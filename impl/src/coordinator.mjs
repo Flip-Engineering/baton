@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
+import { readOnlyNoChangeVerdict } from './referee.mjs';
 import { ContributionService } from './contribution-service.mjs';
 import { nativeSubagentView, NATIVE_SETTLEMENT_GAP } from './native-subagent-view.mjs';
 import {
@@ -514,7 +515,7 @@ const CLOSED_VERIFIER_DIAGNOSTICS = new Set([
   'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
   'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
   'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
-  'verification_passed', 'verification_exit_mismatch',
+  'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
 ]);
 const hex64OrNull = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) ? value : null;
 const boolOrNull = (value) => typeof value === 'boolean' ? value : null;
@@ -15345,45 +15346,73 @@ export class Coordinator {
         }
       }
       const baseSha = task.sessionContext?.baseSha ?? null;
-      const checked = await verifyContribution({
-        worktrees: this._worktrees, referee: this._referee, task, capture: captured, workerResult,
-        onPhase: (phase) => { trustPhase = phase; },
-        beforeVerify: async ({ candidate, base }) => {
-          if (this._atlasStructuralEvidence && base?.path && candidate?.path) {
-            structuralEvidence = await this._atlasStructuralEvidence.classify({
-              beforeRoot: base?.path, afterRoot: candidate?.path, changedPaths,
-              // #286 G-41: the classification budget is the task's OWN recorded brief budget (the
-              // lane spends it at its documented 4 bytes/token), not a literal used as both default
-              // and ceiling. `validateBrief` guarantees the field on every admitted task.
-              budgetTokens: task.brief.budget.tokens,
-            });
-            const structuralEvent = this._log.append({
-              worker: 'hub-atlas', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: 'atlas.structural_classified',
-              payload: {
-                worker: handle.id, taskId: task.id, runId: task.runId ?? null, operation: 'diff.structural', rung: 'R1',
-                changeClass: structuralEvidence.changeClass, files: structuralEvidence.files,
-                digest: structuralEvidence.digest, bytes: structuralEvidence.bytes, path: structuralEvidence.path,
-                mediaType: structuralEvidence.mediaType, ceiling: structuralEvidence.ceiling, languageCeiling: structuralEvidence.languageCeiling,
-              },
-            });
-            structuralEvidenceAuthority = this._coordMapEvent(structuralEvent);
-          }
-          if (this._acceptOpts.requireCoverage && baseSha && sha && typeof this._worktrees.changedLines === 'function') {
-            task.changedLines = await this._worktrees.changedLines(baseSha, sha);
-          }
-        },
-      });
-      const {
-        observedVerdict, workerToolchainProjection, workerSparseCheckoutIdentity,
-        verifierToolchainProjection, verifierSparseCheckoutIdentity,
-        baseVerifierToolchainProjection, baseVerifierSparseCheckoutIdentity,
-      } = checked;
-      verificationCleanupError = checked.cleanupError;
+      // Issue #334 acceptance: a read-only run (repository mutation is not authorized) whose
+      // captured candidate changed no path has nothing to verify against the base — the
+      // pinned verification does not run at all (no referee call, no verify sandbox). The
+      // trust gate records the hub's own typed skip receipt and the run completes with the
+      // worker's textual result. A read-only capture WITH changed paths falls through to
+      // the gates above (forbidden_effect / path_scope) and then verifies normally.
+      const readOnlyNoChange = Array.isArray(task.brief?.effects)
+        && !task.brief.effects.includes('repository_edit') && changedPaths.length === 0;
+      let observedVerdict;
+      let workerToolchainProjection = null;
+      let workerSparseCheckoutIdentity = null;
+      let verifierToolchainProjection = null;
+      let verifierSparseCheckoutIdentity = null;
+      let baseVerifierToolchainProjection = null;
+      let baseVerifierSparseCheckoutIdentity = null;
+      if (readOnlyNoChange) {
+        const skipStarted = Date.now();
+        observedVerdict = readOnlyNoChangeVerdict({ durationMs: Date.now() - skipStarted });
+        verificationCleanupError = null;
+      } else {
+        const checked = await verifyContribution({
+          worktrees: this._worktrees, referee: this._referee, task, capture: captured, workerResult,
+          onPhase: (phase) => { trustPhase = phase; },
+          beforeVerify: async ({ candidate, base }) => {
+            if (this._atlasStructuralEvidence && base?.path && candidate?.path) {
+              structuralEvidence = await this._atlasStructuralEvidence.classify({
+                beforeRoot: base?.path, afterRoot: candidate?.path, changedPaths,
+                // #286 G-41: the classification budget is the task's OWN recorded brief budget (the
+                // lane spends it at its documented 4 bytes/token), not a literal used as both default
+                // and ceiling. `validateBrief` guarantees the field on every admitted task.
+                budgetTokens: task.brief.budget.tokens,
+              });
+              const structuralEvent = this._log.append({
+                worker: 'hub-atlas', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: 'atlas.structural_classified',
+                payload: {
+                  worker: handle.id, taskId: task.id, runId: task.runId ?? null, operation: 'diff.structural', rung: 'R1',
+                  changeClass: structuralEvidence.changeClass, files: structuralEvidence.files,
+                  digest: structuralEvidence.digest, bytes: structuralEvidence.bytes, path: structuralEvidence.path,
+                  mediaType: structuralEvidence.mediaType, ceiling: structuralEvidence.ceiling, languageCeiling: structuralEvidence.languageCeiling,
+                },
+              });
+              structuralEvidenceAuthority = this._coordMapEvent(structuralEvent);
+            }
+            if (this._acceptOpts.requireCoverage && baseSha && sha && typeof this._worktrees.changedLines === 'function') {
+              task.changedLines = await this._worktrees.changedLines(baseSha, sha);
+            }
+          },
+        });
+        ({
+          observedVerdict, workerToolchainProjection, workerSparseCheckoutIdentity,
+          verifierToolchainProjection, verifierSparseCheckoutIdentity,
+          baseVerifierToolchainProjection, baseVerifierSparseCheckoutIdentity,
+        } = checked);
+        verificationCleanupError = checked.cleanupError;
+      }
 
-      // C1: referee.accept() (or an injected equivalent) is the SOLE done-gate.
+      // C1: referee.accept() (or an injected equivalent) is the SOLE done-gate — except for
+      // the #334 read-only skip, which IS the acceptance: there is no observation to gate,
+      // so the hub's own skip receipt completes the run under every accept injection.
       const acceptOpts = { ...this._acceptOpts, expectExit: task.brief.verification.expectExit };
-      const refereeAccept = this._accept(observedVerdict, acceptOpts);
-      const verdict = closedVerificationVerdict(observedVerdict, task.brief.verification);
+      const refereeAccept = readOnlyNoChange ? true : this._accept(observedVerdict, acceptOpts);
+      const verdict = readOnlyNoChange
+        ? Object.freeze({
+          ...closedVerificationVerdict(observedVerdict, task.brief.verification),
+          reason: 'read_only_no_change',
+        })
+        : closedVerificationVerdict(observedVerdict, task.brief.verification);
       task.verdict = verdict;
       // Provider usage can arrive only as a terminal lump. Native kill cannot claw back that
       // spend, but an over-hard-limit artifact must still fail admission and router learning.

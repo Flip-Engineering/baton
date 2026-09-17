@@ -390,6 +390,8 @@ test('renderPrompt snapshot (cli): the Claude-family dialect renders byte-for-by
     'Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.',
     '## Repository mutation authority',
     'Repository mutation is not authorized. Inspect/read and return evidence only; do not create, modify, or delete files.',
+    '## Acceptance',
+    'Acceptance checks the captured diff, not prose: when the capture changed no path the hub runs no pinned verification and records {outcome: passed, diagnosticCode: verification_not_required, reason: read_only_no_change}, and the textual result completes the run; when the capture changed paths the scope gates apply and the hub re-runs the pinned verification below.',
     'Constraints:',
     '- no new dependencies',
     'Work only within: impl/src/**',

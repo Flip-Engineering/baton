@@ -21,8 +21,8 @@ function freeze(value) {
 export const CANONICAL_RUN_PHASES = Object.freeze([
   'planning', 'awaiting_approval', 'queued', 'working', 'paused', 'interrupted',
   'uncertain', 'verifying', 'result_ready', 'awaiting_selection', 'result_selected',
-  'reviewing', 'integrating', 'completed', 'failed', 'cancelled', 'stopped', 'denied',
-  'stopping',
+  'reviewing', 'integrating', 'completed', 'failed', 'inconclusive', 'cancelled', 'stopped',
+  'denied', 'stopping',
 ]);
 export const CANONICAL_MEMBER_STATES = Object.freeze([
   'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',
@@ -103,10 +103,10 @@ export function serializeAttentionKind(kind) {
 // `closed` (→ null) is neither settled nor terminal, which is exactly its dead-string status.
 const PROVIDER_SETTLED_CANONICAL = new Set([
   'result_ready', 'awaiting_selection', 'result_selected',
-  'completed', 'failed', 'cancelled', 'stopped', 'denied',
+  'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
 ]);
 const APPLICATION_TERMINAL_CANONICAL = new Set([
-  'completed', 'failed', 'cancelled', 'stopped', 'denied',
+  'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
 ]);
 export function providerSettled(phase) {
   return PROVIDER_SETTLED_CANONICAL.has(canonicalRunPhase(phase));

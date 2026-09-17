@@ -110,3 +110,18 @@ machinery.
   parity.
 - **31-c**: claim-time effect evaluation, visible-only escalation bound, the live pause-twice
   wave acceptance, and the stall-watchdog silence/progress follow-up spec.
+
+## 5. #334 acceptance: the inconclusive run phase
+
+The closed run-phase vocabulary (application-semantics.mjs `CANONICAL_RUN_PHASES`) gains the
+terminal phase **`inconclusive`**. An inconclusive trust-gate verdict whose `failureOwnership`
+is `baseline_or_environment` — the pinned verification is red on the base too, so the
+candidate is not to blame — never reads phase `failed`: the run's phase is `inconclusive`
+(application.mjs plan-node derivation), the verification state is `inconclusive`, and the
+`retry_verification` action is still offered while the pinned candidate checkpoint is
+preserved. The outline's progress summary names the ownership (`baseline_or_environment`)
+on both the provider-turn and verification stages, so the run no longer reads as a bare
+failure with a retry button. Any other inconclusive ownership (e.g. `verifier`) keeps the
+previous `failed` reading. `inconclusive` is terminal (`APPLICATION_RUN_TERMINAL_PHASES`)
+and provider-settled (`PROVIDER_EXECUTION_SETTLED_PHASES`), resolving through the registry
+predicates like every other terminal phase — no surface hand-maintains the union.

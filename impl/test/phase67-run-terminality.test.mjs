@@ -18,9 +18,10 @@ import {
 // state machine's literals and must agree with the predicates on every literal they carry.
 const settledPhases = [
   'work_completed', 'selection_required', 'candidate_selected',
-  'completed', 'failed', 'cancelled', 'denied', 'stopped',
+  'completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped',
 ];
-const runTerminalPhases = ['completed', 'failed', 'cancelled', 'denied', 'stopped'];
+// Issue #334: a baseline-owned inconclusive verdict reads the terminal phase 'inconclusive'.
+const runTerminalPhases = ['completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped'];
 const providerUnavailablePhases = [
   'work_completed', 'selection_required', 'candidate_selected',
   'completed', 'failed', 'denied',
@@ -38,7 +39,7 @@ test('provider-settled and application-terminal phase sets stay separate, with c
 
 test('the registry predicates own the canonical settled/terminal vocabulary (L4)', () => {
   for (const phase of ['result_ready', 'awaiting_selection', 'result_selected',
-    'completed', 'failed', 'cancelled', 'stopped', 'denied',
+    'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
     'work_completed', 'selection_required', 'candidate_selected']) {
     assert.equal(providerSettled(phase), true, phase);
   }
@@ -47,7 +48,7 @@ test('the registry predicates own the canonical settled/terminal vocabulary (L4)
     'running', 'approved', 'awaiting_plan_approval', 'input_required', 'closed']) {
     assert.equal(providerSettled(phase), false, phase);
   }
-  for (const phase of ['completed', 'failed', 'cancelled', 'stopped', 'denied']) {
+  for (const phase of ['completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied']) {
     assert.equal(applicationTerminal(phase), true, phase);
   }
   for (const phase of ['result_ready', 'awaiting_selection', 'result_selected',

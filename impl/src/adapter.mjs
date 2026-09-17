@@ -302,6 +302,14 @@ export function renderBrief(brief, dialect) {
     lines.push('## Repository mutation authority');
     lines.push('Repository mutation is not authorized. Inspect/read and return evidence only; do not create, modify, or delete files.');
   }
+  // Issue #334 acceptance: a read-only brief states exactly what acceptance will check, so
+  // the worker never trades prose for a diff. The condition mirrors the trust gate's own
+  // read-only signal (coordinator.mjs: effects without repository_edit), and the receipt
+  // names the exact typed verdict the gate records.
+  if (Array.isArray(brief.effects) && !brief.effects.includes('repository_edit')) {
+    lines.push('## Acceptance');
+    lines.push('Acceptance checks the captured diff, not prose: when the capture changed no path the hub runs no pinned verification and records {outcome: passed, diagnosticCode: verification_not_required, reason: read_only_no_change}, and the textual result completes the run; when the capture changed paths the scope gates apply and the hub re-runs the pinned verification below.');
+  }
   if (Array.isArray(brief.constraints) && brief.constraints.length > 0) {
     lines.push(...presentation.constraints(brief));
   }

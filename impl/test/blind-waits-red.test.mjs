@@ -169,9 +169,11 @@ const REPO = 'repo-blind-waits-164';
 // invariants the fail-loud landing rides — a landed impl must leave them untouched.
 const PINNED_PROVIDER_SETTLED = [
   'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed',
-  'cancelled', 'denied', 'stopped',
+  'inconclusive', 'cancelled', 'denied', 'stopped',
 ];
-const PINNED_APPLICATION_TERMINAL = ['completed', 'failed', 'cancelled', 'denied', 'stopped'];
+// Issue #334 extends the closed phase vocabulary: a baseline-owned inconclusive verdict reads
+// the terminal phase 'inconclusive', so both sets carry it beside 'failed'.
+const PINNED_APPLICATION_TERMINAL = ['completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped'];
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -1209,9 +1211,9 @@ test('P-APP RED: the APPLICATION-layer run.wait refusal keeps application_unauth
 
 test('A9 GREEN: the terminal/settled literal sets and WAITING_ON_KINDS stay byte-unchanged (additive-only law)', () => {
   assert.deepEqual([...PROVIDER_EXECUTION_SETTLED_PHASES].sort(), [...PINNED_PROVIDER_SETTLED].sort(),
-    'PROVIDER_EXECUTION_SETTLED_PHASES is the pinned closed set (application.mjs:157) — a landed impl adds the wait-local predicate, never a phase literal');
+    'PROVIDER_EXECUTION_SETTLED_PHASES is the pinned closed set (application.mjs:190) — #334 is the recorded exception that adds the inconclusive phase literal; anything else still adds the wait-local predicate, never a literal');
   assert.deepEqual([...APPLICATION_RUN_TERMINAL_PHASES].sort(), [...PINNED_APPLICATION_TERMINAL].sort(),
-    'APPLICATION_RUN_TERMINAL_PHASES is the pinned closed set (application.mjs:160)');
+    'APPLICATION_RUN_TERMINAL_PHASES is the pinned closed set (application.mjs:193) — #334 adds inconclusive');
   assert.deepEqual([...WAITING_ON_KINDS].sort(), ['capacity_ceiling', 'dispatch_pending', 'plan_approval', 'provider_stalled', 'spawning'].sort(),
     'WAITING_ON_KINDS stays the closed five (application-semantics.mjs:59-61) — "stopping" is NEVER admitted to the waitingOn vocabulary');
   assert.equal(PROVIDER_EXECUTION_SETTLED_PHASES.has('stopping'), false, 'stopping stays outside the settled set');

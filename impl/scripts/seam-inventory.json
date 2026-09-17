@@ -3855,7 +3855,7 @@
         {
           "name": "_runTrustGate",
           "ordinal": 0,
-          "size": 391,
+          "size": 419,
           "seam": "effect",
           "evidence": [
             "effect:worktree_authority",
@@ -4941,7 +4941,7 @@
         {
           "name": "_buildView",
           "ordinal": 0,
-          "size": 450,
+          "size": 460,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",

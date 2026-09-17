@@ -589,6 +589,45 @@ export async function verify(task, result, sandbox, opts = {}) {
 }
 
 /**
+ * Issue #334 acceptance — the hub's own skip receipt for a read-only run whose captured
+ * candidate changed no path. There is nothing to verify against the base, so the pinned
+ * verification does not run at all; the receipt is already closed (the coordinator records
+ * it through its RV boundary beside `reason: 'read_only_no_change'`). `locus` is null —
+ * no sandbox was ever materialized — and every hardening signal is null: there is no
+ * change to harden.
+ */
+export function readOnlyNoChangeVerdict(init = {}) {
+  const durationMs = Number.isFinite(init?.durationMs) && init.durationMs >= 0
+    ? Math.trunc(init.durationMs) : null;
+  return Object.freeze({
+    schemaVersion: 1,
+    reverified: true,
+    observedExit: null,
+    outputExceeded: false,
+    hadClaim: false,
+    matchesClaim: true,
+    passed: true,
+    locus: null,
+    redGreen: null,
+    baseExit: null,
+    coverageOfChange: null,
+    uncoveredChangedLines: [],
+    mutationStrength: null,
+    mutationPassed: null,
+    survivedMutants: [],
+    capturedOutputBytes: 0,
+    capturedOutputDigest: createHash('sha256').update('').digest('hex'),
+    diagnosticCode: 'verification_not_required',
+    durationMs,
+    execution: Object.freeze({ state: 'completed', code: 'verification_completed' }),
+    baseExecution: null,
+    runtimeDigest: null,
+    outcome: 'passed',
+    failureOwnership: null,
+  });
+}
+
+/**
  * A verdict is trustworthy — and a result is safe to mark "done"/merge — iff the hub
  * itself observed a pass, AND (if required) the hardening checks that were requested
  * came back true, not merely non-false, AND the exit the hub observed is the one this
@@ -606,6 +645,12 @@ export async function verify(task, result, sandbox, opts = {}) {
  */
 export function accept(verdict, opts = {}) {
   const { requireRedGreen = false, requireCoverage = false, requireMutation = false, expectExit } = opts;
+  // Issue #334: the hub's own skip receipt is already closed — a read-only run with no
+  // change passed vacuously, and there is no change to harden, so hardening requirements
+  // never apply to it. A malformed receipt (not passed) is still refused below.
+  if (verdict?.diagnosticCode === 'verification_not_required') {
+    return verdict?.passed === true && verdict?.outcome === 'passed';
+  }
   if (!verdict.reverified || !verdict.passed) return false;
   if (expectExit !== undefined && verdict.observedExit !== expectExit) return false;
   if (requireRedGreen && verdict.redGreen !== true) return false;

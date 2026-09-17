@@ -111,7 +111,7 @@ const VERIFIER_DIAGNOSTIC_CODES = Object.freeze(new Set([
   'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
   'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
   'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
-  'verification_passed', 'verification_exit_mismatch',
+  'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
 ]));
 function sanitizeHex64(value) {
   return typeof value === 'string' && HEX64.test(value) ? value : null;
@@ -188,10 +188,10 @@ const EPISODE_TOPICS = Object.freeze([
 // M2). The registry L4 predicates (providerSettled/applicationTerminal) own the canonical
 // vocabulary; the outward-facing surfaces resolve through them.
 export const PROVIDER_EXECUTION_SETTLED_PHASES = new Set([
-  'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed', 'cancelled', 'denied', 'stopped',
+  'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped',
 ]);
 export const APPLICATION_RUN_TERMINAL_PHASES = new Set([
-  'completed', 'failed', 'cancelled', 'denied', 'stopped',
+  'completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped',
 ]);
 
 // docs/36 §9 M1/M3 — the dispatch-layer alias map. Canonical operation names (run.view,
@@ -2642,7 +2642,13 @@ function terminalCauseNarrative(cause) {
 
 function runProgress({ phase, approval, node, route, verification, reviewPolicyMode, semanticReview, result, integration, exportResult, resourcesSettled, stop }) {
   const stopped = stop?.state === 'stopped' || phase === 'stopped';
-  const failed = ['planning_failed', 'failed', 'denied', 'cancelled'].includes(phase);
+  // Issue #334: 'inconclusive' is terminal with no accepted result, so the result/export
+  // stages read stopped exactly like the other terminal-without-result phases.
+  const failed = ['planning_failed', 'failed', 'inconclusive', 'denied', 'cancelled'].includes(phase);
+  // Issue #334: a baseline-owned inconclusive names its ownership on the progress summary —
+  // the base is red and the candidate is not to blame.
+  const baselineInconclusive = verification?.state === 'inconclusive'
+    && verification?.failureOwnership === 'baseline_or_environment';
   const stage = (key, label, state, detail) => ({ key, label, state, detail });
   const stages = [
     stage('intent', 'Intent compiled', 'complete', 'Goal authority recorded'),
@@ -2663,6 +2669,8 @@ function runProgress({ phase, approval, node, route, verification, reviewPolicyM
     phase === 'interrupted' ? 'No provider turn is active; the exact session remains attached and controllable'
       : phase === 'interruption_uncertain'
         ? 'No provider turn is active, but reusable-session attachment is unproven; only whole-Run stop is safe'
+      : baselineInconclusive && node?.state === 'failed'
+        ? 'Provider turn ended; acceptance is inconclusive — the base is red (baseline_or_environment) and the candidate is not to blame'
       : route?.observed ? 'Provider identity observed'
       : route?.resolved ? 'Route resolved; provider identity pending'
         : node?.taskId ? 'Provider startup pending' : 'Provider not started'),
@@ -2672,7 +2680,8 @@ function runProgress({ phase, approval, node, route, verification, reviewPolicyM
     verification?.state === 'mechanically_verified_unstable'
       ? 'Exact candidate confirmed after an original diagnostic failure; instability is retained.'
       : verification?.state === 'mechanically_verified' ? 'Pinned verification accepted'
-      : verification?.state === 'inconclusive' ? 'Verification needs another attempt; the exact candidate is preserved.'
+      : verification?.state === 'inconclusive'
+        ? `Verification needs another attempt; the exact candidate is preserved.${baselineInconclusive ? ' The base is red — the candidate is not to blame (baseline_or_environment).' : ''}`
         : verification?.state === 'failed' ? 'Pinned verification failed' : 'No accepted verification yet'),
     stage('semantic_review', 'Independent semantic review', reviewPolicyMode === 'none' ? 'complete'
       : semanticReview?.state === 'semantic_reviewed' ? 'complete'
@@ -8223,7 +8232,12 @@ export class BatonApplication {
     if (!projection.approval) phase = 'awaiting_plan_approval';
     else if (projection.approval.disposition === 'rejected') phase = 'denied';
     else if (node.state === 'accepted') phase = readOnlyResult ? 'completed' : 'work_completed';
-    else if (node.state === 'failed') phase = 'failed';
+    // Issue #334 acceptance: an inconclusive verdict whose failureOwnership is
+    // baseline_or_environment (the base is red — the candidate is not to blame) never reads
+    // phase 'failed'. The run's phase is the terminal 'inconclusive', with the
+    // retry_verification action still offered below.
+    else if (node.state === 'failed') phase = result?.verdict?.outcome === 'inconclusive'
+      && result?.verdict?.failureOwnership === 'baseline_or_environment' ? 'inconclusive' : 'failed';
     else if (node.state === 'cancelled') phase = 'cancelled';
     // Issue #31 §2.1(3), 31-b Part F rule 14: the site a wave member's `entry.run.status()`
     // resolves through in the common (non-Workflow) case. Without this branch a paused task falls
@@ -8513,12 +8527,17 @@ export class BatonApplication {
               : [{ kind: 'status' }];
     const verificationState = ['work_completed', 'reviewing', 'completed'].includes(phase)
       ? resultStability === 'passed_after_candidate_failure' ? 'mechanically_verified_unstable' : 'mechanically_verified'
-      : phase === 'failed' ? (retryProjection && verdictOutcome === 'inconclusive' ? 'inconclusive' : 'failed') : 'pending';
+      : phase === 'inconclusive' ? 'inconclusive'
+        : phase === 'failed' ? (retryProjection && verdictOutcome === 'inconclusive' ? 'inconclusive' : 'failed') : 'pending';
     const resourcesSettled = ownedWorkers.length === 0;
     const progress = { ...runProgress({
       phase, approval: projection.approval, node,
       route,
-      verification: { state: verificationState, stability: resultStability }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview,
+      verification: {
+        state: verificationState,
+        stability: resultStability,
+        failureOwnership: result?.verdict?.failureOwnership ?? null,
+      }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview,
       result: publicResult, integration, exportResult, resourcesSettled, stop: runStop ? {
         state: runStop.status, receipt: runStop.receipt,
       } : null,
