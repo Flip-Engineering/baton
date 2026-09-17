@@ -1725,58 +1725,6 @@
       "reason": "#102"
     },
     {
-      "key": "test/worker-verdict-surface-red.test.mjs :: A1 (RED): a scope refusal projects the four-field surface with the exact key `detail` (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: A2 (RED): a non-whitelisted trustPhase (promotion) escalates with check:null — a raw gate-internal phase name never crosses (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: A3 (RED): required_effect_absent projects the digest/count subset — the gate degrades to unknown, the code and corrective survive (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: A4 (RED): a red_green verifier refusal projects check = the closed diagnosticCode and a sanitized tail — an adversarial capsule never crosses (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: A5 (RED): a forbidden-effect refusal projects gate forbidden_effect, check forbidden_effect, and the retraction corrective (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: A6 (RED): a coverage verifier refusal projects gate coverage, the closed code as check, and a sanitized tail (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: B1 (RED): every reachable null verifier diagnostic carries corrective:null and the closed code as check (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: B2 (RED): VERDICT_CORRECTIVE_TABLE is the frozen hub-minted corrective table, keyed by terminal code (stage: corrective-table-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: B3 (RED): every terminal code REACHABLE on the surface has a corrective or null in the closed table (OQ1 source-scan)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: B4 (RED): a forced corrective outside the closed table refuses verdict_surface_corrective_forced and the surface degrades per-record (stage: forced-corrective-refusal-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: C1 (RED): two replays over the same log derive the same surface; the latest evidence supersedes (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: C2 (RED): a worker receives ITS OWN surface — the projection is worker-scoped, never run-wide (stage: verdict-surface-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: C3 (RED): the run.debug failure leg carries the same check/corrective — the shared projection on the DG-1 consumer (stage: run-debug-verdict-missing)",
-      "reason": "#61"
-    },
-    {
       "key": "test/worker-verdict-surface-red.test.mjs :: C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing)",
       "reason": "#79"
     },

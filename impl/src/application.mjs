@@ -1212,6 +1212,144 @@ function debugGateRefusal(events) {
   };
 }
 
+// Issue #61 D1 (fold v1.1) — WHAT was checked is a CLOSED domain: the whitelisted trust
+// phases for error-kind refusals, the closed verifier diagnosticCode for verify.reverified
+// refusals — everything else escalates to null so a raw gate-internal phase name never
+// crosses to the worker (#73's class).
+const VERDICT_CHECK_PHASES = Object.freeze(new Set([
+  'path_scope', 'forbidden_effect', 'required_effect',
+]));
+
+// Issue #61 D1 + OQ1 — the hub-minted corrective-class table, keyed by terminal CODE
+// (never the coarse gate: required_effect_absent degrades to gate unknown but keeps its
+// corrective). Frozen so a caller cannot rewrite a corrective (#73). A code absent from
+// the table carries corrective null — honest absence, escalate to the orchestrator.
+export const VERDICT_CORRECTIVE_TABLE = Object.freeze({
+  worker_path_scope_violation: 'in_scope_revision',
+  forbidden_effect_observed: 'forbidden_effect_retraction',
+  required_effect_absent: 'in_scope_edit',
+  verification_red_green_failed: 'failing_check_fix',
+  verification_coverage_failed: 'coverage_completion',
+  verification_output_exceeded: null,
+  verification_timed_out: null,
+  verification_spawn_unavailable: null,
+  verification_claim_diverged: null,
+  verification_mutation_failed: null,
+  verification_coverage_unavailable: null,
+  verification_mutation_unavailable: null,
+  verification_exit_mismatch: null,
+});
+
+// Issue #61 refusal vocabulary — a caller-authored corrective riding a durable event is
+// a forged corrective. The surface degrades PER-RECORD (the #73 B5 precedent): the
+// malformed record is excluded from the projection, never a map-wide throw.
+const VERDICT_SURFACE_CORRECTIVE_FORCED = 'verdict_surface_corrective_forced';
+
+function verdictForgedCorrectiveReason(event) {
+  if (event?.payload && typeof event.payload === 'object'
+    && Object.hasOwn(event.payload, 'corrective')) {
+    return VERDICT_SURFACE_CORRECTIVE_FORCED;
+  }
+  return null;
+}
+
+function verdictLiveCode(event) {
+  return event.kind === 'verify.reverified'
+    ? (typeof event.payload?.verdict?.diagnosticCode === 'string'
+      ? event.payload.verdict.diagnosticCode : 'trust_gate_failed')
+    : (typeof event.payload?.code === 'string' ? event.payload.code : 'trust_gate_failed');
+}
+
+function verdictSurfaceCheck(event, liveCode) {
+  if (event.kind === 'verify.reverified') {
+    return VERIFIER_DIAGNOSTIC_CODES.has(liveCode) ? liveCode : null;
+  }
+  const trustPhase = typeof event.payload?.trustPhase === 'string' ? event.payload.trustPhase : null;
+  return trustPhase !== null && VERDICT_CHECK_PHASES.has(trustPhase) ? trustPhase : null;
+}
+
+// Issue #61 D1 (fold Minor 1) — the detail evidence CLASS. Scope and red_green/coverage
+// reuse debugGateDetail verbatim (digests+counts, sanitizer tail — never paths, never the
+// raw capsule); required_effect_absent carries the digest/count subset of
+// requiredEffectEvidence; every other gate carries {}.
+function verdictSurfaceDetail(gate, liveCode, event) {
+  if (liveCode === 'required_effect_absent') {
+    const evidence = event.payload?.requiredEffectEvidence && typeof event.payload.requiredEffectEvidence === 'object'
+      ? event.payload.requiredEffectEvidence : {};
+    return {
+      changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
+      changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
+      inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
+        ? evidence.inScopeChangedPathCount : 0,
+      inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
+        ? evidence.inScopeChangedPathsDigest : null,
+    };
+  }
+  return debugGateDetail(gate, event);
+}
+
+function isVerdictCandidate(event) {
+  if (event.kind === 'error' && event.payload?.['phase'] === 'trust_gate') return true;
+  if (event.kind === 'verify.reverified' && event.payload?.accept === false) return true;
+  return false;
+}
+
+// Issue #61 D1/R4 — the worker-facing verdict surface: a pure replay-derived projection
+// over the worker-scoped event stream into {gate, code, check, detail, corrective}.
+// Latest evidence supersedes (.at(-1)); cross-worker isolation is the caller's filter
+// (the same worker-scoped set the #79 push derives); forged-corrective records are
+// excluded per-record, so a malformed-only stream projects null.
+export function projectVerdictSurface(events) {
+  if (!Array.isArray(events)) return null;
+  const event = events.filter(isVerdictCandidate)
+    .filter((candidate) => verdictForgedCorrectiveReason(candidate) === null)
+    .at(-1);
+  if (!event) return null;
+  const liveCode = verdictLiveCode(event);
+  const gate = debugGateFromLiveCode(liveCode);
+  return {
+    gate,
+    code: debugTerminalCode(liveCode, 'trust_gate_failed'),
+    check: verdictSurfaceCheck(event, liveCode),
+    detail: verdictSurfaceDetail(gate, liveCode, event),
+    corrective: Object.hasOwn(VERDICT_CORRECTIVE_TABLE, liveCode)
+      ? VERDICT_CORRECTIVE_TABLE[liveCode] : null,
+  };
+}
+
+// Issue #334 — the run-show half of the same surface. view.verification is the closed
+// referee verdict the outline already carries ({state, verdict}); for a failed or
+// inconclusive verification the outline names WHAT was checked, the corrective class,
+// and the referee's failureCapsule as the bounded sanitized tail — the same hub-minted
+// table keyed by the same terminal code. Any other state (or no verdict) projects null:
+// recorded absence, never a fabricated surface.
+export function projectRunVerdictSurface(verification) {
+  const state = verification?.state ?? null;
+  if (state !== 'failed' && state !== 'inconclusive') return null;
+  const verdict = verification?.verdict ?? null;
+  const code = typeof verdict?.diagnosticCode === 'string' ? verdict.diagnosticCode : null;
+  if (!code) return null;
+  const gate = debugGateFromLiveCode(code);
+  const check = VERIFIER_DIAGNOSTIC_CODES.has(code) ? code : null;
+  const corrective = Object.hasOwn(VERDICT_CORRECTIVE_TABLE, code)
+    ? VERDICT_CORRECTIVE_TABLE[code] : null;
+  const capsuleText = typeof verdict?.failureCapsule?.text === 'string'
+    ? verdict.failureCapsule.text : null;
+  return deepFreeze({
+    state,
+    outcome: verdict?.outcome ?? null,
+    failureOwnership: verdict?.failureOwnership ?? null,
+    diagnosticCode: code,
+    gate,
+    code,
+    check,
+    detail: (gate === 'red_green' || gate === 'coverage')
+      ? { tail: sanitizeVerifierDiagnosticText(capsuleText ?? '').text } : {},
+    corrective,
+    ...(capsuleText === null ? {} : { failureTail: sanitizeVerifierDiagnosticText(capsuleText).text }),
+  });
+}
+
 // Diagnostics DG-1a (DIAG-3 / #28 deferral): one aggregated wire.frame_degraded summary
 // (counts + last code), never raw frames — #53 writeReceipts whitelist amendment.
 function debugFrameDegradedSummary(events) {
@@ -11577,6 +11715,12 @@ export class BatonApplication {
       // same caller-scoped semantic actions (never the view's observer-scoped token — R-SP-3/8).
       const semanticActions = callerActions;
       const requiredAction = projectRequiredAction({ phase: view.phase, attention, actions: semanticActions });
+      // Issue #334: for a failed or inconclusive verification the outline carries the
+      // shared verdict projection beside retry_verification — WHAT was checked, the
+      // corrective class, and the referee's failureCapsule as the bounded sanitized
+      // tail — so run show never reads a bare failed string. Any other state projects
+      // null and the outline carries no verification block (recorded absence).
+      const runVerdict = projectRunVerdictSurface(view.verification);
       const outline = {
         objective: current.goal.objective,
         resultIntent: view.resultIntent,
@@ -11617,6 +11761,7 @@ export class BatonApplication {
           summary: view.preservation?.state === 'pinned' ? 'Work preserved; resume available after fresh verification.'
             : 'No preserved work is advertised.',
         },
+        ...(runVerdict ? { verification: runVerdict } : {}),
         actions: semanticActions,
       };
       return this._finalizeSemanticInspection({
@@ -11883,8 +12028,20 @@ export class BatonApplication {
     // #53 failure + DIAG-2 amendment: gate refusal wins when present (structured {gate, detail});
     // otherwise stream-death/crash (lifecycle.crashed) as the #53 closed {kind, code, message}.
     const gateRefusal = debugGateRefusal(events);
+    // Issue #61 D1/R4 — the shared projection rides the run.debug failure leg: the SAME
+    // check + corrective the worker-facing surface carries (GT1/GT3). A forged-only
+    // stream projects no surface and keeps the legacy gate shape (never a throw).
+    const verdictSurface = gateRefusal ? projectVerdictSurface(events) : null;
     const crashEvent = events.findLast((event) => event.kind === 'lifecycle.crashed');
-    const failure = gateRefusal ?? (crashEvent ? {
+    const failure = verdictSurface ? {
+      kind: gateRefusal.kind,
+      code: gateRefusal.code,
+      message: gateRefusal.message,
+      gate: verdictSurface.gate,
+      check: verdictSurface.check,
+      detail: verdictSurface.detail,
+      corrective: verdictSurface.corrective,
+    } : (gateRefusal ?? (crashEvent ? {
       kind: crashEvent.kind,
       code: debugTerminalCode(crashEvent.payload?.code, 'provider_crashed'),
       message: typeof crashEvent.payload?.error === 'string' && crashEvent.payload.error.length > 0
@@ -11894,7 +12051,7 @@ export class BatonApplication {
       // so the debug leg carries it verbatim like the lastToolRows precedent.
       ...(typeof crashEvent.payload?.stderrTail === 'string' && crashEvent.payload.stderrTail.length > 0
         ? { stderrTail: crashEvent.payload.stderrTail } : {}),
-    } : null);
+    } : null));
     return {
       role: dispatch.binding.nodeKey, workerId, phase: task?.status ?? null,
       lastMessages, writeReceipts, failure,

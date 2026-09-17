@@ -16,7 +16,9 @@
 //               caller-authored `derived` key with `application_workflow_feedback_invalid`.
 //               (GREEN at HEAD: the closed schema already exists.) [DG-1b harness]
 //   P4  GREEN-5a run.debug failure leg — the honest referent a forged verdict spoofs projects the
-//               exact `{kind, code, message, gate, detail:{digests, counts}}` shape. [DG-1b harness]
+//               exact `{kind, code, message, gate, check, detail:{digests, counts}, corrective}`
+//               shape (folded #61 D1/C3 extends the leg with the hub-minted check +
+//               corrective; a forged verdict still cannot mint hub fields). [DG-1b harness]
 //   P5  GREEN-5b push constancy — the #79 `gate_verdict` push item carries NO `derived`; the D6
 //               contract section and the push red-suite literal both stay derived-free (B6). [source scan]
 //   P6  GREEN-3  Coaching feedback is authored and rendered exactly as today (summary + findings),
@@ -572,6 +574,7 @@ test('P4 (PIN): GREEN-5a run.debug failure shape — the honest referent a forge
     code: 'worker_path_scope_violation',
     message: 'scope',
     gate: 'scope',
+    check: 'path_scope',
     detail: {
       digests: {
         changedPathsDigest: DIGEST_A,
@@ -580,6 +583,7 @@ test('P4 (PIN): GREEN-5a run.debug failure shape — the honest referent a forge
       },
       counts: { changedPathCount: 1, inScopeChangedPathCount: 0, outOfScopeChangedPathCount: 1 },
     },
+    corrective: 'in_scope_revision',
   });
 });
 
