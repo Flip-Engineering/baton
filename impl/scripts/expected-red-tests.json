@@ -2043,6 +2043,10 @@
       "reason": "#210"
     },
     {
+      "file": "test/lease-foreign-identity-reap-red.test.mjs",
+      "reason": "#330"
+    },
+    {
       "file": "test/lease-zombie-reap-red.test.mjs",
       "reason": "#238"
     },
@@ -2361,6 +2365,10 @@
     {
       "file": "test/resident-convergence-wiring-red.test.mjs",
       "reason": "#239"
+    },
+    {
+      "file": "test/run-admission-readiness-red.test.mjs",
+      "reason": "#324"
     },
     {
       "file": "test/run-debug-surface-red.test.mjs",
