@@ -90,7 +90,9 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     wakeClass: 'context_updated', scope: 'swarm', terminal: false, next: null,
     summary: 'the swarm shared context changed',
     rows: [ledgerKind('swarm.context_updated')],
-    subject: { field: 'contextId', kind: 'context', fallback: { field: 'swarmId', kind: 'swarm' } },
+    // #272: the row carries {key, body} (swarm-state.mjs refuses a keyless write) — the wake
+    // names the key it wrote, never the body, so a follower never re-reads the view per wake.
+    subject: { field: 'key', kind: 'context', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
     wakeClass: 'contribution_recorded', scope: 'swarm', terminal: true,

@@ -1959,8 +1959,8 @@ function parseSwarmCli(args, idempotencyKey) {
       values[entry.field] = token;
     }
   }
-  // The wake flags are parsed before the remainder check, so `--kinds`/`--since` on the follow form
-  // are the stream's vocabulary rather than an unexpected argument.
+  // The wake flags are parsed before the remainder check, so `--wake-class`/`--kinds`/`--since`
+  // on the follow form are the stream's vocabulary rather than an unexpected argument.
   const wakes = follow ? parseWakeCliFlags(args) : null;
   noRemainder(args);
   if (SWARM_COMMAND_DEFINITIONS[row.command].args.includes('idempotencyKey')) {
@@ -1988,8 +1988,8 @@ function parseSwarmCli(args, idempotencyKey) {
 //
 // `baton deployment watch --follow` and `baton swarm watch --follow` are the SAME consumer: one
 // attachment to the resident's deployment-scope wake stream, one JSON frame per line. The swarm verb
-// pins the swarm as a filter — a filter, never a second connection — and `--kinds`/`--since` are the
-// stream's own vocabulary and cursor rule, checked by the stream's own filter parser. Before this,
+// pins the swarm as a filter — a filter, never a second connection — and `--wake-class`/`--since`
+// are the stream's own vocabulary and cursor rule, checked by the stream's own filter parser. Before this,
 // every root-side feed was one `baton swarm watch --follow` child per swarm, re-armed by hand after
 // each resident restart, and the deployment rows no swarm owns had no consumer at all.
 //
@@ -2000,21 +2000,26 @@ function wakeWatchHelpBlocks(topic) {
   return [
     [
       'wake stream:',
-      '  baton deployment watch --follow [--kinds CLASS,...] [--since SEQ]',
-      '  baton swarm watch SWARM_ID --follow [--kinds CLASS,...] [--since SEQ]',
-      '  One JSON frame per line. --kinds watches named wake classes; --since resumes after a',
-      '  coordination cursor (a cursor IS a ledger seq, and every frame carries its own, so a',
-      '  caller that stopped resumes by passing the last seq it acted on: no gap, no duplicate).',
+      '  baton deployment watch --follow [--wake-class CLASS,...] [--since SEQ]',
+      '  baton swarm watch SWARM_ID --follow [--wake-class CLASS,...] [--since SEQ]',
+      '  One JSON frame per line. --wake-class watches named wake classes (--kinds stays a working',
+      '  spelling of the same axis); --since resumes after a coordination cursor (a cursor IS a',
+      '  ledger seq, and every frame carries its own, so a caller that stopped resumes by passing',
+      '  the last seq it acted on: no gap, no duplicate). Each frame names the wake class, the',
+      '  actor, the subject it woke on, and — for terminal classes — the next command that',
+      '  acknowledges it; a coordination row wakes at most once and never carries a request body.',
       '  Both verbs read the same stream through the same client; the swarm verb pins SWARM_ID.',
     ].join('\n'),
-    `wake classes (the closed set --kinds admits):\n${wakeClassHelpLines().map((line) => `  ${line}`).join('\n')}`,
+    `wake classes (the closed set --wake-class admits):\n${wakeClassHelpLines().map((line) => `  ${line}`).join('\n')}`,
   ];
 }
 
-/** The ONE wake flag pair both watch verbs accept. `--kinds` may repeat and/or carry a comma list;
- * an unknown class refuses here with the closed set, exactly as it does on the wire. */
+/** The ONE wake class axis both watch verbs accept (#272). `--wake-class` is the taught spelling
+ * and may repeat and/or carry a comma list; `--kinds` stays a working spelling of the same axis,
+ * merged with it. An unknown class refuses here with the closed set, exactly as it does on the
+ * wire. */
 function parseWakeCliFlags(args) {
-  const tokens = takeAll(args, '--kinds')
+  const tokens = [...takeAll(args, '--kinds'), ...takeAll(args, '--wake-class')]
     .flatMap((value) => `${value}`.split(','))
     .map((token) => token.trim())
     .filter((token) => token.length > 0);
@@ -2046,17 +2051,31 @@ function parseDeploymentWatch(args, idempotencyKey) {
 /** One attachment, one line per frame, for as long as the caller waits. Returns when the caller
  * stops it (a signal), when the stream ends, or — for the swarm verb — when that swarm's own
  * `closed` wake lands. A refusal is thrown, never swallowed: a watch that cannot attach must not
- * look like a quiet deployment. */
+ * look like a quiet deployment.
+ *
+ * One wake per coordination row (#272): a coordination row wakes at most once no matter how often
+ * the transport delivers it — a replayed row is dropped, never printed twice. Ledger rows key by
+ * their seq; observation rows (which borrow the ledger head as their cursor) key by their
+ * observation kind beside it, so a crossing and the head row it coincides with stay two wakes. */
 export async function followWakes(parsed, client, options = {}) {
   let frames = 0;
   let cursor = null;
   let closed = null;
+  const delivered = new Set();
+  const rowKey = (frame) => (frame?.observation === true
+    ? `observation:${frame?.row?.kind ?? frame?.wakeClass}:${frame?.seq}`
+    : `row:${frame?.seq}`);
   const attachment = client.wakes({
     filter: { kinds: parsed.kinds, swarms: parsed.swarms, since: parsed.since },
     ...(options.signal === undefined || options.signal === null ? {} : { signal: options.signal }),
     onFrame: async (frame) => {
+      if (Number.isSafeInteger(frame?.seq)) {
+        const key = rowKey(frame);
+        if (delivered.has(key)) return;
+        delivered.add(key);
+        cursor = frame.seq;
+      }
       frames += 1;
-      if (Number.isSafeInteger(frame?.seq)) cursor = frame.seq;
       if (parsed.stopOnClosedWake && frame?.wakeClass === 'closed' && frame.observation !== true
         && (parsed.swarms ?? []).includes(frame.swarmId)) closed = frame;
       await options.onFollowPage?.(frame);

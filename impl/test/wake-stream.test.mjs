@@ -13,8 +13,8 @@ import test from 'node:test';
 import { MockAdapter, openBaton } from '../src/index.mjs';
 import { discoverBatonConnection } from '../src/application-cli.mjs';
 import {
-  WAKE_CLASS_TABLE, WAKE_CLASSES, deriveWakeFrame, openWakeStream, parseWakeFilter, wakeClassFor,
-  wakeClassHelpLines, wakeClassTableRows,
+  WAKE_CLASS_TABLE, WAKE_CLASSES, WakeStream, deriveObservationFrame, deriveWakeFrame, openWakeStream,
+  parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeClassRow, wakeClassTableRows,
 } from '../src/wake-stream.mjs';
 
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
@@ -266,4 +266,139 @@ test('a deployment below its capacity floors wakes capacity_pressure at attach, 
   assert.equal(wake.next, 'baton doctor --check');
   attachment.close();
   await owner.close();
+});
+
+// ── issue #272: wakes name facts, one wake per row, never bodies ──────────────────────────────
+
+// #272 observation 1: a wake names {seq, kind, payloadKind} only — `swarm.context_updated` never
+// said which key. The summary carries the actor and the subject from the row it names, and the
+// bounded row identity instead of the row's body.
+test('#272: a context wake names the key it wrote and its actor, never the body', () => {
+  const frame = deriveWakeFrame({
+    seq: 11, ts: '2026-09-14T07:16:32.897Z', kind: 'swarm.context_updated', actor: 'swarm-native:audit-a:surfaces',
+    payload: { key: 'writing:surfaces', body: { file: 'surfaces.md', phase: 'requesting' }, swarmId: 'audit-a' },
+  });
+  assert.equal(frame.wakeClass, 'context_updated');
+  assert.equal(frame.actor, 'swarm-native:audit-a:surfaces');
+  assert.deepEqual(frame.subject, { kind: 'context', id: 'writing:surfaces' });
+  assert.ok(!JSON.stringify(frame).includes('surfaces.md'),
+    'the frame carries the row identity, never the row body');
+});
+
+// #272 proposal: one wake per semantic row. Harness chatter — native subagent observations in
+// either container, content messages, tool/route telemetry, the operation request/completed pair,
+// process readiness — wakes nobody, while each semantic row wakes exactly once.
+test('#272: one wake per coordination row, and harness chatter wakes nobody', () => {
+  const ledger = [
+    { seq: 1, ts: 'T', kind: 'swarm.created', actor: 'root', payload: { swarmId: 's1' } },
+    { seq: 2, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
+      payload: { worker: 'w-1', workerSeq: 9, digest: 'd', kind: 'native.subagent_observed', ts: 'T' } },
+    { seq: 3, ts: 'T', kind: 'native.subagent_observed', actor: 'worker',
+      payload: { worker: 'w-1', harness: 'omp', subagentId: 'child-1' } },
+    { seq: 4, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
+      payload: { worker: 'w-1', workerSeq: 3, digest: 'd', kind: 'content.message', ts: 'T' } },
+    { seq: 5, ts: 'T', kind: 'driver.recorded', actor: 'root',
+      payload: { kind: 'swarm.operation_requested', swarmId: 's1', command: 'swarm.guide',
+        request: { participantId: 'p1', body: 'the private guide text' } } },
+    { seq: 6, ts: 'T', kind: 'driver.recorded', actor: 'root',
+      payload: { kind: 'swarm.operation_completed', swarmId: 's1', command: 'swarm.guide' } },
+    { seq: 7, ts: 'T', kind: 'swarm.context_updated', actor: 'swarm-native:s1:p1',
+      payload: { key: 'writing:p1', body: { file: 'p1.md' }, swarmId: 's1' } },
+    { seq: 8, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
+      payload: { worker: 'w-1', workerSeq: 4, digest: 'd', kind: 'turn.paused', ts: 'T' } },
+    { seq: 9, ts: 'T', kind: 'swarm.contribution_recorded', actor: 'swarm-native:s1:p1',
+      payload: { body: 'the contribution text', contributionId: 'c1', participantId: 'p1', swarmId: 's1' } },
+    { seq: 10, ts: 'T', kind: 'driver.recorded', actor: 'policy',
+      payload: { kind: 'route.observed', taskId: 't1', workerId: 'w-1' } },
+    { seq: 11, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
+      payload: { worker: 'w-1', workerSeq: 5, digest: 'd', kind: 'lifecycle.process_ready', ts: 'T' } },
+    { seq: 12, ts: 'T', kind: 'web.audit', actor: 'root', payload: { kind: 'readiness_probe' } },
+    { seq: 13, ts: 'T', kind: 'driver.recorded', actor: 'root',
+      payload: { kind: 'swarm.admission_queued', swarmId: 's1', participantId: 'p2', command: 'swarm.recruit' } },
+  ];
+  const coordination = {
+    eventsView: (from) => ledger.filter((event) => event.seq >= (from ?? 1)),
+    ledgerHeadSeq: () => ledger.at(-1).seq,
+    swarms: () => [],
+  };
+  const stream = new WakeStream({ coordination, pollMs: 50, observationMs: 60_000 });
+  const { frames, cursor } = stream.pull(parseWakeFilter({ since: 0 }));
+  assert.deepEqual(frames.map((frame) => [frame.wakeClass, frame.seq]), [
+    ['recruited', 1], ['context_updated', 7], ['paused', 8], ['contribution_recorded', 9], ['queued', 13],
+  ]);
+  for (const frame of frames) {
+    assert.equal(typeof frame.actor, 'string', `${frame.wakeClass} names its actor`);
+    assert.ok(frame.subject !== null, `${frame.wakeClass} names its subject`);
+  }
+  assert.ok(!frames.some((frame) => JSON.stringify(frame).includes('the private guide text')
+    || JSON.stringify(frame).includes('the contribution text')),
+    'no wake carries a request or contribution body');
+  // Resuming from the cursor redelivers nothing: still one wake per row.
+  const resumed = stream.pull(parseWakeFilter({ since: cursor }));
+  assert.deepEqual(resumed.frames, []);
+  assert.equal(resumed.cursor, cursor);
+});
+
+// #272 observation 4: terminal rows carry `next` — the command that acknowledges them — and only
+// terminal rows do. The table stays the one vocabulary: the frame marks the row with its
+// next/ack command rather than restating the table.
+test('#272: terminal rows carry the command that acknowledges them, and only terminal rows do', () => {
+  const attributed = new Map([['w-1', { swarmId: 's1', participantId: 'p1', runId: 'r1' }]]);
+  const cases = [
+    [{ seq: 1, ts: 'T', kind: 'swarm.participant_joined', actor: 'root',
+      payload: { swarmId: 's1', participantId: 'p1', role: 'the recruit objective' } }, null],
+    [{ seq: 2, ts: 'T', kind: 'swarm.participant_left', actor: 'root',
+      payload: { swarmId: 's1', participantId: 'p1' } }, 'baton swarm view s1'],
+    [{ seq: 3, ts: 'T', kind: 'swarm.assignment_updated', actor: 'root',
+      payload: { assignmentId: 'a1', swarmId: 's1' } }, null],
+    [{ seq: 4, ts: 'T', kind: 'swarm.work_updated', actor: 'root',
+      payload: { workId: 'w1', swarmId: 's1' } }, null],
+    [{ seq: 5, ts: 'T', kind: 'swarm.coupling_updated', actor: 'root',
+      payload: { couplingId: 'c1', swarmId: 's1' } }, null],
+    [{ seq: 6, ts: 'T', kind: 'swarm.context_updated', actor: 'root',
+      payload: { key: 'k', body: {}, swarmId: 's1' } }, null],
+    [{ seq: 7, ts: 'T', kind: 'swarm.contribution_recorded', actor: 'p1',
+      payload: { contributionId: 'c1', participantId: 'p1', swarmId: 's1' } }, 'baton swarm check s1 p1 c1 CHECK_ID'],
+    [{ seq: 8, ts: 'T', kind: 'swarm.contribution_reviewed', actor: 'lead',
+      payload: { contributionId: 'c1', swarmId: 's1' } }, null],
+    [{ seq: 9, ts: 'T', kind: 'knowledge.node_added', actor: 'p1',
+      payload: { id: 'k1', runId: 'r1' } }, null],
+    [{ seq: 10, ts: 'T', kind: 'swarm.closed', actor: 'root', payload: { swarmId: 's1' } }, 'baton swarm view s1'],
+    [{ seq: 11, ts: 'T', kind: 'driver.recorded', actor: 'root',
+      payload: { kind: 'swarm.operation_refused', swarmId: 's1', command: 'swarm.update' } },
+      'baton swarm view s1'],
+    [{ seq: 12, ts: 'T', kind: 'driver.recorded', actor: 'root',
+      payload: { kind: 'swarm.admission_queued', swarmId: 's1', participantId: 'p1' } }, null],
+    [{ seq: 13, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
+      payload: { worker: 'w-1', workerSeq: 4, digest: 'd', kind: 'lifecycle.crashed', ts: 'T' } },
+      'baton swarm update s1 swarm.holder_released'],
+    [{ seq: 14, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
+      payload: { worker: 'w-1', workerSeq: 5, digest: 'd', kind: 'turn.paused', ts: 'T' } },
+      'baton swarm guide s1 p1'],
+    [{ seq: 15, ts: 'T', kind: 'driver.recorded', actor: 'policy',
+      payload: { kind: 'question.asked', requestId: 'q1', runId: 'r1', worker: 'w-1' } },
+      'baton run answer r1 q1 --text TEXT'],
+    [{ seq: 16, ts: 'T', kind: 'message.delivered', actor: 'rt',
+      payload: { messageId: 'm1', worker: 'w-1' } }, null],
+    [{ seq: 17, ts: 'T', kind: 'driver.recorded', actor: 'policy',
+      payload: { kind: 'integration.completed', taskId: 't1' } }, 'baton run view {runId}'],
+    [{ seq: 18, ts: 'T', kind: 'evidence.mapped', actor: 'policy',
+      payload: { worker: 'w-1', workerSeq: 6, digest: 'd', kind: 'worktree.progress_checkpointed', ts: 'T' } },
+      null],
+  ];
+  for (const [event, next] of cases) {
+    const frame = deriveWakeFrame(event, attributed);
+    assert.ok(frame !== null, `${event.kind} wakes`);
+    assert.equal(frame.next, next, `${event.kind} marks its row with ${JSON.stringify(next)}`);
+    assert.ok(!JSON.stringify(frame).includes('the recruit objective'),
+      'a wake never carries the request body beside the row');
+  }
+  for (const [wakeClass, observation] of [
+    ['capacity_pressure', { payload: { code: 'worktree_capacity_exceeded' }, actor: 'deployment' }],
+    ['resident_lifecycle', { payload: { incarnation: 'incarnation-1' }, actor: 'deployment' }],
+  ]) {
+    const frame = deriveObservationFrame(wakeClassRow(wakeClass), observation, 99, 'T');
+    assert.equal(typeof frame.next, 'string', `${wakeClass} marks its row with next`);
+    assert.ok(frame.next.startsWith('baton doctor'), `${wakeClass} names the command that acts on it`);
+  }
 });
