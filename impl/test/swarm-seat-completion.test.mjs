@@ -214,8 +214,10 @@ test('#332: a completed seat still accepts swarm stop', async (t) => {
   const stopped = await f.call('stop', { participantId: 'builder', reason: 'already done' });
   assert.equal(stopped.participantId, 'builder');
   const view = await f.call('view');
-  assert.equal(rowOf(view, 'builder').status, 'active', 'a stop never ends the membership');
-  assert.equal(rowOf(view, 'builder').runtime.state, 'completed', 'a no-op stop keeps the completion');
+  // Issue #350: a stop settles membership; on a completed seat the settled reason IS the
+  // completion, chosen by the derivation the view and the stop share.
+  assert.equal(rowOf(view, 'builder').status, 'left', 'a stop settles the membership');
+  assert.equal(rowOf(view, 'builder').leftReason, 'completed', 'a stop on a completed seat records the completion');
 });
 
 test('#332: a completed seat still serves --resume-from', async (t) => {

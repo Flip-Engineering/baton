@@ -179,8 +179,11 @@ test('#302 a stop answers with the receipt of the operation row that recorded it
   await f.recruit('builder');
   const stopped = await f.call('stop', { participantId: 'builder', reason: 'No longer needed' });
   isReceipt(stopped.receipt, 'swarm.stop');
-  assert.equal(stopped.receipt.event.kind, 'swarm.operation_completed');
-  assert.deepEqual(stopped.receipt.changed, []);
+  // Issue #350: the row a stop records is the seat's settled membership, so the receipt's
+  // event is the participant_left row and the participant row is what changed.
+  assert.equal(stopped.receipt.event.kind, 'swarm.participant_left');
+  assert.ok(stopped.receipt.changed.some((row) => row.collection === 'participants' && row.id === 'builder'),
+    'the stop receipt names the settled participant row');
   assert.deepEqual(stopped.next, { command: 'swarm.view', args: { swarmId: 'baton' } });
   assert.equal(f.workers[0].status, 'dead');
 });

@@ -475,7 +475,9 @@ test('T6 an absent, self, departed, foreign-swarm, or process-less source refuse
   assert.equal(driver.coordinator.liveWorkspaceHolders(ownerId).length, holders + 1);
   await stopParticipant(app, { swarmId: 'shared', participantId: 'builder', reason: 'Builder detaches' });
   assert.equal(driver.coordinator.liveWorkspaceHolders(ownerId).length, holders);
-  await refuse('no-process-child', 'builder', 'holder_not_live');
+  // Issue #350: a stop settles the seat's membership, so a stopped source reads as departed
+  // (source_left) before its process liveness is ever consulted; the refusal stands either way.
+  await refuse('no-process-child', 'builder', 'source_left');
 
   // The refused attempts left the checkout exactly where its remaining holders keep it.
   assert.equal(workspaceDirs(repo).includes(ownerId), true, 'the shared checkout is untouched');

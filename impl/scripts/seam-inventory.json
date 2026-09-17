@@ -6328,12 +6328,13 @@
         {
           "name": "_restoreProjectionCheckpoint",
           "ordinal": 0,
-          "size": 64,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "recovery:reconcile_call",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6972,11 +6973,12 @@
         {
           "name": "_validPreservedResumeAttestation",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6992,13 +6994,12 @@
         {
           "name": "_validateGoalPlanDispatchPair",
           "ordinal": 0,
-          "size": 195,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:authority_check",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -7036,13 +7037,13 @@
         {
           "name": "_validateGoalPlanRecoveryTriple",
           "ordinal": 0,
-          "size": 48,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -7105,13 +7106,13 @@
         {
           "name": "_validateRecoveryAttemptAdmissionPayload",
           "ordinal": 0,
-          "size": 75,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -7151,24 +7152,25 @@
         {
           "name": "_validateRecoverySessionRequest",
           "ordinal": 0,
-          "size": 45,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_validateRecoveryRefinementRequest",
           "ordinal": 0,
-          "size": 39,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -7186,13 +7188,13 @@
         {
           "name": "_validateRecoveryContinuationPayload",
           "ordinal": 0,
-          "size": 74,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -8099,10 +8101,10 @@
         {
           "name": "_acceptanceRevocationRequest",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8883,13 +8885,11 @@
         {
           "name": "createAndClaimPlanRecoveryRefinement",
           "ordinal": 0,
-          "size": 117,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
-            "admission:authority_check",
-            "observation:store_append"
+            "recovery:replay_port"
           ]
         },
         {
@@ -10492,10 +10492,10 @@
         {
           "name": "scratchFactOracleTarget",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -11190,10 +11190,10 @@
         {
           "name": "_scratchCorrectionRequest",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -11258,6 +11258,7 @@
           "size": 5,
           "seam": "admission",
           "evidence": [
+            "delegates:surface",
             "delegates:admission",
             "delegates:observation"
           ]
@@ -11332,10 +11333,10 @@
         {
           "name": "_contradictionListRequest",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -11350,10 +11351,10 @@
         {
           "name": "_contradictionResolutionRequest",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -11401,6 +11402,7 @@
           "size": 6,
           "seam": "admission",
           "evidence": [
+            "delegates:surface",
             "delegates:admission",
             "delegates:observation"
           ]
@@ -11833,6 +11835,15 @@
           ]
         },
         {
+          "name": "_holdsWork",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_worker",
           "ordinal": 0,
           "size": 9,
@@ -12179,7 +12190,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 76,
+          "size": 82,
           "seam": "effect",
           "evidence": [
             "delegates:admission",
@@ -12189,7 +12200,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 538,
+          "size": 571,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -12197,6 +12208,1693 @@
             "effect:timer_arm",
             "admission:authority_check",
             "admission:swarm_refusal"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/coordination-internals.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "boundedText",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "canonical",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "canonicalBytes",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "canonicalDigest",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "clone",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "digest",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "eventTime",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "freeze",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "madCanonUnit",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "madConfidenceOf",
+          "ordinal": 0,
+          "size": 28,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "madMedian",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "promotionActor",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "recallBody",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "replFenceKey",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "scratchpadScopeKey",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "sha256Bytes",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "validKnowledgeContradictionPolicy",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "validRunId",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "admission",
+          "evidence": [
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "validUnicodeScalarString",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_taskTopologyHint",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "repositoryId",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_runIdentityHasEffects",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "runOrchestratorLease",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "runLineage",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "runChildren",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "runDescendants",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "taskTopologyNode",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "taskTopology",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_ttlTarget",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_providerAdverseCeilings",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_providerContribution",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_setKnowledgeNode",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_setKnowledgeEdge",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contextCallRunId",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contextArtifactVerification",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "withContextArtifactVerification",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contextArtifactRead",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contextEffectCallCore",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "events",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "observationTime",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "task",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "run",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "contextProgramAuthority",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "contextSession",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "contextCell",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "contextPackage",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "contextPackageAttachments",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contextPackageProvenance",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "taskResourceRelease",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "unsettledPlanNodeTasks",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "representationProduction",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "representationProductionByRequest",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "reverifyRepresentationProduction",
+          "ordinal": 0,
+          "size": 36,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "goalPlanRunIds",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "healthCheck",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "readyTasks",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "fleetDrain",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "runStop",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "runResultExport",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "runControl",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "runControls",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "webCommand",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "webCommandByScope",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "mcpCall",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "mcpCallByScope",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "artifact",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "providerProcessing",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "advisoryFeedCards",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "dueProviderProcessing",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "reuseDecision",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "reuseSubjectHead",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "reuseRiskGuard",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_prepareContextPackPayload",
+          "ordinal": 0,
+          "size": 34,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "contextPack",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "contextPackHead",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "waveClosure",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "waveClosures",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "waveBinding",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "orientationReadHead",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "orientationReadLatest",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "waveRegistry",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "swarm",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "swarms",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "campaignPlans",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "campaignPlan",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "priorCoordinationEvent",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "waveRoleRun",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "composeBriefingPack",
+          "ordinal": 0,
+          "size": 45,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "integrationAuthority",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "publicationAuthority",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "scratchpadFence",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "scratchpadSnapshotBatch",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_scratchpadResolveForWorker",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "boardFence",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "eventFence",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "boardItem",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "boardItemVersions",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "boardGrant",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "workerGeneration",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_taskByRun",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_waveMembershipOf",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_sortedBoardItems",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_boardGrantItemRow",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_boardGrantReportRow",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "bindingFence",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_knowledgePayload",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_supersessionWouldCycle",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_scratchCorrectionPrefix",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_knowledgeProjectFence",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_madConfidence",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_knowledgeStaleness",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_cachePreview",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_recallAssessmentCandidate",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "recallAssessments",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "KNOWLEDGE_CANDIDATE_TRIGGERS",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "affectedReaders",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "traceKnowledge",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_acceptanceRevocationRequest",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contradictionListRequest",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contradictionResolutionRequest",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_scratchCorrectionRequest",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "scratchFactOracleTarget",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/coordination-replay.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "_readCanonicalReceipt",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:durable_load",
+            "observation:projection_name",
+            "observation:read_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_openCanonicalOrderLedger",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:durable_load",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_ensureCanonicalOrderReceipt",
+          "ordinal": 0,
+          "size": 39,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:durable_load",
+            "admission:guard_name",
+            "observation:store_append",
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_reportStartup",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "startupStatus",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb",
+            "observation:projection_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_reloadProjection",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:durable_load",
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "quarantineEntryProblem",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "quarantineEntries",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "loadQuarantine",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_loadSegmentState",
+          "ordinal": 0,
+          "size": 109,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:durable_load",
+            "observation:read_name",
+            "observation:ledger_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_load",
+          "ordinal": 0,
+          "size": 130,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:reconcile_call",
+            "recovery:durable_load",
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_recoveryBatchIdentity",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_validateRecoveryReplayTransactions",
+          "ordinal": 0,
+          "size": 51,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateGoalPlanReplayTransactions",
+          "ordinal": 0,
+          "size": 111,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_planRecoveryRequestFields",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
+          "name": "_recoveryAttributionFromClaim",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
+          "name": "_normalizedPlanRecoveryCreatedPayload",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_recoveryFailure",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "_verifiedRecoveryPrior",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
+          "name": "_recoveryAttemptFailure",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "_normalizeRecoveryAttemptAdmission",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:normalize_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_normalizeRecoveryAttemptCompletion",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_validateRecoveryAttemptCompletionPayload",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_normalizedRecoveryCreatedPayload",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizedRecoveryClaimedPayload",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_validateRecoveryRefinementPair",
+          "ordinal": 0,
+          "size": 37,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateRecoveryDispositionPayload",
+          "ordinal": 0,
+          "size": 55,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validPreservedContinuationReceipt",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "admission:validation_vocabulary",
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "reconcilePlanGatedTask",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
+          "name": "reconcilePlanRevisionTask",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
+          "name": "createAndClaimPreservedResumeRefinement",
+          "ordinal": 0,
+          "size": 50,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "recoveryDispatchState",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "createAndClaimRecoveryRefinement",
+          "ordinal": 0,
+          "size": 43,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "admitRecoveryAttempt",
+          "ordinal": 0,
+          "size": 30,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "completeRecoveryAttempt",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "recoveryAttempt",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
+          "name": "recoveryAttemptHead",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
+          "name": "pendingRecoveryAttempts",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "reapExpiredContextPacks",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
+          "name": "recordRecoveryContinuationIntent",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:store_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "completeRecoveryDispatch",
+          "ordinal": 0,
+          "size": 68,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "_scratchpadReapReceipt",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "reapRunScratchpads",
+          "ordinal": 0,
+          "size": 72,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "orphans",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
+          "name": "_restoreProjectionCheckpoint",
+          "ordinal": 0,
+          "size": 64,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_validPreservedResumeAttestation",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateGoalPlanDispatchPair",
+          "ordinal": 0,
+          "size": 195,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:authority_check",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateGoalPlanRecoveryTriple",
+          "ordinal": 0,
+          "size": 48,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateRecoveryAttemptAdmissionPayload",
+          "ordinal": 0,
+          "size": 75,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateRecoveryContinuationPayload",
+          "ordinal": 0,
+          "size": 74,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateRecoveryRefinementRequest",
+          "ordinal": 0,
+          "size": 39,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateRecoverySessionRequest",
+          "ordinal": 0,
+          "size": 45,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "createAndClaimPlanRecoveryRefinement",
+          "ordinal": 0,
+          "size": 117,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "admission:authority_check",
+            "observation:store_append"
           ]
         }
       ]
