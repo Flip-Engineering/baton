@@ -1941,8 +1941,10 @@ function parseSwarmCli(args, idempotencyKey) {
   // `swarm watch --follow`: the deployment wake stream with THIS swarm pinned as a filter (#294) —
   // the same consumer `baton deployment watch --follow` runs, so the orchestrator never polls and
   // never re-arms a child per swarm after a resident restart. `swarm check --follow` (#288 R-5):
-  // the caller waits for THIS check's verdict row and reads it back.
-  const follow = (verb === 'watch' || verb === 'check') && flag(args, '--follow');
+  // the caller waits for THIS check's verdict row and reads it back. `swarm recruit --follow`
+  // (#331): the caller admits the recruit and waits for THIS seat's admitted / queued / refused
+  // row on the swarm's own feed.
+  const follow = (verb === 'watch' || verb === 'check' || verb === 'recruit') && flag(args, '--follow');
   const values = {};
   for (const field of row.positional) {
     const token = args.shift();
@@ -1976,6 +1978,18 @@ function parseSwarmCli(args, idempotencyKey) {
     return {
       kind: 'swarm_check_follow', swarmId: values.swarmId, participantId: values.participantId,
       contributionId: values.contributionId, checkId: values.checkId, idempotencyKey,
+    };
+  }
+  if (follow && verb === 'recruit') {
+    return {
+      kind: 'swarm_recruit_follow', swarmId: values.swarmId, participantId: values.participantId,
+      objective: values.objective,
+      ...(values.options === undefined ? {} : { options: values.options }),
+      ...(values.permissions === undefined ? {} : { permissions: values.permissions }),
+      ...(values.shareWorkspaceWith === undefined ? {} : { shareWorkspaceWith: values.shareWorkspaceWith }),
+      ...(values.resumeFrom === undefined ? {} : { resumeFrom: values.resumeFrom }),
+      ...(values.view === undefined ? {} : { view: values.view }),
+      idempotencyKey,
     };
   }
   if (follow) {
@@ -2197,6 +2211,133 @@ export async function followSwarmCheck(parsed, client, options = {}) {
     if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
   }
 }
+
+/** The seat rows one recruit wrote, classified for the follow leg (issue #331). The admission
+ * slice carries the host authority's queued / admitted / timed_out rows per seat; the
+ * participant row carries the seat itself — including the `leftReason: 'recruit_refused'` /
+ * `leftCode` rollback a refused admission leaves (#308). Returns the outcome with the rows
+ * that prove it, or null while the seat is still unobserved. The completed state work-332
+ * defines settles the follow when it appears; until that lane lands, the rows that exist
+ * today decide. */
+export function swarmRecruitSeat(view, participantId) {
+  const participants = Array.isArray(view?.participants) ? view.participants : [];
+  const participant = participants.find((row) => row?.participantId === participantId) ?? null;
+  const admission = (Array.isArray(view?.admission) ? view.admission : [])
+    .find((row) => row?.participantId === participantId && row?.command !== 'swarm.check') ?? null;
+  if (participant === null && admission === null) return null;
+  // The completed state (work-332) is the seat's own terminal row: it wins over an older
+  // admission row the same seat waited through.
+  if (participant?.status === 'completed' || participant?.runtime?.state === 'completed') {
+    return { outcome: 'completed', participant, admission };
+  }
+  // A withdrawn seat never admits: the recruit_refused rollback (#308) or any other leave.
+  if (participant?.status === 'left') return { outcome: 'refused', participant, admission };
+  // A queue timeout is the host authority's refused row: it carries the code.
+  if (admission?.state === 'timed_out') return { outcome: 'refused', participant, admission };
+  if (admission?.state === 'queued') return { outcome: 'queued', participant, admission };
+  if (admission?.state === 'admitted' || participant !== null) {
+    return { outcome: 'admitted', participant, admission };
+  }
+  return null;
+}
+
+/** The printed seat row: the seat's own fields (participantId, workspace, runtime state, base)
+ * beside the admission row that settled it and the baseBehind advisory the recruit answer
+ * carried (null when the recruit receipt never crossed, e.g. a pending command observed
+ * mid-flight). A refused seat additionally carries its leftReason and leftCode. */
+function recruitSeatRow(found, baseBehind) {
+  const { participant, admission } = found;
+  return Object.freeze({
+    participantId: participant?.participantId ?? admission?.participantId ?? null,
+    status: participant?.status ?? null,
+    workspace: participant?.workspace === undefined ? null : participant.workspace,
+    runtime: participant?.runtime === undefined ? null : participant.runtime,
+    admission: admission ?? null,
+    base: participant?.base === undefined ? null : participant.base,
+    baseBehind: baseBehind ?? null,
+    ...(participant?.leftReason === undefined ? {} : { leftReason: participant.leftReason }),
+    ...(participant?.leftCode === undefined ? {} : { leftCode: participant.leftCode }),
+  });
+}
+
+function recruitRefusal(refusal, found) {
+  const code = typeof refusal?.code === 'string' && refusal.code.length > 0 ? refusal.code
+    : typeof found?.participant?.leftCode === 'string' ? found.participant.leftCode
+      : typeof found?.admission?.code === 'string' ? found.admission.code : null;
+  const message = typeof refusal?.message === 'string' && refusal.message.length > 0 ? refusal.message
+    : found?.participant?.leftReason === 'recruit_refused'
+      ? `Swarm recruitment of ${found.participant.participantId} was refused and rolled back`
+      : 'Swarm recruitment did not settle to an admitted seat';
+  return Object.freeze({ code, message });
+}
+
+/** Issue #331: `baton swarm recruit … --follow` — admit the recruit (identity-idempotent, so a
+ * replay resumes the same seat instead of hitting an exists-refusal), then watch the swarm's
+ * own feed until THIS seat's admitted / queued / refused row appears and return it. A queued
+ * row is terminal: the caller sees the position and ahead and re-observes rather than hanging
+ * on a lease it cannot grant. A refusal prints with its code — the caught refusal's when the
+ * recruit call itself refused, else the durable leftCode / admission-timeout code the feed
+ * carries. This is CLI-side observation, so a recruit that outlives the CLI's request bound is
+ * still observable instead of lost to a transport refusal. */
+export async function followSwarmRecruit(parsed, client, options = {}) {
+  let recruit = null;
+  let refusal = null;
+  try {
+    recruit = await client.command('swarm.recruit', {
+      swarmId: parsed.swarmId, participantId: parsed.participantId, objective: parsed.objective,
+      ...(parsed.options === undefined ? {} : { options: parsed.options }),
+      ...(parsed.permissions === undefined ? {} : { permissions: parsed.permissions }),
+      ...(parsed.shareWorkspaceWith === undefined ? {} : { shareWorkspaceWith: parsed.shareWorkspaceWith }),
+      ...(parsed.resumeFrom === undefined ? {} : { resumeFrom: parsed.resumeFrom }),
+      ...(parsed.view === undefined ? {} : { view: parsed.view }),
+      idempotencyKey: parsed.idempotencyKey,
+    }, parsed.idempotencyKey);
+  } catch (error) {
+    refusal = error;
+  }
+  // The verdict rows may already be durable (an instant admission, or a rollback the refused
+  // call wrote before throwing), so the current view is read before any waiting starts.
+  let view = await client.command('swarm.view', { swarmId: parsed.swarmId }, `${parsed.idempotencyKey}:view`);
+  const settled = (found) => {
+    const seat = recruitSeatRow(found, recruit?.baseBehind);
+    if (found.outcome === 'refused') {
+      return Object.freeze({
+        schemaVersion: 1, swarmId: parsed.swarmId, participantId: parsed.participantId,
+        outcome: 'refused', seat, recruit, refusal: recruitRefusal(refusal, found),
+      });
+    }
+    return Object.freeze({
+      schemaVersion: 1, swarmId: parsed.swarmId, participantId: parsed.participantId,
+      outcome: found.outcome, seat, recruit,
+      ...(refusal === null ? { refusal: null } : { refusal: recruitRefusal(refusal, found) }),
+    });
+  };
+  const unobserved = () => Object.freeze({
+    schemaVersion: 1, swarmId: parsed.swarmId, participantId: parsed.participantId,
+    outcome: refusal === null ? 'unobserved' : 'refused', seat: null, recruit,
+    refusal: refusal === null ? null : recruitRefusal(refusal, null),
+  });
+  let found = swarmRecruitSeat(view, parsed.participantId);
+  // A typed refusal is already the whole answer: the seat cannot admit under this operation,
+  // so its durable row (when one landed) is confirmed without arming a watch — and when no
+  // row landed, the refusal itself is the answer rather than a hang.
+  if (refusal !== null && refusal?.code !== 'cli_command_pending') {
+    return found === null ? unobserved() : settled(found);
+  }
+  for (;;) {
+    if (found !== null) return settled(found);
+    if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) {
+      // The swarm is closed and nothing is alive: no further event can write the seat row.
+      return unobserved();
+    }
+    const cursor = view?.cursor;
+    view = await client.command('swarm.watch', {
+      swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
+    }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
+    if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
+    found = swarmRecruitSeat(view, parsed.participantId);
+  }
+}
 /** U-G7 host half (issue #313): the verbs this parser serves that no application command on the
  * wire card carries — the host side of the CLI inventory. One executable table, resolved live by
  * parseBatonCli (the host-verb inventory test resolves every row), rendered into CLI.md by
@@ -2229,9 +2370,11 @@ export const HOST_CLI_VERBS = Object.freeze([
     summary: 'The operator seat: a live human view over runs and swarms (docs/38).',
   }),
 ]);
-/** R-5 (issue #288): where a command's verdict lands and which CLI verb reads it. The observation
- * route is what a `cli_command_pending` receipt hands the caller, so it names the durable row the
- * command will write — never a bare "retry later". */
+/** R-5 (issue #288; #331 adds the recruit leg): where a command's verdict lands and which CLI
+ * verb reads it. The observation route is what a `cli_command_pending` receipt hands the
+ * caller, so it names the durable row the command will write — never a bare "retry later".
+ * A recruit is observed on its own seat row (`baton swarm view <swarm> --participant-id
+ * <seat>`), never via doctor --check. */
 export function commandObservation(name, args, commandId) {
   const value = record(args) ? args : {};
   if (name === 'swarm.check' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
@@ -2240,6 +2383,12 @@ export function commandObservation(name, args, commandId) {
     return Object.freeze({
       command: `baton ${invocation} --follow`,
       row: `reviews["${value.contributionId}"] in \`baton swarm view ${value.swarmId}\` — the row naming "Check ${value.checkId}"`,
+    });
+  }
+  if (name === 'swarm.recruit' && nonempty(value.swarmId) && nonempty(value.participantId)) {
+    return Object.freeze({
+      command: `baton swarm view ${value.swarmId} --participant-id ${value.participantId}`,
+      row: `participants["${value.participantId}"] in \`baton swarm view ${value.swarmId}\` — the seat row (admission, runtime, base)`,
     });
   }
   if (name === 'swarm.capture' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
@@ -3336,7 +3485,7 @@ export class BatonWebClient {
           continue;
         }
         const result = body.status === 'admitted'
-          ? await this.reconcile(envelope.commandId)
+          ? await this.reconcile(envelope.commandId, { name: bus, args: pageArgs })
           : (body.result ?? body);
         drained = drained.concat(result?.items ?? []);
         const next = listContinuationCursor(result);
@@ -3359,7 +3508,7 @@ export class BatonWebClient {
       throw error;
     }
     if (body.status !== 'admitted') return body.result ?? body;
-    return this.reconcile(envelope.commandId);
+    return this.reconcile(envelope.commandId, { name, args });
   }
 
   /** R-5 (issue #288): a command that outlives THIS caller's request bound while the deployment
@@ -3443,7 +3592,11 @@ export class BatonWebClient {
     });
   }
 
-  async reconcile(commandId) {
+  /** Read the durable web command record until it settles. When THIS caller's bound expires
+   * first, the pending refusal keeps the record addressable (its commandId) beside the row
+   * that will carry the verdict (the command's observation route, e.g. the recruit's seat
+   * row — never a bare "retry later"), so the command stays observable instead of lost. */
+  async reconcile(commandId, context = {}) {
     id(commandId, 'command ID');
     const deadline = this.clock() + this.commandTimeoutMs;
     while (this.clock() < deadline) {
@@ -3455,7 +3608,14 @@ export class BatonWebClient {
       }
       await this.sleep(this.pollMs);
     }
-    throw cliError('Baton Web command remains admitted', 'cli_command_pending');
+    const detail = { commandId };
+    if (typeof context?.name === 'string') {
+      detail.observe = commandObservation(context.name, context?.args ?? {}, commandId);
+    }
+    throw Object.assign(
+      cliError('Baton Web command remains admitted', 'cli_command_pending'),
+      { detail },
+    );
   }
 
   async downloadExport({ runId, receipt, destination }) {
@@ -3652,6 +3812,7 @@ export async function runBatonCli(parsed, client, options = {}) {
   }
   if (parsed.kind === 'command') return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
+  if (parsed.kind === 'swarm_recruit_follow') return followSwarmRecruit(parsed, client, options ?? {});
   if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'stream') {

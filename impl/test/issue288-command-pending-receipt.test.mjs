@@ -12,7 +12,7 @@ import test from 'node:test';
 
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import {
-  BatonWebClient, followSwarmCheck, parseBatonCli,
+  BatonWebClient, followSwarmCheck, followSwarmRecruit, parseBatonCli,
 } from '../src/application-cli.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { McpFleetServer } from '../src/mcp-northbound.mjs';
@@ -250,4 +250,184 @@ test('U-F3 × MCP: a permanent deployment condition keeps its typed code and is 
     assert.equal(error.retryable, false, `${code}: a permanent condition is not retryable`);
     assert.match(error.action, remedy, `${code}: the remedy is stated`);
   }
+});
+
+// -------------------------------------------------------------------------------------------
+// Issue #331: `baton swarm recruit … --follow` admits the recruit and then observes the
+// swarm's own feed until THIS seat's admitted / queued / refused row appears and prints it.
+// Without --follow the cli_command_pending receipt names the seat and the exact observation
+// (`baton swarm view <swarm> --participant-id <seat>`), never doctor --check; the durable
+// web command record stays reachable from the CLI through the pending refusal's commandId.
+// Depends on work-332 (the completed row #332 defines): the finder below reads the rows that
+// exist today and treats a completed-state seat as settled when one appears.
+// -------------------------------------------------------------------------------------------
+
+const recruitArgs = ['swarm', 'recruit', 'swarm-331', 'seat-331', 'Carry the lane'];
+const recruitAnswer = {
+  participantId: 'seat-331', runId: 'run-331', swarmId: 'swarm-331', scopeOverlap: [],
+  admission: { state: 'admitted', authority: 'host' }, baseBehind: null,
+};
+function recruitSeatView(extra = {}) {
+  return {
+    swarmId: 'swarm-331', status: 'open', cursor: 7,
+    participants: [{
+      participantId: 'seat-331', status: 'active',
+      workspace: { physicalOwnerId: 'task-331', shared: false, holderCount: 1 },
+      runtime: { workerId: 'w-331', state: 'working', turn: 'running', live: true },
+      base: { observedHead: 'a'.repeat(40), target: 'origin/master', behind: 0 },
+    }],
+    admission: [{
+      participantId: 'seat-331', state: 'admitted', authority: 'host', leaseKind: 'worker',
+      position: null, ahead: null, shortfall: null,
+    }],
+    ...extra,
+  };
+}
+
+test('#331: the CLI parses --follow on recruit into the observation leg', () => {
+  const parsed = parseBatonCli([...recruitArgs, '--follow']);
+  assert.equal(parsed.kind, 'swarm_recruit_follow');
+  assert.equal(parsed.swarmId, 'swarm-331');
+  assert.equal(parsed.participantId, 'seat-331');
+  assert.equal(parsed.objective, 'Carry the lane');
+  assert.equal(typeof parsed.idempotencyKey, 'string');
+  // Without --follow the verb is the ordinary recruit command (unchanged).
+  assert.deepEqual(parseBatonCli([...recruitArgs]).kind, 'command');
+});
+
+test('#331: the CLI carries the recruit selection through the follow leg', () => {
+  const parsed = parseBatonCli([...recruitArgs,
+    '--options', '{"exact":{"harness":"h","model":"m","effort":"e"}}',
+    '--permissions', '["contribute"]', '--resume-from', 'seat-330', '--follow']);
+  assert.equal(parsed.kind, 'swarm_recruit_follow');
+  assert.deepEqual(parsed.options, { exact: { harness: 'h', model: 'm', effort: 'e' } });
+  assert.deepEqual(parsed.permissions, ['contribute']);
+  assert.equal(parsed.resumeFrom, 'seat-330');
+});
+
+test('#331: recruit --follow admits the recruit and prints the admitted seat row', async () => {
+  const calls = [];
+  const client = {
+    async command(name, args, key) {
+      calls.push({ name, args, key });
+      if (name === 'swarm.recruit') return recruitAnswer;
+      return recruitSeatView();
+    },
+  };
+  const result = await followSwarmRecruit(parseBatonCli([...recruitArgs, '--follow']), client, {});
+  assert.deepEqual(calls.map((call) => call.name), ['swarm.recruit', 'swarm.view']);
+  assert.equal(calls[0].args.participantId, 'seat-331');
+  assert.equal(result.outcome, 'admitted');
+  assert.equal(result.seat.participantId, 'seat-331');
+  assert.equal(result.seat.runtime.state, 'working');
+  assert.deepEqual(result.seat.workspace, { physicalOwnerId: 'task-331', shared: false, holderCount: 1 });
+  assert.equal(result.seat.admission.state, 'admitted');
+  assert.deepEqual(result.seat.baseBehind, null);
+  assert.equal(result.recruit.runId, 'run-331', 'the recruit receipt rides beside the row');
+});
+
+test('#331: recruit --follow prints the queued row while the seat still waits', async () => {
+  const calls = [];
+  const pending = Object.assign(new Error('Baton Web command remains admitted'), { code: 'cli_command_pending' });
+  const client = {
+    async command(name) {
+      calls.push(name);
+      if (name === 'swarm.recruit') throw pending;
+      return recruitSeatView({
+        participants: [],
+        admission: [{
+          participantId: 'seat-331', state: 'queued', authority: 'host', leaseKind: 'worker',
+          position: 1, ahead: 0, shortfall: null,
+        }],
+      });
+    },
+  };
+  const result = await followSwarmRecruit(parseBatonCli([...recruitArgs, '--follow']), client, {});
+  assert.deepEqual(calls, ['swarm.recruit', 'swarm.view'], 'a queued row is terminal: no watch is armed');
+  assert.equal(result.outcome, 'queued');
+  assert.equal(result.seat.participantId, 'seat-331');
+  assert.equal(result.seat.admission.state, 'queued');
+  assert.equal(result.seat.admission.position, 1);
+  assert.equal(result.recruit, null, 'no recruit receipt crossed yet');
+});
+
+test('#331: recruit --follow prints the refusal with its code when admission refuses', async () => {
+  const refusal = Object.assign(new Error('route refused this recruitment'), { code: 'application_route_not_allowed' });
+  const client = {
+    async command(name) {
+      if (name === 'swarm.recruit') throw refusal;
+      return recruitSeatView({
+        participants: [{
+          participantId: 'seat-331', status: 'left', leftReason: 'recruit_refused',
+          leftCode: 'application_route_not_allowed', workspace: null,
+          runtime: { workerId: null, state: 'dead', turn: 'settled', live: false }, base: null,
+        }],
+      });
+    },
+  };
+  const result = await followSwarmRecruit(parseBatonCli([...recruitArgs, '--follow']), client, {});
+  assert.equal(result.outcome, 'refused');
+  assert.equal(result.refusal.code, 'application_route_not_allowed', 'the refusal keeps its typed code');
+  assert.equal(result.seat.leftReason, 'recruit_refused');
+  assert.equal(result.seat.leftCode, 'application_route_not_allowed');
+});
+
+test('#331: recruit --follow reads a completed seat as settled (work-332 forward tolerance)', async () => {
+  const client = {
+    async command(name) {
+      if (name === 'swarm.recruit') return recruitAnswer;
+      return recruitSeatView({
+        participants: [{
+          participantId: 'seat-331', status: 'completed', workspace: null,
+          runtime: { workerId: null, state: 'idle', turn: 'settled', live: false }, base: null,
+        }],
+      });
+    },
+  };
+  const result = await followSwarmRecruit(parseBatonCli([...recruitArgs, '--follow']), client, {});
+  assert.equal(result.outcome, 'completed', 'the completed row #332 defines settles the follow');
+  assert.equal(result.seat.participantId, 'seat-331');
+});
+
+test('#331: without --follow the pending receipt names the seat observation, never doctor --check', async () => {
+  const requested = [];
+  const web = client({
+    onRequest: (url) => requested.push(String(url)),
+  });
+  const error = await web.command('swarm.recruit', {
+    swarmId: 'swarm-331', participantId: 'seat-331', objective: 'Carry the lane',
+  }, 'operation-key-331').then(() => null, (refusal) => refusal);
+  assert.equal(error?.code, 'cli_command_pending', 'the peer is alive: this is a receipt, not a transport fault');
+  assert.equal(error.detail.command, 'swarm.recruit');
+  assert.equal(error.detail.observe.command, 'baton swarm view swarm-331 --participant-id seat-331');
+  assert.match(error.detail.observe.row, /seat-331/u);
+  assert.equal(error.detail.observe.command.includes('doctor'), false, 'a seat is observed on its swarm, never via doctor --check');
+  assert.deepEqual(requested, [
+    'https://resident.baton.test/v1/commands',
+    'https://resident.baton.test/healthz',
+  ], 'liveness is probed once, and only after the bound elapsed');
+});
+
+test('#331: the reconcile timeout keeps the durable command record reachable', async () => {
+  let now = 0;
+  const seen = [];
+  const web = new BatonWebClient({
+    baseUrl: 'https://resident.baton.test', origin: ORIGIN, repoId: REPO_ID, token: 'private-bearer',
+    commandTimeoutMs: 60, pollMs: 10, clock: () => now, sleep: async () => { now += 30; },
+    fetchImpl: async (url, options) => {
+      seen.push(`${options.method ?? 'GET'} ${String(url)}`);
+      const body = (options.method ?? 'GET') === 'POST'
+        ? { status: 'admitted' }
+        : { command: { status: 'admitted' } };
+      return { ok: true, headers: { get: () => null }, async text() { return JSON.stringify(body); } };
+    },
+  });
+  const error = await web.command('swarm.recruit', {
+    swarmId: 'swarm-331', participantId: 'seat-331', objective: 'Carry the lane',
+  }, 'operation-key-331-reconcile').then(() => null, (refusal) => refusal);
+  assert.equal(error?.code, 'cli_command_pending', 'a record that never settles is a pending receipt');
+  assert.equal(typeof error?.detail?.commandId, 'string', 'the durable web command record stays addressable');
+  assert.equal(error?.detail?.observe?.command, 'baton swarm view swarm-331 --participant-id seat-331');
+  assert.ok(seen.some((line) => line.startsWith('GET https://resident.baton.test/v1/commands/')),
+    'the CLI polled the durable record before timing out');
 });

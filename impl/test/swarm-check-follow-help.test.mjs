@@ -24,3 +24,22 @@ test('baton help swarm check renders the follow flag, and the family usage lists
   assert.ok(checkLine !== null, 'the family usage lists the check verb');
   assert.match(checkLine, /\[--follow\]/u);
 });
+
+// #331: `baton swarm recruit … --follow` is served (the #288 R-5 follow leg for the recruit
+// lane) and the pending receipt teaches it as the seat's observation route — so the generated
+// help usage line carries the flag, exactly like the check row.
+test('#331: the swarm recruit usage line carries [--follow] like the check row does', () => {
+  const recruit = SWARM_CLI_COMMANDS.find((row) => row.command === 'swarm.recruit');
+  const check = SWARM_CLI_COMMANDS.find((row) => row.command === 'swarm.check');
+  assert.match(check.usage, /\[--follow\]/u);
+  assert.match(recruit.usage, /\[--follow\]/u, 'the served follow leg appears in the generated usage');
+  assert.match(SWARM_CLI_HELP['swarm.recruit'].usage[0], /\[--follow\]/u);
+});
+
+test('#331: baton help swarm recruit renders the follow flag, and the family usage lists it', () => {
+  assert.match(batonCliHelp('swarm.recruit'), /\[--follow\]/u);
+  const family = batonCliHelp('swarm');
+  const recruitLine = family.split('\n').find((line) => line.includes('baton swarm recruit'));
+  assert.ok(recruitLine !== null, 'the family usage lists the recruit verb');
+  assert.match(recruitLine, /\[--follow\]/u);
+});

@@ -32,7 +32,7 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.view': "Read one swarm's membership, work, shared context, knowledge, contributions, reviews, caller authority, and available actions; --participant-id scopes the read to one participant's delegation, and --projection names the slice to answer with (full, outline, participants, contributions, attention, guidance, workspace, knowledge; default full). Each participant row carries its guidance rows, its live checkout custody, the route and scope it was recruited under, its base {observedHead, target, behind} derived from the repository at read time, and its lastRefusal while one stands; `updates` lists, beside availableActions, exactly the kinds and knowledge verbs you may send now and the permission that admits each, and every projected row carries the seq and ts of the record that wrote it. Participants, contributions, groups, couplings and attention are arrays of rows; work, assignments, reviews and context are keyed objects. The `deployment` summary carries the host capacity derivation with its live leases and visible queue beside the workspace capacity observation and its derived floor, where `capacityPressure` names the crossing.",
   'swarm.watch': 'Await the next swarm update past a cursor (defaults to the cursor of the last view this session read) and print the refreshed view, under the same --projection swarm view takes; a refused mutation or bridge refusal wakes it too, as a swarm.operation_refused driver row. With --follow, attach to the deployment wake stream with this swarm pinned and print one JSON wake frame per coordination row — each naming its class, actor and subject, and, for terminal rows, the next command that acknowledges it — optionally filtered by --wake-class over the closed wake-class set, until this swarm closes.',
   'swarm.update': 'Apply one domain update: group, work (including declared dependencies), assignment, coupling record, holder release, context, contribution, review, participant leave, or close. The answer is a mutation receipt; pass --view true to also carry the refreshed view.',
-  'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection. The answer is a mutation receipt plus scopeOverlap — advisory rows naming every ACTIVE participant across the repository\'s swarms whose scope shares paths with the requested scope (never a refusal); pass --view true to also carry the refreshed view. A recruit whose run admission refuses rolls its join back (swarm.participant_left reason recruit_refused), and a repeated recruit of the same id resumes it. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318).',
+  'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection. The answer is a mutation receipt plus scopeOverlap — advisory rows naming every ACTIVE participant across the repository\'s swarms whose scope shares paths with the requested scope (never a refusal); pass --view true to also carry the refreshed view. A recruit whose run admission refuses rolls its join back (swarm.participant_left reason recruit_refused), and a repeated recruit of the same id resumes it. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318). With --follow, the CLI admits the recruit and then observes the swarm\'s own feed until this seat\'s admitted / queued / refused row appears, printing that row.',
   'swarm.guide': 'Send guidance to one participant, active or paused; the receipt names the lane receipt row the guide wrote.',
   'swarm.capture': 'Capture the immutable code for one contribution at its turn boundary. The capture row records the merge-base of the captured revision with the deployment target; a revision whose base cannot reach the target is refused typed (swarm_capture_base_unreachable).',
   'swarm.check': 'Record one independent check of a captured contribution.',
@@ -86,13 +86,15 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     `baton swarm ${verb}`,
     ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
     ...flags.map((field) => `[${flagName(field)} VALUE]`),
-    // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch and
-    // check verbs both serve it (#313 — the check usage line used to omit what the receipt teaches).
-    // The watch leg rides the deployment wake stream, so its usage teaches the stream's own
-    // `--wake-class` filter and `--since` cursor beside the follow leg itself (#272). The follow
-    // token stays literal: the #313 pin reads `[--follow]` off both rows.
+    // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch,
+    // check and recruit verbs serve it (#313 — the check usage line used to omit what the
+    // receipt teaches; #331 adds the recruit leg, which observes the seat's own admission row
+    // rather than the deployment wake stream). The watch leg rides the deployment wake stream,
+    // so its usage teaches the stream's own `--wake-class` filter and `--since` cursor beside
+    // the follow leg itself (#272). The follow token stays literal: the #313/#331 pins read
+    // `[--follow]` off the three rows.
     ...(name === 'swarm.watch' ? ['[--follow]', '[--wake-class CLASS,...]', '[--since SEQ]']
-      : name === 'swarm.check' ? ['[--follow]'] : []),
+      : name === 'swarm.check' || name === 'swarm.recruit' ? ['[--follow]'] : []),
   ].join(' ');
   return Object.freeze({
     verb,
