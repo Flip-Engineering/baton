@@ -139,3 +139,15 @@ fact — `workspaceCapacityPressure(workspace)` (exported from
 `impl/src/worktree-capacity.mjs`, re-exported from `impl/src/application-deployment.mjs`)
 is the ONE predicate; the wake stream lane imports it to derive a `capacity_pressure`
 wake. This document does not build the wake.
+
+Both the doctor and the view's `deployment` summary also carry `served` (#306 part 2):
+`{commit, branch, target: {ref, commit, behind}}` — the revision this deployment
+SERVES, read once at open and frozen for its life (the code that loaded is the code
+that answers), beside the target it is measured against, read fresh at every read from
+the checkout's own refs: the checkout's branch when it is on one, else the remote
+default (`origin/HEAD`, then `origin/master`), else nulls for a detached checkout with
+no remote. `behind` is `rev-list --count served..target` over the refs the repository
+holds now — a fetch refreshes it; the doctor never touches the network — and every git
+read answers null instead of throwing, so an unreadable checkout is absence on a doctor,
+never a doctor failure. `swarm.recruit` reads the same row to answer its `baseBehind`
+advisory (docs/39).

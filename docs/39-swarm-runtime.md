@@ -562,6 +562,14 @@ records the merge-base of the captured revision with the target on the capture r
 TYPED (`swarm_capture_base_unreachable`) when the checkpoint's base cannot reach the target — a
 revision that shares no ancestor with the target could never integrate, so it is never pinned.
 
+**A stale resident says so on the recruit (#306 part 3).** Beside its `admission` row, the recruit
+answer carries `baseBehind {served, branch, target: {ref, commit}, behind}` whenever the resident
+serves a commit its target branch has moved past — read from the deployment summary's own
+`served` row (docs/43) — and `null` when the resident is current, the target is unknown (a
+detached checkout with no remote), or no summary is wired. Advisory, never a refusal: the seat
+is admitted regardless; the root chooses whether to reincarnate first instead of discovering a
+stale base on the lane's capture.
+
 **A refused recruit leaves no phantom, and a retry resumes (#308).** A recruit whose run admission
 refuses rolls its join back with a durable `swarm.participant_left {reason: 'recruit_refused',
 code}` — the typed admission code rides the leave. A repeated recruit of the same id RESUMES the
