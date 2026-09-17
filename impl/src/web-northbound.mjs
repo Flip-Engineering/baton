@@ -182,6 +182,13 @@ const READ_ONLY_COMMANDS = new Set([
   ...[...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES]
     .filter(([, , definition]) => definition.mcpStateful === false)
     .map(([transport]) => transport),
+  // Issue #344: the workflow direct-port reads ride no definition row (their argument authority
+  // is the port normalizer), so the mcpStateful derivation above cannot see them — the four
+  // read-only lanes are named beside it, both spellings, exactly like WAVE_DOT_WEB_ENTRIES.
+  'run_message_receipt', 'run.message.receipt',
+  'run_attention_watch', 'run.attention.watch',
+  'run_scratchpad_read', 'run.scratchpad.read',
+  'run_board_read', 'run.board.read',
 ]);
 const BOUNDED_OBSERVATION_AUDITS = new Set([
   'command_replayed', 'action_authority_read', 'operator_read_authorized',
@@ -875,9 +882,13 @@ function validateEnvelope(envelope) {
     return field ? { code: 'unknown_top_level_field', field, message: 'unknown_top_level_field' } : 'unknown_top_level_field';
   }
   if (envelope.schemaVersion !== 1) return 'unsupported schemaVersion';
+  // Issue #344: read-only verbs carry NO idempotencyKey — the key is required for keyed verbs
+  // only. A read that carries one still honors its shape; a mutation without one still refuses.
+  const readOnly = READ_ONLY_COMMANDS.has(envelope.command);
+  const envelopeKey = envelope.idempotencyKey;
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.commandId ?? '')
-    || !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.idempotencyKey ?? '')
-    || !string(envelope.command) || !string(envelope.repoId) || !string(envelope.origin)) return 'command identity, idempotencyKey, repoId, and origin are required';
+    || !string(envelope.command) || !string(envelope.repoId) || !string(envelope.origin)
+    || (envelopeKey == null ? !readOnly : !/^[A-Za-z0-9._:-]{1,256}$/.test(envelopeKey))) return 'command identity, idempotencyKey, repoId, and origin are required';
   if (!Object.hasOwn(COMMAND_CAPABILITY, envelope.command)) return 'unsupported command';
   if (Object.hasOwn(envelope, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.runId ?? '')) return 'invalid_run_id';
   if (!isRecord(envelope.args)) return 'args must be an object';
@@ -1456,8 +1467,11 @@ export class WebNorthbound {
       return applicationUnavailableRefusal('run application unavailable');
     }
     const webActor = actor(ctx.principal);
-    const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey });
     const requestDigest = hash(canonicalRequest(envelope));
+    // Issue #344: a keyless read scopes its observation by its own request content — identical
+    // reads share the admitted observation (replay), differing reads never share a scope (so a
+    // changed axis reads fresh instead of conflicting). Keyed verbs keep the caller-key scope.
+    const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey ?? requestDigest });
     let semanticAuthority = null;
     if (APPLICATION_COMMAND[envelope.command] === 'run.act') {
       const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;

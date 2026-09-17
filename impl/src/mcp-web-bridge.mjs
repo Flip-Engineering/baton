@@ -4,6 +4,7 @@ import { BatonWebClient, discoverBatonConnection } from './application-cli.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { McpFleetServer } from './mcp-northbound.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+import { SWARM_COMMAND_DEFINITIONS } from './swarm-contract.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { WAKE_CLASSES, parseWakeFilter, wakeMatches } from './wake-stream.mjs';
 
@@ -624,7 +625,12 @@ export class BatonWebApplicationFacade {
       throw bridgeError('Remote Baton MCP command authority is invalid: the call context is malformed', 'application_unauthorized');
     }
     await this._attestSession(principal, context);
-    const idempotencyKey = MUTATIONS.has(name)
+    // Issue #344: the keyed set is the registry's, never a second hand-kept list — every
+    // mcpStateful command (the swarm family's keyed verbs included) derives its forwarded key
+    // over every argument axis (_mutationKey), so a changed axis mints a fresh key and an
+    // identical request replays the admitted one. Reads keep the transport-derived key.
+    const keyed = MUTATIONS.has(name) || SWARM_COMMAND_DEFINITIONS[name]?.mcpStateful === true;
+    const idempotencyKey = keyed
       ? this._mutationKey(name, args, principal)
       : `mcp-web-${digest({ repoId: this.repoId, key: context.idempotencyKey })}`;
     const result = await this.client.command(name, args, idempotencyKey);

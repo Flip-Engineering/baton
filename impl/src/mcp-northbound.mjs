@@ -2049,6 +2049,10 @@ export class McpFleetServer {
       && !(Number.isSafeInteger(id) && id >= 0)) {
       return protocolError(id, -32600, 'Invalid Request');
     }
+    // Issue #344: the server-minted bound key derives over EVERY argument axis (the full
+    // request), never the transport request id — a changed axis mints a fresh key and an
+    // identical retry replays the admitted call. run.act's semantic request IS the supplied
+    // args, so the one derivation covers it too.
     const args = this.bindApplicationContext ? {
       ...suppliedArgs,
       repoId: this.boundRepoId,
@@ -2058,9 +2062,7 @@ export class McpFleetServer {
           userId: this.principal.userId,
           sessionId: this.principal.sessionId,
           tool: params.name,
-          ...(APPLICATION_TOOL[params.name] === 'run.act'
-            ? { semanticRequest: suppliedArgs }
-            : { requestId: id }),
+          request: suppliedArgs,
         })}`,
       } : {}),
     } : suppliedArgs;
