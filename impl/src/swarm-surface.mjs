@@ -33,7 +33,8 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.watch': 'Await the next swarm update past a cursor (defaults to the cursor of the last view this session read) and print the refreshed view, under the same --projection swarm view takes; a refused mutation or bridge refusal wakes it too, as a swarm.operation_refused driver row. With --follow, attach to the deployment wake stream with this swarm pinned and print one JSON wake frame per coordination row — each naming its class, actor and subject, and, for terminal rows, the next command that acknowledges it — optionally filtered by --wake-class over the closed wake-class set, until this swarm closes.',
   'swarm.update': 'Apply one domain update: group, work (including declared dependencies), assignment, coupling record, holder release, context, contribution, review, participant leave, or close. The answer is a mutation receipt; pass --view true to also carry the refreshed view.',
   'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection. The answer is a mutation receipt plus scopeOverlap — advisory rows naming every ACTIVE participant across the repository\'s swarms whose scope shares paths with the requested scope (never a refusal); pass --view true to also carry the refreshed view. A recruit whose run admission refuses rolls its join back (swarm.participant_left reason recruit_refused), and a repeated recruit of the same id resumes it. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318). With --follow, the CLI admits the recruit and then observes the swarm\'s own feed until this seat\'s admitted / queued / refused row appears, printing that row.',
-  'swarm.guide': 'Send guidance to one participant, active or paused; the receipt names the lane receipt row the guide wrote.',
+    'swarm.recruit': ['swarmId', 'participantId', 'objective'],
+  'swarm.guide': 'Send guidance to one participant, active or paused; the receipt names the lane receipt row the guide wrote — or, when the seat’s harness takes no mid-turn delivery, the swarm.guidance_parked row with delivery parked, composed into the seat’s next exec / resume-from successor brief.',
   'swarm.capture': 'Capture the immutable code for one contribution at its turn boundary. The capture row records the merge-base of the captured revision with the deployment target; a revision whose base cannot reach the target is refused typed (swarm_capture_base_unreachable).',
   'swarm.check': 'Record one independent check of a captured contribution.',
   'swarm.stop': 'Stop one participant explicitly; the swarm itself stays open. The receipt names the operation row that recorded the stop.',
@@ -42,7 +43,8 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
 // Command-specific help detail for the verbs whose results carry projected rows: the shape an agent
 // reads back, in the same wording the generated docs teach.
 const SWARM_VIEW_DETAILS = ['Each participant row carries guidance — the nudges addressed to it as',
-  '{seq, ts, from, messageId} rows read from the message lane — workspace, the live checkout',
+  '{seq, ts, from, messageId} rows read from the message lane, beside parked/delivered rows',
+  '{seq, ts, from, messageId, delivery} read from the guidance park — workspace, the live checkout',
   'custody {physicalOwnerId, shared, holderCount} its worker holds (null when it holds none), the',
   'route {harness, model, effort} and scope it was recruited under, its base',
   '{observedHead, target, behind} derived from the repository at read time (the target is the',
@@ -62,7 +64,11 @@ const SWARM_RECEIPT_DETAILS = ['Every mutation answers with a RECEIPT, not the w
   'the command, or `--view true` on the CLI.'].join(' ');
 const SWARM_GUIDE_DETAILS = ['The receipt names the lane receipt row this guide wrote as',
   'guide: {seq, ts, messageId} (null when the guide did not reach the receipted delivery lane),',
-  'so the sender can watch for the participant\'s next turn instead of guessing it landed.'].join(' ');
+  'so the sender can watch for the participant\'s next turn instead of guessing it landed.',
+  'When the seat’s harness takes no mid-turn delivery the message parks durably instead:',
+  'guide carries delivery parked over the swarm.guidance_parked row, and the seat’s next exec /',
+  'resume-from successor brief composes the parked message in its Swarm section and marks it',
+  'delivered — the park itself wakes no guidance_delivered.'].join(' ');
 
 function flagName(field) { return `--${kebabCase(field)}`; }
 
@@ -86,15 +92,13 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     `baton swarm ${verb}`,
     ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
     ...flags.map((field) => `[${flagName(field)} VALUE]`),
-    // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch,
-    // check and recruit verbs serve it (#313 — the check usage line used to omit what the
-    // receipt teaches; #331 adds the recruit leg, which observes the seat's own admission row
-    // rather than the deployment wake stream). The watch leg rides the deployment wake stream,
-    // so its usage teaches the stream's own `--wake-class` filter and `--since` cursor beside
-    // the follow leg itself (#272). The follow token stays literal: the #313/#331 pins read
-    // `[--follow]` off the three rows.
+    // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch and
+    // check verbs both serve it (#313 — the check usage line used to omit what the receipt teaches).
+    // The watch leg rides the deployment wake stream, so its usage teaches the stream's own
+    // `--wake-class` filter and `--since` cursor beside the follow leg itself (#272). The follow
+    // token stays literal: the #313 pin reads `[--follow]` off both rows.
     ...(name === 'swarm.watch' ? ['[--follow]', '[--wake-class CLASS,...]', '[--since SEQ]']
-      : name === 'swarm.check' || name === 'swarm.recruit' ? ['[--follow]'] : []),
+      : name === 'swarm.check' ? ['[--follow]'] : []),
   ].join(' ');
   return Object.freeze({
     verb,

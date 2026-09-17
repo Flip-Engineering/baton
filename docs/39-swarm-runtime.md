@@ -706,3 +706,26 @@ cursor IS the ledger seq; the page boundary derives from the same `wire.frame` r
 answers under — never a numeric page cap. Wiring the extended wire shape through dispatch
 (canonical registry row, swarm validators, bridge scope) stays with the root, which owns those
 files; until it lands, new spellings parse at the surface and refuse typed at dispatch.
+
+## Parked guidance reaches a one-shot seat on its next exec (issue #337)
+
+A one-shot harness (a `codex exec` / `claude -p` seat) takes no mid-turn delivery: its adapter
+card names `prompt` and `steer` unsupported, and every nudge answers with the harness's
+unsupported refusal. `swarm.guide` to such a seat used to wrap that `ok:false` in a success
+envelope with `guide` null and `changed` [] — the message was silently dropped and nothing ever
+reached the seat.
+
+The message now parks durably instead. The guide writes a `swarm.guidance_parked` row naming the
+seat, the minted messageId and the `harness_one_shot` reason, and answers `guide {seq, ts,
+messageId, delivery: 'parked'}` — a parked receipt, never a success envelope around the refusal.
+Whether a seat is one-shot is read from its adapter card's steer/prompt verbs, never from the
+harness name; a harness whose card CAN deliver mid-turn keeps the live path whatever the delivery
+itself answers.
+
+Parked guidance composes into the seat's next exec / `--resume-from` successor brief, in the
+Swarm situation section, attributed to its sender with the parked row's seq, ts and messageId.
+The composition marks each composed message delivered (`swarm.guidance_delivered`, plus the
+`message.delivered` lane row that wakes `guidance_delivered`), so a later successor never
+receives it twice — and the park itself wakes no delivery. Both rows show on the participant
+row's `guidance` beside the live nudges, as `{seq, ts, from, messageId, delivery}` with delivery
+`parked` or `delivered`.

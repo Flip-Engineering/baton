@@ -5480,7 +5480,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 316,
+          "size": 309,
           "seam": "surface",
           "evidence": [
             "observation:durable_read",
@@ -5517,7 +5517,7 @@
         {
           "name": "_debugMember",
           "ordinal": 0,
-          "size": 51,
+          "size": 39,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
@@ -11954,7 +11954,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 488,
+          "size": 472,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -12104,9 +12104,45 @@
           ]
         },
         {
+          "name": "_guidanceParkedFromLabel",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_midTurnGuidanceUnsupported",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_undeliveredParkedGuidance",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_parkGuidance",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 48,
+          "size": 66,
           "seam": "effect",
           "evidence": [
             "delegates:effect"
@@ -12115,7 +12151,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 489,
+          "size": 525,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

@@ -694,6 +694,24 @@ export class SwarmRuntime {
         seq: event.seq, ts: event.ts, from: event.payload.from ?? null, messageId: event.payload.messageId ?? null,
       });
     }
+    // Issue #337: parked and delivered guidance rides the participant row's guidance beside the
+    // live nudges — the swarm.guidance_parked row a one-shot seat's guide wrote, then the
+    // swarm.guidance_delivered row the successor brief that composed it wrote. Keyed by seat
+    // (the park names a participant, never a worker incarnation), in ledger order, with the
+    // delivery state on each row. The view mints nothing of its own here either.
+    const parkedGuidanceByParticipant = new Map();
+    for (const event of ledger) {
+      if (event.kind !== 'driver.recorded') continue;
+      const delivery = event.payload?.kind === 'swarm.guidance_parked' ? 'parked'
+        : event.payload?.kind === 'swarm.guidance_delivered' ? 'delivered' : null;
+      if (delivery === null || typeof event.payload?.participantId !== 'string') continue;
+      const participantId = event.payload.participantId;
+      if (!parkedGuidanceByParticipant.has(participantId)) parkedGuidanceByParticipant.set(participantId, []);
+      parkedGuidanceByParticipant.get(participantId).push({
+        seq: event.seq, ts: event.ts, from: event.payload.from ?? null,
+        messageId: event.payload.messageId ?? null, delivery,
+      });
+    }
     // The knowledge rows (#318): the facts the swarm's participants seeded through the bridge
     // (`run.knowledge.seed`), attributed to the seat via its run. The view mints nothing of its
     // own here either — the coordination ledger's knowledge rows ARE the exchange record, and
@@ -796,7 +814,9 @@ export class SwarmRuntime {
         // worker, a completed one has no paused turn left to guide.
         runtime: { workerId: worker?.id ?? null, state: completed ? 'completed' : liveness.state,
           turn: liveness.turn, live: liveness.live },
-        guidance,
+        // Issue #337: delivered guidance (the nudge lane) beside the guidance parked for a seat
+        // whose harness takes no mid-turn delivery, with its delivery state.
+        guidance: [...guidance, ...(parkedGuidanceByParticipant.get(participant.participantId) ?? [])],
         workspace: physicalOwnerId !== null
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
           : null,
@@ -1583,12 +1603,84 @@ export class SwarmRuntime {
     return { participantId: predecessor.participantId, lastCheckpoint: checkpoint, contracts };
   }
 
+  /** Who parked guidance is from, for the brief line that delivers it (#337): the same
+   * namespaces as the coordinator's guidanceSenderLabel — the web/MCP owner sessions and the
+   * bare orchestrator actor are the root, a swarm-native actor names its seat, anything else
+   * is spelled as it arrived. The coordinator owns that sibling derivation (its file is outside
+   * this lane's scope); this mapper keeps the namespaces identical, never a second rule. */
+  _guidanceParkedFromLabel(actor) {
+    const parts = typeof actor === 'string' ? actor.split(':') : [];
+    if (parts[0] === 'swarm-native' && parts.length >= 3) return `participant "${parts.slice(2).join(':')}" of swarm "${parts[1]}"`;
+    if (parts[0] === 'web' || parts[0] === 'mcp' || actor === 'orchestrator') return 'the root orchestrator';
+    return typeof actor === 'string' && actor.length > 0 ? actor : 'an unnamed sender';
+  }
+
+  /** Whether the seat's harness takes no mid-turn delivery (#337): the seat's adapter card
+   * verbs decide — a one-shot exec harness names prompt AND steer unsupported — never the
+   * harness name. Unknown (no card inventory, no verbs on the card) fails OPEN toward today's
+   * delivery path: parking is for a card that says so, not for a card that cannot be read. */
+  _midTurnGuidanceUnsupported(worker) {
+    try {
+      const cards = typeof this.coordinator.routeCards === 'function' ? this.coordinator.routeCards() : null;
+      if (!Array.isArray(cards)) return false;
+      const card = cards.find((row) => row?.name === worker?.vendor)?.card;
+      const verbs = card?.verbs;
+      if (!verbs || typeof verbs !== 'object') return false;
+      return verbs.prompt === 'unsupported' && verbs.steer === 'unsupported';
+    } catch { return false; }
+  }
+
+  /** The parked guidance still awaiting a seat (#337): every swarm.guidance_parked row naming
+   * one of the given seats whose messageId carries no swarm.guidance_delivered row yet, in
+   * ledger order. Read from the durable rows at compose time, so the brief a seat is
+   * recruited with is what the ledger holds — never a retyped RESUME NOTE. */
+  _undeliveredParkedGuidance(participantIds) {
+    const wanted = new Set((participantIds ?? []).filter((id) => typeof id === 'string'));
+    const delivered = new Set();
+    const parked = [];
+    for (const event of this.store.eventsView()) {
+      if (event.kind !== 'driver.recorded') continue;
+      if (event.payload?.kind === 'swarm.guidance_delivered'
+        && typeof event.payload?.messageId === 'string') {
+        delivered.add(event.payload.messageId);
+      } else if (event.payload?.kind === 'swarm.guidance_parked'
+        && wanted.has(event.payload?.participantId)) {
+        parked.push({ seq: event.seq, ts: event.ts, participantId: event.payload.participantId,
+          messageId: event.payload.messageId, message: event.payload.message,
+          from: event.payload.from ?? null });
+      }
+    }
+    return parked.filter((row) => !delivered.has(row.messageId));
+  }
+
+  /** Park one guide message durably (#337): the swarm.guidance_parked row names the seat, the
+   * minted messageId and the harness_one_shot reason. The answer carries guide
+   * {seq, ts, messageId, delivery:'parked'} — a parked receipt, never a success envelope
+   * around the one-shot refusal. The messageId derives from the whole attempt (a NEW attempt
+   * mints a NEW id), and the driver key makes the row replay-safe. */
+  _parkGuidance(swarmId, participant, message, principal, args) {
+    const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
+      message, args.idempotencyKey])}`;
+    const recorded = this.store.recordDriver('swarm.guidance_parked', {
+      swarmId, participantId: participant.participantId, messageId, message,
+      from: principal.actor, reason: 'harness_one_shot',
+    }, { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
+    const event = recorded.event;
+    return {
+      participantId: participant.participantId,
+      result: { ok: true, result: 'parked', reason: 'harness_one_shot', messageId },
+      guide: { seq: event.seq, ts: event.ts, messageId, delivery: 'parked' },
+      writes: [{ kind: 'swarm.guidance_parked', payload: event.payload,
+        seq: event.seq, ts: event.ts, actor: event.actor }],
+    };
+  }
+
   /** The brief one seat is recruited with (#318 deliverables 3 and 4): the recruiter's objective
    * verbatim, then the swarm situation — the peers and their scopes, the contracts published so
    * far, the commits landed on the target since the base — and, for a `resumeFrom` successor,
    * the predecessor's inheritance. The composition is written ONCE onto the join as `brief`, so
    * the swarm's own record of what a seat was told is the brief every surface renders. */
-  _composeRecruitBrief(swarm, args, caller, predecessor) {
+  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = []) {
     const blocks = [args.objective];
     const situation = [];
     const peers = Object.values(swarm.participants)
@@ -1617,6 +1709,24 @@ export class SwarmRuntime {
         }
       } else if (commits.commits === null) {
         situation.push(`Commits since the base (${commits.baseCommit}): unavailable — this deployment exposes no git authority to the swarm.`);
+      }
+    }
+    // Issue #337: undelivered parked guidance for this seat rides the same Swarm situation
+    // section — a one-shot seat's next exec IS this brief. Each line names the parked row's
+    // seq, ts and messageId and attributes the message to its sender, so the successor can
+    // tell parked guidance from the situation around it. The recruit effect marks every
+    // composed row delivered, so a later successor never receives it twice.
+    if (parkedDeliveries.length > 0) {
+      const bySeat = new Map();
+      for (const row of parkedDeliveries) {
+        if (!bySeat.has(row.participantId)) bySeat.set(row.participantId, []);
+        bySeat.get(row.participantId).push(row);
+      }
+      for (const [seat, rows] of bySeat) {
+        situation.push(`Parked guidance for ${seat} (its harness takes no mid-turn delivery — composed here instead):`);
+        for (const row of rows) {
+          situation.push(`- [from ${this._guidanceParkedFromLabel(row.from)} · seq ${row.seq} · ts ${row.ts} · ${row.messageId}]: ${row.message}`);
+        }
       }
     }
     if (situation.length > 0) blocks.push(['## Swarm situation', ...situation].join('\n'));
@@ -1821,8 +1931,13 @@ export class SwarmRuntime {
         // then the swarm situation — peers and their scopes, contracts published so far, the
         // commits landed on the target since the base. Written onto the join as `brief`, so the
         // swarm's own record of what this ONE seat was told is what every surface renders.
+        // Issue #337: undelivered parked guidance for this seat — its own parks when a
+        // refused-admission seat re-recruits, its predecessor's on a `resumeFrom` successor —
+        // composes into the same brief, so the seat's next exec finally receives it.
         const currentSwarm = this._swarm(args.swarmId);
-        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor);
+        const parkedDeliveries = this._undeliveredParkedGuidance(
+          [args.participantId, args.resumeFrom ?? null]);
+        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
         // whose work would be starved is not started: while the derived host budget has no room,
         // the request waits IN ORDER as a visible queue entry and its typed queued row is
@@ -1923,6 +2038,27 @@ export class SwarmRuntime {
           swarmId: args.swarmId, participantId: args.participantId, workerId: worker.id, taskId: worker.taskId,
           ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
         }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`));
+        // Issue #337: the parked guidance this brief composed is DELIVERED here — after the
+        // run admitted the seat, so a rolled-back recruit never marks guidance its seat never
+        // received. Each messageId is marked exactly once (the compose read already excluded
+        // delivered rows, and the driver key names the message with its recipient seat), and
+        // the message.delivered lane row wakes guidance_delivered on the parked messageId —
+        // the park itself woke nothing.
+        for (const row of parkedDeliveries) {
+          const deliveredWrite = this.store.recordDriver('swarm.guidance_delivered', {
+            swarmId: args.swarmId, participantId: row.participantId, messageId: row.messageId,
+            deliveredTo: args.participantId, from: row.from,
+          }, { actor: principal.actor,
+            key: `swarm-guidance-delivered:${row.messageId}:${args.participantId}` });
+          const deliveredEvent = deliveredWrite.event;
+          writes.push({ kind: 'swarm.guidance_delivered', payload: deliveredEvent.payload,
+            seq: deliveredEvent.seq, ts: deliveredEvent.ts, actor: deliveredEvent.actor });
+          try {
+            this.store.recordMessage('message.delivered', {
+              messageId: row.messageId, kind: 'nudge', participantId: args.participantId,
+            }, { actor: principal.actor, key: `message.delivered:${row.messageId}:${args.participantId}` });
+          } catch { /* the wake row is evidence, never delivery-critical */ }
+        }
         return {
           participantId: args.participantId, runId, swarmId: args.swarmId, scopeOverlap, writes,
           // #297: the typed admission row — admitted, with the queue facts when this seat waited.
@@ -2100,6 +2236,16 @@ export class SwarmRuntime {
       const result = await this._once(command, args, principal, async () => {
         const cursor = this.store.ledgerHeadSeq();
         const guided = await this.coordinator.guideParticipant(worker.id, args.message, { actor: principal.actor });
+        // Issue #337: a one-shot harness answers every mid-turn delivery with its unsupported
+        // refusal — and the old path wrapped that ok:false in a success envelope with guide
+        // null and changed [], dropping the message silently. When the seat's card verbs say
+        // mid-turn delivery is unsupported, the message parks durably instead: the seat's
+        // next exec / resume-from successor brief composes it, and the receipt names the park
+        // row. A harness whose card CAN deliver keeps today's path below, whatever the
+        // delivery itself answers.
+        if (guided?.ok !== true && this._midTurnGuidanceUnsupported(worker)) {
+          return this._parkGuidance(args.swarmId, participant, args.message, principal, args);
+        }
         // The lane receipt is durable coordination log, not process state: deliveries are
         // serialized per worker, so the newest nudge row for this binding past the pre-call
         // cursor is the row THIS guide wrote — read back and returned as its receipt.

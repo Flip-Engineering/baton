@@ -19,9 +19,17 @@ function fixture(t) {
   const starts = [];
   const checks = [];
   const captures = new Map();
+  // Adapter cards by vendor name (#337): the card's steer/prompt verbs decide whether a seat
+  // can take mid-turn guidance — never the harness name. A session vendor delivers natively;
+  // a one-shot vendor names both verbs unsupported.
+  const cards = new Map([
+    ['mock-session', { prompt: 'native', steer: 'native' }],
+    ['mock-oneshot', { prompt: 'unsupported', steer: 'unsupported' }],
+  ]);
   const coordinator = {
     list: () => workers,
     pausedTurns: ({ workerId }) => workers.find((row) => row.id === workerId)?.paused ? [{ pauseId: workerId }] : [],
+    routeCards: () => [...cards.entries()].map(([name, verbs]) => ({ name, card: { verbs } })),
     guideParticipant: async (workerId, message) => {
       prompts.push({ workerId, message });
       workers.find((row) => row.id === workerId).paused = false;
@@ -45,7 +53,7 @@ function fixture(t) {
       assert.equal(store.hasSwarmParticipantRun(request.runId), true, 'membership must precede the first native turn');
       if (workers.some((row) => row.runId === request.runId)) return;
       starts.push(request);
-      workers.push({ id: `w-${workers.length + 1}`, taskId: `t-${workers.length + 1}`, runId: request.runId, status: 'working', paused: true });
+      workers.push({ id: `w-${workers.length + 1}`, taskId: `t-${workers.length + 1}`, runId: request.runId, status: 'working', paused: true, vendor: 'mock-session' });
     },
     stopRun: async (runId) => { workers.find((row) => row.runId === runId).status = 'dead'; return { state: 'closed' }; },
   };
@@ -56,7 +64,7 @@ function fixture(t) {
   const recruit = (participantId, permissions, caller = owner) => call('recruit', {
     participantId, objective: `Continue working as ${participantId}`, ...(permissions ? { permissions } : {}),
   }, caller);
-  return { store, runtime, ports, workers, prompts, starts, checks, call, recruit };
+  return { store, runtime, ports, workers, prompts, starts, checks, call, recruit, cards };
 }
 
 test('orchestrator starts empty, recruits later, and changes overlapping collaboration groups', async (t) => {
@@ -312,4 +320,119 @@ test('native coverage labels absence as absence, and passes a real observation t
   const observed = await f.call('view');
   assert.equal(observed.participants[0].native.coverage, 'observed_only');
   assert.equal(observed.participants[0].native.agents[0].nativeId, 'child-of-w-1');
+});
+
+// Issue #337: guidance to a one-shot harness seat is silently dropped — swarm.guide answers
+// operation_completed with result {ok:false}, guide null, changed [], and nothing reaches the
+// seat. The message must park durably instead, naming the seat, the messageId and the
+// harness_one_shot reason, and answer a parked guide receipt.
+test('a guide to a one-shot seat parks durably instead of answering ok:false', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Parked guidance' });
+  await f.recruit('builder');
+  f.workers[0].vendor = 'mock-oneshot';
+  f.ports.coordinator.guideParticipant = async () => ({ ok: false, reason: 'nudge unsupported on one-shot muse' });
+
+  const guided = await f.call('guide', { participantId: 'builder', message: 'Hold the API shape.' });
+  assert.equal(guided.receipt.command, 'swarm.guide');
+  assert.equal(guided.receipt.event.kind, 'swarm.guidance_parked');
+  assert.deepEqual(guided.receipt.changed, [{ collection: 'participants', id: 'builder',
+    seq: guided.receipt.event.seq, ts: guided.receipt.event.ts }]);
+  assert.equal(guided.guide.delivery, 'parked');
+  assert.equal(guided.guide.seq, guided.receipt.event.seq);
+  assert.equal(guided.guide.ts, guided.receipt.event.ts);
+  assert.match(guided.guide.messageId, /^message:[a-f0-9]{64}$/);
+  assert.deepEqual(guided.result, { ok: true, result: 'parked',
+    reason: 'harness_one_shot', messageId: guided.guide.messageId });
+
+  const parked = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
+    && event.payload?.kind === 'swarm.guidance_parked');
+  assert.equal(parked.length, 1);
+  assert.equal(parked[0].payload.participantId, 'builder');
+  assert.equal(parked[0].payload.messageId, guided.guide.messageId);
+  assert.equal(parked[0].payload.message, 'Hold the API shape.');
+  assert.equal(parked[0].payload.reason, 'harness_one_shot');
+  assert.equal(f.store.eventsView().some((event) => event.kind === 'message.delivered'), false,
+    'the park itself wakes no guidance_delivered');
+
+  const view = await f.call('view');
+  const row = view.participants.find((participant) => participant.participantId === 'builder');
+  assert.deepEqual(row.guidance, [{ seq: parked[0].seq, ts: parked[0].ts,
+    from: parked[0].payload.from, messageId: guided.guide.messageId, delivery: 'parked' }]);
+});
+
+// Issue #337: a harness that CAN deliver mid-turn keeps today's path — even when the delivery
+// itself refuses for another reason, nothing parks.
+test('a refused delivery on a deliverable harness never parks', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Live guidance path' });
+  await f.recruit('builder');
+  f.ports.coordinator.guideParticipant = async () => ({ ok: false, result: 'worker_not_active' });
+
+  const guided = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
+  assert.deepEqual(guided.result, { ok: false, result: 'worker_not_active' });
+  assert.equal(guided.guide, null);
+  assert.equal(f.store.eventsView().some((event) => event.kind === 'driver.recorded'
+    && event.payload?.kind === 'swarm.guidance_parked'), false);
+});
+
+// Issue #337: the card's steer/prompt verbs decide, never the harness name — a seat whose
+// vendor is NAMED like a one-shot but whose card delivers keeps the live path, and a seat
+// under a novel name whose card names both verbs unsupported parks.
+test('one-shot detection reads card verbs, never the harness name', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Verb-decided parking' });
+  await f.recruit('builder');
+  f.workers[0].vendor = 'muse';
+  f.ports.coordinator.guideParticipant = async () => ({ ok: false, result: 'worker_not_active' });
+  const live = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
+  assert.equal(live.guide, null, 'a muse-named seat with a deliverable card keeps the live path');
+
+  f.workers[0].vendor = 'shiny-new-harness';
+  f.cards.set('shiny-new-harness', { prompt: 'unsupported', steer: 'unsupported' });
+  f.ports.coordinator.guideParticipant = async () => ({ ok: false, reason: 'nudge unsupported on one-shot shiny' });
+  const parked = await f.call('guide', { participantId: 'builder', message: 'Hold the shape.' });
+  assert.equal(parked.guide.delivery, 'parked', 'an unknown-named seat with unsupported verbs parks');
+});
+
+// Issue #337: parked guidance composes into the --resume-from successor's brief in the Swarm
+// section, attributed to the root with seq/ts — and the composition marks it delivered, so a
+// second successor never receives it twice and the park itself woke no delivery.
+test('a resume-from successor brief carries parked guidance and marks it delivered', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Parked guidance inheritance' });
+  await f.recruit('otelder');
+  f.workers[0].vendor = 'mock-oneshot';
+  f.ports.coordinator.guideParticipant = async () => ({ ok: false, reason: 'nudge unsupported on one-shot muse' });
+  const root = { actor: 'orchestrator', principalId: 'orchestrator', sessionId: 'orchestrator' };
+  const first = await f.call('guide', { participantId: 'otelder', message: 'Hold the API shape.' }, root);
+  const second = await f.call('guide', { participantId: 'otelder', message: 'And the error codes.' }, root);
+
+  await f.call('recruit', { participantId: 'successor', objective: 'Continue as successor', resumeFrom: 'otelder' });
+  const brief = f.store.swarm('baton').participants.successor.brief;
+  assert.match(brief, /Parked guidance for otelder/);
+  assert.ok(brief.includes('Hold the API shape.'), 'first parked message composes into the successor brief');
+  assert.ok(brief.includes('And the error codes.'), 'second parked message composes into the successor brief');
+  assert.ok(brief.includes(first.guide.messageId), 'delivery cites the parked messageId');
+  assert.ok(brief.includes(String(first.guide.seq)), 'delivery cites the parked seq');
+  assert.ok(brief.includes('the root orchestrator'), 'parked guidance is attributed to the root');
+
+  const delivered = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
+    && event.payload?.kind === 'swarm.guidance_delivered');
+  assert.equal(delivered.length, 2, 'each parked message is marked delivered exactly once');
+  assert.deepEqual(delivered.map((event) => event.payload.messageId).sort(),
+    [first.guide.messageId, second.guide.messageId].sort());
+  const wake = f.store.eventsView().filter((event) => event.kind === 'message.delivered'
+    && event.payload?.messageId === first.guide.messageId);
+  assert.equal(wake.length, 1, 'delivery wakes guidance_delivered on the parked messageId');
+
+  const view = await f.call('view');
+  const elder = view.participants.find((participant) => participant.participantId === 'otelder');
+  assert.deepEqual(elder.guidance.map((row) => row.delivery), ['parked', 'parked', 'delivered', 'delivered']);
+
+  await f.call('recruit', { participantId: 'third', objective: 'Continue as third', resumeFrom: 'otelder' });
+  const thirdBrief = f.store.swarm('baton').participants.third.brief;
+  assert.equal(thirdBrief.includes('Hold the API shape.'), false, 'delivered guidance never composes twice');
+  assert.equal(f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
+    && event.payload?.kind === 'swarm.guidance_delivered').length, 2);
 });

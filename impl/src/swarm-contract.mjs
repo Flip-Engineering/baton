@@ -338,6 +338,11 @@ export function swarmChangedRow(kind, payload = {}) {
       return row('contributions', payload.contributionId ?? null);
     case 'swarm.contribution_reviewed':
       return row('reviews', payload.contributionId ?? null);
+    // Issue #337: a parked or delivered guide changes the named seat — its participant row
+    // carries the guidance rows — so the receipt names it instead of answering changed [].
+    case 'swarm.guidance_parked':
+    case 'swarm.guidance_delivered':
+      return row('participants', payload.participantId ?? null);
     default:
       return null;
   }
@@ -671,7 +676,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.guide',
-    description: 'Send guidance to one swarm participant, whether its session is active or paused. The receipt names the lane receipt row the guide wrote (kind message.sent with its seq and ts) so the sender can watch for the next turn; view: true adds the whole refreshed view.',
+    description: 'Send guidance to one swarm participant, whether its session is active or paused. The receipt names the lane receipt row the guide wrote (kind message.sent with its seq and ts) so the sender can watch for the next turn; when the seat’s harness takes no mid-turn delivery the message parks durably instead (kind swarm.guidance_parked with delivery parked, composed into the seat’s next exec / resume-from successor brief); view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['swarmId', 'participantId', 'message']),
