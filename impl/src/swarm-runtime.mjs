@@ -2188,7 +2188,10 @@ export class SwarmRuntime {
       && !(caller.permissions ?? []).includes('review')) {
       refuse('Capturing another participant requires review authority', 'swarm_permission_required');
     }
-    const worker = this._worker(participant);
+    // Issue #353: a stop of a seat with no live runtime still settles — the seat may be
+    // unbound (joined, never bound) — so the worker lookup below must not refuse the stop;
+    // the stop path resolves its worker null-tolerantly instead (_workerFor).
+    const worker = command === 'swarm.stop' ? null : this._worker(participant);
     if (command === 'swarm.capture') {
       const existing = swarm.contributions[args.contributionId];
       if (existing && existing.participantId !== participant.participantId) {
@@ -2366,7 +2369,15 @@ export class SwarmRuntime {
     }
     if (command === 'swarm.stop') {
       const result = await this._once(command, args, principal, async () => {
-        const stopped = await this.stopRun(participant.runId, args.reason, principal);
+        // Issue #353: a stop whose seat has no live runtime — worker dead, exited,
+        // orphaned, unbound, or never bound — has nothing to drain, so it skips the run
+        // drain entirely and settles membership at once. Liveness is the ONE derivation
+        // the view reads (_workerFor + swarmParticipantLiveness), never a second list.
+        const workers = this.coordinator.list();
+        const seatWorker = this._workerFor(participant, workers);
+        const paused = seatWorker ? this.coordinator.pausedTurns({ workerId: seatWorker.id }) : [];
+        const live = seatWorker !== null && swarmParticipantLiveness(seatWorker, paused.length).live;
+        const stopped = live ? await this.stopRun(participant.runId, args.reason, principal) : { state: 'closed' };
         // Issue #350: a stop settles membership — ONE representation, the existing
         // swarm.participant_left fold (reason stopped|completed, never a second status
         // field), so the seat reads status left on every projection and no "active"

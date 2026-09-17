@@ -2594,11 +2594,12 @@ export async function followSwarmRecruit(parsed, client, options = {}) {
     found = swarmRecruitSeat(view, parsed.participantId, since);
   }
 }
-/** R-5 (issue #288; #331 adds the recruit leg): where a command's verdict lands and which CLI
- * verb reads it. The observation route is what a `cli_command_pending` receipt hands the
- * caller, so it names the durable row the command will write — never a bare "retry later".
- * A recruit is observed on its own seat row (`baton swarm view <swarm> --participant-id
- * <seat>`), never via doctor --check. */
+/** R-5 (issue #288; #331 adds the recruit leg, #353 the stop leg): where a command's verdict
+ * lands and which CLI verb reads it. The observation route is what a `cli_command_pending`
+ * receipt hands the caller, so it names the durable row the command will write — never a
+ * bare "retry later". A recruit is observed on its own seat row (`baton swarm view <swarm>
+ * --participant-id <seat>`), never via doctor --check; a stop that waits on a live worker
+ * is observed on that same seat row, where status left with leftReason stopped lands. */
 export function commandObservation(name, args, commandId) {
   const value = record(args) ? args : {};
   if (name === 'swarm.check' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
@@ -2613,6 +2614,12 @@ export function commandObservation(name, args, commandId) {
     return Object.freeze({
       command: `baton swarm view ${value.swarmId} --participant-id ${value.participantId}`,
       row: `participants["${value.participantId}"] in \`baton swarm view ${value.swarmId}\` — the seat row (admission, runtime, base)`,
+    });
+  }
+  if (name === 'swarm.stop' && nonempty(value.swarmId) && nonempty(value.participantId)) {
+    return Object.freeze({
+      command: `baton swarm view ${value.swarmId} --participant-id ${value.participantId}`,
+      row: `participants.${value.participantId} — status left with leftReason stopped when the stop lands`,
     });
   }
   if (name === 'swarm.capture' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
