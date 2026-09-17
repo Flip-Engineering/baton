@@ -6145,7 +6145,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 171,
+          "size": 177,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
@@ -6326,6 +6326,55 @@
           ]
         },
         {
+          "name": "_releaseProjectionCheckpoint",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_boundedCheckpointWrite",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "checkpointReleaseState",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:ledger_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "armHostStopOutcome",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_mintHostStopOutcome",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "observation",
+          "evidence": [
+            "observation:store_append",
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_restoreProjectionCheckpoint",
           "ordinal": 0,
           "size": 3,
@@ -6470,11 +6519,10 @@
         {
           "name": "releaseWriterLease",
           "ordinal": 0,
-          "size": 47,
+          "size": 44,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
-            "observation:story_ingest"
+            "effect:filesystem_mutation"
           ]
         },
         {
@@ -6573,7 +6621,7 @@
         {
           "name": "_append",
           "ordinal": 0,
-          "size": 48,
+          "size": 50,
           "seam": "observation",
           "evidence": [
             "observation:store_append",

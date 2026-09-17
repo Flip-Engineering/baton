@@ -44,6 +44,9 @@ import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { ensureBatonExcluded } from './worktree.mjs';
 import { WebSessionStore } from './web-auth.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
+import {
+  KILL_ESCALATION_GRACE_MS, processGroupAlive, reapOwnedProcessGroup,
+} from './process-lifecycle.mjs';
 import { WebNorthbound, createLocalAuthenticatedWebServer } from './web-northbound.mjs';
 
 const DEFAULT_BUDGET = Object.freeze({
@@ -2157,6 +2160,10 @@ class BatonDeployment {
   // #341 part 2: the ONE ledger-derived provider-refusal index this deployment reads (built in
   // openBatonDeployment, where the ledger and the adapter cards are both in hand).
   #routeRefusals = null;
+  // Issue #351: the resident's stop records (bounded rows on its own ledger) and the per-incarnation
+  // idempotency token that keeps a repeated stop from minting a second set.
+  #stopRecords = null;
+  #stopToken = null;
   #residentAuthority = null;
   #residentSession = null;
   #ordinaryHostPromise = null;
@@ -2560,6 +2567,7 @@ class BatonDeployment {
       shutdownPrincipal: this.#principal,
       listen: advanced.listen,
       webDrainMs: advanced.webDrainMs,
+      stopRecords: this.#stopRecordsFor(),
     });
     let startPromise = null;
     let handle;
@@ -2639,6 +2647,7 @@ class BatonDeployment {
       shutdownPrincipal: this.#principal,
       listen: { path: authority.socketPath },
       webDrainMs: options.webDrainMs,
+      stopRecords: this.#stopRecordsFor(),
     });
     this.#webHost = webHost;
     try {
@@ -2685,6 +2694,175 @@ class BatonDeployment {
       throw error;
     }
   }
+  /** The deployment's own clock: the resident options carry it (advanced.resident.now), so a stop
+   * row's `at` is stamped on the same clock as every other durable row this deployment writes. */
+  #clock() {
+    const now = this.#residentOptions?.now;
+    const value = typeof now === 'function' ? now() : Date.now();
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'string') return value;
+    return new Date(Number.isFinite(value) ? value : Date.now()).toISOString();
+  }
+
+  /** Issue #351: the durable facts of this resident's stop, and the ACT that ends a stop which
+   * cannot converge. Every row is BOUNDED by construction — three fixed rows naming the trigger,
+   * the wait and the outcome — because a resident that is leaving may not serialize the history it
+   * leaves behind (#229: the projection checkpoint is housekeeping and the ledger stays
+   * authoritative). The rows ride `driver.recorded` on the resident's own ledger, the same channel
+   * every other deployment-owned row uses, so no new kind is invented for them.
+   */
+  #stopRecord(kind, payload, key) {
+    const coordination = this.#driver?.coordination ?? null;
+    if (typeof coordination?.recordDriver !== 'function') return null;
+    this.#stopToken ??= randomBytes(8).toString('hex');
+    try {
+      const recorded = coordination.recordDriver(kind, payload, {
+        actor: `deployment:${this.#repository.repoId}:resident`,
+        key: `host.stop:${this.#stopToken}:${key}`,
+      });
+      return recorded?.event ?? null;
+    } catch { return null; } // a ledger that cannot take the row must never block the stop itself
+  }
+
+  /** The process group this worker's own durable lifecycle rows bind it to, or null when the
+   * worker holds no OS process (a harness that runs in-process) or that process is already closed. */
+  #workerProcessGroup(workerId) {
+    const log = this.#driver?.log ?? null;
+    if (typeof log?.read !== 'function') return null;
+    let rows;
+    try { rows = log.read(workerId); } catch { return null; }
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      // A closed generation has no group left to signal; stop rather than reach past it into a
+      // generation that a restart already sealed.
+      if (['lifecycle.process_closed', 'lifecycle.process_reap_unconfirmed', 'lifecycle.exited']
+        .includes(row?.kind)) return null;
+      const group = row?.payload?.processGroupId;
+      if (!Number.isSafeInteger(group) || group <= 0) continue;
+      // A process group is signalable only when the leader IS the group — the detached-spawn
+      // invariant the process authority binds and `reapOwnedProcessGroup` proves. A `spawned` row
+      // carrying only a pid proves nothing and is skipped, never guessed at.
+      if (group !== row.payload?.pid) continue;
+      if (!['lifecycle.process_started', 'lifecycle.process_ready', 'lifecycle.spawned']
+        .includes(row.kind)) continue;
+      return group;
+    }
+    return null;
+  }
+  /** Issue #351(3): a worker that will not stop is killed BY ITS PROCESS GROUP at the deadline and
+   * reaped, and the forced end is recorded on that worker's own operational ledger — the same
+   * ledger the coordinator appends to, so the row lands where every other lifecycle row lands.
+   * Never a zombie under a live parent: the reap is proof-carrying (`reapOwnedProcessGroup` probes
+   * the group until ESRCH), not a signal we hope landed. */
+  async #stopWorkerGroup(workerId) {
+    const group = this.#workerProcessGroup(workerId);
+    let signal = null;
+    let confirmed = group === null;
+    if (group !== null) {
+      try { process.kill(-group, 'SIGTERM'); signal = 'SIGTERM'; }
+      catch (error) { if (error?.code !== 'ESRCH') signal = null; }
+      if (processGroupAlive(group)) {
+        const reaped = await reapOwnedProcessGroup(group, { timeoutMs: KILL_ESCALATION_GRACE_MS });
+        if (reaped.signaled) signal = 'SIGKILL';
+        confirmed = reaped.confirmed === true;
+      }
+    }
+    const log = this.#driver?.log ?? null;
+    if (typeof log?.append === 'function') {
+      let last = null;
+      try { last = log.read(workerId).at(-1) ?? null; } catch { /* the crash row names no harness then */ }
+      try {
+        log.append({
+          worker: workerId,
+          harness: typeof last?.harness === 'string' ? last.harness : '',
+          turnEpoch: Number.isSafeInteger(last?.turnEpoch) ? last.turnEpoch : 0,
+          kind: 'lifecycle.crashed',
+          actor: 'policy',
+          payload: {
+            phase: 'shutdown',
+            signal,
+            processGroupId: group,
+            error: group === null
+              ? 'the resident ended this worker at its stop deadline; it held no OS process group'
+              : 'the resident killed this worker\u2019s process group at its stop deadline',
+          },
+        });
+      } catch { /* the stop the record describes goes on */ }
+    }
+    return Object.freeze({ workerId, processGroupId: group, signal, confirmed });
+  }
+
+  /** The stop-records seam a host narrates and records through. Built once per deployment, handed
+   * to every host it builds. */
+  #stopRecordsFor() {
+    this.#stopRecords ??= Object.freeze({
+      requested: ({ trigger }) => {
+        const at = this.#clock();
+        this.#stopRecord('host.stop_requested', { trigger, at }, 'requested');
+        return { line: `baton serve: host.stop_requested trigger ${trigger} at ${at}` };
+      },
+      waiting: async ({ wait }) => {
+        const at = this.#clock();
+        this.#stopRecord('host.stop_waiting', { on: wait.on, ids: [...wait.ids], at }, `waiting:${wait.on}`);
+        const named = wait.ids.length > 0 ? ` ${wait.ids.join(',')}` : '';
+        const line = `baton serve: host.stop_waiting on ${wait.on}${named} at ${at}`;
+        if (wait.on !== 'worker') return { line, released: false };
+        const killed = [];
+        for (const workerId of wait.ids) killed.push(await this.#stopWorkerGroup(workerId));
+        // The named obligations are gone. The stop converges once the coordinator's own stop chain
+        // for those workers completes — a transport that was still confirming its kill when the
+        // drain's deadline passed. The window is the kill-escalation grace the reap above used;
+        // each attempt inside it is bounded by the drain policy this deployment already declared.
+        this.#armStopOutcome('stopped_after_deadline');
+        const application = await this.#retryApplicationShutdown();
+        return {
+          line, released: application?.state === 'closed',
+          killed: Object.freeze(killed), application,
+        };
+      },
+      // The outcome ROW is minted by the release itself (`armHostStopOutcome`): the host that
+      // observed the stop has no writer authority left by then, so this step narrates only.
+      stopped: ({ state }) => {
+        const at = this.#clock();
+        const checkpoint = this.#driver?.coordination?.checkpointReleaseState?.() ?? null;
+        const cache = checkpoint === null ? '' : ` (projection checkpoint ${checkpoint.state}${checkpoint.reason ? `: ${checkpoint.reason}` : ''})`;
+        return { line: `baton serve: host.stopped ${state} at ${at}${cache}` };
+      },
+    });
+    return this.#stopRecords;
+  }
+
+  /** Arm the outcome the release will mint for the stop that is starting. The deployment states
+   * WHICH stop it is recording — a converged drain, or one that had to end a wedged worker — and
+   * the release (if it is reached) turns that into the one bounded row that closes the stop. */
+  #armStopOutcome(state) {
+    const coordination = this.#driver?.coordination ?? null;
+    if (typeof coordination?.armHostStopOutcome !== 'function') return;
+    this.#stopToken ??= randomBytes(8).toString('hex');
+    try {
+      coordination.armHostStopOutcome({
+        state,
+        actor: `deployment:${this.#repository.repoId}:resident`,
+        key: `host.stop:${this.#stopToken}:stopped`,
+      });
+    } catch { /* a stop that cannot arm its outcome still stops */ }
+  }
+
+  /** Issue #351(3): converge a stop whose named obligations have just been ended. Each attempt is a
+   * fresh drain request (the coordinator's durable drain epoch is resumed, never re-created), and
+   * the whole window is the kill-escalation grace — the one grace the forced stop already declared.
+   * A stop that still cannot converge returns null, and the host then names its wait and refuses:
+   * the resident never claims a convergence it did not observe. */
+  async #retryApplicationShutdown() {
+    const deadline = Date.now() + KILL_ESCALATION_GRACE_MS;
+    for (;;) {
+      let application = null;
+      try { application = await this.#application.shutdown(this.#principal); } catch { application = null; }
+      if (application?.state === 'closed') return application;
+      if (Date.now() >= deadline) return null;
+    }
+  }
+
 
   close() {
     if (!this.#closePromise) {
@@ -2694,10 +2872,30 @@ class BatonDeployment {
         // every client: selector + profile + token + socket all pointing at a dead process).
         let hosted = null;
         let shutdownFailure = null;
+        // #351: the outcome the release will mint for THIS stop, armed before the drain that
+        // decides whether it is reached.
+        this.#armStopOutcome('stopped');
         try { hosted = this.#webHost ? await this.#webHost.shutdown() : null; }
         catch (error) { shutdownFailure = error; }
         const application = hosted?.application
           ?? (shutdownFailure ? null : await this.#application.shutdown(this.#principal));
+        if (shutdownFailure) {
+          // Issue #351(2): the second obligation a resident's stop owns — the host-capacity verify
+          // lease its lanes reserved. Read from the capacity authority's OWN projection (never
+          // guessed) and named only for what the authority still says it holds.
+          const capacity = this.#driver?.worktreeCapacity ?? null;
+          let held = [];
+          try {
+            const snapshot = typeof capacity?.snapshot === 'function' ? capacity.snapshot() : null;
+            held = (snapshot?.reservations ?? []).filter((row) => row.kind === 'verify' && row.ownerId === capacity.ownerId);
+          } catch { held = []; }
+          if (held.length > 0) {
+            const at = this.#clock();
+            const ids = held.map((row) => row.id);
+            this.#stopRecord('host.stop_waiting', { on: 'verify_lease', ids, at }, 'waiting:verify_lease');
+            this.#webHost?._say?.(`baton serve: host.stop_waiting on verify_lease ${ids.join(',')} at ${at}`);
+          }
+        }
         let residentState = 'closed';
         if (this.#residentAuthority) {
           try {
@@ -2705,7 +2903,17 @@ class BatonDeployment {
               actor: `deployment:${this.#repository.repoId}:resident`, reason: 'deployment_closed',
             });
             this.#residentAuthority.close();
-          } catch { residentState = 'reconciliation_required'; }
+          } catch {
+            // Issue #351(2): the third obligation a resident's stop owns — its own publication.
+            // A withdrawal that fails NAMES that wait rather than leaving a selector pointing at a
+            // process that is exiting (the state #276(3) exists to prevent).
+            residentState = 'reconciliation_required';
+            const at = this.#clock();
+            this.#stopRecord('host.stop_waiting', {
+              on: 'publication', ids: [this.#residentAuthority.deploymentId ?? this.#repository.repoId], at,
+            }, 'waiting:publication');
+            this.#webHost?._say?.(`baton serve: host.stop_waiting on publication at ${at}`);
+          }
         }
         if (shutdownFailure) {
           throw Object.assign(shutdownFailure, { resident: Object.freeze({ state: residentState }) });

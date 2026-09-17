@@ -85,6 +85,36 @@ export function describeDrainWait(detail) {
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
+/** Issue #351: the #265 rule applied to the resident — a stop that did not converge names the CLASS
+ * of thing it is still waiting on, plus their ids. The vocabulary is closed to the three
+ * obligations a resident's stop owns: the fleet's workers, the host-capacity verify lease its
+ * lanes hold, and its own published coordinates. Derived from the refusal the stop already
+ * carries — never a second guess — and `null` when that refusal names none of them, so a caller
+ * composes its own honest fallback instead of inventing a wait. */
+export function describeStopWait(detail) {
+  if (!record(detail)) return null;
+  const ids = (value) => [...new Set((Array.isArray(value) ? value : [])
+    .filter((id) => typeof id === 'string' && id.length > 0))];
+  const workers = ids((Array.isArray(detail.waitingOn) ? detail.waitingOn : []).map((row) => row?.workerId));
+  if (workers.length > 0) return Object.freeze({ on: 'worker', ids: Object.freeze(workers) });
+  // The host-capacity verify lease a lane still holds, and the resident's own publication: the two
+  // remaining obligations, named by the reason the stop refused with.
+  if (['verify_lease', 'capacity'].includes(detail.reason)) {
+    return Object.freeze({ on: 'verify_lease', ids: Object.freeze(ids(detail.ids)) });
+  }
+  if (detail.reason === 'publication') return Object.freeze({ on: 'publication', ids: Object.freeze(ids(detail.ids)) });
+  return null;
+}
+
+/** Issue #351: the trigger a signal-admission owner admitted in THIS process — the one fact a stop
+ * record has to carry, and it is known only to the owner. It lives at module scope because both
+ * wirings admit through this module: `BatonWebHost.serve()` builds its owner, and `baton serve`'s
+ * script builds one around `deployment.close()`. A stop that was never signal-admitted (an
+ * operator's own close) has none, and says `operation_completed` instead. */
+let admittedStopTrigger = null;
+
+export function admittedStopTriggerKind() { return admittedStopTrigger; }
+
 function describeDrainOutcome(application) {
   const fleet = application?.receipt?.fleet;
   if (!record(fleet) || !Number.isSafeInteger(fleet.targetCount) || !Number.isSafeInteger(fleet.remainingCount)) {
@@ -130,6 +160,7 @@ export class SignalLifecycleOwner {
         signalCount += 1;
         if (trigger) return;
         trigger = Object.freeze({ kind, detail: null });
+        admittedStopTrigger ??= kind; // #351: the FIRST admitted signal is the stop's trigger
         controller.abort(trigger);
         if (this.announce) this.announce(trigger);
         ensureShutdown().catch(() => {});
@@ -199,8 +230,8 @@ export class SignalLifecycleOwner {
  */
 export class BatonWebHost {
   constructor(options) {
-    closedKeys(options, ['application', 'server', 'shutdownPrincipal', 'listen', 'webDrainMs'], ['report', 'wakes'],
-      'Web host configuration');
+    closedKeys(options, ['application', 'server', 'shutdownPrincipal', 'listen', 'webDrainMs'],
+      ['report', 'wakes', 'stopRecords'], 'Web host configuration');
     // Issue #294: an OPTIONAL loopback WebSocket binding for the wake stream. The port is a
     // declared resource — never a default number and never port 0 (an ephemeral port is not a
     // declaration an agent could attach to) — and the binding is loopback-only by construction.
@@ -219,6 +250,9 @@ export class BatonWebHost {
       || typeof options.server?.listen !== 'function' || typeof options.server?.once !== 'function'
       || typeof options.server?.off !== 'function' || typeof options.server?.batonShutdown !== 'function'
       || (options.report !== undefined && typeof options.report !== 'function')
+      || (options.stopRecords !== undefined && (!record(options.stopRecords)
+        || !['requested', 'stopped'].every((name) => typeof options.stopRecords[name] === 'function')
+        || (options.stopRecords.waiting !== undefined && typeof options.stopRecords.waiting !== 'function')))
       || (!tcp && !local)
       || (tcp && (typeof options.listen.host !== 'string' || options.listen.host.length === 0
         || !Number.isSafeInteger(options.listen.port) || options.listen.port < 0
@@ -238,9 +272,14 @@ export class BatonWebHost {
     // #276(1): the host's narration sink — `baton serve`'s stderr by default, so a signal is
     // never silent again; a caller may redirect it.
     this.report = options.report ?? defaultReport;
+    // Issue #351: the durable record of this host's stop, owned by the deployment that can write
+    // one (a bounded `host.stop_requested` / `host.stop_waiting` / `host.stopped` row on the
+    // resident's ledger). Absent for a bare host fixture, which then only narrates.
+    this.stopRecords = options.stopRecords ?? null;
     this._start = null;
     this._shutdown = null;
     this._announced = null;
+    this._trigger = null;
   }
 
   start() {
@@ -293,6 +332,9 @@ export class BatonWebHost {
 
   /** #276(1): what this host will do, in one line, the moment a signal arrives. */
   _announceIntent(trigger) {
+    // Issue #351: the trigger this host was admitted by travels with its stop record — the row
+    // that says WHY the resident is going down, not merely that it is.
+    this._trigger = trigger;
     const readRuns = typeof this.application.command === 'function'
       ? () => this.application.command('runs.list', {}, this.shutdownPrincipal)
       : () => { throw hostError('this application exposes no command bus', 'application_host_narration_unavailable'); };
@@ -304,6 +346,25 @@ export class BatonWebHost {
     );
     this._announced = announced;
     return announced;
+  }
+
+  /** Issue #351: one durable row per stop fact, each written through the deployment that owns the
+   * ledger, and one line saying the same. The record is best-effort by construction — a ledger
+   * that cannot take the row must never become a stop that cannot happen — while the LINE is
+   * always written: the operator's log is the surface this issue is about. */
+  async _recordStop(step, payload) {
+    if (this.stopRecords === null) return null;
+    try {
+      if (step === 'requested') return await this.stopRecords.requested(payload) ?? null;
+      if (step === 'waiting') {
+        if (typeof this.stopRecords.waiting !== 'function') return null;
+        return await this.stopRecords.waiting(payload) ?? null;
+      }
+      return await this.stopRecords.stopped(payload) ?? null;
+    } catch (error) {
+      this._say(`baton serve: ${step} record failed (${errorCode(error)}); the stop it describes goes on`);
+      return null;
+    }
   }
 
   /** Bind the declared loopback WebSocket binding, if the operator declared one. It serves the
@@ -336,6 +397,12 @@ export class BatonWebHost {
       // The receipt line is the first line of a drain: a shutdown that follows a signal waits for
       // it (a local, in-process read), so the operator's log reads in the order the facts happened.
       if (this._announced) await this._announced;
+      // Issue #351: the FIRST durable fact of a stop — written before any drain work, so a resident
+      // about to spend its time stopping has already said so on its own ledger.
+      const requested = await this._recordStop('requested', {
+        trigger: this._trigger?.kind ?? admittedStopTriggerKind() ?? 'operation_completed',
+      });
+      if (requested?.line) this._say(requested.line);
       // The declared wake binding is closed FIRST: an attachment is a long-lived socket the
       // server's own close() waits on, and the stream it serves is closing with the resident.
       let wakes = null;
@@ -374,6 +441,25 @@ export class BatonWebHost {
         // #276(2): the deadline names its wait BEFORE this host stops waiting, and the refusal
         // carries the drain's own detail onward — never a bare non-convergence.
         this._say(`baton serve: drain did not converge; ${describeDrainWait(error?.detail) ?? 'no named wait was reported'}`);
+        // Issue #351: a stop that cannot converge NAMES ITS WAIT and then acts on it, instead of
+        // leaving the operator to SIGKILL a resident that is still holding a process. The
+        // deployment owns the act (it alone can kill a process group and reap it); when it reports
+        // the named obligations released, the stop has converged and says so.
+        const wait = describeStopWait(error?.detail);
+        const forced = wait === null ? null : await this._recordStop('waiting', { wait, detail: error?.detail ?? null });
+        if (forced?.line) this._say(forced.line);
+        if (forced?.released === true) {
+          const stopped = await this._recordStop('stopped', { state: 'stopped_after_deadline', wait });
+          if (stopped?.line) this._say(stopped.line);
+          return Object.freeze({
+            schemaVersion: 1,
+            state: 'closed_degraded',
+            wakes,
+            web,
+            application: forced.application ?? null,
+            stop: Object.freeze({ state: 'stopped_after_deadline', wait, killed: forced.killed ?? Object.freeze([]) }),
+          });
+        }
         throw Object.assign(new Error('Baton application shutdown failed after Web admission closed'), {
           code: error?.code ?? 'application_host_shutdown_failed', web,
           detail: error?.detail ?? error?.message ?? null,
@@ -382,6 +468,11 @@ export class BatonWebHost {
       }
       clearTimeout(progressTimer);
       this._say(`baton serve: drain converged; ${describeDrainOutcome(application)}`);
+      const stopped = await this._recordStop('stopped', {
+        state: web?.ok === true && application?.state === 'closed' ? 'stopped' : 'stopped_degraded',
+        wait: null,
+      });
+      if (stopped?.line) this._say(stopped.line);
       return Object.freeze({
         schemaVersion: 1,
         state: web?.ok === true && application?.state === 'closed' ? 'closed' : 'closed_degraded',

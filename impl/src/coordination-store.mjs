@@ -746,6 +746,12 @@ export class CoordinationStore {
     }
     this._startupState = null;
     this._checkpointWriteFailure = null;
+    // Issue #351: what the last clean release did with the projection checkpoint, and why. A
+    // lifecycle path reports the skip instead of paying an unbounded main-thread serialization.
+    this._checkpointRelease = null;
+    // Issue #351: the resident's stop outcome, armed by the deployment that owns the stop and
+    // minted by the release itself — see armHostStopOutcome.
+    this._hostStopOutcome = null;
     this._canonicalOrderReceiptFile = join(root, CANONICAL_ORDER_RECEIPT);
     this._clock = opts.clock ?? (() => new Date().toISOString());
     if (opts.appendFile !== undefined && typeof opts.appendFile !== 'function') throw new TypeError('appendFile must be a function');
@@ -1121,6 +1127,89 @@ export class CoordinationStore {
     }
   }
 
+  /** Issue #351: a clean release writes the projection checkpoint only while it is still a
+   * BOUNDED record. The checkpoint is housekeeping (#229: crash-recovery acceleration; the ledger
+   * stays authoritative), but `_writeProjectionCheckpoint` pays `readFileSync` of the whole ledger,
+   * two digests over it, and one `v8.serialize` of the ENTIRE projection — including the parsed
+   * `_events` cache, a second copy of the same ledger — synchronously on the main thread. On the
+   * stop path that cost is proportional to the whole ledger (and to a live campaign's projection,
+   * which is larger than the ledger it folds): a SIGTERM drain that must serve an operator's
+   * deadline may not spend it re-encoding history nobody asked it to cache.
+   *
+   * The bound is DERIVED, never invented: the checkpoint exists to serve a replay, and
+   * `view.wake_replay.items` is the registry's own ceiling for how many ledger rows one replay
+   * carries. A projection holding more rows than that is no longer a bounded record, so the
+   * release records the skip (with the row count, the bound and the reason) and leaves the ledger
+   * — which every loader still replays exactly — authoritative. The deferred append-path
+   * checkpoint and the operator's `compact()` write are untouched: neither is a lifecycle path.
+   */
+  _releaseProjectionCheckpoint() {
+    if (this._startupState?.state !== 'ready' || this._projectionPoison) return null;
+    this._checkpointRelease = this._boundedCheckpointWrite('release');
+    return this._checkpointRelease;
+  }
+
+  /** The one bound every HOUSEWRITING checkpoint obeys (#229's deferred append-path write and
+   * #351's release write): housekeeping may only ever re-encode a BOUNDED projection. The bound is
+   * DERIVED, never invented — the checkpoint exists to serve a replay, and
+   * `view.wake_replay.items` is the registry's own ceiling for how many ledger rows one replay
+   * carries. Beyond it the write is skipped, with the row count, the bound and the reason recorded,
+   * and the ledger — which every loader still replays exactly — stays authoritative. The operator's
+   * own `compact()` verb is NOT housewriting and keeps its unconditional cache write. */
+  _boundedCheckpointWrite(phase) {
+    const bound = FRAME_LIMITS['view.wake_replay.items'].value;
+    const rows = this._events.length - (this._segmentIndex?.archivedThroughSeq ?? 0);
+    if (rows > bound) {
+      return freeze({ state: 'skipped', reason: `${phase}_checkpoint_unbounded`, rows, bound });
+    }
+    try {
+      this._writeProjectionCheckpoint();
+      return freeze({ state: 'written', reason: null, rows, bound });
+    } catch {
+      // The ledger stays authoritative; cache telemetry cannot block the path that reached here.
+      return freeze({ state: 'failed', reason: 'checkpoint_write_failed', rows, bound });
+    }
+  }
+
+  /** Issue #351: what the last clean release did with the projection checkpoint, and why. `null`
+   * until a release has decided; the stop path records this row so a skipped cache is never a
+   * silent one. */
+  checkpointReleaseState() { return this._checkpointRelease; }
+
+  /** Issue #351(2): arm the resident's stop outcome, which the RELEASE then mints.
+   *
+   * The release is a drain's last act and the writer authority it needs exists only until it
+   * returns — so the outcome of a stop that CONVERGED cannot be written after the fact by the host
+   * that observed it (`_assertWriterLease` refuses an append once the lease is dropped). The
+   * release mints it instead, carrying the checkpoint decision it has just made, because a release
+   * that returns IS the converged stop. Armed by the deployment that owns the stop; a store whose
+   * release is not a resident's stop is never armed and writes only the checkpoint it always did.
+   */
+  armHostStopOutcome(fields) {
+    const keys = ['actor', 'key', 'state'];
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join('\0') !== [...keys].sort().join('\0')
+      || keys.some((name) => typeof fields[name] !== 'string' || fields[name].length === 0)) {
+      throw new TypeError('host stop outcome arming is invalid');
+    }
+    this._hostStopOutcome = freeze({ ...fields });
+    return true;
+  }
+
+  _mintHostStopOutcome() {
+    const armed = this._hostStopOutcome;
+    if (!armed) return null;
+    this._hostStopOutcome = null; // one release, one row
+    try {
+      return this._append('driver.recorded', {
+        kind: 'host.stopped', state: armed.state, at: this._clock(),
+        checkpoint: this._checkpointRelease,
+      }, { actor: armed.actor, key: armed.key });
+    } catch {
+      return null; // a release that cannot record its outcome is still an exact release
+    }
+  }
+
   _restoreProjectionCheckpoint(raw, base = 0) {
     return coordinationReplay._restoreProjectionCheckpoint(this, raw, base);
   }
@@ -1425,10 +1514,10 @@ export class CoordinationStore {
         this._ledgerSyncScheduled = false;
         this._flushLedgerSync();
       }
-      if (this._startupState?.state === 'ready' && !this._projectionPoison) {
-        try { this._writeProjectionCheckpoint(); }
-        catch { /* the ledger is authoritative; cache telemetry cannot block exact lease release */ }
-      }
+      this._releaseProjectionCheckpoint();
+      // #351: the resident's stop outcome, minted while the writer authority the row needs is still
+      // held — the release IS the converged stop, and the checkpoint decision travels with it.
+      this._mintHostStopOutcome();
       try { unlinkSync(lease.path); }
       catch { throw new CoordinationRefusal('coordination writer lease could not be released', 'coordination_writer_lost'); }
       if (existsSync(lease.path)) throw new CoordinationRefusal('coordination writer lease release was not exact', 'coordination_writer_lost');
@@ -1439,10 +1528,7 @@ export class CoordinationStore {
       this._ledgerSyncScheduled = false;
       this._flushLedgerSync();
     }
-    if (this._startupState?.state === 'ready' && !this._projectionPoison) {
-      try { this._writeProjectionCheckpoint(); }
-      catch { /* ownership/removal semantics take precedence over a best-effort cache */ }
-    }
+    this._releaseProjectionCheckpoint();
     try {
       const observed = JSON.parse(readFileSync(lease.path, 'utf8'));
       if (observed?.token === lease.token && observed?.pid === process.pid
@@ -1687,7 +1773,9 @@ export class CoordinationStore {
         this._checkpointPending = true;
         setImmediate(() => {
           this._checkpointPending = false;
-          try { this._writeProjectionCheckpoint(); }
+          // #351: the same declared bound the release obeys — housekeeping may only ever re-encode
+          // a bounded projection, so a deferred write can never stall the loop on the whole ledger.
+          try { this._boundedCheckpointWrite('deferred'); }
           catch { /* the ledger remains authoritative; clean release retries and reports failure */ }
         });
       }
