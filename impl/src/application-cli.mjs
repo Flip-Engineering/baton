@@ -1891,27 +1891,33 @@ function swarmPayload(token) {
   return token;
 }
 
-// `baton evidence search SWARM_ID [--query TEXT] [--participant PARTICIPANT_ID] [--kind KIND]
-// [--after-seq SEQ]` (issue #318, #312): the swarm evidence search. ONE canonical operation
-// (`evidence.search`) — this parser only shapes the argv; the dispatch lives in SwarmRuntime,
-// reads the coordination ledger, and derives its page boundary from the wire.frame row (the
-// cursor is the ledger seq, never a page count).
+// `baton evidence search [SWARM_ID] [--query TEXT] [--participant PARTICIPANT_ID] [--kind KIND]
+// [--path PATH] [--after-seq SEQ]` (issue #318, #312): the deployment evidence search. ONE
+// canonical operation (`evidence.search`, impl/src/evidence-search.mjs) — this parser only
+// shapes the argv; the dispatch reads the coordination ledger, and derives its page boundary
+// from the wire.frame row (the cursor is the ledger seq, never a page count). The swarm is a
+// filter, not a scope: absent names the whole deployment (a leading flag is never a swarm).
 function parseEvidenceCli(args, idempotencyKey) {
   if (args[0] !== 'evidence') return null;
   args.shift();
   if (args[0] !== 'search') {
-    throw cliError('evidence requires the search verb: baton evidence search SWARM_ID [--query TEXT]', 'cli_command_unavailable');
+    throw cliError('evidence requires the search verb: baton evidence search [SWARM_ID] [--query TEXT]', 'cli_command_unavailable');
   }
   args.shift();
-  const swarmId = args.shift();
-  if (!nonempty(swarmId)) throw cliError('evidence search requires <swarmId>');
   const values = {};
+  if (args.length > 0 && !args[0].startsWith('--')) {
+    const swarmId = args.shift();
+    if (!nonempty(swarmId)) throw cliError('evidence search swarm is invalid');
+    values.swarmId = swarmId;
+  }
   const query = take(args, '--query');
   if (query !== null) values.query = query;
   const participant = take(args, '--participant');
   if (participant !== null) values.participantId = participant;
   const kind = take(args, '--kind');
   if (kind !== null) values.kind = kind;
+  const path = take(args, '--path');
+  if (path !== null) values.path = path;
   const afterSeq = take(args, '--after-seq');
   if (afterSeq !== null) {
     const value = Number(afterSeq);
@@ -1919,7 +1925,7 @@ function parseEvidenceCli(args, idempotencyKey) {
     values.afterSeq = value;
   }
   noRemainder(args);
-  return { kind: 'command', name: 'evidence.search', args: { swarmId, ...values }, idempotencyKey };
+  return { kind: 'command', name: 'evidence.search', args: values, idempotencyKey };
 }
 function parseSwarmCli(args, idempotencyKey) {
   if (args[0] !== 'swarm') return null;

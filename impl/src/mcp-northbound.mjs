@@ -13,6 +13,7 @@ import {
 } from './application-semantics.mjs';
 import { compileWavefile } from './workflow-dsl.mjs';
 import { SWARM_MCP_TOOL_DEFINITIONS } from './swarm-surface.mjs';
+import { EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
 
 // Issue #233 (canonical naming unification): every mcp-flagged application definition is
 // admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
@@ -1032,24 +1033,20 @@ export function swarmApplicationToolDefinitions(definitions = APPLICATION_COMMAN
 }
 
 const SWARM_APPLICATION_TOOL_DEFINITIONS = Object.freeze(swarmApplicationToolDefinitions());
-// Issue #318 (retrieval, #312): the swarm evidence search as an ordinary tool. ONE schema — the
-// canonical operation's own inputSchema — so the advertised wire shape can never drift from the
-// dispatch authority's validator; the canonical dot twin derives below like every other tool.
-const EVIDENCE_SEARCH_TOOL_DEFINITIONS = Object.freeze([Object.freeze((() => {
-  const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-    .find((row) => row.key === 'evidence.search');
-  return {
-    name: deriveSurfaceNames('evidence.search').mcp,
-    _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
-    execution: Object.freeze({ taskSupport: 'forbidden' }),
-    description: 'Search the facts a swarm\u2019s participants exchanged — by free text, participant or knowledge kind — with a cursor derived from the coordination ledger seq (never a page cap).',
-    inputSchema: schema({ ...repo, ...operation.inputSchema.properties },
-      ['repoId', ...operation.inputSchema.required]),
-    annotations: Object.freeze({
-      readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
-    }),
-  };
-})())]);
+// Issue #318 (retrieval, #312): the deployment evidence search as an ordinary tool. ONE
+// schema — the canonical operation's own (evidence-search.mjs) — so the advertised wire shape
+// can never drift from the operation every surface serves; the swarm filter is optional because
+// absent names the whole deployment. The canonical dot twin derives below like every other tool.
+const EVIDENCE_SEARCH_TOOL_DEFINITIONS = Object.freeze([Object.freeze((() => ({
+  name: deriveSurfaceNames('evidence.search').mcp,
+  _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+  execution: Object.freeze({ taskSupport: 'forbidden' }),
+  description: 'Search the evidence and contributions a deployment\u2019s swarms exchanged — by swarm, participant, kind, path or free text — with a cursor derived from the coordination ledger seq (never a page cap).',
+  inputSchema: schema({ ...repo, ...EVIDENCE_SEARCH_INPUT_SCHEMA.properties }, ['repoId']),
+  annotations: Object.freeze({
+    readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+  }),
+}))())]);
 
 // 2026-09-14 audit (U-F7): an alias pair carries DISTINCT descriptions, so a model can tell the
 // canonical spelling from the retained one instead of seeing two identically-described tools. The

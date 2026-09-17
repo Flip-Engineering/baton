@@ -55,6 +55,7 @@ import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
   projectSwarmView, swarmCommandFieldSummary, swarmIdentityKeyedCommand,
   swarmKnowledgeCommand,
   validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
+import { EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
 // The knowledge verbs' shared shape validator (the ONE authority the runtime dispatch also runs),
 // and the canonical schema accessor its help renders from.
 import { validateSwarmKnowledgeCommand } from './swarm-runtime.mjs';
@@ -617,8 +618,12 @@ function bridgeHelpText(command = null) {
     "Arguments (one JSON object):",
   ].filter((line) => line !== '');
   if (knowledge) {
-    // The canonical schema (application-semantics) is the ONE argument authority; the identity
-    const schema = canonicalOperationForCommand(command)?.inputSchema ?? { properties: {}, required: [] };
+    // The canonical schema is the ONE argument authority (application-semantics for the run.*
+    // verbs, the deployment evidence search module for `evidence.search` — every surface serves
+    // that operation, so its help renders that operation's own fields); the identity
+    const schema = command === 'evidence.search'
+      ? EVIDENCE_SEARCH_INPUT_SCHEMA
+      : canonicalOperationForCommand(command)?.inputSchema ?? { properties: {}, required: [] };
     for (const [field, fieldSchema] of Object.entries(schema.properties)) {
       const required = schema.required?.includes(field) && !knowledge.identityFields.includes(field);
       const derived = knowledge.identityFields.includes(field);

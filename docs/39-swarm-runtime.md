@@ -682,8 +682,16 @@ commits are derived from git at compose time through the same authority — a st
 a stored count, and an unavailable git says so instead of inventing a line.
 
 **Retrieval (deliverable 5, #312).** `evidence search` is one canonical operation
-(`evidence.search`) on the table every surface derives from: the `baton evidence search SWARM_ID
---query TEXT` CLI command, the `baton_evidence_search` MCP tool (and its `evidence.search`
-dot-name alias), and the bridge verb. It reads the coordination ledger directly, so every row carries its
-seq/ts and the cursor IS the ledger seq; the page boundary derives from the same `wire.frame` row
-the bridge answers under — never a numeric page cap.
+(`evidence.search`, implemented once in `impl/src/evidence-search.mjs`) every surface derives
+from: the `baton evidence search [SWARM_ID] [--query TEXT] [--participant ID] [--kind KIND]
+[--path PATH] [--after-seq SEQ]` CLI command, the `baton_evidence_search` MCP tool (and its
+`evidence.search` dot-name alias), and the bridge verb. It retrieves across the deployment —
+seeded knowledge facts AND recorded contributions — filtered by swarm (absent names the whole
+deployment), participant, kind (a knowledge node type, or a `type`/`kind` a contribution body
+names), path (case-sensitive, over refs, work and path-like body text) and free text
+(case-insensitive, over body text and row identities). The operation rebuilds a per-deployment
+index from the coordination ledger on every call, so every row carries its seq/ts and the
+cursor IS the ledger seq; the page boundary derives from the same `wire.frame` row the bridge
+answers under — never a numeric page cap. Wiring the extended wire shape through dispatch
+(canonical registry row, swarm validators, bridge scope) stays with the root, which owns those
+files; until it lands, new spellings parse at the surface and refuse typed at dispatch.

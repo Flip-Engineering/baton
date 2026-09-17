@@ -1711,6 +1711,7 @@ const F_EXEMPTIONS = Object.freeze([
   ['coordinator.mjs', /_orientationRecordCitation\(packDigest, scope, freshnessDigest, maxLine = 4096\)/u, 'uncataloged: orientation citation line bound'],
   ['coordinator.mjs', /Buffer\.byteLength\(JSON\.stringify\(candidate\)\) > 4096/u, 'uncataloged: orientation candidate bound'],
   ['credential-projection.mjs', /DEFAULT_(FILE|TOTAL)_LIMIT = /u, 'uncataloged: credential projection file bounds (NOT the credential.file lane)'],
+  ['evidence-search.mjs', /MAX_SEARCH_TEXT_BYTES = 4096/u, 'uncataloged: evidence search text schema bound (mirrors the #318 query cap)'],
   ['goal-plan.mjs', /ctx\.idempotencyKey\) > 4096/u, 'uncataloged: idempotency-key bound'],
   ['goal-plan.mjs', /raw\.limits\.maxTextBytes > 1024 \* 1024/u, 'uncataloged: goal-plan policy ceiling'],
   ['grok-acp.mjs', /DEFAULT_MAX_WIRE_FRAME_BYTES =/u, 'uncataloged: sibling-transport frame bound'],
