@@ -234,7 +234,10 @@ function processStartIdentity(pid) {
   } catch { return undefined; }
 }
 
-function parsedLeaseOwner(bytes, rootIdentityDigest) {
+/** #330: structural lease-owner validation ONLY — identity is decided beside liveness, never
+ * before it. A digest comparison here turned a recreated evidence root under a dead holder into
+ * an un-reclaimable lease (bare result_export_root_busy forever). */
+function parseLeaseOwner(bytes) {
   let owner;
   try { owner = JSON.parse(bytes.toString('utf8')); } catch { return null; }
   const versionOne = exactObject(owner, ['schemaVersion', 'pid', 'nonce', 'rootIdentityDigest'])
@@ -245,8 +248,46 @@ function parsedLeaseOwner(bytes, rootIdentityDigest) {
   if ((!versionOne && !versionTwo)
     || !Number.isSafeInteger(owner.pid) || owner.pid <= 0
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(owner.nonce ?? '')
-    || owner.rootIdentityDigest !== rootIdentityDigest) return null;
+    || typeof owner.rootIdentityDigest !== 'string' || owner.rootIdentityDigest.length === 0) return null;
   return owner;
+}
+
+/** #330: the busy-root refusal the serve/doctor path renders. The operator reads the cause from
+ * the message AND the detail: the holder (pid, pidStart, liveness), whether the lease's recorded
+ * root identity matches this root, the lease path, and the remedy — the live pid to stop, or the
+ * manual rm when no live holder is proved. `detail` rides the control-surface envelope
+ * (BatonControlError.from preserves it), so `baton serve` prints it beside the refusal. */
+function leaseBusyRefusal({ lease, owner, rootIdentityDigest }) {
+  const rootIdentity = !owner
+    ? 'unproved'
+    : (owner.rootIdentityDigest === rootIdentityDigest ? 'matches' : 'mismatch');
+  const holder = !owner ? null : Object.freeze({
+    pid: owner.pid,
+    pidStart: owner.schemaVersion === 2 ? owner.pidStart : null,
+    liveness: processLiveness(owner.pid),
+  });
+  const remedy = holder?.liveness === 'alive'
+    ? `stop pid ${holder.pid} or wait for it to release the export root, then retry`
+    : `remove ${lease} manually (rm -rf ${lease}) after confirming no live exporter holds this root, then retry`;
+  const message = holder?.liveness === 'alive'
+    ? `result export root is already leased by live process ${holder.pid} (root identity ${rootIdentity}); ${remedy}`
+    : `result export root is already leased by an unproved holder (root identity ${rootIdentity}); ${remedy}`;
+  return Object.assign(exportError(message, 'result_export_root_busy'), {
+    detail: Object.freeze({ holder, rootIdentity, lease, remedy }),
+  });
+}
+
+/** Best-effort owner read for the refusal path: structural gates only, never a throw — an
+ * unreadable lease is itself the unproved case. */
+function readLeaseOwnerForRefusal({ root, rootIdentity, lease }) {
+  try {
+    assertRootIdentity(root, rootIdentity);
+    if (!ownedPrivateDirectory(lease) || bytewiseNames(lease).join('\0') !== 'owner.json') return null;
+    const ownerStat = lstatSync(join(lease, 'owner.json'));
+    if (!ownerStat.isFile() || ownerStat.isSymbolicLink() || ownerStat.nlink !== 1
+      || (ownerStat.mode & 0o777) !== 0o600 || ownerStat.size <= 0 || ownerStat.size > 16_384) return null;
+    return parseLeaseOwner(readExactRegular(join(lease, 'owner.json'), { mode: 0o600, size: ownerStat.size }));
+  } catch { return null; }
 }
 
 /** Reclaim only one structurally exact lease whose process owner is proved gone. Unknown or
@@ -260,9 +301,13 @@ function reapDeadResultExportRootLease({ root, rootIdentity, lease, rootIdentity
     if (!ownerStat.isFile() || ownerStat.isSymbolicLink() || ownerStat.nlink !== 1
       || (ownerStat.mode & 0o777) !== 0o600 || ownerStat.size <= 0 || ownerStat.size > 16_384) return false;
     const ownerBytes = readExactRegular(join(lease, 'owner.json'), { mode: 0o600, size: ownerStat.size });
-    const owner = parsedLeaseOwner(ownerBytes, rootIdentityDigest);
+    const owner = parseLeaseOwner(ownerBytes);
     if (!owner) return false;
 
+    // #330: liveness decides BEFORE identity. A dead holder is reclaimable even on identity
+    // mismatch — a dead holder plus a mismatch proves no live process holds THIS root through
+    // that lease (the evidence root was recreated under a dead owner). Unknown or alive
+    // holders stay fail-closed however the digest compares.
     const liveness = processLiveness(owner.pid);
     if (liveness === 'unknown') return false;
     if (liveness === 'alive') {
@@ -303,7 +348,16 @@ export function acquireResultExportRootLease(rawRoot) {
         reclaimed = true;
         continue;
       }
-      throw exportError('result export root is already leased', cause?.code === 'EEXIST' ? 'result_export_root_busy' : 'result_export_root_invalid');
+      if (cause?.code !== 'EEXIST') {
+        throw exportError('result export root is already leased', 'result_export_root_invalid');
+      }
+      // #330: the busy refusal names its cause for the serve/doctor path — the live holder
+      // pid, or the manual rm when no live holder is proved.
+      throw leaseBusyRefusal({
+        lease,
+        owner: readLeaseOwnerForRefusal({ root, rootIdentity, lease }),
+        rootIdentityDigest,
+      });
     }
   }
   const leaseIdentity = lstatSync(lease);
