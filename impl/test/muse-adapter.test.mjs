@@ -17,7 +17,7 @@ import {
 import { assertIsAdapter } from '../src/adapter.mjs';
 import * as deploymentModule from '../src/application-deployment.mjs';
 import { RuntimeIsolation, runtimeIdentity } from '../src/runtime-isolation.mjs';
-import { openBaton } from '../src/index.mjs';
+import { createDriver, openBaton } from '../src/index.mjs';
 
 // Real captured shapes (verbatim payload_type/payload vocabulary).
 const STARTED = { payload_type: 'run.lifecycle.started', payload: { kind: 'run_started' } };
@@ -430,5 +430,61 @@ test('file-backend doctor: a keychain-only login serves muse rows blocked with t
     assert.equal(row.state, 'blocked');
     assert.equal(row.code, 'authentication_required');
     assert.match(row.summary, /TBH_CREDENTIAL_BACKEND=file muse login/);
+  }
+});
+
+// ── #323: a served deployment's built-in muse adapter must be LIVE ──────────────────────────
+// Every other built-in route is a native RPC/ACP adapter; MuseCli is the only served route on
+// the CliAdapter base, whose `live` defaults to false so unit tests never spawn a real CLI.
+// A served deployment IS the real run: builtInAdapters must construct it live, or every muse
+// run crashes at spawn with "live:false — refusing to launch a real CLI". The fake `muse` here
+// answers the two probes the deployment makes (`exec --help`, `--version`) and completes one
+// exec with a terminal MSP record — no real binary, no network, no quota.
+function fakeMuseBin() {
+  const bin = fileTmp('fake-muse-bin');
+  const script = [
+    '#!/bin/sh',
+    'if [ "$1" = "--version" ]; then echo "Muse Code 1.3.0 (fake)"; exit 0; fi',
+    'if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then echo "muse exec (fake)"; exit 0; fi',
+    `printf '%s\\n' '{"schema_version":1,"payload_type":"run.terminal.completed","payload":{"kind":"run_terminal","terminal":"completed","text":"pong","reason":null}}'`,
+    'exit 0',
+    '',
+  ].join('\n');
+  writeFileSync(join(bin, 'muse'), script, { mode: 0o755 });
+  return bin;
+}
+
+test('#323: a served deployment constructs its built-in muse adapter live — spawn never refuses for live:false', async () => {
+  const fixture = fileRepo();
+  const home = fileTmp('home-live');
+  writeMuseAuth(home, MUSE_FILE_BACKED_AUTH());
+  const bin = fakeMuseBin();
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath}`;
+  let captured = null;
+  const spyDriver = (opts) => { captured = opts.adapters; return createDriver(opts); };
+  const museRoutes = deploymentModule.DEFAULT_BATON_DEPLOYMENT_ROUTES.filter((route) => route.harness === 'muse');
+  let deployment = null;
+  try {
+    deployment = await withMuseHome(home, () => deploymentModule.openBatonDeployment({
+      repo: fixture.repo,
+      advanced: {
+        deploymentRoot: join(fileTmp('deployment-live'), 'deployment'),
+        routes: museRoutes,
+        verification: { command: process.execPath, arguments: ['--version'] },
+        capacity: {
+          estimate: () => ({ bytes: 1, inodes: 1 }),
+          observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
+        },
+      },
+    }, spyDriver));
+    const adapter = captured?.['muse:muse'];
+    assert.ok(adapter instanceof MuseCli, 'the deployment built its muse adapter through builtInAdapters');
+    assert.equal(adapter._live, true, 'a served deployment is the real run: its muse adapter must be live');
+    const ack = await adapter.spawn('w-live', { goal: 'x', verification: { command: 'true', expectExit: 0 } }, { worktree: fixture.repo });
+    assert.doesNotMatch(String(ack.reason ?? ''), /live:false/, `spawn refused the served adapter: ${ack.reason}`);
+  } finally {
+    process.env.PATH = previousPath;
+    try { await deployment?.close(); } catch { /* fixture tree removed by fileTmp */ }
   }
 });

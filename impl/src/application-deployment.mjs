@@ -1136,8 +1136,11 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       if (rows.some((row) => !allowedModels.has(row.model))) {
         throw deploymentError('current Muse routes permit only muse-spark-1.3-contributor');
       }
+      // A served deployment IS the real run. MuseCli is the only served route on the
+      // CliAdapter base, whose `live` defaults to false so unit tests never spawn a real
+      // CLI; without opting in here every muse run crashed at spawn (#323).
       adapters[key] = new MuseCli({
-        cmd: museCommand(), model: route.model, ceiling, maxWireFrameBytes,
+        cmd: museCommand(), model: route.model, ceiling, maxWireFrameBytes, live: true,
       });
     } else if (route.harness === 'grok') {
       adapters[key] = new GrokAcpCli({

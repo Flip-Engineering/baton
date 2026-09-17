@@ -73,7 +73,7 @@ flowchart TB
         COORD["dispatch · fences · event log · replay<br/>trust gate · stall watchdog · capacity · reap"]
     end
     subgraph FLEET["Workers (full harnesses, own worktrees)"]
-        W["Claude · Codex · GLM · Grok · DeepSeek · Kimi"]
+        W["Claude · Codex · GLM · Grok · DeepSeek · Kimi · Muse"]
     end
     YOU --> SURFACES --> APP --> KERNEL --> FLEET
     APP <--> COLLAB
@@ -164,6 +164,8 @@ The complete open map is ~112 tracked issues — the lossless catalog lives in t
 ## Run it
 
 Requires Node ≥ 20. The only runtime dependency is `@ast-grep/napi`.
+
+**Muse seat.** Baton drives the `muse` CLI headlessly (`muse exec --json`, model `muse-spark-1.3-contributor`, efforts low–max) with file-backed auth on every OS: run `TBH_CREDENTIAL_BACKEND=file muse login` once, then confirm with `node scripts/baton.mjs doctor --check`. A keychain-only macOS login reads blocked with that remedy; API-key auth is out of scope for this seat (other harnesses cover API keys).
 
 ```bash
 cd impl && npm ci                     # install
