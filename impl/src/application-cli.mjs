@@ -1702,6 +1702,26 @@ function compactInspectSection(result) {
   });
 }
 
+/** Issue #349: the CLI's rendering of a narrowed swarm answer. The narrowing record IS the
+ * headline — requested → served, the omitted families and per-row fields, the ceiling the answer
+ * was narrowed against — printed BEFORE the served rows, never bare rows shaped like the
+ * requested projection, beside the re-request that returns the rest: the CLI declares no frame,
+ * so an ordinary re-read of the same command receives the whole answer. */
+function narrowedSwarmViewResult(result) {
+  const { narrowing, ...view } = result;
+  // The re-request asks for what the caller ORIGINALLY requested (the record's `requested`),
+  // never the projection the frame substituted — the re-read is how the rest is recovered.
+  const requested = nonempty(narrowing?.requested) ? narrowing.requested : view.projection;
+  const projection = nonempty(requested) && requested !== 'full' ? ` --projection ${requested}` : '';
+  return Object.freeze({
+    schemaVersion: 1,
+    narrowed: true,
+    narrowing: Object.freeze({ ...narrowing }),
+    expand: Object.freeze({ command: `baton swarm view ${view.swarmId}${projection}` }),
+    ...view,
+  });
+}
+
 /**
  * Project mutation/status RunViews into the CLI's ordinary outline. The authenticated
  * application response remains available through progressive `run show` inspection;
@@ -1710,6 +1730,10 @@ function compactInspectSection(result) {
  */
 export function projectBatonCliResult(parsed, result) {
   if (!record(parsed) || !record(result)) return result;
+  // Issue #349: a narrowed swarm answer is never printed as the rows it served — the narrowing
+  // record renders loudly at the top of the output, before any row. Only swarm views carry the
+  // record (web-northbound's narrowSwarmViewForBridge mints it), so its presence alone gates.
+  if (record(result.narrowing)) return narrowedSwarmViewResult(result);
   if (parsed.kind === 'stream' && nonempty(result.runId) && record(result.content)) {
     if (parsed.channel === 'progress') return Object.freeze({
       ...result.content,
@@ -3394,10 +3418,17 @@ export class BatonWebClient {
   constructor(options) {
     // socketPath is optional: a local resident's wake attachment rides the owner-only Unix socket
     // its commands ride, while an explicit network deployment attaches over its published URL.
+    // frameFor is optional: the per-command frame declaration a transport that answers under a
+    // declared wire ceiling carries on its envelopes (issue #349) — `(command) => frame | null`.
+    // The MCP bridge declares {lane:'wire.frame'} on swarm.view; the CLI declares none.
+    const optionalKeys = options.frameFor === undefined ? [] : ['frameFor'];
     exactKeys(options, options.socketPath === undefined
-      ? ['baseUrl', 'origin', 'repoId', 'token', 'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep']
-      : ['baseUrl', 'origin', 'repoId', 'token', 'socketPath', 'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep'],
+      ? ['baseUrl', 'origin', 'repoId', 'token', 'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep', ...optionalKeys]
+      : ['baseUrl', 'origin', 'repoId', 'token', 'socketPath', 'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep', ...optionalKeys],
     'Web client configuration');
+    if (options.frameFor !== undefined && typeof options.frameFor !== 'function') {
+      throw cliError('Web client frame declaration is invalid', 'cli_config_invalid');
+    }
     const base = new URL(options.baseUrl);
     const origin = new URL(options.origin);
     if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/'
@@ -3432,6 +3463,7 @@ export class BatonWebClient {
     this.fetch = options.fetchImpl;
     this.clock = options.clock;
     this.sleep = options.sleep;
+    this.frameFor = options.frameFor ?? null;
   }
 
   _headers(json = false) {
@@ -3618,6 +3650,10 @@ export class BatonWebClient {
     // server stops naming one. The loop ends on the SERVER's signal plus a progress check (the
     // cursor must advance, or the server is broken and the client refuses typed) — never on a
     // client-side page count.
+    // Issue #349: the transport's declared frame rides every envelope it dispatches (the MCP
+    // bridge declares {lane:'wire.frame'} on swarm.view; a client that declares none — the CLI —
+    // sends no frame and receives whole answers).
+    const declaredFrame = this.frameFor === null ? null : this.frameFor(bus);
     const LIST_CONTINUATION = new Set(['runs.list', 'waves.list']);
     if (LIST_CONTINUATION.has(bus)) {
       let pageArgs = { ...args };
@@ -3627,6 +3663,7 @@ export class BatonWebClient {
         const envelope = {
           schemaVersion: 1, commandId: randomUUID(), idempotencyKey, command, args: pageArgs,
           repoId: this.repoId, origin: this.origin,
+          ...(declaredFrame ? { frame: declaredFrame } : {}),
         };
         let body;
         try {
@@ -3654,6 +3691,7 @@ export class BatonWebClient {
     const envelope = {
       schemaVersion: 1, commandId: randomUUID(), idempotencyKey, command, args,
       repoId: this.repoId, ...(runId ? { runId } : {}), origin: this.origin,
+      ...(declaredFrame ? { frame: declaredFrame } : {}),
     };
     let body;
     try {

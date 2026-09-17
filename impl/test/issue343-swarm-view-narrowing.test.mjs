@@ -186,7 +186,7 @@ test('343-5: the resident serves an oversize swarm.view over the web lane narrow
   const view = fullView({ participants: 120, knowledgeBytes: 560_000 });
   assert.ok(swarmViewBridgeFrameBytes(view) > CEILING, 'the fixture really exceeds the bridge frame');
   const web = residentFixture(t, view);
-  const response = await web.execute(context(), viewEnvelope());
+  const response = await web.execute(context(), viewEnvelope({ frame: { lane: 'wire.frame' } }));
   assert.equal(response.status, 200);
   assert.equal(response.body.ok, true);
   const served = response.body.result;
@@ -220,6 +220,8 @@ test('343-7: narrowing applies to swarm.view only — other oversize answers cro
   const response = await web.execute(context(), viewEnvelope({
     commandId: 'cmd-inspect-1', idempotencyKey: 'inspect-1',
     command: 'run_inspect', args: { runId: 'run-1', depth: 'outline' },
+    // Issue #349: even a DECLARED frame narrows swarm.view only — never another command's answer.
+    frame: { lane: 'wire.frame' },
   }));
   assert.equal(response.status, 200);
   assert.equal(Object.hasOwn(response.body.result, 'narrowing'), false);

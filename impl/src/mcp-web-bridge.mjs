@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
+import { FRAME_LIMITS } from './limits.mjs';
 import { BatonWebClient, discoverBatonConnection } from './application-cli.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { McpFleetServer } from './mcp-northbound.mjs';
@@ -716,6 +717,11 @@ export async function connectBatonWebApplication(options = {}) {
     ...(connection.socketPath === undefined ? {} : { socketPath: connection.socketPath }),
     commandTimeoutMs: options.commandTimeoutMs ?? 120_000,
     pollMs: options.pollMs ?? 250,
+    // Issue #349: the bridge is the caller that answers under the MCP wire frame, so it DECLARES
+    // that frame on the swarm.view envelopes it forwards — the one declaration that lets the
+    // resident narrow the answer to fit. The CLI's own client declares none and receives the
+    // whole answer; the row is the registry's declared substrate row, never a second constant.
+    frameFor: (command) => (command === 'swarm.view' ? { lane: FRAME_LIMITS['wire.frame'].lane } : null),
     fetchImpl,
     clock: options.clock ?? options.now ?? Date.now,
     sleep: options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),

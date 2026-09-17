@@ -193,7 +193,7 @@ const READ_ONLY_COMMANDS = new Set([
 const BOUNDED_OBSERVATION_AUDITS = new Set([
   'command_replayed', 'action_authority_read', 'operator_read_authorized',
 ]);
-const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
+const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor', 'frame']);
 // Advertised schema (ARG_FIELDS) excludes transportHidden. Acceptance during validateEnvelope
 // uses ARG_FIELDS ∪ transportHidden (see acceptedWebArgFields below).
 const ARG_FIELDS = Object.freeze({
@@ -892,6 +892,19 @@ function validateEnvelope(envelope) {
   if (!Object.hasOwn(COMMAND_CAPABILITY, envelope.command)) return 'unsupported command';
   if (Object.hasOwn(envelope, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.runId ?? '')) return 'invalid_run_id';
   if (!isRecord(envelope.args)) return 'args must be an object';
+  // Issue #349: a caller that DECLARES the frame it answers under names one declared FRAME_LIMITS
+  // row — closed shape {lane}. The resident narrows swarm.view answers only when the envelope
+  // carries this field, against the row it names; a caller without a frame receives the whole
+  // answer. The row itself is read at dispatch, never re-declared here.
+  if (Object.hasOwn(envelope, 'frame')) {
+    const frame = envelope.frame;
+    if (!isRecord(frame) || Object.keys(frame).length !== 1 || !Object.hasOwn(frame, 'lane') || !string(frame.lane)) {
+      return { code: 'invalid_frame', field: 'frame', message: 'invalid_frame' };
+    }
+    if (!Object.hasOwn(FRAME_LIMITS, frame.lane)) {
+      return { code: 'unknown_frame_lane', field: 'frame.lane', message: 'unknown_frame_lane' };
+    }
+  }
   // S-1 v2: acceptance = advertised ∪ transportHidden; advertised schema (ARG_FIELDS) excludes
   // declared-hidden fields so they do not appear in web-admitted argument inventories.
   const allowed = ACCEPTED_ARG_FIELDS[envelope.command] ?? ARG_FIELDS[envelope.command];
@@ -1101,14 +1114,19 @@ function swarmViewOmittedParticipantFields(received, served) {
   return [...before].filter((key) => key !== 'participantId' && !after.has(key)).sort();
 }
 
-// Serve a swarm.view answer through the bridge frame: a fitting answer passes through
+// Serve a swarm.view answer through a frame the caller DECLARED: a fitting answer passes through
 // untouched (no narrowing to name); an oversize one is served as the widest fitting
 // per-row projection with the narrowing named. The fit is measured on the FINAL answer — the
 // candidate projection plus the narrowing record itself, which also costs bytes — so what is
-// served is what fits the bridge. When even the rowless outline (named) exceeds the frame, no
+// served is what fits the frame. When even the rowless outline (named) exceeds the frame, no
 // projection helps and the answer crosses untouched: the bridge's own oversize refusal is the
 // honest fallthrough, never a truncation.
-export function narrowSwarmViewForBridge(view, requestedProjection = null, maxBytes = SWARM_VIEW_BRIDGE_FRAME_ROW.value) {
+//
+// Issue #349: the ceiling is the FRAME_LIMITS row the caller named on the envelope (`row`), not
+// a lane-wide constant — narrowing is the answer shape of the caller that declared the frame,
+// and the record names the row it was narrowed against. The default row stays the MCP bridge's
+// declared `wire.frame` substrate row.
+export function narrowSwarmViewForBridge(view, requestedProjection = null, maxBytes = SWARM_VIEW_BRIDGE_FRAME_ROW.value, row = SWARM_VIEW_BRIDGE_FRAME_ROW) {
   const requested = typeof requestedProjection === 'string' && Object.hasOwn(SWARM_VIEW_PROJECTIONS, requestedProjection)
     ? requestedProjection : 'full';
   if (view === null || typeof view !== 'object' || Array.isArray(view)) return view;
@@ -1131,8 +1149,8 @@ export function narrowSwarmViewForBridge(view, requestedProjection = null, maxBy
         omittedParticipantFields: Object.freeze(swarmViewOmittedParticipantFields(view, candidate)),
         reason: 'frame_ceiling',
         ceiling: Object.freeze({
-          lane: SWARM_VIEW_BRIDGE_FRAME_ROW.lane, class: SWARM_VIEW_BRIDGE_FRAME_ROW.class,
-          value: maxBytes, unit: SWARM_VIEW_BRIDGE_FRAME_ROW.unit,
+          lane: row.lane, class: row.class,
+          value: maxBytes, unit: row.unit,
         }),
         actualBytes,
       }),
@@ -1827,10 +1845,20 @@ export class WebNorthbound {
     }
     if (value?.result === 'stale_fence') return error(409, 'stale_fence');
     const projected = GOAL_PLAN_MUTATIONS.has(envelope.command) ? sanitizeGoalPlanProjection(value) : json(value);
-    // Issue #343: an oversize swarm.view answer is served through the per-row projection that
-    // fits the bridge frame, naming the narrowing — never an oversize failure or a truncation.
+    // Issue #343/#349: an oversize swarm.view answer is served through the per-row projection
+    // that fits the frame, naming the narrowing — never an oversize failure or a truncation.
+    // Narrowing is the answer shape of a caller that DECLARES the frame it answers under
+    // (`frame: {lane}` naming a FRAME_LIMITS row): the bridge declares one, so it receives the
+    // fitting answer; a caller without a frame — the CLI's web client — receives the whole
+    // answer. The scoped and the unscoped read follow this ONE rule.
     if (APPLICATION_COMMAND[envelope.command] === 'swarm.view') {
-      return result(200, { ok: true, commandId: envelope.commandId, result: narrowSwarmViewForBridge(projected, a?.projection) });
+      const declaredRow = envelope.frame === undefined ? null : FRAME_LIMITS[envelope.frame.lane];
+      return result(200, {
+        ok: true, commandId: envelope.commandId,
+        result: declaredRow === null
+          ? projected
+          : narrowSwarmViewForBridge(projected, a?.projection, declaredRow.value, declaredRow),
+      });
     }
     return result(200, { ok: true, commandId: envelope.commandId, result: projected });
   }
