@@ -35,7 +35,7 @@ function repository(name) {
 
 function exactAdapter(harness, model, efforts, scenario = {
   outcome: 'completed', delayMs: 10, summary: `${harness} complete`, files: {},
-}) {
+}, cardExtra = {}) {
   const adapter = new MockAdapter({
     harness,
     scenario,
@@ -43,6 +43,7 @@ function exactAdapter(harness, model, efforts, scenario = {
   const rawCard = adapter.card.bind(adapter);
   adapter.card = () => ({
     ...rawCard(),
+    ...cardExtra,
     authPosture: 'subscription',
     modelSelection: {
       mode: 'exact', configuredDefault: model, available: [model], family: harness,
@@ -395,14 +396,19 @@ test('DF8: one public Claude harness dispatches exact Opus and Kimi tuples only 
     { harness: 'claude-code', provider: 'claude', model: 'claude-opus-4-6', effort: 'xhigh' },
     { harness: 'claude-code', provider: 'kimi', model: 'kimi-k3[1m]', effort: 'max' },
   ];
+  // #327 credential ownership: these caller-supplied adapters bring their own credential, so
+  // each card advertises providerCompatibility.credentialState 'available' — the deployment
+  // trusts that advertisement at readiness and dispatch instead of projecting the operator
+  // credential.
+  const ownedCredential = { providerCompatibility: { credentialState: 'available' } };
   const opus = exactAdapter('claude-code', 'claude-opus-4-6', ['xhigh'], {
     outcome: 'completed', delayMs: 10, summary: 'Opus route completed',
     edits: [{ path: 'opus-result.txt', content: 'opus\n' }],
-  });
+  }, ownedCredential);
   const kimi = exactAdapter('claude-code', 'kimi-k3[1m]', ['max'], {
     outcome: 'completed', delayMs: 10, summary: 'Kimi route completed',
     edits: [{ path: 'kimi-result.txt', content: 'kimi\n' }],
-  });
+  }, ownedCredential);
   const calls = { opus: [], kimi: [] };
   const opusSpawn = opus.spawn.bind(opus);
   opus.spawn = (...args) => { calls.opus.push(args); return opusSpawn(...args); };

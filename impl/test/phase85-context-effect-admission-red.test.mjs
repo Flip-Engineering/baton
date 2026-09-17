@@ -51,6 +51,10 @@ function adapter(route, tracker) {
   const baseCard = value.card.bind(value);
   value.card = () => ({
     ...baseCard(), authPosture: 'subscription',
+    // #327 credential ownership: this caller-supplied adapter brings its own credential, so the
+    // card advertises providerCompatibility.credentialState 'available' — the deployment trusts
+    // that advertisement at readiness and dispatch instead of projecting the operator credential.
+    providerCompatibility: { credentialState: 'available' },
     modelSelection: {
       mode: 'exact', configuredDefault: route.model, available: [route.model],
       family: route.harness, acceptedPrefixes: [], acceptedAliases: [],

@@ -1491,7 +1491,17 @@ async function projectedAdapterAuthentication(adapters, repoRoot, runtimeRoot, p
  * its own credential (providerCompatibility.credentialState 'available'), resolves; anything
  * else would spawn an auth-less member. Local filesystem facts only — never a network probe,
  * never a projection copy (the tree ENTRY is the admission fact, exactly the inventory
- * defaultCredentialProjection builds). */
+ * defaultCredentialProjection builds).
+ *
+ * #327 credential-ownership rule: a caller-supplied adapter on a claude-code route (or any
+ * route) OWNS its credential — it says so by advertising
+ * providerCompatibility.credentialState 'available' on its card, and the deployment trusts
+ * that advertisement both here at readiness and at dispatch (RuntimeIsolation.create's
+ * adapterManaged mechanism). The deployment projects the operator credential only when the
+ * matched card does not so advertise. A caller-supplied adapter that stays silent about its
+ * credential is therefore blocked as route_credentials_unprojected, exactly as an operator
+ * route with no projected credential is: readiness never assumes an adapter the caller wired
+ * in can authenticate. */
 function credentialProjectionResolves(projection, card) {
   const { family, adapterCredentialState } = runtimeIdentity({ card });
   if (adapterCredentialState === 'available') return true;

@@ -18,7 +18,7 @@ import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mj
 import { runSurfaceGate } from './surface-gate.mjs';
 import {
   computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, isHang,
-  loadExpectedRed, planExpectedRedRewrite, verdictDocument, writeExpectedRed,
+  loadExpectedRed, planExpectedRedRewrite, reasonClassOf, verdictDocument, writeExpectedRed,
 } from './suite-verdict.mjs';
 import { selectFromRepository } from '../src/verification-selection.mjs';
 
@@ -166,7 +166,17 @@ const signalStatus = { SIGINT: 130, SIGTERM: 143, SIGKILL: 137 };
 // `reason` field, and its absence refuses the write instead of recording a silent placeholder.
 const reasonFlagIndex = process.argv.indexOf('--expected-red-reason');
 const expectedRedReason = reasonFlagIndex === -1 ? null : (process.argv[reasonFlagIndex + 1] ?? null);
-const runnerFlags = new Set(['--write-expected-red', '--expected-red-reason']);
+// Issue #327: a new row minted with the `credential` class must name the prerequisite it depends
+// on — the registry route key the suite environment line prints — so the verdict can judge it
+// against that prerequisite's observed state instead of the global absent list.
+const prerequisiteFlagIndex = process.argv.indexOf('--expected-red-prerequisite');
+const expectedRedPrerequisite = prerequisiteFlagIndex === -1 ? null : (process.argv[prerequisiteFlagIndex + 1] ?? null);
+if (reasonClassOf(expectedRedReason) === 'credential'
+  && (expectedRedPrerequisite === null || expectedRedPrerequisite.trim().length === 0)) {
+  process.stderr.write('baton test runner: --expected-red-reason credential names an environment-class row, so it needs the prerequisite the row depends on — pass --expected-red-prerequisite <registry-route-key> (the route key the suite environment line prints, e.g. omp/deepseek/deepseek-flash or claude-code:claude/claude-opus-4-6); a row with a bare class keeps the global behaviour only until it is attributed\n');
+  process.exit(1);
+}
+const runnerFlags = new Set(['--write-expected-red', '--expected-red-reason', '--expected-red-prerequisite']);
 // #300: `--changed <paths…>` selects the affected test files through the import graph
 // (verification-selection.mjs) instead of naming files by hand. The paths are the capture's
 // changedPaths — the flag's INPUT, never passthrough file names — and the selection itself is
@@ -183,6 +193,7 @@ if (changedFlagIndex !== -1) {
 }
 const passthroughArgs = process.argv.slice(2).filter((arg, index, argv) => (
   !runnerFlags.has(arg) && !(index > 0 && argv[index - 1] === '--expected-red-reason')
+  && !(index > 0 && argv[index - 1] === '--expected-red-prerequisite')
   && !changedFlagArgs.has(index + 2)
 ));
 const writeExpectedRedRequested = process.argv.includes('--write-expected-red');
@@ -529,7 +540,10 @@ if (legacyPassthrough) {
     if (writeExpectedRedRequested) {
       const failures = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed');
       const plan = planExpectedRedRewrite({
-        failures, prior: loadExpectedRed(manifestPath), defaultReason: expectedRedReason,
+        failures,
+        prior: loadExpectedRed(manifestPath),
+        defaultReason: expectedRedReason,
+        defaultPrerequisite: expectedRedPrerequisite,
       });
       if (plan.refused) {
         process.stderr.write(`baton test runner: --write-expected-red refuses to record ${plan.newKeys.length} row(s) with no reason — ${plan.newKeys.join('; ')}\n`);
@@ -537,7 +551,7 @@ if (legacyPassthrough) {
         rewriteRefused = true;
       } else {
         const written = writeExpectedRed(manifestPath, { rows: plan.kept, converged: plan.converged });
-        process.stderr.write(`baton test runner: wrote ${written.rows.length} expected-red rows to scripts/expected-red-tests.json (kept ${plan.kept.length - plan.newKeys.length} reasons, dropped ${plan.dropped.length} now-green rows${plan.newKeys.length > 0 ? `, ${plan.newKeys.length} new rows reasoned ${expectedRedReason}` : ''})\n`);
+        process.stderr.write(`baton test runner: wrote ${written.rows.length} expected-red rows to scripts/expected-red-tests.json (kept ${plan.kept.length - plan.newKeys.length} reasons, dropped ${plan.dropped.length} now-green rows${plan.newKeys.length > 0 ? `, ${plan.newKeys.length} new rows reasoned ${expectedRedReason}${expectedRedPrerequisite ? ` with prerequisite ${expectedRedPrerequisite}` : ''}` : ''})\n`);
       }
     }
     if (rewriteRefused) {

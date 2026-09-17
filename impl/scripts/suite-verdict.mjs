@@ -16,10 +16,14 @@
 // `unattributed`).
 //
 // A row whose class is `credential`/`environment` is an ENVIRONMENT row: the machine decides its
-// outcome. When the run observed an absent prerequisite it is expected not to pass and is reported
-// as environment-red, apart from code rows and beside the machine-local prerequisites the harness
-// actually observed (2026-09-14 audit R-1); when every prerequisite was present the machine can
-// run it, so it must pass — and a failure there is an unexpected failure like any other.
+// outcome. A row that names its `prerequisite` (the registry route key the suite environment line
+// prints, e.g. `omp/deepseek/deepseek-flash` or `claude-code:claude/claude-opus-4-6`) is judged
+// against THAT prerequisite's observed state only (issue #327): absent excuses it as
+// environment-red, present demands a pass, and a declared (unevaluated) prerequisite leaves it
+// unjudged as environment-red — the verdict never invents an observation it did not make. A row
+// with a bare class keeps the global behaviour below until it is attributed: any absent
+// prerequisite excuses it, and when every prerequisite was present the machine can run it, so it
+// must pass — and a failure there is an unexpected failure like any other.
 //
 // `converged` names the files that were authored as red-first specs, carry no expected-red row
 // any more (they are fully green) and keep the `-red` suffix as the record of the contract they
@@ -69,7 +73,18 @@ function parseRow(row) {
     const key = typeof row?.key === 'string' ? row.key : JSON.stringify(row);
     throw manifestError(`expected-red manifest row ${key} is incomplete — ${REASON_FIELD_HINT}`);
   }
-  return Object.freeze({ key: row.key, reason: row.reason });
+  // The prerequisite is the registry route key the row depends on (issue #327). It is optional:
+  // a bare environment-class row keeps the global behaviour until it is attributed. When present
+  // it must name the prerequisite — an empty value refuses, never silently meaning "no
+  // prerequisite".
+  const prerequisite = row.prerequisite ?? null;
+  if (prerequisite !== null
+    && (typeof prerequisite !== 'string' || prerequisite.trim().length === 0)) {
+    throw manifestError(`expected-red manifest row ${row.key} names no prerequisite — set "prerequisite" to the registry route key the row depends on (e.g. omp/deepseek/deepseek-flash), or drop the field for a bare class`);
+  }
+  return prerequisite === null
+    ? Object.freeze({ key: row.key, reason: row.reason })
+    : Object.freeze({ key: row.key, reason: row.reason, prerequisite });
 }
 
 export function loadExpectedRed(path) {
@@ -97,14 +112,19 @@ export function loadExpectedRed(path) {
   };
 }
 
-/** The committed form: rows sorted by key, converged files sorted by path, both unique. */
+/** The committed form: rows sorted by key, converged files sorted by path, both unique. A row's
+ * prerequisite survives the round trip beside its reason (issue #327). */
 export function manifestRows({ rows = [], converged = [] } = {}) {
   const byKey = new Map();
-  for (const row of rows) byKey.set(row.key, row.reason);
+  for (const row of rows) {
+    byKey.set(row.key, row.prerequisite === undefined || row.prerequisite === null
+      ? { key: row.key, reason: row.reason }
+      : { key: row.key, reason: row.reason, prerequisite: row.prerequisite });
+  }
   const byFile = new Map();
   for (const entry of converged) byFile.set(entry.file, entry.reason);
   return {
-    rows: [...byKey].sort(([left], [right]) => left.localeCompare(right)).map(([key, reason]) => ({ key, reason })),
+    rows: [...byKey].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row),
     converged: [...byFile].sort(([left], [right]) => left.localeCompare(right)).map(([file, reason]) => ({ file, reason })),
   };
 }
@@ -121,19 +141,38 @@ export function writeExpectedRed(path, manifest) {
  * Every row that stays red keeps the reason it already carried. A row the manifest has never
  * listed cannot be invented: it needs the run's declared reason (`defaultReason`, supplied by
  * `--expected-red-reason`), and without one the rewrite is refused by naming the flag and the
- * field it fills — never written as a silent placeholder (2026-09-14 audit S-G2/S-I6).
+ * field it fills — never written as a silent placeholder (2026-09-14 audit S-G2/S-I6). A new row
+ * minted with an environment-class reason also carries the run's declared prerequisite
+ * (`defaultPrerequisite`, from `--expected-red-prerequisite`); a row that stays red keeps the
+ * prerequisite it already carried.
  *
- * @param {{failures: Array<{file: string, name: string}>, prior: {rows: Array<{key, reason}>, converged: Array<{file, reason}>}, defaultReason?: string|null}} input
+ * @param {{failures: Array<{file: string, name: string}>, prior: {rows: Array<{key, reason, prerequisite?}>, converged: Array<{file, reason}>}, defaultReason?: string|null, defaultPrerequisite?: string|null}} input
  */
-export function planExpectedRedRewrite({ failures, prior, defaultReason = null }) {
-  const priorReasons = new Map(prior.rows.map((row) => [row.key, row.reason]));
+export function planExpectedRedRewrite({ failures, prior, defaultReason = null, defaultPrerequisite = null }) {
+  const priorRows = new Map(prior.rows.map((row) => [row.key, row]));
   const keys = [...new Set(failures.map((row) => rowKey(row.file, row.name)))].sort();
-  const newKeys = keys.filter((key) => !priorReasons.has(key));
+  const newKeys = keys.filter((key) => !priorRows.has(key));
   const resolvedDefault = reasonClassOf(defaultReason) === null ? null : defaultReason;
   if (newKeys.length > 0 && resolvedDefault === null) {
     return { refused: true, newKeys, kept: [], dropped: [], converged: prior.converged };
   }
-  const kept = keys.map((key) => ({ key, reason: priorReasons.get(key) ?? resolvedDefault }));
+  // A row that stays red keeps the reason AND the prerequisite it already carried. A new row
+  // minted with an environment-class reason carries the run's declared prerequisite
+  // (`--expected-red-prerequisite`, required for `credential`); any other class never takes one.
+  const resolvedPrerequisite = typeof defaultPrerequisite === 'string' && defaultPrerequisite.trim().length > 0
+    && resolvedDefault !== null && isEnvironmentReasonClass(reasonClassOf(resolvedDefault))
+    ? defaultPrerequisite : null;
+  const kept = keys.map((key) => {
+    const priorRow = priorRows.get(key);
+    if (priorRow !== undefined) {
+      return priorRow.prerequisite === undefined || priorRow.prerequisite === null
+        ? { key, reason: priorRow.reason }
+        : { key, reason: priorRow.reason, prerequisite: priorRow.prerequisite };
+    }
+    return resolvedPrerequisite === null
+      ? { key, reason: resolvedDefault }
+      : { key, reason: resolvedDefault, prerequisite: resolvedPrerequisite };
+  });
   const dropped = prior.rows.filter((row) => !keys.includes(row.key)).map((row) => row.key);
   return { refused: false, newKeys, kept, dropped, converged: prior.converged };
 }
@@ -231,8 +270,13 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
     if (typeof row?.key !== 'string' || reasonClassOf(row?.reason) === null) {
       throw manifestError(`expected-red manifest row ${JSON.stringify(row)} is incomplete — ${REASON_FIELD_HINT}`);
     }
+    if (row.prerequisite !== undefined && row.prerequisite !== null
+      && (typeof row.prerequisite !== 'string' || row.prerequisite.trim().length === 0)) {
+      throw manifestError(`expected-red manifest row ${row.key} names no prerequisite — set "prerequisite" to the registry route key the row depends on, or drop the field for a bare class`);
+    }
   }
   const reasons = new Map(manifest.rows.map((row) => [row.key, row.reason]));
+  const prerequisites = new Map(manifest.rows.map((row) => [row.key, row.prerequisite ?? null]));
   const seen = new Set();
   const unexpected = [];
   const expectedRed = [];
@@ -241,14 +285,35 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
   const stalled = [];
   // Environment rows: a row whose reason class is credential/environment is the row's own
   // declaration that this machine decides its outcome (2026-09-14 audit R-1). It is judged
-  // against what the run OBSERVED, never against itself:
-  //   - the run observed an absent prerequisite: the row is expected not to pass. A failure is
-  //     environment-red, a pass is environment-red too (it is not evidence the spec went green),
-  //     and staleness never applies — this is what makes a clone-hosted run read
-  //     `GREEN except environment` instead of a pile of unexpected failures.
-  //   - every declared prerequisite was present: the machine can run the row, so it must pass;
-  //     a failure is an unexpected failure like any other.
+  // against what the run OBSERVED, never against itself. A row that names its `prerequisite`
+  // (issue #327) is judged against THAT prerequisite's observed state only:
+  //   - absent: the row is expected not to pass. A failure is environment-red, a pass is
+  //     environment-red too (it is not evidence the spec went green), and staleness never
+  //     applies.
+  //   - present: the machine can run the row, so it must pass; a failure is an unexpected
+  //     failure like any other.
+  //   - declared (or unknown to this run): the run never evaluated the prerequisite, so the row
+  //     stays unjudged as environment-red either way — the verdict never invents an observation
+  //     it did not make.
+  // A row with a bare class keeps the global behaviour until attributed: any absent prerequisite
+  // excuses it, and when every prerequisite was present it must pass. Without an observed
+  // environment at all, an attributed row falls back to that same global rule.
   const environmentAbsent = (environment?.absent?.length ?? 0) > 0;
+  const absentIds = new Set(environment?.absent ?? []);
+  const presentIds = new Set(environment?.present ?? []);
+  const prerequisiteStateOf = (prerequisite) => {
+    if (environment === null || environment === undefined || prerequisite === null) return null;
+    if (absentIds.has(prerequisite)) return 'absent';
+    if (presentIds.has(prerequisite)) return 'present';
+    return 'declared';
+  };
+  // True when the run observed that THIS row cannot be held to a pass: its own prerequisite is
+  // absent/declared, or (for a bare row, or with no environment observed) the global excuse.
+  const rowExcused = (key) => {
+    const state = prerequisiteStateOf(prerequisites.get(key));
+    if (state !== null) return state === 'present' ? null : state;
+    return environmentAbsent ? 'absent' : null;
+  };
   let cancelled = 0;
   let passed = 0;
   for (const summary of summaries) {
@@ -259,8 +324,12 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
       if (!reasons.has(key)) continue;
       const klass = reasonClassOf(reasons.get(key));
       if (!isEnvironmentReasonClass(klass)) { stale.push(key); continue; }
-      if (environmentAbsent) {
-        expectedRed.push({ key, reason: reasons.get(key), class: klass, outcome: 'passed' });
+      const excused = rowExcused(key);
+      if (excused !== null) {
+        expectedRed.push({
+          key, reason: reasons.get(key), class: klass, outcome: 'passed',
+          prerequisite: prerequisites.get(key), prerequisiteState: excused,
+        });
       }
     }
     for (const row of summary.failed) {
@@ -270,11 +339,17 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
       if (isCancelled(row)) cancelled += 1;
       if (!reasons.has(key)) { unexpected.push({ key, message: row.message ?? null }); continue; }
       const klass = reasonClassOf(reasons.get(key));
-      if (isEnvironmentReasonClass(klass) && !environmentAbsent) {
+      const excused = isEnvironmentReasonClass(klass) ? rowExcused(key) : 'code';
+      if (excused === null) {
         unexpected.push({ key, message: row.message ?? null, environmentPrerequisite: 'present' });
         continue;
       }
-      expectedRed.push({ key, reason: reasons.get(key), class: klass, outcome: 'failed' });
+      expectedRed.push(excused === 'code'
+        ? { key, reason: reasons.get(key), class: klass, outcome: 'failed' }
+        : {
+          key, reason: reasons.get(key), class: klass, outcome: 'failed',
+          prerequisite: prerequisites.get(key), prerequisiteState: excused,
+        });
     }
     if (summary.stalled) stalled.push({ lane: summary.lane, ...summary.stalled });
   }
@@ -305,8 +380,13 @@ export function formatVerdict(verdict) {
     lines.push(`  expected red by reason class: ${classes.map((klass) => `${klass}=${verdict.expectedRedByClass[klass]}`).join(', ')}`);
   }
   for (const row of verdict.environmentRed) {
-    const outcome = row.outcome === 'failed' ? 'failed' : 'unjudged — the prerequisite is absent';
-    lines.push(`  environment red (expected, ${row.class}, ${outcome}): ${row.key} — reason ${row.reason}`);
+    const outcome = row.outcome === 'failed' ? 'failed'
+      : row.prerequisiteState === 'declared'
+        ? 'unjudged — the prerequisite is declared (never evaluated)'
+        : 'unjudged — the prerequisite is absent';
+    const attributed = row.prerequisite === undefined || row.prerequisite === null ? ''
+      : `, prerequisite ${row.prerequisite} (${row.prerequisiteState ?? 'absent'})`;
+    lines.push(`  environment red (expected, ${row.class}, ${outcome}): ${row.key} — reason ${row.reason}${attributed}`);
   }
   for (const row of verdict.unexpected) lines.push(`  unexpected failure: ${row.key}${row.message ? ` — ${String(row.message).split('\n')[0].slice(0, 160)}` : ''}`);
   for (const key of verdict.stale) lines.push(`  stale expectation (now green — remove it from expected-red-tests.json): ${key}`);
@@ -327,7 +407,12 @@ export function verdictDocument(verdict) {
     expectedRed: verdict.expectedRed.length,
     expectedRedByClass: { ...verdict.expectedRedByClass },
     codeRed: verdict.codeRed.map((row) => row.key),
-    environmentRed: verdict.environmentRed.map((row) => ({ key: row.key, reason: row.reason, class: row.class })),
+    environmentRed: verdict.environmentRed.map((row) => (row.prerequisite === undefined || row.prerequisite === null
+      ? { key: row.key, reason: row.reason, class: row.class }
+      : {
+        key: row.key, reason: row.reason, class: row.class,
+        prerequisite: row.prerequisite, prerequisiteState: row.prerequisiteState ?? null,
+      })),
     unexpected: verdict.unexpected.map((row) => row.key),
     stale: [...verdict.stale],
     unseen: [...verdict.unseen],

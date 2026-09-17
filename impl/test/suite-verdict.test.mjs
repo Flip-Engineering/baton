@@ -263,6 +263,125 @@ test('an environment row is judged against the run’s prerequisites, in both di
   assert.match(formatVerdict(absentPass), /unjudged — the prerequisite is absent/u);
 });
 
+test('an attributed environment row is judged against its own prerequisite only (#327)', () => {
+  const attributed = (name, prerequisite) => ({
+    key: rowKey('test/cred.test.mjs', name), reason: 'credential', prerequisite,
+  });
+  const manifest = {
+    rows: [
+      attributed('present-needing', 'omp/deepseek/deepseek-flash'),
+      attributed('absent-needing', 'omp/zai/glm-5.3-flash'),
+      attributed('declared-needing', 'codex/gpt-5.6-sol'),
+    ],
+  };
+  const fail = (name) => row('test/cred.test.mjs', name, { failureType: 'testCodeFailure', message: 'no provider credential' });
+  // The fixture run observes glm absent while deepseek is present: an unrelated absent
+  // prerequisite must not excuse the row that needs the present one.
+  const verdict = computeVerdict(
+    [{ lane: 'suite', passed: [], failed: [fail('present-needing'), fail('absent-needing'), fail('declared-needing')] }],
+    manifest,
+    { environment: fixtureEnvironment() },
+  );
+  assert.equal(verdict.green, false, 'the row whose own prerequisite is present fails unexpectedly');
+  assert.deepEqual(verdict.unexpected.map((entry) => entry.key), ['test/cred.test.mjs :: present-needing']);
+  assert.deepEqual(
+    verdict.environmentRed.map((entry) => entry.key),
+    ['test/cred.test.mjs :: absent-needing', 'test/cred.test.mjs :: declared-needing'],
+    'absent excuses its own row; declared leaves its row unjudged',
+  );
+  const byKey = Object.fromEntries(verdict.environmentRed.map((entry) => [entry.key, entry]));
+  assert.equal(byKey['test/cred.test.mjs :: absent-needing'].prerequisiteState, 'absent');
+  assert.equal(byKey['test/cred.test.mjs :: declared-needing'].prerequisiteState, 'declared');
+  const line = formatVerdict(verdict);
+  assert.match(line, /reason credential, prerequisite omp\/zai\/glm-5\.3-flash \(absent\)/u);
+  assert.match(line, /reason credential, prerequisite codex\/gpt-5\.6-sol \(declared\)/u);
+  // A pass on a declared prerequisite is unjudged, never stale.
+  const passVerdict = computeVerdict(
+    [{ lane: 'suite', passed: [row('test/cred.test.mjs', 'declared-needing')], failed: [] }],
+    { rows: [attributed('declared-needing', 'codex/gpt-5.6-sol')] },
+    { environment: fixtureEnvironment() },
+  );
+  assert.deepEqual(passVerdict.stale, []);
+  assert.deepEqual(passVerdict.environmentRed.map((entry) => entry.key), ['test/cred.test.mjs :: declared-needing']);
+  assert.match(formatVerdict(passVerdict), /unjudged — the prerequisite is declared \(never evaluated\)/u);
+  // A prerequisite this run never observed is declared-like, never an excuse to demand a pass.
+  const unknownVerdict = computeVerdict(
+    [{ lane: 'suite', passed: [], failed: [fail('present-needing')] }],
+    { rows: [attributed('present-needing', 'omp/nope/nothing')] },
+    { environment: fixtureEnvironment() },
+  );
+  assert.equal(unknownVerdict.green, true);
+  assert.deepEqual(unknownVerdict.environmentRed.map((entry) => entry.key), ['test/cred.test.mjs :: present-needing']);
+  // Without an observed environment an attributed row falls back to the global rule.
+  const noEnvironment = computeVerdict(
+    [{ lane: 'suite', passed: [], failed: [fail('present-needing')] }],
+    { rows: [attributed('present-needing', 'omp/deepseek/deepseek-flash')] },
+  );
+  assert.equal(noEnvironment.green, false);
+  assert.deepEqual(noEnvironment.unexpected.map((entry) => entry.key), ['test/cred.test.mjs :: present-needing']);
+});
+
+test('a rewrite keeps each row’s prerequisite and attributes new environment-class rows', () => {
+  const prior = {
+    rows: [
+      { key: rowKey('test/keep.test.mjs', 'K1'), reason: 'credential', prerequisite: 'codex/gpt-5.6-sol' },
+      listed('test/bare.test.mjs', 'B1', 'credential'),
+    ],
+    converged: [],
+  };
+  const failures = [row('test/keep.test.mjs', 'K1'), row('test/new.test.mjs', 'N1')];
+  const planned = planExpectedRedRewrite({
+    failures, prior, defaultReason: 'credential', defaultPrerequisite: 'omp/zai/glm-5.3-flash',
+  });
+  assert.equal(planned.refused, false);
+  assert.deepEqual(planned.kept, [
+    { key: 'test/keep.test.mjs :: K1', reason: 'credential', prerequisite: 'codex/gpt-5.6-sol' },
+    { key: 'test/new.test.mjs :: N1', reason: 'credential', prerequisite: 'omp/zai/glm-5.3-flash' },
+  ]);
+  // A code reason never takes a prerequisite, even when the flag is passed.
+  const issuePlanned = planExpectedRedRewrite({
+    failures, prior, defaultReason: '#327', defaultPrerequisite: 'omp/zai/glm-5.3-flash',
+  });
+  assert.deepEqual(issuePlanned.kept.find((entry) => entry.key === 'test/new.test.mjs :: N1'), {
+    key: 'test/new.test.mjs :: N1', reason: '#327',
+  });
+});
+
+test('the manifest round-trips row prerequisites and refuses an empty one', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-verdict-prereq-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'expected-red-tests.json');
+  const written = writeExpectedRed(path, {
+    rows: [{ key: rowKey('test/a.test.mjs', 'A'), reason: 'credential', prerequisite: 'codex/gpt-5.6-sol' }],
+    converged: [],
+  });
+  assert.deepEqual(written.rows, [
+    { key: 'test/a.test.mjs :: A', reason: 'credential', prerequisite: 'codex/gpt-5.6-sol' },
+  ]);
+  assert.deepEqual(loadExpectedRed(path).rows, written.rows);
+  writeFileSync(path, JSON.stringify({
+    schemaVersion: 2,
+    rows: [{ key: 'test/a.test.mjs :: A', reason: 'credential', prerequisite: '   ' }],
+  }));
+  assert.throws(() => loadExpectedRed(path), { code: 'suite_manifest_invalid', message: /prerequisite/u });
+  assert.throws(
+    () => computeVerdict(
+      [{ lane: 'suite', passed: [], failed: [] }],
+      { rows: [{ key: 'test/a.test.mjs :: A', reason: 'credential', prerequisite: '' }] },
+    ),
+    { code: 'suite_manifest_invalid', message: /prerequisite/u },
+  );
+  const document = verdictDocument(computeVerdict(
+    [{ lane: 'suite', passed: [], failed: [row('test/a.test.mjs', 'A', { failureType: 'testCodeFailure', message: 'x' })] }],
+    { rows: written.rows },
+    { environment: fixtureEnvironment() },
+  ));
+  assert.deepEqual(document.environmentRed, [{
+    key: 'test/a.test.mjs :: A', reason: 'credential', class: 'credential',
+    prerequisite: 'codex/gpt-5.6-sol', prerequisiteState: 'declared',
+  }]);
+});
+
 test('manifestRows sorts both sections so the committed file is byte-stable', () => {
   const { rows, converged } = manifestRows({
     rows: [listed('test/z.test.mjs', 'Z', '#1'), listed('test/a.test.mjs', 'A', '#2')],

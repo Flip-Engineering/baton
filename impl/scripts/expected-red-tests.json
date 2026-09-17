@@ -971,7 +971,8 @@
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF11: concise complete prepares an adopted result and one explicit apply fast-forwards it",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF3: exact route cards are self-described and multi-route start has no effort fallback",
@@ -979,15 +980,13 @@
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF6: deployment close joins callers, drains ownership, and remains idempotent",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF7: worker worktrees materialize the effective caller tree without importing credentials or mutating the caller",
-      "reason": "credential"
-    },
-    {
-      "key": "test/phase78-concise-deployment-factory.test.mjs :: DF8: one public Claude harness dispatches exact Opus and Kimi tuples only to their private adapters",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-1: deployment workflow compiles one durable multi-node Plan and starts no provider before approval",
@@ -1031,15 +1030,18 @@
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-1: ordinary Workflow Context is source-grounded, credential-excluding, and restart-readable",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-2: Run stop fences and reaps an in-flight owned Context execution",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-3: shutdown closes Context admission before an authorized action can register late",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-6: provider-secret sentinels are absent in owned execution and its Git child",
@@ -1055,7 +1057,8 @@
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-9: narrow write scope retains deployment-authorized repository Context read scope",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase84-context-map-wave-red.test.mjs :: CM84-W1: map prebinds Plan v2 with zero new provider calls, then approval launches one real parallel Wave and stop reaps it",
@@ -1092,30 +1095,6 @@
     {
       "key": "test/phase84-context-map-wave-red.test.mjs :: CM85-L1: a replayed v2 root maps through one exact v3 catalog upgrade",
       "reason": "design"
-    },
-    {
-      "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A1: generic reduce shares one store, recovers its Plan, dispatches once, and stops exactly",
-      "reason": "credential"
-    },
-    {
-      "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A2: generic map admission verifies every exact completed-cell output without dispatch",
-      "reason": "credential"
-    },
-    {
-      "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A3: public reduce proposes, approves, dispatches once, and survives reopen",
-      "reason": "credential"
-    },
-    {
-      "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A4: a provider-failed reduce settles once with exact cleanup and replays terminally",
-      "reason": "credential"
-    },
-    {
-      "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A5: restart after generic cleanup but before settlement attaches without another effect",
-      "reason": "credential"
-    },
-    {
-      "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A6: failed generic map retries only failed units and reuses accepted siblings",
-      "reason": "credential"
     },
     {
       "key": "test/phase87-semantic-action-authority.test.mjs :: SA4: Web client and MCP bridge preflight use the exact remote semantic mutation scope",
@@ -2210,6 +2189,10 @@
     {
       "file": "test/phase85-context-call-generation-red.test.mjs",
       "reason": "design"
+    },
+    {
+      "file": "test/phase85-context-effect-admission-red.test.mjs",
+      "reason": "credential"
     },
     {
       "file": "test/phase85-context-eval-application-red.test.mjs",

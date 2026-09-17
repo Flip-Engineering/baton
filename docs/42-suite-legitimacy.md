@@ -36,9 +36,13 @@ is one of:
 | `unattributed` | code | nobody has attributed it yet — a TODO, never a resting place |
 
 A row without a classifiable reason refuses the manifest (`suite_manifest_invalid`, naming the
-field it needs). The verdict reports the expected-red count **by reason class**, so a reader can
-see the shape of the debt: how much is unimplemented design, how much is a tracked issue, how much
-is this machine.
+field it needs). An environment-class row may also carry a `prerequisite`: the registry route key
+it depends on (e.g. `"prerequisite": "omp/deepseek/deepseek-flash"`), so the verdict judges it
+against that prerequisite's observed state instead of the global absent list; a bare
+environment-class row keeps the global behaviour until it is attributed, and an empty
+`prerequisite` refuses like a missing reason. The verdict reports the expected-red count **by
+reason class**, so a reader can see the shape of the debt: how much is unimplemented design, how
+much is a tracked issue, how much is this machine.
 
 ## 2. The environment dimension
 
@@ -57,26 +61,30 @@ baton suite verdict: GREEN except environment — 4849 passed, 472 expected red 
 ```
 
 **Environment rows are judged against the run's prerequisites, in both directions.** A row whose
-reason class is `credential`/`environment` declares that this machine decides its outcome:
+reason class is `credential`/`environment` declares that this machine decides its outcome. A row
+that names its `prerequisite` (issue #327) — the registry route key the suite environment line
+prints, e.g. `omp/deepseek/deepseek-flash` or `claude-code:claude/claude-opus-4-6` — is judged
+against THAT prerequisite's observed state only:
 
-- The run observed an absent prerequisite: the row is expected not to pass. A failure is
-  environment-red — reported separately from code rows, never counted as an unexpected failure —
-  and a pass is not evidence the spec went green, so staleness never applies to it.
-- Every declared prerequisite was present: the machine can run the row, so it **must** pass. A
-  failure is an unexpected failure like any other (the environment axis cannot excuse it), and a
-  pass is simply fine.
+- Its prerequisite is absent: the row is expected not to pass. A failure is environment-red —
+  reported separately from code rows, never counted as an unexpected failure — and a pass is not
+  evidence the spec went green, so staleness never applies to it.
+- Its prerequisite is present: the machine can run the row, so it **must** pass. A failure is an
+  unexpected failure like any other (the environment axis cannot excuse it), and a pass is simply
+  fine.
+- Its prerequisite is declared (the run reports the route's ready-when contract without
+  evaluating it) or unknown to the run: the row stays unjudged as environment-red either way —
+  the verdict never invents an observation it did not make.
 
-That is what makes a clone-hosted or credential-less run read `GREEN except environment` instead
-of a pile of unexpected failures, while a credentialed host is judged strictly. The rows that
-need a machine-local credential today pin the same contracts (`impl/test/phase78-…`,
-`phase79-workflow-composition-red`, `phase80-application-revision-red`,
+A row with a bare class keeps the global behaviour until it is attributed: any prerequisite the
+derivation reports ABSENT makes it unjudged for that run, and when every prerequisite was present
+it must pass. That is what makes a clone-hosted or credential-less run read `GREEN except
+environment` instead of a pile of unexpected failures, while a credentialed host is judged
+strictly. The rows that need a machine-local credential today pin the same contracts
+(`impl/test/phase78-…`, `phase79-workflow-composition-red`, `phase80-application-revision-red`,
 `phase83-context-runtime-red`, `feedback-forge-hardening-red`); each carries the `credential`
-reason, and each is green on a host that has the credential.
-
-The aggregate the judgement reads is the run's own prerequisite list: any prerequisite the
-derivation reports ABSENT makes the environment rows unjudged for that run. A row that needs a
-prerequisite the derivation cannot evaluate belongs in the reason's own words instead — the
-verdict never invents an observation it did not make.
+reason (attributed to its route's prerequisite where the file names exactly one registry route),
+and each is green on a host that has the credential.
 
 The machine-readable form is written when `BATON_SUITE_VERDICT_FILE` names a path: the same
 counts, the environment facts, and the environment-red rows by class.
@@ -92,6 +100,10 @@ contract, issue #290). Two rules make it safe:
   row by itself: pass `--expected-red-reason <reason>` (the flag fills the manifest's own `reason`
   field) or the write is refused, naming the flag, the field, and every row that needed it. A
   rewrite never records a silent placeholder.
+- **A new `credential` row needs a named prerequisite.** `--expected-red-reason credential` is
+  refused without `--expected-red-prerequisite <registry-route-key>` (the route key the suite
+  environment line prints for the prerequisite the row depends on), so a freshly minted
+  environment row is attributable from birth instead of joining the global absent list.
 
 Rows that went green are dropped, and `converged` is preserved.
 
