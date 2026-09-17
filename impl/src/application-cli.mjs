@@ -543,6 +543,22 @@ function route(value) {
   if (slash <= 0 || at <= slash + 1 || at === value.length - 1) throw cliError('--exact must be HARNESS/MODEL@EFFORT');
   return { harness: value.slice(0, slash), model: value.slice(slash + 1, at), effort: value.slice(at + 1) };
 }
+// Issue #335: the --model axis carries the provider-qualified grammar ([provider/]model —
+// omp serves deepseek/deepseek-flash while muse serves the bare muse-spark-1.3-contributor),
+// so it admits one optional provider segment where id() admits none. A value outside the
+// grammar refuses with the teaching, never a bare "model is invalid": the judged field, the
+// observed value, the grammar, and the canonical --exact spelling.
+const MODEL_SEGMENT = '[A-Za-z0-9._:-]{1,256}';
+const MODEL_SELECTOR_PATTERN = new RegExp(`^${MODEL_SEGMENT}(?:/${MODEL_SEGMENT})?$`, 'u');
+function modelSelector(value) {
+  if (value !== null && MODEL_SELECTOR_PATTERN.test(value)) return value;
+  throw Object.assign(
+    cliError(`model ${observedValue(value ?? null)} is invalid; --model admits [provider/]model `
+      + `(one optional provider/ prefix plus the model); `
+      + `for one exact route pass --exact HARNESS/MODEL@EFFORT`),
+    { field: 'model', detail: { field: 'model', grammar: '[provider/]model', exact: 'HARNESS/MODEL@EFFORT' } },
+  );
+}
 function duration(value) {
   const match = /^(\d+)(ms|s|m|h)$/u.exec(value ?? '');
   if (!match) throw cliError('duration must use ms, s, m, or h');
@@ -1928,7 +1944,15 @@ function parseStart(args, objective, idempotencyKey, resultIntent = 'change') {
   const hasManualRoute = selectorRules.manualRoute.selectors.some((name) => selected[name] !== null);
   if (exactValue === null && hasManualRoute
     && selectorRules.manualRoute.requiredTogether.some((name) => selected[name] === null)) {
-    throw cliError('manual routing requires --model and --effort together');
+    // Issue #335: the missing-axis refusal teaches the accepted forms from the registry's own
+    // manual-route rule, never a bare "requires --model and --effort together".
+    const missing = selectorRules.manualRoute.requiredTogether.filter((name) => selected[name] === null);
+    throw Object.assign(
+      cliError(`manual routing requires --model and --effort together (missing: ${missing.map((name) => `--${name}`).join(', ')}); `
+        + `${selectorRules.manualRoute.description}; --model admits [provider/]model; `
+        + `for one exact route pass --exact HARNESS/MODEL@EFFORT`),
+      { field: 'route', detail: { field: 'route', missing } },
+    );
   }
   noRemainder(args);
   const intent = { objective, resultIntent };
@@ -1936,7 +1960,7 @@ function parseStart(args, objective, idempotencyKey, resultIntent = 'change') {
   if (exactValue !== null) intent.route = route(exactValue);
   else {
     const selector = {};
-    if (model !== null) selector.model = id(model, 'model');
+    if (model !== null) selector.model = modelSelector(model);
     if (harness !== null) selector.harness = id(harness, 'harness');
     if (effort !== null) selector.effort = id(effort, 'effort');
     if (Object.keys(selector).length > 0) intent.route = selector;
@@ -3221,15 +3245,37 @@ export function parseBatonCli(rawArgs) {
     const item = take(args, '--item');
     const rawOffset = take(args, '--offset');
     noRemainder(args);
-    if (!APPLICATION_SEMANTIC_REGISTRY.depths.includes(depth)) {
-      throw cliError('show depth is invalid');
+    // Issue #335 (the A9-1 law): a depth refusal names the unknown AND restates the closed set,
+    // read from the registry — never a hand-kept list. The selector→depth map below is derived
+    // from the same two arrays the admission check reads, so the teaching cannot drift from it.
+    const closedDepths = [...APPLICATION_SEMANTIC_REGISTRY.depths];
+    if (!closedDepths.includes(depth)) {
+      throw Object.assign(
+        cliError(`show depth ${observedValue(depth)} is invalid; expected one of: ${closedDepths.join(', ')}`),
+        { field: 'depth', detail: { field: 'depth', expected: closedDepths } },
+      );
     }
-    const sectionRequired = ['section', 'item', 'content', 'evidence'].includes(depth);
-    const itemRequired = ['item', 'content', 'evidence'].includes(depth);
+    const sectionDepths = ['section', 'item', 'content', 'evidence'];
+    const itemDepths = ['item', 'content', 'evidence'];
+    const sectionRequired = sectionDepths.includes(depth);
+    const itemRequired = itemDepths.includes(depth);
     if ((sectionRequired && section === null) || (!sectionRequired && section !== null)
       || (itemRequired && item === null) || (!itemRequired && item !== null)
       || (depth !== 'content' && rawOffset !== null)) {
-      throw cliError('show selectors do not match the requested depth');
+      const observed = [
+        `--depth ${depth}`,
+        ...(section === null ? [] : [`--section ${observedValue(section)}`]),
+        ...(item === null ? [] : [`--item ${observedValue(item)}`]),
+        ...(rawOffset === null ? [] : [`--offset ${observedValue(rawOffset)}`]),
+      ].join(' ');
+      throw Object.assign(
+        cliError(`show selectors do not match the requested depth (${observed}); `
+          + `expected one of: ${closedDepths.join(', ')}; `
+          + `--section is required at depth ${sectionDepths.join(', ')}; `
+          + `--item is additionally required at depth ${itemDepths.join(', ')}; `
+          + `--offset is accepted only at depth content`),
+        { field: 'depth', detail: { field: 'depth', depth, expected: closedDepths } },
+      );
     }
     let offset;
     if (rawOffset !== null) {
@@ -4009,24 +4055,120 @@ export async function connectBaton({
   }));
 }
 
+// Issue #335: the served route table as the CLI reads it — the same rows doctor prints.
+// client.doctor() carries them at .routes with the card's readiness table as the fallback;
+// every teaching refusal below renders from THESE rows, never a hand-kept list.
+function servedCliRoutes(doctor) {
+  const routes = Array.isArray(doctor?.routes)
+    ? doctor.routes : doctor?.application?.readiness?.routes;
+  return Array.isArray(routes) ? routes : [];
+}
+
+// One served row in its canonical exact-route spelling, carrying its readiness verdict.
+function formatServedRoute(row) {
+  const spelling = `${row?.harness ?? '?'}/${row?.model ?? '?'}@${row?.effort ?? '?'}`;
+  if (typeof row?.state !== 'string' || row.state.length === 0) return spelling;
+  const verdict = row.state === 'blocked' && typeof row.code === 'string' && row.code.length > 0
+    ? `blocked (${row.code})` : row.state;
+  return `${spelling} (${verdict})`;
+}
+
+// The served rows matching every axis the caller typed (an untyped axis matches all).
+function servedRouteMatches(routes, requested) {
+  return routes.filter((row) => record(row)
+    && (requested.harness === undefined || row.harness === requested.harness)
+    && (requested.model === undefined || row.model === requested.model)
+    && (requested.effort === undefined || row.effort === requested.effort));
+}
+
+function renderRequestedRoute(requested) {
+  const axes = ['harness', 'model', 'effort']
+    .filter((axis) => requested[axis] !== undefined)
+    .map((axis) => `${axis} ${observedValue(requested[axis])}`);
+  return `{${axes.join(', ')}}`;
+}
+
+// The closed-set route teaching: the requested selector, the selector grammar, the canonical
+// exact-route spelling (worked from the served table when it has a row for the harness), and
+// the served rows themselves with their readiness state.
+function cliRouteTeachingRefusal({ requested, served, field, origin }) {
+  const sameHarness = requested.harness === undefined ? served
+    : served.filter((row) => record(row) && row.harness === requested.harness);
+  const candidates = sameHarness.length > 0 ? sameHarness : served;
+  const shown = candidates.slice(0, 8).map(formatServedRoute).join(', ');
+  const remainder = candidates.length > 8 ? ` (+${candidates.length - 8} more)` : '';
+  const exactExample = candidates.length > 0
+    ? `, e.g. --exact ${candidates[0].harness}/${candidates[0].model}@${candidates[0].effort}` : '';
+  const servedText = candidates.length > 0
+    ? `served routes${sameHarness.length > 0 && requested.harness !== undefined ? ` for harness ${observedValue(requested.harness)}` : ''}: ${shown}${remainder}`
+    : 'the deployment serves no routes (see `baton doctor --check`)';
+  return Object.assign(
+    cliError(`${origin} route ${renderRequestedRoute(requested)} matches no served route; `
+      + `--model admits [provider/]model (one optional provider/ prefix plus the model); `
+      + `for one exact route pass --exact HARNESS/MODEL@EFFORT${exactExample}; ${servedText}`),
+    { field, detail: { field, requested: { ...requested }, served: candidates.slice(0, 8) } },
+  );
+}
+
+// Issue #335: the CLI consults the served table BEFORE sending a route the resident would
+// refuse with a one-sentence application_route_not_allowed. run.start selectors that carry a
+// provider-qualified model (previously "model is invalid" at parse) and swarm.recruit exact
+// tuples are checked; anything matching is sent untouched, and a doctor the client cannot
+// read fails open to the resident (never a new refusal for a route that might serve).
+async function assertCliRouteServable(parsed, client) {
+  if (typeof client?.doctor !== 'function') return;
+  let requested = null;
+  let field = 'route';
+  let origin = 'run';
+  if (parsed?.name === 'run.start') {
+    const route = parsed?.args?.intent?.route;
+    if (!record(route) || typeof route.model !== 'string' || !route.model.includes('/')) return;
+    requested = { ...route };
+  } else if (parsed?.name === 'swarm.recruit') {
+    const exact = parsed?.args?.options?.exact;
+    if (!record(exact)) return;
+    requested = { ...exact };
+    field = 'options.exact';
+    origin = 'swarm recruit';
+  } else {
+    return;
+  }
+  let served;
+  try {
+    served = servedCliRoutes(await client.doctor());
+  } catch {
+    return;
+  }
+  if (servedRouteMatches(served, requested).length === 0) {
+    throw cliRouteTeachingRefusal({ requested, served, field, origin });
+  }
+}
+
 export async function runBatonCli(parsed, client, options = {}) {
   if (parsed.kind === 'help') return { help: BATON_CLI_HELP };
   if (parsed.kind === 'doctor') return client.doctor();
   if (parsed.kind === 'route') {
     const doctor = await client.doctor();
-    const routes = Array.isArray(doctor?.routes)
-      ? doctor.routes : doctor?.application?.readiness?.routes;
-    const matches = routes?.filter((candidate) => (
+    const routes = servedCliRoutes(doctor);
+    const matches = routes.filter((candidate) => (
       candidate.harness === parsed.exact.harness && candidate.model === parsed.exact.model
       && candidate.effort === parsed.exact.effort
-    )) ?? [];
+    ));
     if (matches.length !== 1) {
-      throw cliError('Exact route is not configured by this deployment',
-        'application_route_unavailable');
+      const requested = `${parsed.exact.harness}/${parsed.exact.model}@${parsed.exact.effort}`;
+      const shown = routes.slice(0, 8).map(formatServedRoute).join(', ');
+      const remainder = routes.length > 8 ? ` (+${routes.length - 8} more)` : '';
+      throw cliError(`Exact route ${requested} is not configured by this deployment; `
+        + `pass --exact HARNESS/MODEL@EFFORT for one served route${routes.length > 0 ? `: ${shown}${remainder}` : ' (the deployment serves no routes; see `baton doctor --check`)'}; `
+        + `run starts may also select --model [provider/]model with --effort`,
+      'application_route_unavailable');
     }
     return matches[0];
   }
-  if (parsed.kind === 'command') return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
+  if (parsed.kind === 'command') {
+    await assertCliRouteServable(parsed, client);
+    return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
+  }
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_recruit_follow') return followSwarmRecruit(parsed, client, options ?? {});
   if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
