@@ -231,7 +231,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // workspace id, and the two axes stay independent — adoption is not a native-session resume.
   'swarm.recruit': Object.freeze({
     args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions',
-      'shareWorkspaceWith', 'resumeFrom', 'idempotencyKey', 'view']),
+      'shareWorkspaceWith', 'resumeFrom', 'workId', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -412,6 +412,7 @@ const SWARM_FIELD_RULES = Object.freeze({
   checkId: Object.freeze({ check: isId, expectation: 'a check identity' }),
   objective: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   shareWorkspaceWith: Object.freeze({ check: isId, expectation: 'a participant identity' }),
+  workId: Object.freeze({ check: isId, expectation: 'a work identity' }),
   message: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   reason: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   payload: Object.freeze({ check: isBody, expectation: 'a JSON object or a non-empty text body' }),
@@ -461,7 +462,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.recruit': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']),
-    optional: Object.freeze(['options', 'permissions', 'shareWorkspaceWith', 'resumeFrom', 'view']),
+    optional: Object.freeze(['options', 'permissions', 'shareWorkspaceWith', 'resumeFrom', 'workId', 'view']),
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
@@ -664,13 +665,14 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.recruit',
-    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. shareWorkspaceWith names an existing participant whose live checkout the new participant works in. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318). Answers with a mutation receipt (event, changed rows, next) plus scopeOverlap — an advisory row per ACTIVE participant whose declared scope shares paths with the requested scope, across every swarm in the repository; view: true adds the whole refreshed view.',
+    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. shareWorkspaceWith names an existing participant whose live checkout the new participant works in. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318). workId names an existing work item the seat holds on join — the runtime writes the assignment row itself and the brief names it. Answers with a mutation receipt (event, changed rows, next) plus scopeOverlap — an advisory row per ACTIVE participant whose declared scope shares paths with the requested scope, across every swarm in the repository; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({
       swarmId: ID_SCHEMA, participantId: ID_SCHEMA, objective: TEXT_SCHEMA, view: VIEW_SCHEMA,
       options: JSON_OBJECT_SCHEMA, permissions: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string', minLength: 1 }) }),
       shareWorkspaceWith: ID_SCHEMA,
       resumeFrom: ID_SCHEMA,
+      workId: ID_SCHEMA,
     }),
     required: Object.freeze(['swarmId', 'participantId', 'objective']),
   }),

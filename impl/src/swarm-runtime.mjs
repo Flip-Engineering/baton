@@ -407,6 +407,15 @@ export class SwarmRuntime {
     return row;
   }
 
+  /** Whether a seat holds a work item (issue #345): an ACTIVE assignment binds the seat to the
+   * work — including the assignment a `swarm.recruit` with `workId` wrote on join, so "your work
+   * item is work-N" is a fact the swarm knows. A released assignment no longer holds. */
+  _holdsWork(swarm, participantId, workId) {
+    return typeof workId === 'string' && Object.values(swarm.assignments ?? {})
+      .some((assignment) => assignment.status === 'active'
+        && assignment.participantId === participantId && assignment.workId === workId);
+  }
+
   _worker(participant) {
     const binding = participant.bindings.at(-1);
     const worker = this.coordinator.list().find((row) => row.id === binding?.workerId
@@ -1682,6 +1691,12 @@ export class SwarmRuntime {
    * the swarm's own record of what a seat was told is the brief every surface renders. */
   _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = []) {
     const blocks = [args.objective];
+    // Issue #345: the seat's own assignment — the work item the swarm knows it holds — rides the
+    // brief first, so "your work item is work-N" is read from the assignment, never retyped.
+    if (typeof args.workId === 'string' && args.workId.length > 0) {
+      const held = Object.hasOwn(swarm.work ?? {}, args.workId) ? swarm.work[args.workId] : null;
+      blocks.push(`Your work item is ${args.workId}${held ? ` — ${held.objective}` : ''}: report progress on it with swarm.work_updated through your bridge.`);
+    }
     const situation = [];
     const peers = Object.values(swarm.participants)
       .filter((row) => row.status === 'active' && row.participantId !== args.participantId)
@@ -1803,6 +1818,23 @@ export class SwarmRuntime {
       permission = member?.participantId === args.participantId ? 'contribute' : 'review';
     }
     if (!permission) refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
+    // Issue #345: a seat may move the work it holds with contribute authority — status, basis
+    // and progress notes — but never dependsOn and never work it does not hold (those stay
+    // organize). The refusal names the rule and the field, so the seat learns what to change.
+    if (command === 'swarm.update' && args.event === 'swarm.work_updated' && member
+      && !(member.permissions ?? DEFAULT_PERMISSIONS).includes('organize')) {
+      const payloadForRule = args.payload !== null && typeof args.payload === 'object'
+        && !Array.isArray(args.payload) ? args.payload : {};
+      if (payloadForRule.dependsOn !== undefined
+        || !this._holdsWork(swarm, member.participantId, payloadForRule.workId)) {
+        refuse(`Seat ${member.participantId} holds no organize authority over this work: a seat reports progress only on the work item it holds, and never declares dependsOn`,
+          'swarm_permission_required', {
+            field: 'workId', rule: 'work-holder-or-organize',
+            participantId: member.participantId, workId: payloadForRule.workId ?? null,
+          });
+      }
+      permission = 'contribute';
+    }
     const caller = this._permit(swarm, principal, context, permission);
     if (command === 'swarm.update') {
       if (typeof args.payload === 'string' && args.event !== 'swarm.contribution_recorded') {
@@ -1915,6 +1947,12 @@ export class SwarmRuntime {
           refuse('Swarm participant already exists', 'swarm_participant_exists', {
             participantId: args.participantId, status: existing.status,
           });
+        }
+        // Issue #345: a recruit may name the work item it holds on join. The item must exist —
+        // refused pre-effect, before any membership is written, so a bad name joins nobody.
+        if (args.workId !== undefined && !Object.hasOwn(current.work ?? {}, args.workId)) {
+          refuse(`Swarm recruit work ${args.workId} not found in swarm ${args.swarmId}`, 'work_not_found',
+            { field: 'workId', participantId: args.participantId, workId: args.workId });
         }
         // Advisory, never a refusal (issue #301): the requested scope is compared with every
         // ACTIVE participant's scope across the repository's swarms, BEFORE the join writes the
@@ -2038,6 +2076,16 @@ export class SwarmRuntime {
           swarmId: args.swarmId, participantId: args.participantId, workerId: worker.id, taskId: worker.taskId,
           ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
         }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`));
+        // Issue #345: the recruit named its work item, so the runtime assigns the seat on join —
+        // the assignment row itself, written after the run admitted the seat so a rolled-back
+        // recruit assigns nothing.
+        if (args.workId !== undefined) {
+          const assignmentId = `assignment-${args.participantId}`;
+          writes.push(this._write('swarm.assignment_updated', {
+            swarmId: args.swarmId, assignmentId, participantId: args.participantId,
+            workId: args.workId, status: 'active',
+          }, principal, `swarm-assignment:${hash([args.swarmId, assignmentId])}`));
+        }
         // Issue #337: the parked guidance this brief composed is DELIVERED here — after the
         // run admitted the seat, so a rolled-back recruit never marks guidance its seat never
         // received. Each messageId is marked exactly once (the compose read already excluded
