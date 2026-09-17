@@ -11835,6 +11835,15 @@
           ]
         },
         {
+          "name": "_holdsWork",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_worker",
           "ordinal": 0,
           "size": 9,
@@ -12153,7 +12162,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 66,
+          "size": 72,
           "seam": "effect",
           "evidence": [
             "delegates:effect"
@@ -12162,7 +12171,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 525,
+          "size": 558,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

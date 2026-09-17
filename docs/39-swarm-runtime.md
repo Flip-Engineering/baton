@@ -81,6 +81,17 @@ expressing orchestration over the runtime, rather than mandatory representations
 interaction. Existing authorization, revocation, and process ownership remain meaningful when
 organization changes.
 
+A seat evolves the work it holds (issue #345). A recruited seat with `contribute` authority may
+`swarm.work_updated` the work item an ACTIVE assignment binds it to — status, basis and
+objective-as-progress-notes — without `organize`; naming `dependsOn`, or work it does not hold,
+refuses `swarm_permission_required {field: 'workId', rule: 'work-holder-or-organize'}` so the
+seat learns what to change. `swarm.recruit` takes an optional `workId`: it must name existing work
+(`work_not_found` refuses pre-effect and joins nobody), the runtime writes the
+`swarm.assignment_updated` row itself once the run admitted the seat, and the brief names the held
+item from that assignment ("Your work item is work-N") rather than from prose the recruiter typed.
+A holder completing its item with accepted evidence releases dependents' `waitsOn` through the one
+existing evidence derivation.
+
 ## Claims, preservation, and acceptance
 
 Live collaboration does not require frozen inputs. A participant can use current working state,

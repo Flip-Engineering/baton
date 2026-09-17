@@ -123,7 +123,7 @@ export class Swarm {
   recruit(participantId, objective, options = {}) {
     const selectionFields = ['exact', 'harness', 'model', 'effort', 'scope', 'profile', 'resultIntent'];
     exactOptions(options, new Set(['options', 'permissions', 'idempotencyKey', 'shareWorkspaceWith',
-      'resumeFrom', ...selectionFields]), 'Swarm recruit');
+      'resumeFrom', 'workId', ...selectionFields]), 'Swarm recruit');
     const selection = Object.fromEntries(selectionFields.filter((field) => options[field] !== undefined)
       .map((field) => [field, options[field]]));
     if (options.options !== undefined && Object.keys(selection).length) {
@@ -138,6 +138,9 @@ export class Swarm {
       ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
       ...(options.shareWorkspaceWith === undefined ? {} : { shareWorkspaceWith: options.shareWorkspaceWith }),
       ...(options.resumeFrom === undefined ? {} : { resumeFrom: options.resumeFrom }),
+      // Issue #345: the work item the seat holds on join — the runtime validates it names
+      // existing work and writes the assignment itself.
+      ...(options.workId === undefined ? {} : { workId: options.workId }),
       idempotencyKey: idempotencyOf(options),
     });
   }
