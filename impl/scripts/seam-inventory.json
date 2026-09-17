@@ -908,7 +908,7 @@
         {
           "name": "_providerBrief",
           "ordinal": 0,
-          "size": 95,
+          "size": 100,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -2541,7 +2541,26 @@
         {
           "name": "_observeWatchdogEvent",
           "ordinal": 0,
-          "size": 75,
+          "size": 73,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_freshTurnProgress",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_observeTurnProgress",
+          "ordinal": 0,
+          "size": 53,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -3736,7 +3755,7 @@
         {
           "name": "_handleEvent",
           "ordinal": 0,
-          "size": 1105,
+          "size": 1108,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
