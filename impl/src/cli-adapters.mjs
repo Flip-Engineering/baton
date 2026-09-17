@@ -28,7 +28,9 @@ const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 // constant) — one 128th of the wire-frame ceiling, the same 8 KiB the referee's failure
 // capsule uses — so a CLI that dies before its first JSONL leaves provider-failure evidence
 // under one shared ceiling instead of an unbounded log.
-const MAX_STDERR_TAIL_BYTES = Math.floor(FRAME_LIMITS['wire.frame'].value / 128);
+// #342: exported so the native RPC/ACP process adapters (omp first) keep the SAME tail — one
+// derivation of the bound and one redaction, never a second copy per adapter.
+export const MAX_STDERR_TAIL_BYTES = Math.floor(FRAME_LIMITS['wire.frame'].value / 128);
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
 
@@ -84,7 +86,7 @@ function fixedWireFailure(base) {
 // Issue #326: the session's stderr tail. Bytes appended past the derived bound drop from the
 // FRONT, so the tail always holds the process's last words (the complaint it died with).
 // Synthetic sessions (unit-driven _onData/_onClose) carry no buffer; they read as empty.
-function appendStderrTail(session, chunk) {
+export function appendStderrTail(session, chunk) {
   const next = `${session.stderrTailRaw ?? ''}${chunk}`;
   const bytes = Buffer.from(next, 'utf8');
   session.stderrTailRaw = bytes.length <= MAX_STDERR_TAIL_BYTES
@@ -96,7 +98,7 @@ function appendStderrTail(session, chunk) {
 // evidence path already applies (sanitizeVerifierDiagnosticText — never a second vocabulary),
 // so token-shaped values never land in the ledger; the sanitizer's own tail bound holds no
 // matter how much redaction grows the text.
-function crashedStderrTail(session) {
+export function crashedStderrTail(session) {
   const raw = typeof session.stderrTailRaw === 'string' ? session.stderrTailRaw : '';
   if (raw === '') return '';
   return sanitizeVerifierDiagnosticText(raw).text;

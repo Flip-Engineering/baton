@@ -804,7 +804,7 @@ function trackedTreeBounds(repoRoot, treeish) {
 
 function defaultCredentialProjection(repoRoot, {
   projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null,
-  museCredentialPath = null, museKeychainRead = null,
+  museCredentialPath = null, museKeychainRead = null, ompCatalogRead = null,
 } = {}) {
   const credentials = {};
   const codex = join(homedir(), '.codex', 'auth.json');
@@ -849,7 +849,7 @@ function defaultCredentialProjection(repoRoot, {
   }
   return Object.freeze({
     credentialEnv: Object.freeze(credentialEnv), credentialFiles: credentials,
-    credentialTrees, repoRoot, museKeychainRead,
+    credentialTrees, repoRoot, museKeychainRead, ompCatalogRead,
   });
 }
 
@@ -899,9 +899,58 @@ function ompRouteReadinessFacts(model) {
   });
 }
 
-/** The one omp route gate: the adapter's own agent database AND the route provider's repo key
- * file. Blocked rows name the missing file; contents are never read or surfaced. */
-export function ompRouteReadiness(repoRoot, model) {
+// #342: the harness's OWN model catalog — `omp models --json --no-extensions` — is the third
+// omp readiness fact. A route the registry names but the catalog lacks (the phantom
+// `deepseek/deepseek-v4-pro[1m]`: omp 17.4.0 defines `deepseek/deepseek-v4-pro`) read ready on
+// the key file alone, was admitted, and died at spawn with "Model … not found" on a discarded
+// stderr. The read is bounded, local (omp lists its models.db; no network), memoised per
+// process for a short window keyed by the operator's models.yml mtime, and never throws: an
+// unreadable catalog is a typed blocked row, never a doctor failure.
+const OMP_CATALOG_ARGS = Object.freeze(['models', '--json', '--no-extensions']);
+const OMP_CATALOG_MEMO_MS = 60_000;
+let ompCatalogMemo = null;
+
+function defaultOmpCatalogRead() {
+  try {
+    return execFileSync('omp', [...OMP_CATALOG_ARGS], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 20_000, maxBuffer: 8 * 1024 * 1024,
+    });
+  } catch { return null; }
+}
+
+/** `Map<selector, {provider, id, thinking: string[]|null}>` over the harness catalog, or null
+ * when omp cannot list its models (absent binary, refused run, non-JSON). */
+export function ompModelCatalog({ catalogRead = defaultOmpCatalogRead, now = Date.now } = {}) {
+  let key = 'no-models-yml';
+  try { key = String(lstatSync(join(homedir(), OMP_AGENT_MODELS)).mtimeMs); } catch { /* absent file: keyed as such */ }
+  if (catalogRead === defaultOmpCatalogRead && ompCatalogMemo && ompCatalogMemo.key === key
+    && now() - ompCatalogMemo.at < OMP_CATALOG_MEMO_MS) {
+    return ompCatalogMemo.catalog;
+  }
+  let parsed;
+  try { parsed = JSON.parse(catalogRead() ?? ''); } catch { parsed = null; }
+  const rows = Array.isArray(parsed?.models) ? parsed.models : null;
+  let catalog = null;
+  if (rows) {
+    catalog = new Map();
+    for (const row of rows) {
+      if (!record(row) || typeof row.provider !== 'string' || typeof row.id !== 'string') continue;
+      const selector = typeof row.selector === 'string' ? row.selector : `${row.provider}/${row.id}`;
+      catalog.set(selector, Object.freeze({
+        provider: row.provider, id: row.id,
+        thinking: Array.isArray(row.thinking) ? Object.freeze(row.thinking.filter((v) => typeof v === 'string')) : null,
+      }));
+    }
+  }
+  if (catalogRead === defaultOmpCatalogRead) ompCatalogMemo = { key, at: now(), catalog };
+  return catalog;
+}
+
+/** The one omp route gate: the adapter's own agent database, the route provider's repo key
+ * file, AND (#342) the harness catalog defining the model and its effort. Blocked rows name the
+ * missing file or the models/efforts the catalog does define; contents of key files are never
+ * read or surfaced. */
+export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead = null } = {}) {
   const facts = ompRouteReadinessFacts(model);
   if (!ompAgentConfigured()) {
     return Object.freeze({
@@ -921,6 +970,34 @@ export function ompRouteReadiness(repoRoot, model) {
       summary: `omp route ${model} is not configured; provision ${facts.keyFile} at the repository root.`,
     });
   }
+  // #342: the harness must define the model (and the effort, when it lists efforts) — the
+  // spawn will otherwise die with "Model … not found" on a stderr the crash row now carries.
+  // The catalog is consulted only when a reader is wired (a built-in-adapter deployment, or an
+  // explicit advanced.ompCredentials.catalogRead shim): a fixture deployment or a bare call
+  // never runs the host's omp by accident — the muse keychain reader's own rule.
+  if (catalogRead === null) return Object.freeze({ state: 'ready' });
+  const catalog = ompModelCatalog({ catalogRead });
+  if (catalog === null) {
+    return Object.freeze({
+      state: 'blocked', code: 'omp_catalog_unavailable',
+      summary: `omp route ${model} cannot be confirmed: \`omp ${OMP_CATALOG_ARGS.join(' ')}\` did not answer with a model catalog; run it by hand and fix what it reports, then reopen Baton.`,
+    });
+  }
+  const entry = catalog.get(model);
+  if (!entry) {
+    const provider = model.slice(0, Math.max(0, model.indexOf('/')));
+    const defined = [...catalog.keys()].filter((selector) => selector.startsWith(`${provider}/`)).sort().slice(0, 12);
+    return Object.freeze({
+      state: 'blocked', code: 'model_unavailable_in_harness',
+      summary: `omp defines no model ${model}; its catalog for ${provider || 'that provider'} defines ${defined.length > 0 ? defined.join(', ') : 'nothing'} — add it to ~/${OMP_AGENT_MODELS} or route one of those.`,
+    });
+  }
+  if (typeof effort === 'string' && Array.isArray(entry.thinking) && !entry.thinking.includes(effort)) {
+    return Object.freeze({
+      state: 'blocked', code: 'effort_unavailable_in_harness',
+      summary: `omp model ${model} does not offer effort ${effort}; it offers ${entry.thinking.join(', ')}.`,
+    });
+  }
   return Object.freeze({ state: 'ready' });
 }
 
@@ -930,7 +1007,7 @@ function ompRouteReadyWhen(model) {
   const facts = ompRouteReadinessFacts(model);
   return facts.keyFile === null
     ? `\`${facts.agentDatabase}\` present and a registered provider credential file`
-    : `\`${facts.agentDatabase}\` present and repo \`${facts.keyFile}\` present`;
+    : `\`${facts.agentDatabase}\` present, repo \`${facts.keyFile}\` present, and \`omp models --json\` defining the model and effort`;
 }
 
 /** The ready-when contract each registered route family documents — the same facts the gates
@@ -1695,7 +1772,7 @@ function deploymentReadiness(
         });
       }
     } else if (route.harness === 'omp') {
-      const ompGate = ompRouteReadiness(repoRoot, route.model);
+      const ompGate = ompRouteReadiness(repoRoot, route.model, route.effort, { catalogRead: projection.ompCatalogRead ?? null });
       if (ompGate.state === 'blocked') {
         return Object.freeze({
           ...publicFields, state: 'blocked', code: ompGate.code, summary: ompGate.summary, runtime,
@@ -2382,7 +2459,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'museCredentials', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -2579,12 +2656,24 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // #306 (2): the revision this deployment serves — read once, here, because the code that is
   // loading now IS the code that will answer for the deployment's life.
   const served = servedRevision(repository.root);
+  // #342: the omp catalog reader — the host's `omp models --json` for a built-in-adapter
+  // deployment, an explicit advanced.ompCredentials.catalogRead shim otherwise, never a
+  // host exec for a fixture deployment.
+  const rawOmpCredentials = advanced.ompCredentials ?? {};
+  closed(rawOmpCredentials, ['catalogRead'], 'advanced ompCredentials');
+  if (rawOmpCredentials.catalogRead !== undefined && typeof rawOmpCredentials.catalogRead !== 'function') {
+    throw deploymentError('advanced ompCredentials.catalogRead must be a function');
+  }
+  const ompCatalogRead = routes.some((route) => route.harness === 'omp')
+    ? (rawOmpCredentials.catalogRead ?? (usesBuiltInAdapters ? defaultOmpCatalogRead : null))
+    : null;
   const projection = defaultCredentialProjection(repository.root, {
     projectNativeKimi: nativeKimiAuthentication?.state === 'ready',
     claudeCredentialCache,
     grokCredentialCache,
     museCredentialPath,
     museKeychainRead,
+    ompCatalogRead,
   });
   const adapterAuthentication = await projectedAdapterAuthentication(
     adapters, repository.root, runtimeRoot, projection,

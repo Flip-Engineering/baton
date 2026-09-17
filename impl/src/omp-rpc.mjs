@@ -22,6 +22,8 @@ import { renderBrief } from './adapter.mjs';
 import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
+// #342: the ONE stderr tail (bound + #299 redaction) the CLI adapters keep since #326.
+import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 import { OmpTurnUsageAccumulator, OMP_TOKEN_METRIC } from './omp-usage.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
@@ -207,7 +209,11 @@ export class OmpRpcProcess {
     }
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this._onStdout(chunk));
-    child.stderr.on('data', () => { /* stderr capture is the #225 harvest lane's, not fate */ });
+    // #342: keep the bounded, redacted tail — an omp that dies before its ready frame (a model
+    // the catalog lacks, a missing key) says why on stderr, and the setup crash must carry it.
+    // The tail is evidence for the crash row, never fate: it decides nothing.
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => appendStderrTail(this, String(chunk)));
     child.on('error', (error) => { this.failure = error; this._onExit(null, null); });
     child.on('exit', (code, signal) => this._onExit(code, signal));
     return this;
@@ -225,6 +231,8 @@ export class OmpRpcProcess {
           code: 'setup_process_exit',
           exitCode: this._exitFacts?.code ?? null,
           signal: this._exitFacts?.signal ?? null,
+          // #342: the process's own last words, bounded and redacted (the #326 derivation).
+          stderrTail: crashedStderrTail(this),
         });
       }
       if (attempt >= RETRY_BACKOFF_MS.length) {
@@ -1061,14 +1069,18 @@ export class OmpRpcCli {
       } catch (error) {
         // waitReady throws ONLY on the process-exit fact (evidence), never on patience.
         session.setupFailed = true;
+        // #342: the crash row carries the process's own last words beside the exit fact, so a
+        // dead seat reads "Model … not found" on the participant row instead of a bare exit.
+        const stderrTail = typeof error?.stderrTail === 'string' ? error.stderrTail : '';
         this._emit(session, 'lifecycle.crashed', {
           phase: 'setup', usageSeal: this._usageSeal(session),
           error: String(error?.message ?? error),
           code: error?.code ?? 'setup_process_exit',
           exitCode: error?.exitCode ?? null, signal: error?.signal ?? null,
+          stderrTail,
         });
         await session.process.kill({ kind: 'kill.confirmed', payload: { terminalCause: 'setup', usageSeal: unavailableUsageSeal() } });
-        return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error) };
+        return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error), stderrTail };
       }
       // The exact process-lifecycle contract shape (validProcessReadyPayload is exact-keys):
       if (workerPolicyObserved) {
