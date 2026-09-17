@@ -4,7 +4,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { acquireResultExportRootLease } from '../src/result-export.mjs';
 
 
@@ -20,7 +20,9 @@ import { acquireResultExportRootLease } from '../src/result-export.mjs';
 const FOREIGN_DIGEST = 'f'.repeat(64);
 
 function makeRoot() {
-  const root = mkdtempSync(join(tmpdir(), 'baton-lease-330-'));
+  // Resolved once: the module reports the lease path realpath'd (macOS `/var` → `/private/var`),
+  // so the fixture compares against the same resolution.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'baton-lease-330-')));
   chmodSync(root, 0o700);
   return root;
 }
