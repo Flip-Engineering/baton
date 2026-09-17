@@ -190,6 +190,22 @@ fact — `workspaceCapacityPressure(workspace)` (exported from
 is the ONE predicate; the wake stream lane imports it to derive a `capacity_pressure`
 wake. This document does not build the wake.
 
+Both the doctor and the view's `deployment` summary carry `routeUsage` (#341):
+an array of per-served-route usage rows derived from the deployment's own operational
+log and adapter cards. Each row has the shape
+`{route, state, code, usage: {turns, tokens, usd}, concurrency: {ceiling, inUse},
+lastProviderRefusal: {code, text, at, resetAt} | null, quota: {state, resetAt}}`.
+Turns and tokens are aggregated from `lifecycle.turn_started` and `resource.tokens`
+events matched by route attribution (`harnessResolved`, `modelResolved`,
+`effortResolved`). The concurrency ceiling comes from the adapter card, and
+`lastProviderRefusal` is the most recent `lifecycle.crashed` event whose payload
+carries `PROVIDER_FAULT_CODES.quota`. The `quota` section reflects the live
+`ProviderQuotaAuthority.blockFor()` derivation — a route whose provider refused it
+for quota reads `{state: 'exhausted', resetAt}` until the recorded instant passes,
+then reads `{state: 'ok', resetAt: null}` again. The `baton route usage` CLI verb
+exposes the same rows. The brief renderer's `## Swarm` section includes a
+`### Route usage` subsection when the brief carries usage rows.
+
 Both the doctor and the view's `deployment` summary also carry `served` (#306 part 2):
 `{commit, branch, target: {ref, commit, behind}}` — the revision this deployment
 SERVES, read once at open and frozen for its life (the code that loaded is the code

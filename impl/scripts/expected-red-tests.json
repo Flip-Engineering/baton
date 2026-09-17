@@ -2315,6 +2315,10 @@
       "reason": "#239"
     },
     {
+      "file": "test/route-usage-341-red.test.mjs",
+      "reason": "#341"
+    },
+    {
       "file": "test/run-admission-readiness-red.test.mjs",
       "reason": "#324"
     },

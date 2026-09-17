@@ -16,6 +16,7 @@ import { BatonWebHost } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
+import { PROVIDER_FAULT_CODES } from './provider-faults.mjs';
 import { ProviderQuotaAuthority } from './route-quota.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
@@ -2056,8 +2057,9 @@ class BatonDeployment {
     // is, read fresh from the checkout's refs — so a root sees "this resident serves d9b8164c,
     // 4 behind master" on the doctor instead of discovering it on a stale-based lane.
     const served = this.#served ? servedRow(this.#repository.root, this.#served) : null;
+    const routeUsage = this.#routeUsageRows();
     const base = {
-      ...this.#readiness, ready, routes,
+      ...this.#readiness, ready, routes, routeUsage,
       ...(workspace ? { workspace } : {}),
       ...(hostCapacity ? { hostCapacity } : {}),
       ...(served ? { served } : {}),
@@ -2097,6 +2099,59 @@ class BatonDeployment {
       ? normalizeConcurrencyCeiling(match.adapter.card()?.concurrencyCeiling, `${vendor} concurrencyCeiling`)
       : null;
     return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
+  }
+
+  #routeUsageRows() {
+    const log = this.#driver?.log ?? null;
+    const routes = this.#routes;
+    return Object.freeze(routes.map((route) => {
+      let turns = 0;
+      let tokens = 0;
+      let usd = 0;
+      let lastProviderRefusal = null;
+      if (log) {
+        for (const worker of log.workers()) {
+          for (const ev of log.byKind(worker, 'lifecycle.turn_started')) {
+            if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort) turns += 1;
+          }
+          for (const ev of log.byKind(worker, 'resource.tokens')) {
+            if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort) {
+              tokens += typeof ev.payload?.tokens === 'number' ? ev.payload.tokens : 0;
+              usd += typeof ev.payload?.usd === 'number' ? ev.payload.usd : 0;
+            }
+          }
+          for (const ev of log.byKind(worker, 'lifecycle.crashed')) {
+            if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort
+              && ev.payload?.code === PROVIDER_FAULT_CODES.quota) {
+              const text = typeof ev.payload.error === 'string' ? ev.payload.error.slice(0, 1024) : '';
+              if (!lastProviderRefusal || ev.ts > lastProviderRefusal.at) {
+                lastProviderRefusal = { code: PROVIDER_FAULT_CODES.quota, text, at: ev.ts, resetAt: null };
+              }
+            }
+          }
+        }
+      }
+      const quotaBlock = this.#routeQuota?.blockFor(route) ?? null;
+      const quota = quotaBlock
+        ? Object.freeze({ state: 'exhausted', resetAt: quotaBlock.resetAt })
+        : Object.freeze({ state: 'ok', resetAt: null });
+      const occupancy = this.#occupancyFor(route);
+      let ceiling = occupancy.concurrencyCeiling;
+      if (ceiling === null) {
+        const adapter = this.#adapters[route.harness];
+        if (adapter) ceiling = normalizeConcurrencyCeiling(adapter.card()?.concurrencyCeiling, `${route.harness} concurrencyCeiling`);
+      }
+      const state = quotaBlock ? 'blocked' : 'ready';
+      const code = quotaBlock ? PROVIDER_FAULT_CODES.quota : null;
+      return Object.freeze({
+        route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
+        state, code,
+        usage: Object.freeze({ turns, tokens, usd }),
+        concurrency: Object.freeze({ ceiling, inUse: occupancy.inFlight }),
+        lastProviderRefusal: lastProviderRefusal ? Object.freeze(lastProviderRefusal) : null,
+        quota,
+      });
+    }));
   }
 
   #learningFor(route) {

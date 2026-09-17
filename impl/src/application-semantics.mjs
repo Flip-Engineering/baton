@@ -859,6 +859,7 @@ const cliCommands = [
   ['explore.objective', 'run.start', null, 'baton explore OBJECTIVE [--exact HARNESS/MODEL@EFFORT] [--profile PROFILE] [--scope PATHS]'],
   ['review.objective', 'run.start', null, 'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
   ['route.exact', null, null, 'baton route HARNESS/MODEL@EFFORT'],
+  ['route.usage', null, null, 'baton route usage'],
   ['run.objective', 'run.start', null, 'baton run OBJECTIVE [--model MODEL --effort EFFORT] [--harness HARNESS]'],
   ['run.objective.manual', 'run.start', null, 'baton run OBJECTIVE --model MODEL --effort EFFORT [--harness HARNESS]'],
   ['run.start.exact', 'run.start', null, 'baton run start OBJECTIVE --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
@@ -1033,7 +1034,7 @@ const cli = {
     },
     'run.start': { aliasFor: 'run' },
     routing: {
-      commandIds: ['route.exact', 'run.objective.manual', 'run.start.exact'],
+      commandIds: ['route.exact', 'route.usage', 'run.objective.manual', 'run.start.exact'],
       selectorRule: 'routingDetail',
     },
     'run.inspect': {
@@ -1920,6 +1921,7 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['context.retry', 'embedded', 'BatonRunContext.retry'],
   ['deployment.shutdown', 'application.commands', 'application.shutdown'],
   ['deployment.view', 'cli', 'baton route exact'],
+  ['deployment.view', 'cli', 'baton route usage'],
   ['deployment.view', 'embedded', 'BatonClient.doctor'],
   ['deployment.view', 'embedded', 'BatonClient.route'],
   ['deployment.view', 'embedded', 'BatonClient.routes'],

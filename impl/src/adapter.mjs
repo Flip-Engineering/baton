@@ -265,6 +265,18 @@ export function renderBrief(brief, dialect) {
   // renderer owns only the heading, so every dialect reads the same surface.
   if (brief.swarm) {
     lines.push('## Swarm', '', brief.swarm);
+    if (Array.isArray(brief.routeUsage) && brief.routeUsage.length > 0) {
+      lines.push('', '### Route usage');
+      for (const row of brief.routeUsage) {
+        const r = row.route;
+        const tag = `${r.harness}/${r.model}@${r.effort}`;
+        const parts = [`${tag}: ${row.state}`];
+        if (row.usage) parts.push(`turns=${row.usage.turns} tokens=${row.usage.tokens}`);
+        if (row.quota?.state === 'exhausted') parts.push(`quota=exhausted resetAt=${row.quota.resetAt ?? 'unknown'}`);
+        if (row.concurrency) parts.push(`concurrency=${row.concurrency.inUse}/${row.concurrency.ceiling ?? '∞'}`);
+        lines.push(`- ${parts.join(' | ')}`);
+      }
+    }
   }
   // Issue #305: the lane contract a recruit was given rides the provider-facing brief as
   // its own section — derived ONCE by the owner (the recruit join brief the swarm recorded),
