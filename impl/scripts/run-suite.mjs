@@ -40,6 +40,12 @@ const {
 // second default).
 const { defaultSuiteParallelism } = await import(new URL('../src/host-capacity.mjs', import.meta.url).href);
 
+// Issue #333: the runner's host-wide verify lease lives behind this seam (suite-host-lease.mjs)
+// so tests can stage the authority — the runner itself always admits through the shared host
+// directory, prints the #329 queued row while it waits, and stays bypassed under
+// BATON_HOST_CAPACITY_DISABLED=1 with its children unwired.
+const { acquireSuiteVerifyLease, formatSuiteDegradedWarning, suiteQueueTimeoutDecision } = await import(new URL('./suite-host-lease.mjs', import.meta.url).href);
+
 /** The machine-local prerequisites this run observed, named by the readiness declaration. */
 function suiteEnvironment(repoRootPath) {
   const routes = [...DEFAULT_BATON_DEPLOYMENT_ROUTES];
@@ -528,46 +534,72 @@ if (legacyPassthrough) {
     }
   }
   const files = laneFiles(changedSelection);
-  process.stderr.write(`baton test runner: ${files.parallel.length} files in the parallel lane (x${parallelism}), ${files.serial.length} in the serial lane; progress deadline ${idleMs} ms per file\n`);
-  const results = [...await runLane(files.parallel, parallelism), ...await runLane(files.serial, 1)];
-  const spawnError = results.find((result) => result.error)?.error ?? null;
-  const groupReaped = results.every((result) => result.groupReaped);
-  if (requestedSignal || spawnError || !groupReaped) {
-    finish(1, requestedSignal, spawnError, groupReaped);
-  } else {
-    const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), stalled: null }];
-    let rewriteRefused = false;
-    if (writeExpectedRedRequested) {
-      const failures = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed');
-      const plan = planExpectedRedRewrite({
-        failures,
-        prior: loadExpectedRed(manifestPath),
-        defaultReason: expectedRedReason,
-        defaultPrerequisite: expectedRedPrerequisite,
-      });
-      if (plan.refused) {
-        process.stderr.write(`baton test runner: --write-expected-red refuses to record ${plan.newKeys.length} row(s) with no reason — ${plan.newKeys.join('; ')}\n`);
-        process.stderr.write('baton test runner: declare the reason for newly red rows with --expected-red-reason <reason> (the manifest field is "reason": a GitHub issue like #263, the audit item that tracks it like S-G5, or a class: credential | environment | design | unattributed)\n');
-        rewriteRefused = true;
-      } else {
-        const written = writeExpectedRed(manifestPath, { rows: plan.kept, converged: plan.converged });
-        process.stderr.write(`baton test runner: wrote ${written.rows.length} expected-red rows to scripts/expected-red-tests.json (kept ${plan.kept.length - plan.newKeys.length} reasons, dropped ${plan.dropped.length} now-green rows${plan.newKeys.length > 0 ? `, ${plan.newKeys.length} new rows reasoned ${expectedRedReason}${expectedRedPrerequisite ? ` with prerequisite ${expectedRedPrerequisite}` : ''}` : ''})\n`);
-      }
-    }
-    if (rewriteRefused) {
-      finish(1, null, null, true);
+  // Issue #333: the runner holds one host-wide verify lease for the whole verdict — a full
+  // suite costs every core but the hub's, so two residents each running a suite would repeat
+  // the 2026-09-14 load incident. Admission waits IN ORDER printing the #329 queued row; a
+  // spent wait refuses BEFORE any lane starts (no lane runs starved) unless the dimension
+  // names a limit no wait could cure — a host that cannot fund a suite runs degraded with a
+  // warning instead of bricking (suiteQueueTimeoutDecision) — and the lease releases at the
+  // verdict whichever way it ends. A bypassed run acquires nothing.
+  let suiteLease = null;
+  try {
+    suiteLease = await acquireSuiteVerifyLease();
+  } catch (error) {
+    if (error?.code === 'host_capacity_queue_timeout'
+      && suiteQueueTimeoutDecision(error) === 'proceed-degraded') {
+      process.stderr.write(`${formatSuiteDegradedWarning(error)}\n`);
+      suiteLease = { token: null, release: async () => false };
     } else {
-      const manifest = loadExpectedRed(manifestPath);
-      const verdict = computeVerdict(summaries, manifest, { environment: suiteEnvironment(fileURLToPath(repositoryRoot)) });
-      // A partial run (explicit files, or a --changed selection) cannot judge rows it never ran.
-      const judged = explicitFiles.length > 0 || changedPaths.length > 0
-        ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 }
-        : verdict;
-      process.stderr.write(`${formatVerdict(judged)}\n`);
-      if (process.env.BATON_SUITE_VERDICT_FILE) {
-        writeFileSync(process.env.BATON_SUITE_VERDICT_FILE, `${JSON.stringify(verdictDocument(judged), null, 2)}\n`);
+      process.stderr.write(`baton test runner: ${error?.message ?? error}\n`);
+      finish(1, null, null, true);
+    }
+  }
+  if (suiteLease !== null) {
+    try {
+      process.stderr.write(`baton test runner: ${files.parallel.length} files in the parallel lane (x${parallelism}), ${files.serial.length} in the serial lane; progress deadline ${idleMs} ms per file\n`);
+      const results = [...await runLane(files.parallel, parallelism), ...await runLane(files.serial, 1)];
+      const spawnError = results.find((result) => result.error)?.error ?? null;
+      const groupReaped = results.every((result) => result.groupReaped);
+      if (requestedSignal || spawnError || !groupReaped) {
+        finish(1, requestedSignal, spawnError, groupReaped);
+      } else {
+        const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), stalled: null }];
+        let rewriteRefused = false;
+        if (writeExpectedRedRequested) {
+          const failures = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed');
+          const plan = planExpectedRedRewrite({
+            failures,
+            prior: loadExpectedRed(manifestPath),
+            defaultReason: expectedRedReason,
+            defaultPrerequisite: expectedRedPrerequisite,
+          });
+          if (plan.refused) {
+            process.stderr.write(`baton test runner: --write-expected-red refuses to record ${plan.newKeys.length} row(s) with no reason — ${plan.newKeys.join('; ')}\n`);
+            process.stderr.write('baton test runner: declare the reason for newly red rows with --expected-red-reason <reason> (the manifest field is "reason": a GitHub issue like #263, the audit item that tracks it like S-G5, or a class: credential | environment | design | unattributed)\n');
+            rewriteRefused = true;
+          } else {
+            const written = writeExpectedRed(manifestPath, { rows: plan.kept, converged: plan.converged });
+            process.stderr.write(`baton test runner: wrote ${written.rows.length} expected-red rows to scripts/expected-red-tests.json (kept ${plan.kept.length - plan.newKeys.length} reasons, dropped ${plan.dropped.length} now-green rows${plan.newKeys.length > 0 ? `, ${plan.newKeys.length} new rows reasoned ${expectedRedReason}${expectedRedPrerequisite ? ` with prerequisite ${expectedRedPrerequisite}` : ''}` : ''})\n`);
+          }
+        }
+        if (rewriteRefused) {
+          finish(1, null, null, true);
+        } else {
+          const manifest = loadExpectedRed(manifestPath);
+          const verdict = computeVerdict(summaries, manifest, { environment: suiteEnvironment(fileURLToPath(repositoryRoot)) });
+          // A partial run (explicit files, or a --changed selection) cannot judge rows it never ran.
+          const judged = explicitFiles.length > 0 || changedPaths.length > 0
+            ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 }
+            : verdict;
+          process.stderr.write(`${formatVerdict(judged)}\n`);
+          if (process.env.BATON_SUITE_VERDICT_FILE) {
+            writeFileSync(process.env.BATON_SUITE_VERDICT_FILE, `${JSON.stringify(verdictDocument(judged), null, 2)}\n`);
+          }
+          finish(judged.green ? 0 : 1, null, null, true);
+        }
       }
-      finish(judged.green ? 0 : 1, null, null, true);
+    } finally {
+      await suiteLease.release();
     }
   }
 }

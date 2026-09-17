@@ -279,6 +279,35 @@ export function hostCapacityShortfall(kind, capacity, used) {
 /** The operator's documented bypass, named by every capacity refusal (#329). */
 export const HOST_CAPACITY_BYPASS = 'BATON_HOST_CAPACITY_DISABLED=1';
 
+/** #333: the verify state of ONE swarm participant, derived from the authority's visible
+ * queue and the holders of live verify leases — the projection the swarm view's participant
+ * row carries as `verify {state, position, ahead}`. The holder name is the lease holder the
+ * runtime mints per seat (`participant:<swarmId>:<participantId>`): a queue entry under that
+ * name reads `{state: 'queued', position, ahead}` (the entry's own place when it carries one,
+ * else its FIFO index), a live verify lease under it reads `{state: 'admitted'}` (position
+ * and ahead are null — an admitted seat waits on nothing), and anything else reads null:
+ * absence is absence, never a guessed row. Only exact verify records for this holder match —
+ * one seat's lease never projects onto another seat's row, and worker leases never read as a
+ * verdict. Returns a frozen row or null; never throws on unstructured input, so the view can
+ * call it per row. */
+export function projectParticipantVerify(queue, verifyHolders, holder) {
+  if (typeof holder !== 'string' || holder.length === 0) return null;
+  const entries = Array.isArray(queue) ? queue : [];
+  const index = entries.findIndex((row) => row?.kind === 'verify' && row?.holder === holder);
+  if (index !== -1) {
+    const found = entries[index];
+    return Object.freeze({
+      state: 'queued',
+      position: Number.isSafeInteger(found?.position) ? found.position : index + 1,
+      ahead: Number.isSafeInteger(found?.ahead) ? found.ahead : index,
+    });
+  }
+  const holders = Array.isArray(verifyHolders) ? verifyHolders
+    : (verifyHolders instanceof Set ? [...verifyHolders] : []);
+  if (holders.includes(holder)) return Object.freeze({ state: 'admitted', position: null, ahead: null });
+  return null;
+}
+
 /** The suite runner's default file parallelism — the same derivation every resident reads
  * (#297 item 3): one core for the runner's own loop, and no more lanes than the memory the host
  * can fund at one share per lane. BATON_SUITE_PARALLELISM remains the operator override. */
@@ -607,6 +636,21 @@ export class HostCapacityAuthority {
         && cores + 1 <= capacity.usableCores
         && bytes + capacity.coreShareBytes <= capacity.usableBytes,
     });
+  }
+
+  /** #333: one participant's verify state for the swarm view row — the same non-mutating read
+   * `observeNow()` performs (live-pid verify leases only, so a crashed resident's lease never
+   * pins a row), folded through `projectParticipantVerify` for the holder
+   * `participant:<swarmId>:<participantId>`. Admission correctness never depends on this read;
+   * it is what the participant row shows. */
+  observeParticipantVerify(holder) {
+    const queue = this.#queueRows(listRecords(this.queueDir, 'host capacity queue', QUEUE_FIELDS));
+    const holders = [];
+    for (const record of listRecords(this.leasesDir, 'host capacity lease', LEASE_FIELDS)) {
+      if (record.kind !== 'verify' || !this.liveness(record.pid)) continue;
+      holders.push(record.holder);
+    }
+    return projectParticipantVerify(queue, holders, holder);
   }
 
   // ── admission ───────────────────────────────────────────────────────────────────────────────────

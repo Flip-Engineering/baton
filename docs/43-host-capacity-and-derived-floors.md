@@ -96,6 +96,56 @@ derivation, one core for the runner's own loop and no more lanes than the memory
 host funds at one share per lane. `BATON_SUITE_PARALLELISM` remains the operator
 override: an explicit decision that replaces the derivation, never a second default.
 
+## 3b. The suite runner's verify lease (#333)
+
+A full suite costs every core but the hub's (the #269 measurement `suiteCores`), so two
+residents each running a suite on one host repeat the 2026-09-14 load incident by
+construction. `run-suite.mjs` therefore holds ONE host-wide `verify` lease for the whole
+verdict: acquired from the shared authority (the seam lives in
+`impl/scripts/suite-host-lease.mjs` so tests can stage it) before the lanes start,
+released at the verdict whichever way it ends. While the request waits it prints the
+queued row — `position`, `ahead`, `shortfall`, the #329 shape. A spent wait refuses
+BEFORE any lane starts, the way a recruit refuses pre-effect — unless the dimension
+names a limit no wait could cure: a `budget` shortfall (another lease holds the lane)
+or a `load` shortfall (the host is oversubscribed) can resolve, so the run refuses; a
+`memory` shortfall means the host itself cannot fund a full suite's entitled share, a
+standing property of a small host, so the run proceeds degraded without mutual exclusion
+and warns loudly instead of bricking (`suiteQueueTimeoutDecision`; unknown failures
+fail closed to refuse). No lane ever runs starved without saying so.
+`BATON_HOST_CAPACITY_DISABLED=1` stays the operator bypass (the run acquires nothing and
+touches no lease directory); a nested runner — one spawned from a test file, carrying
+`BATON_TEST_SUITE_ROOT` — stays unwired the same way deployments do, so the suite's own
+self-checks (which spawn the runner) never queue behind their parent's lease on a host
+that is oversubscribed by design. Every test-file child stays unwired through the
+`BATON_HOST_CAPACITY_DISABLED=1` the runner already pins in the child environment. The
+runner's own wait defaults short (2s): verify leases are held for whole suites and checks
+(minutes), so a longer wait would only delay the same refuse/degrade decision while
+stalling time-bound runs on a host with no room; `BATON_HOST_CAPACITY_WAIT_MS` extends it
+when queuing behind a known-finishing holder and `BATON_HOST_CAPACITY_POLL_MS` sets the
+queue poll. Catchable signals release through the verdict path's `finally`; a SIGKILL-class
+death between acquire and release holds the lease until the authority's dead-holder sweep
+reclaims it — the designed recovery for a crashed resident, not a second release path.
+
+## 3c. The worker's verify on the participant row (#333; #332 wires the row)
+
+A worker's suite is a `verify` lease held under the seat's holder name
+(`participant:<swarmId>:<participantId>`, the same template the worker holder set mints),
+and the deployment summary's `hostCapacity.used.leases.verify` counts it — verify leases
+are counted by kind, so worker suites read beside verdict leases with no special case.
+`impl/src/host-capacity.mjs` exports the ONE derivation the swarm view's participant row
+projects through: `projectParticipantVerify(queue, verifyHolders, holder)` (pure — a queue
+entry under the name reads `{state: 'queued', position, ahead}`, a live verify lease
+under it reads `{state: 'admitted', position: null, ahead: null}`, anything else reads
+null) and the authority method `observeParticipantVerify(holder)` (the same non-mutating
+live-pid read `observeNow()` performs, folded through the derivation).
+
+Coordination note for the #332 lane, which owns `impl/src/swarm-runtime.mjs`: wire the
+row by calling `this.hostCapacity.observeParticipantVerify(
+`participant:${swarmId}:${participantId}`)` per participant (guarded by `typeof ... ===
+'function'`, so an unwired runtime keeps the row absent) and attaching the result as
+`verify` — null when the seat holds and waits on nothing. This lane does not touch
+swarm-runtime.mjs.
+
 ## 4. The derived workspace floor (#307)
 
 The floor beneath a reservation wave is a record, not a constant:
