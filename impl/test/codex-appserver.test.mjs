@@ -12,6 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn as realSpawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -661,6 +662,56 @@ test('XA11: kill() force-ends the worker and emits kill.confirmed once the proce
   const confirmed = await until(events, (e) => e.kind === 'kill.confirmed');
   assert.equal(confirmed.worker, worker);
   assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
+});
+
+// ---------------------------------------------------------------------------
+// #281 Codex half (audit A-E7/A-I5, A-G3)
+// ---------------------------------------------------------------------------
+
+test('A-E7/A-I5: spawn() launches the app-server child with cwd set to the worker worktree, never the orchestrator directory', async () => {
+  const seen = [];
+  const adapter = new CodexAppServerCli({
+    cmd: process.execPath,
+    args: [FIXTURE, '--serve'],
+    requestTimeoutMs: 2000,
+    ceiling: 4,
+    versionProbe: () => 'fake-codex/0.144.0-test',
+    spawnFn: (cmd, args, opts) => {
+      seen.push({ ...opts });
+      return realSpawn(cmd, args, opts);
+    },
+  });
+  const events = collect(adapter);
+  const worker = 'w-cwd';
+  const worktree = freshWorktree();
+  try {
+    assert.equal((await adapter.spawn(worker, makeBrief('trivial'), { worktree })).ok, true);
+    await until(events, (e) => e.kind === 'lifecycle.turn_completed');
+    assert.equal(seen.length, 1, 'exactly one app-server child is spawned per worker');
+    assert.equal(seen[0].cwd, worktree, 'the app-server process itself runs in the worker worktree (A-E7)');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('A-G3: kill() reports unconfirmed while the process has not confirmed its exit, and terminal once it has', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w-unconfirmed';
+  try {
+    await adapter.spawn(worker, makeBrief('FAKE:STAY_OPEN never finishes'), { worktree: freshWorktree() });
+    await until(events, (e) => e.kind === 'lifecycle.turn_started');
+
+    // The child is still alive: no close fact exists, so the Ack must say unconfirmed —
+    // a bare {ok:true} would read as done while nothing was observed.
+    assert.deepEqual(await adapter.kill(worker), { ok: true, confirmed: false, reason: 'close_pending' });
+    await until(events, (e) => e.kind === 'kill.confirmed');
+
+    // The generation is reaped now: no confirmation event can ever follow, so the Ack IS it.
+    assert.deepEqual(await adapter.kill(worker), { ok: true, terminal: true });
+  } finally {
+    await cleanup(adapter, worker);
+  }
 });
 
 

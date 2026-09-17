@@ -818,7 +818,11 @@ export class CodexAppServerCli {
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
     const processGeneration = normalizeProcessGeneration(opts.processGeneration);
+    // A-E7/A-I5: the app-server child itself runs in the worker's worktree — the thread/start
+    // cwd param pins the THREAD, but a child spawned in the orchestrator's directory still
+    // resolves relative paths, loads config and writes side effects there.
     const child = this._spawnFn(this._cmd, this._args, {
+      cwd,
       env: opts.replaceEnv
         ? { ...(opts.env ?? {}), ...(this._env ?? {}) }
         : { ...process.env, ...(this._env ?? {}), ...(opts.env ?? {}) },
@@ -1140,12 +1144,16 @@ export class CodexAppServerCli {
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up
     session.killing = true;
     const terminalCause = session.timeoutFailure ? 'timeout' : session.processFailure ? 'process_error' : null;
-    void session.processClose.authorizeStop('kill.confirmed', {
+    const auth = await session.processClose.authorizeStop('kill.confirmed', {
       threadId: session.threadId,
       ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
     });
     if (!session.terminal) this._killChild(session);
-    return { ok: true };
+    // A-G3: the Ack reports the latch's own observation — a stop the process has not
+    // confirmed is unconfirmed (confirmed:false with the latch's reason), never a bare ok
+    // that reads as done. The confirmation itself still arrives as kill.confirmed.
+    if (auth?.confirmed === true) return { ok: true, terminal: true };
+    return { ok: true, confirmed: false, reason: auth?.reason ?? 'close_pending' };
   }
 
   // #163 (2026-09-14 audit, swarm-b/lead.md finding 10): the wall-time fate clock is retired here

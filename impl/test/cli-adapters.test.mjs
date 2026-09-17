@@ -597,3 +597,49 @@ test('A-E2/A-F8: an interrupt of an already-reaped one-shot generation returns t
   assert.deepEqual(await adapter.interrupt('never-spawned'), { ok: true, terminal: true });
   assert.deepEqual(await adapter.kill('never-spawned'), { ok: true, terminal: true });
 });
+
+// ---------------------------------------------------------------------------
+// #281 one-shot half (audit A-G3): kill() reports unconfirmed while live
+// ---------------------------------------------------------------------------
+
+test('A-G3: kill() of a live one-shot generation reports unconfirmed until the process confirms its exit', async (t) => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  t.after(() => {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already exactly reaped */ }
+  });
+  await once(child, 'spawn');
+
+  const adapter = new CodexCli({ maxWireFrameBytes: 32 });
+  const events = [];
+  let resolveConfirmed;
+  const confirmed = new Promise((resolve) => { resolveConfirmed = resolve; });
+  adapter.onEvent((event) => {
+    events.push(event);
+    if (event.kind === 'kill.confirmed') resolveConfirmed(event);
+  });
+  const session = {
+    worker: 'kill-unconfirmed', child, terminal: false, turnSettled: false,
+    processClosePending: false, processClosedEmitted: false, processGeneration: 1,
+    processReapTimeoutMs: 2000, turnEpoch: 1, buf: '', logicalSequence: 0,
+    spawnError: null, timeoutFailure: null,
+  };
+  adapter._sessions.set(session.worker, session);
+  adapter._processCloseLatch(session);
+  child.once('close', (code, signal) => adapter._onClose(session, code, signal));
+
+  // The child is still alive: no close fact exists, so the Ack must say unconfirmed —
+  // a bare {ok:true} would read as done while nothing was observed.
+  assert.deepEqual(await adapter.kill(session.worker), { ok: true, confirmed: false, reason: 'close_pending' });
+
+  let timeout;
+  await Promise.race([
+    confirmed,
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('kill confirmation timed out after SIGKILL close')), 5000); }),
+  ]).finally(() => clearTimeout(timeout));
+
+  // The generation is reaped now: no confirmation event can ever follow, so the Ack IS it.
+  assert.deepEqual(await adapter.kill(session.worker), { ok: true, terminal: true });
+});

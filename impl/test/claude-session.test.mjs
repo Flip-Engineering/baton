@@ -647,6 +647,90 @@ test('CS14: kill() on a cooperative process confirms promptly via plain SIGTERM 
 });
 
 // ---------------------------------------------------------------------------
+// #281 Claude half (audit A-E3/A-N1, A-G3, A-G4/A-I7)
+// ---------------------------------------------------------------------------
+
+test('A-E3/A-N1: an auth-refresh respawn advances the process generation, starts the new child under it, and still closes the replaced generation', async () => {
+  let refreshed = 0;
+  const { cli, events, waitForKind } = harness({
+    credentialController: {
+      ensureFresh: async () => {},
+      refresh: async () => { refreshed += 1; },
+      projectionEnv: () => ({}),
+    },
+  });
+  const w = 'auth-refresh-gen';
+  try {
+    assert.equal((await cli.spawn(w, brief('TRIGGER_AUTH_REFUSAL'), { worktree: process.cwd() })).ok, true);
+    const terminal = await waitForKind('lifecycle.turn_completed', 8000);
+    assert.equal(terminal.payload.result.status, 'failed');
+    assert.equal(terminal.payload.result.failure?.code, 'authentication_refresh_required');
+    assert.equal(refreshed, 1, 'the failed turn retried through exactly one credential refresh');
+
+    // The replacement process is a NEW generation: two distinct OS processes must never share
+    // one generation number, or every generation-keyed guard (cost ledger, result dedup) is
+    // ambiguous across the swap.
+    const starts = events.filter((e) => e.kind === 'lifecycle.process_started');
+    assert.deepEqual(
+      starts.map((e) => e.payload.generation),
+      [1, 2],
+      'the respawned child emits lifecycle.process_started under an advanced generation',
+    );
+
+    // The replaced generation still owns its process group until reaped: its close is a fact
+    // about generation 1, not silence.
+    const closes = events.filter((e) => e.kind === 'lifecycle.process_closed');
+    assert.equal(closes.length, 1, 'the replaced generation still reports its close');
+    assert.equal(closes[0].payload.generation, 1);
+  } finally {
+    await cli.kill(w);
+  }
+});
+
+test('A-G4/A-I7: closing the session settles in-flight control requests instead of hanging the interrupt confirmation', async () => {
+  const { cli, waitForKind } = harness();
+  const w = 'drain-on-close';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  await waitForKind('content.message');
+  const session = cli._sessions.get(w);
+  assert.ok(session, 'the worker owns a session');
+  // Hold the wire: create the interrupt round-trip through the real path while the fake can
+  // never answer it — exactly the in-flight shape a close must settle.
+  const write = cli._write.bind(cli);
+  cli._write = (s, obj) => {
+    if (obj?.type === 'control_request') return undefined;
+    return write(s, obj);
+  };
+  const confirmed = cli._sendInterrupt(session);
+  cli._write = write;
+  assert.equal(session.pendingControlRequests.size, 1, 'the interrupt round-trip is in flight');
+  let settled = false;
+  void confirmed.then(() => { settled = true; });
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed', 4000);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(settled, true, 'the in-flight control request settles on close instead of hanging');
+  assert.equal(session.pendingControlRequests.size, 0, 'no control waiter is retained past close');
+  assert.equal(session.pendingInterrupt, null, 'no interrupt confirmation outlives its session');
+});
+
+test('A-G3: kill() reports unconfirmed while the process has not confirmed its exit, and terminal once it has', async () => {
+  const { cli, waitForKind } = harness();
+  const w = 'kill-unconfirmed';
+  await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
+  await waitForKind('content.message');
+
+  // The child is still alive: no close fact exists, so the Ack must say unconfirmed —
+  // a bare {ok:true} would read as done while nothing was observed.
+  assert.deepEqual(await cli.kill(w), { ok: true, confirmed: false, reason: 'close_pending' });
+  await waitForKind('kill.confirmed', 4000);
+
+  // The generation is reaped now: no confirmation event can ever follow, so the Ack IS it.
+  assert.deepEqual(await cli.kill(w), { ok: true, terminal: true });
+});
+
+// ---------------------------------------------------------------------------
 // CS15 — resume: constructor sessionId -> --resume, echoed back on the wire
 // ---------------------------------------------------------------------------
 

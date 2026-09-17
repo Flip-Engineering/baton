@@ -560,12 +560,16 @@ class CliAdapter {
     if (!s?.processClose || s.processClose.confirmed) return { ok: true, terminal: true };
     s.stopping = true; s.killMode = 'kill';
     const terminalCause = s.timeoutFailure ? 'timeout' : s.wireFailure ? 'wire_frame_oversize' : null;
-    void s.processClose.authorizeStop('kill.confirmed', {
+    const auth = await s.processClose.authorizeStop('kill.confirmed', {
       signal: s.processClose.closeFact?.signal ?? 'SIGKILL',
       ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
     });
     if (!s.terminal) this._signal(worker, 'SIGKILL');
-    return { ok: true };
+    // A-G3: the Ack reports the latch's own observation — a stop the process has not
+    // confirmed is unconfirmed (confirmed:false with the latch's reason), never a bare ok
+    // that reads as done. The confirmation itself still arrives as kill.confirmed.
+    if (auth?.confirmed === true) return { ok: true, terminal: true };
+    return { ok: true, confirmed: false, reason: auth?.reason ?? 'close_pending' };
   }
   // A one-shot `exec`/`-p` run can't be steered/answered mid-flight without the app-server/SDK.
   async prompt(worker, content, mode) { return { ok: false, emulated: true, reason: `${mode} unsupported on one-shot ${this._cfg.harness}` }; }

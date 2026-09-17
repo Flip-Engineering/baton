@@ -1358,6 +1358,12 @@ export class ClaudeSessionCli {
       if (session.terminal || session.stopping) return;
       const oldChild = session.child;
       const oldPid = session.pid;
+      // A-E3: retain the replaced generation's latch (and its readiness observation) BEFORE
+      // anything is swapped — once session.child moves on, the spawn-time handlers stop
+      // firing for the old child, so its close must be driven below, against its OWN
+      // generation, or the group silently leaves the ledger.
+      const oldLatch = session.processClose;
+      const oldReady = session.spawnedEmitted;
       const env = {
         ...session.spawnSpec.env,
         ...this._cfg.credentialController.projectionEnv(),
@@ -1365,6 +1371,11 @@ export class ClaudeSessionCli {
       const child = spawn(this._cfg.cmd, session.spawnSpec.argv, {
         cwd: session.spawnSpec.cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
       });
+      // A-N1: the replacement process is a NEW generation — the latch binds the
+      // (generation, pid, group) triple, and every generation-keyed guard (the cost-ledger
+      // rebase in _handleResult, result dedup) keys off it. Two distinct OS processes must
+      // never share one generation number.
+      session.processGeneration = normalizeProcessGeneration(session.processGeneration + 1);
       session.child = child;
       session.pid = child.pid;
       session.buf = '';
@@ -1378,6 +1389,13 @@ export class ClaudeSessionCli {
       session.spawnSpec = Object.freeze({ ...session.spawnSpec, env: Object.freeze({ ...env }) });
       session.processClose = this._newProcessCloseLatch(session);
       this._attachChild(session, child);
+      // A-E3: the new child is a new OS process — it emits lifecycle.process_started under
+      // the new generation, exactly as a spawn does.
+      const processStarted = processStartedPayload(session.processGeneration, session.pid);
+      if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
+      if (oldChild && oldLatch && !oldLatch.confirmed) {
+        oldChild.on('close', (code, signal) => { void oldLatch.close(code, signal, oldReady); });
+      }
       try { process.kill(-oldPid, 'SIGKILL'); } catch { try { oldChild.kill('SIGKILL'); } catch {} }
     } catch (error) {
       session.turnInFlight = false;
@@ -1628,11 +1646,15 @@ export class ClaudeSessionCli {
       }
     }
     const terminalCause = session.timeoutFailure ? 'timeout' : session.processFailure ? 'process_error' : null;
-    void session.processClose.authorizeStop('kill.confirmed', {
+    const auth = await session.processClose.authorizeStop('kill.confirmed', {
       signal: session.processClose.closeFact?.signal ?? 'SIGKILL',
       ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
     });
-    return { ok: true };
+    // A-G3: the Ack reports the latch's own observation — a stop the process has not
+    // confirmed is unconfirmed (confirmed:false with the latch's reason), never a bare ok
+    // that reads as done. The confirmation itself still arrives as kill.confirmed.
+    if (auth?.confirmed === true) return { ok: true, terminal: true };
+    return { ok: true, confirmed: false, reason: auth?.reason ?? 'close_pending' };
   }
 
   // ---------------------------------------------------------------------------
@@ -1663,6 +1685,16 @@ export class ClaudeSessionCli {
       });
     }
     session.terminal = true;
+    // A-G4/A-I7: settle every in-flight control request on close — the interrupt confirmation
+    // promise from _sendInterrupt would otherwise hang forever, and session.pendingInterrupt
+    // would stay non-null past the death of its session. Resolved (never rejected: interrupt()
+    // attaches a bare .then with no rejection handler), before the reap below, so waiters
+    // release promptly and no phantom confirmation can follow (the session is terminal).
+    for (const [wireId, resolve] of session.pendingControlRequests) {
+      session.pendingControlRequests.delete(wireId);
+      try { resolve({ subtype: 'closed', request_id: wireId }); } catch { /* a waiter defect never blocks close */ }
+    }
+    session.pendingInterrupt = null;
     await session.processClose.close(code, signal, session.spawnedEmitted, closeDerived);
   }
 
