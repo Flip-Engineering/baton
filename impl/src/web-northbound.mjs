@@ -10,6 +10,7 @@ import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
+import { projectSwarmView, SWARM_VIEW_PROJECTIONS } from './swarm-contract.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalAndTransportNames } from './application-semantics.mjs';
 import { WakeStream, parseWakeFilter } from './wake-stream.mjs';
 
@@ -1026,6 +1027,110 @@ function admittedRunId(envelope) {
   return envelope.args.runId;
 }
 
+// Issue #343: per-row swarm.view projections over the MCP bridge, with the narrowing named.
+//
+// When a swarm.view answer exceeds the bridge frame, the bridge serves the rows through the
+// per-row projection that fits — never an oversize failure, never an unusable truncated blob —
+// and every narrowed answer names the narrowing it applied (which projection was substituted
+// and what was left out) so the caller can re-request precisely.
+//
+// The ceiling is the declared `wire.frame` substrate row from limits.mjs: the same row the MCP
+// bridge script (impl/scripts/mcp-web.mjs) aligns its maxMessageBytes to, and the same row the
+// native bridge bounds its loopback frames with. No number is re-declared here.
+const SWARM_VIEW_BRIDGE_FRAME_ROW = FRAME_LIMITS['wire.frame'];
+
+// The MCP bridge refuses a tool answer whose tool-result envelope exceeds its frame
+// (mcp-northbound.mjs: the APPLICATION_TOOL ceiling beside toolResult). The resident mirrors
+// that envelope byte-for-byte here — the normalized record wrapped as {content,
+// structuredContent} — so the fit it predicts is the fit the bridge enforces.
+export function swarmViewBridgeFrameBytes(value) {
+  const normalizedValue = value === undefined ? null : JSON.parse(JSON.stringify(value));
+  const structuredContent = normalizedValue !== null && typeof normalizedValue === 'object' && !Array.isArray(normalizedValue)
+    ? normalizedValue : { result: normalizedValue };
+  return Buffer.byteLength(JSON.stringify({
+    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
+    structuredContent,
+    isError: false,
+  }));
+}
+
+// The projections an oversize answer may fall back to, given what the caller asked for. The
+// runtime already applied the requested projection before the resident sees the view, so a
+// fallback may only name rows the received view still carries: from `full` every declared
+// projection is measurable; from `participants` only the per-row slices of the rows it kept
+// (plus the rowless outline); from anything narrower only the outline — re-projecting onto a
+// sibling family would serve an empty frame shaped like data.
+function swarmViewNarrowingCandidates(requested) {
+  if (requested === 'participants') return ['guidance', 'workspace', 'outline'];
+  if (requested === 'full') return ['participants', 'contributions', 'attention', 'guidance', 'workspace', 'knowledge', 'outline'];
+  return ['outline'];
+}
+
+// The sliced families the served projection left out, read empirically off the two views —
+// the keys the received view carried that the served one does not — so no contract export
+// beyond the projections themselves is needed to name them.
+function swarmViewOmittedFamilies(received, served) {
+  return Object.keys(received)
+    .filter((key) => key !== 'projection' && key !== 'narrowing' && !Object.hasOwn(served, key))
+    .sort();
+}
+
+// The per-row fields the served projection left out: the participant-row keys the received
+// rows carried that the served rows do not. Empty when whole rows page through intact.
+function swarmViewOmittedParticipantFields(received, served) {
+  const before = new Set();
+  for (const row of (received?.participants ?? [])) {
+    if (row && typeof row === 'object' && !Array.isArray(row)) for (const key of Object.keys(row)) before.add(key);
+  }
+  if (before.size === 0) return [];
+  const after = new Set();
+  for (const row of (served?.participants ?? [])) {
+    if (row && typeof row === 'object' && !Array.isArray(row)) for (const key of Object.keys(row)) after.add(key);
+  }
+  return [...before].filter((key) => key !== 'participantId' && !after.has(key)).sort();
+}
+
+// Serve a swarm.view answer through the bridge frame: a fitting answer passes through
+// untouched (no narrowing to name); an oversize one is served as the widest fitting
+// per-row projection with the narrowing named. The fit is measured on the FINAL answer — the
+// candidate projection plus the narrowing record itself, which also costs bytes — so what is
+// served is what fits the bridge. When even the rowless outline (named) exceeds the frame, no
+// projection helps and the answer crosses untouched: the bridge's own oversize refusal is the
+// honest fallthrough, never a truncation.
+export function narrowSwarmViewForBridge(view, requestedProjection = null, maxBytes = SWARM_VIEW_BRIDGE_FRAME_ROW.value) {
+  const requested = typeof requestedProjection === 'string' && Object.hasOwn(SWARM_VIEW_PROJECTIONS, requestedProjection)
+    ? requestedProjection : 'full';
+  if (view === null || typeof view !== 'object' || Array.isArray(view)) return view;
+  const actualBytes = swarmViewBridgeFrameBytes(view);
+  if (actualBytes <= maxBytes) return view;
+  const ordered = [];
+  for (const projection of swarmViewNarrowingCandidates(requested)) {
+    const candidate = projectSwarmView(view, projection);
+    ordered.push({ projection, candidate, bytes: swarmViewBridgeFrameBytes(candidate) });
+  }
+  // Widest first: the rows page through the projection that keeps the most of the answer.
+  ordered.sort((left, right) => right.bytes - left.bytes);
+  for (const { projection, candidate } of ordered) {
+    const served = {
+      ...candidate,
+      narrowing: Object.freeze({
+        requested,
+        served: projection,
+        omitted: Object.freeze(swarmViewOmittedFamilies(view, candidate)),
+        omittedParticipantFields: Object.freeze(swarmViewOmittedParticipantFields(view, candidate)),
+        reason: 'frame_ceiling',
+        ceiling: Object.freeze({
+          lane: SWARM_VIEW_BRIDGE_FRAME_ROW.lane, class: SWARM_VIEW_BRIDGE_FRAME_ROW.class,
+          value: maxBytes, unit: SWARM_VIEW_BRIDGE_FRAME_ROW.unit,
+        }),
+        actualBytes,
+      }),
+    };
+    if (swarmViewBridgeFrameBytes(served) <= maxBytes) return served;
+  }
+  return view;
+}
+
 export class WebNorthbound {
   constructor(opts) {
     if (!opts?.coordinator || !opts?.coordination) throw new TypeError('web northbound requires coordinator and coordination authority');
@@ -1708,6 +1813,11 @@ export class WebNorthbound {
     }
     if (value?.result === 'stale_fence') return error(409, 'stale_fence');
     const projected = GOAL_PLAN_MUTATIONS.has(envelope.command) ? sanitizeGoalPlanProjection(value) : json(value);
+    // Issue #343: an oversize swarm.view answer is served through the per-row projection that
+    // fits the bridge frame, naming the narrowing — never an oversize failure or a truncation.
+    if (APPLICATION_COMMAND[envelope.command] === 'swarm.view') {
+      return result(200, { ok: true, commandId: envelope.commandId, result: narrowSwarmViewForBridge(projected, a?.projection) });
+    }
     return result(200, { ok: true, commandId: envelope.commandId, result: projected });
   }
 
