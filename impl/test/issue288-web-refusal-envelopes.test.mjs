@@ -6,7 +6,7 @@
 // the transient row).
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,7 @@ import test from 'node:test';
 import {
   APPLICATION_COMMAND_DEFINITIONS, CoordinationStore, WebNorthbound, WebSessionStore,
 } from '../src/index.mjs';
+import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 
 const NOW = Date.parse('2026-09-14T12:00:00.000Z');
 const ORIGIN = 'https://control.example.test';
@@ -364,4 +365,127 @@ test('U-F3: a plaintext request is refused typed as a permanent transport miscon
   assert.equal(response.body.error.field, 'transport');
   assert.equal(response.body.error.retryable, false, 'a plaintext retry is never the remedy');
   assert.match(response.body.error.action, /https:\/\//u);
+});
+
+// -------------------------------------------------------------------------------------------
+// #336 — the swarm family's typed fold refusals cross the web AS THEMSELVES: the fold's own
+// code and message (with the field/rule it names, when it names one), an HTTP 4xx class
+// (404 not-found, 409 state conflict, 400 shape) and retryable:false. The transient 503
+// fallthrough stays reserved for causes with NO code.
+// -------------------------------------------------------------------------------------------
+
+// The REAL swarm stack behind the web seam: the refusal the caller meets is the ONE the durable
+// fold raises at admission, not a fixture's stand-in for it.
+function swarmFixture() {
+  const directory = scratch('web-swarm');
+  const sessions = new WebSessionStore(join(directory, 'sessions'), { now: () => NOW });
+  const coordination = new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() });
+  const swarmRuntime = new SwarmRuntime({
+    store: coordination,
+    coordinator: { list: () => [] },
+    authorize: async () => true,
+    prepareRun: (request) => request,
+    startRun: async () => { throw new Error('no native runs in this fixture'); },
+    stopRun: async () => {},
+  });
+  const application = {
+    repoId: REPO_ID, card: applicationCard,
+    async authorizeReplay() { return true; },
+    async command(name, args, principal, context) {
+      return swarmRuntime.command(name, args, {
+        actor: `web:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, context);
+    },
+    async actionAuthority() {
+      return {
+        schemaVersion: 1, actionId: 'act-1', kind: 'approve', effect: 'plan_approval',
+        requiredCapabilities: ['observe'], authorityDigest: 'a'.repeat(64),
+      };
+    },
+  };
+  const web = new WebNorthbound({
+    coordinator: {}, coordination, sessions, application,
+    repoIds: [REPO_ID], allowedOrigins: [ORIGIN], now: () => NOW,
+  });
+  const issued = sessions.issue({
+    userId: 'issue336-operator', authMethod: 'bearer',
+    capabilities: ['observe', 'control', 'approve', 'emergency_stop'], repoIds: [REPO_ID], ttlMs: 60_000,
+  }, { actor: 'issue336-fixture' });
+  const principal = { actor: 'direct:issue336-root', principalId: 'issue336-root', sessionId: 'issue336-root' };
+  return { coordination, web, swarmRuntime, issued, principal };
+}
+
+test('#336: a group_updated naming a non-member crosses as participant_not_found — the fold\'s own refusal, retryable:false', async () => {
+  const { coordination, web, swarmRuntime, issued, principal } = swarmFixture();
+  await swarmRuntime.command('swarm.create', {
+    swarmId: 's-issue336', purpose: 'web refusal envelopes', idempotencyKey: 'issue336:create',
+  }, principal);
+  await coordination.recordSwarm('swarm.participant_joined', {
+    swarmId: 's-issue336', participantId: 'builder-a', role: 'builder',
+  }, { actor: principal.actor, key: 'issue336:join:builder-a' });
+
+  const response = await send(web, {
+    path: '/v1/commands',
+    body: envelope({
+      commandId: 'issue336-cmd-1', idempotencyKey: 'issue336-key-1', command: 'swarm.update',
+      args: {
+        swarmId: 's-issue336', event: 'swarm.group_updated',
+        payload: { groupId: 'impl', members: ['ghost'] }, idempotencyKey: 'issue336-swarm-key-1',
+      },
+    }),
+    headers: { authorization: `Bearer ${issued.token}` },
+  });
+  assert.equal(response.status, 404, 'a refused group seat names what was not found, at 404');
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.error.code, 'participant_not_found', 'the fold code crosses as itself');
+  assert.match(response.body.error.message, /impl/, 'the fold\'s own message names the group');
+  assert.match(response.body.error.message, /ghost/, 'the fold\'s own message names the seat');
+  assert.equal(response.body.error.retryable, false, 'a typed fold refusal is never retryable');
+});
+
+test('#336: every code the swarm fold raises crosses typed — a coded fold refusal never maps to temporarily_unavailable', async () => {
+  // The ONE closed set, read the way the surface-gate fold-admission audit reads it: the literal
+  // codes the event validator and the fold raise in impl/src/swarm-state.mjs. A code added there
+  // without a mapping row fails here (it would cross as the transient row); a mapping row for a
+  // code the fold no longer raises fails here too (a stale row is an invented vocabulary).
+  const foldSource = readFileSync(new URL('../src/swarm-state.mjs', import.meta.url), 'utf8');
+  const raised = new Set();
+  for (const open of foldSource.matchAll(/\b(?:refuse|integrity)\(/gu)) {
+    let depth = 0;
+    let index = open.index;
+    for (; index < foldSource.length; index += 1) {
+      const character = foldSource[index];
+      if (character === '(') depth += 1;
+      else if (character === ')') { depth -= 1; if (depth === 0) break; }
+      else if (character === "'" || character === '`') {
+        const quote = character;
+        index += 1;
+        while (index < foldSource.length && foldSource[index] !== quote) {
+          if (foldSource[index] === '\\') index += 1;
+          index += 1;
+        }
+      }
+    }
+    const call = foldSource.slice(open.index, index + 1);
+    const codes = [...call.matchAll(/,\s*'([a-z][a-z0-9_]*)'\s*,?\s*\)\s*$/gu)];
+    if (codes.length > 0) raised.add(codes[codes.length - 1][1]);
+  }
+  assert.ok(raised.has('participant_not_found'), 'the scan reads the fold the issue names');
+
+  const SHAPE_CODES = new Set(['invalid_payload', 'invalid_body', 'unknown_event_kind',
+    'unsupported_event_kind', 'work_dependency_self']);
+  for (const code of [...raised].sort()) {
+    const expected = code.endsWith('_not_found') ? 404 : SHAPE_CODES.has(code) ? 400 : 409;
+    const { web, context } = fixture({ command: async () => {
+      throw Object.assign(new Error(`fold refused: ${code}`), { code });
+    } });
+    const response = await web.execute(context(), envelope({
+      commandId: `issue336-${code}`, idempotencyKey: `issue336-${code}`,
+    }));
+    assert.equal(response.status, expected, `${code}: crosses with its own 4xx class`);
+    assert.equal(response.body.error.code, code, `${code}: the code crosses as itself`);
+    assert.notEqual(response.body.error.code, 'temporarily_unavailable', `${code}: never the transient row`);
+    assert.equal(response.body.error.retryable, false, `${code}: a coded fold refusal is never retryable`);
+  }
 });

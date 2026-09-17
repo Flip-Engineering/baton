@@ -7,6 +7,7 @@
 // U-E19 rides the same seam: the schema-version verdict runs BEFORE the key closure, so a selector
 // published by a newer resident is refused as version drift, never as "unknown or missing fields".
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -14,9 +15,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import {
-  CLI_CONNECTION_CAUSES, cliConnectionCauseRow, connectBaton, discoverBatonConnection,
+import { BatonWebClient, CLI_CONNECTION_CAUSES, cliConnectionCauseRow, connectBaton, discoverBatonConnection,
 } from '../src/application-cli.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS, CoordinationStore, WebNorthbound, WebSessionStore } from '../src/index.mjs';
+import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 
 const CLI_REGISTRY_DIGEST = APPLICATION_SEMANTIC_REGISTRY.digest;
@@ -315,4 +317,100 @@ test('U-F11: a selector naming another checkout refuses before any transport is 
   assert.equal(refusal?.cause, 'selector_repo_mismatch');
   assert.equal(refusal?.field, 'repoId');
   assert.deepEqual(transport.requests, [], 'a selector mismatch never opens a transport');
+});
+
+// -------------------------------------------------------------------------------------------
+// #336 — a coded swarm fold refusal crosses the CLI AS ITSELF. The resident composes the
+// envelope (the fold's own code and message, retryable:false); the web client surfaces the
+// WIRE refusal verbatim — the #231 pass-through — so an agent sees `participant_not_found`,
+// never the transient `temporarily_unavailable` row and never a transport failure.
+// -------------------------------------------------------------------------------------------
+
+const CLI_SWARM_ORIGIN = 'https://control.example.test';
+
+test('#336: a coded swarm fold refusal surfaces through the web client as itself — wire code, fold message, retryable:false', async () => {
+  // The real swarm stack behind the real northbound: the refusal the client meets is the ONE the
+  // durable fold raises, composed by the resident's own web layer.
+  const directory = scratch('cli-swarm');
+  const sessions = new WebSessionStore(join(directory, 'sessions'), { now: () => NOW });
+  const coordination = new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() });
+  const swarmRuntime = new SwarmRuntime({
+    store: coordination,
+    coordinator: { list: () => [] },
+    authorize: async () => true,
+    prepareRun: (request) => request,
+    startRun: async () => { throw new Error('no native runs in this fixture'); },
+    stopRun: async () => {},
+  });
+  const repoId = 'repo-issue336-cli';
+  const application = {
+    repoId,
+    card: () => ({ schemaVersion: 1, repoId, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+    async authorizeReplay() { return true; },
+    async command(name, args, principal, context) {
+      return swarmRuntime.command(name, args, {
+        actor: `web:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, context);
+    },
+  };
+  const web = new WebNorthbound({
+    coordinator: {}, coordination, sessions, application,
+    repoIds: [repoId], allowedOrigins: [CLI_SWARM_ORIGIN], now: () => NOW,
+  });
+  const principal = { actor: 'direct:issue336-root', principalId: 'issue336-root', sessionId: 'issue336-root' };
+  await swarmRuntime.command('swarm.create', {
+    swarmId: 's-issue336', purpose: 'cli refusal causes', idempotencyKey: 'issue336:create',
+  }, principal);
+  await coordination.recordSwarm('swarm.participant_joined', {
+    swarmId: 's-issue336', participantId: 'builder-a', role: 'builder',
+  }, { actor: principal.actor, key: 'issue336:join:builder-a' });
+
+  // A client whose fetch drives the real northbound handle — the full HTTP composition runs.
+  const fetchImpl = async (url, options = {}) => {
+    const req = new EventEmitter();
+    Object.assign(req, {
+      method: options.method ?? 'GET', url: new URL(url).pathname,
+      headers: { origin: CLI_SWARM_ORIGIN, 'content-type': 'application/json', ...(options.headers ?? {}) },
+      socket: { encrypted: true, remoteAddress: '127.0.0.1' }, destroy() {},
+    });
+    const res = { status: 0, raw: '' };
+    const pending = web.handle(req, {
+      writeHead(status) { res.status = status; },
+      end(body = '') { res.raw = body; },
+    });
+    queueMicrotask(() => {
+      if (options.body) req.emit('data', Buffer.from(options.body));
+      req.emit('end');
+    });
+    await pending;
+    return {
+      ok: res.status >= 200 && res.status < 300, status: res.status,
+      headers: { get: () => null }, text: async () => res.raw,
+    };
+  };
+  // The client authenticates like a real CLI: with a bearer token the session store issued.
+  const issued = sessions.issue({
+    userId: 'issue336-operator', authMethod: 'bearer',
+    capabilities: ['observe', 'control', 'approve', 'emergency_stop'], repoIds: [repoId], ttlMs: 60_000,
+  }, { actor: 'issue336-fixture' });
+  const client = new BatonWebClient({
+    baseUrl: 'https://resident.baton.test', origin: CLI_SWARM_ORIGIN, repoId,
+    token: issued.token, commandTimeoutMs: 1_000, pollMs: 10,
+    fetchImpl, clock: () => NOW, sleep: async () => {},
+  });
+  const refusal = await client.command('swarm.update', {
+    swarmId: 's-issue336', event: 'swarm.group_updated',
+    payload: { groupId: 'impl', members: ['ghost'] }, idempotencyKey: 'issue336-cli-key-1',
+  }).then(() => null, (error) => error);
+
+  assert.equal(refusal?.code, 'participant_not_found', 'the wire code crosses as itself');
+  assert.match(refusal?.message ?? '', /HTTP 404/u, 'the refusal is the 4xx class, not the transient 503');
+  assert.match(refusal?.message ?? '', /impl/, 'the fold\'s own message names the group');
+  assert.match(refusal?.message ?? '', /ghost/, 'the fold\'s own message names the seat');
+  assert.equal(refusal?.detail?.code, 'participant_not_found', 'the full parsed error rides as detail');
+  assert.equal(refusal?.detail?.retryable, false, 'the not-retryable verdict crosses');
+  assert.notEqual(refusal?.code, 'temporarily_unavailable', 'never the transient row');
+  assert.notEqual(refusal?.code, 'cli_transport_failed', 'a served refusal is never a transport failure');
+  swarmRuntime.close();
 });

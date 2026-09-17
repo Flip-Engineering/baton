@@ -446,6 +446,49 @@ function idempotencyConflictRefusal(prior, envelope) {
     `idempotency conflict: this idempotencyKey was admitted with a different ${axis}; resend the identical request to replay the admitted one, or use a fresh idempotencyKey for a different intent`,
     field, { detail: { movedAxis: axis }, retryable: false });
 }
+// #336: the swarm family's ONE closed fold refusal set, with the HTTP class each code crosses
+// the web with: 404 when the request names a row the swarm does not hold, 409 when the ledger's
+// current state conflicts with the request, 400 when the request itself is malformed. The set is
+// read from the family's own sources — the literal codes `validateSwarmEvent` and
+// `foldSwarmEvent` raise (impl/src/swarm-state.mjs), the same set the surface-gate
+// fold-admission audit (SWARM_FOLD_ADMISSION_PINS plus the shape and admission-guarded codes)
+// already enumerates — never a second vocabulary. The closure is pinned row by row in
+// issue288-web-refusal-envelopes.test.mjs: a code the fold raises without a row here would cross
+// as the transient `temporarily_unavailable` (the bug this fixes), and a row here for a code the
+// fold no longer raises is a stale invention the same row refuses.
+export const SWARM_FOLD_REFUSAL_HTTP_STATUS = Object.freeze({
+  // Not-found (404): the request names a swarm, seat, work, group, coupling or contribution the
+  // swarm does not hold.
+  swarm_not_found: 404,
+  participant_not_found: 404,
+  work_not_found: 404,
+  group_not_found: 404,
+  coupling_not_found: 404,
+  contribution_not_found: 404,
+  // State conflicts (409): the swarm holds a row or version the request disagrees with.
+  swarm_duplicate: 409,
+  participant_duplicate: 409,
+  participant_not_active: 409,
+  version_conflict: 409,
+  swarm_already_arrived: 409,
+  swarm_already_closed: 409,
+  swarm_coupling_released: 409,
+  swarm_coupling_conflict: 409,
+  swarm_writer_conflict: 409,
+  swarm_writer_workspace_unrecorded: 409,
+  swarm_not_a_member: 409,
+  contribution_duplicate: 409,
+  contribution_author_mismatch: 409,
+  contribution_revision_conflict: 409,
+  work_dependency_cycle: 409,
+  // Shape (400): the request's own payload is malformed for the event it names.
+  invalid_payload: 400,
+  invalid_body: 400,
+  unknown_event_kind: 400,
+  unsupported_event_kind: 400,
+  work_dependency_self: 400,
+});
+
 function dispatchFailure(cause) {
   const goalPlanCode = cause?.code;
   if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
@@ -596,6 +639,24 @@ function dispatchFailure(cause) {
         leaseKind: cause.leaseKind ?? null, waitMs: cause.waitMs ?? null, shortfall, bypass: cause.bypass ?? null,
       },
     } } };
+  }
+  // #336: the swarm family's typed fold refusals cross AS THEMSELVES. This arm is the wave
+  // lane's W6/F4 precedent applied to the swarm fold: every code the family's ONE closed fold
+  // refusal set raises (impl/src/swarm-state.mjs `validateSwarmEvent` + `foldSwarmEvent` — the
+  // same set the surface-gate fold-admission audit pins and the durable swarm.operation_refused
+  // row records) crosses with its own code, the fold's own message, the field/rule it named, an
+  // HTTP 4xx class (404 not-found, 409 state conflict, 400 shape) and retryable:false. The
+  // transient 503 fallthrough below stays reserved for causes with NO code.
+  if (SWARM_FOLD_REFUSAL_HTTP_STATUS[goalPlanCode] !== undefined) {
+    const detail = isRecord(cause?.detail) ? cause.detail : null;
+    const field = detail !== null && typeof detail.field === 'string' ? safeFieldName(detail.field) : null;
+    return failure(SWARM_FOLD_REFUSAL_HTTP_STATUS[goalPlanCode], goalPlanCode,
+      typeof cause?.message === 'string' && cause.message.length > 0 ? cause.message : 'swarm mutation refused',
+      {
+        retryable: false,
+        ...(field !== null ? { field } : {}),
+        ...(detail !== null ? { detail } : {}),
+      });
   }
   // D5 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): the wave lane's typed refusals
   // carry the lane's OWN message byte-identically (W6/F4) plus the {actual, cap, cause, role}
