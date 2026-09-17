@@ -5480,7 +5480,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 309,
+          "size": 316,
           "seam": "surface",
           "evidence": [
             "observation:durable_read",
@@ -5517,7 +5517,7 @@
         {
           "name": "_debugMember",
           "ordinal": 0,
-          "size": 39,
+          "size": 51,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
@@ -11954,7 +11954,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 472,
+          "size": 508,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
