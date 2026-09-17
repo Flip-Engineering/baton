@@ -18,7 +18,7 @@
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { renderBrief } from './adapter.mjs';
+import { providerRefusalsForHarness, renderBrief } from './adapter.mjs';
 import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
@@ -568,6 +568,10 @@ export class OmpRpcCli {
         hostProcess: 'same_uid', guarantees: ['worktree-cwd', 'profile-isolation'],
         surface: 'rpc-stdio',
       },
+      // #341 part 2: the closed provider-refusal table this card's providers (deepseek, zai, omp
+      // itself) answer a spent plan/limit or a refused key with — the route reads blocked off their
+      // own words instead of staying "ready" while every successor on it dies.
+      providerRefusals: providerRefusalsForHarness('omp'),
     };
   }
 

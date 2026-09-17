@@ -16,9 +16,12 @@ import { BatonWebHost } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
-import { PROVIDER_FAULT_CODES } from './provider-faults.mjs';
-import { ProviderQuotaAuthority } from './route-quota.mjs';
+import { PROVIDER_FAULT_CODES, parseProviderResetAt } from './provider-faults.mjs';
+import { ProviderQuotaAuthority, routeQuotaKey } from './route-quota.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
+import { matchProviderRefusal, PROVIDER_RESET_AT_FROM_TEXT } from './adapter.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
+import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
 import { createRecipes } from './recipes.mjs';
@@ -1820,6 +1823,197 @@ function requestedReadiness(options, routeStates) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+// ── #341 part 2: a provider refusal feeds route readiness ───────────────────────────────────────
+//
+// A provider that refused a turn said so in its own words, and the deployment's ledger is where
+// that answer already landed (the crash cert, or the failed turn a session-shaped adapter typed).
+// #341's observed failure was that the text was the ONLY place the fact existed: readiness kept
+// reporting the route ready while every recruit on it died within seconds with the identical
+// refusal. So ONE derivation reads the ledger and derives the route's block from it — through the
+// route card's CLOSED refusal table (adapter.mjs), never through a regex of this module's own —
+// and the readiness rows and every pre-effect admission read THAT derivation: one authority, no
+// second copy to drift.
+
+/** The bytes a candidate provider text is read to: the lane's own attention bound, never a literal
+ * of this module (the same bound provider-faults.mjs scans its answers with). */
+const PROVIDER_REFUSAL_SCAN_BYTES = FRAME_LIMITS['view.attention_text.bytes'].value;
+
+/** The bytes a published `lastProviderRefusal.text` is bounded to — the bound this row already
+ * published before a refusal became readiness evidence (#341 part 1's row contract). */
+const PROVIDER_REFUSAL_TEXT_BYTES = 1024;
+
+/** The ledger kinds a provider refusal rides: the crash cert, and the turn terminal (a
+ * session-shaped adapter types its provider's refusal onto the failed turn, not a crash). */
+const REFUSAL_LEDGER_KINDS = Object.freeze(['lifecycle.crashed', 'lifecycle.turn_completed']);
+
+/** The verdict a `lifecycle.turn_completed` row published: adapters wrap the WorkerResult as
+ * `{result}` (the session tiers) or emit it directly (the CLI tiers), and the coordinator
+ * normalizes the two spellings the same way. */
+function turnVerdictOf(payload) {
+  const result = payload?.result !== undefined && payload?.status === undefined ? payload.result : payload;
+  return typeof result?.status === 'string' ? result.status : null;
+}
+
+/** The provider text a died or failed turn row carries, in the order the adapters spell it: the
+ * crash error, the process's own last words, the typed failure message, then the turn summary. */
+function refusalTextsOf(payload) {
+  if (!record(payload)) return [];
+  const failure = record(payload.failure) ? payload.failure
+    : record(payload.result?.failure) ? payload.result.failure : null;
+  return [payload.error, payload.stderrTail, failure?.message, payload.summary, payload.result?.summary]
+    .filter((value) => typeof value === 'string' && value.length > 0);
+}
+
+/** The refusal one ledger row carries, or null. Two forms of evidence, both closed:
+ * the boundary's OWN typed quota code (#295 — an adapter that already classified its provider's
+ * answer needs no second reading of it), or a row whose text matches a row of the route card's
+ * refusal table (#341 part 2 — the provider's own words, and nothing else). */
+function refusalEvidenceOf(payload, card) {
+  const texts = refusalTextsOf(payload);
+  if (payload?.code === PROVIDER_FAULT_CODES.quota) {
+    const detail = record(payload.detail) ? payload.detail : null;
+    return {
+      code: PROVIDER_FAULT_CODES.quota,
+      text: texts[0] ?? '',
+      resetAt: typeof detail?.resetAt === 'string' && Number.isFinite(Date.parse(detail.resetAt))
+        ? new Date(Date.parse(detail.resetAt)).toISOString() : null,
+      resetAtFromText: false,
+    };
+  }
+  for (const text of texts) {
+    const row = matchProviderRefusal(card, text.slice(0, PROVIDER_REFUSAL_SCAN_BYTES));
+    if (!row) continue;
+    return {
+      code: row.code, text, resetAt: null,
+      resetAtFromText: row.resetAt === PROVIDER_RESET_AT_FROM_TEXT,
+    };
+  }
+  return null;
+}
+
+/** The text a refusal row publishes: the #299 redaction applied BEFORE the bound, so a
+ * token-shaped value can never cross the row even when it sits inside the bytes that survive. */
+function publishedRefusalText(text) {
+  const scanned = typeof text === 'string' ? text.slice(0, PROVIDER_REFUSAL_SCAN_BYTES) : '';
+  return scanned === '' ? '' : sanitizeVerifierDiagnosticText(scanned).text.slice(0, PROVIDER_REFUSAL_TEXT_BYTES);
+}
+
+/** Strict ledger order: the stamped instant decides, and two rows stamped in the same millisecond
+ * are ordered by their worker's own gap-free seq only when they share a worker. A cross-worker tie
+ * is not an ordering, so it never retires a refusal (fail-closed). */
+function ledgerPositionAfter(candidate, prior) {
+  if (prior === null) return true;
+  if (candidate.at !== prior.at) return candidate.at > prior.at;
+  return candidate.worker === prior.worker && candidate.seq > prior.seq;
+}
+
+/** The adapter card that owns one exact route's provider vocabulary: the liveness matcher when it
+ * resolves the route (the same authority the occupancy ceiling reads), else the adapter whose card
+ * advertises the harness — the tier the fixture and legacy cards publish from. */
+function routeAdapterCard(route, { adapters = {}, liveness = null } = {}) {
+  const matched = liveness?.adapterFor?.(route)?.adapter ?? null;
+  const adapter = matched ?? Object.values(adapters).find((candidate) => {
+    try { return candidate?.card?.()?.harness === route.harness; } catch { return false; }
+  }) ?? adapters?.[route.harness] ?? null;
+  if (typeof adapter?.card !== 'function') return null;
+  try { return adapter.card() ?? null; } catch { return null; }
+}
+
+/**
+ * The last provider refusal and the last successful turn this deployment's ledger holds for each
+ * served route. Clock-free: an instant only ever enters as `resetAt`, and its expiry is derived at
+ * read time (`liveRefusalBlock`), so a block lapses because arithmetic says so, never because a
+ * timer fired.
+ */
+function deriveRouteRefusals({ log, routes, cardContext }) {
+  const observations = new Map();
+  for (const route of routes) {
+    const key = routeQuotaKey(route);
+    if (key === null) continue;
+    observations.set(key, {
+      route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
+      refusal: null, refusalRow: null, success: null,
+    });
+  }
+  if (!log || observations.size === 0) return observations;
+  const cards = new Map();
+  const cardFor = (route) => {
+    const key = routeQuotaKey(route);
+    if (!cards.has(key)) cards.set(key, routeAdapterCard(route, cardContext));
+    return cards.get(key);
+  };
+  for (const worker of log.workers()) {
+    for (const kind of REFUSAL_LEDGER_KINDS) {
+      for (const event of log.byKind(worker, kind)) {
+        const key = routeQuotaKey({
+          harness: event.harnessResolved, model: event.modelResolved, effort: event.effortResolved,
+        });
+        const entry = key === null ? undefined : observations.get(key);
+        if (!entry) continue;
+        const position = { at: event.ts, worker: event.worker, seq: event.seq };
+        if (kind === 'lifecycle.turn_completed') {
+          const verdict = turnVerdictOf(event.payload);
+          if (verdict === 'completed') {
+            if (ledgerPositionAfter(position, entry.success)) entry.success = position;
+            continue;
+          }
+          if (verdict !== 'failed') continue;
+        }
+        const evidence = refusalEvidenceOf(event.payload, cardFor(entry.route));
+        if (!evidence || !ledgerPositionAfter(position, entry.refusal)) continue;
+        const text = publishedRefusalText(evidence.text);
+        const resetAt = evidence.resetAt
+          ?? (evidence.resetAtFromText ? parseProviderResetAt(evidence.text) : null);
+        entry.refusal = { ...position, code: evidence.code, resetAt };
+        entry.refusalRow = Object.freeze({ code: evidence.code, text, at: event.ts, resetAt });
+      }
+    }
+  }
+  return observations;
+}
+
+/** The route's live refusal block, or null: a refusal no LATER successful turn retired, and whose
+ * provider-stated instant has not passed. Derived from the recorded positions and the clock. */
+function liveRefusalBlock(entry, now) {
+  const refusal = entry.refusal;
+  if (!refusal) return null;
+  if (entry.success !== null && ledgerPositionAfter(entry.success, refusal)) return null;
+  if (refusal.resetAt !== null && Date.parse(refusal.resetAt) <= now) return null;
+  return Object.freeze({
+    state: 'blocked', route: entry.route,
+    code: refusal.code, resetAt: refusal.resetAt, observedAt: refusal.at,
+    lastProviderRefusal: entry.refusalRow,
+  });
+}
+
+const EMPTY_REFUSAL_RECORD = Object.freeze({ live: new Map(), observed: new Map() });
+
+/**
+ * #341 part 2: the ONE provider-refusal accessor for a deployment — the refusals its ledger holds
+ * for its served routes, and the blocks the deployment's own clock derives from them.
+ *
+ * Deliberately uncached: the ledger read (`Log.byKind`) is itself the append-aware path (it
+ * re-parses exactly the bytes appended since the last read), while a cache keyed on a remembered
+ * per-worker tail silently misses an append made through ANOTHER Log instance — the shape every
+ * fixture that stages a crash writes through — and would hold a block the ledger has retired.
+ * Returns `{ live, observed }`: the blocks the route reads today, and the last refusal the route's
+ * ledger holds whether or not it is still live.
+ */
+function providerRefusalIndex({ log, routes, adapters = {}, liveness = null, now = Date.now }) {
+  return () => {
+    const rows = deriveRouteRefusals({ log, routes, cardContext: { adapters, liveness } });
+    const live = new Map();
+    const observed = new Map();
+    const at = now();
+    for (const [key, entry] of rows) {
+      if (entry.refusalRow) observed.set(key, entry.refusalRow);
+      const block = liveRefusalBlock(entry, at);
+      if (block) live.set(key, block);
+    }
+    return Object.freeze({ live, observed });
+  };
+}
+
 function assertRouteReady(options, readiness) {
   const route = requestedReadiness(options, readiness.routes);
   if (route?.state !== 'blocked') return;
@@ -1828,6 +2022,14 @@ function assertRouteReady(options, readiness) {
     state: route.state,
     route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
   });
+}
+
+/** The blocked row's summary, in the vocabulary of the fact that blocked it: a provider that named
+ * the instant it answers again, or one that named none (only a later successful turn retires it). */
+function providerBlockSummary(block) {
+  const until = block.resetAt
+    ? `until ${block.resetAt}` : 'until a later turn on it succeeds';
+  return `The exact route is blocked by its provider (${block.code}) ${until}; recruit on another route.`;
 }
 
 /** #295 item 4: the exhausted-route block that applies to a requested exact route, or null. */
@@ -1840,31 +2042,79 @@ function routeQuotaBlockOf(options, readiness, quota) {
   } catch { return null; }
 }
 
-/** The refusal a recruit on an exhausted route draws BEFORE any effect: it names the route, the
- * typed class, and — when the provider's own answer carried one — the reset instant. */
-function providerQuotaRefusal(block) {
-  const { harness, model, effort } = block.route;
-  const window = block.resetAt
-    ? `until ${block.resetAt}` : 'until its provider reports a reset time';
-  return Object.assign(new Error(
-    `route ${harness}/${model}@${effort} is exhausted (${block.code}) ${window}; recruit on another route or wait for the reset`,
-  ), { code: block.code, state: 'blocked', route: Object.freeze({ harness, model, effort }), resetAt: block.resetAt });
+/** The refusal record a caller's `refusals` supplier holds — or an empty one when the caller has no
+ * ledger-derived refusals to consult (the gate's pre-#341 two-argument form). */
+function refusalRecordOf(refusals) {
+  if (typeof refusals !== 'function') return EMPTY_REFUSAL_RECORD;
+  return refusals() ?? EMPTY_REFUSAL_RECORD;
 }
 
-function assertRouteQuotaClear(options, readiness, quota) {
+/** The routes a caller can actually use RIGHT NOW: the static row is not blocked, its provider has
+ * no live exhausted-quota block, and the ledger records no live refusal. The refusal a blocked
+ * route draws names THESE — the alternative the caller needs, not an instruction to go find one. */
+function readyRouteAlternatives(readiness, quota, record) {
+  const labels = [];
+  for (const row of readiness?.routes ?? []) {
+    if (row.state === 'blocked') continue;
+    const route = { harness: row.harness, model: row.model, effort: row.effort };
+    if (quota && typeof quota.blockFor === 'function' && quota.blockFor(route)) continue;
+    const key = routeQuotaKey(route);
+    if (key !== null && record.live.has(key)) continue;
+    labels.push(`${row.harness}/${row.model}@${row.effort}`);
+  }
+  return Object.freeze(labels);
+}
+
+/** The refusal a recruit/run on a blocked route draws BEFORE any effect: it names the route, the
+ * typed class, the instant the provider's own answer stated (or that the provider stated none), and
+ * the routes that ARE ready. */
+function providerRouteRefusal(block, readiness, quota, record) {
+  const { harness, model, effort } = block.route;
+  const window = block.resetAt
+    ? `until ${block.resetAt}` : 'until a later turn on it succeeds';
+  const ready = readyRouteAlternatives(readiness, quota, record);
+  return Object.assign(new Error(
+    `route ${harness}/${model}@${effort} is blocked (${block.code}) ${window}; `
+    + (ready.length > 0
+      ? `routes ready now: ${ready.join(', ')}`
+      : 'no route is ready — wait for the reset or provision another route'),
+  ), {
+    code: block.code,
+    state: 'blocked',
+    route: Object.freeze({ harness, model, effort }),
+    resetAt: block.resetAt ?? null,
+    readyRoutes: ready,
+  });
+}
+
+function assertRouteQuotaClear(options, readiness, quota, refusals = null) {
   const block = routeQuotaBlockOf(options, readiness, quota);
-  if (block) throw providerQuotaRefusal(block);
+  if (block) throw providerRouteRefusal(block, readiness, quota, refusalRecordOf(refusals));
+}
+
+/** #341 part 2: the same pre-effect refusal for a route its provider refused, read from the
+ * deployment's own ledger. Derived from the same index the readiness rows publish, so the row a
+ * caller sees blocked is the one the next recruit is refused by. */
+function assertRouteRefusalClear(options, readiness, refusals) {
+  if (typeof refusals !== 'function') return;
+  const route = requestedReadiness(options, readiness?.routes ?? []);
+  if (!route) return;
+  const record = refusalRecordOf(refusals);
+  const block = record.live.get(routeQuotaKey({ harness: route.harness, model: route.model, effort: route.effort }));
+  if (block) throw providerRouteRefusal(block, readiness, null, record);
 }
 
 /** Issue #324: the pre-effect route gate run admission shares with recruit admission. The
- * SAME two assertions every start-family seam runs — the static readiness row, then (#295
- * item 4) the route's exhausted-quota state — bound to this deployment's rows and quota
- * authority, so a blocked route refuses identically however the run arrives (embedded
- * recruit or resident run.start), and there is never a second derivation to drift. */
-export function routeAdmissionGate(readiness, routeQuota) {
+ * SAME assertions every start-family seam runs — the static readiness row, then (#295 item 4) the
+ * route's exhausted-quota state, then (#341 part 2) the refusals its provider's own words recorded
+ * — bound to this deployment's rows, quota authority and ledger, so a blocked route refuses
+ * identically however the run arrives (embedded recruit or resident run.start), and there is never
+ * a second derivation to drift. */
+export function routeAdmissionGate(readiness, routeQuota, refusals = null) {
   return (options) => {
     assertRouteReady(options, readiness);
-    assertRouteQuotaClear(options, readiness, routeQuota);
+    assertRouteQuotaClear(options, readiness, routeQuota, refusals);
+    assertRouteRefusalClear(options, readiness, refusals);
   };
 }
 
@@ -1904,6 +2154,9 @@ class BatonDeployment {
   #adapters = {};
   #routes = [];
   #routeQuota = null;
+  // #341 part 2: the ONE ledger-derived provider-refusal index this deployment reads (built in
+  // openBatonDeployment, where the ledger and the adapter cards are both in hand).
+  #routeRefusals = null;
   #residentAuthority = null;
   #residentSession = null;
   #ordinaryHostPromise = null;
@@ -1924,6 +2177,7 @@ class BatonDeployment {
     this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
+    this.#routeRefusals = deployment.refusals ?? null;
     this.#adapters = deployment.adapters ?? {};
     this.#routes = deployment.routes ?? [];
     this.#card = Object.freeze({ ...application.card(), readiness });
@@ -1983,17 +2237,20 @@ class BatonDeployment {
     Object.freeze(this);
   }
 
-  /** Every start-family seam asserts the SAME two things before any effect: the static route
-   * readiness, and (#295 item 4) the route's exhausted-quota state. A quota refusal names the
-   * reset instant the provider itself recorded, and expires by derivation from it. */
+  /** Every start-family seam asserts the SAME things before any effect: the static route
+   * readiness, (#295 item 4) the route's exhausted-quota state, and (#341 part 2) the refusals the
+   * deployment's own ledger recorded off the provider's words. Each refusal names the code it
+   * carries, the instant the provider stated when it stated one, and the routes that ARE ready. */
   #assertRouteReady(options) {
     assertRouteReady(options, this.#readiness);
-    assertRouteQuotaClear(options, this.#readiness, this.#routeQuota);
+    assertRouteQuotaClear(options, this.#readiness, this.#routeQuota, this.#routeRefusals);
+    assertRouteRefusalClear(options, this.#readiness, this.#routeRefusals);
   }
 
   /** Issue #35: workspace capacity is observed FRESH at each doctor/card read — disk state
    * moves, and an open-time snapshot would go stale exactly when the answer matters. */
   doctorReadiness() {
+    const refusals = this.#routeRefusals ? this.#routeRefusals() : EMPTY_REFUSAL_RECORD;
     const workspace = this.#workspaceProbe ? this.#workspaceProbe() : null;
     const credential = this.#claudeCredentialProbe ? this.#claudeCredentialProbe() : null;
     const grokCredential = this.#grokCredentialProbe ? this.#grokCredentialProbe() : null;
@@ -2005,20 +2262,29 @@ class BatonDeployment {
       if (route.harness === 'grok' && grokCredential) {
         row = Object.freeze({ ...row, credential: grokCredential });
       }
-      // #295 item 4: a route its provider refused for quota reads blocked until the recorded
-      // reset instant — derived, never re-probed, so readiness returns when the instant passes
-      // and nothing has to poll for it.
-      const quotaBlock = this.#routeQuota
+      const key = routeQuotaKey({ harness: row.harness, model: row.model, effort: row.effort });
+      const lastProviderRefusal = key === null ? null : refusals.observed.get(key) ?? null;
+      // #295 item 4 / #341 part 2: a route its provider refused reads blocked — the quota block the
+      // coordinator recorded, or the refusal the deployment's own ledger holds off the provider's
+      // words. Both are DERIVED on every read, never re-probed, so readiness returns when the
+      // recorded instant passes or a later turn succeeds, and nothing has to poll for it. A row
+      // its own static derivation already blocked keeps that verdict: it is the substrate the
+      // pre-effect assertion reads first.
+      const quotaBlock = this.#routeQuota && key !== null
         ? this.#routeQuota.blockFor({ harness: row.harness, model: row.model, effort: row.effort }) : null;
-      if (quotaBlock) {
-        // The instant the block was OBSERVED, spelled the same way as `resetAt` so the row reads
-        // as one timeline — the authority's own `observedAt`, never a field this reader invents.
-        const blockedSince = Number.isFinite(quotaBlock.observedAt)
-          ? new Date(quotaBlock.observedAt).toISOString() : null;
+      const refusalBlock = key === null ? null : refusals.live.get(key) ?? null;
+      const block = quotaBlock ?? refusalBlock;
+      if (block && row.state !== 'blocked') {
+        // The instant the block was OBSERVED, spelled the same way as `resetAt` so the row reads as
+        // one timeline — the authority's own `observedAt`, or the ledger row's stamped `at`, never a
+        // field this reader invents.
+        const observedAt = quotaBlock
+          ? (Number.isFinite(quotaBlock.observedAt) ? new Date(quotaBlock.observedAt).toISOString() : null)
+          : refusalBlock.observedAt;
         row = Object.freeze({
-          ...row, state: 'blocked', code: quotaBlock.code, resetAt: quotaBlock.resetAt,
-          quotaBlockedSince: blockedSince,
-          summary: `The exact route is exhausted until ${quotaBlock.resetAt ?? 'its provider reports a reset time'} (${quotaBlock.code}); recruit on another route or wait for the reset.`,
+          ...row, state: 'blocked', code: block.code, resetAt: block.resetAt ?? null,
+          quotaBlockedSince: observedAt,
+          summary: providerBlockSummary(block),
         });
       }
       // §4.2.2: doctor rows gain the roster fields — liveness + occupancy (RT-7b), so every
@@ -2030,6 +2296,10 @@ class BatonDeployment {
       const composed = { ...row };
       Object.defineProperty(composed, 'liveness', { value: live.liveness, enumerable: false });
       Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
+      // #341 part 2: the last refusal THIS deployment's ledger holds for the route — published by
+      // the same non-enumerable pattern (a reader sees it; the pre-existing serialized row shape
+      // DP5 pins does not move). Present whenever the ledger holds one, live or already retired.
+      Object.defineProperty(composed, 'lastProviderRefusal', { value: lastProviderRefusal, enumerable: false });
       return Object.freeze(composed);
     }));
     // Epic #103 (D6b): the non-enumerable `briefing` sibling — { packId, composedAtEventSeq,
@@ -2057,7 +2327,7 @@ class BatonDeployment {
     // is, read fresh from the checkout's refs — so a root sees "this resident serves d9b8164c,
     // 4 behind master" on the doctor instead of discovering it on a stale-based lane.
     const served = this.#served ? servedRow(this.#repository.root, this.#served) : null;
-    const routeUsage = this.#routeUsageRows();
+    const routeUsage = this.#routeUsageRows(routes);
     const base = {
       ...this.#readiness, ready, routes, routeUsage,
       ...(workspace ? { workspace } : {}),
@@ -2101,14 +2371,19 @@ class BatonDeployment {
     return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
   }
 
-  #routeUsageRows() {
+  /** #341: the per-route usage row — turns, tokens, usd, the card's concurrency ceiling, and the
+   * route's provider-derived state, read off the SAME composed doctor rows this document publishes
+   * (never a second reading of the ledger), so the usage row and the readiness row can never
+   * disagree about what the provider said. */
+  #routeUsageRows(doctorRows) {
     const log = this.#driver?.log ?? null;
-    const routes = this.#routes;
-    return Object.freeze(routes.map((route) => {
+    const stateOf = new Map((doctorRows ?? []).map((row) => [
+      routeQuotaKey({ harness: row.harness, model: row.model, effort: row.effort }), row,
+    ]));
+    return Object.freeze(this.#routes.map((route) => {
       let turns = 0;
       let tokens = 0;
       let usd = 0;
-      let lastProviderRefusal = null;
       if (log) {
         for (const worker of log.workers()) {
           for (const ev of log.byKind(worker, 'lifecycle.turn_started')) {
@@ -2120,35 +2395,34 @@ class BatonDeployment {
               usd += typeof ev.payload?.usd === 'number' ? ev.payload.usd : 0;
             }
           }
-          for (const ev of log.byKind(worker, 'lifecycle.crashed')) {
-            if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort
-              && ev.payload?.code === PROVIDER_FAULT_CODES.quota) {
-              const text = typeof ev.payload.error === 'string' ? ev.payload.error.slice(0, 1024) : '';
-              if (!lastProviderRefusal || ev.ts > lastProviderRefusal.at) {
-                lastProviderRefusal = { code: PROVIDER_FAULT_CODES.quota, text, at: ev.ts, resetAt: null };
-              }
-            }
-          }
         }
       }
-      const quotaBlock = this.#routeQuota?.blockFor(route) ?? null;
-      const quota = quotaBlock
-        ? Object.freeze({ state: 'exhausted', resetAt: quotaBlock.resetAt })
+      const key = routeQuotaKey(route);
+      const doctorRow = key === null ? null : stateOf.get(key) ?? null;
+      const blocked = doctorRow?.state === 'blocked';
+      const code = blocked ? doctorRow.code ?? null : null;
+      const resetAt = blocked ? doctorRow.resetAt ?? null : null;
+      // The quota axis is the provider's own quota fact: a live exhausted-quota block, or a refusal
+      // whose code IS the quota class. An authentication refusal leaves it `ok` — the route is
+      // blocked, but not because anything ran out.
+      const quotaRefused = code === PROVIDER_FAULT_CODES.quota;
+      const quota = quotaRefused
+        ? Object.freeze({ state: 'exhausted', resetAt })
         : Object.freeze({ state: 'ok', resetAt: null });
       const occupancy = this.#occupancyFor(route);
       let ceiling = occupancy.concurrencyCeiling;
       if (ceiling === null) {
-        const adapter = this.#adapters[route.harness];
-        if (adapter) ceiling = normalizeConcurrencyCeiling(adapter.card()?.concurrencyCeiling, `${route.harness} concurrencyCeiling`);
+        const card = routeAdapterCard(route, { adapters: this.#adapters, liveness: this.#liveness });
+        if (card) ceiling = normalizeConcurrencyCeiling(card.concurrencyCeiling, `${route.harness} concurrencyCeiling`);
       }
-      const state = quotaBlock ? 'blocked' : 'ready';
-      const code = quotaBlock ? PROVIDER_FAULT_CODES.quota : null;
       return Object.freeze({
         route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
-        state, code,
+        state: blocked ? 'blocked' : 'ready',
+        code,
+        resetAt,
         usage: Object.freeze({ turns, tokens, usd }),
         concurrency: Object.freeze({ ceiling, inUse: occupancy.inFlight }),
-        lastProviderRefusal: lastProviderRefusal ? Object.freeze(lastProviderRefusal) : null,
+        lastProviderRefusal: doctorRow?.lastProviderRefusal ?? null,
         quota,
       });
     }));
@@ -2866,6 +3140,16 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     probeTimeoutMs: rawLiveness.probeTimeoutMs ?? 120_000,
     failureWindowMs: rawLiveness.failureWindowMs ?? 10 * 60 * 1000,
   });
+  // #341 part 2: ONE ledger-derived provider-refusal index for this deployment, built here where
+  // the ledger, the adapter cards and the route inventory are all in hand. The readiness rows, the
+  // doctor's usage rows and every pre-effect admission read THIS index — the crash text a provider
+  // refused with is evidence about the route, and it is read through the route card's closed
+  // refusal table, never through a regex of the reader's own. The clock is the deployment's own
+  // (advanced.resident.now), so a provider-stated reset instant expires on the same clock the
+  // quota authority compares against.
+  const routeRefusals = providerRefusalIndex({
+    log: driver.log, routes, adapters, liveness: livenessController, now: residentOptions.now,
+  });
   const grokCredentialProbe = grokCredentialCache ? () => {
     const metadata = grokCredentialCache.metadata();
     if (metadata.state === 'expired_needs_login') {
@@ -2931,14 +3215,15 @@ export async function openBatonDeployment(rawOptions, createDriver) {
         served: servedRow(repository.root, served),
       }),
       // Issue #324: run admission consults route readiness pre-effect through the same gate
-      // recruit admission reads — the deployment's own rows and quota authority, never a
-      // second derivation. A run or explore naming a blocked route refuses inside start(),
-      // before goal/plan records, worktree, capacity reservation, or worker spawn.
-      routeAdmission: routeAdmissionGate(readiness, routeQuota),
+      // recruit admission reads — the deployment's own rows, quota authority (#295) and
+      // ledger-derived provider refusals (#341 part 2), never a second derivation. A run or
+      // explore naming a blocked route refuses inside start(), before goal/plan records, worktree,
+      // capacity reservation, or worker spawn — and the refusal names the ready alternatives.
+      routeAdmission: routeAdmissionGate(readiness, routeQuota, routeRefusals),
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
-      driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
+      driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota, refusals: routeRefusals,
       hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,
       liveness: livenessController,
       claudeCredentialProbe: claudeCredentialCache ? () => claudeCredentialCache.metadata() : null,

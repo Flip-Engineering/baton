@@ -1959,6 +1959,10 @@
       "reason": "#28"
     },
     {
+      "file": "test/issue341-provider-refusals-readiness.test.mjs",
+      "reason": "#341"
+    },
+    {
       "file": "test/issue45-startup-reconcile-red.test.mjs",
       "reason": "#45"
     },

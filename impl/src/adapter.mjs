@@ -23,6 +23,149 @@ import { renderVerificationExecution } from './verification-presentation.mjs';
 import { renderAttentionSection } from './messages.mjs';
 import { advertisesBatonControlSurface } from './control-surface-unification.mjs';
 
+// ── #341 part 2: the closed provider-refusal table a card carries ───────────────────────────────
+//
+// A provider that refuses a turn says so in its OWN words, and until #341 that text was the only
+// place the fact existed: `doctor --check` kept reporting the route ready while every recruit on it
+// died with "You've hit your usage limit … try again at <date>", and readiness never moved (#346,
+// #348: a claude-code seat died on "401 OAuth access token has expired" with readiness still
+// saying ready). The refusal is a fact about the ROUTE — a successor on the same route is refused
+// identically — so the route's own card is where the vocabulary that recognises it is declared: a
+// small CLOSED table, one row per class the provider states in its own text. Readiness matches
+// crash text against THESE rows and nothing else: a pattern with no card row is a pattern nobody
+// owns, and it never blocks a route.
+
+/** The classes a provider refusal falls in.
+ *
+ * `quota` — the provider refused for a spent plan/limit. Its text may name the instant the limit
+ * resets; when it does, that instant is read out of the provider's own words (never invented) and
+ * the route reads blocked until it passes.
+ * `authentication` — the provider refused the credential. No instant exists to wait for, so only a
+ * later turn that succeeds clears the block. */
+export const PROVIDER_REFUSAL_CODES = Object.freeze({
+  quota: 'provider_quota_exhausted',
+  authentication: 'provider_auth_expired',
+});
+
+/** A row whose provider text carries the reset instant the provider itself stated. */
+export const PROVIDER_RESET_AT_FROM_TEXT = 'provider-text';
+
+/**
+ * One card's closed provider-refusal table. Each row is `{code, pattern, resetAt}`: the closed
+ * code the route reads blocked by, the provider's own refusal text as a regex SOURCE (so a table
+ * stays data — serializable, comparable, reviewable as text), and `resetAt` =
+ * PROVIDER_RESET_AT_FROM_TEXT when that text names the reset instant, else null.
+ *
+ * Validated where the card is built: an unknown code or an uncompilable pattern refuses at
+ * construction, never as a silently inert row nobody notices until a lane dies on it.
+ * @param {string} harness the provider whose vocabulary this table is
+ * @param {Array<{code: string, pattern: string, resetAt: string|null}>} rows
+ */
+export function providerRefusals(harness, rows) {
+  if (typeof harness !== 'string' || harness.length === 0) {
+    throw new TypeError('providerRefusals requires the harness the table belongs to');
+  }
+  if (!Array.isArray(rows)) throw new TypeError(`provider refusal table for ${harness} must be an array`);
+  const codes = new Set(Object.values(PROVIDER_REFUSAL_CODES));
+  return Object.freeze(rows.map((row) => {
+    if (!codes.has(row?.code)) {
+      throw new TypeError(`provider refusal row for ${harness} names no known code`);
+    }
+    if (typeof row.pattern !== 'string' || row.pattern.length === 0) {
+      throw new TypeError(`provider refusal row for ${harness} carries no provider text pattern`);
+    }
+    if (row.resetAt !== null && row.resetAt !== undefined && row.resetAt !== PROVIDER_RESET_AT_FROM_TEXT) {
+      throw new TypeError(`provider refusal row for ${harness} declares an unusable resetAt source`);
+    }
+    try { new RegExp(row.pattern, 'iu'); } catch (error) {
+      throw new TypeError(`provider refusal row for ${harness} carries an uncompilable pattern: ${error.message}`);
+    }
+    return Object.freeze({
+      code: row.code, pattern: row.pattern,
+      resetAt: row.resetAt === PROVIDER_RESET_AT_FROM_TEXT ? PROVIDER_RESET_AT_FROM_TEXT : null,
+    });
+  }));
+}
+
+// The provider texts themselves, each captured from the harness that said it — one spelling per
+// provider, so a reader sees whose words a row recognises and no second copy can drift from it.
+
+// codex (#341, observed live): "You've hit your usage limit. Visit
+// https://chatgpt.com/codex/settings/usage … or try again at Sep 19th, 2026 10:28 PM."
+const CODEX_QUOTA_REFUSAL_TEXT = String.raw`you(?:'ve| have)? hit your usage limit|usage limit (?:reached|exceeded)`;
+
+// claude-code (#348): the result strings the claude session tier's own reader already recognises
+// (claude-session.mjs `claudeResultFailureCode`) plus the live capture that opened #348.
+const CLAUDE_AUTH_REFUSAL_TEXT = String.raw`authentication_error|not logged in[^\n]*please run (?:/login|claude auth login)|failed to authenticate[^\n]*\b401\b|oauth access token has (?:expired|been revoked)`;
+
+// muse: the CLI's own login refusal. Muse's headless `exec --json` reports an unusable login on its
+// terminal frame, which parseMuseEvent preserves as the crash reason; the vocabulary is the login
+// refusal the deployment's own muse gate already names (`muse login`, then the file backend).
+const MUSE_AUTH_REFUSAL_TEXT = String.raw`\b(?:not )?log(?:ged)? ?in\b|\blogin (?:required|expired)\b|\bauthentication (?:failed|required|error)\b|\bunauthorized\b|\baccess token (?:expired|revoked|invalid)\b|\bcredential[s]? (?:expired|rejected|invalid)\b`;
+
+// The provider-limit vocabulary every other served provider answers with — the SAME set the
+// provider-faults taxonomy already reads at the omp boundary (#295), plus DeepSeek's documented
+// 402 text ("Insufficient Balance", api-docs.deepseek.com/quick_start/error_codes).
+const PROVIDER_LIMIT_REFUSAL_TEXT = String.raw`usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:balance|quota|credit)|\b402\b`;
+
+/** A card for a harness whose provider refusal text this build has never captured publishes an
+ * EMPTY table — recorded absence, never a pattern guessed on that provider's behalf. Empty, so the
+ * matcher returns null for every text and no route is ever blocked by a pattern nobody owns. */
+export const NO_PROVIDER_REFUSALS = Object.freeze([]);
+
+const PROVIDER_REFUSALS_BY_HARNESS = Object.freeze({
+  codex: providerRefusals('codex', [
+    { code: PROVIDER_REFUSAL_CODES.quota, pattern: CODEX_QUOTA_REFUSAL_TEXT, resetAt: PROVIDER_RESET_AT_FROM_TEXT },
+  ]),
+  'claude-code': providerRefusals('claude-code', [
+    { code: PROVIDER_REFUSAL_CODES.authentication, pattern: CLAUDE_AUTH_REFUSAL_TEXT, resetAt: null },
+  ]),
+  muse: providerRefusals('muse', [
+    { code: PROVIDER_REFUSAL_CODES.authentication, pattern: MUSE_AUTH_REFUSAL_TEXT, resetAt: null },
+  ]),
+  // zai (GLM) and the omp-served providers (deepseek, zai, omp): their own limit refusal, whose
+  // text may name a reset instant.
+  'glm-via-claude': providerRefusals('glm-via-claude', [
+    { code: PROVIDER_REFUSAL_CODES.quota, pattern: PROVIDER_LIMIT_REFUSAL_TEXT, resetAt: PROVIDER_RESET_AT_FROM_TEXT },
+  ]),
+  omp: providerRefusals('omp', [
+    { code: PROVIDER_REFUSAL_CODES.quota, pattern: PROVIDER_LIMIT_REFUSAL_TEXT, resetAt: PROVIDER_RESET_AT_FROM_TEXT },
+    { code: PROVIDER_REFUSAL_CODES.authentication, pattern: String.raw`\b(?:invalid|revoked|expired) (?:api )?key\b|\bunauthorized\b|\b401\b|\bauthentication (?:failed|required|error)\b`, resetAt: null },
+  ]),
+});
+
+/** The closed refusal table the card for this harness carries. */
+export function providerRefusalsForHarness(harness) {
+  return PROVIDER_REFUSALS_BY_HARNESS[harness] ?? NO_PROVIDER_REFUSALS;
+}
+
+const refusalMatchers = new Map();
+
+/** One table holds at most a handful of rows and a card compiles its table on construction, so the
+ * compiled source is cached by its own text — never recompiled on the readiness read path. */
+function refusalMatcher(source) {
+  let compiled = refusalMatchers.get(source);
+  if (compiled === undefined) {
+    compiled = new RegExp(source, 'iu');
+    refusalMatchers.set(source, compiled);
+  }
+  compiled.lastIndex = 0;
+  return compiled;
+}
+
+/**
+ * The refusal row a provider's own text carries, or null. Reads ONLY the card's table: a card that
+ * declares none recognises nothing, so a route is never blocked by a pattern nobody owns (#341).
+ * @param {object} card @param {string} text the provider's own words
+ */
+export function matchProviderRefusal(card, text) {
+  const rows = card?.providerRefusals;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  if (typeof text !== 'string' || text.length === 0) return null;
+  for (const row of rows) if (refusalMatcher(row.pattern).test(text)) return row;
+  return null;
+}
+
 const STOP_SETTLE_MS = 8;
 const MOCK_TOKEN_METRIC = 'mock_scenario_tokens';
 
@@ -445,6 +588,10 @@ export class MockAdapter {
       // SC8: canonical 8-verb card. steer rides prompt(mode:'steer'), approve/answer ride the
       // respond flow — all genuinely implemented here; pause has no implementation and says so.
       verbs: { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'native', answer: 'native', kill: 'native', pause: 'unsupported' },
+      // #341 part 2: the double stands in for a REAL harness, so it publishes that harness's
+      // closed provider-refusal table — a fixture can then drive the readiness derivation through
+      // the same card vocabulary a live route would.
+      providerRefusals: providerRefusalsForHarness(this._harness),
       // Part B (issue #16): a structured decision.requested/answer(optionId|text) event pair,
       // not text-grammar parsing — honestly 'native' for this deterministic test double.
       decision: 'native',
@@ -957,6 +1104,8 @@ export class CodexAdapter extends SubprocessAdapterBase {
       // SC8 honesty: SubprocessAdapterBase implements ONLY spawn — prompt/interrupt/approve/
       // answer/kill are not-implemented stubs, and the card may not claim otherwise.
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
+      // #341 part 2: the provider refusal text this tier's own provider answers with.
+      providerRefusals: providerRefusalsForHarness('codex'),
       decision: 'unsupported',
     };
   }
@@ -978,6 +1127,8 @@ export class ClaudeAdapter extends SubprocessAdapterBase {
       permissions: { mode: 'bypassPermissions', sandbox: 'unverified', boundary: 'Approval autonomy only; host filesystem and network containment are unverified' },
       // SC8 honesty: only spawn is implemented on this legacy subprocess tier (see base stubs).
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
+      // #341 part 2: the claude auth refusal (#348) this tier's provider answers with.
+      providerRefusals: providerRefusalsForHarness('claude-code'),
       decision: 'unsupported',
     };
   }
@@ -993,6 +1144,6 @@ export class GlmAdapter extends ClaudeAdapter {
   card() {
     // No configured limit at this tier: such a constraint belongs to a deployment caller that
     // declares one (advanced.adapterOptions.concurrencyCeiling), never to a subclass default.
-    return { ...super.card(), harness: 'glm-via-claude' };
+    return { ...super.card(), harness: 'glm-via-claude', providerRefusals: providerRefusalsForHarness('glm-via-claude') };
   }
 }

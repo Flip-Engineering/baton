@@ -19,7 +19,7 @@ import { FRAME_LIMITS } from './limits.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
-import { CLI_PROMPT_DIALECT, renderBrief } from './adapter.mjs';
+import { CLI_PROMPT_DIALECT, providerRefusalsForHarness, renderBrief } from './adapter.mjs';
 import { assertAdapterCard } from './adapter-contract.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
@@ -319,6 +319,10 @@ class CliAdapter {
       permissions: this._cfg.permissions,
       workerPolicy: this._cfg.workerPolicy,
       verbs: this._cfg.verbs,
+      // #341 part 2: the provider refusal text this harness answers with, from the ONE closed card
+      // vocabulary (adapter.mjs). A harness whose refusal text this build has never captured
+      // publishes an EMPTY table — honest absence, never a pattern nobody owns.
+      providerRefusals: providerRefusalsForHarness(this._cfg.harness),
     });
   }
 
