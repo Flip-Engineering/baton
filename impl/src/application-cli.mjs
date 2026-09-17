@@ -2427,15 +2427,21 @@ export async function followSwarmCheck(parsed, client, options = {}) {
 /** The seat rows one recruit wrote, classified for the follow leg (issue #331). The admission
  * slice carries the host authority's queued / admitted / timed_out rows per seat; the
  * participant row carries the seat itself — including the `leftReason: 'recruit_refused'` /
- * `leftCode` rollback a refused admission leaves (#308). Returns the outcome with the rows
- * that prove it, or null while the seat is still unobserved. The completed state work-332
+ * `leftCode` rollback a refused admission leaves (#308). `since` (issue #352) is the seq this
+ * attempt began at — the recruit receipt's own event seq — and an admission row older than it
+ * is a previous attempt's verdict, never this one's: only rows at or after it decide. Rows
+ * without a seq cannot be dated and still decide. Returns the outcome with the rows that
+ * prove it, or null while the seat is still unobserved. The completed state work-332
  * defines settles the follow when it appears; until that lane lands, the rows that exist
  * today decide. */
-export function swarmRecruitSeat(view, participantId) {
+export function swarmRecruitSeat(view, participantId, since) {
   const participants = Array.isArray(view?.participants) ? view.participants : [];
   const participant = participants.find((row) => row?.participantId === participantId) ?? null;
   const admission = (Array.isArray(view?.admission) ? view.admission : [])
-    .find((row) => row?.participantId === participantId && row?.command !== 'swarm.check') ?? null;
+    .filter((row) => row?.participantId === participantId && row?.command !== 'swarm.check')
+    .filter((row) => !Number.isSafeInteger(since)
+      || !Number.isSafeInteger(row?.seq) || row.seq >= since)
+    .find(() => true) ?? null;
   if (participant === null && admission === null) return null;
   // The completed state (work-332) is the seat's own terminal row: it wins over an older
   // admission row the same seat waited through.
@@ -2444,6 +2450,13 @@ export function swarmRecruitSeat(view, participantId) {
   }
   // A withdrawn seat never admits: the recruit_refused rollback (#308) or any other leave.
   if (participant?.status === 'left') return { outcome: 'refused', participant, admission };
+  // An active seat with a live runtime already runs: it wins over any admission row's
+  // timed_out (issue #352 — a previous attempt's timeout is never this seat's verdict), and
+  // the printed seat carries no previous attempt's row beside it.
+  if (admission?.state === 'timed_out' && participant?.status === 'active'
+    && (LIVE_RUNTIME_STATES.has(participant?.runtime?.state) || participant?.runtime?.live === true)) {
+    return { outcome: 'admitted', participant, admission: null };
+  }
   // A queue timeout is the host authority's refused row: it carries the code.
   if (admission?.state === 'timed_out') return { outcome: 'refused', participant, admission };
   if (admission?.state === 'queued') return { outcome: 'queued', participant, admission };
@@ -2507,6 +2520,13 @@ export async function followSwarmRecruit(parsed, client, options = {}) {
   } catch (error) {
     refusal = error;
   }
+  // Issue #352: the follow observes only rows from THIS attempt. The recruit receipt's own
+  // event seq bounds the admission rows below; when the recruit call itself refused no receipt
+  // crossed, and no pre-call cursor was captured (capturing one would add a swarm.view
+  // round-trip ahead of the recruit and break the recruit-then-view order the #331 rows pin),
+  // so the latest folded row — already scoped per seat by the runtime — decides.
+  const receiptSeq = recruit?.event?.seq ?? recruit?.receipt?.event?.seq;
+  const since = Number.isSafeInteger(receiptSeq) ? receiptSeq : undefined;
   // The verdict rows may already be durable (an instant admission, or a rollback the refused
   // call wrote before throwing), so the current view is read before any waiting starts.
   let view = await client.command('swarm.view', { swarmId: parsed.swarmId }, `${parsed.idempotencyKey}:view`);
@@ -2529,7 +2549,7 @@ export async function followSwarmRecruit(parsed, client, options = {}) {
     outcome: refusal === null ? 'unobserved' : 'refused', seat: null, recruit,
     refusal: refusal === null ? null : recruitRefusal(refusal, null),
   });
-  let found = swarmRecruitSeat(view, parsed.participantId);
+  let found = swarmRecruitSeat(view, parsed.participantId, since);
   // A typed refusal is already the whole answer: the seat cannot admit under this operation,
   // so its durable row (when one landed) is confirmed without arming a watch — and when no
   // row landed, the refusal itself is the answer rather than a hang.
@@ -2547,7 +2567,7 @@ export async function followSwarmRecruit(parsed, client, options = {}) {
       swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
     }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
     if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
-    found = swarmRecruitSeat(view, parsed.participantId);
+    found = swarmRecruitSeat(view, parsed.participantId, since);
   }
 }
 /** R-5 (issue #288; #331 adds the recruit leg): where a command's verdict lands and which CLI
