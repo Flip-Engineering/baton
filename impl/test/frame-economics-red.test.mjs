@@ -203,6 +203,7 @@ import { BatonApplication, MockAdapter, createDriver, createWaveDriver } from '.
 import { AtlasCodeIndex, CartographerQuartermaster, PublicSupplyChainOracle } from '../src/index.mjs';
 import { connectBaton } from '../src/application-cli.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const dirs = [];
@@ -1685,18 +1686,10 @@ const F_EXEMPTIONS = Object.freeze([
   ['coordination-store.mjs', /scratchpadString\(entry\.target\.url, 2_048\)/u, 'deliberate-local: link url partition (Decision 2)'],
   ['coordination-store.mjs', /Buffer\.byteLength\(parsed\.href\) > 2_048/u, 'deliberate-local: link href partition (Decision 2)'],
   ['coordination-store.mjs', /boundedText\(sbom\.lockfile, 2_048\)/u, 'deliberate-local: SBOM lockfile projection bound (Decision 2)'],
-  ['coordination-store.mjs', /attribution\.routeKey\]\.some\(\(value\) => value !== null && !boundedText\(value, 8_192\)\)/u, 'deliberate-local: attribution provenance bounds (Decision 2)'],
   ['coordination-store.mjs', /boundedText\(fields\.reason, 8_192\)/u, 'deliberate-local: knowledge maintenance reason (Decision 2)'],
   ['coordination-store.mjs', /MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES = 262_144/u, 'uncataloged: snapshot reap ceiling'],
-  ['coordination-store.mjs', /boundedText\(context\.worktree, 32_768\)/u, 'uncataloged: attribution context paths'],
-  ['coordination-store.mjs', /context\[key\], key === 'repoRoot' \? 32_768 : 4_096/u, 'uncataloged: attribution context fields'],
-  ['coordination-store.mjs', /boundedText\(path, 32_768\)/u, 'uncataloged: attribution sparse paths'],
-  ['coordination-store.mjs', /bytes > 1024 \* 1024/u, 'uncataloged: attribution context bytes ceiling'],
-  ['coordination-store.mjs', /raw\.byteLength \* 16 \+ 1024 \* 1024/u, 'uncataloged: artifact scan ceiling arithmetic'],
   ['coordination-store.mjs', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
   ['coordination-store.mjs', /boundedText\(p\.routeKey, 4096\)/u, 'uncataloged: routeKey identity bound'],
-  ['coordination-store.mjs', /boundedText\(p\.workerId, 256\)/u, 'uncataloged: worker identity bound'],
-  ['coordination-store.mjs', /context\.sparsePaths\.length > 4_096/u, 'uncataloged: sparse-path COUNT'],
   ['coordination-store.mjs', /Buffer\.byteLength\((fields\.taskId|p\.taskId|id|fields\.id|request\[name\])\) > 4_096/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
   ['coordination-store.mjs', /branch\.summary\.length > 4_096/u, 'uncataloged: branch summary bound'],
   ['coordinator.mjs', /Buffer\.byteLength\(JSON\.stringify\(result\)\) > 32_768/u, 'uncataloged: route-observation result cap'],
@@ -1779,6 +1772,54 @@ const F_EXEMPTIONS = Object.freeze([
   ['worktree.mjs', /maxBuffer: 4_096/u, 'uncataloged: exec buffer'],
 ]);
 
+// ── the name-keyed exemptions (issue #259 slice 2) ──────────────────────────────────────────────
+// The byte literals below belong to a MEMBER, and that member moved: slice 2 relocated 14
+// CoordinationStore members — and with them the literals F1 was exempting by FILE — into the two
+// modules the split carved out (coordination-internals.mjs, coordination-replay.mjs). An entry
+// therefore names the member, never a file and never a line: the member's file and its line window
+// are read from the live seam inventory, which identifies every member by (file, name, ordinal) and
+// derives the positions, so an exemption travels with the code it belongs to and a relocation can
+// no longer carry a cataloged literal past the ratchet.
+const F_MEMBER_EXEMPTIONS = Object.freeze([
+  ['_acceptanceRevocationRequest', /Buffer\.byteLength\((fields\.taskId|p\.taskId|id|fields\.id|request\[name\])\) > 4_096/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_contradictionListRequest', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_contradictionResolutionRequest', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_scratchCorrectionRequest', /Buffer\.byteLength\((fields\.taskId|p\.taskId|id|fields\.id|request\[name\])\) > 4_096/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['scratchFactOracleTarget', /Buffer\.byteLength\((fields\.taskId|p\.taskId|id|fields\.id|request\[name\])\) > 4_096/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_validPreservedResumeAttestation', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_validateGoalPlanDispatchPair', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_validateGoalPlanRecoveryTriple', /attribution\.routeKey\]\.some\(\(value\) => value !== null && !boundedText\(value, 8_192\)\)/u, 'deliberate-local: attribution provenance bounds (Decision 2)'],
+  ['_validateRecoveryAttemptAdmissionPayload', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_validateRecoveryContinuationPayload', /boundedText\(p\.workerId, 256\)/u, 'uncataloged: worker identity bound'],
+  ['_validateRecoveryContinuationPayload', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_validateRecoveryRefinementRequest', /attribution\.routeKey\]\.some\(\(value\) => value !== null && !boundedText\(value, 8_192\)\)/u, 'deliberate-local: attribution provenance bounds (Decision 2)'],
+  ['_validateRecoveryRefinementRequest', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['_validateRecoverySessionRequest', /boundedText\(context\.worktree, 32_768\)/u, 'uncataloged: attribution context paths'],
+  ['_validateRecoverySessionRequest', /context\[key\], key === 'repoRoot' \? 32_768 : 4_096/u, 'uncataloged: attribution context fields'],
+  ['_validateRecoverySessionRequest', /boundedText\(path, 32_768\)/u, 'uncataloged: attribution sparse paths'],
+  ['_validateRecoverySessionRequest', /bytes > 1024 \* 1024/u, 'uncataloged: attribution context bytes ceiling'],
+  ['_validateRecoverySessionRequest', /context\.sparsePaths\.length > 4_096/u, 'uncataloged: sparse-path COUNT'],
+  ['_validateRecoverySessionRequest', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['createAndClaimPlanRecoveryRefinement', /attribution\.routeKey\]\.some\(\(value\) => value !== null && !boundedText\(value, 8_192\)\)/u, 'deliberate-local: attribution provenance bounds (Decision 2)'],
+  ['createAndClaimPlanRecoveryRefinement', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+]);
+
+/** `member -> [{file, first, last}]` over the live seam map. A member that kept a delegate has two
+ * windows — the three-line delegate on the class and the body in the module that now holds it — and
+ * a hit inside either one is exempted by the member's name. */
+function memberWindows() {
+  const windows = new Map();
+  for (const file of collectSeamInventory().files) {
+    const rel = file.file.replace(/^impl\/src\//u, '');
+    for (const member of file.members) {
+      const entries = windows.get(member.name) ?? [];
+      entries.push({ file: rel, first: member.line, last: member.line + member.size - 1 });
+      windows.set(member.name, entries);
+    }
+  }
+  return windows;
+}
+
 function* walkSourceFiles(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
@@ -1789,6 +1830,7 @@ function* walkSourceFiles(dir) {
 
 test('F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs', () => {
   const spellingRegexes = SCANNED_BYTE_VALUES.flatMap((value) => valueSpellingRegexes(value));
+  const windows = memberWindows();
   const hits = [];
   for (const path of walkSourceFiles(SRC_DIR)) {
     const rel = relative(SRC_DIR, path);
@@ -1798,7 +1840,9 @@ test('F1: no module re-declares a cataloged byte literal or hand-types byte pros
       const valueHit = spellingRegexes.some((regex) => regex.test(line));
       const proseHit = BYTE_PROSE_REGEXES.some((regex) => regex.test(line));
       if (!valueHit && !proseHit) return;
-      const exempted = F_EXEMPTIONS.some(([file, pattern]) => rel === file && pattern.test(line));
+      const exempted = F_EXEMPTIONS.some(([file, pattern]) => rel === file && pattern.test(line))
+        || F_MEMBER_EXEMPTIONS.some(([member, pattern]) => pattern.test(line)
+          && (windows.get(member) ?? []).some((window) => window.file === rel && index + 1 >= window.first && index + 1 <= window.last));
       if (!exempted) hits.push(`${rel}:${index + 1}: ${line.trim().slice(0, 140)}`);
     });
   }

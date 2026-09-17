@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// seam-inventory.mjs — issue #259, slice 0: the machine-checked seam map of the three runtime
-// monoliths (impl/src/coordinator.mjs, impl/src/application.mjs, impl/src/coordination-store.mjs).
+// seam-inventory.mjs — issue #259: the machine-checked seam map of the runtime's monoliths
+// (impl/src/coordinator.mjs, impl/src/application.mjs, impl/src/coordination-store.mjs), of the
+// classes that grew beside them (impl/src/swarm-runtime.mjs), and of the modules the split has
+// already carved out (impl/src/coordination-internals.mjs, impl/src/coordination-replay.mjs).
 //
 // Each file entangles four runtime concerns — admission (what may start), effect (what the
 // runtime does to processes, worktrees, providers), observation (what is recorded and projected),
@@ -12,8 +14,9 @@
 //   node impl/scripts/seam-inventory.mjs --write   # regenerate impl/scripts/seam-inventory.json
 //   node impl/scripts/seam-inventory.mjs --report  # per-seam counts + the entangled members
 //
-// Classification is by EVIDENCE, never by hand. Every class member (a top-level method_definition
-// of the named class, extracted with @ast-grep/napi) is classified by, in order:
+// Classification is by EVIDENCE, never by hand. Every member of a declared target — a top-level
+// method_definition of the named class, or a top-level function of a module target (`className:
+// null`), extracted with @ast-grep/napi — is classified by, in order:
 //
 //   1. transport reachability — a member the file's own dispatcher calls, or the dispatcher
 //      itself, is `surface`: it exists to carry a CLI/MCP/Web command into the runtime. This is
@@ -68,7 +71,11 @@ export const SEAM_PRIORITY = Object.freeze(['effect', 'recovery', 'admission', '
 // `dispatchers` are the members that carry a transport command into the class (found by reading
 // the class: a command/act handler that maps a name to one of its own verbs). `surface` names the
 // rest of the class's declared transport shape — the advertised card, the help text, and the
-// caller-facing handle projection.
+// caller-facing handle projection. `receiver` names the receiver a target's members read their
+// state through: `this` for a class method, and `store` for the functions of an extracted module,
+// where the store is the explicit first parameter (issue #259 slice 2). The authority catalogue is
+// written against `this.`; `receiver` is the one spelling the classifier normalizes, so a member
+// that crosses the module boundary keeps the evidence it had before the move.
 export const TARGETS = Object.freeze([
   Object.freeze({
     file: 'impl/src/coordinator.mjs', className: 'Coordinator',
@@ -90,6 +97,21 @@ export const TARGETS = Object.freeze([
   // classified by the authority catalogue and delegation, never by reachability.
   Object.freeze({
     file: 'impl/src/swarm-runtime.mjs', className: 'SwarmRuntime',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
+  // Two module targets (issue #259 slice 2): the buckets slice 1 moved out — the store's
+  // authority-free surface into coordination-internals.mjs and its replay/reconcile paths into
+  // coordination-replay.mjs — are part of the map, because the code lives there. Their members are
+  // plain exported functions at module scope, not class methods, so the collector reads the module
+  // scope (`className: null`) and the classifier normalizes their explicit `store` receiver onto
+  // `this`. Without these targets a moved member leaves the map the moment its body crosses the
+  // module boundary, and a map that cannot see the extracted code cannot be the map of the split.
+  Object.freeze({
+    file: 'impl/src/coordination-internals.mjs', className: null, receiver: 'store',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
+  Object.freeze({
+    file: 'impl/src/coordination-replay.mjs', className: null, receiver: 'store',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
 ]);
@@ -179,26 +201,39 @@ if (new Set(AUTHORITY_RULES.map((rule) => rule.id)).size !== AUTHORITY_RULES.len
   throw new Error('seam-inventory: duplicate rule id in the authority catalogue');
 }
 
-/** Every top-level method of `className` in `source`, in source order. */
+/** Every member of one declared target, in source order: the class's top-level methods when
+ * `className` names a class, or the module's top-level function declarations when `className` is
+ * null (an extracted module has no class to read the members off — issue #259 slice 2). */
 export function collectMembers(source, className) {
   const root = parse(Lang.JavaScript, source).root();
-  const declaration = root
-    .findAll({ rule: { kind: 'class_declaration' } })
-    .find((node) => node.field('name')?.text() === className);
-  if (!declaration) throw new Error(`seam-inventory: ${className} is not declared in this file`);
-  const body = declaration.field('body');
+  const nodes = [];
+  if (className === null) {
+    for (const statement of root.children()) {
+      const declaration = statement.kind() === 'export_statement' ? statement.field('declaration') : statement;
+      if (declaration?.kind() === 'function_declaration') nodes.push(declaration);
+    }
+  } else {
+    const declaration = root
+      .findAll({ rule: { kind: 'class_declaration' } })
+      .find((node) => node.field('name')?.text() === className);
+    if (!declaration) throw new Error(`seam-inventory: ${className} is not declared in this file`);
+    for (const node of declaration.field('body').children()) {
+      if (node.kind() === 'method_definition') nodes.push(node);
+    }
+  }
   const members = [];
-  for (const node of body.children()) {
-    if (node.kind() !== 'method_definition') continue;
+  for (const node of nodes) {
     const name = node.field('name')?.text();
-    if (typeof name !== 'string' || name.length === 0) throw new Error(`seam-inventory: unnamed member in ${className}`);
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new Error(`seam-inventory: unnamed member in ${className ?? 'the module scope'}`);
+    }
     // Identity is (name, ordinal): the ordinal counts same-name definitions in source order, so a
     // duplicate declaration is visible without keying anything by a line number that every
     // ordinary edit shifts.
     const ordinal = members.filter((member) => member.name === name).length;
     members.push({ name, ordinal, line: node.range().start.line + 1, endLine: node.range().end.line + 1, text: node.text() });
   }
-  if (members.length === 0) throw new Error(`seam-inventory: ${className} declares no members`);
+  if (members.length === 0) throw new Error(`seam-inventory: ${className ?? 'the module scope'} declares no members`);
   return members;
 }
 
@@ -255,10 +290,15 @@ export function dispatchedMembers(members, dispatchers) {
  * Classify every member of one class: transport reachability first, then the authority catalogue,
  * then delegation among the members those two layers left unresolved.
  */
-export function classifyMembers(members, { dispatchers = [], surface = [] } = {}) {
-  const scored = members.map((member) => ({ member, ...scoreMember(member) }));
+export function classifyMembers(members, { dispatchers = [], surface = [], receiver = 'this' } = {}) {
+  // The receiver normalization (see TARGETS): a module function reads the class it was moved out of
+  // through its explicit `store` parameter, and the catalogue's `this.foo(` rules must see it.
+  const scoped = receiver === 'this'
+    ? members
+    : members.map((member) => ({ ...member, text: member.text.replaceAll(`${receiver}.`, 'this.') }));
+  const scored = scoped.map((member) => ({ member, ...scoreMember(member) }));
   const byName = new Map(scored.map((row) => [row.member.name, row]));
-  const dispatched = dispatchedMembers(members, dispatchers);
+  const dispatched = dispatchedMembers(scoped, dispatchers);
   const resolved = new Map();
   for (const row of scored) {
     if (row.evidence.length > 0) resolved.set(row.member.name, rankSeam(row.scores));
@@ -307,7 +347,7 @@ export function classifyMembers(members, { dispatchers = [], surface = [] } = {}
   });
 }
 
-/** The committed artifact: one entry per class member, in source order. */
+/** The committed artifact: one entry per declared member, in source order. */
 export function collectSeamInventory() {
   const files = [];
   for (const target of TARGETS) {
@@ -316,7 +356,7 @@ export function collectSeamInventory() {
     files.push({
       file: target.file,
       class: target.className,
-      members: classifyMembers(members, { dispatchers: target.dispatchers, surface: target.surface }),
+      members: classifyMembers(members, { dispatchers: target.dispatchers, surface: target.surface, receiver: target.receiver ?? 'this' }),
     });
   }
   return { schemaVersion: SCHEMA_VERSION, generatedBy: 'impl/scripts/seam-inventory.mjs', seams: [...SEAMS], files };
