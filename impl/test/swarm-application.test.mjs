@@ -177,8 +177,8 @@ test('native shells coordinate, recruit and contribute through scoped runtime-in
   assert.equal((await native(leadEnv, 'swarm.view')).caller.participantId, 'lead');
 });
 
-test('an implementer captures and checks its own live code through its native shell', async (t) => {
-  const { baton, driver, adapter } = await fixture(t);
+test('an implementer captures its own live code; a reviewer checks it while a self-check refuses', async (t) => {
+  const { app, baton, driver, adapter } = await fixture(t);
   let release;
   const heldTurn = new Promise((done) => { release = done; });
   const run = adapter._runSession.bind(adapter);
@@ -209,7 +209,20 @@ test('an implementer captures and checks its own live code through its native sh
     assert.equal(git(['rev-parse', 'HEAD']), head);
     assert.deepEqual(readFileSync(indexPath), index);
     assert.equal(driver.coordinator.pausedTurns({ workerId: worker.id }).length, 0);
-    const checked = await native('swarm.check', { participantId: 'builder', contributionId: 'live', checkId: 'own-check' });
+    // #269 item 4: reviewer independence — the contributing seat cannot check its own
+    // contribution. The refusal is the command's answer (ok:false on stdout, non-zero exit)
+    // and runs nothing.
+    const refused = await native('swarm.check', { participantId: 'builder', contributionId: 'live', checkId: 'own-check' })
+      .then(() => null, (error) => JSON.parse(error.stdout));
+    assert.equal(refused?.ok, false);
+    assert.equal(refused?.error?.code, 'self_check_refused');
+    // A different seat checks the same capture: the verdict path is unchanged.
+    const reviewer = await swarm.recruit('reviewer', 'Review the live contribution',
+      { ...selection, permissions: ['read', 'review', 'communicate'] });
+    const reviewerWorker = driver.coordinator.list().find((row) => row.runId === reviewer.runId);
+    const reviewerClient = bindBaton(app, { actor: `worker:${reviewerWorker.id}`,
+      principalId: `worker:${reviewerWorker.id}`, sessionId: 'reviewer-session' });
+    const checked = await reviewerClient.swarms.open(swarm.id).check('builder', 'live', 'review-check');
     assert.equal(checked.passed, true);
     assert.equal((await swarm.view()).participants[0].runtime.turn, 'running');
     assert.deepEqual(readFileSync(indexPath), index, 'verification leaves the live staging area untouched too');

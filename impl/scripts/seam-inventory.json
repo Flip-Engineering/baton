@@ -11926,7 +11926,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 414,
+          "size": 453,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -12087,11 +12087,12 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 392,
+          "size": 484,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
             "effect:action_verb",
+            "effect:timer_arm",
             "admission:authority_check",
             "admission:swarm_refusal"
           ]

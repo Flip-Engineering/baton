@@ -77,7 +77,17 @@ even if membership remains. A runtime built without an authority reports
 #269 lane orders it: a full check records `contribution.check_host_queued`
 (`{position, ahead, running, workerLeases}`) when enqueued, holds the lease for the
 verdict, releases it whichever way the verdict ends, and reports
-`admission: {state: 'admitted', authority: 'host', …}` on the receipt.
+`admission: {state: 'admitted', authority: 'host', …}` on the receipt. The swarm runtime
+mirrors that wait at the swarm level (#269 items 2 and 4): while the check waits, the
+check path watches the authority's visible queue for its holder
+(`check:${contributionId}:${checkId}`) and records the same durable
+`swarm.admission_queued` / `admitted` / `timeout` rows a recruit gets (with
+`command: 'swarm.check'`, `contributionId`, `checkId`, `leaseKind: 'verify'`); `swarm.view`
+folds them per (contribution, check) into the admission slice, mints `check_queued` /
+`check_queue_timeout` attention, and marks the waiting contribution's row as queued with
+the position, ahead and shortfall. Reviewer independence holds beside it: the seat that
+authored a contribution cannot check it — `swarm.check` by the contributing seat refuses
+`self_check_refused` (rule `check-reviewer-independence`) before any effect.
 
 ## 3. The suite runner's parallelism (#297 item 3)
 

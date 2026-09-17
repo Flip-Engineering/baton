@@ -10,6 +10,7 @@ import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
+import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
 
 const clone = (value) => structuredClone(value);
 /** JSON-plain content with absent members dropped. An undefined value means "not sent" to the
@@ -842,20 +843,26 @@ export class SwarmRuntime {
     if (swarm.status !== 'open' && participants.some((row) => row.status === 'active' && !gone(row))) {
       organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => row.status === 'active' && !gone(row)).map((row) => row.participantId) });
     }
-    // #329: host admission per seat, folded from the runtime's own durable rows — the LATEST of
-    // queued / admitted / timed-out for each recruited seat. A seat still queued has no
-    // participant row yet, and a seat whose wait is spent never got one, so the ONLY place an
-    // orchestrator can learn "the host refused my recruit, and why" is here: `recruit_queued`
-    // names the position and the dimension it waits on; `recruit_queue_timeout` names the
-    // dimension, the numbers and the operator bypass.
+    // #329 (+ #269 item 2): host admission, folded from the runtime's own durable rows — the
+    // LATEST of queued / admitted / timed-out for each recruited seat, and for each check. A
+    // seat still queued has no participant row yet, and a seat whose wait is spent never got one,
+    // so the ONLY place an orchestrator can learn "the host refused my recruit, and why" is here:
+    // `recruit_queued` names the position and the dimension it waits on; `recruit_queue_timeout`
+    // names the dimension, the numbers and the operator bypass. A check's rows ride the SAME
+    // kinds; the command tells them apart, and a check folds per (contribution, check) — one seat
+    // may wait on many — minting `check_queued` / `check_queue_timeout` with the same facts.
     const admission = new Map();
     for (const event of ledger) {
       const payload = event.kind === 'driver.recorded' ? event.payload : null;
       if (payload?.swarmId !== swarm.swarmId || typeof payload.participantId !== 'string') continue;
       if (payload.kind !== 'swarm.admission_queued' && payload.kind !== 'swarm.admission_admitted'
         && payload.kind !== 'swarm.admission_timeout') continue;
-      admission.set(payload.participantId, {
+      const check = payload.command === 'swarm.check'
+        && typeof payload.contributionId === 'string' && typeof payload.checkId === 'string';
+      admission.set(check ? `check\0${payload.contributionId}\0${payload.checkId}` : payload.participantId, {
         participantId: payload.participantId, seq: event.seq, ts: event.ts,
+        ...(check ? { command: payload.command,
+          contributionId: payload.contributionId, checkId: payload.checkId } : {}),
         state: payload.kind === 'swarm.admission_queued' ? 'queued'
           : payload.kind === 'swarm.admission_admitted' ? 'admitted' : 'timed_out',
         authority: payload.authority ?? 'host', leaseKind: payload.leaseKind ?? 'worker',
@@ -866,6 +873,22 @@ export class SwarmRuntime {
       });
     }
     for (const row of admission.values()) {
+      if (row.command === 'swarm.check') {
+        if (row.state === 'queued') {
+          organization.push({ kind: 'check_queued', participantId: row.participantId,
+            contributionId: row.contributionId, checkId: row.checkId,
+            position: row.position, ahead: row.ahead, shortfall: row.shortfall, seq: row.seq, ts: row.ts });
+        } else if (row.state === 'timed_out') {
+          organization.push({ kind: 'check_queue_timeout', participantId: row.participantId,
+            contributionId: row.contributionId, checkId: row.checkId, code: row.code,
+            position: row.position, ahead: row.ahead, shortfall: row.shortfall,
+            waitMs: row.waitMs, bypass: row.bypass,
+            seq: row.seq, ts: row.ts,
+            next: { command: 'swarm.check', swarmId: swarm.swarmId, participantId: row.participantId,
+              contributionId: row.contributionId, checkId: row.checkId } });
+        }
+        continue;
+      }
       if (row.state === 'queued' && !participantsById.has(row.participantId)) {
         organization.push({ kind: 'recruit_queued', participantId: row.participantId, position: row.position,
           ahead: row.ahead, shortfall: row.shortfall, seq: row.seq, ts: row.ts });
@@ -875,6 +898,15 @@ export class SwarmRuntime {
           seq: row.seq, ts: row.ts,
           next: { command: 'swarm.recruit', swarmId: swarm.swarmId, participantId: row.participantId } });
       }
+    }
+    // #269 item 2: the latest still-queued check per contribution, so the contribution rows name
+    // the wait they sit behind. Latest by seq wins; a settled check (admitted / timed_out)
+    // replaces its queued row in the fold above and clears the contribution row.
+    const queuedCheckByContribution = new Map();
+    for (const row of admission.values()) {
+      if (row.command !== 'swarm.check' || row.state !== 'queued') continue;
+      const prior = queuedCheckByContribution.get(row.contributionId);
+      if (!prior || row.seq > prior.seq) queuedCheckByContribution.set(row.contributionId, row);
     }
     const operations = ledger.filter((event) => event.kind === 'driver.recorded'
       && event.payload.swarmId === swarm.swarmId && event.payload.kind === 'swarm.operation_requested');
@@ -1000,7 +1032,15 @@ export class SwarmRuntime {
       // identity-addressed families (work, assignments, reviews, context) stay keyed objects.
       // Every read path (view, watch, bridge, MCP) carries these rows through unchanged.
       contributions: rowsOf(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
-        && scopeWorkIds.has(contribution.workId)),
+        && scopeWorkIds.has(contribution.workId)).map((row) => {
+        // #269 item 2: a contribution whose check still waits on the host authority reads as
+        // queued where the contribution reads — the position, ahead and shortfall of the wait.
+        const queued = queuedCheckByContribution.get(row.contributionId) ?? null;
+        return queued ? { ...row, admission: { state: 'queued', authority: queued.authority,
+          leaseKind: queued.leaseKind, position: queued.position, ahead: queued.ahead,
+          shortfall: queued.shortfall, checkId: queued.checkId, participantId: queued.participantId,
+          seq: queued.seq, ts: queued.ts } } : row;
+      }),
       reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
       // A group is a roster: a scoped view carries the groups its subtree is ON, by the same
       // roster-intersection rule the couplings below use. A group with no member in scope is not
@@ -1032,9 +1072,9 @@ export class SwarmRuntime {
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions],
         lastRefusal: caller ? lastRefusal(caller.participantId) : null },
       availableActions, attention: scopedAttention,
-      // #329: host admission per recruited seat (queued / admitted / timed_out with the
-      // dimension and numbers), the rows the recruit_queued / recruit_queue_timeout attention
-      // derives from.
+      // #329 (+ #269 item 2): host admission per recruited seat and per check (queued /
+      // admitted / timed_out with the dimension and numbers), the rows the recruit_queued /
+      // recruit_queue_timeout and check_queued / check_queue_timeout attention derives from.
       admission: [...admission.values()].filter((row) => !scope || scopeSubtree.includes(row.participantId)),
       actionTargets: {
         'swarm.capture': { participantIds: contributionTargets },
@@ -1891,9 +1931,101 @@ export class SwarmRuntime {
       });
     }
     if (command === 'swarm.check') {
-      const checked = await this.coordinator.checkContribution(worker.id, {
-        contributionId: args.contributionId, checkId: args.checkId,
-      });
+      // #269 item 4: reviewer independence — the contributing seat cannot check its own
+      // contribution. A check is an independent observation about identified work, never a
+      // substitute for the author's own status, so the seat that authored the contribution is
+      // refused BEFORE any effect: no check runs, no review row lands.
+      const authored = Object.hasOwn(this._swarm(args.swarmId).contributions ?? {}, args.contributionId)
+        ? this._swarm(args.swarmId).contributions[args.contributionId] : null;
+      if (caller && authored && authored.participantId === caller.participantId) {
+        refuse(`A contribution cannot be checked by its own author: a check is an independent observation, never a substitute for the author's own status (contribution ${args.contributionId} by ${caller.participantId})`,
+          'self_check_refused', { rule: 'check-reviewer-independence',
+            participantId: caller.participantId, contributionId: args.contributionId });
+      }
+      // #269 item 2: the host admits this verdict inside the coordinator (the verify lease the
+      // contribution service holds for the suite), so the check path watches the authority's own
+      // visible queue for its holder and records the same durable queued/admitted/timeout rows a
+      // recruit gets — the view folds them the way #329 folds recruits. The holder template is
+      // owned by the contribution service (`check:${contributionId}:${checkId}`); this path only
+      // ever READS it back, never mints a lease of its own.
+      const checkOperationKey = this._operationKey(command, args, principal);
+      const checkHolder = `check:${args.contributionId}:${args.checkId}`;
+      let checkQueued = false;
+      const writeCheckQueued = (row) => {
+        if (checkQueued) return;
+        checkQueued = true;
+        try {
+          this.store.recordDriver('swarm.admission_queued', {
+            swarmId: args.swarmId, participantId: participant.participantId, command,
+            contributionId: args.contributionId, checkId: args.checkId,
+            authority: 'host', leaseKind: 'verify',
+            position: row.position ?? null, ahead: row.ahead ?? null,
+            shortfall: row.shortfall ?? null,
+          }, { actor: principal.actor, key: `${checkOperationKey}:queued` });
+        } catch { /* a raced operation row is evidence, never admission-critical */ }
+      };
+      const observeCheckQueue = () => {
+        if (checkQueued || typeof this.hostCapacity?.observeNow !== 'function') return;
+        let observed = null;
+        try {
+          observed = this.hostCapacity.observeNow();
+        } catch { return; }
+        const entry = Array.isArray(observed?.queue)
+          ? observed.queue.find((row) => row?.holder === checkHolder && row?.kind === 'verify') : null;
+        if (!entry) return;
+        let shortfall = null;
+        try {
+          shortfall = hostCapacityShortfall('verify', observed.capacity, observed.used) ?? null;
+        } catch { shortfall = null; }
+        writeCheckQueued({ position: entry.position ?? null, ahead: entry.ahead ?? null, shortfall });
+      };
+      observeCheckQueue();
+      const checkQueuePoll = typeof this.hostCapacity?.observeNow === 'function'
+        ? setInterval(observeCheckQueue, 25) : null;
+      if (checkQueuePoll && typeof checkQueuePoll.unref === 'function') checkQueuePoll.unref();
+      let checked;
+      try {
+        checked = await this.coordinator.checkContribution(worker.id, {
+          contributionId: args.contributionId, checkId: args.checkId,
+        });
+      } catch (error) {
+        if (checkQueuePoll) clearInterval(checkQueuePoll);
+        // A spent wait is recorded AGAINST THE CHECK the way #329 records one against the seat —
+        // the queued facts ride the same `:queued` key (a poller that already saw the wait keeps
+        // its row), then the timeout row names the dimension and the operator bypass.
+        if (error?.code === 'host_capacity_queue_timeout') {
+          writeCheckQueued({ position: error.queuePosition ?? null, ahead: error.queueAhead ?? null,
+            shortfall: error.shortfall ?? null });
+          try {
+            this.store.recordDriver('swarm.admission_timeout', {
+              swarmId: args.swarmId, participantId: participant.participantId, command,
+              contributionId: args.contributionId, checkId: args.checkId,
+              authority: 'host', leaseKind: 'verify', code: error.code,
+              position: error.queuePosition ?? null, ahead: error.queueAhead ?? null,
+              shortfall: error.shortfall ?? null, waitMs: error.waitMs ?? null,
+              bypass: error.bypass ?? HOST_CAPACITY_BYPASS,
+            }, { actor: principal.actor, key: `${checkOperationKey}:timeout` });
+          } catch { /* evidence row only */ }
+        }
+        throw error;
+      }
+      if (checkQueuePoll) clearInterval(checkQueuePoll);
+      // The receipt carries the typed admission row when the wait happened (#297: position and
+      // ahead ride it only when the check queued); the durable rows mirror it under the
+      // operation's own keys, so a retried check never mints a second pair.
+      if (checked?.admission?.position !== undefined && checked?.admission?.position !== null) {
+        writeCheckQueued({ position: checked.admission.position ?? null,
+          ahead: checked.admission.ahead ?? null, shortfall: null });
+        try {
+          this.store.recordDriver('swarm.admission_admitted', {
+            swarmId: args.swarmId, participantId: participant.participantId, command,
+            contributionId: args.contributionId, checkId: args.checkId,
+            authority: 'host', leaseKind: 'verify',
+            position: checked.admission.position ?? null, ahead: checked.admission.ahead ?? null,
+            queuedAt: checked.admission.queuedAt ?? null,
+          }, { actor: principal.actor, key: `${checkOperationKey}:admitted` });
+        } catch { /* evidence row only */ }
+      }
       const key = `swarm-check:${hash([args.swarmId, participant.participantId, args.contributionId, args.checkId])}`;
       const writes = [];
       if (!this.store.priorCoordinationEvent(key)) {

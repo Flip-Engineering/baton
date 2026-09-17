@@ -69,12 +69,14 @@ test('S-G1: a document missing a kind is refused by the gate, naming the block',
 
 test('S-G1: the attention vocabulary is read from the runtime mint sites, in source order', () => {
   const kinds = swarmAttentionKinds();
-  // #329 added the two host-admission rows (recruit_queued, recruit_queue_timeout).
-  assert.equal(kinds.length, 11, 'the runtime mints eleven attention kinds');
+  // #329 added the two host-admission rows (recruit_queued, recruit_queue_timeout); #269 item 2
+  // adds the two check-admission rows (check_queued, check_queue_timeout), minted first in source.
+  assert.equal(kinds.length, 13, 'the runtime mints thirteen attention kinds');
   assert.deepEqual(kinds, [
     'participant_runtime_dead', 'member_left_session_live', 'delegation_orphaned',
     'assignment_holder_gone', 'group_member_gone', 'coupling_writer_gone',
-    'closed_with_live_participants', 'recruit_queued', 'recruit_queue_timeout',
+    'closed_with_live_participants', 'check_queued', 'check_queue_timeout',
+    'recruit_queued', 'recruit_queue_timeout',
     'operation_refused', 'operation_unconfirmed',
   ]);
   // Fail closed: a source whose mint sites changed shape must refuse, never render an empty list.
