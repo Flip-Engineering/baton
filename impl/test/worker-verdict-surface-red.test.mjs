@@ -103,6 +103,7 @@ import { coordinationForLog } from '../src/coordination-store.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 import { bindBaton, createDriver } from '../src/index.mjs';
 import * as recipesNs from '../src/recipes.mjs';
+import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 // ---------------------------------------------------------------------------
 // Verified split (recorded after two consecutive runs from the repo root)
@@ -126,9 +127,9 @@ test.after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: tru
 // ---------------------------------------------------------------------------
 
 const APP_SRC = fileURLToPath(new URL('../src/application.mjs', import.meta.url));
-const STORE_SRC = fileURLToPath(new URL('../src/coordination-store.mjs', import.meta.url));
 
-// application.mjs and coordination-store.mjs carry NUL bytes — touched ONLY via grep -an / sed -n.
+// application.mjs and coordination-store.mjs carry NUL bytes — every source read below goes through
+// grep -an / sed -n, never a whole-file read, whichever file the seam map places a member in.
 function grepAn(pattern, path) {
   try {
     return execFileSync('grep', ['-an', pattern, path], { encoding: 'utf8' });
@@ -143,6 +144,26 @@ function sedLines(path, first, last) {
   } catch {
     return '';
   }
+}
+
+// The R5 digest pin is anchored on the MEMBER, never on the file it happened to live in: issue #259
+// slice 2 moved `_validateRecoveryRefinementRequest` into coordination-replay.mjs, so the pin
+// resolves the member's file and its line window from the live seam inventory (name + ordinal
+// identity, positions derived) and reads exactly those lines — grep/sed only, the discipline the
+// NUL-bearing store file needs. A member that kept a class delegate has two windows; both belong to
+// the member, and the pin must be in one of them.
+const SEAM_MEMBERS = collectSeamInventory();
+function memberSource(name) {
+  const windows = [];
+  for (const file of SEAM_MEMBERS.files) {
+    const path = fileURLToPath(new URL(`../${file.file.replace(/^impl\//u, '')}`, import.meta.url));
+    for (const member of file.members) {
+      if (member.name !== name) continue;
+      windows.push(sedLines(path, member.line, member.line + member.size - 1));
+    }
+  }
+  if (windows.length === 0) throw new Error(`memberSource: ${name} is not in the seam map`);
+  return windows.join('\n');
 }
 
 // Extract the single-quoted snake_case literals of a bracketed enum block under a marker, in ACTUAL
@@ -765,9 +786,9 @@ test('C4 (PIN): the surface never rides the refinement brief — task.brief stay
   assert.ok(!JSON.stringify(task.brief).includes('in_scope_revision'),
     'no corrective class ever lands in the brief (the surface rides the push, not the objective text)');
   assert.ok(
-    grepAn('recovery_refinement_conflict', STORE_SRC).includes('recovery_refinement_conflict')
-      && grepAn('canonicalDigest(fields.brief)', STORE_SRC).includes('canonicalDigest(fields.brief)'),
-    'the recovery-refinement digest pin compares the brief canonically (coordination-store.mjs:3037)',
+    memberSource('_validateRecoveryRefinementRequest').includes('recovery_refinement_conflict')
+      && memberSource('_validateRecoveryRefinementRequest').includes('canonicalDigest(fields.brief)'),
+    'the recovery-refinement digest pin compares the brief canonically, inside the refinement validator wherever the seam map places it',
   );
 });
 
@@ -1195,8 +1216,8 @@ test('E4 (PIN): the cross-referenced refusal laws stay alive — the #73 closed 
     'a caller-authored gate-shaped verdict refuses — the #73 closed {gate, detail} caller schema (application.mjs:1597)',
   );
   assert.ok(
-    grepAn('recovery_refinement_conflict', STORE_SRC).includes('recovery_refinement_conflict')
-      && grepAn('canonicalDigest(fields.brief)', STORE_SRC).includes('canonicalDigest(fields.brief)'),
-    'the recovery-refinement digest pin is byte-stable (R5 source, coordination-store.mjs:3037)',
+    memberSource('_validateRecoveryRefinementRequest').includes('recovery_refinement_conflict')
+      && memberSource('_validateRecoveryRefinementRequest').includes('canonicalDigest(fields.brief)'),
+    'the recovery-refinement digest pin is byte-stable (R5 source, inside the refinement validator)',
   );
 });

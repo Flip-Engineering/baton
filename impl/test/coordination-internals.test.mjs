@@ -194,9 +194,10 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
   }
   const counts = [...moved.values()].reduce((acc, namespace) => ({ ...acc, [namespace]: (acc[namespace] ?? 0) + 1 }), {});
   // #286 added three internals helpers (waveBinding, orientationReadHead, orientationReadLatest)
-  // and their store delegates; the census is the point, so it moves with them.
-  assert.deepEqual(counts, { coordinationInternals: 98, coordinationReplay: 42 },
-    'the map must show the moved surface and recovery buckets, minus the members two suite-pinned source scans still key to the store');
+  // and their store delegates, and issue #259 slice 2 relocated the last 14 members two suite-pinned
+  // source scans had keyed to the store file; the census is the point, so it moves with them.
+  assert.deepEqual(counts, { coordinationInternals: 103, coordinationReplay: 51 },
+    'the map must show the moved surface and recovery buckets — every store member whose body left');
 
   const wired = delegates();
   const orphans = [...moved.keys()].filter((identity) => !wired.has(identity.split('#')[0]));
@@ -206,17 +207,17 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
     assert.ok(Object.hasOwn(MODULES.find((entry) => entry.namespace === delegate.module).exports, delegate.helper),
       `${member}: ${delegate.module}.${delegate.helper} must be exported`);
   }
-  // The replay module is exactly its port: 42 exports, one delegate each. The internals module also
+  // The replay module is exactly its port: 51 exports, one delegate each. The internals module also
   // exports the relocated primitives (keys, digests, paths) the store imports back, so the claim
-  // there is: 103 distinct exported helpers, each reached by exactly one delegate — and every name
-  // the store imports from either module must exist.
+  // there is: 103 distinct delegate-reached helpers, each reached by exactly one delegate — and every
+  // name the store imports from either module must exist.
   const replay = MODULES.find((module) => module.namespace === 'coordinationReplay');
   const reached = [...wired.values()].filter((delegate) => delegate.module === replay.namespace).map((delegate) => delegate.helper).sort();
   assert.deepEqual(reached, Object.keys(replay.exports).sort(),
     `${replay.file}: every export has exactly one delegate, and every delegate names an export`);
   const helpers = [...wired.values()].filter((delegate) => delegate.module === 'coordinationInternals').map((delegate) => delegate.helper);
   assert.equal(new Set(helpers).size, helpers.length, 'one delegate per internals helper');
-  assert.equal(helpers.length, 98, 'the surface bucket moved 98 of its 103 members');
+  assert.equal(helpers.length, 103, 'the internals port carries 103 delegate-reached helpers');
   for (const imported of importedFromMovedModules()) {
     const module = MODULES.find((entry) => entry.file === imported.module);
     assert.ok(Object.hasOwn(module.exports, imported.name),
@@ -324,7 +325,18 @@ test('CI4: the store reaches every moved member through its own delegate, with i
     ['_recallAssessmentCandidate', 2], ['recallAssessments', 0], ['KNOWLEDGE_CANDIDATE_TRIGGERS', 0],
     ['affectedReaders', 1], ['traceKnowledge', 1],
   ];
-  assert.equal(MOVED.length, 136, 'slice 1 moved 136 members: 95 of the surface bucket and 41 of the recovery bucket');
+  // Issue #259 slice 2: the last 14 members — the 5 the surface bucket and the 9 the recovery bucket
+  // had kept in the store — took the same road, so the delegate census and its arities grow with them.
+  MOVED.push(
+    ['_acceptanceRevocationRequest', 2], ['_contradictionListRequest', 2],
+    ['_contradictionResolutionRequest', 2], ['_scratchCorrectionRequest', 1],
+    ['scratchFactOracleTarget', 3], ['_restoreProjectionCheckpoint', 1],
+    ['_validPreservedResumeAttestation', 1], ['_validateGoalPlanDispatchPair', 2],
+    ['_validateGoalPlanRecoveryTriple', 3], ['_validateRecoveryAttemptAdmissionPayload', 2],
+    ['_validateRecoveryContinuationPayload', 2], ['_validateRecoveryRefinementRequest', 3],
+    ['_validateRecoverySessionRequest', 3], ['createAndClaimPlanRecoveryRefinement', 5],
+  );
+  assert.equal(MOVED.length, 150, 'slice 1 moved 136 members; slice 2 relocated the last 14');
   const wired = delegates();
   for (const [name, arity] of MOVED) {
     assert.ok(wired.has(name), `${name}: the class must still delegate it`);
@@ -384,13 +396,14 @@ test('CI5: the store keeps its exact public behavior across the move (create, re
   }
 });
 
-test('CI6: the members that stayed are the ones two suite-pinned source scans key to the store', () => {
-  // The move is not total, and the reason is mechanical: frame-economics-red F1 exempts byte-literal
-  // sites by FILE, so a `4_096` identity bound that moves into a new module turns that ratchet red;
-  // worker-verdict-surface-red C4/E4 grep coordination-store.mjs for the recovery-refinement digest
-  // pin. These members keep their bodies here — unchanged — until slice 2 relocates the exemptions and
-  // the pins. Pinning the list here makes the debt visible where the move is reviewed.
-  const STAYED = [
+test('CI6: the 14 members slice 2 relocated are delegates, and the pins that keyed them to the store now name them', () => {
+  // Slice 1 kept these 14 in the store because two red-first suites pinned byte-literal LOCATIONS in
+  // coordination-store.mjs: frame-economics-red exempted F1's byte literals by FILE, and
+  // worker-verdict-surface-red grepped the store path for the recovery-refinement digest pin. Slice 2
+  // retired both: F1's exemptions and the digest pin now name the MEMBER, resolving its home through
+  // the committed seam map, so the bodies could move — and this row pins that they did, and that the
+  // store's copy of the pin is gone rather than duplicated.
+  const RELOCATED = [
     '_acceptanceRevocationRequest', '_contradictionListRequest', '_contradictionResolutionRequest',
     '_scratchCorrectionRequest', 'scratchFactOracleTarget',
     '_restoreProjectionCheckpoint', '_validPreservedResumeAttestation', '_validateGoalPlanDispatchPair',
@@ -399,12 +412,15 @@ test('CI6: the members that stayed are the ones two suite-pinned source scans ke
     '_validateRecoverySessionRequest', 'createAndClaimPlanRecoveryRefinement',
   ];
   const wired = delegates();
+  const map = JSON.parse(read('scripts/seam-inventory.json'));
   const store = read(STORE_FILE);
-  assert.ok(store.includes('canonicalDigest(fields.brief)'),
-    'the recovery-refinement digest pin worker-verdict-surface-red greps for must stay in the store');
-  for (const name of STAYED) {
-    assert.ok(!wired.has(name), `${name}: stayed in the store rather than delegating to a moved module`);
-    assert.ok(new RegExp(`^  ${name}\\(`, 'mu').test(store), `${name}: the class must still declare it`);
+  for (const name of RELOCATED) {
+    assert.ok(wired.has(name), `${name}: the class must now delegate it`);
+    const home = MODULES.find((module) => module.namespace === wired.get(name).module);
+    const rows = map.files.find((file) => file.file === home.artifact).members.filter((member) => member.name === name);
+    assert.equal(rows.length, 1, `${name}: the seam map carries its body once, by name, in ${home.artifact}`);
   }
-  assert.equal(STAYED.length, 14, 'five of the surface bucket, nine of the recovery bucket');
+  assert.ok(!store.includes('canonicalDigest(fields.brief)'),
+    'the recovery-refinement digest pin left the store with its member — the pin names the member now, not the file');
+  assert.equal(RELOCATED.length, 14, 'five of the surface bucket, nine of the recovery bucket');
 });

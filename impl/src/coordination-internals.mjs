@@ -1,6 +1,7 @@
-// coordination-internals.mjs — issue #259, slice 1: the CoordinationStore members that touch
-// no runtime authority — payload keys, digests, segment paths, pure projections and predicates — plus
-// the primitives they need (canonicalization, hashing, cloning, key derivation).
+// coordination-internals.mjs — issue #259, slice 1 (slice 2 added the last five members the store held):
+// the CoordinationStore members that touch no runtime authority — payload keys, digests, segment paths,
+// pure projections and predicates — plus the primitives they need (canonicalization, hashing, cloning,
+// key derivation).
 //
 // Every function is a plain export, never a method: the state it reads is its first parameter, passed
 // explicitly — `state` for the one collection the helper projects (or that collection's own name, where
@@ -10,6 +11,8 @@
 //
 // Moved verbatim from coordination-store.mjs: no behavior change, no renamed member, no changed durable
 // format. The store keeps the same method names as one-line delegates, so every call site is untouched.
+// Slice 2 relocated the five surface members two pinned source scans had exempted by file, which is why
+// this module is a seam-map target: a moved member stays mapped, by name, in its new home.
 
 import { compareCanonicalStrings } from './canonical-order.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
@@ -44,6 +47,8 @@ export class CoordinationRefusal extends Error {
 
 export const DEFAULT_CONTEXT_PACK_VALIDITY = '2999-12-31T23:59:59.999Z';
 
+export const KNOWLEDGE_CONTRADICTION_POLICY_FIELDS = ['repoId', 'maxScanEvents', 'maxScanEdges', 'maxItems', 'maxSnippetBytes', 'maxEvidenceRefs', 'maxAffectedReads', 'maxReasonBytes', 'maxBatchBytes', 'maxResultBytes'];
+
 export const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'acceptanceInvalidation', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
 
 export const MAD_METRIC = /(?<sign>[+-])?(?<number>\d+(?:\.\d+)?)\s*(?<unit>tok\/s|tokens?\/s|ms|us|ns|sec|seconds?|min|minutes?|GB|MB|KB|TFLOPS|GFLOPS|tokens?|%|x)/gu;
@@ -57,6 +62,57 @@ export const MAD_UNIT_CANON = new Map([
 
 export const MAX_CONTEXT_PACK_BODY_BYTES = FRAME_LIMITS['context_pack.body'].value;
 
+export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
+  '_events', '_byKey', '_tasks', '_runs', '_artifacts',
+  '_reuseDecisions', '_reuseSubjects', '_reuseRiskGuards', '_reusePolicyHeads',
+  '_reusePolicyTransitions', '_routeObservations', '_representations',
+  '_representationRequests', '_goals', '_goalHeads', '_plans', '_planHeads',
+  '_planApprovals', '_planDispatches', '_planTaskLinks', '_planBudgetSettlements',
+  '_reuseProviderContributions', '_reuseProviderCoordinateContributions',
+  '_reuseProviderGuards', '_evidence', '_scratchFacts', '_scratchClaims', '_scratchReads',
+  '_knowledgeNodes', '_knowledgeEdges', '_knowledgeNodeHistory', '_knowledgeEdgeHistory',
+  '_knowledgeReads', '_knowledgeRecallAssessments', '_contamination', '_webCommands',
+  '_webCommandScopes', '_mcpCalls', '_mcpCallScopes', '_fleetDrains', '_runStops',
+  '_runStopByTarget', '_runControls', '_runResultAdoptions', '_runResultExports',
+  '_runVerificationRetries', '_runOrchestratorLeases', '_runLineages',
+  '_runLineageEventSeqs', '_runChildrenByParent', '_recoveryDispatches',
+  '_taskTopologies', '_recoveryAttemptsById', '_recoveryAttemptHeads',
+  '_providerReceipts', '_providerDeliveryIds', '_providerProcessing', '_providerPending',
+  '_providerSequences', '_providerSourceHealth', '_contextSessions', '_contextCells',
+  '_contextCalls', '_contextPrograms', '_contextArtifacts', '_taskResourceReleases',
+  '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
+  '_boardReports', '_boardFences', '_boardRunBindings',
+  // Epic #78: replay-derived worker grant state and per-worker generation records.
+  '_boardGrants', '_boardGrantMints', '_workerGenerations',
+  '_contextPackages', '_contextPackageAttachments',
+  // BD3-B context packs (server-owned supersession chain per family) and BD3-A read audit.
+  '_contextPacks', '_contextPackHeads', '_contextReads',
+  // Decision 4: digest-addressed spill artifacts (mint/materialize; durable, replay-derived).
+  '_spills',
+  // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId.
+  '_waveClosures',
+  // D2.3 (epic #132): replay-derived wave.started registry rows by waveId.
+  '_waveRegistry',
+  // #286 G-31: the CURRENT run -> wave binding (last write wins), folded from `steering.registered`.
+  // `_waveRoleRuns` above answers "which run holds this (waveId, waveRole) seat"; this answers
+  // "which wave does this run sit in NOW" — the one reading `_waveIdOf`/`_waveRoleOf` share.
+  '_waveBindings',
+  // #286 G-45: BD3-A orientation receipt heads — the first read per (workerId, packDigest) and the
+  // latest read per workerId. Folded so a rating and a freshness check are lookups.
+  '_contextReadHeads', '_contextReadLatest',
+  // #161: replay-derived campaign-plan objects (planId -> plan) and the (waveId, waveRole) ->
+  // runId roster index the plan lane resolves pre-decomposed ownedBy.run bindings from (H2.2).
+  '_campaignPlans', '_waveRoleRuns', '_swarms',
+  '_replManifestAdmissions',
+  // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
+  '_replBindings', '_replBindingHistory', '_replBindingFences',
+  // Issue #33: task-ephemeral scratchpad entries, scope indexes/fences, live elevation
+  // commitments, and bounded prose-free reap receipts are one ledger projection.
+  '_scratchpadEntries', '_scratchpadEntriesByScope', '_scratchpadFences',
+  '_scratchpadElevations', '_scratchpadReaps',
+  // KG-1 (Part A rule 5): gains _projectionInputFence, a plain replay-derived counter.
+  '_projectionInputFence',
+]);
 
 export const SCRATCHPAD_SCOPE = /^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u;
 
@@ -79,6 +135,8 @@ export function canonical(value) {
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
+
+export function canonicalBytes(value) { return Buffer.byteLength(JSON.stringify(canonical(value))); }
 
 export function canonicalDigest(value) { return digest(canonical(value)); }
 
@@ -136,6 +194,8 @@ export function madMedian(sortedAscending) {
   return n % 2 === 0 ? (sortedAscending[mid - 1] + sortedAscending[mid]) / 2 : sortedAscending[mid];
 }
 
+export function promotionActor(value) { return value === 'orchestrator' || (typeof value === 'string' && value.startsWith('operator:')); }
+
 export function recallBody(value) { return typeof value === 'string' ? value : JSON.stringify(canonical(value ?? '')); }
 
 export function replFenceKey(runId, scope) { return JSON.stringify([runId, scope]); }
@@ -144,7 +204,25 @@ export function scratchpadScopeKey(runId, scope) { return JSON.stringify([runId,
 
 export function sha256Bytes(value) { return createHash('sha256').update(value).digest('hex'); }
 
+export function validKnowledgeContradictionPolicy(policy) {
+  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_CONTRADICTION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
+  const numeric = KNOWLEDGE_CONTRADICTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
+  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
+  return policy.maxScanEvents <= 1_000_000 && policy.maxScanEdges <= 1_000_000 && policy.maxItems <= 100_000
+    && policy.maxSnippetBytes <= 64 * 1024 && policy.maxEvidenceRefs <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
+    && policy.maxReasonBytes <= 64 * 1024 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+}
+
 export function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
+
+export function validUnicodeScalarString(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xD800 && code <= 0xDBFF) { const next = value.charCodeAt(index + 1); if (!(next >= 0xDC00 && next <= 0xDFFF)) return false; index += 1; }
+    else if (code >= 0xDC00 && code <= 0xDFFF) return false;
+  }
+  return true;
+}
 
 // ── the store's authority-free members ──────────────────────────────────────────────────────────
 
@@ -1026,4 +1104,82 @@ export function traceKnowledge(store, nodeId) {
   if (!store._knowledgeNodes.has(nodeId)) throw new CoordinationRefusal(`unknown knowledge node ${nodeId}`, 'not_found');
   const edges = [...store._knowledgeEdges.values()].filter((edge) => edge.from === nodeId || edge.to === nodeId).map(clone);
   return freeze({ node: clone(store._knowledgeNodes.get(nodeId)), evidence: clone(store._knowledgeNodes.get(nodeId).evidence ?? []), edges });
+}
+
+// ── the pinned authority-free members (issue #259 slice 2) ────────────────────────────────────────────
+
+/** Moved from `CoordinationStore._acceptanceRevocationRequest` (issue #259 slice 2). Reads no store state. */
+export function _acceptanceRevocationRequest(fields, auth) {
+  const expected = ['evidence', 'expectedTaskVersion', 'schemaVersion', 'taskId'];
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+    || Object.keys(fields).sort().join(',') !== expected.sort().join(',') || fields.schemaVersion !== 1
+    || typeof fields.taskId !== 'string' || fields.taskId.length === 0 || Buffer.byteLength(fields.taskId) > 4_096
+    || !Number.isSafeInteger(fields.expectedTaskVersion) || fields.expectedTaskVersion <= 0
+    || !fields.evidence || typeof fields.evidence !== 'object' || Array.isArray(fields.evidence)
+    || Object.keys(fields.evidence).join(',') !== 'coordinationSeq'
+    || !Number.isSafeInteger(fields.evidence.coordinationSeq) || fields.evidence.coordinationSeq <= 0) {
+    throw new CoordinationRefusal('task acceptance revocation request is invalid', 'acceptance_revocation_invalid');
+  }
+  if (!promotionActor(auth?.actor) || typeof auth?.key !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(auth.key)) {
+    throw new CoordinationRefusal('task acceptance revocation authority is invalid', 'acceptance_revocation_unauthorized');
+  }
+  return clone(fields);
+}
+
+/** Moved from `CoordinationStore._contradictionListRequest` (issue #259 slice 2). State: the store, passed explicitly. */
+export function _contradictionListRequest(store, request, policy) {
+  const fields = ['observedSeq', 'afterEdgeId', 'limit'];
+  if (!validKnowledgeContradictionPolicy(policy) || !request || Object.keys(request).sort().join(',') !== fields.sort().join(',')
+    || !Number.isSafeInteger(request.observedSeq) || request.observedSeq < 0 || request.observedSeq > store._events.length
+    || (request.afterEdgeId !== null && !boundedText(request.afterEdgeId, 4_096)) || !Number.isSafeInteger(request.limit) || request.limit <= 0) throw new CoordinationRefusal('knowledge contradiction list request is invalid', 'causal_contradiction_invalid');
+  if (request.observedSeq > policy.maxScanEvents || request.limit > policy.maxItems) throw new CoordinationRefusal('knowledge contradiction list exceeded deployment ceiling', 'causal_contradiction_oversize');
+  return freeze(clone(request));
+}
+
+/** Moved from `CoordinationStore._contradictionResolutionRequest` (issue #259 slice 2). Reads no store state. */
+export function _contradictionResolutionRequest(request, policy) {
+  const fields = ['edgeId', 'winnerId', 'loserId', 'expectedEdgeValidityVersion', 'expectedWinnerValidityVersion', 'expectedLoserValidityVersion', 'reason'];
+  if (!validKnowledgeContradictionPolicy(policy) || !request || Object.keys(request).sort().join(',') !== fields.sort().join(',')
+    || !boundedText(request.edgeId, 4_096) || !boundedText(request.winnerId, 4_096) || !boundedText(request.loserId, 4_096) || request.winnerId === request.loserId
+    || !Number.isSafeInteger(request.expectedEdgeValidityVersion) || request.expectedEdgeValidityVersion <= 0
+    || !Number.isSafeInteger(request.expectedWinnerValidityVersion) || request.expectedWinnerValidityVersion <= 0
+    || !Number.isSafeInteger(request.expectedLoserValidityVersion) || request.expectedLoserValidityVersion <= 0
+    || !boundedText(request.reason, policy.maxReasonBytes) || !validUnicodeScalarString(request.reason)) throw new CoordinationRefusal('knowledge contradiction resolution request is invalid', 'causal_contradiction_invalid');
+  return freeze(clone(request));
+}
+
+/** Moved from `CoordinationStore._scratchCorrectionRequest` (issue #259 slice 2). Reads no store state. */
+export function _scratchCorrectionRequest(request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request) || !['release', 'supersede', 'retract'].includes(request.action)) throw new CoordinationRefusal('Scratch correction request is invalid', 'causal_correction_invalid');
+  const fields = request.action === 'release' ? ['action', 'oracleTaskId', 'scratchFactId']
+    : request.action === 'supersede' ? ['action', 'expectedValidityVersion', 'replacementScratchFactId', 'targetNodeId', ...(Object.hasOwn(request, 'oracleTaskId') ? ['oracleTaskId'] : [])]
+      : ['action', 'expectedValidityVersion', 'reason', 'targetNodeId'];
+  if (Object.keys(request).sort().join(',') !== fields.sort().join(',')) throw new CoordinationRefusal('Scratch correction request shape is invalid', 'causal_correction_invalid');
+  for (const name of ['scratchFactId', 'replacementScratchFactId', 'targetNodeId', 'oracleTaskId']) if (Object.hasOwn(request, name) && (typeof request[name] !== 'string' || request[name].length === 0 || Buffer.byteLength(request[name]) > 4_096)) throw new CoordinationRefusal('Scratch correction identifier is invalid', 'causal_correction_invalid');
+  if (request.action !== 'release' && (!Number.isSafeInteger(request.expectedValidityVersion) || request.expectedValidityVersion <= 0)) throw new CoordinationRefusal('Scratch correction target version is invalid', 'causal_correction_invalid');
+  if (request.action === 'retract' && !['source_expired', 'oracle_withdrawn', 'operator_correction'].includes(request.reason)) throw new CoordinationRefusal('Scratch correction reason is invalid', 'causal_correction_invalid');
+  return clone(request);
+}
+
+/** Moved from `CoordinationStore.scratchFactOracleTarget` (issue #259 slice 2). State: the store, passed explicitly. */
+export function scratchFactOracleTarget(store, id, repoId, maxTargetBytes) {
+  if (typeof id !== 'string' || id.length === 0 || Buffer.byteLength(id) > 4_096 || typeof repoId !== 'string' || repoId.length === 0
+    || !Number.isSafeInteger(maxTargetBytes) || maxTargetBytes <= 0) throw new CoordinationRefusal('Scratch oracle target request is invalid', 'scratch_oracle_invalid');
+  const fact = store._scratchFacts.get(id);
+  if (!fact || !fact.active || fact.grounding !== 'derived') throw new CoordinationRefusal('Scratch oracle requires an active derived fact', 'scratch_oracle_target_ineligible');
+  if (fact.envRef?.repoId !== repoId || typeof fact.ownerTask !== 'string' || fact.ownerTask.length === 0) throw new CoordinationRefusal('Scratch oracle target repository or producer is invalid', 'scratch_oracle_target_ineligible');
+  const source = store._events[fact.createdEvent - 1];
+  const projectedFact = Object.fromEntries(Object.entries(fact).filter(([key]) => !['active', 'createdEvent'].includes(key)));
+  if (!source || source.kind !== 'scratch.fact_posted' || source.payload?.id !== id || canonicalDigest(source.payload) !== canonicalDigest(projectedFact)) {
+    throw new CoordinationIntegrityError('Scratch oracle source binding is invalid', 'scratch_oracle_integrity');
+  }
+  const snapshot = clone(source.payload); const targetBytes = canonicalBytes(snapshot);
+  if (targetBytes > maxTargetBytes) throw new CoordinationRefusal('Scratch oracle target exceeded deployment ceiling', 'scratch_oracle_oversize');
+  const commitment = freeze({
+    schemaVersion: 1, kind: 'scratch.fact', scratchFactId: id,
+    scratchFactDigest: canonicalDigest(snapshot), sourceEventSeq: source.seq,
+    sourceEventDigest: canonicalDigest(source), repoId,
+    envRefDigest: canonicalDigest(snapshot.envRef), producerTaskId: snapshot.ownerTask,
+  });
+  return freeze({ commitment, snapshot, targetBytes });
 }

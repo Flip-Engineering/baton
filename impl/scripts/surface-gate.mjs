@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runSurfaceConformanceMain } from './surface-conformance.mjs';
 import { checkSurfaceParityMatrix, writeSurfaceParityMatrix } from './surface-parity.mjs';
 import { renderSurfaceDoc } from './render-surface-docs.mjs';
+import { collectSeamInventory } from './seam-inventory.mjs';
 
 const { McpFleetServer, commandForTool } = await import(new URL('../src/mcp-northbound.mjs', import.meta.url).href);
 const { CoordinationStore } = await import(new URL('../src/coordination-store.mjs', import.meta.url).href);
@@ -689,30 +690,57 @@ function blankGoalPlanNonCode(body) {
   return out;
 }
 
-/**
- * Every live-policy read inside the goal/plan replay fold is a pinned one, and the
- * fold never compares a recorded digest to the live digest nor re-normalises recorded
- * content under the live policy. `source` overrides the scanned file so the rule
- * itself is testable.
- */
+/** The bodies of the goal/plan fold's methods, located by NAME through the live seam map — the map
+ * is the anchor, never a line, so the audit follows a member into whichever file now holds it (issue
+ * #259 slice 2 moved the two pair validators into coordination-replay.mjs, where a store-file search
+ * would have reported them missing). A member the class now delegates — a three-line
+ * `return <module>.<name>(…)` — is skipped in favour of the body it forwards to. */
+function goalPlanFoldBodies() {
+  const bodies = [];
+  for (const file of collectSeamInventory().files) {
+    const text = readFileSync(fileURLToPath(new URL(`../${file.file.replace(/^impl\//u, '')}`, import.meta.url)), 'utf8');
+    const lines = text.split('\n');
+    for (const member of file.members) {
+      if (!GOAL_PLAN_FOLD_METHODS.includes(member.name)) continue;
+      const window = lines.slice(member.line - 1, member.line - 1 + member.size).join('\n');
+      if (/\breturn coordination(?:Internals|Replay)\.[A-Za-z_$]+\(/u.test(window)) continue;
+      bodies.push({ name: member.name, file: file.file, lineOffset: member.line - 1, body: `\n${window}` });
+    }
+  }
+  return bodies;
+}
+
+/** An explicit `source` stays what it always was — a synthetic class body the rule's own test hands
+ * in — and is read with the class-depth marker, unchanged. */
+function goalPlanFoldBodiesFromSource(source) {
+  return GOAL_PLAN_FOLD_METHODS.map((name) => {
+    const method = goalPlanFoldMethodBody(source, name);
+    return { name, file: GOAL_PLAN_FOLD_PATH, lineOffset: method?.lineOffset ?? 0, body: method?.body ?? null };
+  });
+}
 export function checkGoalPlanFoldAdmission({ source = null } = {}) {
-  const text = source ?? readFileSync(new URL(`../src/coordination-store.mjs`, import.meta.url), 'utf8');
+  const bodies = source === null ? goalPlanFoldBodies() : goalPlanFoldBodiesFromSource(source);
   const findings = [];
   const readFields = new Set();
-  for (const name of GOAL_PLAN_FOLD_METHODS) {
-    const method = goalPlanFoldMethodBody(text, name);
-    if (method === null) {
-      findings.push(`${GOAL_PLAN_FOLD_PATH}: goal/plan fold method '${name}' not found — the fold admission audit cannot run`);
+  for (const entry of bodies) {
+    if (entry.body === null) {
+      findings.push(`${entry.file}: goal/plan fold method '${entry.name}' not found — the fold admission audit cannot run`);
       continue;
     }
+    const method = entry;
+    const name = method.name;
     const code = blankGoalPlanNonCode(method.body);
     const lineOf = (index) => method.lineOffset + code.slice(0, index).split('\n').length;
-    for (const match of code.matchAll(/this\._goalPlanPolicy\??\.([A-Za-z0-9_]+)/gu)) {
+    // The live policy is read through the receiver the member's own file gives it: `this` on the
+    // class, `store` in an extracted module, where the store is the explicit first parameter (issue
+    // #259 slice 2). One spelling would have made a moved fold member look like it had stopped
+    // reading the policy — the exact blindness the name-anchored lookup above exists to remove.
+    for (const match of code.matchAll(/\b(?:this|store)\._goalPlanPolicy\??\.([A-Za-z0-9_]+)/gu)) {
       const field = match[1];
       const line = lineOf(match.index);
       if (field === 'policyDigest') {
         findings.push(
-          `${GOAL_PLAN_FOLD_PATH}:${line}: goal-plan fold compares a recorded digest to the live policy`
+          `${entry.file}:${line}: goal-plan fold compares a recorded digest to the live policy`
           + ` ('${name}' reads this._goalPlanPolicy.policyDigest) — anchor replay on the digest the row carries (#325)`,
         );
         continue;
@@ -722,7 +750,7 @@ export function checkGoalPlanFoldAdmission({ source = null } = {}) {
         continue;
       }
       findings.push(
-        `${GOAL_PLAN_FOLD_PATH}:${line}: goal-plan fold reads an unpinned live-policy field`
+        `${entry.file}:${line}: goal-plan fold reads an unpinned live-policy field`
         + ` ('${name}' reads this._goalPlanPolicy.${field}) — pin it as a justified replay invariant or reclassify the rule admission-only (#325)`,
       );
     }
@@ -730,7 +758,7 @@ export function checkGoalPlanFoldAdmission({ source = null } = {}) {
       for (const call of GOAL_PLAN_FOLD_FORBIDDEN_CALLS) {
         for (const match of code.matchAll(new RegExp(`\\b${call}\\s*\\(`, 'gu'))) {
           findings.push(
-            `${GOAL_PLAN_FOLD_PATH}:${lineOf(match.index)}: goal-plan fold re-normalises recorded content`
+            `${entry.file}:${lineOf(match.index)}: goal-plan fold re-normalises recorded content`
             + ` under the live policy ('_applyGoalPlanEvent' calls ${call}) — verify the row against its recorded digest instead (#325)`,
           );
         }
