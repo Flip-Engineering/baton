@@ -2685,7 +2685,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'deploymentSummary', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -2717,6 +2717,14 @@ export class BatonApplication {
     this.deploymentSummary = typeof options.deploymentSummary === 'function' ? options.deploymentSummary : null;
     if (this.deploymentSummary === null && options.deploymentSummary !== undefined) {
       throw applicationError('application deployment summary must be a function', 'application_config_invalid');
+    }
+    // Issue #324: the deployment's pre-effect route gate, built from the SAME readiness rows
+    // and quota authority recruit admission reads (application-deployment). Null when the
+    // application is constructed bare — it then admits as before, with no readiness source
+    // to refuse on rather than a fabricated one.
+    this.routeAdmission = typeof options.routeAdmission === 'function' ? options.routeAdmission : null;
+    if (this.routeAdmission === null && options.routeAdmission !== undefined) {
+      throw applicationError('application route admission must be a function', 'application_config_invalid');
     }
     this.context = null;
     if (options.context !== undefined) {
@@ -4943,6 +4951,21 @@ export class BatonApplication {
     return admitted;
   }
 
+  /** Issue #324: run admission consults the deployment's route readiness pre-effect — the
+   * single route and every composition team route, through the injected gate, before the
+   * first durable effect. A blocked route refuses here, so there is no goal/plan record to
+   * approve, no worktree, no capacity reservation, and no worker spawn — with the blocked
+   * row (state, code, summary) as the typed refusal. */
+  _assertRouteAdmission(intent) {
+    if (typeof this.routeAdmission !== 'function') return;
+    this.routeAdmission(intent.route);
+    if (intent.composition) {
+      for (const member of intent.composition.team) {
+        this.routeAdmission({ exact: member.route });
+      }
+    }
+  }
+
   async start(rawIntent, rawOwner, rawContext = null) {
     this._assertOpen();
     await this.ready;
@@ -5010,6 +5033,7 @@ export class BatonApplication {
     if (!profile.routes.some((route) => routeEqual(route, intent.route))) {
       throw applicationError('requested route is outside the deployment profile', 'application_route_not_allowed');
     }
+    this._assertRouteAdmission(intent);
     this._admitRecursiveRun(intent, owner, context);
     const constraint = profileConstraint(intent.profile, profile);
     const workflowConstraint = intent.composition

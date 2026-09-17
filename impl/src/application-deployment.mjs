@@ -1690,6 +1690,7 @@ function assertRouteReady(options, readiness) {
   if (route?.state !== 'blocked') return;
   throw Object.assign(new Error(route.summary), {
     code: route.code,
+    state: route.state,
     route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
   });
 }
@@ -1712,12 +1713,24 @@ function providerQuotaRefusal(block) {
     ? `until ${block.resetAt}` : 'until its provider reports a reset time';
   return Object.assign(new Error(
     `route ${harness}/${model}@${effort} is exhausted (${block.code}) ${window}; recruit on another route or wait for the reset`,
-  ), { code: block.code, route: Object.freeze({ harness, model, effort }), resetAt: block.resetAt });
+  ), { code: block.code, state: 'blocked', route: Object.freeze({ harness, model, effort }), resetAt: block.resetAt });
 }
 
 function assertRouteQuotaClear(options, readiness, quota) {
   const block = routeQuotaBlockOf(options, readiness, quota);
   if (block) throw providerQuotaRefusal(block);
+}
+
+/** Issue #324: the pre-effect route gate run admission shares with recruit admission. The
+ * SAME two assertions every start-family seam runs — the static readiness row, then (#295
+ * item 4) the route's exhausted-quota state — bound to this deployment's rows and quota
+ * authority, so a blocked route refuses identically however the run arrives (embedded
+ * recruit or resident run.start), and there is never a second derivation to drift. */
+export function routeAdmissionGate(readiness, routeQuota) {
+  return (options) => {
+    assertRouteReady(options, readiness);
+    assertRouteQuotaClear(options, readiness, routeQuota);
+  };
 }
 
 function residentApplicationFacade(application, resident, readinessSupplier) {
@@ -2702,6 +2715,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
         workspace: workspaceProbe(),
         hostCapacity: hostCapacityProbe ? hostCapacityProbe() : null,
       }),
+      // Issue #324: run admission consults route readiness pre-effect through the same gate
+      // recruit admission reads — the deployment's own rows and quota authority, never a
+      // second derivation. A run or explore naming a blocked route refuses inside start(),
+      // before goal/plan records, worktree, capacity reservation, or worker spawn.
+      routeAdmission: routeAdmissionGate(readiness, routeQuota),
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
