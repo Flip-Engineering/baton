@@ -98,9 +98,10 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     // `--wake-class` filter and `--since` cursor beside the follow leg itself (#272); the same
     // `--wake-class` filter is served by the BOUNDED watch (#339), while `--since` stays the
     // stream's cursor and needs --follow. The follow token stays literal: the #313 pin reads
-    // `[--follow]` off both rows.
+    // `[--follow]` off both rows, and the #331 pin reads it off the recruit row (the recruit
+    // follow leg observes the seat's own admitted / queued / refused row).
     ...(name === 'swarm.watch' ? ['[--follow]', '[--wake-class CLASS,...]', '[--since SEQ (with --follow)]']
-      : name === 'swarm.check' ? ['[--follow]'] : []),
+      : name === 'swarm.check' || name === 'swarm.recruit' ? ['[--follow]'] : []),
   ].join(' ');
   return Object.freeze({
     verb,
