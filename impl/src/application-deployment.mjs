@@ -212,6 +212,53 @@ function repositoryAuthority(value) {
   }
 }
 
+const GIT_SHA_40 = /^[0-9a-f]{40}$/u;
+
+/** A bounded git read that answers null instead of throwing: the served-commit rows are
+ * observations, and an unreadable repository is reported as absence, never as a doctor failure. */
+function gitReadOrNull(args, cwd) {
+  try {
+    const out = git(args, cwd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return out.length > 0 ? out : null;
+  } catch { return null; }
+}
+
+/** #306 (2): the revision this deployment SERVES — the checkout's HEAD at open, frozen for the
+ * deployment's life because the code running is the code that was loaded, whatever the
+ * checkout does afterwards — and the branch it was on (null when detached). */
+export function servedRevision(repoRoot) {
+  const commit = gitReadOrNull(['rev-parse', 'HEAD'], repoRoot);
+  return Object.freeze({
+    commit: commit !== null && GIT_SHA_40.test(commit) ? commit : null,
+    branch: gitReadOrNull(['symbolic-ref', '--short', 'HEAD'], repoRoot),
+  });
+}
+
+/** #306 (2): the target the served revision is measured against, read FRESH: the checkout's own
+ * branch when it is on one (the branch landings move), else the remote's default branch
+ * (`origin/HEAD`, then `origin/master`), else nothing — a detached checkout with no remote has
+ * no target, and says so with nulls. `behind` counts the target commits the served revision
+ * lacks, from the refs the repository holds NOW (a fetch refreshes it; the doctor never
+ * touches the network). */
+export function servedTarget(repoRoot, served) {
+  const ref = served?.branch
+    ?? (gitReadOrNull(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoRoot)
+      ?? (gitReadOrNull(['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/master'], repoRoot) ? 'origin/master' : null));
+  if (ref === null) return Object.freeze({ ref: null, commit: null, behind: null });
+  const commit = gitReadOrNull(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], repoRoot);
+  if (commit === null || !GIT_SHA_40.test(commit)) return Object.freeze({ ref, commit: null, behind: null });
+  const behind = served?.commit
+    ? gitReadOrNull(['rev-list', '--count', `${served.commit}..${commit}`], repoRoot) : null;
+  return Object.freeze({
+    ref, commit, behind: behind !== null && /^\d+$/u.test(behind) ? Number(behind) : null,
+  });
+}
+
+/** The doctor / summary row: the served revision beside its target and the behind count. */
+function servedRow(repoRoot, served) {
+  return Object.freeze({ ...served, target: servedTarget(repoRoot, served) });
+}
+
 const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([
   'glm_key.json', 'deepseek_key.json',
   '.env', '.env.local', '.env.development', '.env.test', '.env.production',
@@ -1771,6 +1818,8 @@ class BatonDeployment {
   #workspaceProbe = null;
   #hostCapacity = null;
   #hostCapacityProbe = null;
+  // #306 (2): the revision this deployment serves, frozen at open.
+  #served = null;
   #claudeCredentialProbe = null;
   #grokCredentialProbe = null;
   #liveness = null;
@@ -1794,6 +1843,7 @@ class BatonDeployment {
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
     this.#hostCapacityProbe = deployment.hostCapacityProbe ?? null;
+    this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
     this.#adapters = deployment.adapters ?? {};
@@ -1925,10 +1975,15 @@ class BatonDeployment {
     // #297: the doctor's host capacity section — the derived budget, the live leases and the
     // visible queue, read FRESH beside the workspace observation (#297 item 4).
     const hostCapacity = this.#hostCapacityProbe ? this.#hostCapacityProbe() : null;
+    // #306 (2): the served revision (frozen at open) beside its target and how far behind it
+    // is, read fresh from the checkout's refs — so a root sees "this resident serves d9b8164c,
+    // 4 behind master" on the doctor instead of discovering it on a stale-based lane.
+    const served = this.#served ? servedRow(this.#repository.root, this.#served) : null;
     const base = {
       ...this.#readiness, ready, routes,
       ...(workspace ? { workspace } : {}),
       ...(hostCapacity ? { hostCapacity } : {}),
+      ...(served ? { served } : {}),
     };
     Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
     return Object.freeze(base);
@@ -2521,6 +2576,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       });
     } catch { museCredentialPath = null; /* readiness names the missing credential */ }
   }
+  // #306 (2): the revision this deployment serves — read once, here, because the code that is
+  // loading now IS the code that will answer for the deployment's life.
+  const served = servedRevision(repository.root);
   const projection = defaultCredentialProjection(repository.root, {
     projectNativeKimi: nativeKimiAuthentication?.state === 'ready',
     claudeCredentialCache,
@@ -2724,6 +2782,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       deploymentSummary: () => Object.freeze({
         workspace: workspaceProbe(),
         hostCapacity: hostCapacityProbe ? hostCapacityProbe() : null,
+        // #306 (2): the served revision and its drift from the target ride the swarm view's
+        // deployment rows, so a root recruiting lanes sees the stale base before it recruits.
+        served: servedRow(repository.root, served),
       }),
       // Issue #324: run admission consults route readiness pre-effect through the same gate
       // recruit admission reads — the deployment's own rows and quota authority, never a
@@ -2734,7 +2795,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
-      hostCapacity: hostCapacityAuthority, hostCapacityProbe,
+      hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,
       liveness: livenessController,
       claudeCredentialProbe: claudeCredentialCache ? () => claudeCredentialCache.metadata() : null,
       claudeCredentialCache,
