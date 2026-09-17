@@ -15,6 +15,8 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
+import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { CLI_PROMPT_DIALECT, renderBrief } from './adapter.mjs';
@@ -22,6 +24,11 @@ import { assertAdapterCard } from './adapter-contract.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+// Issue #326: the stderr tail bound derives from the ONE frame registry (never a fresh
+// constant) — one 128th of the wire-frame ceiling, the same 8 KiB the referee's failure
+// capsule uses — so a CLI that dies before its first JSONL leaves provider-failure evidence
+// under one shared ceiling instead of an unbounded log.
+const MAX_STDERR_TAIL_BYTES = Math.floor(FRAME_LIMITS['wire.frame'].value / 128);
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
 
@@ -72,6 +79,27 @@ function fixedWireFailure(base) {
       },
     },
   };
+}
+
+// Issue #326: the session's stderr tail. Bytes appended past the derived bound drop from the
+// FRONT, so the tail always holds the process's last words (the complaint it died with).
+// Synthetic sessions (unit-driven _onData/_onClose) carry no buffer; they read as empty.
+function appendStderrTail(session, chunk) {
+  const next = `${session.stderrTailRaw ?? ''}${chunk}`;
+  const bytes = Buffer.from(next, 'utf8');
+  session.stderrTailRaw = bytes.length <= MAX_STDERR_TAIL_BYTES
+    ? next
+    : bytes.subarray(bytes.length - MAX_STDERR_TAIL_BYTES).toString('utf8');
+}
+
+// Issue #326: the crash-time composition. Redaction is the #299 derivation the referee's
+// evidence path already applies (sanitizeVerifierDiagnosticText — never a second vocabulary),
+// so token-shaped values never land in the ledger; the sanitizer's own tail bound holds no
+// matter how much redaction grows the text.
+function crashedStderrTail(session) {
+  const raw = typeof session.stderrTailRaw === 'string' ? session.stderrTailRaw : '';
+  if (raw === '') return '';
+  return sanitizeVerifierDiagnosticText(raw).text;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +382,7 @@ class CliAdapter {
     const spawnedAt = Date.now();
     const session = {
       worker, child, terminal: false, turnSettled: false, processClosePending: false,
-      turnEpoch, buf: '', logicalSequence: 0, processGeneration, processClosedEmitted: false,
+      turnEpoch, buf: '', stderrTailRaw: '', logicalSequence: 0, processGeneration, processClosedEmitted: false,
       processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
       spawnError: null, timeoutFailure: null, wallBudgetNotified: false,
       workerPolicyObserved,
@@ -364,7 +392,12 @@ class CliAdapter {
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this._onData(session, chunk));
-    child.stderr.on('data', () => {}); // discard; errors surface via the event stream / exit code
+    // Issue #326: keep the tail — a CLI that exits before its first JSONL record (bad
+    // credentials, an unknown flag, a missing binary dependency) otherwise crashes as a bare
+    // `exited 1 (null)` with the reason discarded. Bounded by the derived registry bound and
+    // redacted at crash composition, so the ledger never holds raw provider output.
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => appendStderrTail(session, String(chunk)));
 
     child.on('close', (code, signal) => this._onClose(session, code, signal));
     child.on('error', (err) => {
@@ -476,7 +509,9 @@ class CliAdapter {
       } else if (code === 0) {
         this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed'), usageSeal: unavailableUsageSeal() } } });
       } else {
-        this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: `exited ${code} (${signal})`, usageSeal: unavailableUsageSeal() } } });
+        // Issue #326: the process exited without a terminal record — the exit error rides
+        // beside the redacted stderr tail, so the crash row says why the CLI died.
+        this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: `exited ${code} (${signal})`, stderrTail: crashedStderrTail(session), usageSeal: unavailableUsageSeal() } } });
       }
     };
     if (wasStopping) {

@@ -4081,7 +4081,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 85,
+          "size": 95,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -5498,7 +5498,7 @@
         {
           "name": "_debugMember",
           "ordinal": 0,
-          "size": 34,
+          "size": 39,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
@@ -11716,7 +11716,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 10,
+          "size": 12,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -11917,7 +11917,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 410,
+          "size": 414,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"

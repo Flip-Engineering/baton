@@ -154,6 +154,25 @@ export function swarmParticipantLiveness(worker, pausedTurns = 0) {
   return { state, live, turn: live && pausedTurns > 0 ? 'paused' : state === 'working' ? 'running' : null };
 }
 
+/** Issue #326: the seat's last `lifecycle.crashed` row — the exit error and the redacted
+ * stderr tail the CLI died with — projected from ITS OWN durable ledger, never a second
+ * store. The tail was already bounded and redacted at the adapter's emit boundary (the #299
+ * derivation), so the view carries it verbatim; a seat with no crash reads null (absence,
+ * never a guess). Pure over an event array so the deployment wires its own ledger read. */
+export function lastCrashOf(events) {
+  if (!Array.isArray(events)) return null;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.kind !== 'lifecycle.crashed') continue;
+    const payload = event?.payload ?? {};
+    return Object.freeze({
+      error: typeof payload.error === 'string' ? payload.error : null,
+      stderrTail: typeof payload.stderrTail === 'string' ? payload.stderrTail : null,
+    });
+  }
+  return null;
+}
+
 /** Living collaboration over the existing Run, worker, and coordination authorities.
  * This service owns organization and the user-facing operations. It never infers work
  * completion from a process/turn ending, or session closure from accepting a contribution. */
@@ -284,8 +303,10 @@ export class SwarmRuntime {
    * derives the rows landed on the target since that base. Both are optional; a deployment
    * without them refuses the verbs it cannot serve or omits the facts it cannot derive. */
   constructor({ store, coordinator, authorize, prepareRun = (request) => request, startRun, stopRun,
-    hostCapacity = null, deploymentSummary = null, knowledge = null, situationGit = null }) {
-    Object.assign(this, { store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit });
+    hostCapacity = null, deploymentSummary = null, knowledge = null, situationGit = null, lastCrash = null }) {
+    Object.assign(this, {
+      store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
+    });
     // #297: the host-wide capacity authority recruits admit through (null = admission is not
     // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
     this.hostCapacity = hostCapacity;
@@ -720,6 +741,10 @@ export class SwarmRuntime {
         lastToolRows: worker && typeof this.coordinator.lastToolRows === 'function'
           ? this.coordinator.lastToolRows(worker.id)
           : [],
+        // Issue #326: beside the runtime state, the row carries the seat's last crash — the
+        // exit error and the redacted stderr tail — so a dead seat reads with its reason,
+        // not only as `dead`. Null when no crash was observed or no authority is wired.
+        crash: worker && typeof this.lastCrash === 'function' ? this.lastCrash(worker.id) : null,
         runtime: { workerId: worker?.id ?? null, state: liveness.state, turn: liveness.turn, live: liveness.live },
         guidance: worker ? (guidanceByWorker.get(worker.id) ?? []) : [],
         workspace: physicalOwnerId !== null

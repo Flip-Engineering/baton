@@ -602,3 +602,67 @@ test('#323: a served deployment constructs its built-in muse adapter live — sp
     try { await deployment?.close(); } catch { /* fixture tree removed by fileTmp */ }
   }
 });
+
+// ── #326: a CLI that dies before its first JSONL record must leave its stderr on the crash ──
+// A worker that exits before emitting any JSONL (bad credentials, an unknown flag, a missing
+// binary dependency) used to land as lifecycle.crashed with only `exited 1 (null)` — the one
+// line that said why was discarded on the floor (`child.stderr.on('data', () => {})`). The
+// adapter now keeps a bounded, redacted stderr tail on the session and composes it into the
+// crash payload as stderrTail beside error. Both rows below spawn a fake `muse` on PATH through
+// the real CliAdapter spawn path (live:true, a real child, no quota): red-before, they fail
+// until the adapter keeps the tail.
+function fakeMuseStderrBin(stderrLines, code = 1) {
+  const bin = fileTmp('fake-muse-stderr-bin');
+  const script = [
+    '#!/bin/sh',
+    ...stderrLines.map((line) => `printf '%s\\n' '${line}' >&2`),
+    `exit ${code}`,
+    '',
+  ].join('\n');
+  writeFileSync(join(bin, 'muse'), script, { mode: 0o755 });
+  return bin;
+}
+
+/** Resolve with the first lifecycle.crashed the adapter emits (the close path is async). */
+function waitCrash(adapter, timeoutMs = 10_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out waiting for lifecycle.crashed')), timeoutMs);
+    timer.unref?.();
+    adapter.onEvent((event) => {
+      if (event.kind === 'lifecycle.crashed') { clearTimeout(timer); resolve(event); }
+    });
+  });
+}
+
+async function spawnCrashingMuse(t, stderrLines) {
+  const fixture = fileRepo();
+  const bin = fakeMuseStderrBin(stderrLines);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath}`;
+  t.after(() => { process.env.PATH = previousPath; });
+  const adapter = new MuseCli({ version: 'fake-stderr', live: true });
+  const crashed = waitCrash(adapter);
+  const ack = await adapter.spawn(
+    `w-stderr-${t.name.replace(/[^a-z0-9]+/giu, '-').slice(0, 32)}`,
+    { goal: 'x', verification: { command: 'true', expectExit: 0 } },
+    { live: true, worktree: fixture.repo },
+  );
+  assert.equal(ack.ok, true, `spawn must reach the fake CLI: ${ack.reason ?? ''}`);
+  return crashed;
+}
+
+test('#326: a CLI worker that exits before its first JSONL crashes with its stderr tail beside the exit error', async (t) => {
+  const crash = await spawnCrashingMuse(t, ['muse: error: invalid API key (fake-stderr-marker)']);
+  assert.equal(crash.payload.error, 'exited 1 (null)');
+  assert.equal(typeof crash.payload.stderrTail, 'string');
+  assert.match(crash.payload.stderrTail, /invalid API key \(fake-stderr-marker\)/);
+});
+
+test('#326: a token-shaped value on stderr is redacted from the crash tail, never landed verbatim', async (t) => {
+  const token = ["s" + "k", "fake" + "0123456789abcdef"].join("-"); // built at runtime: no token-shaped literal is stored in this file
+  const crash = await spawnCrashingMuse(t, [`muse: FATAL: credential rejected for key ${token} (fake)`]);
+  assert.equal(crash.payload.error, 'exited 1 (null)');
+  assert.equal(typeof crash.payload.stderrTail, 'string');
+  assert.ok(!crash.payload.stderrTail.includes(token), `raw token leaked into the crash tail: ${crash.payload.stderrTail}`);
+  assert.match(crash.payload.stderrTail, /\[credential-shaped content redacted\]/);
+});

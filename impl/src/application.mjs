@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { SwarmRuntime } from './swarm-runtime.mjs';
+import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { wrapProse } from './messages.mjs';
@@ -3491,6 +3491,16 @@ export class BatonApplication {
   _swarmRuntime() {
     this._swarmService ??= new SwarmRuntime({
       store: this.driver.coordination, coordinator: this.driver.coordinator,
+      // Issue #326: the participant row's crash fact reads the seat's own durable ledger —
+      // the same log the debug leg projects — never a second store. Null when unreadable.
+      lastCrash: (workerId) => {
+        if (typeof workerId !== 'string' || workerId.length === 0) return null;
+        try {
+          return lastCrashOf(this.driver.log.read(workerId));
+        } catch {
+          return null;
+        }
+      },
       // #297: the host-wide capacity authority every resident shares (driver-built); recruits
       // admit through it and the view carries the deployment summary beside the queue.
       hostCapacity: this.driver.hostCapacity ?? null,
@@ -11879,6 +11889,11 @@ export class BatonApplication {
       code: debugTerminalCode(crashEvent.payload?.code, 'provider_crashed'),
       message: typeof crashEvent.payload?.error === 'string' && crashEvent.payload.error.length > 0
         ? boundedAttentionText(crashEvent.payload.error) : null,
+      // Issue #326: the redacted stderr tail the CLI died with rides beside the exit error.
+      // Already bounded and redacted at the adapter's emit boundary (the #299 derivation),
+      // so the debug leg carries it verbatim like the lastToolRows precedent.
+      ...(typeof crashEvent.payload?.stderrTail === 'string' && crashEvent.payload.stderrTail.length > 0
+        ? { stderrTail: crashEvent.payload.stderrTail } : {}),
     } : null);
     return {
       role: dispatch.binding.nodeKey, workerId, phase: task?.status ?? null,
