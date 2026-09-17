@@ -748,3 +748,20 @@ The composition marks each composed message delivered (`swarm.guidance_delivered
 receives it twice — and the park itself wakes no delivery. Both rows show on the participant
 row's `guidance` beside the live nudges, as `{seq, ts, from, messageId, delivery}` with delivery
 `parked` or `delivered`.
+## A stop settles membership (issue #350, 2026-09-17)
+
+Forty stops on one swarm had written no membership row: every stopped seat still read
+`status: active`, so each new brief listed thirty dead peers as "working beside you", the recruit
+overlap advisory named twelve stopped seats, and the roster-intersection rules counted them.
+
+`swarm.stop` now writes `swarm.participant_left {reason: 'stopped' | 'completed'}` through the
+same fold the recruit-refused rollback (#308) uses — one representation, `leftReason` on the row —
+so a stopped seat reads `status: left` on every projection; `completed` is chosen by the ONE
+completion derivation (`_seatCompleted`, #332) the view and the stop share. Every predicate that
+means "a seat that can still act" — peers in the brief, scope overlap, synchronization arrivals,
+`closed_with_live_participants`, holder checks and the completion derivation — reads one helper,
+`_canAct` (membership active and runtime not known-dead; `gone` keeps its meaning). The brief's
+Swarm situation lists only seats that can act and adds one line counting the seats that completed
+or stopped since the base, so a successor knows the history without being told the dead are
+working. The stop receipt's event is the `participant_left` row and its `changed` names the
+participant; a stopped checkout source refuses `source_left` before its liveness is consulted.
