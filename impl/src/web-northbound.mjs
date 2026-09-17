@@ -580,6 +580,23 @@ function dispatchFailure(cause) {
     } } };
   }
   if (['worktree_capacity_exceeded', 'worktree_capacity_unavailable'].includes(cause?.code)) return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'workspace capacity refused this dispatch; free repository volume space or raise the deployment capacity floors, then retry' } } };
+  // #329: the host-wide authority's queue timeout names the dimension it waited on (load,
+  // memory, budget) with the observed and required numbers and the operator bypass, instead of
+  // the transient fallthrough — a recruit that can never be admitted on this host must say so.
+  if (cause?.code === 'host_capacity_queue_timeout') {
+    const shortfall = isRecord(cause.shortfall) ? cause.shortfall : null;
+    return { httpStatus: 503, body: { ok: false, error: {
+      code: cause.code,
+      message: `host capacity queued this ${cause.leaseKind ?? 'lease'} request at position ${cause.queuePosition ?? '?'} (${cause.queueAhead ?? '?'} ahead) and the ${cause.waitMs ?? '?'}ms admission wait is spent`
+        + (shortfall ? `; waiting on ${shortfall.dimension}: ${shortfall.observed} ${shortfall.unit} observed, ${shortfall.required} required` : '')
+        + `; no capacity effect was applied (operator bypass: ${cause.bypass ?? 'BATON_HOST_CAPACITY_DISABLED=1'})`,
+      retryable: true,
+      detail: {
+        queuePosition: cause.queuePosition ?? null, queueAhead: cause.queueAhead ?? null,
+        leaseKind: cause.leaseKind ?? null, waitMs: cause.waitMs ?? null, shortfall, bypass: cause.bypass ?? null,
+      },
+    } } };
+  }
   // D5 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): the wave lane's typed refusals
   // carry the lane's OWN message byte-identically (W6/F4) plus the {actual, cap, cause, role}
   // payload — never the fixed mapping strings below, so the web surface mirrors the direct port.

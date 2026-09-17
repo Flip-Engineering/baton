@@ -120,8 +120,19 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   wakeRow({
     wakeClass: 'refused', scope: 'swarm', terminal: true, next: 'baton swarm view {swarmId}',
     summary: 'the runtime refused a swarm mutation and recorded why',
-    rows: [operationalKind('swarm.operation_refused'), operationalKind('swarm.operation_unavailable')],
+    // #329: a recruit whose host-admission wait is spent is a refusal recorded against the seat,
+    // naming the dimension (load, memory, budget), the numbers and the operator bypass.
+    rows: [operationalKind('swarm.operation_refused'), operationalKind('swarm.operation_unavailable'),
+      operationalKind('swarm.admission_timeout')],
     subject: { field: 'command', kind: 'refusal', fallback: { field: 'swarmId', kind: 'swarm' } },
+  }),
+  wakeRow({
+    wakeClass: 'queued', scope: 'swarm', terminal: false, next: null,
+    summary: 'the host capacity authority queued a recruited seat (naming the dimension it waits on) or admitted a queued seat',
+    // #329: the queue-to-admit timeline the runtime records for every host-admitted seat, so an
+    // orchestrator wakes on "your recruit is waiting on memory" instead of watching a silent view.
+    rows: [operationalKind('swarm.admission_queued'), operationalKind('swarm.admission_admitted')],
+    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
     wakeClass: 'dead', scope: 'deployment', terminal: true,

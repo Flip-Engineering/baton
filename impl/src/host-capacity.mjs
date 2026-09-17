@@ -23,6 +23,7 @@
 // reaper gate, every wait turn bounded by a monotonic deadline. There the protocol guards one
 // repository's reservation ledger; here it guards the host's lease namespace.
 
+import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 // F1 (frame economics): no hand-typed byte literals outside the registry — the bounded-record
 // ceiling reuses a substrate registry value.
@@ -128,17 +129,74 @@ function validOwner(value) {
 
 // ── measurement and derivation ───────────────────────────────────────────────────────────────────
 
+/** #329: the memory the OS will actually hand out, which is NOT `os.freemem()`. On darwin
+ * `freemem()` reports free pages only — inactive, speculative and purgeable pages are
+ * reclaimable but not "free", so a Mac with a browser open reports a few hundred MB of 16 GB and
+ * every worker lease queued forever. Parse the same `vm_stat` the operator reads. Returns
+ * `{ pageSize, freeBytes, inactiveBytes, speculativeBytes, purgeableBytes, availableBytes }`, or
+ * null when the text is not a vm_stat report (the caller falls back honestly). */
+export function parseVmStat(text) {
+  if (typeof text !== 'string') return null;
+  const pageSize = Number(/page size of (\d+) bytes/u.exec(text)?.[1]);
+  if (!Number.isSafeInteger(pageSize) || pageSize <= 0) return null;
+  const pages = (label) => {
+    const match = new RegExp(`^${label}:\\s+(\\d+)\\.?$`, 'mu').exec(text);
+    return match ? Number(match[1]) : null;
+  };
+  const free = pages('Pages free');
+  if (free === null) return null;
+  const inactive = pages('Pages inactive') ?? 0;
+  const speculative = pages('Pages speculative') ?? 0;
+  const purgeable = pages('Pages purgeable') ?? 0;
+  const bytes = (count) => count * pageSize;
+  return Object.freeze({
+    pageSize, freeBytes: bytes(free), inactiveBytes: bytes(inactive),
+    speculativeBytes: bytes(speculative), purgeableBytes: bytes(purgeable),
+    availableBytes: bytes(free + inactive + speculative + purgeable),
+  });
+}
+
+/** /proc/meminfo's MemAvailable (kB) as bytes, or null when the text does not carry it. */
+export function parseMemInfoAvailable(text) {
+  const match = typeof text === 'string' ? /^MemAvailable:\s+(\d+) kB$/mu.exec(text) : null;
+  return match ? Number(match[1]) * 1024 : null;
+}
+
+/** Measure available memory the platform's own way; `os.freemem()` is the fallback where no
+ * platform report exists or the report cannot be read. Never throws. */
+export function hostAvailableMemoryBytes({
+  platform: hostPlatform = platform(), freeBytes = freemem(), totalBytes = totalmem(),
+  vmStat = () => execFileSync('/usr/bin/vm_stat', [], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
+  memInfo = () => readFileSync('/proc/meminfo', 'utf8'),
+} = {}) {
+  let measured = null;
+  try {
+    if (hostPlatform === 'darwin') measured = parseVmStat(vmStat())?.availableBytes ?? null;
+    else if (hostPlatform === 'linux') measured = parseMemInfoAvailable(memInfo());
+  } catch { measured = null; }
+  const available = measured ?? freeBytes;
+  return Math.min(totalBytes, Math.max(freeBytes, available));
+}
+
 /** The host observation every threshold derives from. Dependencies are injectable so a test can
- * stage a loaded host; production reads the machine. */
+ * stage a loaded host; production reads the machine. A STAGED observation (one that names its
+ * `freeBytes`) reads `availableBytes` as that same number unless it names it too, so a staged
+ * host never reaches for the real machine's vm_stat. */
 export function hostCapacityObservation({
-  cores = availableParallelism(), totalBytes = totalmem(), freeBytes = freemem(),
+  cores = availableParallelism(), totalBytes = totalmem(), freeBytes, availableBytes,
   load1m = loadavg()[0] ?? 0,
 } = {}) {
+  const staged = freeBytes !== undefined;
+  const free = staged ? freeBytes : freemem();
+  const available = availableBytes !== undefined
+    ? availableBytes
+    : (staged ? free : hostAvailableMemoryBytes({ freeBytes: free, totalBytes }));
   if (!Number.isSafeInteger(cores) || cores <= 0) throw new TypeError('host capacity cores must be a positive safe integer');
   if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0) throw new TypeError('host capacity total memory must be a positive safe integer');
-  if (!Number.isSafeInteger(freeBytes) || freeBytes < 0 || freeBytes > totalBytes) throw new TypeError('host capacity free memory must be a safe integer within total memory');
+  if (!Number.isSafeInteger(free) || free < 0 || free > totalBytes) throw new TypeError('host capacity free memory must be a safe integer within total memory');
+  if (!Number.isSafeInteger(available) || available < 0 || available > totalBytes) throw new TypeError('host capacity available memory must be a safe integer within total memory');
   if (!Number.isFinite(load1m) || load1m < 0) throw new TypeError('host capacity load average must be a non-negative finite number');
-  return Object.freeze({ cores, totalBytes, freeBytes, load1m });
+  return Object.freeze({ cores, totalBytes, freeBytes: free, availableBytes: available, load1m });
 }
 
 /** The ONE derivation from the host observation to every admission threshold (#297: no numeric
@@ -158,10 +216,13 @@ export function hostCapacityObservation({
  *   saturated     load1m ≥ cores — the operator's `uptime` read, derived: at or above a
  *                 one-minute load equal to the core count the host is already oversubscribed,
  *                 and new heavy work queues regardless of free slots.
- *   memoryTight   freeBytes < suiteBytes — free memory cannot fund one more verdict.
+ *   memoryTight   availableBytes < suiteBytes — available memory cannot fund one more verdict.
+ *   workerMemoryTight
+ *                 availableBytes < coreShareBytes — it cannot fund one more worker's one share
+ *                 (#329: a worker is entitled to ONE share, so it is never gated on the suite's).
  */
 export function deriveHostCapacity(observation) {
-  const { cores, totalBytes, freeBytes, load1m } = hostCapacityObservation(observation);
+  const { cores, totalBytes, freeBytes, availableBytes, load1m } = hostCapacityObservation(observation);
   const hubCores = 1;
   const usableCores = Math.max(1, cores - hubCores);
   const suiteCores = Math.max(1, cores - hubCores);
@@ -171,11 +232,12 @@ export function deriveHostCapacity(observation) {
   const usableBytes = totalBytes - coreShareBytes;
   const workerSlots = usableCores;
   return Object.freeze({
-    cores, totalBytes, freeBytes, load1m,
+    cores, totalBytes, freeBytes, availableBytes, load1m,
     hubCores, usableCores, suiteCores, verdictLanes, coreShareBytes, suiteBytes, usableBytes,
     workerSlots,
     saturated: load1m >= cores,
-    memoryTight: freeBytes < suiteBytes,
+    memoryTight: availableBytes < suiteBytes,
+    workerMemoryTight: availableBytes < coreShareBytes,
   });
 }
 
@@ -185,6 +247,37 @@ function leaseWeight(kind, capacity) {
     ? Object.freeze({ cores: capacity.suiteCores, bytes: capacity.suiteBytes })
     : Object.freeze({ cores: 1, bytes: capacity.coreShareBytes });
 }
+
+/** Whether the host's own measurement is too tight for ONE lease of this kind (the budget of
+ * already-admitted leases is judged separately by `fits`). */
+function memoryTightFor(kind, capacity) {
+  return kind === 'verify' ? capacity.memoryTight : capacity.workerMemoryTight;
+}
+
+/** #329: WHY a request of this kind does not fit right now — the ONE dimension an operator can
+ * act on, with the observed and required numbers, so a queued or timed-out request names what
+ * it waits for instead of "temporarily unavailable". `load` (the host is saturated), `memory`
+ * (available memory below this kind's share), or `budget` (admitted leases hold the cores or
+ * bytes this kind needs). Null when the request fits. */
+export function hostCapacityShortfall(kind, capacity, used) {
+  const weight = leaseWeight(kind, capacity);
+  if (capacity.saturated) {
+    return Object.freeze({ dimension: 'load', observed: capacity.load1m, required: capacity.cores, unit: 'load1m' });
+  }
+  if (memoryTightFor(kind, capacity)) {
+    return Object.freeze({ dimension: 'memory', observed: capacity.availableBytes, required: weight.bytes, unit: 'bytes' });
+  }
+  if (used.cores + weight.cores > capacity.usableCores) {
+    return Object.freeze({ dimension: 'budget', observed: capacity.usableCores - used.cores, required: weight.cores, unit: 'cores' });
+  }
+  if (used.bytes + weight.bytes > capacity.usableBytes) {
+    return Object.freeze({ dimension: 'budget', observed: capacity.usableBytes - used.bytes, required: weight.bytes, unit: 'bytes' });
+  }
+  return null;
+}
+
+/** The operator's documented bypass, named by every capacity refusal (#329). */
+export const HOST_CAPACITY_BYPASS = 'BATON_HOST_CAPACITY_DISABLED=1';
 
 /** The suite runner's default file parallelism — the same derivation every resident reads
  * (#297 item 3): one core for the runner's own loop, and no more lanes than the memory the host
@@ -481,7 +574,7 @@ export class HostCapacityAuthority {
         roomForVerify: !capacity.saturated && !capacity.memoryTight
           && used.cores + capacity.suiteCores <= capacity.usableCores
           && used.bytes + capacity.suiteBytes <= capacity.usableBytes,
-        roomForWorker: !capacity.saturated && !capacity.memoryTight
+        roomForWorker: !capacity.saturated && !capacity.workerMemoryTight
           && used.cores + 1 <= capacity.usableCores
           && used.bytes + capacity.coreShareBytes <= capacity.usableBytes,
       });
@@ -510,7 +603,7 @@ export class HostCapacityAuthority {
       roomForVerify: !capacity.saturated && !capacity.memoryTight
         && cores + capacity.suiteCores <= capacity.usableCores
         && bytes + capacity.suiteBytes <= capacity.usableBytes,
-      roomForWorker: !capacity.saturated && !capacity.memoryTight
+      roomForWorker: !capacity.saturated && !capacity.workerMemoryTight
         && cores + 1 <= capacity.usableCores
         && bytes + capacity.coreShareBytes <= capacity.usableBytes,
     });
@@ -544,7 +637,9 @@ export class HostCapacityAuthority {
         const head = mine === null || ahead === 0;
         const fits = used.cores + weight.cores <= capacity.usableCores
           && used.bytes + weight.bytes <= capacity.usableBytes;
-        if (head && !capacity.saturated && !capacity.memoryTight && fits) {
+        // #329: a worker is judged against ITS share (workerMemoryTight), a verify against the
+        // suite's (memoryTight) — never a worker against the suite's.
+        if (head && !capacity.saturated && !memoryTightFor(kind, capacity) && fits) {
           const lease = {
             schemaVersion: 1, kind, holder, nonce, pid: process.pid,
             residentId: this.residentId, acquiredAt: new Date(this.now()).toISOString(),
@@ -562,7 +657,12 @@ export class HostCapacityAuthority {
           atomicWrite(join(this.queueDir, queueName(entry)), entry);
         }
         return Object.freeze({
-          queued: { position: ahead + 1, ahead, running: used.leases.verify, workerLeases: used.leases.worker },
+          queued: {
+            position: ahead + 1, ahead, running: used.leases.verify, workerLeases: used.leases.worker,
+            // #329: the dimension this request waits on, with the numbers, so the queued row
+            // and the refusal name what an operator can act on.
+            shortfall: hostCapacityShortfall(kind, capacity, used),
+          },
         });
       });
       if (outcome.admitted) {
@@ -577,10 +677,23 @@ export class HostCapacityAuthority {
       }
       const remaining = deadline - performance.now();
       if (remaining <= 0) {
+        // #329: "no capacity effect was applied" must be true of the queue too — a spent wait
+        // withdraws its own queue record, so a refused recruit never leaves a phantom entry that
+        // every later reader (observeNow, the doctor) counts ahead of the next request.
+        await this._mutex(() => {
+          rmSync(join(this.queueDir, queueName({ enqueuedAt: new Date(queuedAt).toISOString(), nonce })), { force: true });
+        });
+        const shortfall = outcome.queued.shortfall;
+        const why = shortfall
+          ? `; waiting on ${shortfall.dimension}: ${shortfall.observed} ${shortfall.unit} observed, ${shortfall.required} required`
+          : '';
         throw typed(
-          `host capacity queued this ${kind} request at position ${outcome.queued.position} (${outcome.queued.ahead} ahead) and the ${this.waitMs}ms admission wait is spent; no capacity effect was applied`,
+          `host capacity queued this ${kind} request at position ${outcome.queued.position} (${outcome.queued.ahead} ahead) and the ${this.waitMs}ms admission wait is spent${why}; no capacity effect was applied (operator bypass: ${HOST_CAPACITY_BYPASS})`,
           'host_capacity_queue_timeout',
-          { queuePosition: outcome.queued.position, queueAhead: outcome.queued.ahead },
+          {
+            queuePosition: outcome.queued.position, queueAhead: outcome.queued.ahead,
+            shortfall, bypass: HOST_CAPACITY_BYPASS, leaseKind: kind, waitMs: this.waitMs,
+          },
         );
       }
       await new Promise((resolve) => { setTimeout(resolve, Math.min(this.pollMs, remaining)); });

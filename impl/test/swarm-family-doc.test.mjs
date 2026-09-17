@@ -69,11 +69,13 @@ test('S-G1: a document missing a kind is refused by the gate, naming the block',
 
 test('S-G1: the attention vocabulary is read from the runtime mint sites, in source order', () => {
   const kinds = swarmAttentionKinds();
-  assert.equal(kinds.length, 9, 'the runtime mints nine attention kinds');
+  // #329 added the two host-admission rows (recruit_queued, recruit_queue_timeout).
+  assert.equal(kinds.length, 11, 'the runtime mints eleven attention kinds');
   assert.deepEqual(kinds, [
     'participant_runtime_dead', 'member_left_session_live', 'delegation_orphaned',
     'assignment_holder_gone', 'group_member_gone', 'coupling_writer_gone',
-    'closed_with_live_participants', 'operation_refused', 'operation_unconfirmed',
+    'closed_with_live_participants', 'recruit_queued', 'recruit_queue_timeout',
+    'operation_refused', 'operation_unconfirmed',
   ]);
   // Fail closed: a source whose mint sites changed shape must refuse, never render an empty list.
   assert.throws(() => swarmAttentionKinds('const organization = [];'), /could not be read/u);

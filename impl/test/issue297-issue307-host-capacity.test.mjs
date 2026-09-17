@@ -23,7 +23,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   deriveHostCapacity, hostCapacityObservation, HostCapacityAuthority, defaultSuiteParallelism,
+  parseVmStat, parseMemInfoAvailable, hostAvailableMemoryBytes, hostCapacityShortfall, HOST_CAPACITY_BYPASS,
 } from '../src/host-capacity.mjs';
+import { WAKE_CLASSES } from '../src/wake-stream.mjs';
 import {
   deriveWorktreeCapacityFloor, loadOrCreateWorktreeCapacityIntegrityKey,
   WorktreeCapacityAuthority, workspaceCapacityPressure,
@@ -91,7 +93,11 @@ test('HC-2: two residents share one host lease directory; admission, FIFO queue 
     holder: 'p4', onQueued: (row) => { queuedRow = row; },
   });
   await new Promise((resolve) => { setTimeout(resolve, 150); });
-  assert.deepEqual(queuedRow, { position: 1, ahead: 0, running: 0, workerLeases: 3 },
+  assert.deepEqual(queuedRow, {
+    position: 1, ahead: 0, running: 0, workerLeases: 3,
+    // #329: the row names the dimension it waits on — here the admitted leases hold every core.
+    shortfall: { dimension: 'budget', observed: 0, required: 1, unit: 'cores' },
+  },
     'the queued request reports its visible place in the host queue');
 
   const snapshot = await second.observe();
@@ -148,7 +154,11 @@ test('HC-3: a proved-dead holder\'s lease returns to the budget, and a bounded w
     loaded.acquire('verify', { holder: 'check-x', onQueued: (row) => { queued = row; } }),
     (error) => error.code === 'host_capacity_queue_timeout' && error.queuePosition === 1,
   );
-  assert.deepEqual(queued, { position: 1, ahead: 0, running: 0, workerLeases: 0 },
+  assert.deepEqual(queued, {
+    position: 1, ahead: 0, running: 0, workerLeases: 0,
+    // #329: a saturated host names load as the dimension, with the observed and required numbers.
+    shortfall: { dimension: 'load', observed: 9, required: 4, unit: 'load1m' },
+  },
     'the typed queued row is reported even when the wait is refused at the deadline');
 });
 
@@ -404,4 +414,135 @@ test('HC-10: swarm.view carries the deployment summary rows with host capacity, 
   // The deployment rows ride the frame: every projection carries them.
   const outlined = await f.call('view', { projection: 'outline' });
   assert.equal(outlined.deployment.workspace.floorBytes, 1_200);
+});
+
+// ── #329: available memory, not free pages; a worker judged against ITS share; visible queueing ──
+
+// Captured on the 10-core / 16 GB development Mac, 2026-09-16 (page size 16384): 0.10 GB "free",
+// 3.68 GB inactive — the host that queued every recruit to host_capacity_queue_timeout.
+const VM_STAT_CAPTURED = [
+  'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+  'Pages free:                                6644.',
+  'Pages active:                            229400.',
+  'Pages inactive:                          241055.',
+  'Pages speculative:                          807.',
+  'Pages throttled:                              0.',
+  'Pages wired down:                        119907.',
+  'Pages purgeable:                           1200.',
+  '"Translation faults":                 123456789.',
+  'Pages stored in compressor:              787539.',
+  'Pages occupied by compressor:            434501.',
+  '',
+].join('\n');
+
+test('HC-11 (#329): darwin available memory derives from vm_stat (free + inactive + speculative + purgeable), linux from MemAvailable, else os.freemem — never a throw', () => {
+  const parsed = parseVmStat(VM_STAT_CAPTURED);
+  assert.equal(parsed.pageSize, 16384);
+  assert.equal(parsed.freeBytes, 6644 * 16384);
+  assert.equal(parsed.inactiveBytes, 241055 * 16384);
+  assert.equal(parsed.availableBytes, (6644 + 241055 + 807 + 1200) * 16384);
+  assert.ok(parsed.availableBytes > 3.7 * G && parsed.freeBytes < 0.11 * G, 'the captured Mac had ~3.8 GB available and ~0.1 GB free');
+  assert.equal(parseVmStat('not a report'), null);
+  assert.equal(parseVmStat(null), null);
+  assert.equal(parseMemInfoAvailable('MemTotal:       16000000 kB\nMemFree:          100000 kB\nMemAvailable:    4000000 kB\n'), 4000000 * 1024);
+  assert.equal(parseMemInfoAvailable('MemTotal: 1 kB'), null);
+
+  const darwin = hostAvailableMemoryBytes({ platform: 'darwin', freeBytes: 6644 * 16384, totalBytes: 16 * G, vmStat: () => VM_STAT_CAPTURED });
+  assert.equal(darwin, (6644 + 241055 + 807 + 1200) * 16384);
+  const linux = hostAvailableMemoryBytes({ platform: 'linux', freeBytes: 100 * 1024 * 1024, totalBytes: 16 * G, memInfo: () => 'MemAvailable:    4000000 kB\n' });
+  assert.equal(linux, 4000000 * 1024);
+  const unreadable = hostAvailableMemoryBytes({ platform: 'darwin', freeBytes: 123, totalBytes: 16 * G, vmStat: () => { throw new Error('no vm_stat'); } });
+  assert.equal(unreadable, 123, 'an unreadable platform report falls back to os.freemem honestly');
+  const other = hostAvailableMemoryBytes({ platform: 'win32', freeBytes: 456, totalBytes: 16 * G });
+  assert.equal(other, 456);
+  const capped = hostAvailableMemoryBytes({ platform: 'linux', freeBytes: 1, totalBytes: 10, memInfo: () => 'MemAvailable: 100 kB\n' });
+  assert.equal(capped, 10, 'available never exceeds total');
+});
+
+test('HC-12 (#329): a staged observation names its own numbers; a worker is judged against one core share and a verify against the suite share', () => {
+  const staged = hostCapacityObservation({ cores: 10, totalBytes: 16 * G, freeBytes: 15 * G, load1m: 1 });
+  assert.equal(staged.availableBytes, 15 * G, 'a staged observation without availableBytes reads it as freeBytes — never the real machine');
+  // The captured Mac: 0.10 GB free, ~3.9 GB available, 10 cores / 16 GB.
+  const mac = deriveHostCapacity(hostCapacityObservation({
+    cores: 10, totalBytes: 16 * G, freeBytes: Math.floor(0.1 * G), availableBytes: Math.floor(3.9 * G), load1m: 1.5,
+  }));
+  assert.equal(mac.coreShareBytes, Math.floor((16 * G) / 10));
+  assert.equal(mac.workerMemoryTight, false, '3.9 GB available funds one worker share (1.6 GB)');
+  assert.equal(mac.memoryTight, true, '3.9 GB available cannot fund a full-suite verdict (14.4 GB)');
+  const shortfall = hostCapacityShortfall('verify', mac, { cores: 0, bytes: 0, leases: { verify: 0, worker: 0 } });
+  assert.deepEqual(shortfall, { dimension: 'memory', observed: Math.floor(3.9 * G), required: mac.suiteBytes, unit: 'bytes' });
+  assert.equal(hostCapacityShortfall('worker', mac, { cores: 0, bytes: 0, leases: { verify: 0, worker: 0 } }), null, 'a worker fits');
+  const loaded = deriveHostCapacity(hostCapacityObservation({ cores: 10, totalBytes: 16 * G, freeBytes: 15 * G, load1m: 12 }));
+  assert.equal(hostCapacityShortfall('worker', loaded, { cores: 0, bytes: 0, leases: { verify: 0, worker: 0 } }).dimension, 'load');
+  const budget = hostCapacityShortfall('worker', mac, { cores: 9, bytes: 0, leases: { verify: 0, worker: 9 } });
+  assert.deepEqual(budget, { dimension: 'budget', observed: 0, required: 1, unit: 'cores' });
+  // The old derivation (free pages against the suite share) is what #329 retires: under it the
+  // same Mac read memoryTight for a worker too.
+  const oldStyle = deriveHostCapacity(hostCapacityObservation({ cores: 10, totalBytes: 16 * G, freeBytes: Math.floor(0.1 * G), load1m: 1.5 }));
+  assert.equal(oldStyle.workerMemoryTight, true, 'with only free pages known, the worker is (correctly) tight — the measurement is the fix');
+});
+
+test('HC-13 (#329): the authority admits a worker on the captured Mac while a verify queues, and the timeout names the dimension, the numbers and the bypass', async (t) => {
+  const root = leaseRoot(t);
+  const observation = () => ({ cores: 10, totalBytes: 16 * G, freeBytes: Math.floor(0.1 * G), availableBytes: Math.floor(3.9 * G), load1m: 1.5 });
+  const authority = new HostCapacityAuthority({ root, residentId: 'mac', observation, pollMs: 10, waitMs: 80 });
+  const worker = await authority.acquire('worker', { holder: 'participant:s:p1' });
+  assert.ok(worker.token, 'a worker lease is admitted with ~4 GB available');
+  const observed = await authority.observe();
+  assert.equal(observed.roomForWorker, true);
+  assert.equal(observed.roomForVerify, false);
+  let queued = null;
+  await assert.rejects(
+    authority.acquire('verify', { holder: 'verdict', onQueued: (row) => { queued = row; } }),
+    (error) => {
+      assert.equal(error.code, 'host_capacity_queue_timeout');
+      assert.equal(error.leaseKind, 'verify');
+      assert.equal(error.shortfall.dimension, 'memory');
+      assert.equal(error.shortfall.observed, Math.floor(3.9 * G));
+      assert.equal(error.shortfall.required, 9 * Math.floor((16 * G) / 10));
+      assert.equal(error.bypass, HOST_CAPACITY_BYPASS);
+      assert.match(error.message, /waiting on memory: \d+ bytes observed, \d+ required/u);
+      assert.match(error.message, /BATON_HOST_CAPACITY_DISABLED=1/u);
+      return true;
+    },
+  );
+  assert.equal(queued.shortfall.dimension, 'memory', 'the queued row already names the dimension');
+  assert.equal(authority.observeNow().queue.length, 0,
+    'a spent wait withdraws its own queue record — no phantom entry survives the refusal (read without the sweep)');
+  authority.release(worker.token);
+});
+
+test('HC-14 (#329): a recruit the host cannot admit is visible on swarm.view — recruit_queued while waiting, recruit_queue_timeout after, with the seat, the dimension and the bypass — and both ride the wake classes', async (t) => {
+  assert.ok(WAKE_CLASSES.includes('queued'), 'the queue-to-admit timeline is a wake class');
+  const root = leaseRoot(t);
+  // A host with no memory for even one worker share: every recruit queues and times out.
+  const observation = () => ({ cores: 4, totalBytes: 8 * G, freeBytes: 1 * G, availableBytes: 1 * G, load1m: 1 });
+  const authority = new HostCapacityAuthority({ root, residentId: 'tight', observation, pollMs: 10, waitMs: 120 });
+  const f = swarmFixture(t, { hostCapacity: authority });
+  await f.call('create', { purpose: 'Recruit on a tight host' });
+  const pending = f.call('recruit', { participantId: 'starved', objective: 'Cannot start' });
+  await new Promise((resolve) => { setTimeout(resolve, 40); });
+  const waiting = await f.call('view', {});
+  const queuedRow = waiting.attention.find((row) => row.kind === 'recruit_queued');
+  assert.ok(queuedRow, 'while queued, the view names the seat that waits');
+  assert.equal(queuedRow.participantId, 'starved');
+  assert.equal(queuedRow.shortfall.dimension, 'memory');
+  assert.equal(waiting.admission.find((row) => row.participantId === 'starved').state, 'queued');
+  await assert.rejects(pending, (error) => error.code === 'host_capacity_queue_timeout');
+  assert.equal(authority.observeNow().queue.length, 0, 'the refused recruit left no queue record behind');
+  const timeoutRows = f.store.eventsView().filter((event) => event.kind === 'driver.recorded' && event.payload.kind === 'swarm.admission_timeout');
+  assert.equal(timeoutRows.length, 1, 'the spent wait is recorded against the seat');
+  assert.equal(timeoutRows[0].payload.participantId, 'starved');
+  assert.equal(timeoutRows[0].payload.shortfall.dimension, 'memory');
+  assert.equal(timeoutRows[0].payload.bypass, HOST_CAPACITY_BYPASS);
+  const after = await f.call('view', {});
+  const timeoutRow = after.attention.find((row) => row.kind === 'recruit_queue_timeout');
+  assert.ok(timeoutRow, 'after the wait, the view says the host refused this seat');
+  assert.equal(timeoutRow.participantId, 'starved');
+  assert.equal(timeoutRow.code, 'host_capacity_queue_timeout');
+  assert.equal(timeoutRow.shortfall.dimension, 'memory');
+  assert.equal(timeoutRow.bypass, HOST_CAPACITY_BYPASS);
+  assert.deepEqual(timeoutRow.next, { command: 'swarm.recruit', swarmId: 'baton', participantId: 'starved' });
+  assert.equal(after.admission.find((row) => row.participantId === 'starved').state, 'timed_out');
+  assert.equal(f.workers.length, 0, 'no starved work ever started');
 });

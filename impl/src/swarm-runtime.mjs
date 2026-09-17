@@ -817,6 +817,40 @@ export class SwarmRuntime {
     if (swarm.status !== 'open' && participants.some((row) => row.status === 'active' && !gone(row))) {
       organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => row.status === 'active' && !gone(row)).map((row) => row.participantId) });
     }
+    // #329: host admission per seat, folded from the runtime's own durable rows — the LATEST of
+    // queued / admitted / timed-out for each recruited seat. A seat still queued has no
+    // participant row yet, and a seat whose wait is spent never got one, so the ONLY place an
+    // orchestrator can learn "the host refused my recruit, and why" is here: `recruit_queued`
+    // names the position and the dimension it waits on; `recruit_queue_timeout` names the
+    // dimension, the numbers and the operator bypass.
+    const admission = new Map();
+    for (const event of ledger) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.swarmId !== swarm.swarmId || typeof payload.participantId !== 'string') continue;
+      if (payload.kind !== 'swarm.admission_queued' && payload.kind !== 'swarm.admission_admitted'
+        && payload.kind !== 'swarm.admission_timeout') continue;
+      admission.set(payload.participantId, {
+        participantId: payload.participantId, seq: event.seq, ts: event.ts,
+        state: payload.kind === 'swarm.admission_queued' ? 'queued'
+          : payload.kind === 'swarm.admission_admitted' ? 'admitted' : 'timed_out',
+        authority: payload.authority ?? 'host', leaseKind: payload.leaseKind ?? 'worker',
+        position: payload.position ?? null, ahead: payload.ahead ?? null,
+        shortfall: payload.shortfall ?? null,
+        ...(payload.kind === 'swarm.admission_timeout'
+          ? { code: payload.code ?? null, waitMs: payload.waitMs ?? null, bypass: payload.bypass ?? null } : {}),
+      });
+    }
+    for (const row of admission.values()) {
+      if (row.state === 'queued' && !participantsById.has(row.participantId)) {
+        organization.push({ kind: 'recruit_queued', participantId: row.participantId, position: row.position,
+          ahead: row.ahead, shortfall: row.shortfall, seq: row.seq, ts: row.ts });
+      } else if (row.state === 'timed_out' && !participantsById.has(row.participantId)) {
+        organization.push({ kind: 'recruit_queue_timeout', participantId: row.participantId, code: row.code,
+          position: row.position, ahead: row.ahead, shortfall: row.shortfall, waitMs: row.waitMs, bypass: row.bypass,
+          seq: row.seq, ts: row.ts,
+          next: { command: 'swarm.recruit', swarmId: swarm.swarmId, participantId: row.participantId } });
+      }
+    }
     const operations = ledger.filter((event) => event.kind === 'driver.recorded'
       && event.payload.swarmId === swarm.swarmId && event.payload.kind === 'swarm.operation_requested');
     const attention = [
@@ -973,6 +1007,10 @@ export class SwarmRuntime {
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions],
         lastRefusal: caller ? lastRefusal(caller.participantId) : null },
       availableActions, attention: scopedAttention,
+      // #329: host admission per recruited seat (queued / admitted / timed_out with the
+      // dimension and numbers), the rows the recruit_queued / recruit_queue_timeout attention
+      // derives from.
+      admission: [...admission.values()].filter((row) => !scope || scopeSubtree.includes(row.participantId)),
       actionTargets: {
         'swarm.capture': { participantIds: contributionTargets },
         'swarm.check': { participantIds: contributionTargets },
@@ -1677,18 +1715,42 @@ export class SwarmRuntime {
         let queuedRow = null;
         if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
           const operationKey = this._operationKey(command, args, principal);
-          const admitted = await this.hostCapacity.acquire('worker', {
-            holder: `participant:${args.swarmId}:${args.participantId}`,
-            onQueued: (row) => {
-              queuedRow = row;
+          let admitted;
+          try {
+            admitted = await this.hostCapacity.acquire('worker', {
+              holder: `participant:${args.swarmId}:${args.participantId}`,
+              onQueued: (row) => {
+                queuedRow = row;
+                try {
+                  this.store.recordDriver('swarm.admission_queued', {
+                    swarmId: args.swarmId, participantId: args.participantId, command,
+                    authority: 'host', leaseKind: 'worker', position: row.position, ahead: row.ahead,
+                    // #329: the dimension the seat waits on, with its numbers — the view's
+                    // recruit_queued row reads it from here.
+                    shortfall: row.shortfall ?? null,
+                  }, { actor: principal.actor, key: `${operationKey}:queued` });
+                } catch { /* a raced operation row is evidence, never admission-critical */ }
+              },
+            });
+          } catch (error) {
+            // #329: a queued seat whose wait is spent is recorded AGAINST THE SEAT (the generic
+            // operation lane's unavailable row names the caller, which for a root recruit is
+            // nobody), with the dimension and the bypass, so swarm.view carries
+            // recruit_queue_timeout where the orchestrator looks.
+            if (error?.code === 'host_capacity_queue_timeout') {
               try {
-                this.store.recordDriver('swarm.admission_queued', {
+                this.store.recordDriver('swarm.admission_timeout', {
                   swarmId: args.swarmId, participantId: args.participantId, command,
-                  authority: 'host', leaseKind: 'worker', position: row.position, ahead: row.ahead,
-                }, { actor: principal.actor, key: `${operationKey}:queued` });
-              } catch { /* a raced operation row is evidence, never admission-critical */ }
-            },
-          });
+                  authority: 'host', leaseKind: 'worker', code: error.code,
+                  position: error.queuePosition ?? queuedRow?.position ?? null,
+                  ahead: error.queueAhead ?? queuedRow?.ahead ?? null,
+                  shortfall: error.shortfall ?? queuedRow?.shortfall ?? null,
+                  waitMs: error.waitMs ?? null, bypass: error.bypass ?? null,
+                }, { actor: principal.actor, key: `${operationKey}:timeout` });
+              } catch { /* evidence row only */ }
+            }
+            throw error;
+          }
           workerLease = admitted.token;
           if (queuedRow) {
             try {
