@@ -737,6 +737,47 @@ function pathInScope(scopes, path) {
   return scopes.some((scope) => scope === '**' || scope === '.' || scope === './' || globRegex(scope).test(path));
 }
 
+/** Issue #305: the ONE reading of the raw edited paths a worker `content.file_edit` row
+ * carries — the top-level path(s) plus the adapter item/change/diff shapes. Both the scope
+ * watchdog and the mid-turn progress checkpoint read this derivation, never a second copy. */
+function workerEditedPathsOf(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  return [payload.path, ...(payload.paths ?? []), payload.item?.path,
+    ...((payload.item?.changes ?? []).map((change) => change.path)),
+    ...((payload.content ?? []).filter((item) => item?.type === 'diff').map((item) => item.path))].filter(Boolean);
+}
+
+/** Issue #305: the closed reading of the human label a worker `content.tool_call` row
+ * carries — title, then tool/name fallbacks, then the adapter item shapes. */
+function workerToolTitleOf(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const item = payload.item;
+  for (const candidate of [payload.title, payload.tool, payload.name,
+    (item && typeof item === 'object') ? item.title : null,
+    (item && typeof item === 'object') ? item.tool : null]) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate;
+  }
+  return null;
+}
+
+const TURN_PROGRESS_COMMIT_RE = /^[a-f0-9]{40,64}$/u;
+
+/** Issue #305: the closed structured fields a commit sha is read from — top-level
+ * commit/sha/resultSha or a `commits[]` entry. A sha-shaped string anywhere else (a title,
+ * a path, message prose) is not an observed commit, so nothing here scrapes text. */
+function workerObservedCommitsOf(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  const found = [];
+  const consider = (value) => {
+    if (typeof value === 'string' && TURN_PROGRESS_COMMIT_RE.test(value) && !found.includes(value)) found.push(value);
+  };
+  consider(payload.commit);
+  consider(payload.sha);
+  consider(payload.resultSha);
+  if (Array.isArray(payload.commits)) for (const entry of payload.commits) consider(entry);
+  return found;
+}
+
 function normalizeModelPolicy(model, policy, effort) {
   if (effort !== undefined && (typeof effort !== 'string' || effort.length === 0)) throw new ModelSelectionError('effort must be a non-empty exact identifier', 'invalid_effort');
   if (model !== undefined && (typeof model !== 'string' || model.length === 0)) {
@@ -4444,6 +4485,11 @@ export class Coordinator {
         inner = Object.freeze({
           ...inner,
           swarm: surface.swarm,
+          // Issue #305: the lane contract the recruit was given (recorded on its join)
+          // rides the provider-facing value beside the Swarm surface — never task.brief,
+          // so the digest stays byte-stable and a re-prompt re-renders it identically.
+          ...(typeof surface.laneContract === 'string' && surface.laneContract.length > 0
+            ? { laneContract: surface.laneContract } : {}),
           tools: [...(inner.tools ?? []), ...surface.tools],
         });
       }
@@ -10785,9 +10831,7 @@ export class Coordinator {
     }
     if (event.kind === 'content.file_edit') {
       const payload = event.payload ?? {};
-      const rawPaths = [payload.path, ...(payload.paths ?? []), payload.item?.path,
-        ...((payload.item?.changes ?? []).map((change) => change.path)),
-        ...((payload.content ?? []).filter((item) => item?.type === 'diff').map((item) => item.path))].filter(Boolean);
+      const rawPaths = workerEditedPathsOf(payload);
       const task = this._tasks.get(handle.taskId);
       for (const rawPath of rawPaths) {
         const path = this._relativeActionPath(handle, rawPath);
@@ -10822,6 +10866,88 @@ export class Coordinator {
     this._touchWatchdog(handle);                     // progress evidence re-arms
     // D4 rung 2: a qualifying D2 re-arm inside the claimed window answers the stall-seam cycle.
     this._observeStallSeam(handle, event);
+  }
+
+  /** Issue #305: a fresh per-turn progress accumulator. Counts run for the whole turn as
+   * this incarnation observed it; the title/path/commit lists are bounded sliding windows
+   * (last rows win) so a long turn cannot grow the row it checkpoints with. */
+  _freshTurnProgress(turnEpoch) {
+    return {
+      turnEpoch, toolCalls: 0, fileEdits: 0,
+      toolTitles: [], editedPaths: [], commits: [], rowsSinceCheckpoint: 0,
+    };
+  }
+
+  /** Issue #305: mid-turn progress checkpoints, derived from the worker's OWN activity.
+   * `worktree.progress_checkpointed` is written only at reap/stop boundaries, so a root
+   * watching a long turn sees nothing move until it ends. This observer counts the
+   * worker's `content.tool_call` / `content.file_edit` rows DURING the turn and, every
+   * window of rows, appends one durable `turn.progress` policy row — cumulative counts
+   * plus the bounded last-titles / relative-paths / structured-commit-shas windows — so
+   * wait()/read() observers see the turn move. Message prose never advances it (prose is
+   * liveness, never progress); a sealed turn checkpoints nothing further (the terminal
+   * row already carries the result); a trailing partial window stays uncheckpointed.
+   *
+   * Both bounds derive from the ONE limits registry, never fresh constants: the window
+   * (rows per checkpoint AND items per list) is one observer screen
+   * (`view.knowledge_slice.items`), and each item is one observer summary line
+   * (`view.blocked_interaction_summary.bytes`, redact-before-truncate). The row is
+   * operational liveness only — deliberately outside RUN_TIMELINE_OPERATIONAL_KINDS, so
+   * it maps to no coordination evidence and replays as plain history. Live path only:
+   * construction replay never calls `_handleEvent`, which is this observer's only caller.
+   */
+  _observeTurnProgress(handle, event) {
+    if (!event || event.actor !== 'worker') return;
+    const { kind, payload } = event;
+    // A worker turn_started opens a fresh count even when the fence epoch did not move
+    // (an adapter's own turn start inside one admitted turn). The row itself is not activity.
+    if (kind === 'lifecycle.turn_started') {
+      handle.turnProgress = this._freshTurnProgress(this._safeTurnEpoch(handle));
+      return;
+    }
+    if (kind !== 'content.tool_call' && kind !== 'content.file_edit') return;
+    if (handle.turnTerminalObserved === true) return;
+    const epoch = this._safeTurnEpoch(handle);
+    let progress = handle.turnProgress;
+    if (!progress || progress.turnEpoch !== epoch) {
+      // A fresh turn admitted without a worker turn_started (nudge/orchestrator start
+      // moves the fence epoch): the previous turn's counts must not leak forward.
+      progress = this._freshTurnProgress(epoch);
+      handle.turnProgress = progress;
+    }
+    const windowItems = FRAME_LIMITS['view.knowledge_slice.items'].value;
+    const itemBytes = FRAME_LIMITS['view.blocked_interaction_summary.bytes'].value;
+    const pushWindowed = (list, value) => {
+      list.push(value);
+      if (list.length > windowItems) list.splice(0, list.length - windowItems);
+    };
+    if (kind === 'content.tool_call') {
+      progress.toolCalls += 1;
+      const title = workerToolTitleOf(payload);
+      if (title !== null) pushWindowed(progress.toolTitles, boundedAttentionText(title, itemBytes));
+    } else {
+      progress.fileEdits += 1;
+      for (const rawPath of workerEditedPathsOf(payload)) {
+        const path = this._relativeActionPath(handle, rawPath);
+        if (!path) continue;
+        pushWindowed(progress.editedPaths, boundedAttentionText(path, itemBytes));
+      }
+    }
+    for (const sha of workerObservedCommitsOf(payload)) {
+      if (!progress.commits.includes(sha)) pushWindowed(progress.commits, sha);
+    }
+    progress.rowsSinceCheckpoint += 1;
+    if (progress.rowsSinceCheckpoint < windowItems) return;
+    progress.rowsSinceCheckpoint = 0;
+    this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: epoch,
+      kind: 'turn.progress', actor: 'policy', ...this._routeAttribution(handle),
+      payload: {
+        turnEpoch: epoch, toolCalls: progress.toolCalls, fileEdits: progress.fileEdits,
+        toolTitles: [...progress.toolTitles], editedPaths: [...progress.editedPaths],
+        commits: [...progress.commits],
+      },
+    });
   }
 
   _wireAck(waiter, call, operationGeneration, operationMode) {
@@ -14868,6 +14994,9 @@ export class Coordinator {
       }, `driver.route_observed:${task?.id ?? handle.taskId}:${nativeObservationEvent.seq}`);
     }
     this._observeWatchdogEvent(handle, event);
+    // Issue #305: the mid-turn progress checkpoint observer rides the same live-only
+    // observation point — construction replay never reaches `_handleEvent`.
+    this._observeTurnProgress(handle, event);
   }
 
   // =========================================================================

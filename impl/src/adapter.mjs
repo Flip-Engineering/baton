@@ -266,6 +266,13 @@ export function renderBrief(brief, dialect) {
   if (brief.swarm) {
     lines.push('## Swarm', '', brief.swarm);
   }
+  // Issue #305: the lane contract a recruit was given rides the provider-facing brief as
+  // its own section — derived ONCE by the owner (the recruit join brief the swarm recorded),
+  // the ONE renderer owns only the heading, like ## Swarm above. A missing or blank
+  // contract renders nothing (the #89 frame-waste law lives at the renderer, never the seam).
+  if (typeof brief.laneContract === 'string' && brief.laneContract.trim().length > 0) {
+    lines.push('## Lane contract', '', brief.laneContract);
+  }
   lines.push('## Write authority');
   // A-F4: name `## Path scope` in the authority paragraph only when that section is rendered.
   lines.push([
