@@ -144,3 +144,55 @@ test('#306 (2): the deployment doctor and card carry the served revision, frozen
     try { await deployment?.close(); } catch { /* fixture tree removed by tmp() */ }
   }
 });
+
+// ── #306 (3): a recruit on a resident that serves a commit behind its target carries baseBehind ──
+import { CoordinationStore } from '../src/coordination-store.mjs';
+import { SwarmRuntime } from '../src/swarm-runtime.mjs';
+
+function swarmFixture(deploymentSummary) {
+  const directory = tmp('swarm');
+  const store = new CoordinationStore(directory);
+  const workers = [];
+  const coordinator = { list: () => workers, pausedTurns: () => [] };
+  const runtime = new SwarmRuntime({
+    store, coordinator, authorize: async () => {}, deploymentSummary,
+    prepareRun: async (request) => request,
+    startRun: async (request) => {
+      if (!workers.some((row) => row.runId === request.runId)) {
+        workers.push({ id: `w-${workers.length + 1}`, taskId: `t-${workers.length + 1}`, runId: request.runId, status: 'working', paused: false });
+      }
+    },
+    stopRun: async (runId) => { workers.find((row) => row.runId === runId).status = 'dead'; return { state: 'closed' }; },
+  });
+  const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
+  let key = 0;
+  const call = (command, args = {}) => runtime.command(`swarm.${command}`,
+    { swarmId: 'baton', ...(command === 'view' ? {} : { idempotencyKey: `request-${++key}` }), ...args }, owner);
+  return { call };
+}
+
+test('#306 (3): swarm.recruit is admitted with a baseBehind advisory when the served commit is behind the target, and carries null when current or unknown', async () => {
+  const behindSummary = () => ({
+    workspace: null, hostCapacity: null,
+    served: { commit: 'a'.repeat(40), branch: null, target: { ref: 'origin/main', commit: 'b'.repeat(40), behind: 4 } },
+  });
+  const stale = swarmFixture(behindSummary);
+  await stale.call('create', { purpose: 'stale resident' });
+  const recruited = await stale.call('recruit', { participantId: 'lane', objective: 'work' });
+  assert.equal(recruited.admission.state, 'admitted', 'advisory, never a refusal');
+  assert.deepEqual(recruited.baseBehind, {
+    served: 'a'.repeat(40), branch: null, target: { ref: 'origin/main', commit: 'b'.repeat(40) }, behind: 4,
+  });
+
+  const current = swarmFixture(() => ({ workspace: null, hostCapacity: null, served: { commit: 'a'.repeat(40), branch: 'main', target: { ref: 'main', commit: 'a'.repeat(40), behind: 0 } } }));
+  await current.call('create', { purpose: 'current resident' });
+  assert.equal((await current.call('recruit', { participantId: 'lane', objective: 'work' })).baseBehind, null);
+
+  const unknown = swarmFixture(() => ({ workspace: null, hostCapacity: null, served: { commit: 'a'.repeat(40), branch: null, target: { ref: null, commit: null, behind: null } } }));
+  await unknown.call('create', { purpose: 'detached, no remote' });
+  assert.equal((await unknown.call('recruit', { participantId: 'lane', objective: 'work' })).baseBehind, null);
+
+  const unwired = swarmFixture(null);
+  await unwired.call('create', { purpose: 'no summary' });
+  assert.equal((await unwired.call('recruit', { participantId: 'lane', objective: 'work' })).baseBehind, null);
+});

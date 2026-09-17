@@ -564,6 +564,24 @@ export class SwarmRuntime {
     finally { this.pending.delete(key); }
   }
 
+  /** #306 (3): the advisory a recruit carries when the resident serves a commit its target branch
+   * has moved past — {served, target, behind} from the deployment summary's own `served` row, or
+   * null when the resident is current, the target is unknown, or no summary is wired. Advisory
+   * only: the seat is admitted regardless; the root decides whether to reincarnate first. */
+  _baseBehind() {
+    let summary = null;
+    try { summary = typeof this.deploymentSummary === 'function' ? this.deploymentSummary() : null; }
+    catch { return null; }
+    const served = summary?.served;
+    const behind = served?.target?.behind;
+    if (!served || typeof served.commit !== 'string' || !Number.isSafeInteger(behind) || behind <= 0) return null;
+    return Object.freeze({
+      served: served.commit, branch: served.branch ?? null,
+      target: Object.freeze({ ref: served.target.ref ?? null, commit: served.target.commit ?? null }),
+      behind,
+    });
+  }
+
   /** The participant's current worker, or null when unbound — the ONE lookup inspect and the
    * holder-release eligibility check share, so "gone" means the same thing everywhere. */
   _workerFor(participant, workers) {
@@ -1878,11 +1896,16 @@ export class SwarmRuntime {
             ...(queuedRow ? { position: queuedRow.position, ahead: queuedRow.ahead,
               queuedAt: workerLease?.queuedAt ?? null } : {}),
           },
+          // #306 (3): the seat is admitted, and the root is TOLD when this resident serves a
+          // commit the target branch has moved past — so it chooses to reincarnate first
+          // instead of discovering a stale base on the lane's capture.
+          baseBehind: this._baseBehind(),
         };
       }, { replaySafe: true, basis: Object.values(swarm.context), context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, runId: result.runId, swarmId: result.swarmId,
-          scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null });
+          scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null,
+          baseBehind: result.baseBehind ?? null });
     }
     const participant = this._participant(swarm, args.participantId);
     if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId
