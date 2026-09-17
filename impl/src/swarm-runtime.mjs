@@ -732,6 +732,12 @@ export class SwarmRuntime {
       if (!refusal) return null;
       return (completions.get(participantId)?.get(refusal.command) ?? 0) > refusal.seq ? null : refusal;
     };
+    // Issue #332: the seats that published a final contribution — a contribution names its
+    // author durably, so the set survives a resident restart the way the worker row does not.
+    const contributors = new Set();
+    for (const contribution of Object.values(swarm.contributions ?? {})) {
+      if (contribution?.participantId) contributors.add(contribution.participantId);
+    }
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
@@ -740,6 +746,27 @@ export class SwarmRuntime {
       // construction rather than by three copies of a status list.
       const liveness = swarmParticipantLiveness(worker, paused.length);
       const alive = liveness.live;
+      const guidance = worker ? (guidanceByWorker.get(worker.id) ?? []) : [];
+      // Issue #332: a seat whose worker exited after its recorded final contribution with a
+      // terminal turn settles to `completed` instead of reading as a dead runtime. The turn
+      // is terminal exactly when the exit is clean — no crash row on the seat's own ledger
+      // (a CLI worker that exits without a terminal record always lands as lifecycle.crashed,
+      // the #326 invariant) and no recorded failure cause — so a mid-turn death can never
+      // read as a completion. A crash row or a failure cause vetoes; an unwired crash
+      // authority is unknown and fails closed, never a clean exit. A boundary pause with
+      // pending guidance defeats the completion too: the steering was never answered, so the
+      // seat died mid-turn however cleanly the process ended. Membership stays active, so
+      // swarm stop and a resumeFrom recruit keep working on a completed seat.
+      const crashWired = worker !== null && typeof this.lastCrash === 'function';
+      const crash = crashWired ? this.lastCrash(worker.id) : null;
+      const cause = worker?.terminalCause;
+      // Either clean signal counts — the wired crash read finding no row, or the worker row
+      // carrying an explicit null cause — while a recorded failure or a crash row vetoes.
+      const failed = (cause !== null && cause !== undefined) || (crashWired && crash !== null);
+      const cleanExit = !failed && ((crashWired && crash === null) || cause === null);
+      const completed = participant.status === 'active' && worker !== null && !alive
+        && contributors.has(participant.participantId) && cleanExit
+        && !(paused.length > 0 && guidance.length > 0);
       // The participant's live checkout, projected exactly as capture projects its custody:
       // the physical owner named by the live worker's session context and the coordinator's
       // live holder count for it. An unbound or departed worker carries workspace: null.
@@ -763,9 +790,13 @@ export class SwarmRuntime {
         // Issue #326: beside the runtime state, the row carries the seat's last crash — the
         // exit error and the redacted stderr tail — so a dead seat reads with its reason,
         // not only as `dead`. Null when no crash was observed or no authority is wired.
-        crash: worker && typeof this.lastCrash === 'function' ? this.lastCrash(worker.id) : null,
-        runtime: { workerId: worker?.id ?? null, state: liveness.state, turn: liveness.turn, live: liveness.live },
-        guidance: worker ? (guidanceByWorker.get(worker.id) ?? []) : [],
+        crash,
+        // Issue #332: a completed seat settles to its own runtime state — still a member
+        // (status stays active), no longer a dead runtime. Turn stays null: like a dead
+        // worker, a completed one has no paused turn left to guide.
+        runtime: { workerId: worker?.id ?? null, state: completed ? 'completed' : liveness.state,
+          turn: liveness.turn, live: liveness.live },
+        guidance,
         workspace: physicalOwnerId !== null
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
           : null,
@@ -802,8 +833,12 @@ export class SwarmRuntime {
     for (const row of participants) {
       // A worker that exists and is not live is dead or exited. A seat with NO worker at all is
       // unbound — between its join and its first binding, or after a restart — which is absence,
-      // not a dead runtime, and never raises this row.
-      if (row.status === 'active' && !row.runtime.live && row.runtime.workerId !== null) {
+      // not a dead runtime, and never raises this row. Issue #332: a completed seat is neither
+      // absence nor death — its final contribution landed and its turn ended terminally — so it
+      // never raises this row either; only a runtime that died without a terminal row (no clean
+      // exit evidence) or mid-turn (a crash, a failure cause, unanswered guidance) pages here.
+      if (row.status === 'active' && !row.runtime.live && row.runtime.workerId !== null
+        && row.runtime.state !== 'completed') {
         organization.push({ kind: 'participant_runtime_dead', participantId: row.participantId, state: row.runtime.state });
       }
       if (row.status !== 'active' && row.runtime.live) {

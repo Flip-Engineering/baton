@@ -436,6 +436,17 @@ wake feed carries that row, and the bridge carries it verbatim — three surface
 pinned by a test that feeds one runtime record through all three. A seat with no worker at all reads
 `unbound` and is absent, not dead: it raises no `participant_runtime_dead` row.
 
+**A finished seat reads `completed`, not dead (#332).** A seat whose worker exited after its
+recorded final contribution with a terminal turn — a clean exit, meaning no crash row on the
+seat's own ledger and no recorded failure cause — settles to `runtime.state: 'completed'` with
+membership still `active`, instead of staying `active` with a dead runtime and raising
+`participant_runtime_dead`. A boundary pause with no pending guidance counts as the terminal
+turn; a pause with unanswered guidance, a crash, or a failure cause reads as a mid-turn death
+and still pages. `participant_runtime_dead` is raised only for a runtime that died without a
+terminal row or mid-turn. A completed seat still accepts `swarm.stop` and a `resumeFrom`
+recruit, and the wake feed's `dead` class — which matches crash rows only — never wakes on a
+completion.
+
 **A participant row carries the route and scope the seat was recruited under** (`route: { harness,
 model, effort }`, `scope: [...]`), recorded ONCE with the membership write — the deployment's own
 resolution when `prepareRun` makes one, otherwise the selection the caller named. It is projected
