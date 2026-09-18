@@ -253,9 +253,29 @@ const BRIEF = Object.freeze({
   'brief.couplings.items': { lane: 'brief.couplings.items', class: 'view', value: BRIEF_COUPLINGS_ITEMS, unit: 'items', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the couplings situation block)' },
 });
 
+// ── #306 lane A: the in-place handoff's own bound ────────────────────────────────────────────────
+// A reincarnation (#306) is a stop that ends in a successor, so its three waits share the
+// deployment's OWN declared stop envelope rather than a preference of this module's:
+//   • the old incarnation's wait for its in-flight turns (a one-shot turn completes on it);
+//   • the successor's wait for the predecessor's leases (the coordination writer lease is released
+//     by the old's drain, whose own window is application-deployment.mjs's drainPolicy.timeoutMs);
+//   • the old incarnation's wait for the successor's publication (the successor's open IS the
+//     resident's own replay+assembly — measured at 65 s for the operator's 161 931-row ledger on
+//     2026-09-18, which is why this bound is the drain window plus a startup allowance and not the
+//     drain window alone).
+// 300 s is the smallest round bound covering the deployment's 90 s drain window plus that measured
+// startup with the same order of headroom; a handoff that has not progressed by then is FAILED and
+// admission is reopened (the old incarnation keeps serving), never silently abandoned.
+const REINCARNATION_STARTUP_MS = 210_000;
+const REINCARNATION_WAIT_MS = 90_000 + REINCARNATION_STARTUP_MS;
+const REINCARNATION = Object.freeze({
+  'host.reincarnation.wait_ms': { lane: 'host.reincarnation.wait_ms', class: 'substrate', value: REINCARNATION_WAIT_MS, unit: 'ms', graceful: null,
+    enforcedAt: 'application-deployment.mjs (openDriverForHandoff/openResidentAuthorityForHandoff: the successor\'s lease waits; BatonDeployment.#awaitInFlightTurns/#awaitSuccessorReady/#completeReincarnationHandoff: the old incarnation\'s waits)' },
+});
+
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
-export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF });
+export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...REINCARNATION });
 
 export const FRAME_LIMITS_VERSION = '1.2.0';
 

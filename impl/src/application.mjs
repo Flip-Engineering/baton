@@ -13721,6 +13721,36 @@ export class BatonApplication {
     });
   }
 
+  /** #306 lane A: the in-place reincarnation verb (a direct port — never a key of
+   * APPLICATION_COMMAND_DEFINITIONS, exactly like deployment.doctor, so the byte-stable command
+   * table is unchanged). The verb itself belongs to the DEPLOYMENT — only the deployment object
+   * owns the running resident's publication, leases and stop path — so it is installed at
+   * construction (`reincarnationAuthority.verb`, application-deployment.mjs) and dispatched here.
+   *
+   * Authority (the lane brief's "organize/owner"): the deployment owner principal (local-owner /
+   * its service principals) or a caller carrying a lifecycle capability (the resident's own
+   * session — `emergency_stop`, the same class application.shutdown requires — or `control`). A
+   * worker or swarm seat holds neither and is refused typed before any effect. */
+  reincarnate(args, principal, rawContext = null) {
+    const context = normalizeCommandContext(rawContext);
+    const principalId = typeof principal?.principalId === 'string' ? principal.principalId : '';
+    const capabilities = Array.isArray(context?.capabilities) ? context.capabilities : [];
+    const owner = principalId === 'local-owner' || principalId.startsWith('service-');
+    const lifecycle = capabilities.includes('emergency_stop') || capabilities.includes('control');
+    if (!owner && !lifecycle) {
+      throw applicationError(
+        'deployment.reincarnate is a deployment-lifecycle act: it needs the deployment owner or a lifecycle authority',
+        'application_unauthorized',
+        { principalId, required: ['owner', 'lifecycle'], attempted: 'deployment.reincarnate' },
+      );
+    }
+    const verb = this.reincarnationAuthority?.verb ?? null;
+    if (typeof verb !== 'function') {
+      throw applicationError('this deployment holds no reincarnation authority', 'reincarnation_unavailable');
+    }
+    return verb({ target: args?.target });
+  }
+
   card() {
     return deepFreeze({
       schemaVersion: 1,
@@ -13897,6 +13927,10 @@ export class BatonApplication {
     // waves.run accepts, admission-free (it never starts a wave).
     if (name === 'waves.compile') return this.compileWaveSpec(args, principal, context);
     if (name === 'deployment.doctor') return this.doctorReadiness();
+    // #306 lane A: the in-place reincarnation verb is a DIRECT PORT (like deployment.doctor above
+    // and the wave ports below) — the byte-stable command-table key set is unchanged, and the
+    // authoritative refusal for an unauthorized or unhosted caller is thrown inside reincarnate().
+    if (name === 'deployment.reincarnate') return this.reincarnate(args, principal, rawContext);
     // Epic #103 (D7): the orchestrator's embedded briefing resolve lane — server-derived like the
     // settlement commands (kg-settlement-decisions.md D2), never advertised on MCP/CLI/web. It
     // resolves the family head and serves the D5-framed pack + lag; no head → typed refusal.

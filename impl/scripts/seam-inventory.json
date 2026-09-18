@@ -6061,6 +6061,16 @@
           ]
         },
         {
+          "name": "reincarnate",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "surface",
+          "evidence": [
+            "admission:authority_check",
+            "surface:transport_dispatch"
+          ]
+        },
+        {
           "name": "card",
           "ordinal": 0,
           "size": 44,
@@ -6081,7 +6091,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 219,
+          "size": 223,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
