@@ -184,9 +184,23 @@ const VIEW = Object.freeze({
   'view.run.records': { lane: 'view.run.records', class: 'view', value: 100_000, unit: 'items', graceful: 'shed-flagged' },
 });
 
+// Issue #441 (the reading half): the two bounds a recruited ContextPackage draws. A branch
+// carries ONE document the root pulled at recruit time (the issue, or a doc it cites), so the
+// per-branch ceiling is the durable spilled-body ceiling — the same substrate bound every other
+// durable text write in the ledger uses. The brief's rendered slice is a VIEW bound (a
+// shed-flagged read, never a write): the brief-time knowledge slice KG-3 already injects, times
+// four, because a brief's context slice must carry an issue's opening — its title and first
+// paragraphs — where a knowledge snippet carries one fact.
+const CONTEXT_PACKAGE_SOURCE_BYTES = SPILL_BODY_BYTES;
+const CONTEXT_PACKAGE_BRIEF_BYTES = VIEW['view.knowledge_slice.bytes'].value * 4;
+const CONTEXT_PACKAGE = Object.freeze({
+  'context_package.source_bytes': { lane: 'context_package.source_bytes', class: 'substrate', value: CONTEXT_PACKAGE_SOURCE_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'web-northbound.mjs context package admit port (one branch document) and application-cli.mjs (the root-side reader)' },
+  'context_package.brief_bytes': { lane: 'context_package.brief_bytes', class: 'view', value: CONTEXT_PACKAGE_BRIEF_BYTES, unit: 'bytes', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the rendered slice per branch)' },
+});
+
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
-export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW });
+export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE });
 
 export const FRAME_LIMITS_VERSION = '1.2.0';
 

@@ -101,6 +101,8 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 
 Swarm argv is closed (#431): an unknown `--flag` on any `swarm` verb refuses naming the token, the verb's admitted flags and its usage line; a missing required positional refuses naming its position before anything is dispatched; the seat selector on swarm verbs is `--participant-id` (the contract field `participantId`).
 
+The recruit's context leg (#441): `baton swarm recruit … --issue N [--doc PATH …]` pulls the GitHub issue through THIS host's own `gh` credential and admits ONE ContextPackage (branch `issue:N`, plus one branch per repository doc the issue cites and per `--doc`) which the seat's run carries (scope `worker:<seat>`); the seat's brief renders the package digest, each branch and the head of its text. A worker never calls `gh`, and the reader refuses typed before any effect: `issue_reader_unavailable`, `issue_not_found`, `context_doc_unreadable`, `context_source_oversize`.
+
 ## Drive a living swarm
 
 `baton swarm` recruits participants, publishes findings, and lets agents DECLARE the coupling

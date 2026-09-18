@@ -9,39 +9,24 @@
 
 **Repository:** <https://github.com/Flip-Engineering/baton>
 
-**Current design work (2026-09-12):** [Evolving agent swarms](docs/39-swarm-runtime.md) — tight
-and loose orchestration, peer communication, continuous collaboration, and scoped acceptance.
-See the [runtime review and validation evidence](docs/40-runtime-review-2026-09-12.md) for checked
-implementation results and remaining gaps. The full suite is currently failing; historical status
-labels below do not establish release acceptance.
-
-**Cross-harness agent orchestration.** An orchestrator agent running in one full coding harness directs *other* full-session harnesses as subordinate workers. Workers get real messaging, live telemetry, mid-flight steering, and durable evidence — the things you'd want from a teammate, not a subprocess.
+**Cross-harness agent orchestration.** An orchestrator (an AI agent in one full coding harness, or a person at a terminal) directs *other* full coding-harness sessions as subordinate workers. Workers get their own git worktree, a brief, a bridge back into the swarm, live telemetry, mid-flight guidance, and a durable ledger that records everything they did. The orchestrator gets wakes instead of polling, typed refusals instead of prose, and a contribution contract instead of a chat transcript.
 
 The name: a conductor's baton directs an orchestra; a relay baton gets passed between runners. Both are the point.
 
-> **Project updates.** Dated, evidence-cited campaign reports live in [`reviews/`](reviews/) — latest:
-> **[baton-update-2026-08-14](reviews/baton-update-2026-08-14.html)** (the no-clock law, the detached bus,
-> the uncapped fleet — 48h with focus on the last 12h/6h) ·
-> [campaign state 2026-08-14](reviews/baton-campaign-state-2026-08-14.html) ·
-> [foundry day 2026-08-13](reviews/baton-foundry-day-2026-08-13.html) ·
-> [24h report](reviews/baton-24h-report.html).
-
-> **Reading the status tiers.** The capability inventory below is historical. Its **[shipped]**
-> labels describe previously landed implementations; **[in flight]** and **[planned]** describe
-> earlier tracker states. Current test results and native run receipts take precedence. Failing
-> tests include shipped behavior and cannot be explained away by filenames or an expected-red
-> roster. The [runtime review](docs/40-runtime-review-2026-09-12.md) records the complete sweeps,
-> focused follow-up checks, preserved contributions and release limitations.
+**Status (2026-09-18).** Baton is developed by Baton: every change since 2026-09-13 has been written by a recruited seat on a running Baton resident and landed by the root. The current design work is the **swarm runtime** ([docs/39](docs/39-swarm-runtime.md)) with its open-coordination ([docs/45](docs/45-open-coordination.md)) and visibility ([docs/46](docs/46-swarm-visibility.md)) extensions. The canonical suite is judged against an expected-red manifest ([docs/42](docs/42-suite-legitimacy.md)); a full acceptance run on current `master` is not published. The open tracker is the [issue list](https://github.com/Flip-Engineering/baton/issues) (`bug` + `priority:high` marks a subsystem that failed in the real loop and is sequenced first).
 
 ---
 
 ## What baton is
 
-A run-centric **fleet application**: you (or your orchestrator agent) state an outcome; baton compiles it into an approved Plan, routes it onto live worker seats across vendors, watches liveness, fields questions, verifies results against evidence it re-derives itself, and closes every resource it opened. One orchestrator can run **many workers in parallel as waves**, and can declare a whole multi-member workflow — heavyweight coordinator over cheap swarm rows, steering policies, harvest contract — as **one data file** run through the surface (`waves run`), no bespoke driver code.
+A run-centric **fleet application** with a **swarm runtime** on top:
 
-The fleet today: **Claude** (opus/sonnet), **Codex** (gpt-5.6-sol), **Grok** (grok-build, 4.5), **GLM** 5.2, **DeepSeek** (`deepseek-v4-flash` wide seats, `deepseek-v4-pro[1m]` heavyweight), **Kimi** k3, and **Muse** (muse-spark-1.3-contributor) — each worker a full harness session with its own tools, sandbox, and context management, in its own git worktree.
+- **Runs.** You state an outcome; baton compiles it into an approved Plan, routes it onto a live worker seat, watches liveness, fields questions, verifies results against evidence it re-derives itself in a fresh worktree, and closes every resource it opened.
+- **Swarms.** An orchestrator creates a swarm, recruits participants onto exact routes with path scopes and permissions, guides them, groups and couples them, and reads one view of who holds what. Participants report through a validated **contribution contract** (subject, base, commit, items, needs-from-others, carried-forward), reviewed and landed by the root. Seats can be **sub-orchestrators**: a seat granted `recruit` and `organize` recruits and steers its own builders.
+- **The resident.** `baton serve` hosts a standing, owner-local deployment for one repository: an authenticated command bus over an owner-only socket, a wake stream, and a durable coordination ledger under `.git/baton/`. The CLI and the MCP bridge are thin authenticated clients of the same authority; a resident survives client crashes and answers again after a restart from its checkpoint.
+- **The fleet.** Every worker is a full harness session in its own worktree. Served today: **omp** running `zai/glm-5.3-flash`, `kimi-code/k3` and `deepseek/deepseek-flash`; native **deepseek**; **codex** (`gpt-5.6-sol`); **kimi-code** (`k3`); **grok** (`grok-4.5`); **claude-code** (Claude Opus/Sonnet); and **muse** (`muse-spark-1.3-contributor`, one-shot). Each route carries its billing basis: subscription routes (GLM, Kimi, Codex, Grok, Claude, muse) never get a per-token price on their profile; API routes (DeepSeek) do.
 
-Underneath the application sits the **Coordinator**: a plain-code reliability kernel (version fencing, confirm-it-stopped, at-least-once cursors, answer-exactly-once, log-is-truth) that makes "interrupt worker 3" actually land, every time. The orchestrator is an AI; the coordinator is not — that asymmetry is the design.
+Underneath sits the **Coordinator**: a plain-code reliability kernel (version fencing, confirm-it-stopped, at-least-once cursors, answer-exactly-once, log-is-truth). The orchestrator is an AI; the coordinator is not. That asymmetry is the design.
 
 ---
 
@@ -49,148 +34,172 @@ Underneath the application sits the **Coordinator**: a plain-code reliability ke
 
 ```mermaid
 flowchart TB
-    subgraph YOU["Orchestrator (an AI harness — or a human seat)"]
-        O[decides · approves · answers · steers]
+    subgraph YOU["Orchestrator (an AI harness, a sub-orchestrator seat, or a person)"]
+        O[creates swarms · recruits · guides · reviews · lands]
     end
-    subgraph SURFACES["Control surfaces — one command bus"]
-        MCP["MCP stdio<br/>(primary agent surface)"]
-        CLI["baton CLI<br/>(thin authenticated client)"]
-        WEB["resident bus — baton serve<br/>(auth HTTP over owner-only socket)"]
+    subgraph SURFACES["Control surfaces — one command bus, one grammar (docs/36)"]
+        CLI["baton CLI<br/>(authenticated client)"]
+        MCP["MCP bridge<br/>(mcp-web.mjs over the resident)"]
+        WEB["resident bus — baton serve<br/>(owner-only socket + wake stream)"]
         FAC["embedded facade — openBaton()"]
     end
-    subgraph APP["Run application"]
-        RUN["runs: start · approve · status · act · answer · stop<br/>evidence · review · adopt · integrate · recover"]
-        WAVES["waves: start · attach · progress · send · stop · list"]
-        WF["workflow interpreter (#114): spec → members, steering policies,<br/>decision deferral, harvest, D6 receipt"]
+    subgraph APP["Application"]
+        SW["swarms: create · recruit · guide · update · capture · check · view · watch · stop"]
+        RUN["runs: start · show · do · stop · export · evidence search"]
+        WAVES["waves: run · start · attach · progress · send · stop · list"]
     end
-    subgraph COLLAB["Collaboration & memory layer"]
-        KG["knowledge horizons:<br/>task → workflow → project graphs,<br/>orchestrator-gated elevation"]
-        SCR["worker scratchpad · boards ·<br/>context packs · briefing packs"]
-        MSG["interaction lane (blocking questions)<br/>+ reply lane (conversational, depth-budgeted)"]
-        REPL["REPL layer: shared cells,<br/>typed bindings, cross-run scripting"]
+    subgraph COLLAB["Shared context"]
+        CTX["swarm context (whiteboard) · boards · scratchpads ·<br/>context packages · knowledge horizons · REPL cells"]
     end
     subgraph KERNEL["Coordinator kernel (plain code)"]
-        COORD["dispatch · fences · event log · replay<br/>trust gate · stall watchdog · capacity · reap"]
+        COORD["dispatch · fences · event ledger · checkpoint + replay ·<br/>trust gate · host capacity · worktree custody · reap"]
     end
-    subgraph FLEET["Workers (full harnesses, own worktrees)"]
-        W["Claude · Codex · GLM · Grok · DeepSeek · Kimi · Muse"]
+    subgraph FLEET["Workers (full harnesses, own worktrees, a bridge back)"]
+        W["omp (GLM · Kimi · DeepSeek) · deepseek · codex · kimi-code · grok · claude-code · muse"]
     end
     YOU --> SURFACES --> APP --> KERNEL --> FLEET
     APP <--> COLLAB
-    COLLAB <--> KERNEL
+    FLEET <--> COLLAB
 ```
 
-**The surfaces share one authority.** The CLI is a bearer-authenticated client of the resident bus, not a second controller; MCP is the primary agent-facing northbound; `openBaton({repo, advanced})` is the direct-embedding path the evidence drivers use. `baton serve` publishes discovery to `.git/baton/connection.json` only after an authenticated card/session/readiness challenge; credentials are never command arguments.
+**One authority, three doors.** The CLI discovers the resident through `.git/baton/connection.json` and speaks the authenticated bus; the MCP bridge (`impl/scripts/mcp-web.mjs`) projects the same operation table to an agent client; `openBaton({repo, advanced})` embeds the application directly (the evidence drivers use it). Provider credentials are never command arguments and never reach a worker's environment.
 
-**Waves expose cohort operations.** A wave starts N members with per-member scopes and exact routes; the registry (`waves list`) projects roster, phase, and progress class live; outcome materialization pins each member's result as a content-addressed git object; re-drive restarts only the failed members. The **workflow interpreter** is an optional recipe layer that composes patterns declaratively: a spec names members, steering policies (`approveOnAdvertisedPlan`, `nudgeOnCheckpoint`, `claimOnStall`, `messageOnSpawn`, `elevateWhenNotes`, `answerDecisions`, `signalOnMembersDone`), and a harvest contract; the interpreter drives it to a verdict and a seven-key receipt.
+**Wakes, not polling.** `baton swarm watch <swarm> --follow` prints one JSON frame per coordination row; the bounded form (`--timeout-ms`, `--wake-class`) answers on the first row of a named class or at its deadline and resumes with `--after-seq`. The closed wake-class set is printed by `baton swarm --help` (recruited, left, assigned, work_updated, coupling_updated, context_updated, contribution_recorded, reviewed, note, knowledge, closed, refused, queued, dead, paused, attention, guidance_delivered, integrated, checkpoint, capacity_pressure, resident_lifecycle).
 
-**Turns, not gates.** Pausable harnesses end turns as checkpoints — the driver steers with `nudge_turn` / `wait_turn` / `claim_turn` instead of killing workers at turn boundaries, and every pause snapshots a recovery pin. The **stall watchdog** (#67) declares stalls only on liveness *evidence* (a closed re-arm set; an in-flight turn is never reaped — the slow-but-productive worker is structurally protected), with an escalate → claim/nudge → preserve-first-reap ladder, every step receipted.
+**Trust is re-derived, never reported.** When a seat says "done", the check re-runs the verification in a fresh worktree at the seat's commit. Verifications take a host verify lease (one suite per host); a check that must wait records `contribution.check_queued`. Every limit the runtime enforces is one row in `impl/src/limits.mjs` (the frame-limits registry), derived from the host or a policy, never a literal in code.
 
-**Trust is re-derived, never reported.** When a worker says "done," the coordinator re-runs the verification in a *fresh* worktree at the worker's commit — the worker's own directory is never trusted. Verifications run through one lane per deployment (derived from the machine: the suite takes every core but one, so one at a time; `advanced.verification.concurrency` raises it for a lighter verification), and a check that has to wait records `contribution.check_queued` with its position instead of looking like a slow verifier. A deployment may also name the paths its code verification covers and a lighter docs verification (`advanced.verification.paths` / `.docs`): a capture that changes none of those paths is checked by the docs verification, and the check records which one ran. Red→green enforcement, coverage-of-change, and mutation probes harden the gate; `run.review` sends the immutable result to an independently-routed reviewer; `run.adopt` / `run.integrate` are separate, policy-gated effects.
+**Turns, not gates.** Pausable harnesses end turns as checkpoints; the driver steers with nudge / wait / claim instead of killing workers at turn boundaries. One-shot harnesses (muse) get guidance parked and delivered on their next resume. Progress checkpoints are recorded during a turn from activity, and a dead seat's worktree is snapshotted onto its lane branch and retained under custody rules rather than deleted.
 
 ---
 
-## Capabilities
+## How Baton is developed (the loop you will run)
 
-### Previously landed capabilities (historical inventory)
+Since 2026-09-13 every change lands through this loop. It is the product's own acceptance test.
 
-**Orchestration core**
-- **Runs** — the ordinary API: concise intent → readable Plan → visible approval → one bounded RunView → attention → evidence → cleanup. `run.start / status / approve / act / answer / wait / stop / evidence / review / adopt / integrate / recover / resume_work`.
-- **Waves** — multi-member orchestration with durable wave identity, per-member scopes/routes, attach-and-harvest, re-drive-the-failed, and the live registry projection (**#132**: `waves list` on CLI/bus/MCP, roster + phase + progress class).
-- **Workflow-as-data** (**#114**) — whole multi-member workflows as one declarative spec through `baton.recipes.runWorkflow` / `baton waves run` / `baton_waves_run`: closed member fields, steering policy map, decision deferral to the human, harvest with `mustContain`, the closed seven-key D6 receipt.
-- **The resident** — `baton serve`: a standing owner-local deployment publishing an authenticated bus over an owner-only Unix socket; CLI and MCP clients discover it through `.git/baton/connection.json`; signal close revokes only the current incarnation.
-- **Turn-checkpoint steering** (**#31**) — nudge/wait/claim instead of turn-boundary kills; every pause snapshots a recovery pin.
+1. **Serve a resident** on the commit you want to develop against, from a dedicated shell that does nothing else:
+   ```bash
+   cd impl && (nohup node scripts/baton.mjs serve > /tmp/baton-serve.log 2>&1 < /dev/null &)
+   node scripts/baton.mjs doctor --check      # connection, served commit, route readiness, model profiles
+   ```
+   The log's flip line says `replayed (...)` then `answering (... checkpoint <state>; reconstructed <ms>)`. A resident on a large ledger publishes from its checkpoint in tens of seconds.
+2. **Create a swarm and recruit lanes.** One issue per lane, exact route, path scope, the permissions it needs:
+   ```bash
+   node scripts/baton.mjs swarm create "Baton develops Baton: wave N" --swarm-id swarm-wave-N
+   node scripts/baton.mjs swarm recruit swarm-wave-N omp-442 "$(cat brief-442.txt)" \
+     --options '{"exact":{"harness":"omp","model":"deepseek/deepseek-flash","effort":"max"},"scope":["impl/src/swarm-runtime.mjs","impl/test/issue442-*.test.mjs"]}'
+   # a sub-orchestrator that recruits its own builders:
+   node scripts/baton.mjs swarm recruit swarm-wave-N kimi-441 "$(cat brief-kimi-441.txt)" \
+     --permissions '["read","communicate","contribute","review","organize","recruit","stop"]' \
+     --options '{"exact":{"harness":"omp","model":"kimi-code/k3","effort":"max"},"scope":["docs/47-*.md","impl/test/issue441-*.test.mjs"]}'
+   ```
+   The recruit receipt names the seat's run, worker and workspace (`.baton/wt/<workspaceId>`, a lane branch `baton/<workspaceId>`). The brief a seat receives is composed by the runtime: the objective, the swarm situation, the routes it may recruit on, the bridge verbs it holds, and an admitted example of the contribution payload. Workers hold no GitHub credential, so a brief carries the issue text; issue #441 (the reading half) is landing the `--issue N` form that admits the issue and its cited docs as a context package.
+3. **Let Baton wake you.**
+   ```bash
+   node scripts/baton.mjs swarm watch swarm-wave-N --after-seq <cursor> \
+     --wake-class contribution_recorded,dead --timeout-ms 1740000 --projection outline
+   ```
+   The answer carries the wake row and the outline; re-arm from the returned seq. Until #433 lands, a second wake inside one call is not carried, so scan the ledger from the cursor after every return.
+4. **Land the contribution.** The row's `commit.sha` names the real commit and `commit.branch` the lane branch. Pick the whole range in order, regenerate the shared artifacts, run the gate set the changed files imply, push:
+   ```bash
+   git log --reverse master..baton/<workspaceId>            # the whole lane range, never the tip alone
+   git cherry-pick <sha...>                                  # seam-inventory.json conflicts: take theirs, then regenerate
+   node scripts/seam-inventory.mjs --write && node scripts/surface-gate.mjs --write && node scripts/render-surface-docs.mjs --write
+   BATON_SUITE_VERDICT_FILE=/tmp/verdict.json node scripts/run-suite.mjs test/<gate files>
+   ```
+   Issue #296 (priority:high) turns this into `swarm integrate` with the merge-base rule, a derived gate set and a durable integration receipt.
+5. **Review and release the seat.**
+   ```bash
+   node scripts/baton.mjs swarm update swarm-wave-N swarm.contribution_reviewed \
+     --payload '{"contributionId":"<id>","decision":"accept","reason":"landed as <sha>"}'
+   node scripts/baton.mjs swarm stop swarm-wave-N omp-442 "landed"
+   ```
+   Then smoke-test the served surface on the landed commit before closing the issue: a lane's green test files are not proof its verb works from the CLI.
 
-**Communication & attention**
-- **waitingOn vocabulary** (**#10**) — one honest projection of what a run is waiting on (the closed five kinds), surfacing *blocked_interaction* so an orchestrator never has to guess that it must act.
-- **Reply lanes** (**#105**) — blocking asks ride the interaction lane; conversational follow-ups ride depth-budgeted reply chains (`MAX_MESSAGE_DEPTH_BUDGET`); membership-authorized, replay-exact.
-- **Briefing packs** (**#103**) — the orchestrator-readable wave.closed record: what the wave did, per member, with result pins.
-- **Decision channel** — workers ask multi-choice (+ free-response) questions that park the task at `input_required` until the orchestrator or a steering policy answers — the escalation lane the worker-orchestrated swarm rides.
+**What a seat records.** One `swarm.contribution_recorded` per lane through its bridge (`$BATON_SWARM_CLIENT`), with `body.subject`, `body.base {observedHead, rebasedOnto}`, `body.commit {sha, branch}`, `body.items[] {id, status: delivered | not_delivered, change, files, test, evidence}`, `body.needsFromOthers[]`, `body.carriedForward[]`. A seat that needs a file outside its scope hands it back in `needsFromOthers`; issue #441 makes that a claim instead.
 
-**Memory & collaboration**
-- **Knowledge horizons** — task-ephemeral → workflow-ephemeral → project-persistent knowledge graphs with orchestrator-gated elevation; the worker's typed scratchpad (**#33**) writes into its task-ephemeral graph; shared boards and context packs carry cross-member state.
-- **REPL layer** — shared cells, typed bindings, cross-run scripting (**docs/33**).
-- **Cairn memory** (Phases 44–53) — verified route statistics, causal integrity audit, bounded recall, selective promotion, scratch correction with independent-oracle release, recall-outcome attribution, authenticated contradiction workspace.
-
-**Trust & evidence**
-- **The trust gate** — fresh-worktree re-verification, red→green, coverage-of-change, mutation probes; independent semantic review over immutable git ranges; bounded evidence manifests; policy-gated adopt/integrate.
-- **Atlas representations** (Phases 54, 61) — lexical-binding-aware CPG, graph-backed R1 structural delta / R2 SCIP snapshot / R3 bounded CPG delta, content-addressed and replay-exact.
-- **Dependency & supply-chain chain** (Phases 36–43) — exact dependency dossiers + actual-lockfile SBOM, immutable reuse decisions, advisory TTL invalidation, isolated install graphs, transitive advisory projection, policy-epoch reconciliation, adverse provider ingress.
-- **Fleet governance** — exact provider process lifecycle + reap (51), route-bound provider governance (57), canonical sparse worker/verifier authority (58), repo-scoped worktree capacity authority (59), attach-only native recovery (60), public drain/close (56).
-- **Stall watchdog** (**#67**) — evidence-based liveness: closed re-arm kinds, the in-flight-turn gate, null-deadline interaction sweep, the preserve-first kill ladder.
-
-**Surface engineering**
-- **Unified control grammar** (**#43**, docs/36) — one grammar across embedded/Web/CLI/MCP; executable per-profile inventories; generated `CLI.md`/`MCP.md`; the surface-conformance gate (novel divergence fails the suite).
-- **Adapter cards** — every harness publishes native/emulated/unsupported per control; the driver never pretends an emulated steer is a real one.
-
-### In flight (mid-pipeline; stage named)
-
-- **#74 — worker-orchestrated swarms** *(contract v1.2 + suite folded; implementation running on the heavyweight seat)* — a heavyweight coordinator member over cheap flash rows as ONE workflow spec: the truthful steering trail (denied answers record `denied`, never falsified `answered`), the scratchpad read-authorization law, escalation bounds. The two-level dogfood (**#147**, the control-surface audit) already ran this pattern end-to-end — its issues feed #154–#159.
-- **#79 — worker delivery push** *(red-first suite landed)* — gate verdicts and attention pushed into the judged worker's next-turn brief; carries the **#111-F3** corrective-nudge coaching fold-in.
-- **#61 — worker verdict surface** *(contract v1.1 + suite landed + blue-team folded; impl queued)* — the worker-facing four-field `{gate, check, detail, corrective}` verdict + objectives generated from live truth (never boilerplate).
-- **#70 — cross-deployment knowledge** *(suite landed + blue-team folded; impl queued)* — one primary KG root per project; promotion primary-only on every path.
-- **#72 — prescriptive doctor** *(suite landed + folded)* — the doctor warns on footguns before they bite; carries the **#111-F4** projection-fields amendment.
-- **#73 — feedback-forge hardening** *(suite landed + blue-team folded; impl queued)* — `run.feedback` gate-shaped submissions are hub-minted or refused, never caller-authored.
-- **#77 — suite resource governance** *(contract v1.2 + suite landed)* — load-calibrated gates: the end of the under-load flake cluster (#7) by construction.
-- **#144 — LSP support** *(contract v1.1 + suite landed; suite-fold running)* — a bounded, honest LSP pool for diagnostic scoping and environmental understanding; clock-free wedged-server trigger; effective-view absence caching.
-- **#69 tight cells · #59 harvest accessor · #66 doubt review · #71 orchestrator wake · #80 redrive continuity/TG3 · #99 harvest lane · #12 nested orchestration · #102** — red-first suites landed; implementations queued on the serialized impl lane.
-
-### Planned (filed, not started)
-
-The complete open map is ~112 tracked issues — the lossless catalog lives in the
-[issue tracker](https://github.com/Flip-Engineering/baton/issues) and
-[docs/28](docs/28-exhaustive-capability-audit.md); the thematic shape:
-
-**Core platform rungs** — #2 orchestrator-selected exact routes · #3 the live route-matrix proof · #4 locale-independent ordering · #5 cross-controller namespaces · #6 semantic verification of model-authored reviews · #7 transitive process-forest reap under load · #8 durable autonomy/containment authority · **#9 the Program IR trunk** (closed, replayable, content-addressed workflow programs — the driver-killer's final form; #170's DSL is its surface syntax).
-
-**The collaboration layer, completed** — #19 REPL objects as ordinary hand-offs · #24–#27 the KG horizons arc (read models, promotion paths, ambient activation, graph growth) · #96 the project tier across runs · #104 symbol-cited briefs · #122 the compaction firewall.
-
-**Control-surface honesty (the operator's top priority)** — #155–#160 the #147-audit cluster (silent reinterpretation, MCP profile superset, CLI ghosts + registry fidelity, the scratchpad write verb, doc-truth↔admission conformance, error actionability as a gate law) · #136/#139 the cursor/refusal-quality elders · #41 the pattern source · #97 untyped TypeError refusals · #93/#156 the MCP surface completeness arc.
-
-**Orchestration depth** — #12 nested orchestration (gates the #74 full shape + #162) · #102 tightly-coupled cells · #106 steering-policy coverage of the new lanes · #161 the orchestrator plan object · #162 mid-flight wave mutability · #163 quiescence-derived completion · #164 blind waits fail loud · #165 launch-time harvest validation · #167 the actual-inference readiness tier · #146 seat telemetry.
-
-**Kernel honesty (#169's umbrella)** — #143 the `baton_repl_cite` cross-run read escape · #95 the public `driver` field · #98 NUL-byte key separators · #148 the resident credential fence · #168 snapshot sideband refs.
-
-**Craft & governance** — #77 suite resource governance · #72 prescriptive doctor · #82 the frontier-sweep umbrella · #91 the orchestrator investigation surface · #100 wave-retry footguns · #101 the 4096 objective cap · #113 policy single-sourcing · #125 the replay harness · #149 the gate failure digest · #166 the anchor suite-law.
-
-**Eval & proof** — #107 EVAL-R0 (pre-registered, fires on clear seats) · #125's replay-harness precondition · the attended-dogfood practice (recurring real-task waves as the defect-finder).
-
-**Older AX frictions (worker-reported)** — #38 read-only objectives compiling change intent · #39 transient refusals cancelling runs · #49/#50 the glm seat elders · #51 upward state feedback · #52 MockAdapter stray commits · #54 kimi-acp thinking=on · #55–#58 the stall/AX convergence set (partially absorbed by #67) · #60 the worker friction up-channel · #65 keyed-wave close stall · #66 the doubt-review surface.
-
-**Seats & reach** — #145 OhMyPi harness evaluation (low) · #29/#90 remote control over Tailscale (low) · computer-use worker tier (bet, flagged flaky) · programmatic provider reauth (#148-adjacent) · **#115/#133 the Flip experience** (docs/38; the pose grammar + native animation, low).
+**What the root learns from the ledger.** Every worker's evidence is under `.git/baton/application-v3/state/w-<n>.jsonl`; the coordination ledger is `.../state/coordination/events.jsonl`. A failed turn is a typed row (`lifecycle.turn_completed status=failed failure.code=provider_quota_exhausted`, for example) and a policy kill is `kill.requested {rule: provider_fault}`. Issue #442 (priority:high) folds those into the swarm so the participant row, the wake feed and the route readiness say so without a ledger read.
 
 ---
 
 ## Run it
 
-Requires Node ≥ 20. The only runtime dependency is `@ast-grep/napi`.
-
-**Muse seat.** Baton drives the `muse` CLI headlessly (`muse exec --json`, model `muse-spark-1.3-contributor`, efforts low–max). Credentials come from the OS keyring first: run `muse login` once and confirm with `node scripts/baton.mjs doctor --check`. Baton reads the keyring item at the root (a worker's private runtime cannot reach the login keychain) and projects a file-backed `auth.json` into each worker's isolated config home; on a keyring-less host the fallback is `TBH_CREDENTIAL_BACKEND=file muse login`, whose file projects as-is. API-key auth is out of scope for this seat (other harnesses cover API keys).
+Requires Node ≥ 20 (Node 22 is what the residents run). The only runtime dependency is `@ast-grep/napi`.
 
 ```bash
-cd impl && npm ci                     # install
-node scripts/run-suite.mjs            # the canonical gate: green means green (see the verdict note below)
-node scripts/surface-gate.mjs         # surface gate: grammar lint, generated artifacts, MCP dispatch (--write regenerates)
-node scripts/baton.mjs serve          # start the owner-local resident
-node scripts/baton.mjs doctor --check # connection + exact-route readiness
-node scripts/baton.mjs waves list     # live wave registry (roster, phase, progress class)
-node scripts/baton.mjs swarm watch SWARM_ID --follow   # Baton wakes you: one line per swarm event, no polling
-node scripts/baton.mjs waves run path/to/workflow.json   # a whole workflow, as data
+cd impl && npm ci                              # install
+node scripts/run-suite.mjs                     # the canonical gate, judged against expected-red-tests.json
+node scripts/surface-gate.mjs                  # grammar lint, generated artifacts, MCP dispatch (--write regenerates)
+node scripts/baton.mjs serve                   # host the owner-local resident for this checkout
+node scripts/baton.mjs doctor --check          # connection + served commit + exact-route readiness + model profiles
+node scripts/baton.mjs swarm list              # the swarms this resident serves
+node scripts/baton.mjs swarm view SWARM_ID --projection participants
+node scripts/baton.mjs swarm watch SWARM_ID --follow          # one JSON frame per event, no polling
+node scripts/baton.mjs evidence search --swarm SWARM_ID --text "refused"
+node scripts/baton.mjs waves run path/to/workflow.json        # a whole workflow, as data
+node scripts/baton.mjs top                                     # the operator seat (docs/38)
 ```
 
-**The suite verdict (issue #260).** `run-suite.mjs` runs the parallel lane, then the process-heavy files of `impl/scripts/suite-lanes.json` serially, through `suite-verdict-reporter.mjs`, and judges the run against `impl/scripts/expected-red-tests.json` — the manifest of tests expected not to pass today (rows are `file :: name`, nested tests as `parent > child`): red-first spec tests, and tests cancelled because an earlier test in their file awaits something that never settles (a dangling await the verdict counts separately; issue #260 tracks them). The verdict is GREEN only when every failure is listed, no listed test passed or vanished (a stale expectation refuses), and nothing hung — a file with no test event for the runner's progress deadline (`BATON_SUITE_IDLE_MS`, default 10 min) is killed and can never be expected. When a red-first spec goes green, delete its row; when you add a red-first spec, add its row, or regenerate the whole manifest from a clean run with `node scripts/run-suite.mjs --write-expected-red` and review the diff.
+`baton --help` lists every top-level verb; `baton help swarm`, `baton help run`, `baton help routing` and `baton help connection` render the topics. The generated inventories are [impl/CLI.md](impl/CLI.md) and [impl/MCP.md](impl/MCP.md). Unknown flags and missing positionals refuse at the CLI with the admitted spelling (#431); every swarm refusal crosses the web layer as its own typed code (#430).
 
-The full verb inventory is generated from the executable registry: [impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md). After any surface change run `node impl/scripts/surface-gate.mjs --write` and commit the regenerated artifacts; the suite preflight, CI and the repo pre-commit hook (`git config core.hooksPath .githooks`, once per clone) all run the same gate. The resident's fleet routes are declared in [impl/scripts/resident.deployment.mjs](impl/scripts/resident.deployment.mjs).
+**Credentials** are read at the deployment root, projected into each worker's isolated home, and never printed:
+
+| Harness / provider | Where the credential lives | Readiness |
+|---|---|---|
+| omp → zai (GLM) | `glm_key.json` in the deployment's config root, projected into `$HOME/.omp/agent` | route row blocks naming the missing file |
+| omp → deepseek | `deepseek_key.json` | same |
+| omp → kimi-code | `kimi_key.json` (`baton credentials install kimi`) | same |
+| claude-code | the harness's own OAuth login; readiness carries `expiresAt` / `refreshable` (#346) | typed `provider_auth_expired` with the root-side remedy |
+| codex, grok, kimi-code native | the harness's own login | quota exhaustion is a typed turn failure, not readiness (#341) |
+| muse | OS keyring first (`muse login`), file backend as fallback | `doctor --check` confirms |
+| Artificial Analysis (model profiles, #429) | `BATON_AA_KEY`, else `~/.config/baton/aa_key` (0600) | absent key → a degraded profile row, never a refusal |
+
+Subscription routes (GLM, Kimi, Codex, Grok, Claude, muse) are windowed: GLM's 5-hour window closing ends every GLM seat with `provider_quota_exhausted` and a reset instant. Spread a wave over routes; the doctor's route table is the input to that decision.
+
+**The suite verdict.** `run-suite.mjs` runs the parallel lane, then the process-heavy files of `impl/scripts/suite-lanes.json` serially, and judges the run against `impl/scripts/expected-red-tests.json`: rows are `file :: name`, each with a reason naming the issue it waits on ([docs/42](docs/42-suite-legitimacy.md)). GREEN means every failure is listed, no listed test passed or vanished, and nothing hung (`BATON_SUITE_IDLE_MS`, default 10 min). Red-before tests land under the `-red` suffix convention ([docs/44](docs/44-red-suffix-convention.md)) and are delisted when the implementing lane turns them green. A subset run prints a `SUBSET verdict (n of m files)` line and never counts as acceptance. On a host that runs lanes, the suite takes a verify lease so two suites never share the cores (#333); `BATON_HOST_CAPACITY_DISABLED=1` bypasses the capacity gate for a root-side gate run.
+
+**Restarting a resident.** Stop seats first (`swarm stop`), `kill -TERM` the exact pid (resolve it by working directory, never by a substring match), wait for the `host.stopped` row, relaunch from a dedicated shell, and probe with one `swarm recruit` on a cheap route before trusting the new commit: a `baton run` succeeding proves nothing about recruit. Issue #351 tracks the remaining idle-stop cost; #306 is the in-place reincarnation that removes the restart.
+
+---
+
+## Where the design stands (2026-09-18)
+
+Landed since the swarm runtime began (2026-09-13), by theme, with the issue that carries the evidence:
+
+- **Swarm runtime.** Living swarms with groups, work, assignments, couplings and shared context (docs/39); contribution contract rendered in the brief with an admitted example (#310, #371); progress checkpoints during a turn (#305); guidance parked for one-shot seats (#337); membership settled on stop (#350); read-only recruit mode (#373); one closed refusal set across the web layer (#430); closed CLI argv (#431); worktree custody on stop, drain and crash (#428, #435); lost seats named after a restart (#364); writer couplings honest (#425); the context projection (#427).
+- **Wakes and views.** The wake stream with a closed class set (#272, #294); the bounded watch with `--wake-class` (#339); wake primitives above the CLI boundary with no client-side size anticipation (#356); typed attention rows for foreign changes and turns without a contribution (#357); evidence and contribution search (#312, #338).
+- **The resident.** Owner-local publication; shutdown that never serializes the whole ledger on the main thread and a checkpoint that is reused across restarts (#351 lanes 1–4, #397, #361, #434); EPIPE-safe transports (#383); host capacity measured from the machine (#329, #359); the served commit on every wake frame and a provider stall as one deployment fact (#316).
+- **Routes and fleet.** Exact-route admission that consults readiness (#324); omp readiness from the harness catalog (#342); route comparison answered on recruit (#341); Claude OAuth expiry typed (#346); live model profiles from Artificial Analysis with subscription billing honoured (#429).
+- **Suite legitimacy.** Reasoned expected-red rows, the environment dimension, the `-red` convention (#260, docs/42, docs/44); the verify lease (#333); per-row prerequisite attribution (#327).
+
+Open and sequenced first (`bug` + `priority:high`): **#441** the reading half (seats read their issue, cited docs, landed work and peers through Baton's own context primitives; a Kimi sub-orchestrator and two DeepSeek builders are on it), **#442** provider-quota kills fold into the swarm and wake the root, **#438** `swarm.view` never spawns git on the read path, **#296** the native landing verb, **#306** resident reincarnation in place, **#351** the idle-stop remainder, **#433** the contributions projection and multi-wake frame. Filed from the operator's asks: **#443** re-route runs ended by depleted usage, **#444** Design Arena rankings beside the Artificial Analysis profiles.
 
 ---
 
 ## Documentation map
 
-- **[SYSTEM.md](SYSTEM.md)** — the authoritative system design (read it second).
-- **[docs/PROGRESS.md](docs/PROGRESS.md)** — the per-phase progress ledger (the status narrative).
-- **[docs/26](docs/26-full-system-goal.md)** — the retained full-system goal; **[docs/28](docs/28-exhaustive-capability-audit.md)** — the lossless capability audit.
-- **[GLOSSARY.md](GLOSSARY.md)** — any leftover jargon.
-- **Design docs (`docs/`)** — the full table of the exploration corpus (problem framing through representation ladder) is preserved in the [superseded README](docs/reference/README-superseded-2026-08-13.md); nothing was discarded.
-- **Specs (`spec/`)** — per-phase implementation contracts; the campaign-era contracts/red-teams/folds live in **`docs/reference/evidence/<epic>-<date>/`** (the spec-driven pipeline's working papers).
-- **Issues** — [github.com/Flip-Engineering/baton/issues](https://github.com/Flip-Engineering/baton/issues): the tracked in-flight + planned roster (this README names the headline ones).
-- **The orchestrator friction ledger** — [docs/reference/evidence/frontier-sweep-2026-08-03/orchestrator-friction-ledger.md](docs/reference/evidence/frontier-sweep-2026-08-03/orchestrator-friction-ledger.md): every AX friction the orchestrator hit while building baton with baton, with dispositions.
+- **[SYSTEM.md](SYSTEM.md)** — the authoritative system design (read it second). **[GLOSSARY.md](GLOSSARY.md)** — the jargon.
+- **[docs/PROGRESS.md](docs/PROGRESS.md)** — the per-phase progress ledger, oldest first; a row is never rewritten to look greener than it was.
+- **[impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md)** — generated from the executable registry; regenerate with `node impl/scripts/surface-gate.mjs --write` after any surface change (the pre-commit hook runs the same gate: `git config core.hooksPath .githooks` once per clone).
+- **[impl/scripts/expected-red-tests.json](impl/scripts/expected-red-tests.json)** — the reasoned expected-red manifest; **[impl/src/limits.mjs](impl/src/limits.mjs)** — the frame-limits registry, the one place a bound is declared.
+
+**Design docs — the swarm era (`docs/`)**
+
+| doc | what it settles |
+|---|---|
+| [32](docs/32-reflexive-orchestration.md) | Reflexive orchestration: decision channels, task boards, context packages as typed hand-offs, REPL objects |
+| [33](docs/33-shared-objects-repl-layer.md) | Shared objects and the REPL layer: content-addressed cells, named bindings |
+| [34](docs/34-knowledge-horizons.md) | Knowledge horizons: task → workflow → project graphs, promotion, brief-time activation |
+| [35](docs/35-turn-checkpoints.md) | Turn checkpoints: steer, don't gate |
+| [36](docs/36-unified-control-grammar.md) | One grammar across embedded, web, CLI and MCP; the generated inventories and the conformance gate |
+| [37](docs/37-wave-driver.md) · [37b](docs/37-holistic-runtime-convergence.md) | The shipped wave driver; holistic runtime convergence |
+| [38](docs/38-flip-experience.md) · [38b](docs/38-flip-visual-surfaces.md) | The Flip operator experience and visual surfaces (`baton top`) |
+| [39](docs/39-swarm-runtime.md) | **The swarm runtime**: living swarms, tight and loose coupling, communication and shared context, the knowledge verbs on the bridge |
+| [40](docs/40-runtime-review-2026-09-12.md) · [41](docs/41-verification-recovery-review.md) | The runtime review with checked results; verification and contribution recovery |
+| [42](docs/42-suite-legitimacy.md) · [42b](docs/42-deployment-topology.md) | Suite legitimacy (expected-red reasons, the environment dimension); deployment topology beyond one host (#298) |
+| [43](docs/43-host-capacity-and-derived-floors.md) | Host capacity is the throttle; the replaying → reconstructing → answering contract; restart truth |
+| [44](docs/44-red-suffix-convention.md) | The `-red` test-suffix convention |
+| [45](docs/45-open-coordination.md) | Open coordination: joint couplings, claims, peers-now (#422, #423, #374) |
+| [46](docs/46-swarm-visibility.md) | Swarm visibility: one liveness derivation, the contributions ledger, the cost of a view (#433, #364, #438) |
+| 47 | The reading half (#441) — being written by the `kimi-441` design seat |
+
+The earlier corpus (problem framing through the representation ladder, docs 00–31) and the campaign-era working papers are indexed in the [superseded README](docs/reference/README-superseded-2026-08-13.md) and under `docs/reference/evidence/`; nothing was discarded. Dated campaign reports live in [`reviews/`](reviews/). The orchestrator friction ledger, every AX friction met while building baton with baton, is at [docs/reference/evidence/frontier-sweep-2026-08-03/orchestrator-friction-ledger.md](docs/reference/evidence/frontier-sweep-2026-08-03/orchestrator-friction-ledger.md); its successors are the `bug` issues filed from each wave.

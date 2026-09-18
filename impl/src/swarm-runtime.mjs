@@ -2,7 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
   projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
   validateSwarmCommand, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
-  swarmKnowledgeCommand, swarmKnowledgePermission } from './swarm-contract.mjs';
+  swarmKnowledgeCommand, swarmKnowledgePermission, readRecruitContextPackageOption,
+  withoutRecruitContextPackageOption } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
@@ -60,6 +61,15 @@ const swarmRouteShape = (value) => (value && typeof value === 'object' && !Array
   ? Object.freeze({ harness: value.harness, model: value.model,
     effort: typeof value.effort === 'string' && value.effort.length > 0 ? value.effort : null })
   : null;
+
+/** Issue #441: the first `maxBytes` UTF-8 bytes of a branch's text, never splitting a character —
+ * the ONE slice the recruit brief's `## Context package` section renders. */
+const sliceUtf8 = (text, maxBytes) => {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= maxBytes) return text;
+  return new TextDecoder('utf-8', { fatal: false })
+    .decode(bytes.subarray(0, maxBytes)).replace(/\uFFFD+$/u, '');
+};
 // ── repository reads (issue #301) ────────────────────────────────────────────────────────────────
 const GIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 /** One read-only git query over a checkout the deployment itself owns, or null when it cannot be
@@ -2576,6 +2586,12 @@ export class SwarmRuntime {
       }
     }
     if (situation.length > 0) blocks.push(['## Swarm situation', ...situation].join('\n'));
+    // Issue #441: the ONE ContextPackage the root pulled at recruit time — the issue it named
+    // and the docs the issue cites — renders right after the swarm situation, so a seat can read
+    // the world its brief names. A recruit that named no package renders no section: today's
+    // hand-typed briefs stay byte-identical.
+    const contextPackageSection = this._recruitContextPackageBriefSection(args.options);
+    if (contextPackageSection !== null) blocks.push(contextPackageSection);
     // Issue #310 + #371 + #373: the expected contribution shape rides every brief as one
     // worked example the validator admits, with the closed sets derived from the schema the
     // validator reads. A seat recruited read_only — or granted no contribute authority —
@@ -2606,6 +2622,49 @@ export class SwarmRuntime {
       blocks.push(inheritance.join('\n'));
     }
     return blocks.join('\n\n');
+  }
+
+  /** Issue #441: the `## Context package` section one recruited seat's brief carries — the
+   * package's digest, then per branch its name, digest, byte size and the first
+   * `context_package.brief_bytes` of its text (the registry row, never a literal). The branches
+   * resolve through the store's own resolver, so the seat reads the same bytes the root admitted;
+   * a branch whose bytes are gone renders its identity and says so, never a silent gap. Returns
+   * null for a recruit that named no package — every pre-#441 brief composes exactly as before.
+   */
+  _recruitContextPackageBriefSection(options) {
+    const selected = readRecruitContextPackageOption(options ?? {});
+    if (selected === null) return null;
+    const record = this.store.contextPackage(selected.digest);
+    if (record === null) {
+      refuse(`Swarm recruit context package ${selected.digest} is not admitted by this deployment`,
+        'swarm_command_invalid', {
+          field: 'options.contextPackage.digest', rule: 'unadmitted-package', digest: selected.digest,
+        });
+    }
+    const row = FRAME_LIMITS['context_package.brief_bytes'];
+    const branches = record.branches ?? [];
+    const lines = [
+      '## Context package',
+      `Package ${record.packageDigest} — ${branches.length} branch${branches.length === 1 ? '' : 'es'},`
+        + ' admitted before this recruit and attached to your run: the full text of any branch'
+        + ' resolves from the package and branch digests below.',
+    ];
+    for (const branch of branches) {
+      const digest = branch.source?.digest ?? branch.artifact?.digest
+        ?? branch.valueRef?.artifactDigest ?? null;
+      let text = null;
+      try {
+        const resolved = this.store.resolveContextPackageBranch(record.packageDigest, branch.name);
+        text = resolved.source === null ? null
+          : typeof resolved.source === 'string' ? resolved.source : JSON.stringify(resolved.source);
+      } catch { text = null; }
+      lines.push(`- ${branch.name}`);
+      lines.push(`  digest ${digest ?? '(none)'}${text === null ? '' : ` · ${Buffer.byteLength(text, 'utf8')} bytes`}`);
+      lines.push(text === null
+        ? '  text unavailable — this deployment could not resolve the branch bytes.'
+        : sliceUtf8(text, row.value).split('\n').map((line) => `  | ${line}`).join('\n'));
+    }
+    return lines.join('\n');
   }
 
   async _dispatch(command, args, principal, context = null) {
@@ -2833,14 +2892,20 @@ export class SwarmRuntime {
       // usage derivation; this runtime derives a CHOICE, never a second route table.
       const routeSelection = this._routeSelection(args);
       const admittedOptions = routeSelection?.options ?? args.options ?? {};
+      // Issue #441: the recruit's context package is NOT a Run-start selection — it names an
+      // admitted ContextPackage by digest, and the runtime attaches it to the seat's run once the
+      // run is bound. It never reaches prepareRun/startRun (a deployment resolves a selection it
+      // knows), so it is read here and stripped from the intent's options.
+      const contextPackage = readRecruitContextPackageOption(admittedOptions);
+      const selectionOptions = withoutRecruitContextPackageOption(admittedOptions);
       // #373: the seat's contribution mode IS the run contract — a read_only recruit starts
       // its run with the read-only result intent (#334), which renders the brief's dispatch
       // block with no repository mutation authority and the read-only acceptance instead.
       // `mode` is the one spelling the contract table declares; when named it overrides any
       // nested options spelling an older caller may have sent.
       const runOptions = args.mode === 'read_only'
-        ? { ...admittedOptions, resultIntent: 'read_only_evidence' }
-        : admittedOptions;
+        ? { ...selectionOptions, resultIntent: 'read_only_evidence' }
+        : selectionOptions;
       const runId = `run-${hash([args.swarmId, args.participantId]).slice(0, 32)}`;
       // The route and scope this seat is recruited under (issue #283 root comment 1): the
       // deployment's own resolution when it makes one (prepareRun answers with the admitted
@@ -2880,6 +2945,17 @@ export class SwarmRuntime {
         if (args.workId !== undefined && !Object.hasOwn(current.work ?? {}, args.workId)) {
           refuse(`Swarm recruit work ${args.workId} not found in swarm ${args.swarmId}`, 'work_not_found',
             { field: 'workId', participantId: args.participantId, workId: args.workId });
+        }
+        // Issue #441: a package this deployment has not admitted cannot be attached, so the
+        // recruit is refused BEFORE any membership is written — no seat joins on a package
+        // nobody holds. The digest travels; the package itself was admitted by the root's CLI
+        // (the web context-package port), so this check is the ONE place the runtime judges it.
+        if (contextPackage !== null && this.store.contextPackage(contextPackage.digest) === null) {
+          refuse(`Swarm recruit context package ${contextPackage.digest} is not admitted by this deployment`,
+            'swarm_command_invalid', {
+              field: 'options.contextPackage.digest', rule: 'unadmitted-package',
+              participantId: args.participantId, digest: contextPackage.digest,
+            });
         }
         // Advisory, never a refusal (issue #301): the requested scope is compared with every
         // ACTIVE participant's scope across the repository's swarms, BEFORE the join writes the
@@ -3007,6 +3083,18 @@ export class SwarmRuntime {
           swarmId: args.swarmId, participantId: args.participantId, workerId: worker.id, taskId: worker.taskId,
           ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
         }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`));
+        // Issue #441: the run is bound, so the recruiter's package binds to it — scope
+        // `worker:<seat>`, the ONE scope the seat's brief renders for. The attach row IS the
+        // durable fact: the package was admitted before the recruit at the root's own authority,
+        // and this fenced O(1) pointer is what makes it readable from the seat's run.
+        if (contextPackage !== null) {
+          this.store.attachContextPackage({
+            packageDigest: contextPackage.digest, runId, scope: `worker:${args.participantId}`,
+          }, {
+            actor: principal.actor,
+            key: `package.attach:${contextPackage.digest}:${runId}:worker:${args.participantId}`,
+          });
+        }
         // Issue #425: the new lease learns the checkout's live writer before its seat can act.
         this._settleCheckoutWriterState();
         // Issue #345: the recruit named its work item, so the runtime assigns the seat on join —
