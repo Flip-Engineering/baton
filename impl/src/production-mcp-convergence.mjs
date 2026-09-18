@@ -1,3 +1,12 @@
+import {
+  CORE_TOOL_NAMES,
+  coreMetaAlias,
+  coreMovedTo,
+  coreToolDefinitions,
+  resolveCoreCall,
+} from './mcp-core-tools.mjs';
+import { nearestToolName } from './mcp-northbound.mjs';
+
 import { randomUUID } from 'node:crypto';
 
 import { resolveUnifiedSurfaceCommand } from './control-surface-unification.mjs';
@@ -525,6 +534,90 @@ function augmentTools(response, tools) {
   return { ...response, result: { ...response.result, tools: [...byName.values()] } };
 }
 
+// ── the core agent surface (issue #314, docs/49) ────────────────────────────────────────────
+//
+// The ordinary (`application`) surface is the seven core verb-tools: this wrapper advertises
+// the core table in place of the raw server's flat 52 (plus the six unified meta tools, which
+// fold into ONE baton_surface) and routes a core call to the flat tool its verb names — the
+// SAME operation, through the SAME server dispatch, so a core call and its legacy counterpart
+// answer byte-identically. A flat spelling the core folds in refuses `unknown_tool` with a
+// `movedTo` pointer (docs/49 §8); every other name keeps the landed unknown-tool shape, now
+// naming the CORE advertised set. The `advanced`/`combined` profiles (the descriptor's kernel
+// and authoring surfaces) are untouched: they advertise exactly what they advertise today.
+
+/** The advertised tools of a core-surface session: the seven definitions, with the envelope
+ * fields stripped when the connection binds the repository coordinate (as the raw server does
+ * for its own table). */
+function coreSurfaceTools(target) {
+  return coreToolDefinitions({ bindApplicationContext: target.bindApplicationContext === true });
+}
+
+function serveCoreTools(response, tools) {
+  if (!Array.isArray(response?.result?.tools)) return response;
+  return { ...response, result: { ...response.result, tools: [...tools] } };
+}
+
+function coreToolRefusal(message, refusal) {
+  const body = {
+    ok: false,
+    error: {
+      code: refusal.code,
+      ...(refusal.message == null ? {} : { message: refusal.message }),
+      ...(refusal.detail == null ? {} : { detail: refusal.detail }),
+      ...(refusal.field == null ? {} : { field: refusal.field }),
+    },
+  };
+  return {
+    jsonrpc: '2.0', id: message?.id ?? null,
+    result: { isError: true, structuredContent: body, content: [{ type: 'text', text: JSON.stringify(body) }] },
+  };
+}
+
+/** The landed unknown-tool refusal (mcp-northbound.mjs:2036-2046), re-minted over the CORE
+ * advertised set — plus the one DATA addition docs/49 §8 mints: a flat spelling the core folds
+ * in carries `data.movedTo: {tool, verb}` naming its replacement. */
+function coreUnknownTool(message, name, tools) {
+  const names = [...tools].sort();
+  const nearest = nearestToolName(name, names);
+  const movedTo = coreMovedTo(name);
+  const messageText = movedTo === null
+    ? (nearest === null
+      ? `unknown tool ${name}; this surface advertises no tools`
+      : `unknown tool ${name}; the nearest core tool is ${nearest}`)
+    : `unknown tool ${name}; the core surface folds it into ${movedTo.tool} {verb: ${JSON.stringify(movedTo.verb)}}`;
+  return {
+    jsonrpc: '2.0', id: message?.id ?? null,
+    error: {
+      code: -32602,
+      message: messageText,
+      data: { code: 'unknown_tool', requested: name, nearest, tools: names, ...(movedTo === null ? {} : { movedTo }) },
+    },
+  };
+}
+
+/** Dispatch one core tool call: the verb's flat counterpart through the raw server (the ONE
+ * dispatch), or the meta authority for the six baton_surface verbs. */
+async function dispatchCoreTool(target, shadow, runtime, message, tool) {
+  const args = message?.params?.arguments;
+  const resolved = resolveCoreCall(tool, args ?? {}, {
+    bindApplicationContext: target.bindApplicationContext === true,
+  });
+  if (!resolved.ok) return coreToolRefusal(message, resolved);
+  const call = resolved.dispatch;
+  // A meta leg speaks the unified meta tools' own closed arg sets, which carry no repoId (their
+  // authority derives it — authorizeMcpMetaRead): the envelope field the core schema carries at
+  // the top level is dropped there, exactly as the bound bridge surface drops it for every tool.
+  const forwarded = call.kind === 'meta'
+    ? Object.fromEntries(Object.entries(call.arguments).filter(([field]) => field !== 'repoId'))
+    : call.arguments;
+  const rewritten = {
+    ...message,
+    params: { ...message.params, name: call.name, arguments: forwarded },
+  };
+  if (call.kind === 'meta') return handleMeta(target, await shadow(), runtime, rewritten);
+  return target.handle(rewritten);
+}
+
 async function invokeCapability(target, shadow, capability, args, idempotencyKey, message) {
   if (capability.kind === 'cli_native' || capability.hostLocal === true) {
     throw new BatonControlError('surface_host_command_required', `${capability.id} is a host-local CLI capability`);
@@ -676,10 +769,15 @@ export function wrapProductionMcpServer(server, {
   // and kernel reachability stays where the profile already projects it — the baton_surface_* meta
   // tools route to this same shadow (invokeCapability), while an advanced/combined surface carries
   // the definitions itself.
-  const listedTools = async () => [
+  // The core surface (docs/49 §2): on the ordinary profile this wrapper advertises the seven
+  // core verb-tools instead of the flat table; `advanced`/`combined` keep the landed merge.
+  const coreSurface = server.surface === 'application';
+  const coreTools = coreSurface ? coreSurfaceTools(server) : null;
+  const coreNames = new Set(coreTools === null ? [] : CORE_TOOL_NAMES);
+  const listedTools = async () => (coreSurface ? coreTools : [
     ...(server.toolDefinitions ?? []),
     ...COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS,
-  ];
+  ]);
   return new Proxy(server, {
     get(target, key, receiver) {
       if (key === 'convergence') return runtime;
@@ -688,11 +786,13 @@ export function wrapProductionMcpServer(server, {
         nameClosure: assertSurfaceCapabilityNameClosure(),
       });
       if (key === 'toolDefinitions') {
+        if (coreSurface) return [...coreTools];
         const byName = new Map((target.toolDefinitions ?? []).map((tool) => [tool.name, tool]));
         for (const tool of COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS) byName.set(tool.name, tool);
         return [...byName.values()];
       }
       if (key === 'toolNames') {
+        if (coreSurface) return new Set(coreNames);
         return new Set([...(target.toolNames ?? []), ...META_NAMES]);
       }
       if (key !== 'handle') {
@@ -705,9 +805,26 @@ export function wrapProductionMcpServer(server, {
         }
         if (message?.method === 'tools/list'
           || (message?.method === 'notifications/initialized' && message?.id !== undefined)) {
-          return augmentTools(await target.handle(message), await listedTools());
+          return coreSurface
+            ? serveCoreTools(await target.handle(message), coreTools)
+            : augmentTools(await target.handle(message), await listedTools());
         }
         const tool = message?.method === 'tools/call' ? message?.params?.name : null;
+        // The core surface: a core tool dispatches its verb's own operation. The six unified meta
+        // spellings the CLI's own MCP client speaks (configured-mcp-client.mjs) ride their core
+        // verb as aliases — docs/49 §0 keeps the CLI unchanged — while every other unadvertised
+        // name refuses over the CORE set, `movedTo` naming the verb that replaced it.
+        if (coreSurface && typeof tool === 'string') {
+          if (coreNames.has(tool)) return dispatchCoreTool(target, shadow, runtime, message, tool);
+          const alias = coreMetaAlias(tool);
+          if (alias !== null) {
+            return dispatchCoreTool(target, shadow, runtime, {
+              ...message,
+              params: { ...message.params, arguments: { ...(message.params?.arguments ?? {}), verb: alias.verb } },
+            }, alias.tool);
+          }
+          return coreUnknownTool(message, tool, coreNames);
+        }
         if (META_NAMES.has(tool)) return handleMeta(target, await shadow(), runtime, message);
         const definition = definitionFor(tool);
         if (!definition) return target.handle(message);

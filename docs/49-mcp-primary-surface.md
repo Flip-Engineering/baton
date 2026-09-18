@@ -77,6 +77,15 @@ each a `verb`-discriminated closed schema** (the docs/36 grammar: `noun.verb` be
 `tool {verb, ...}`; H7's depth cap becomes the tool count). No flat `baton_<noun>_<verb>`
 spelling is advertised by default; the migration table (§7) maps every one of them.
 
+**Landed (#314 lane 1).** The production wrapper (`production-mcp-convergence.mjs`) advertises
+exactly these seven tools on the ordinary (`application`) surface — the surface both entry scripts
+serve — and the raw `McpFleetServer` keeps its flat table for embedders and its own pins; rows
+314-a (the name set) and 314-c (the closed schema shape) are green. `advanced`/`combined` are
+untouched (§9). The tables' third column is on the core rows too: each long verb carries its
+`wake` handoff (`kinds` + `settleOn`), validated against the landed `WAKE_CLASS_TABLE` when the
+table loads, and `coreVerbFacts(tool, verb)` answers `{mutation, long, wake}` for the answer
+composer — the §10 ownership row, read by lane 2.
+
 The schema law, per core tool (the red file carries the designed schemas as executable data):
 
 ```jsonc
@@ -196,6 +205,14 @@ The rest opens through `baton_surface`: `catalog` lists the capability inventory
 profile serves (the landed mechanism), `describe` answers one capability's live schema and
 posture, `invoke` routes it through the authority it already has. A caller that knows a legacy
 spelling gets taught the core verb by the refusal (§8) without a `tools/list` round trip.
+
+**Landed (#314 lane 1).** `tools/list` over the served surface carries the seven tools and nothing
+else (row 314-a green; 314-b measures the served bytes inside the derived budget — 19,707 B
+against 7 × 3,038 = 21,266 B at this table), the 51 non-core flat tools stay reachable through
+`baton_surface`, and a flat spelling the core folds in refuses with `movedTo` (§8, row 314-g).
+The six unified `baton_surface_*` spellings stay accepted as unadvertised aliases of their core
+verb: the CLI's own MCP client (`configured-mcp-client.mjs`, `baton surface … --mcp`) speaks them,
+and §0 keeps the CLI unchanged.
 
 The byte budget is **derived, never a bare ceiling** (docs/43): the red file carries the
 designed core tool definitions as executable data, and
@@ -388,6 +405,12 @@ from the legacy tool schemas (impl/src/mcp-northbound.mjs:608-909 and the swarm 
 > and the served-surface clause beside it is lane 1's projection, red until the core surface
 > lands.
 
+**Landed (#314 lane 1).** The served-surface clause holds: no spelling this table moves behind
+`baton_surface` or retires is advertised by default (row 314-f's red clause is green), and every
+moved spelling refuses with its `movedTo` pointer — the pointer set is derived in
+`impl/src/mcp-core-tools.mjs` from each verb's `replaces` plus that spelling's canonical dot twin,
+never a second hand list. The MCP.md coverage half of law (f) is lane 4's.
+
 ## 8. The refusal set
 
 **Law (g).** The core surface mints NO refusal code. The set a client can meet:
@@ -404,6 +427,13 @@ from the legacy tool schemas (impl/src/mcp-northbound.mjs:608-909 and the swarm 
   impl/src/web-northbound.mjs:575+), the bridge's wireSafe composition
   (impl/src/mcp-web-bridge.mjs:47-50), and the wake plane's own codes
   (`invalid_wake_filter`, `wake_stream_*`).
+
+**Landed (#314 lane 1).** Law (g) is live: the core surface mints no code — an unadvertised name
+refuses the landed `unknown_tool` over the core set (with `data.movedTo` when §7 folds or retires
+it), a verb outside a tool's enum refuses `invalid_arguments` with `field: "verb"` and
+`detail.admitted`, and a field another verb owns refuses the same way naming that field. The six
+unified meta spellings are the one unadvertised exception: the CLI's own MCP client speaks them,
+and they ride their core verb instead of refusing (§3).
 
 ## 9. What stays OUT
 

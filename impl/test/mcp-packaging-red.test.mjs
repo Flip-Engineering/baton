@@ -489,6 +489,13 @@ test('MP15: npm pack → clean install → descriptor-driven stdio handshake (th
   assert.ok(tarball, 'npm pack produced a tarball');
   const installDir = join(directory, 'install');
   mkdirSync(installDir, { recursive: true });
+  // The install needs its OWN project root: without a package.json here npm walks UP from the
+  // temp dir looking for one and can land on an unrelated ancestor (measured on this host: a
+  // $TMPDIR under the home tree made npm treat $HOME as the project, answer "up to date" and
+  // install nothing — and MUTATE the home package.json). One private manifest keeps the smoke
+  // hermetic, which is what "clean install" means.
+  writeFileSync(join(installDir, 'package.json'),
+    JSON.stringify({ name: 'baton-install-smoke', version: '0.0.0', private: true }));
   execFileSync('npm', ['install', '--no-audit', '--no-fund', '--omit=dev', join(import.meta.dirname, '..', tarball)],
     { cwd: installDir, encoding: 'utf8', timeout: 120_000 });
   const descriptorPath = join(directory, 'descriptor.json');
@@ -505,7 +512,7 @@ test('MP15: npm pack → clean install → descriptor-driven stdio handshake (th
       { jsonrpc: '2.0', method: 'notifications/initialized' },
       { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
     ]);
-    assert.match(answer, /baton_deployment_doctor/, 'the packed install serves the doctor tool over stdio');
+    assert.match(answer, /baton_deployment/, 'the packed install serves the core deployment tool over stdio');
   } finally {
     child.kill('SIGKILL');
   }
@@ -598,12 +605,13 @@ test('MP18: an external process orchestrates a wave purely through stdio MCP (st
     const transcript = await mcpScript(child, [
       ['initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'mp18', version: '1' } }],
       ['notifications/initialized'],
-      ['tools/call', { name: 'baton_deployment_doctor', arguments: { repoId: 'repo-mp18' } }],
-      ['tools/call', { name: 'baton_waves_start', arguments: {
-        repoId: 'repo-mp18', idempotencyKey: 'mp18-wave',
+      // The shipped ordinary surface advertises the core verb-tools (issue #314).
+      ['tools/call', { name: 'baton_deployment', arguments: { repoId: 'repo-mp18', verb: 'doctor' } }],
+      ['tools/call', { name: 'baton_waves', arguments: {
+        repoId: 'repo-mp18', verb: 'start', idempotencyKey: 'mp18-wave',
         members: [{ role: 'surveyor', objective: 'survey (marker:surveyor)', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'] }],
       } }],
-      ['tools/call', { name: 'baton_waves_progress', arguments: { repoId: 'repo-mp18', waveId: `wave:${'a'.repeat(32)}` } }],
+      ['tools/call', { name: 'baton_waves', arguments: { repoId: 'repo-mp18', verb: 'progress', waveId: `wave:${'a'.repeat(32)}` } }],
     ]);
     assert.match(transcript, /surveyor|wave:/, 'the wave starts over MCP');
     assert.match(transcript, /"phase"|progressClass/, 'progress is readable over MCP');
