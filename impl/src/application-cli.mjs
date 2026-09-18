@@ -20,7 +20,7 @@ import {
   swarmCliCommand,
 } from './swarm-surface.mjs';
 import { webAdmittedCommandNames } from './web-northbound.mjs';
-import { WAKE_STREAM_END_REASONS, openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeClassRow, wakeQuery } from './wake-stream.mjs';
+import { ATTACHMENT_CLOSED_REASONS, WAKE_STREAM_END_REASONS, attachmentClosedFrame, attachmentClosedReason, openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeClassRow, wakeQuery } from './wake-stream.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 // TWO derived tiers, one declaration each (2026-09-14 audit, U-N5/U-E6):
 //
@@ -2434,7 +2434,12 @@ export async function followWakes(parsed, client, options = {}) {
     },
   });
   const outcome = await attachment.done;
-  if (outcome?.status === 'refused' || outcome?.status === 'error') {
+  // Issue #316 (b): the attachment's typed final frame — what ended it, when, and the seq a
+  // reconnect resumes from. The stream module owns the ONE closed reason set and the ONE mapping
+  // (the same one the loopback bridge names its closes by); this leg only delivers it, so the CLI
+  // and the bridge can never report the same end two ways.
+  const attachmentClosed = outcome?.attachmentClosed ?? null;
+  if (outcome?.status === 'refused') {
     const cause = outcome.error;
     throw cliError(
       `the deployment wake stream could not be attached: ${cause?.message ?? 'the resident refused the attachment'}`,
@@ -2450,12 +2455,30 @@ export async function followWakes(parsed, client, options = {}) {
     : options.signal?.aborted === true ? 'caller_closed'
     : outcome?.status === 'ended' && WAKE_STREAM_END_REASONS.includes(outcome.reason) ? outcome.reason
     : 'transport_closed';
+  if (outcome?.status === 'error') {
+    // Issue #316 (b): an attachment that FAILED is not silence either. Its typed final frame is
+    // delivered to the page consumer first (the consumer sees what ended the attachment and where
+    // to resume), and the transport refusal is thrown with the same frame on its detail — the old
+    // behaviour (a bare throw for a crash mid-attachment) told the caller nothing about the wakes
+    // it had already received.
+    const frame = attachmentClosed ?? attachmentClosedFrame('error', { resumeFrom: cursor });
+    await options.onFollowPage?.(frame);
+    const cause = outcome.error;
+    throw Object.assign(cliError(
+      `the deployment wake stream could not be attached: ${cause?.message ?? 'the resident refused the attachment'}`,
+      typeof cause?.code === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(cause.code) ? cause.code : 'wake_stream_unavailable',
+    ), { detail: { ...(cause?.detail ?? {}), attachmentClosed: frame } });
+  }
   const endedRow = Object.freeze({
     schemaVersion: 1, kind: 'baton.wake_stream_ended', frames, cursor,
     swarms: parsed.swarms === null ? null : [...parsed.swarms],
     kinds: parsed.kinds === null ? null : [...parsed.kinds],
     closed: closed === null ? null : Object.freeze({ swarmId: closed.swarmId, seq: closed.seq }),
     reason,
+    // The typed final frame rides the ended row on EVERY end, whatever the transport named, so a
+    // consumer that only reads the returned row is never left with a bare reason string.
+    attachmentClosed: attachmentClosed
+      ?? attachmentClosedFrame(attachmentClosedReason(outcome ?? {}), { resumeFrom: cursor }),
   });
   // An attachment that delivered nothing says why it ended as its only page — the follow that
   // ended at once with no wake is the shape this row exists for (#356). An attachment that

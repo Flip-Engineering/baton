@@ -2200,7 +2200,11 @@ function liveRefusalBlock(entry, now) {
   });
 }
 
-const EMPTY_REFUSAL_RECORD = Object.freeze({ live: new Map(), observed: new Map() });
+// `succeeded` is the third reading the same walk already produces — the last turn on each route
+// that COMPLETED. #341 never needed it published, but the #316 degrade retires against exactly
+// that instant ("a later turn on it succeeds"), so the ONE walk publishes it rather than a second
+// reader walking the same ledger again.
+const EMPTY_REFUSAL_RECORD = Object.freeze({ live: new Map(), observed: new Map(), succeeded: new Map() });
 
 /**
  * #341 part 2: the ONE provider-refusal accessor for a deployment — the refusals its ledger holds
@@ -2218,14 +2222,135 @@ function providerRefusalIndex({ log, routes, adapters = {}, liveness = null, now
     const rows = deriveRouteRefusals({ log, routes, cardContext: { adapters, liveness } });
     const live = new Map();
     const observed = new Map();
+    const succeeded = new Map();
     const at = now();
     for (const [key, entry] of rows) {
       if (entry.refusalRow) observed.set(key, entry.refusalRow);
+      if (entry.success) succeeded.set(key, entry.success);
       const block = liveRefusalBlock(entry, at);
       if (block) live.set(key, block);
     }
-    return Object.freeze({ live, observed });
+    return Object.freeze({ live, observed, succeeded });
   };
+}
+
+// ── #316 (a): a route its provider degraded ─────────────────────────────────────────────────────
+//
+// The coordinator folds a run of same-class provider deaths on one route into ONE episode and
+// lands it durably as `provider.degraded` — the row the root reads as a deployment-level attention
+// row. This is the deployment's half of that ONE fact: the route table reads the ledger's episode
+// and reports the route degraded, the same row the pre-effect recruit refusal is derived from, so
+// the row an operator sees and the route a recruit cannot use are never two derivations.
+//
+// The episode ends the way #341's refusals end — by DERIVATION, never by a timer: a later turn
+// that SUCCEEDED on the route, or a readiness probe whose verdict on it is `verified` after the
+// last death, retires it. A probe IS a turn on the route, so the two readings agree by
+// construction; the probe verdict is read too because a probe turn's own rows are not attributed
+// to the route's model/effort coordinates.
+
+/** The degrade episodes one ledger holds per route: the LAST `provider.degraded` row per exact
+ * route, its participants and window, read from the same ledger walk the refusals use. */
+function deriveRouteDegrades({ log, routes }) {
+  const episodes = new Map();
+  const keys = new Map();
+  for (const route of routes) {
+    const key = routeQuotaKey(route);
+    if (key !== null) keys.set(key, route);
+  }
+  if (!log || keys.size === 0) return episodes;
+  for (const worker of log.workers()) {
+    for (const event of log.byKind(worker, 'provider.degraded')) {
+      const payload = event.payload ?? {};
+      const route = record(payload.route) ? payload.route : null;
+      const key = routeQuotaKey({
+        harness: route?.harness ?? event.harnessResolved,
+        model: route?.model ?? event.modelResolved,
+        effort: route?.effort ?? event.effortResolved,
+      });
+      if (key === null || !keys.has(key)) continue;
+      const exact = keys.get(key);
+      const window = record(payload.window) ? payload.window : null;
+      const to = typeof window?.to === 'string' && Number.isFinite(Date.parse(window.to))
+        ? new Date(Date.parse(window.to)).toISOString() : null;
+      const participants = Array.isArray(payload.participants)
+        ? payload.participants.filter((id) => typeof id === 'string' && id.length > 0) : [];
+      episodes.set(key, Object.freeze({
+        key,
+        route: Object.freeze({ harness: exact.harness, model: exact.model, effort: exact.effort }),
+        faultClass: typeof payload.faultClass === 'string' ? payload.faultClass : null,
+        participants: Object.freeze([...participants]),
+        window: Object.freeze({
+          from: typeof window?.from === 'string' && Number.isFinite(Date.parse(window.from))
+            ? new Date(Date.parse(window.from)).toISOString() : null,
+          to,
+        }),
+        count: Number.isSafeInteger(payload.count) ? payload.count : participants.length,
+        next: record(payload.next)
+          ? Object.freeze({ ...payload.next })
+          : Object.freeze({ action: 'pause_recruits_until_probe', route: Object.freeze({ ...exact }) }),
+        at: to,
+      }));
+    }
+  }
+  return episodes;
+}
+
+/** The live degrade block for one route, or null: an episode no later successful turn and no
+ * later verified probe has retired. `success`/`probeVerifiedAt` are the two readings the caller
+ * owns; both are instants, and the later one wins. */
+function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null } = {}) {
+  const retired = [successAt, probeVerifiedAt].filter((at) => typeof at === 'string');
+  for (const at of retired) {
+    // An episode whose own window end cannot be read (a malformed row) stays degraded: the
+    // fail-closed reading is the one that never admits a seat onto a route that is killing seats.
+    if (episode.window.to !== null && Date.parse(at) > Date.parse(episode.window.to)) return null;
+  }
+  return Object.freeze({
+    state: 'degraded', route: episode.route, since: episode.window.from,
+    faultClass: episode.faultClass, participants: episode.participants,
+    window: episode.window, count: episode.count, next: episode.next,
+  });
+}
+
+/** #316 (a): the ONE degrade accessor for a deployment, in the shape the refusal index publishes:
+ * `{ live }` — the routes degraded right now — plus the episodes themselves for the route table.
+ * Deliberately uncached for the same reason the refusal index is: the ledger read is already
+ * append-aware, and a cache would hold an episode a later turn has retired. */
+function providerDegradeIndex({ log, routes, refusals = null, liveness = null }) {
+  return () => {
+    const episodes = deriveRouteDegrades({ log, routes });
+    const live = new Map();
+    const observed = refusals === null ? EMPTY_REFUSAL_RECORD : refusalRecordOf(refusals);
+    for (const [key, episode] of episodes) {
+      // A route whose last turn (or verified probe) SUCCEEDED after the last death of the episode
+      // is not degraded: the probe the row's `next` asks for has already succeeded.
+      const successAt = observed.succeeded.get(key)?.at ?? null;
+      let probeVerifiedAt = null;
+      if (liveness && typeof liveness.project === 'function') {
+        try {
+          const row = liveness.project(episode.route, { withProbe: false });
+          if (row?.state === 'verified' && Number.isFinite(row.verifiedAt)) {
+            probeVerifiedAt = new Date(row.verifiedAt).toISOString();
+          }
+        } catch { probeVerifiedAt = null; }
+      }
+      const block = liveDegradeBlock(episode, { successAt, probeVerifiedAt });
+      if (block) live.set(key, block);
+    }
+    return Object.freeze({ live, episodes });
+  };
+}
+
+/** The served-commit fact one wake frame header carries (#316 c): the commit the resident serves
+ * and how many commits the branch it was started from has moved past it — null when the
+ * deployment cannot name one, and `behind: null` when there is no readable target to count
+ * against (absence is never a fabricated zero). */
+export function servedWakeFact(row) {
+  if (!record(row)) return null;
+  const commit = typeof row.commit === 'string' && GIT_SHA_40.test(row.commit) ? row.commit : null;
+  if (commit === null) return null;
+  const behind = row?.target?.behind;
+  return Object.freeze({ commit, behind: Number.isSafeInteger(behind) ? behind : null });
 }
 
 function assertRouteReady(options, readiness) {
@@ -2398,6 +2523,10 @@ class BatonDeployment {
   // #341 part 2: the ONE ledger-derived provider-refusal index this deployment reads (built in
   // openBatonDeployment, where the ledger and the adapter cards are both in hand).
   #routeRefusals = null;
+  // #316 (a): the routes the coordinator's provider-degraded fold has taken down (built beside the
+  // refusal index, from the same ledger) — the fact the route usage rows publish and the
+  // pre-effect recruit refusal reads.
+  #routeDegrades = null;
   // #346: the credential-lifetime layer — the live claude credential facts and the lane horizon
   // every admission judges them against (null when the deployment has no claude credential
   // authority, in which case no route is judged on a lifetime nobody can read).
@@ -2435,6 +2564,7 @@ class BatonDeployment {
     this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
     this.#routeRefusals = deployment.refusals ?? null;
+    this.#routeDegrades = deployment.degrades ?? null;
     this.#adapters = deployment.adapters ?? {};
     this.#routes = deployment.routes ?? [];
     this.#profiles = deployment.modelProfiles ?? null;
@@ -2515,6 +2645,7 @@ class BatonDeployment {
    * moves, and an open-time snapshot would go stale exactly when the answer matters. */
   doctorReadiness() {
     const refusals = this.#routeRefusals ? this.#routeRefusals() : EMPTY_REFUSAL_RECORD;
+    const degrades = this.#routeDegrades ? this.#routeDegrades() : null;
     const workspace = this.#workspaceProbe ? this.#workspaceProbe() : null;
     // #346: the live credential facts — `expiresAt` plus whether the deployment can refresh this
     // credential at all — read FRESH on every doctor/card read (the clock moves), never an
@@ -2584,6 +2715,12 @@ class BatonDeployment {
       // the same non-enumerable pattern (a reader sees it; the pre-existing serialized row shape
       // DP5 pins does not move). Present whenever the ledger holds one, live or already retired.
       Object.defineProperty(composed, 'lastProviderRefusal', { value: lastProviderRefusal, enumerable: false });
+      // #316 (a): the degrade the coordinator's fold recorded for this route, published by the same
+      // non-enumerable pattern (a reader sees it; the serialized doctor row shape DP5 pins does not
+      // move). The route usage row below publishes it as its own recruit-facing state.
+      Object.defineProperty(composed, 'degraded', {
+        value: degrades?.live?.get(key) ?? null, enumerable: false,
+      });
       return Object.freeze(composed);
     }));
     // Epic #103 (D6b): the non-enumerable `briefing` sibling — { packId, composedAtEventSeq,
@@ -2718,6 +2855,10 @@ class BatonDeployment {
       const quota = quotaRefused
         ? Object.freeze({ state: 'exhausted', resetAt })
         : Object.freeze({ state: 'ok', resetAt: null });
+      // #316 (a): the episode the coordinator's fold recorded for this route, if it is still live —
+      // read from the SAME doctor row's published degrade (never a second ledger walk), so the
+      // usage row and the readiness row cannot disagree about it.
+      const degraded = doctorRow?.degraded ?? null;
       const occupancy = this.#occupancyFor(route);
       let ceiling = occupancy.concurrencyCeiling;
       if (ceiling === null) {
@@ -2730,7 +2871,10 @@ class BatonDeployment {
         // for this route (one read of the cache per doctor read), present only when this deployment
         // has a profile authority at all.
         ...(profiles === null ? {} : { profile: profiles.get(key) ?? null }),
-        state: blocked ? 'blocked' : 'ready',
+        // #316 (a): a route the provider-degraded fold has taken down is not `ready` — the state a
+        // recruit compares and a seat's brief renders says what the route is doing right now. A
+        // static block keeps its own verdict: it is the substrate every admission reads first.
+        state: blocked ? 'blocked' : (degraded ? 'degraded' : 'ready'),
         code,
         resetAt,
         usage: Object.freeze({ turns, tokens, usd }),
@@ -2740,6 +2884,9 @@ class BatonDeployment {
         // deployment can refresh it — so the usage row and the readiness row cannot disagree.
         credential: doctorRow?.credential ?? null,
         quota,
+        // #316 (a): the degrade episode itself — since, fault class, every participant it took, the
+        // window, and the next act — so the refusal a recruit draws names the fact that refused it.
+        degraded,
       });
     }));
   }
@@ -2804,6 +2951,13 @@ class BatonDeployment {
     });
   }
 
+  /** #316 (c): the served-commit fact every wake frame header carries, derived from the SAME
+   * doctor row the deployment publishes — one git read per refresh (the wake stream reads this on
+   * its observation cadence, never per frame), and the drift an operator reads on a frame is
+   * exactly the drift the doctor reports. */
+  wakeServedFact() {
+    return this.#served ? servedWakeFact(servedRow(this.#repository.root, this.#served)) : null;
+  }
   async run(objective, route = {}) {
     this.#assertRouteReady(route);
     await this.#livenessGate(route);
@@ -2964,6 +3118,10 @@ class BatonDeployment {
       repoIds: [this.#repository.repoId],
       allowedOrigins: [authority.origin],
       now: options.now,
+      // #316 (c): the served-commit fact the resident's wake stream rides on every frame header.
+      // The stream reads it once at publish and refreshes it on its observation cadence, so the
+      // drift is visible where the deaths appear without a git read per frame.
+      served: () => this.wakeServedFact(),
     });
     const server = createLocalAuthenticatedWebServer(web);
     const webHost = new BatonWebHost({
@@ -3833,6 +3991,13 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const routeRefusals = providerRefusalIndex({
     log: driver.log, routes, adapters, liveness: livenessController, now: residentOptions.now,
   });
+  // #316 (a): the degrade index — the routes the coordinator's provider-degraded fold has taken
+  // down — read from the SAME ledger and retired against the SAME refusal record, so the route
+  // table's degraded state, the attention row's `next`, and the pre-effect recruit refusal are one
+  // derivation rather than three that can drift.
+  const routeDegrades = providerDegradeIndex({
+    log: driver.log, routes, refusals: routeRefusals, liveness: livenessController,
+  });
   const grokCredentialProbe = grokCredentialCache ? () => {
     const metadata = grokCredentialCache.metadata();
     if (metadata.state === 'expired_needs_login') {
@@ -3932,7 +4097,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // Issue #351 lane 2: the open's own elapsed milliseconds — the replay-to-assembly cost the
       // publication contract publishes at the flip. openStartedAtMs is stamped at entry.
       startupElapsedMs: Date.now() - openStartedAtMs,
-      driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota, refusals: routeRefusals,
+      driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
+      refusals: routeRefusals, degrades: routeDegrades,
       hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,
       liveness: livenessController,
       claudeCredentialProbe,

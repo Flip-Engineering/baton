@@ -1459,6 +1459,10 @@ export class Coordinator {
     this._attentionReasons = [];
     this._attentionCursor = 0;
     this._attentionMintEpoch = 0;
+    /** #316 (a): the OPEN provider-degrade episode per exact route — one entry holds the single
+     * deployment-level row the route's deaths fold into while they are inside the deployment's
+     * declared provider-failure window, so one provider fault class is never N anonymous deaths. */
+    this._providerDegrades = new Map();
 
     this._workerSeq = 0;
     this._taskSeq = 0;
@@ -8557,7 +8561,10 @@ export class Coordinator {
     const reviewAuthority = this._isReviewAuthority(principal, runId);
     for (const reason of this._attentionReasons) {
       if (reason.seq <= afterCursor) continue;
-      if (reason.runId !== runId) continue;
+      // A DEPLOYMENT-level reason (runId null — the #316 provider-degrade fold is the first) is a
+      // fact about the deployment, not about one run: every run's page reads it, because the root
+      // that was NOT watching the dead seat's run is exactly the reader such a row exists for.
+      if (reason.runId !== null && reason.runId !== runId) continue;
       if (reason.kind === 'candidacy_review' && !reviewAuthority) continue;
       if (targetKinds.size > 0 && !targetKinds.has(reason.kind)) continue;
       reasons.push({ ...reason });
@@ -8585,7 +8592,6 @@ export class Coordinator {
     reasons.sort((a, b) => a.seq - b.seq);
     return reasons;
   }
-
   /** Mint a member_terminal wake. Consecutive same-run terminal events in one storm window
    * coalesce into a single entry carrying an explicit count + perPhase distribution — never a
    * singular {role, phase} a phase-trusting consumer would misread. A count-1 reason retains
@@ -15657,9 +15663,93 @@ export class Coordinator {
     };
     handle.providerFaultRowSeq = reason.seq;
     this._attentionReasons.push(reason);
+    // #316 (a): the death is ALSO evidence about the ROUTE. The fold below turns a run of them
+    // into one deployment-level row — the same fault class, one route, one window — which is what
+    // the root acts on (pause recruits on that route) instead of N anonymous dead runtimes.
+    this._foldProviderDegrade(handle, task, reason);
     return Object.freeze({ ...reason });
   }
 
+  /**
+   * #316 (a): the deployment's provider-failure fold. A provider stall is a fact about the ROUTE,
+   * not about the seat that happened to hit it: when N participants die on one exact route with
+   * the same typed fault class inside ONE window, that is ONE episode, and the operator needs one
+   * row naming every participant it took — never N rows a reader has to correlate by hand.
+   *
+   * The window bound is the deployment's OWN declared provider-failure bound — the resolved
+   * watchdog budget that already judges every silent turn (`watchdogConfig()`, and the `elapsedMs`
+   * every `health.stall_suspected` row stamps). It is read here, never re-declared: a deployment
+   * that narrows its stall budget narrows this fold with it.
+   *
+   * The row is deployment-level (`runId: null`), because the fact is about the route: every run's
+   * attention page reads it, and the durable `provider.degraded` row beside it is what the
+   * deployment's route table derives its degraded state from (so a recruit on the route can be
+   * refused before any effect). The row's `next` pauses recruits on the route until a probe
+   * succeeds — the readiness tier the route's own admission already consults.
+   */
+  _foldProviderDegrade(handle, task, death) {
+    const route = death?.route ?? null;
+    if (!route || typeof route.harness !== 'string' || typeof route.model !== 'string'
+      || typeof route.effort !== 'string') return null;
+    const faultClass = death.fault?.code ?? null;
+    if (faultClass === null) return null;
+    const at = Number.isFinite(death.mintedAt) ? death.mintedAt : this._now();
+    const windowMs = this._watchdog.stallMs;
+    const key = `${route.harness}\u0000${route.model}\u0000${route.effort}`;
+    const open = this._providerDegrades.get(key) ?? null;
+    // One episode: the same class on the same route, with the previous death no further back than
+    // the declared window. Anything else opens a NEW episode — an older one is history and stays
+    // readable as the row it was minted as.
+    const same = open !== null && open.faultClass === faultClass && (at - open.to) <= windowMs;
+    const next = Object.freeze({ action: 'pause_recruits_until_probe', route });
+    if (same && Array.isArray(open.row.participants)) {
+      if (!open.row.participants.includes(handle.id)) open.row.participants.push(handle.id);
+      open.row.count = open.row.participants.length;
+      open.to = at;
+      open.row.window = Object.freeze({
+        from: open.row.window.from, to: new Date(at).toISOString(),
+      });
+      this._recordProviderDegrade(handle, task, open.row);
+      return open.row;
+    }
+    const row = {
+      seq: ++this._attentionCursor,
+      kind: 'provider_degraded',
+      // Deployment-level: the route degraded, not this run.
+      runId: null,
+      mintEpoch: ++this._attentionMintEpoch,
+      mintedAt: at,
+      route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
+      faultClass,
+      participants: [handle.id],
+      count: 1,
+      window: Object.freeze({ from: new Date(at).toISOString(), to: new Date(at).toISOString() }),
+      next,
+    };
+    this._providerDegrades.set(key, { faultClass, from: at, to: at, row });
+    this._attentionReasons.push(row);
+    this._recordProviderDegrade(handle, task, row);
+    return row;
+  }
+
+  /** The durable half of the #316 fold: the deployment's route table derives its degraded state
+   * from THIS row (never from the coordinator's memory), so the route an operator reads degraded
+   * and the route a recruit is refused on are one fact. */
+  _recordProviderDegrade(handle, task, row) {
+    try {
+      this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'provider.degraded', actor: 'policy', ...this._routeAttribution(handle, task),
+        harnessResolved: row.route.harness, modelResolved: row.route.model,
+        effortResolved: row.route.effort,
+        payload: {
+          route: row.route, faultClass: row.faultClass,
+          participants: Object.freeze([...row.participants]),
+          window: row.window, count: row.count, next: row.next,
+        },
+      });
+    } catch { /* the fold itself is already authoritative in memory; the ledger read is additive */ }
+  }
   /**
    * #265 item 2: killing a member settles every native child it had been observed to run. The
    * kill reaps the OMP process group, so the session that would have carried a child's terminal
