@@ -14,6 +14,9 @@ import { northboundCapabilityToken } from './northbound-capability-authority.mjs
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
 import { projectSwarmView, SWARM_VIEW_PROJECTIONS } from './swarm-contract.mjs';
+// Issue #430: the swarm family's ONE closed refusal set — the owner of every code the fold or
+// the runtime raises; the fold status table below is DERIVED from it, never hand-kept.
+import { SWARM_REFUSAL_CODES } from './swarm-refusals.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalAndTransportNames } from './application-semantics.mjs';
 import { WakeStream, deriveWakeFrame, parseWakeFilter, wakeClassRow } from './wake-stream.mjs';
 
@@ -457,50 +460,31 @@ function idempotencyConflictRefusal(prior, envelope) {
     `idempotency conflict: this idempotencyKey was admitted with a different ${axis}; resend the identical request to replay the admitted one, or use a fresh idempotencyKey for a different intent`,
     field, { detail: { movedAxis: axis }, retryable: false });
 }
-// #336: the swarm family's ONE closed fold refusal set, with the HTTP class each code crosses
-// the web with: 404 when the request names a row the swarm does not hold, 409 when the ledger's
-// current state conflicts with the request, 400 when the request itself is malformed. The set is
-// read from the family's own sources — the literal codes `validateSwarmEvent` and
-// `foldSwarmEvent` raise (impl/src/swarm-state.mjs), the same set the surface-gate
-// fold-admission audit (SWARM_FOLD_ADMISSION_PINS plus the shape and admission-guarded codes)
-// already enumerates — never a second vocabulary. The closure is pinned row by row in
-// issue288-web-refusal-envelopes.test.mjs: a code the fold raises without a row here would cross
-// as the transient `temporarily_unavailable` (the bug this fixes), and a row here for a code the
-// fold no longer raises is a stale invention the same row refuses.
-export const SWARM_FOLD_REFUSAL_HTTP_STATUS = Object.freeze({
-  // Not-found (404): the request names a swarm, seat, work, group, coupling or contribution the
-  // swarm does not hold.
-  swarm_not_found: 404,
-  participant_not_found: 404,
-  work_not_found: 404,
-  group_not_found: 404,
-  coupling_not_found: 404,
-  contribution_not_found: 404,
-  // State conflicts (409): the swarm holds a row or version the request disagrees with.
-  swarm_duplicate: 409,
-  participant_duplicate: 409,
-  participant_not_active: 409,
-  version_conflict: 409,
-  swarm_already_arrived: 409,
-  swarm_already_closed: 409,
-  swarm_coupling_released: 409,
-  swarm_coupling_conflict: 409,
-  swarm_writer_conflict: 409,
-  swarm_writer_workspace_unrecorded: 409,
-  swarm_not_a_member: 409,
-  contribution_duplicate: 409,
-  contribution_author_mismatch: 409,
-  contribution_revision_conflict: 409,
-  work_dependency_cycle: 409,
-  // Shape (400): the request's own payload is malformed for the event it names.
-  invalid_payload: 400,
-  invalid_body: 400,
-  unknown_event_kind: 400,
-  unsupported_event_kind: 400,
-  work_dependency_self: 400,
-});
+// #336, now derived (issue #430): the swarm family's ONE closed refusal set lives in
+// impl/src/swarm-refusals.mjs; the fold's HTTP classes are DERIVED from it — the fold-raised
+// codes with the status their owner row declares. No hand-kept second table: a code the fold
+// starts or stops raising moves by editing the owner row's raisedBy, and the #336 closure guard
+// (issue288-web-refusal-envelopes.test.mjs) refuses both a raised code without a row and a row
+// the fold no longer raises. The full owner table (fold AND runtime codes) is what
+// dispatchFailure consults, so a runtime-level refusal (`swarm_participant_not_found`,
+// `swarm_participant_exists`, …) crosses typed instead of as the transient 503 row.
+export const SWARM_FOLD_REFUSAL_HTTP_STATUS = Object.freeze(Object.fromEntries(
+  Object.entries(SWARM_REFUSAL_CODES)
+    .filter(([, refusalRow]) => refusalRow.raisedBy.includes('fold'))
+    .map(([code, refusalRow]) => [code, refusalRow.status])));
 
-function dispatchFailure(cause) {
+// #430: the transient fallthrough narrates the unmapped code (and the command) on the resident's
+// stderr ONCE PER CODE, so the NEXT unmapped refusal is visible in the serve log, not only on the
+// ledger. A cause with no code has nothing to name, so it stays silent.
+const NARRATED_UNMAPPED_CODES = new Set();
+function narrateUnmappedDispatchCode(cause, command) {
+  const code = cause?.code;
+  if (typeof code !== 'string' || code.length === 0 || NARRATED_UNMAPPED_CODES.has(code)) return;
+  NARRATED_UNMAPPED_CODES.add(code);
+  console.error(`baton-web dispatch fallthrough: command '${command ?? 'unknown'}' raised the unmapped refusal code '${code}' and crossed as 503 temporarily_unavailable; map the code (swarm family: SWARM_REFUSAL_CODES in impl/src/swarm-refusals.mjs; other families: a dispatchFailure row) so the next caller crosses typed`);
+}
+
+function dispatchFailure(cause, command = null) {
   const goalPlanCode = cause?.code;
   if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
     const invalid = ['worker_policy_invalid', 'worker_policy_observation_invalid'].includes(goalPlanCode);
@@ -672,17 +656,20 @@ function dispatchFailure(cause) {
       },
     } } };
   }
-  // #336: the swarm family's typed fold refusals cross AS THEMSELVES. This arm is the wave
-  // lane's W6/F4 precedent applied to the swarm fold: every code the family's ONE closed fold
-  // refusal set raises (impl/src/swarm-state.mjs `validateSwarmEvent` + `foldSwarmEvent` — the
-  // same set the surface-gate fold-admission audit pins and the durable swarm.operation_refused
-  // row records) crosses with its own code, the fold's own message, the field/rule it named, an
-  // HTTP 4xx class (404 not-found, 409 state conflict, 400 shape) and retryable:false. The
-  // transient 503 fallthrough below stays reserved for causes with NO code.
-  if (SWARM_FOLD_REFUSAL_HTTP_STATUS[goalPlanCode] !== undefined) {
+  // #336, extended by #430: the swarm family's typed refusals cross AS THEMSELVES. This arm is
+  // the wave lane's W6/F4 precedent applied to the swarm family: every code in the ONE closed
+  // refusal set (impl/src/swarm-refusals.mjs — the fold's `validateSwarmEvent` + `foldSwarmEvent`
+  // codes AND the runtime's refuse() codes, the same set the surface-gate fold-admission audit
+  // pins and the durable swarm.operation_refused row records) crosses with its own code, the
+  // refusal's own message, the field/rule it named, the HTTP class its owner row declares
+  // (404 not-found, 409 state conflict, 400 shape, 403 permission, 503 only for the shut-down
+  // runtime) and retryable:false. The transient 503 fallthrough below stays reserved for causes
+  // the table does not hold — and it narrates those once per code (see above).
+  const swarmRefusalRow = SWARM_REFUSAL_CODES[goalPlanCode];
+  if (swarmRefusalRow !== undefined) {
     const detail = isRecord(cause?.detail) ? cause.detail : null;
     const field = detail !== null && typeof detail.field === 'string' ? safeFieldName(detail.field) : null;
-    return failure(SWARM_FOLD_REFUSAL_HTTP_STATUS[goalPlanCode], goalPlanCode,
+    return failure(swarmRefusalRow.status, goalPlanCode,
       typeof cause?.message === 'string' && cause.message.length > 0 ? cause.message : 'swarm mutation refused',
       {
         retryable: false,
@@ -703,7 +690,10 @@ function dispatchFailure(cause) {
   } } };
   // U-F3 (issue #288): the fallthrough is the TRANSIENT row — an unclassified cause is not
   // evidence that the request is permanently unservable, so it is stated retryable with the next
-  // action. The message stays the sanitized constant (W7-A: no internal text crosses).
+  // action. The message stays the sanitized constant (W7-A: no internal text crosses). #430: the
+  // unmapped code (and the command) is narrated on the resident's stderr once per code, so the
+  // NEXT unmapped refusal is visible in the serve log, not only on the ledger.
+  narrateUnmappedDispatchCode(cause, command);
   return failure(503, 'temporarily_unavailable', 'command dispatch failed', {
     retryable: true,
     action: 'retry once; a refusal that repeats is a resident defect rather than a request fault — inspect the resident (`baton doctor --check`) and report the refusal code',
@@ -1625,7 +1615,7 @@ export class WebNorthbound {
       });
       return null;
     } catch (cause) {
-      const failure = dispatchFailure(cause);
+      const failure = dispatchFailure(cause, envelope.command);
       return result(failure.httpStatus, failure.body);
     }
   }
@@ -1661,7 +1651,7 @@ export class WebNorthbound {
     let response;
     try { response = observation.response ?? await observation.pending; }
     catch (cause) {
-      const failure = dispatchFailure(cause);
+      const failure = dispatchFailure(cause, envelope.command);
       return result(failure.httpStatus, failure.body);
     }
     const postAuthorizationFailure = this._postWaitAuthorization(ctx, envelope);
@@ -1727,7 +1717,7 @@ export class WebNorthbound {
           },
         );
       } catch (cause) {
-        const failure = dispatchFailure(cause);
+        const failure = dispatchFailure(cause, envelope.command);
         try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
         catch { return error(503, 'temporarily_unavailable'); }
         return result(failure.httpStatus, failure.body);
@@ -1799,7 +1789,7 @@ export class WebNorthbound {
         try {
           replayed = await this._dispatchDrain(envelope, admittedActor, commandId, ctx.principal);
         } catch (cause) {
-          const failure = dispatchFailure(cause);
+          const failure = dispatchFailure(cause, envelope.command);
           try { this.coordination.failWebCommand(commandId, failure, { actor: admittedActor, key: `web.fail:${commandId}` }); } catch { /* no success is returned */ }
           if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
           return result(failure.httpStatus, { ...failure.body, replayed: true });
@@ -1832,7 +1822,7 @@ export class WebNorthbound {
             )
             : await this._dispatch(admittedEnvelope, admittedActor, admittedPrincipal);
         } catch (cause) {
-          const failure = dispatchFailure(cause);
+          const failure = dispatchFailure(cause, envelope.command);
           try { this.coordination.failWebCommand(commandId, failure, { actor: admittedActor, key: `web.fail:${commandId}` }); } catch { /* no success is returned */ }
           if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
           return result(failure.httpStatus, { ...failure.body, replayed: true });
@@ -1885,7 +1875,7 @@ export class WebNorthbound {
             } } : {}),
           });
         } catch (cause) {
-          const failure = dispatchFailure(cause);
+          const failure = dispatchFailure(cause, envelope.command);
           return result(failure.httpStatus, failure.body);
         }
       }
@@ -1906,7 +1896,7 @@ export class WebNorthbound {
           )
           : await this._dispatch(envelope, webActor, ctx.principal);
     } catch (cause) {
-      const failure = dispatchFailure(cause);
+      const failure = dispatchFailure(cause, envelope.command);
       try { this.coordination.failWebCommand(envelope.commandId, failure, { actor: webActor, key: `web.fail:${envelope.commandId}` }); } catch { /* no success is returned */ }
       if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(envelope.commandId);
       void cause;
@@ -2330,7 +2320,7 @@ export class WebNorthbound {
           }, { transport: 'web-stream', requestId: randomUUID() });
         } catch (cause) {
           ticketQuota?.rollback();
-          const failure = dispatchFailure(cause);
+          const failure = dispatchFailure(cause, 'run.inspect');
           return this._write(res, result(failure.httpStatus, failure.body), origin);
         }
         if (!snapshot || snapshot.runId !== body.runId || snapshot.depth !== 'outline'
@@ -2434,7 +2424,7 @@ export class WebNorthbound {
           },
         );
       } catch (cause) {
-        const failure = dispatchFailure(cause);
+        const failure = dispatchFailure(cause, envelope.command);
         return this._write(res, result(failure.httpStatus, failure.body), origin);
       }
       if (!Array.isArray(semanticAuthority?.requiredCapabilities)) {
