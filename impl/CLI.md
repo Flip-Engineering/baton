@@ -99,6 +99,8 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 
 <!-- END GENERATED: cli-top-level-verbs -->
 
+Swarm argv is closed (#431): an unknown `--flag` on any `swarm` verb refuses naming the token, the verb's admitted flags and its usage line; a missing required positional refuses naming its position before anything is dispatched; the seat selector on swarm verbs is `--participant-id` (the contract field `participantId`).
+
 ## Drive a living swarm
 
 `baton swarm` recruits participants, publishes findings, and lets agents DECLARE the coupling

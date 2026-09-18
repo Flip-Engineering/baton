@@ -556,6 +556,15 @@
           ]
         },
         {
+          "name": "_isAuthorityCheckout",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:predicate_name"
+          ]
+        },
+        {
           "name": "_sharedCheckoutCustody",
           "ordinal": 0,
           "size": 6,
@@ -2056,7 +2065,7 @@
         {
           "name": "_preserveProgressBeforeReap",
           "ordinal": 0,
-          "size": 116,
+          "size": 122,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -2095,7 +2104,7 @@
         {
           "name": "_removeTaskWorktree",
           "ordinal": 0,
-          "size": 24,
+          "size": 27,
           "seam": "effect",
           "evidence": [
             "effect:worktree_authority",
