@@ -159,8 +159,9 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    `claim_holder_gone` row (docs/45 §2.1's row is for a hold a seat TOOK, whose release frees
    something; the participant row already carries the declared scope and says the seat is gone, so
    the row would page the root per settled seat for a bookkeeping write) — the claim row stays
-   active and durable on the view. The red skeleton's row (e) is green; the landed lanes' rows are
-   pinned by `impl/test/issue441d-claims-instead-of-handovers.test.mjs`.
+  active and durable on the view. The red skeleton's row (e) is green, and the whole skeleton is a
+  conformance pin now (§7); the landed lanes' rows are pinned by
+  `impl/test/issue441d-claims-instead-of-handovers.test.mjs`.
 
 ## 6. What stays OUT
 
@@ -192,6 +193,28 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
   brief renders (#371) are untouched.
 - The contributions read derives review state at read time through the ONE exported derivation
   (`contributionLedgerRows` + `SWARM_REVIEW_STATES`, docs/46 §2.1); no durable row is rewritten.
+- The wave-13 red-before skeleton (`impl/test/issue441-reading-half-red.test.mjs`) is a
+  conformance pin now and carries no expected-red row: `impl/scripts/expected-red-tests.json`
+  lists the file under `converged` with reason `#441`, and nothing in its row set pins an
+  unlanded promise — no row remains red. Its six rows assert the LANDED spellings, re-derived
+  after the four lanes landed: (a) `--issue N` parses onto the recruit's context leg and the
+  runtime attaches the ONE admitted package to the seat's run; (b) the brief's `## Context
+  package` section names each branch, its digest and the issue title; (c) `run.package.read`
+  answers the attached package's branch list by digest and one branch's text by name, and
+  refuses a digest the seat's run never carried; (d) `run.contributions.read` answers `rows` —
+  the fold's rows with their files and their derived review state, with zero ledger scans on the
+  read path; (e) a claim is one `swarm.claim_updated` row, never a handover; (f)
+  `issue_reader_unavailable` is the APPLICATION layer's refusal, raised by the root's CLI
+  (`runBatonCli` → `admitRecruitContextPackage`, application-cli.mjs) before any recruit crosses
+  the wire — never a runtime refusal.
+- The design's pre-landing guesses that did NOT survive contact are recorded here so no reader
+  re-derives them from the skeleton's history: the recruit's `--issue` parse lands on
+  `parsed.contextPackage`, never `parsed.args.issue`; the runtime is handed a package digest and
+  never an issue number (the reader is the root's, §4.1); the contributions read answers `rows`,
+  not `contributions`; and `run.package.read`'s unattached-digest refusal is the runtime family's
+  `package_not_attached_to_run` (the store's own `context_package_not_found` is a store spelling,
+  below the runtime — the branch-miss refusal the verb raises is
+  `swarm_context_package_branch_not_found`).
 
 ## 8. Closed-set owners and the seam map
 
