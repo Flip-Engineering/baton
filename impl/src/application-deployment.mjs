@@ -2680,6 +2680,24 @@ const REINCARNATION_HANDOFF_ENV = Object.freeze({
   target: 'BATON_REINCARNATION_TARGET',
 });
 
+/** #462: the SAME keys, as the closed list both halves of the handoff share. The old incarnation
+ * MINTS exactly these (`#successorSpec`) and the successor DELETES exactly these at open
+ * (`consumeReincarnationHandoff`) — one derivation, the spec's own values, so the side that mints
+ * and the side that consumes can never drift into two lists. */
+export const REINCARNATION_HANDOFF_ENV_KEYS = Object.freeze(Object.values(REINCARNATION_HANDOFF_ENV));
+
+/** #462: a copy of `env` with the handoff declaration removed. The declaration is a fact about ONE
+ * process — the incarnation `deployment.reincarnate` started — and never about the processes that
+ * incarnation spawns: worker seats, the #459 supervised gate runs, the regenerators, a seat's own
+ * nested `baton serve`, or an in-process deployment a fixture opens. Every child environment this
+ * process builds is copied from this (the worker runtime's baseEnv) or spread over it (the next
+ * successor's spec), so none of them can hand a child a declaration that was never about it. */
+export function withoutReincarnationHandoff(env) {
+  const copy = { ...env };
+  for (const key of REINCARNATION_HANDOFF_ENV_KEYS) delete copy[key];
+  return copy;
+}
+
 /** #306: the deployment's reincarnation refusal set — the four request refusals the lane brief
  * fixes, every one drawn BEFORE any effect (nothing spawned, no row written, no lease moved). */
 export const REINCARNATION_REFUSALS = Object.freeze({
@@ -2724,6 +2742,21 @@ function reincarnationHandoffFromEnvironment(env, deploymentRoot) {
     incarnation,
     markerPath: reincarnationMarkerPath(deploymentRoot, incarnation),
   });
+}
+
+/** #306, #462: the handoff declaration, read ONCE and consumed ONCE. The successor reads it into
+ * its own incarnation state (the readiness marker, the host lease identity, the publication) and
+ * the keys leave this process's environment in the same act — every child environment built
+ * afterwards is a spread over `process.env` or a copy of it, so no seat, gate run, regenerator or
+ * next successor inherits a declaration that was never about it. A malformed declaration is
+ * consumed too: absence for identity, never a fact for the children. The next successor gets its
+ * OWN declaration from the next `reincarnate` — the old mints a fresh spec. */
+export function consumeReincarnationHandoff(env, deploymentRoot) {
+  const handoff = reincarnationHandoffFromEnvironment(env, deploymentRoot);
+  if (env !== null && typeof env === 'object') {
+    for (const key of REINCARNATION_HANDOFF_ENV_KEYS) delete env[key];
+  }
+  return handoff;
 }
 
 function writeReincarnationMarker(handoff, pid, state) {
@@ -4137,8 +4170,11 @@ class BatonDeployment {
     const invocation = process.argv.slice(2).filter((argument) => argument !== '--reincarnate');
     const args = [script, ...invocation];
     const markerPath = reincarnationMarkerPath(this.#deploymentRoot, incarnation);
+    // #462: the base is this incarnation's own environment with the declaration IT consumed
+    // removed — the successor this mints gets exactly ONE declaration, the one minted here, never
+    // the one this process was spawned into (whose predecessor is not its own).
     const env = {
-      ...process.env,
+      ...withoutReincarnationHandoff(process.env),
       [REINCARNATION_HANDOFF_ENV.predecessorIncarnation]: this.#residentAuthority.incarnation,
       [REINCARNATION_HANDOFF_ENV.predecessorPid]: String(process.pid),
       [REINCARNATION_HANDOFF_ENV.predecessorCommit]: this.#served?.commit ?? '',
@@ -5069,8 +5105,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // its readiness marker BEFORE its open blocks on the writer lease the old still holds, and waits
   // for that release on the handoff's own bound — the release IS the old's drain completing, so a
   // handoff successor never refuses `coordination_writer_busy` at once. A resident started any
-  // other way reads nothing here and keeps the old immediate refusal.
-  const reincarnationHandoff = reincarnationHandoffFromEnvironment(process.env, deploymentRoot);
+  // other way reads nothing here and keeps the old immediate refusal. #462: the read CONSUMES the
+  // declaration — the keys leave this process's environment in the same act, so no child this
+  // resident spawns (a seat, a #459 gate run, a regenerator, the next successor) inherits one.
+  const reincarnationHandoff = consumeReincarnationHandoff(process.env, deploymentRoot);
   if (reincarnationHandoff !== null) writeReincarnationMarker(reincarnationHandoff, process.pid, 'waiting');
   const driverOptions = {
     routeQuotaAuthority: routeQuota,
@@ -5089,6 +5127,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     ...(toolchainProjection ? { toolchainProjection } : {}),
     runtimeIsolation: {
       root: runtimeRoot,
+      // #462: the base every seat's environment is copied from. RuntimeIsolation takes it ONCE,
+      // here, and filters it into each worker env — so the seam that builds worker environments
+      // hands none of the handoff keys through, whichever way this process was started. Handing it
+      // explicitly also means the base is this process's own environment as it is at OPEN, after
+      // the declaration above was consumed, never a later live read of `process.env`.
+      baseEnv: withoutReincarnationHandoff(process.env),
       credentialEnv: projection.credentialEnv,
       credentialFiles: projection.credentialFiles,
       credentialTrees: projection.credentialTrees,
