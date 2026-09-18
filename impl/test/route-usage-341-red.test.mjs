@@ -22,8 +22,11 @@ import { PROVIDER_FAULT_CODES } from '../src/provider-faults.mjs';
 
 const ROUTE_A = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 const ROUTE_B = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' });
-const CODEX_QUOTA_TEXT = "You've hit your usage limit for the day. Please try again at 2026-09-18T00:00:00Z.";
-const EXPECTED_RESET_AT = '2026-09-18T00:00:00.000Z';
+// The reset instant is a FUTURE wall-clock instant derived from now: a literal date turned this
+// file into a time bomb (USAGE-341-3/4 went red at 2026-09-18T00:00Z when the recorded block
+// lapsed and the route read ready again).
+const EXPECTED_RESET_AT = new Date(Math.floor(Date.now() / 1000) * 1000 + 24 * 60 * 60 * 1000).toISOString();
+const CODEX_QUOTA_TEXT = `You've hit your usage limit for the day. Please try again at ${EXPECTED_RESET_AT.replace('.000Z', 'Z')}.`;
 
 function repository(t, name) {
   const root = mkdtempSync(join(tmpdir(), `baton-route-usage-${name}-`));
