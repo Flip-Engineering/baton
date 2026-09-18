@@ -34,12 +34,52 @@ export function contextProgramPure(value) {
   ));
 }
 
-const SECRET_SHAPED_TEXT = Object.freeze([
-  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u,
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/iu,
-  /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/u,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u,
+/** The secret-shaped text a context source may not carry — the ONE table both the scan
+ * (`normalizeContextSource`, `boundedText`) and the typed refusal's detail read: `pattern` is the
+ * name the `context_source_sensitive` refusal publishes (`private_key`, `keyed_secret`,
+ * `sk_token`, `gh_token`) and `expression` is the shape the scan tests. The matched text is never
+ * quoted anywhere: a refusal that echoed it would leak the very credential it refused. */
+export const CONTEXT_SOURCE_SECRET_SHAPES = Object.freeze([
+  Object.freeze({
+    pattern: 'private_key',
+    expression: /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u,
+  }),
+  Object.freeze({
+    pattern: 'keyed_secret',
+    expression: /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/iu,
+  }),
+  Object.freeze({
+    pattern: 'sk_token',
+    expression: /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/u,
+  }),
+  Object.freeze({
+    pattern: 'gh_token',
+    expression: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u,
+  }),
 ]);
+const SECRET_SHAPED_TEXT = Object.freeze(
+  CONTEXT_SOURCE_SECRET_SHAPES.map((shape) => shape.expression),
+);
+
+/** The FIRST secret-shaped line a text carries — the shape's name and the 1-based line it sits
+ * on, never the matched text — or null when the text carries none. The caller turns it into
+ * either the `context_source_sensitive` refusal (the Bench's source scan) or a NAMED GAP (#488:
+ * a document the root's reading leg cannot hand to the deployment becomes a gap on the recruit,
+ * not a refusal of the recruit). Table order decides which name is reported when several shapes
+ * match. */
+export function contextSourceSecretShape(text) {
+  if (typeof text !== 'string' || text.length === 0) return null;
+  for (const shape of CONTEXT_SOURCE_SECRET_SHAPES) {
+    const match = shape.expression.exec(text);
+    if (match !== null) {
+      return Object.freeze({
+        pattern: shape.pattern,
+        line: text.slice(0, match.index).split('\n').length,
+      });
+    }
+  }
+  return null;
+}
 const { policyDigest: ignoredReferencePolicyDigest, ...referencePolicyBody }
   = DEFAULT_CONTEXT_PROGRAM_POLICY;
 void ignoredReferencePolicyDigest;
@@ -628,7 +668,15 @@ function outputValue(result) {
   });
 }
 
-function normalizeContextSource(value, policy) {
+/** The Bench's source admission (#488): every string in the value is measured against the
+ * deployment policy's own text bound and scanned for the secret shapes above, and the TWO facts
+ * answer TWO codes — `context_source_oversize` with `{bytes, bound, limit: 'maxTextBytes'}` (the
+ * document is bigger than one source string may be, which is a projection fact, never a
+ * confidentiality one) and `context_source_sensitive` with `{pattern, line}` (a named shape on a
+ * named line, never the matched text). Exported beside the Bench because the readers that must
+ * answer the same two facts — the root's reading leg (#488) — chunk and gap by THIS judgment
+ * rather than re-deriving it. */
+export function normalizeContextSource(value, policy) {
   const normalized = normalizeJson(value, 'context_source_integrity');
   const state = { nodes: 0 };
   const visit = (entry, depth = 0) => {
@@ -638,10 +686,17 @@ function normalizeContextSource(value, policy) {
         'context_source_oversize');
     }
     if (typeof entry === 'string') {
-      if (Buffer.byteLength(entry) > policy.maxTextBytes
-        || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(entry))) {
-        throw typed('Context source contains oversized or secret-shaped text',
-          'context_source_sensitive');
+      const bytes = Buffer.byteLength(entry);
+      if (bytes > policy.maxTextBytes) {
+        throw Object.assign(typed('Context source text exceeds its deployment-owned bound',
+          'context_source_oversize'), {
+          detail: { bytes, bound: policy.maxTextBytes, limit: 'maxTextBytes' },
+        });
+      }
+      const shape = contextSourceSecretShape(entry);
+      if (shape !== null) {
+        throw Object.assign(typed('Context source text is secret-shaped',
+          'context_source_sensitive'), { detail: { pattern: shape.pattern, line: shape.line } });
       }
       return;
     }

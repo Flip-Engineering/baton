@@ -35,6 +35,10 @@ const SEAT = 'lane-480';
 const OWNER = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
 const PRESENT_DOC = 'docs/480-in-the-checkout.md';
 const ABSENT_DOC = 'docs/480-never-committed.md';
+// Issue #488: the two documents the chunk rows cite — the long one the leg must CHUNK (the parent
+// writes it into the fixture checkout at its root) and the one a secret-shaped line keeps out.
+const CHUNKED_DOC = 'docs/488-cited-chunks.md';
+const SENSITIVE_DOC = 'docs/488-keyed-secret.md';
 // Every await the fixture takes on the deployment's own settle chain is BOUNDED and NAMED (#460,
 // docs/42 §8): the bound is the registry's own probe deadline, and a bound miss carries
 // `fixture_wait_unsettled` so a row can never read a hung wait as a deployment refusal.
@@ -65,15 +69,23 @@ function bounded(promise, label) {
 }
 
 /** The issue the reader answers for one scenario: a body citing the two documents (`cited` names
- * only the one the checkout carries, `gap` names both), or an issue that carries no text at all
- * (the leg's one path to a package with no readable member). */
+ * only the one the checkout carries, `gap` names both, `chunks` names #488's long and
+ * secret-shaped pair), or an issue that carries no text at all (the leg's one path to a package
+ * with no readable member). */
 function issueFor(scenario) {
   const url = `https://github.com/owner/repo/issues/${ISSUE}`;
   if (scenario === 'empty') return { number: ISSUE, title: '', body: '', labels: [], url };
   const body = scenario === 'gap'
     ? [`The item cites ${PRESENT_DOC} and one note that was never committed: ${ABSENT_DOC}.`].join('\n')
-    : [`The item cites ${PRESENT_DOC}.`].join('\n');
-  return { number: ISSUE, title: 'One citation the checkout does not carry', body, labels: ['bug'], url };
+    : scenario === 'chunks'
+      // The body names the two paths and nothing that reads like a keyed line itself: the issue
+      // branch is minted into the same context store, so the FIXTURE's own prose must stay clean.
+      ? [`The item cites ${CHUNKED_DOC} and ${SENSITIVE_DOC}.`].join('\n')
+      : [`The item cites ${PRESENT_DOC}.`].join('\n');
+  const title = scenario === 'chunks'
+    ? 'One cited document is long and one is secret-shaped'
+    : 'One citation the checkout does not carry';
+  return { number: ISSUE, title, body, labels: ['bug'], url };
 }
 
 class Response {
@@ -187,7 +199,7 @@ async function main() {
   const report = {
     scenario, cwd: process.cwd(), docs,
     receipt: null, refusal: null, brief: null,
-    branchNames: [], attached: 0, admittedPackages: 0, seatJoined: false,
+    branchNames: [], branches: [], attached: 0, admittedPackages: 0, seatJoined: false,
   };
   const argv = [
     'swarm', 'recruit', SWARM_ID, SEAT, 'Read the issue and land its item 1.',
@@ -221,13 +233,35 @@ async function main() {
     report.attached = attachments.length;
     if (attachments.length > 0) {
       const record = f.coordination.contextPackage(attachments[0].packageDigest);
-      report.branchNames = (record?.branches ?? []).map((branch) => branch.name);
+      const branches = record?.branches ?? [];
+      report.branchNames = branches.map((branch) => branch.name);
+      // Issue #488: the branch TEXTS as a reader gets them back — the store's own resolver, the
+      // same one the brief and `run.package.read` read through (the brief's three-way coercion,
+      // never a second reader) — so a chunk row can reassemble a document from what the package
+      // really carries instead of from what it was handed.
+      report.branches = branches.map((branch) => {
+        let source = null;
+        try {
+          source = f.coordination.resolveContextPackageBranch(
+            attachments[0].packageDigest, branch.name,
+          ).source;
+        } catch { source = null; }
+        const text = source === null ? null
+          : typeof source === 'string' ? source : JSON.stringify(source);
+        return {
+          name: branch.name, bytes: text === null ? null : Buffer.byteLength(text, 'utf8'),
+          text,
+        };
+      });
     }
   } finally {
     try { f.coordination.releaseWriterLease?.(); } catch { /* a fixture that cannot release still reports */ }
     try { rmSync(f.root, { recursive: true, force: true }); } catch { /* the scratch root is the OS's */ }
   }
-  process.stdout.write(`${JSON.stringify(report)}\n`);
+  // Issue #488: the report now carries the branch TEXTS a reader gets back, so it is far larger
+  // than a handshake — and `process.exit` truncates a pipe's pending writes. Wait for the flush,
+  // then exit (the fixture's own handles are why this process exits explicitly at all).
+  await new Promise((resolve) => { process.stdout.write(`${JSON.stringify(report)}\n`, resolve); });
   process.exit(0);
 }
 
