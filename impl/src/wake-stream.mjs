@@ -29,6 +29,14 @@ import { CONTRIBUTION_NOTE_KIND } from './contribution-contract.mjs';
 
 const WAKE_SCHEMA_VERSION = 1;
 
+// Issue #356: the ONE closed set of reasons a wake stream's end can name. The follow consumer
+// (followWakes) derives what it can see client-side and takes `transport_closed` when the resident
+// ended the stream without naming itself; the resident names `stream_cursor_behind_archive` and
+// `resident_stopping` itself, because only it knows.
+export const WAKE_STREAM_END_REASONS = Object.freeze([
+  'swarm_closed', 'stream_cursor_behind_archive', 'transport_closed', 'caller_closed', 'resident_stopping',
+]);
+
 function typed(message, code, detail = undefined) {
   return Object.assign(new Error(message), { code, ...(detail === undefined ? {} : { detail }) });
 }
@@ -718,6 +726,16 @@ export function openWakeStream({
         if (data.length === 0) return;
         let frame;
         try { frame = JSON.parse(data); } catch { return; }
+        if (type === 'ended') {
+          // Issue #356: the resident's own end marker — `event: ended` carrying a
+          // baton.wake_stream_ended body whose reason names the close from the ONE closed set.
+          // It ENDS the attachment with that reason; it is never delivered as a wake frame.
+          finish({
+            status: 'ended',
+            reason: WAKE_STREAM_END_REASONS.includes(frame?.reason) ? frame.reason : undefined,
+          });
+          return;
+        }
         if (type === 'lagged') onLagged?.(frame);
         else onFrame(frame, id);
       };

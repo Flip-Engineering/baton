@@ -19,7 +19,7 @@ import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, swarmCliCommand,
 } from './swarm-surface.mjs';
 import { webAdmittedCommandNames } from './web-northbound.mjs';
-import { openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeQuery } from './wake-stream.mjs';
+import { WAKE_STREAM_END_REASONS, openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeClassRow, wakeQuery } from './wake-stream.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 // TWO derived tiers, one declaration each (2026-09-14 audit, U-N5/U-E6):
 //
@@ -377,6 +377,16 @@ function cliCauseRefusal(cause, { field = null, observed = null, detail = null }
 }
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function nonempty(value) { return typeof value === 'string' && value.length > 0; }
+
+/** The socket's own cause a fetch rejected with, composed for the transport refusal's detail
+ * (#356): the error's code and message — ECONNRESET, ENOENT, the local transport's typed code —
+ * or null when the rejection names neither, so an anonymous failure stays anonymous instead of
+ * growing a detail row full of nulls. */
+function socketCause(error) {
+  const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : null;
+  const message = error instanceof Error && nonempty(error.message) ? error.message : null;
+  return code === null && message === null ? null : { code, message };
+}
 // U-F12: a key-closure violation names the offending key (the first one, in sorted order, so the
 // refusal is deterministic) instead of only the artifact. `cause` is optional so a caller that has
 // no table row keeps the previous message shape.
@@ -2319,12 +2329,28 @@ export async function followWakes(parsed, client, options = {}) {
       typeof cause?.code === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(cause.code) ? cause.code : 'wake_stream_unavailable',
     );
   }
-  return Object.freeze({
+  // Issue #356: the end names its reason from the ONE closed set (WAKE_STREAM_END_REASONS). The
+  // swarm's own closed wake is the end IT named; the caller's own stop names itself; a reason the
+  // resident named on the stream rides verbatim; a clean end the resident did not name is a
+  // transport close — never an unnamed one (the follow that ended within a second on a live swarm
+  // was undiagnosable exactly because this row carried no reason).
+  const reason = closed !== null ? 'swarm_closed'
+    : options.signal?.aborted === true ? 'caller_closed'
+    : outcome?.status === 'ended' && WAKE_STREAM_END_REASONS.includes(outcome.reason) ? outcome.reason
+    : 'transport_closed';
+  const endedRow = Object.freeze({
     schemaVersion: 1, kind: 'baton.wake_stream_ended', frames, cursor,
     swarms: parsed.swarms === null ? null : [...parsed.swarms],
     kinds: parsed.kinds === null ? null : [...parsed.kinds],
     closed: closed === null ? null : Object.freeze({ swarmId: closed.swarmId, seq: closed.seq }),
+    reason,
   });
+  // An attachment that delivered nothing says why it ended as its only page — the follow that
+  // ended at once with no wake is the shape this row exists for (#356). An attachment that
+  // delivered wakes has already printed its truth; its end reason rides the returned row, so a
+  // page consumer still sees one page per coordination row (#272).
+  if (frames === 0) await options.onFollowPage?.(endedRow);
+  return endedRow;
 }
 
 /** The durable verdict row one check wrote, or null while it is still running. The runtime composes
@@ -2376,14 +2402,22 @@ export async function followSwarm(parsed, client, options = {}) {
   }
 }
 
-/** Issue #339: the bounded watch under the SAME wake-class filter the follow leg takes. Each round
- * asks the runtime for the next swarm update and derives the class that row would have been streamed
- * under (`wakeClassFor` — the stream's own table, so the two legs can never disagree about a class).
- * A row outside the filter re-arms the watch PAST it instead of answering, so
- * `baton swarm watch S --timeout-ms N --wake-class closed` waits for that class or for the deadline;
- * the answer is the ordinary swarm view with the wake row it woke on, class named. */
+/** Issue #339/#356: the bounded watch under the SAME wake-class filter the follow leg takes. Each
+ * round asks the runtime for the next swarm update and derives the class that row would have been
+ * streamed under (`wakeClassFor` — the stream's own table, so the two legs can never disagree about
+ * a class; a resident that already names the class on its enriched watch row (#356) is believed
+ * through the same table). A row outside the filter re-arms the watch PAST it instead of answering,
+ * so `baton swarm watch S --timeout-ms N --wake-class closed` waits for that class or for the
+ * deadline.
+ *
+ * The answer is a WAKE FRAME first: `watch {reason, matchedSeq, event}` — the event enriched to the
+ * #272 shape the follow stream prints (class, subject, next, terminal) by the resident's watch arm
+ * — plus the refreshed view under the requested projection, which DEFAULTS TO `outline`: a wake is
+ * not a view read, and the caller names a wider projection when it wants one. The frame rides
+ * before the view in the answer, exactly as the CLI prints it. */
 export async function watchSwarmFiltered(parsed, client) {
-  const kinds = new Set(parsed.kinds);
+  const kinds = parsed.kinds === null || parsed.kinds === undefined ? null : new Set(parsed.kinds);
+  const projection = parsed.projection ?? 'outline';
   const deadline = Date.now() + (parsed.timeoutMs ?? DEFAULT_APPLICATION_WAIT_MS);
   let cursor = parsed.afterSeq;
   let round = 0;
@@ -2393,19 +2427,41 @@ export async function watchSwarmFiltered(parsed, client) {
     const view = await client.command('swarm.watch', {
       swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
       timeoutMs: Math.max(1, remaining),
-      ...(parsed.projection === undefined ? {} : { projection: parsed.projection }),
+      projection,
     }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}:${round}`);
     const wake = view?.watch ?? null;
-    const wakeClass = wake?.event === null || wake?.event === undefined ? null
-      : (wakeClassFor({ kind: wake.event.kind,
-        payload: wake.event.payloadKind === null || wake.event.payloadKind === undefined
-          ? null : { kind: wake.event.payloadKind } })?.wakeClass ?? null);
-    if (wakeClass !== null && kinds.has(wakeClass)) return { ...view, watch: { ...wake, wakeClass } };
+    const event = wake?.event ?? null;
+    // The class axis: a resident that names the class on its enriched watch row (#356) is believed
+    // through the same table; an older resident's bare row is classified here. `kinds === null` is
+    // the UNFILTERED watch: the next row IS the answer, class named when the row has one.
+    const wakeClass = typeof event?.wakeClass === 'string' && wakeClassRow(event.wakeClass) !== null
+      ? event.wakeClass
+      : (event === null ? null : (wakeClassFor({ kind: event.kind,
+        payload: event.payloadKind === null || event.payloadKind === undefined
+          ? null : { kind: event.payloadKind } })?.wakeClass ?? null));
+    const matched = kinds === null
+      ? wake?.reason === 'event'
+      : wakeClass !== null && kinds.has(wakeClass);
+    if (matched) return watchAnswer(view, projection, wake, wakeClass);
     // Nothing matched: either the deadline passed (the runtime answered its own `timeout` row) or the
     // row that woke it is outside the filter — resume past that row and keep waiting for a match.
-    if (wake?.reason !== 'event' || !Number.isSafeInteger(wake.matchedSeq)) return view;
+    if (wake?.reason !== 'event' || !Number.isSafeInteger(wake.matchedSeq)) {
+      return watchAnswer(view, projection, wake, null);
+    }
     cursor = wake.matchedSeq;
   }
+}
+
+/** The watch answer: the wake frame rides FIRST (it is the headline a consumer acts on), the
+ * projection it answered under is named, and the view's own families follow. A timeout never
+ * claims a wake class — the deadline is reported, never a fabricated wake (#339). */
+function watchAnswer(view, projection, wake, wakeClass) {
+  const { watch: answeredWatch, ...families } = view ?? {};
+  return {
+    watch: wakeClass === null ? { ...(wake ?? {}) } : { ...(wake ?? {}), wakeClass },
+    projection,
+    ...families,
+  };
 }
 
 /** R-5 (issue #288): `baton swarm check … --follow` — admit the check (identity-idempotent, so a
@@ -3559,14 +3615,20 @@ export class BatonWebClient {
         response = await this.fetch(`${this.baseUrl}${path}`, {
           ...options, redirect: 'error', signal: controller.signal,
         });
-      } catch {
+      } catch (fetchError) {
         // #160 R6 (error-actionability-2026-08-13/contract-fold.md §2 D4-R6/F4): the transport
         // refusal names the transport class (web) AND a next action — never a bare "failed".
         // #313 (the #288 host leftover): this leg is composed from the ONE cause table like
         // every other CLI refusal — rule, remedy, judged field, transience verdict and detail —
         // instead of a fixed string with no cause.
+        // Issue #356: the socket's OWN cause rides the detail — ECONNRESET, ENOENT on the socket,
+        // the local transport's typed code — instead of being discarded, so a dead transport is
+        // diagnosable from the refusal alone. An abort of OURS (the request bound) is not a socket
+        // fact: requestBoundElapsed below already names it, and no socket cause is composed.
+        const socket = socketCause(fetchError);
         const refusal = cliCauseRefusal('web_transport_failed', {
           observed: `${options.method ?? 'GET'} ${path}`,
+          ...(socket === null ? {} : { detail: { socket } }),
         });
         // R-5 (issue #288): "this REQUEST outlived its own bound" (our abort fired) is a different
         // fact from "the connection never happened" — a caller whose command may still be running
@@ -4170,6 +4232,20 @@ export async function runBatonCli(parsed, client, options = {}) {
   }
   if (parsed.kind === 'command') {
     await assertCliRouteServable(parsed, client);
+    // Issue #356: the UNFILTERED bounded watch (`baton swarm watch S [--timeout-ms ...]`) is the
+    // same wake-frame read as the --wake-class form — it parses to the ordinary command (its own
+    // pins), so the outline default is applied HERE, at the one leg that sends it. The answer is
+    // the wake frame first under the requested projection, never the megabyte full record.
+    if (parsed.name === 'swarm.watch') {
+      return watchSwarmFiltered({
+        swarmId: parsed.args.swarmId,
+        ...(parsed.args.afterSeq === undefined ? {} : { afterSeq: parsed.args.afterSeq }),
+        ...(parsed.args.timeoutMs === undefined ? {} : { timeoutMs: parsed.args.timeoutMs }),
+        ...(parsed.args.projection === undefined ? {} : { projection: parsed.args.projection }),
+        kinds: null,
+        idempotencyKey: parsed.idempotencyKey,
+      }, client);
+    }
     return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   }
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});

@@ -30,8 +30,11 @@ class LocalHeaders {
 }
 
 /** A narrowly-scoped fetch-compatible transport for authenticated HTTP over one owner-only Unix
- * socket. It validates the synthetic HTTPS authority and socket identity on every request and
- * never follows redirects. It carries no size ceiling in either direction (operator ruling,
+ * socket. It validates the synthetic HTTPS authority at construction and the socket's identity,
+ * existence and authority on EVERY request (issue #356: a socket that is not up YET — or that the
+ * resident unbound — is a typed per-request refusal, `local_transport_unavailable`, not a
+ * construction failure; the refusal's code rides the caller's composed transport cause). It never
+ * follows redirects. It carries no size ceiling in either direction (operator ruling,
  * 2026-09-17, #356): the resident's answer is whatever the deployment is. */
 export function createLocalSocketFetch({
   socketPath,
@@ -45,7 +48,9 @@ export function createLocalSocketFetch({
     || base.search || base.hash) {
     throw localError('local Baton transport configuration is invalid');
   }
-  validateSocket(socketPath, ownerUid);
+  // Issue #356: the socket itself is validated per REQUEST (below) — the file may not exist yet at
+  // construction, and may be unbound by a stopping resident later; both are the request's typed
+  // refusal, never a construction throw the caller cannot attach to a command.
   return async function localSocketFetch(input, options = {}) {
     const target = new URL(String(input));
     if (target.origin !== base.origin || target.username || target.password || target.hash) {

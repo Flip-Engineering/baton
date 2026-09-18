@@ -282,10 +282,13 @@ test('357d: every new row rides the bounded watch’s returned view and the foll
     'the follow page carries every new row in its attention');
 
   // And the bounded watch under the attention filter resolves carrying the rows: the
-  // watch itself is the delivery path the root already follows.
+  // watch itself is the delivery path the root already follows. #356: a bounded watch answers
+  // its wake frame over the outline default — a caller that wants the rows on the view names
+  // the projection, exactly as the CLI now spells `--projection full`.
   const client = { async command(name, args) { return f.call(name === 'swarm.watch' ? 'watch' : name, args); } };
   const filtered = await watchSwarmFiltered(
-    { kinds: ['attention'], swarmId: 'attn', timeoutMs: 50, idempotencyKey: 'attn-watch' }, client);
+    { kinds: ['attention'], swarmId: 'attn', timeoutMs: 50, projection: 'full',
+      idempotencyKey: 'attn-watch' }, client);
   assert.ok(kinds(filtered.attention).includes('worktree_foreign_changes'),
     'the --wake-class attention watch resolves with the rows on its view');
 });
