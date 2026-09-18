@@ -286,6 +286,8 @@ test('450b: a stop with zero drain targets releases and names the gone worker\'s
     state: 'stopped',
     actor: `deployment:${repoId}:resident`,
     key: `host.stop:issue450b:stopped`,
+    // The hand-back the lane recorded: the outcome row carries the drain's released rows.
+    released: () => driver.coordinator.releasedResources(),
   });
   const startedAt = Date.now();
   const receipt = await driver.drainAndClose('resident:issue450b');
@@ -305,6 +307,9 @@ test('450b: a stop with zero drain targets releases and names the gone worker\'s
     .find((event) => event.kind === 'driver.recorded' && event.payload?.kind === 'host.stopped');
   assert.ok(stopped, 'host.stopped is written — the stop never failed on a reservation it could release');
   assert.equal(stopped.payload.state, 'stopped');
+  assert.ok(Array.isArray(stopped.payload.released)
+    && stopped.payload.released.some((row) => row.resource === capacityId && row.how === 'worker_gone'),
+    `host.stopped names the released reservation verbatim: ${JSON.stringify(stopped.payload.released)}`);
 });
 
 // --- the deployment's own stop: the wiring and the resident's outcome -------------------------

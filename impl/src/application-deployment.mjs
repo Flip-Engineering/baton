@@ -3623,6 +3623,9 @@ class BatonDeployment {
         // this arming (the fleet drain it runs inside, the publication withdrawal after it) still
         // reach the row. A stop that marks nothing mints an empty timeline.
         stages: () => this.#stopStageRows(),
+        // Issue #450: the released rows are read at the mint too — the drain that runs inside
+        // this arming is what fills them.
+        released: () => this.#driver?.coordinator?.releasedResources?.() ?? [],
       });
     } catch { /* a stop that cannot arm its outcome still stops */ }
   }

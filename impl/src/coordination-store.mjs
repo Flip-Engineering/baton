@@ -1319,10 +1319,15 @@ export class CoordinationStore {
   armHostStopOutcome(fields) {
     const keys = ['actor', 'key', 'state'];
     const stages = fields?.stages ?? null;
+    // Issue #450: the resources the stop released ({workerId, resource, how}) are read at the
+    // mint the same way the stage timeline is — a reader the drain keeps current until the release.
+    const released = fields?.released ?? null;
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-      || Object.keys(fields).sort().join('\0') !== [...keys, ...(stages === null ? [] : ['stages'])].sort().join('\0')
+      || Object.keys(fields).sort().join('\0')
+        !== [...keys, ...(stages === null ? [] : ['stages']), ...(released === null ? [] : ['released'])].sort().join('\0')
       || keys.some((name) => typeof fields[name] !== 'string' || fields[name].length === 0)
-      || (stages !== null && typeof stages !== 'function')) {
+      || (stages !== null && typeof stages !== 'function')
+      || (released !== null && typeof released !== 'function')) {
       throw new TypeError('host stop outcome arming is invalid');
     }
     this._hostStopOutcome = freeze({ ...fields });
@@ -1337,6 +1342,8 @@ export class CoordinationStore {
     // throws costs the row its timings, never the release its exactness.
     let stages = null;
     try { stages = typeof armed.stages === 'function' ? armed.stages() : null; } catch { stages = null; }
+    let released = null;
+    try { released = typeof armed.released === 'function' ? armed.released() : null; } catch { released = null; }
     try {
       return this._append('driver.recorded', {
         kind: 'host.stopped', state: armed.state, at: this._clock(),
@@ -1344,6 +1351,9 @@ export class CoordinationStore {
         // ONE shape: the stop's own timeline, in the order the stages happened. Empty for a stop
         // that marked none (a bare host fixture), never absent — a reader never has to guess.
         stages: Array.isArray(stages) ? stages : [],
+        // Issue #450: the resources this stop released, verbatim from the drain's own rows
+        // ({workerId, resource, how}); empty when nothing was left behind, never absent.
+        released: Array.isArray(released) ? released.map((row) => ({ ...row })) : [],
       }, { actor: armed.actor, key: armed.key });
     } catch {
       return null; // a release that cannot record its outcome is still an exact release
