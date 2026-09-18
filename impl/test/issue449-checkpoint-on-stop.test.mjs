@@ -150,20 +150,22 @@ test('449-a: a window past the replay frame ceiling still checkpoints on release
   reopened.releaseWriterLease({ requireOwned: true });
 });
 
-test('449-a2: a window whose own ledger bytes are past the cost ceiling is skipped without serializing', (t) => {
+test('449-a2: a projection past the cost ceiling is skipped, naming the bytes it measured', (t) => {
   const directory = root(t, 'oversize');
   const store = new CoordinationStore(directory, { checkpointInterval: 1_024 });
-  // One event whose own bytes put the window past the declared cost ceiling: the cheap proof the
-  // release uses is the window's ledger bytes, so no serialize is paid to reach the skip.
+  // One event that puts the PROJECTION past the declared cost ceiling — the quantity the release
+  // judges. #449's residual replaced the window's ledger bytes as the gate (they are evidence on the
+  // row now), so the skip is reached by measuring, and the row says what it measured.
   store.recordDriver('issue449.fixture', { blob: 'x'.repeat(COST.value) }, { actor, key: 'issue449:oversize' });
   store.releaseWriterLease({ requireOwned: true });
 
   const release = store.checkpointReleaseState();
   assert.equal(release?.state, 'skipped');
   assert.equal(release.reason, 'release_checkpoint_unbounded');
-  assert.equal(release.bytes, null, 'nothing was serialized to reach the verdict');
+  assert.ok(Number.isSafeInteger(release.bytes) && release.bytes > COST.value,
+    'the row names the serialized projection the write measured and refused');
   assert.equal(release.ledgerBytes, store._loadedLedgerIdentity.bytes);
-  assert.ok(release.ledgerBytes > COST.value, 'the window alone is past the cost ceiling');
+  assert.ok(release.ledgerBytes > COST.value, 'the window\u2019s own bytes ride the row as evidence, never as the gate');
   assert.equal(release.bound, FRAME.value);
   assert.equal(release.costBound, COST.value);
   assert.equal(existsSync(join(directory, CHECKPOINT)), false, 'and no checkpoint was written');

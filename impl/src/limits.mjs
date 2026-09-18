@@ -332,11 +332,16 @@ const BRIEF = Object.freeze({
 // carries, while `view.attention_text.bytes` is the registry's own byte ceiling for one row of a
 // frame's text. A cache that costs more than a frame's own byte budget is not a bounded aid to
 // that frame, and the ledger — which every loader still replays exactly — stays authoritative.
-// The pre-#449 bug applied the FRAME's ROW ceiling to the ledger's row count instead, which
-// skipped every release on a ledger that had done real work. The one write this ceiling does NOT
-// gate is the rewrite an open performs after it has replayed the ledger in full for a stale-shape
-// checkpoint (coordination-replay.mjs): that write is bounded by the replay it follows, and it is
-// the only thing that bounds the NEXT open.
+// The pre-#449 bug applied the FRAME's ROW ceiling to the ledger's row count, and the bound that
+// replaced it still let the window's LEDGER BYTES decide — the same wrong axis, one layer down:
+// the bigger the history, the LESS likely the checkpoint. The quantity judged is the checkpoint's
+// own serialized projection (the ledger's bytes ride the outcome as evidence, never as the gate),
+// and the deferred path reuses the last measurement while the window only grows, so a projection
+// past the ceiling is not serialized a second time on the resident's loop. The writes this ceiling
+// does NOT gate are the open's refresh after a load the cache could not serve
+// (`_openCheckpointRefresh`: absent, stale shape, stale authority) and the operator's `compact()`
+// — each is bounded by the work it follows, and the open's refresh is the only thing that bounds
+// the NEXT open.
 const CHECKPOINT_PROJECTION_BYTES = VIEW['view.wake_replay.items'].value * VIEW['view.attention_text.bytes'].value;
 const CHECKPOINT = Object.freeze({
   'checkpoint.projection_bytes': { lane: 'checkpoint.projection_bytes', class: 'substrate', value: CHECKPOINT_PROJECTION_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mjs _boundedCheckpointWrite (the release and deferred housewriting gates)' },

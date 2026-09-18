@@ -77,7 +77,8 @@ test('I397-A: a proven checkpoint under a changed authority digest reads stale_a
   const envelope = readEnvelope(directory);
   assert.equal(envelope.throughSeq, 16);
   envelope.authorityDigest = 'f'.repeat(64);
-  writeFileSync(join(directory, CHECKPOINT), serialize(envelope), { mode: 0o600 });
+  const planted = serialize(envelope);
+  writeFileSync(join(directory, CHECKPOINT), planted, { mode: 0o600 });
 
   const reopened = new CoordinationStore(directory);
   const status = reopened.startupStatus();
@@ -95,7 +96,17 @@ test('I397-A: a proven checkpoint under a changed authority digest reads stale_a
     actual: abbrev('f'.repeat(64)),
   });
 
-  // The restore report itself carries reused: true and the parsed events for the replay.
+  // Issue #449 (residual): the open that had to fall back to another authority's cache refreshes it
+  // for the next open — recorded on the open's own row, and visible in the bytes on disk.
+  assert.equal(status.checkpointRewrite?.state, 'written',
+    'the stale-authority open refreshes the cache it reused');
+  assert.equal(status.checkpointRewrite?.refreshed, true);
+  assert.equal(status.checkpointRewrite?.reason, 'stale_authority_rewrite');
+
+  // The restore report itself carries reused: true and the parsed events for the replay. It is
+  // re-derived from the bytes the OTHER authority wrote — planted back for this proof, because the
+  // open that reused them has since refreshed the cache on disk with this build's authority.
+  writeFileSync(join(directory, CHECKPOINT), planted, { mode: 0o600 });
   const report = coordinationReplay._restoreProjectionCheckpoint(
     reopened, readFileSync(join(directory, 'events.jsonl')), 0);
   assert.equal(report.state, 'stale_authority');
