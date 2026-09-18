@@ -1,5 +1,8 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { FRAME_LIMITS } from './limits.mjs';
+import {
+  FRAME_LIMITS, WEB_WAIT_CEILING_ROW, WEB_WAIT_DEFAULT_MS,
+  composeWebWaitCeilingRefusal, webWaitCeilingRefusalCode,
+} from './limits.mjs';
 import { createServer as createHttpsServer } from 'node:https';
 import { createServer as createHttpServer } from 'node:http';
 import { WebEventStream } from './web-stream.mjs';
@@ -964,9 +967,11 @@ function validateEnvelope(envelope) {
       return 'application_command_arguments_invalid';
     }
     // #233: command-level (not transport-level) so both admitted spellings draw the identical
-    // web wait ceiling and runId-derivation rules.
+    // web wait ceiling and runId-derivation rules. #394: that ceiling is the `web.wait_ceiling_ms`
+    // registry row — the SAME row the coordinator wait arm below reads, and the row the default
+    // wait derives from.
     if (APPLICATION_COMMAND[envelope.command] === 'run.wait'
-      && envelope.args.timeoutMs > 30_000) return 'application_wait_timeout_exceeds_web_ceiling';
+      && envelope.args.timeoutMs > WEB_WAIT_CEILING_ROW.value) return webWaitCeilingRefusalCode('application');
     if (Object.hasOwn(envelope, 'expectedFence')) return 'application_command_does_not_accept_fence';
     const applicationRunId = APPLICATION_COMMAND[envelope.command] === 'run.start'
       ? envelope.args.intent.runId ?? null
@@ -974,6 +979,20 @@ function validateEnvelope(envelope) {
     if (Object.hasOwn(envelope, 'runId') && envelope.runId !== applicationRunId) {
       return 'application_run_id_mismatch';
     }
+  }
+  // Issue #394: the ONE web wait ceiling (the `web.wait_ceiling_ms` registry row) governs BOTH
+  // wait arms. The application `run.wait` arm above refuses above it as its pinned route-shape
+  // token; the legacy coordinator `wait` arm — which silently clamped, answering a caller that
+  // asked for 120 s after 30 s with no marker — now refuses the same way, structured: the field,
+  // the ceiling value and the remedy. A declared value that is not a number cannot exceed the
+  // ceiling, so it keeps the dispatch arm's own historical coercion.
+  if (envelope.command === 'wait' && Number(envelope.args.timeoutMs) > WEB_WAIT_CEILING_ROW.value) {
+    const requested = Number(envelope.args.timeoutMs);
+    return {
+      code: webWaitCeilingRefusalCode('coordinator'),
+      field: 'timeoutMs',
+      message: composeWebWaitCeilingRefusal(requested),
+    };
   }
   if (FENCE_REQUIRED.has(envelope.command) && !Number.isInteger(envelope.expectedFence)) return `${envelope.command} requires expectedFence`;
   if (envelope.command === 'spawn') {
@@ -2020,7 +2039,9 @@ export class WebNorthbound {
     } else if (envelope.command === 'result') {
       value = await this.coordinator.result(a.workerId);
     } else if (envelope.command === 'wait') {
-      value = await this.coordinator.wait(Math.min(Number(a.timeoutMs ?? 25000), 30000));
+      // #394: the ceiling is refused at admission (validateEnvelope), never clamped here, and the
+      // default this arm falls back to derives from the SAME registry row.
+      value = await this.coordinator.wait(Number(a.timeoutMs ?? WEB_WAIT_DEFAULT_MS));
     } else if (envelope.command === 'capabilities') {
       value = this.coordinator.capabilityCards();
     } else if (envelope.command === 'provider_status') {

@@ -110,6 +110,17 @@ const SUBSTRATE = Object.freeze({
   // nothing about the provider, so it never blocks the route).
   'route.probe_capture': { lane: 'route.probe_capture', class: 'substrate', value: 2048, unit: 'bytes', graceful: null },
   'route.probe_deadline_ms': { lane: 'route.probe_deadline_ms', class: 'substrate', value: 120_000, unit: 'ms', graceful: null },
+  // Issue #394: the web transport's wait ceiling — ONE row for the bound BOTH wait arms draw
+  // (the application `run.wait` arm, which refused above it, and the legacy coordinator `wait`
+  // arm, which silently clamped to it). The derivation is the transport's own default per-command
+  // request deadline: 30 s is what `scripts/baton.mjs` sends as BATON_COMMAND_TIMEOUT_MS and what
+  // `application-deployment.mjs` gives the resident's command client (commandTimeoutMs), so an
+  // answer that settles past this bound is written to a request the caller has already abandoned.
+  // The resident therefore refuses a longer wait instead of shortening it, and the DEFAULT wait
+  // derives from this row (WEB_WAIT_DEFAULT_MS below) — never a second literal. The row mints no
+  // cataloged coaching refusalCode: the ceiling refusal is a request-shape refusal, not a byte
+  // lane, so its code rode the ONE `webWaitCeilingRefusalCode` derivation beside this row.
+  'web.wait_ceiling_ms': { lane: 'web.wait_ceiling_ms', class: 'substrate', value: 30_000, unit: 'ms', graceful: null, enforcedAt: 'web-northbound.mjs validateEnvelope (the application run.wait arm and the legacy coordinator wait arm)' },
 });
 
 const VIEW = Object.freeze({
@@ -170,6 +181,30 @@ export const code = 'limits-module';
  * channel and never changes this digest — the CLI handshake stays green between identical code. */
 export const FRAME_LIMITS_DIGEST = createHash('sha256')
   .update(JSON.stringify(canonical(FRAME_LIMITS))).digest('hex');
+
+/** Issue #394: the web wait ceiling, read from the ONE registry row above — the bound both wait
+ * arms of web-northbound.mjs compare against. Never re-declared by a consumer. */
+export const WEB_WAIT_CEILING_ROW = FRAME_LIMITS['web.wait_ceiling_ms'];
+
+/** The web wait DEFAULT: the resident's own choice of how much of the transport deadline to keep
+ * for serializing and delivering the answer — a stated FRACTION of the ceiling (5/6: 25 s of the
+ * 30 s request deadline), so a ceiling change moves the default with it and no second literal
+ * survives in the transport. */
+const WEB_WAIT_DEFAULT_FRACTION = 5 / 6;
+export const WEB_WAIT_DEFAULT_MS = Math.round(WEB_WAIT_CEILING_ROW.value * WEB_WAIT_DEFAULT_FRACTION);
+
+/** Issue #394: the ONE derivation of the web wait-ceiling refusal code, scoped by the arm that
+ * draws it — 'application' for the application `run.wait` arm (whose token is pinned
+ * byte-identical by the blind-waits suite) and 'coordinator' for the legacy coordinator `wait`
+ * arm. One family, one ceiling: a caller branches on the suffix and neither arm may re-spell it. */
+export function webWaitCeilingRefusalCode(scope) {
+  return `${scope}_wait_timeout_exceeds_web_ceiling`;
+}
+
+/** The ONE web wait-ceiling refusal text: the field, the ceiling it draws on, and the remedy. */
+export function composeWebWaitCeilingRefusal(actual, row = WEB_WAIT_CEILING_ROW) {
+  return `timeoutMs ${actual} exceeds the web wait ceiling (${row.lane} = ${row.value} ms); resend with timeoutMs ≤ ${row.value} or poll`;
+}
 
 // Issue #74 (D2/A5) — the coordinator authority boundary. The ONE new refusal code this rung
 // introduces, plus the graceful escalation path it coaches. A coordinator-seat principal (a
