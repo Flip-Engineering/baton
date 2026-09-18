@@ -593,6 +593,29 @@ export class OmpRpcCli {
     });
   }
 
+  /** Issue #383 (child half), #468 (the row): a child's stdio pipes are Sockets, and a write to a
+   * child that already closed its stdin fails ASYNCHRONOUSLY as 'error' on the stdin Socket —
+   * outside every try/catch, and an uncaught exception with no listener. `guardChildPipes` owns
+   * that event (nothing reaches `process`); THIS is the durable half: the ordinary transport-stall
+   * notice the runner already reads, plus — for a PIPE failure — the worker's own bounded
+   * `lifecycle.pipe_error {stream, code, at}` row, which names the stream AND the seat on the
+   * durable log. That row is what a reader has when the narration is lost: the 13:36Z EPIPE of
+   * 2026-09-18 reached `process` precisely because no row named the stream that failed. */
+  _onTransportStall(session, info) {
+    try {
+      this._emit(session, 'content.message', { phase: 'notice', note: 'transport_stall', ...info });
+    } catch { /* an observer defect never re-raises the pipe error */ }
+    if (info?.phase !== 'pipe_error') return;
+    try {
+      this._emit(session, 'lifecycle.pipe_error', {
+        stream: info.stream ?? null,
+        code: info.code ?? 'error',
+        at: new Date().toISOString(),
+        note: info.note ?? null,
+      });
+    } catch { /* the row is best-effort; the pipe failure itself is already owned */ }
+  }
+
   _appendStreamChunk(session, turn, streamKind, value) {
     if (!turn) return;
     const text = typeof value === 'string' ? value : JSON.stringify(value);
@@ -1100,7 +1123,7 @@ export class OmpRpcCli {
             this._sessions.delete(session.worker);
           }
         },
-        onTransportStall: (info) => this._emit(session, 'content.message', { phase: 'notice', note: 'transport_stall', ...info }),
+        onTransportStall: (info) => this._onTransportStall(session, info),
         onFrame: (frame) => this._onFrame(session, frame),
       }).start();
       this._sessions.set(worker, session);

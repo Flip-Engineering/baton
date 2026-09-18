@@ -1675,6 +1675,25 @@ export class WebNorthbound {
     });
   }
 
+  /** Issue #468: the durable half of a transport guard. A stream this northbound serves on (the
+   * SSE attachment's response) that fails asynchronously is recorded on the resident's own
+   * `driver.recorded` lane — the same lane every other `host.*` row rides — as one bounded
+   * `host.stream_error {stream, code, at}`, idempotency-keyed per (stream, code) so a client that
+   * keeps vanishing can never flood the ledger it is being recorded on. Best-effort by
+   * construction: a store that refuses (or one that exposes no driver lane) is a missing row,
+   * never a stream that throws.
+   */
+  _recordStreamError(stream, code) {
+    const record = this.coordination.recordDriver;
+    if (typeof record !== 'function') return null;
+    const [repoId] = this.repoIds;
+    try {
+      return record.call(this.coordination, 'host.stream_error',
+        { stream, code, at: new Date(this.now()).toISOString() },
+        { actor: `deployment:${repoId ?? 'unknown'}:resident`, key: `host.stream_error:${stream}:${code}` });
+    } catch { return null; }
+  }
+
   // U-F13 (issue #288): each distinct authentication outcome refuses with the credential that was
   // missing or unusable, the rule it violated, and the route that obtains a fresh one. Before
   // this, absent / malformed / expired / revoked credentials were one bare `unauthenticated`, and
@@ -3172,7 +3191,14 @@ export class WebNorthbound {
       try { res.end(); } catch { /* the socket is already terminal */ }
     };
     res.on?.('close', clientGone);
-    res.on?.('error', clientGone);
+    // Issue #468: the attachment's response stream is a writable this resident holds, and a client
+    // that vanishes mid-write raises EPIPE/ECONNRESET on it. #383's socket guard owns the
+    // connection; the attachment's own failure is recorded here, durably, BEFORE the leg ends
+    // through its ONE path — so the ledger names the stream instead of a line the dead socket ate.
+    res.on?.('error', (error) => {
+      this._recordStreamError('sse', error?.code ?? error?.name ?? 'error');
+      clientGone();
+    });
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store',
       connection: 'keep-alive', 'x-accel-buffering': 'no',

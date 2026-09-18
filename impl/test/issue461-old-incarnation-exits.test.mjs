@@ -32,7 +32,7 @@ import test from 'node:test';
 
 import { MockAdapter, createDriver } from '../src/index.mjs';
 import { SignalLifecycleOwner, signalIntentLine } from '../src/application-host.mjs';
-import { openBatonDeployment } from '../src/application-deployment.mjs';
+import { incarnationServeLogPath, openBatonDeployment } from '../src/application-deployment.mjs';
 
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 const WAIT_MS = 4_000;
@@ -309,8 +309,14 @@ test('461e: host.successor_started carries the spawn spelling and the log its na
   for (const argument of started.payload.argv) assert.equal(typeof argument, 'string');
   assert.ok(started.payload.argv[0].endsWith(join('impl', 'scripts', 'baton.mjs')),
     `argv[0] is the spawn spelling: ${JSON.stringify(started.payload.argv)}`);
-  // …and the narration it writes is not discarded: the row names the log, and the bytes land there.
-  assert.equal(started.payload.log, 'stderr', `the row names the log its narration rides: ${JSON.stringify(started.payload)}`);
+  // Issue #468: the row names a PATH — the successor's OWN serve log, which the successor opens
+  // at open (`resident/serve.<incarnation>.log`) — never #461's `'stderr'`: that pipe has no
+  // reader once this incarnation exits, and every line written into it after that was lost.
+  assert.equal(started.payload.log, incarnationServeLogPath(f.deploymentRoot, started.payload.incarnation),
+    `the row names the log its narration rides: ${JSON.stringify(started.payload)}`);
+  assert.notEqual(started.payload.log, 'stderr', 'a stream name is not a log');
+  // …and during the handoff window the tee still delivers the successor's stderr here, so an
+  // operator watching THIS incarnation sees the successor come up.
   const successorLog = await until(() => (serveLog().includes('461 successor online') ? serveLog() : null),
     { label: 'the successor stderr teed into the serve log' });
   assert.match(successorLog, /461 successor online instance-/u);

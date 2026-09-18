@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import {
   chmodSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync,
-  openSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync, writeFileSync,
+  openSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -2722,6 +2722,15 @@ export function reincarnationMarkerPath(deploymentRoot, incarnation) {
   return join(deploymentRoot, 'resident', `handoff.${incarnation}.json`);
 }
 
+/** Issue #468: the ONE spelling of an incarnation's own serve log. Two halves of one handoff read
+ * it: the predecessor names this path on `host.successor_started {log}` (so the row says where the
+ * successor's narration will land), and the incarnation ITSELF opens the file at open — never a
+ * pipe whose reader is a process that has already exited (#461's tee ends with the predecessor,
+ * and every line written after that was lost, the 13:36Z narration among them). */
+export function incarnationServeLogPath(deploymentRoot, incarnation) {
+  return join(deploymentRoot, 'resident', `serve.${incarnation}.log`);
+}
+
 /** The handoff the AMBIENT environment declares, or null. Only a process the old incarnation
  * spawned with the handoff variables enters handoff mode — an ordinary `baton serve` never reads
  * here, and a malformed declaration is absence (the successor then starts as any other resident,
@@ -2916,6 +2925,13 @@ class BatonDeployment {
   #residentAuthority = null;
   #residentSession = null;
   #ordinaryHostPromise = null;
+  // Issue #468: this incarnation's OWN serve log — {path, fd} of `resident/serve.<incarnation>.log`,
+  // opened by this incarnation at open (never a predecessor's pipe). Null until then, and null for
+  // a deployment that never hosted: such a deployment has no incarnation to name a log after.
+  #serveLog = null;
+  // Issue #468: the (stream, code) pairs this incarnation already recorded as `host.stream_error`,
+  // so a stream that fails repeatedly can never flood the very log it is reporting on.
+  #streamErrorKeys = null;
 
   constructor(application, principal, readiness, deployment) {
     this.#application = application;
@@ -3513,6 +3529,11 @@ class BatonDeployment {
       authority.incarnation = handoff.incarnation;
     }
     this.#residentAuthority = authority;
+    // Issue #468: THIS incarnation's own serve log, opened here — at open — and named by the
+    // predecessor on `host.successor_started {log}`. Every narration line this incarnation writes
+    // through its host lands in the file, so the log of the handoff's second half does not end
+    // with the first half's process.
+    this.#openServeLog(authority.incarnation);
     const sessions = new WebSessionStore(authority.sessionRoot, {
       now: options.now,
       maxTtlMs: options.sessionTtlMs,
@@ -3554,6 +3575,10 @@ class BatonDeployment {
       shutdownPrincipal: this.#principal,
       listen: { path: authority.socketPath },
       webDrainMs: options.webDrainMs,
+      // Issue #468: the host's narration is this incarnation's own — it goes to the operator's
+      // stderr AND to `resident/serve.<incarnation>.log`, so a line about a broken stream survives
+      // the stream that would have carried it.
+      report: (line) => this.#sayServeLine(line),
       stopRecords: this.#stopRecordsFor(),
     });
     this.#webHost = webHost;
@@ -3767,6 +3792,74 @@ class BatonDeployment {
     return { line: `baton serve: host.narration_refused ${read} (${code}) at ${at}` };
   }
 
+  /** Issue #468: record a writable this resident holds whose asynchronous error nobody else owns
+   * — one bounded `host.stream_error {stream, code, at}` row per (stream, code), so the ledger
+   * names the stream that failed instead of a narration line that the failure itself swallowed.
+   * Returns the narration line for the call that RECORDED the row (`recorded: true`) and
+   * `{line: null, recorded: false}` once it exists — a repeated failure on the same stream may
+   * never flood the log it is reporting on. Never throws, and never returns a row the ledger
+   * refused: the resident goes on without it. */
+  recordStreamError({ stream, code } = {}) {
+    if (typeof stream !== 'string' || stream.length === 0
+      || typeof code !== 'string' || code.length === 0) {
+      return Object.freeze({ line: null, recorded: false });
+    }
+    this.#streamErrorKeys ??= new Set();
+    const key = `${stream}:${code}`;
+    if (this.#streamErrorKeys.has(key)) return Object.freeze({ line: null, recorded: false });
+    const at = this.#clock();
+    const recorded = this.#stopRecord('host.stream_error', { stream, code, at }, `stream_error:${key}`);
+    if (recorded === null) return Object.freeze({ line: null, recorded: false });
+    this.#streamErrorKeys.add(key);
+    return Object.freeze({
+      line: `baton serve: host.stream_error ${stream} (${code}) at ${at}`, recorded: true,
+    });
+  }
+
+  /** Issue #468: this incarnation's own serve log — the file its narration lands in, opened by
+   * THIS incarnation at open. The caller that narrates on its own (`baton serve` writes its flip
+   * and stop lines itself, not through the host) writes through the returned handle, so one
+   * incarnation is never without a log even when it was started BY HAND with stdout/stderr as
+   * they were. Null before this deployment has an incarnation to name a log after. */
+  serveLog() {
+    const log = this.#serveLog;
+    if (log === null) return null;
+    return Object.freeze({ path: log.path, write: (line) => this.#writeServeLog(line) });
+  }
+
+  /** Issue #468: open `resident/serve.<incarnation>.log` for this incarnation, at open. Best
+   * effort by construction: a log that cannot be created is a missing log, never a resident that
+   * cannot serve — and never a fallback to a predecessor's pipe. */
+  #openServeLog(incarnation) {
+    if (this.#serveLog !== null) return this.#serveLog;
+    try {
+      mkdirSync(join(this.#deploymentRoot, 'resident'), { recursive: true });
+      const path = incarnationServeLogPath(this.#deploymentRoot, incarnation);
+      // Appended synchronously and unbuffered: the line a stop writes is the line a reader must be
+      // able to find after the process is gone, not a buffer that dies with it.
+      this.#serveLog = Object.freeze({ path, fd: openSync(path, 'a', 0o600) });
+    } catch { this.#serveLog = null; }
+    return this.#serveLog;
+  }
+
+  /** Issue #468: one narration line into this incarnation's own log. A log that cannot be written
+   * is a missing line, never an exception in the middle of a stop. */
+  #writeServeLog(line) {
+    const log = this.#serveLog;
+    if (log === null) return false;
+    try { writeSync(log.fd, `${line}\n`); return true; }
+    catch { return false; }
+  }
+
+  /** Issue #468: the host's narration sink for this incarnation — the operator's stderr AND the
+   * incarnation's own file. The stderr half can be orphaned (a successor's pipe has no reader once
+   * its predecessor exits); the file half is what makes the line outlive the process that wrote
+   * it. */
+  #sayServeLine(line) {
+    try { process.stderr.write(`${line}\n`); } catch { /* a broken sink never breaks the lifecycle */ }
+    this.#writeServeLog(line);
+  }
+
   /** The process group this worker's own durable lifecycle rows bind it to, or null when the
    * worker holds no OS process (a harness that runs in-process) or that process is already closed. */
   #workerProcessGroup(workerId) {
@@ -3841,17 +3934,34 @@ class BatonDeployment {
    * stop: whichever path calls first — the signal handler or the shutdown drain — records the
    * one row, and the other narrates nothing. A ledger that cannot take the row (the writer lease
    * is lost, the store is poisoned) returns null and the stop narrates without it, never wedges.
-   * Returns the narration line when THIS call did the recording. */
-  recordStopRequested(trigger) {
-    if (this.#stopRequestedAt !== null) return null;
+   * Returns the narration line when THIS call did the recording.
+   *
+   * Issue #468: a trigger raised by an uncaught exception carries `facts` — the error's `code` and
+   * its stack head — onto the row, so the ledger names what reached `process` (an EPIPE on a
+   * stream nobody guarded) and where, even when the narration line itself was written into a pipe
+   * that had no reader. A stop that was already requested keeps its ONE trigger row; the late
+   * facts land on a bounded `host.last_resort` row instead, never lost and never a second
+   * `host.stop_requested` for one stop. */
+  recordStopRequested(trigger, facts = null) {
     const kind = typeof trigger === 'string' && trigger.length > 0 ? trigger : 'signal';
     const at = this.#clock();
+    const named = facts === null ? {} : {
+      code: typeof facts.code === 'string' && facts.code.length > 0 ? facts.code : null,
+      stackHead: typeof facts.stackHead === 'string' && facts.stackHead.length > 0 ? facts.stackHead : null,
+    };
+    if (this.#stopRequestedAt !== null) {
+      if (facts === null || (named.code === null && named.stackHead === null)) return null;
+      const late = this.#stopRecord('host.last_resort', { trigger: kind, at, ...named },
+        `last_resort:${kind}:${named.code ?? 'error'}`);
+      if (late === null) return null;
+      return `baton serve: host.last_resort ${kind} (${named.code ?? 'error'}) at ${at}`;
+    }
     // Issue #437/#450: the count the operator's one line carries rides the durable request row,
     // read SYNCHRONOUSLY from the projection this resident already holds. A read that refuses is a
     // FACT (`{count: null, refusal: {read, code}}`) — a refused count is itself the named wait, so
     // it can never become a silent deadline the next operator has to reconstruct from a log line.
     const recorded = this.#stopRecord('host.stop_requested', {
-      trigger: kind, at, participants: this.#stopParticipants(),
+      trigger: kind, at, participants: this.#stopParticipants(), ...named,
     }, 'requested');
     this.#markStopStage(STOP_STAGES.requested);
     if (recorded === null) return null;
@@ -4005,6 +4115,11 @@ class BatonDeployment {
       participants: () => this.ownedParticipantCount(),
       /** Issue #437: one durable row per (read, code) — see recordNarrationRefused. */
       narrationRefused: (refusal) => this.recordNarrationRefused(refusal),
+      /** Issue #468: one durable row per (stream, code) for a writable the resident holds whose
+       * asynchronous error nobody owns — see recordStreamError. The host narrates the line of the
+       * call that recorded it and stays silent on a repeat, so the sink that just failed is never
+       * the sink a flood of lines is written into. */
+      streamError: (streamError) => this.recordStreamError(streamError),
     });
     return this.#stopRecords;
   }
@@ -4283,6 +4398,10 @@ class BatonDeployment {
         from: Object.freeze({ incarnation: handoff.predecessorIncarnation, commit: handoff.predecessorCommit }),
         to: Object.freeze({ incarnation: authority.incarnation, commit: handoff.target }),
         predecessorExited: alive,
+        // Issue #468: the same path the predecessor named on `host.successor_started {log}` — the
+        // file THIS incarnation opened at open. The pair of rows now says where the narration of
+        // this handoff lives, from both halves of it.
+        log: this.#serveLog?.path ?? null,
         at,
       }, 'reincarnation:reincarnated');
       try { rmSync(handoff.markerPath, { force: true }); } catch { /* the marker is our own */ }
@@ -4444,13 +4563,15 @@ class BatonDeployment {
     // The old's LAST ROWS before it releases: the incarnation it starts is an identity the old
     // MINTED, so the row and the successor's own publication name one incarnation, not two. #461:
     // the row also carries the spawn spelling AS SPAWNED (argv — a reader finds the process without
-    // guessing it; the live incident had to look the pid up) and the log the successor's own
-    // narration rides — its stderr, teed into THIS incarnation's serve log by
-    // `#attachSuccessorStderr`, never a stream that goes nowhere.
+    // guessing it; the live incident had to look the pid up). #468: `log` is the PATH of the
+    // successor's own serve log — the file the successor opens at open and writes its narration
+    // into. It replaces #461's `'stderr'`: the tee below still carries the successor's stderr
+    // during the handoff window, but that pipe has no reader once THIS process exits, and the
+    // 13:36Z narration proved a line written into it is a line lost.
     this.#reincarnationRecord('host.successor_started', {
       pid: handoff.successor.pid, incarnation, target: resolved, from, at: this.#clock(),
       argv: handoff.successor.argv,
-      log: 'stderr',
+      log: incarnationServeLogPath(this.#deploymentRoot, incarnation),
     }, 'reincarnation:successor_started');
     // #461: …and the wait the stop takes next, declared while this incarnation STILL holds the
     // writer authority that can record it: the wait for the successor's publication begins right
@@ -4483,10 +4604,12 @@ class BatonDeployment {
     });
   }
 
-  /** #306/#461: the successor's stderr, read for TWO facts — the bounded tail the failure row
-   * carries (#326's bound; never unbounded, cut by BYTES) and the successor's OWN narration, which
-   * is said through this incarnation's serve log line by line instead of being dropped with the
-   * pipe. Returns the listener, so the release at the end of a handoff can detach it. */
+  /** #306/#461/#468: the successor's stderr, read for THREE facts — the bounded tail the failure
+   * row carries (#326's bound; never unbounded, cut by BYTES), the successor's OWN narration for
+   * the handoff window (said through this incarnation's serve log line by line instead of being
+   * dropped with the pipe), and the pipe's own failure: the tee is a writable this resident holds,
+   * so an `error` on it is a recorded fact, never an uncaught exception. Returns the listener, so
+   * the release at the end of a handoff can detach it. */
   #attachSuccessorStderr(child, tail) {
     const stream = child?.stderr ?? null;
     if (stream === null || typeof stream.on !== 'function') return null;
@@ -4500,6 +4623,12 @@ class BatonDeployment {
       }
     };
     stream.on('data', onData);
+    stream.on('error', (error) => {
+      const recorded = this.recordStreamError({
+        stream: 'successor_stderr', code: error?.code ?? error?.name ?? 'error',
+      });
+      if (recorded.recorded === true) this.#webHost?._say?.(recorded.line);
+    });
     return onData;
   }
 

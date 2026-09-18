@@ -376,6 +376,14 @@ export class BatonWebHost {
     // Issue #383: how many client connections this host has seen end in a socket error — a
     // counter the narration cites, so a flood of disconnects is visible without a crash.
     this.clientSocketErrors = 0;
+    // Issue #468: how many of the resident's OWN streams (its sinks, its transport connections)
+    // have raised an asynchronous error — the counter the same narration cites, so an incarnation
+    // whose sinks are gone is visible on the ledger without a crash.
+    this.streamErrors = 0;
+    // Issue #468: the streams this host already owns an `error` handler on. One handler per
+    // stream per host, so a second `start()` never stacks a second narration on the same failure.
+    this._guardedStreams = new WeakSet();
+
   }
 
   start() {
@@ -416,7 +424,11 @@ export class BatonWebHost {
       // it — down twice on 2026-09-18. Each accepted connection gets a handler that ends only
       // that connection and narrates once; a malformed request (`clientError`) is answered by
       // closing that socket. Neither ever reaches `process`.
-      this._guardClientSockets(this.server);
+      this._guardClientSockets(this.server, 'web');
+      // Issue #468: the resident's own sinks are the LAST streams a predecessor's exit can orphan
+      // (#461 tees a successor's stderr into the predecessor's serve log; the pipe has no reader
+      // once the predecessor is gone) — guarded before the first line any signal narration writes.
+      this._guardProcessSinks();
       try {
         if (this.listenOptions.path) this.server.listen(this.listenOptions.path);
         else this.server.listen(this.listenOptions.port, this.listenOptions.host);
@@ -433,11 +445,13 @@ export class BatonWebHost {
     try { this.report(line); } catch { /* the lifecycle this line describes goes on */ }
   }
 
-  /** Issue #383: every server this host owns (the local transport AND the wake binding — the
-   * third EPIPE of 2026-09-18 came through the wake server) gets the same guard. One connection
-   * counts once, whichever event reaches it first: Node's own http error path and the destroy
-   * below re-raise 'error' on the same socket. */
-  _guardClientSockets(server) {
+  /** Issue #383, #468: every server this host owns (the local transport AND the wake binding — the
+   * third EPIPE of 2026-09-18 came through the wake server) gets the same guard, named after the
+   * transport it serves. One connection counts once, whichever event reaches it first: Node's own
+   * http error path and the destroy below re-raise 'error' on the same socket. A transport failure
+   * is recorded durably (#468: `host.stream_error {stream, code, at}`); a malformed request is the
+   * peer's own malformed bytes, never a stream failure, and is only narrated. */
+  _guardClientSockets(server, transport = 'client') {
     if (typeof server?.on !== 'function') return;
     const counted = new WeakSet();
     const ended = (socket, error) => {
@@ -448,14 +462,56 @@ export class BatonWebHost {
       // narration reads the ERROR (a parser code is a malformed request; anything else is the
       // peer's connection ending), never the event it happened to arrive on.
       const code = errorCode(error);
-      const what = /^HPE_/u.test(code) ? 'malformed client request' : 'client connection';
+      const malformed = /^HPE_/u.test(code);
+      const what = malformed ? 'malformed client request' : 'client connection';
       this._say(`baton serve: ${what} ended by ${code} (${this.clientSocketErrors} so far); the resident goes on`);
+      if (!malformed) this._recordStreamError(`${transport}_client`, code);
       try { socket.destroy(); } catch { /* already gone */ }
     };
     server.on('connection', (socket) => {
       socket.on('error', (error) => ended(socket, error));
     });
     server.on('clientError', (error, socket) => ended(socket, error));
+  }
+
+  /** Issue #468: the resident's OWN sinks — a successor's stderr pipe has no reader once its
+   * predecessor exits, and the next narration line then raises EPIPE on it. Guarded here so the
+   * line is lost, never the resident: an unhandled stream 'error' is an uncaught exception that
+   * takes the resident — and every worker under it — down (the 13:36Z EPIPE of 2026-09-18). */
+  _guardProcessSinks() {
+    this._guardStream(process.stdout, 'stdout');
+    this._guardStream(process.stderr, 'stderr');
+  }
+
+  /** Issue #468: one writable this host holds, owned here. The handler records the fact on the
+   * resident's own ledger and narrates it — the deployment's own line naming the row it just
+   * wrote, or, for a host with no ledger behind it, the one line this host can say. Either way a
+   * stream narrates ONCE: the sink that just failed must never receive a flood of lines about
+   * itself, and the handler never re-raises the failure to `process`. */
+  _guardStream(stream, name) {
+    if (!stream || typeof stream.on !== 'function' || this._guardedStreams.has(stream)) return null;
+    this._guardedStreams.add(stream);
+    let narrated = false;
+    const onError = (error) => {
+      const code = errorCode(error);
+      this.streamErrors += 1;
+      if (narrated) { this._recordStreamError(name, code); return; }
+      narrated = true;
+      const recorded = this._recordStreamError(name, code);
+      if (recorded?.line) this._say(recorded.line);
+      else this._say(`baton serve: ${name} stream failed with ${code} (${this.streamErrors} so far); the resident goes on`);
+    };
+    stream.on('error', onError);
+    return onError;
+  }
+
+  /** Issue #468: the durable half of a stream guard. The row is written through the deployment
+   * that owns the resident's ledger (`host.stream_error {stream, code, at}`); a bare host fixture
+   * has none and its narration is then the whole record. Never throws: the resident this row
+   * describes goes on, whether or not the ledger took the row. */
+  _recordStreamError(stream, code) {
+    try { return this.stopRecords?.streamError?.({ stream, code }) ?? null; }
+    catch { return null; }
   }
 
   /** #276(1): what this host will do, in one line, the moment a signal arrives. */
@@ -589,7 +645,7 @@ export class BatonWebHost {
       res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'content-length': '46' });
       res.end('{"ok":false,"error":{"code":"not_found"}}');
     });
-    this._guardClientSockets(server);
+    this._guardClientSockets(server, 'wake');
     const binding = attachWakeWebSocket({ server, stream, authenticate });
     this.wakeBinding = Object.freeze({ server, ...binding });
     server.once('error', () => { try { server.close(); } catch { /* never bound */ } });
