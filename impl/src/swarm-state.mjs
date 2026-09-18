@@ -474,6 +474,9 @@ export function validateSwarmEvent(kind, payload) {
     // The typed code the runtime rolled a recruitment back with (issue #308): the join's own
     // admission refusal, carried on the leave so the durable log explains WHY the seat vanished.
     validOptionalNonEmptyString(p.code, 'left code', refuse);
+    // Issue #490: the Run the leave SETTLES, when the seat is being withdrawn rather than reported
+    // gone. Optional, so every leave recorded before the field existed folds identically.
+    validOptionalNonEmptyString(p.runId, 'left runId', refuse);
     return;
   }
   if (kind === 'swarm.group_updated') {
@@ -1288,11 +1291,22 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
   if (kind === 'swarm.participant_left') {
     const participant = ownGet(swarm.participants, p.participantId);
     if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    // Issue #490: a leave that names the Run it settles is the recruit rollback's OWN settlement —
+    // the withdrawn attempt's Run stops with this refusal as its terminal cause, and the seat's
+    // projection carries it (`settledRun {runId, terminalCause {code, at}}`), so a reader sees
+    // WHICH Run was closed, why, and when, without a second cleanup row. One derivation: this fold,
+    // which #350 already settles membership in.
     const updatedParticipant = Object.freeze({
       ...participant, status: 'left', leftReason: p.reason ?? null,
       // The typed admission code a recruit rollback carries (issue #308). Conditional on the
       // payload, so logs written before the field existed replay byte-identically.
       ...(p.code !== undefined ? { leftCode: p.code } : {}),
+      ...(p.runId !== undefined ? {
+        settledRun: Object.freeze({
+          runId: p.runId,
+          terminalCause: Object.freeze({ code: p.code ?? null, at: meta.ts }),
+        }),
+      } : {}),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const parts = new Map(Object.entries(swarm.participants));

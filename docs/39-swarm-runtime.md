@@ -1078,3 +1078,52 @@ projection `run.contributions.read` answers, where the row's `summary` is then a
 incident's rows read as `{"0": "{", "1": "\"", …}`), which is exactly the shape the marker replaces;
 the marker is a few bytes, so the frame budget docs/47 §3 guards is not spent on a second copy, and
 the paged read's own body bound (`bodyBytes`/`bodyTruncated`, #343) is untouched.
+
+## A refused recruit leaves its seat id re-joinable (issue #490, 2026-09-18)
+
+**Every leg past the mint is inside the ONE withdrawal (#490).** `swarm.recruit` writes the seat's
+join, starts the Run (which mints the Run's Goal and Plan), then binds the worker, claims the seat's
+scope, attaches the recruiter's Context Package and carries the predecessor workspace. A refusal at
+ANY of those legs — the live case was the package attach — runs the same #308 rollback the run start
+does: ONE `swarm.participant_left {reason: 'recruit_refused', code, runId}` row, folded by #350's
+settle fold, which (a) withdraws the seat's membership, keeping the identity re-joinable, and (b)
+settles the Run the row names, so the seat's projection carries `settledRun {runId, terminalCause
+{code, at}}` and the deployment stops that Run with the same refusal as its cause. There is no
+second cleanup path: a refusal after the mint never leaves an active phantom seat beside a running
+Run, and never leaves rows no reader can attribute to an attempt.
+
+**A Run belongs to one recruit attempt (#490).** `swarm.recruit` names its Run by the attempt's own
+operation identity — `run-<hash([swarmId, participantId, swarm-operation:<hash([command, swarmId,
+principalId, idempotencyKey])>])>` — so a replay of one operation (the same recruit under the same
+`idempotencyKey` by the same caller, which the family admits for a lost response, #302/#344) names
+the SAME Run and re-admits it, while a new attempt names its own. Run creation mints the Run's Goal
+under the fixed idempotency key `application:<runId>:goal:v1` (`application.mjs` `start`), and the
+request digest that key is bound to covers the Goal's OBJECTIVE — for a recruit, the seat's composed
+brief, a text that moves with the swarm. An attempt that refused after the mint therefore left a
+Goal bound to one request under a key the seat id could never change: the next recruit of that seat
+spelled the same Run and the same key with a different digest, and the store refused it
+(`goal_conflict`, "goal idempotency key is bound differently") with no objective that could ever be
+admitted again. Each attempt naming its own Run keeps the withdrawn Run's Goal as that attempt's
+history — one version, the objective it was minted for, under its own key — and the seat's next
+generation mints its own Goal, Plan and task rows.
+
+**A re-join's receipt names what it superseded, and a conflict names the Run (#490).** A recruit that
+resumes a rolled-back join carries `supersedes {runId, refusedAt, code}` — the withdrawn Run, the
+instant its refusal was recorded, and the typed code it was withdrawn with — so the recruiter reads
+the history it continued. When the Run the seat's id names STILL holds a Goal bound to another
+request, the conflict crosses as the swarm family's own `swarm_recruit_run_conflict` (409, raised at
+the recruit seam) rather than as the store's bare code: it names the Run, the Goal it holds, the
+ledger row that holds them (`{seq, kind, idempotencyKey}`, read back by the deployment's own key for
+that Run — a keyed read, never a scan) and the remedy in `detail.next` — `swarm stop` the seat, or
+recruit the work under a fresh participant id.
+
+**The rest of the identity rules are unchanged.** A seat that left through an ordinary stop is still
+refused with `swarm_participant_exists {participantId, status: 'left'}` when recruited again, and a
+re-attempt of the SAME operation under the SAME `idempotencyKey` is the same attempt: it names the
+same Run, so the family's rule stands that a new attempt needs a new key.
+
+**A probe admission names the Run it admitted (#490).** `route.probe_admitted` carries `runId`
+beside `swarmId`/`participantId`, so a probe's answering turn is read on the Run that ran it
+(`route.observed` is keyed by the Run). The lane reads that field where the row carries it, and a
+row recorded before the field existed reads as the seat spelling — the Run every such row was
+admitted on, since the first incarnation is the only spelling those rows ever had.
