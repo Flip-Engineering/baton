@@ -3,7 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { FRAME_LIMITS } from './limits.mjs';
 import { BatonWebClient, discoverBatonConnection } from './application-cli.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
-import { McpFleetServer } from './mcp-northbound.mjs';
+import { McpFleetServer, coreMutationAnswer, coreWakeHandoff, coreWakeHandoffFilter } from './mcp-northbound.mjs';
+import { coreCommandFacts } from './mcp-core-tools.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from './swarm-contract.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
@@ -223,9 +224,11 @@ export class WakeSubscriptions {
       if (typeof deliver !== 'function') throw bridgeError('wake delivery must be a function', 'wake_notifications_unavailable');
       this.deliver = deliver;
     }
-    if (this.deliver === null) {
-      throw bridgeError('this session cannot receive wake notifications', 'wake_notifications_unavailable');
-    }
+    // Issue #314: a subscription is opened without a delivery sink when the session has none yet
+    // (a long verb's handoff is opened by the FACADE, which reaches its sink through the facade's
+    // own `_deliverToSession`): the frames then reach the sink that is not there, which is exactly
+    // what the landed transport already does when its `notify` refuses — the subscription itself
+    // never depended on a sink.
     const filter = wakeFilter(params);
     const requested = filter.since;
     // An explicit cursor lowers the attachment's floor. A subscription that asks for history this
@@ -438,6 +441,10 @@ export class BatonWebApplicationFacade {
     // connection cannot attach the stream (a mock, or a resident older than the wake feed) refuses
     // the subscription instead of holding an attachment it never opened.
     this._wakes = null;
+    // Issue #314 (docs/49 §5): the sink every wake frame reaches — the MCP server installs it at
+    // construction (`attachWakeDelivery`), so the explicit `baton_wakes subscribe` verb and a long
+    // verb's handoff deliver through ONE session sink, whatever order they arrive in.
+    this._wakeDelivery = null;
   }
 
   card() { return this._card; }
@@ -472,11 +479,18 @@ export class BatonWebApplicationFacade {
     }
     const readiness = live.deployment && typeof live.deployment === 'object' && !Array.isArray(live.deployment)
       ? clone(live.deployment) : {};
+    // Issue #479: a resident that is stopping says so on the card every client reads (#467/#476) —
+    // the client's own doctor() carries that section beside the readiness it projects, so the MCP
+    // projection carries it too, verbatim. Null (never absent) for a resident that is not stopping,
+    // the same rule the CLI's doctor answers under.
+    const stopping = live.stopping !== null && typeof live.stopping === 'object'
+      && !Array.isArray(live.stopping) ? clone(live.stopping) : null;
     return Object.freeze({
       ...readiness,
       schemaVersion: 1,
       repoId: this.repoId,
       ready: live.ready === true,
+      stopping,
     });
   }
 
@@ -602,24 +616,6 @@ export class BatonWebApplicationFacade {
     return true;
   }
 
-  async _inspectOutline(runId, mutationKey, context) {
-    let lastError = null;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const outlineKey = `mcp-web-${digest({
-        repoId: this.repoId, mutationKey, requestId: contextRequestId(context),
-        stage: 'result-outline', attempt,
-      })}`;
-      try {
-        const outline = await this.client.command('run.inspect', { runId, depth: 'outline' }, outlineKey);
-        if (!validOutline(outline, runId)) {
-          throw bridgeError('Remote Baton returned an invalid Run outline');
-        }
-        return outline;
-      } catch (cause) { lastError = cause; }
-    }
-    throw lastError;
-  }
-
   async command(name, args, principal, context) {
     if (!this._admits(name)) throw this._notAdmitted(name);
     if (!validContext(context)) {
@@ -635,14 +631,45 @@ export class BatonWebApplicationFacade {
       ? this._mutationKey(name, args, principal)
       : `mcp-web-${digest({ repoId: this.repoId, key: context.idempotencyKey })}`;
     const result = await this.client.command(name, args, idempotencyKey);
-    if (!['run.start', 'run.stop'].includes(name)) return result;
+    // Issue #314 law (d), docs/49 §5: a core MUTATION answers the #302 receipt, and a long verb's
+    // answer adds the wake handoff its follow-up rides — the call returns as soon as the receipt
+    // exists, never holding the turn on the operation's settle (the retired `_inspectOutline`
+    // answer held it on the whole Run outline). The facts are the core table's own
+    // (`coreCommandFacts`, derived from the rows the agent surface advertises), and the answer
+    // composer is the ONE shape both entries' dispatch can read; a command the core does not fold
+    // in keeps the answer its own lane sends, untouched.
+    const facts = coreCommandFacts(name);
+    if (facts === null || !facts.mutation) return result;
+    const wake = facts.long ? await this._openHandoff(facts, args) : null;
+    return coreMutationAnswer({ command: name, args, result, wake });
+  }
 
-    const requestedRunId = name === 'run.start' ? args.intent.runId ?? null : args.runId;
-    const runId = result?.runId ?? requestedRunId;
-    if (!SAFE_RUN_ID.test(runId ?? '') || (requestedRunId !== null && runId !== requestedRunId)) {
-      throw bridgeError(`Remote Baton ${name} returned a mismatched Run identity`);
+  /** The wake handoff a long verb's answer hands back (#294): ONE subscription on the session's
+   * own plane — never a second connection — filtered to the operation's subject per the core
+   * row's classes. The settleOn subset the answer carries is the client's cue to re-read. */
+  async _openHandoff(facts, args) {
+    const subscription = await this._wakePlane().subscribe(
+      coreWakeHandoffFilter(facts, args),
+      (frame, subscriptionRow) => this._deliverToSession(frame, subscriptionRow),
+    );
+    return coreWakeHandoff(subscription, facts);
+  }
+
+  /** One frame for this session's client: the sink the MCP server installed. A facade without one
+   * has no transport to deliver to, so the frame is dropped — the state the plane is in before its
+   * first subscription too (WakeSubscriptions._emit). */
+  _deliverToSession(frame, subscription) {
+    const sink = this._wakeDelivery;
+    if (sink !== null) sink(frame, subscription);
+  }
+
+  /** The session's notification sink: the MCP server hands its own `notify` over here at
+   * construction, so an explicit subscription and a long verb's handoff deliver through it. */
+  attachWakeDelivery(deliver) {
+    if (deliver !== null && typeof deliver !== 'function') {
+      throw new TypeError('wake delivery must be a function');
     }
-    return this._inspectOutline(runId, idempotencyKey, context);
+    this._wakeDelivery = deliver;
   }
 
   /** Issue #294: the session's one wake plane, created on first use. */
@@ -658,13 +685,15 @@ export class BatonWebApplicationFacade {
     return this._wakes;
   }
 
-  /** Open one wake subscription. `deliver(subscription, frame)` is how a frame reaches THIS
-   * session's client; the server supplies its own notification emitter. */
-  wakeSubscribe(params, deliver) {
+  /** Open one wake subscription. `deliver(frame, subscription)` is how a frame reaches THIS
+   * session's client; the MCP server installs that sink at construction, so an explicit verb and a
+   * long verb's handoff deliver through ONE sink. */
+  wakeSubscribe(params, deliver = null) {
     if (typeof this.client.wakes !== 'function') {
       throw bridgeError('this Baton connection cannot attach the deployment wake stream', 'wake_stream_unavailable');
     }
-    return this._wakePlane().subscribe(params, deliver);
+    if (deliver !== null) this.attachWakeDelivery(deliver);
+    return this._wakePlane().subscribe(params, (frame, subscription) => this._deliverToSession(frame, subscription));
   }
 
   wakeUnsubscribe(params) {

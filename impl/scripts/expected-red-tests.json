@@ -458,10 +458,6 @@
       "reason": "#364"
     },
     {
-      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-d2 RED: a mutation answers a receipt plus a wake subscription, never the whole view (docs/49 §5)",
-      "reason": "#314"
-    },
-    {
       "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-e1 RED: a bridge session survives reincarnation — rediscovery, ONE typed notification, wake resume (docs/49 §6)",
       "reason": "#314"
     },
@@ -572,6 +568,10 @@
     {
       "key": "test/mcp-reflex-surface-red.test.mjs :: Inventory: the combined surface adds the derived S-3 reflex tools, frozen and _meta-stamped like the ordinary table",
       "reason": "#261"
+    },
+    {
+      "key": "test/mcp-web-entry-story.test.mjs :: ES-B (#314 lane 4): MCP.md's inventory is the tool table the server advertises",
+      "reason": "#314"
     },
     {
       "key": "test/nested-orchestration-red.test.mjs :: R1 RED (stage: connection-mint-missing): mintChildAuthority mints a FRESH child profile + token",
@@ -1767,10 +1767,6 @@
     {
       "key": "test/tight-cell-red.test.mjs :: TC-26 quorum[survivor-set-missing]: survived is the closed work-rest set, losses receipted in cell.lost",
       "reason": "#102"
-    },
-    {
-      "key": "test/unified-mcp-surface.test.mjs :: an ordinary surface advertises exactly what tools/call dispatches — no advanced-shadow merge (U-E2)",
-      "reason": "#314"
     },
     {
       "key": "test/wave-observability-red.test.mjs :: A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)",

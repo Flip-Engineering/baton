@@ -22,25 +22,37 @@
 import {
   APPLICATION_SEMANTIC_REGISTRY, canonicalAndTransportNames, deriveSurfaceNames,
 } from './application-semantics.mjs';
-import { APPLICATION_TOOL, ORDINARY_APPLICATION_TOOL_DEFINITIONS } from './mcp-northbound.mjs';
+import { APPLICATION_TOOL, ORDINARY_APPLICATION_TOOL_DEFINITIONS, commandForTool } from './mcp-northbound.mjs';
 import { COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS } from './surface-capability-resolution.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_SCHEMAS } from './swarm-contract.mjs';
 import { WAKE_CLASSES } from './wake-stream.mjs';
 
 
 /** The wake handoff docs/49 §2 declares for a long verb: the classes the answer's subscription
- * carries and the `settleOn` subset whose frame settles the follow-up. Every class is checked
- * against the landed vocabulary (WAKE_CLASS_TABLE, wake-stream.mjs) when the table loads — a
- * class the stream does not publish is a load-time refusal, never a literal that drifts (§10). */
-function wakeHandoff(kinds, settleOn = kinds) {
+ * carries, the `settleOn` subset whose frame settles the follow-up, and the ARGUMENT axes the
+ * subscription may be narrowed by — the operation's own subject, as §2's third column spells it
+ * (`recruit` scopes by swarm AND participant; `check` names its swarm; the run and waves families
+ * name none, because the #294 filter carries no run axis and their frames correlate client-side —
+ * §12 Q2). Every class is checked against the landed vocabulary (WAKE_CLASS_TABLE, wake-stream.mjs)
+ * when the table loads — a class the stream does not publish is a load-time refusal, never a
+ * literal that drifts (§10) — and the scope names are argument fields, checked the same way. */
+const WAKE_SCOPE_AXES = Object.freeze(['swarmId', 'participantId']);
+
+function wakeHandoff(kinds, settleOn = kinds, scope = []) {
   for (const wakeClass of [...kinds, ...settleOn]) {
     if (!WAKE_CLASSES.includes(wakeClass)) {
       throw new Error(`mcp-core-tools: ${wakeClass} is not a wake class the deployment stream publishes`);
     }
   }
+  for (const axis of scope) {
+    if (!WAKE_SCOPE_AXES.includes(axis)) {
+      throw new Error(`mcp-core-tools: ${axis} is not a wake filter axis (${WAKE_SCOPE_AXES.join(', ')})`);
+    }
+  }
   return Object.freeze({
     kinds: Object.freeze([...kinds]),
     settleOn: Object.freeze([...settleOn]),
+    scope: Object.freeze([...scope]),
   });
 }
 const REPO_ID_SCHEMA = Object.freeze({ type: 'string', minLength: 1, maxLength: 4096 });
@@ -130,11 +142,12 @@ const CORE_TABLE = Object.freeze([
         wake: wakeHandoff(
           ['queued', 'refused', 'dead', 'reroute_proposed', 'contribution_recorded'],
           ['refused', 'dead', 'reroute_proposed', 'contribution_recorded'],
+          ['swarmId', 'participantId'],
         ) }),
       Object.freeze({ verb: 'guide', command: 'swarm.guide', requires: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']) }),
       Object.freeze({ verb: 'capture', command: 'swarm.capture', requires: Object.freeze(['swarmId', 'participantId']) }),
       Object.freeze({ verb: 'check', command: 'swarm.check', requires: Object.freeze(['swarmId', 'participantId', 'contributionId']),
-        wake: wakeHandoff(['reviewed']) }),
+        wake: wakeHandoff(['reviewed'], ['reviewed'], ['swarmId']) }),
     ]),
   }),
   Object.freeze({
@@ -420,6 +433,49 @@ export function coreVerbFacts(toolName, verbName, sources = null) {
     long: verb.wake !== undefined,
     wake: verb.wake ?? null,
   });
+}
+
+// ── the bridge's own view of the table (docs/49 §5, §10) ──────────────────────────────────────
+//
+// The resident bridge never sees the core (tool, verb) pair: the production wrapper resolves it
+// and dispatches the flat counterpart, so the facade holds a wire COMMAND (`run.start`) and needs
+// the same facts `coreVerbFacts` answers. The index below is that lookup, derived from the SAME
+// rows — a command → its verb → the facts — so the wake handoff has ONE owner (this table) and a
+// bridge-side hand list can never drift from it.
+/** The wire command a core verb dispatches: the contract command for a swarm verb, else the
+ * landed application command its flat counterpart carries (mcp-northbound.mjs `commandForTool`,
+ * which reads BOTH the table binding and the explicit-dispatch lane) — null for a verb whose
+ * dispatch is the unified meta authority (no application command). */
+function verbCommand(verb, sources) {
+  if (verb.command) return verb.command;
+  if (verb.meta) return null;
+  return commandForTool(dispatchTarget(verb, {}, sources).name);
+}
+
+function commandFactsIndex(sources) {
+  const index = new Map();
+  for (const row of CORE_TABLE) {
+    for (const verb of row.verbs) {
+      const command = verbCommand(verb, sources);
+      if (command === null) continue;
+      if (index.has(command)) {
+        throw new Error(`mcp-core-tools: the command ${command} is dispatched by two core verbs`);
+      }
+      index.set(command, Object.freeze({ tool: row.name, verb: verb.verb, ...coreVerbFacts(row.name, verb.verb, sources) }));
+    }
+  }
+  return index;
+}
+
+let commandFactsCache = null;
+
+/** The core facts a bridge composer reads off the wire COMMAND it holds: `{tool, verb, mutation,
+ * long, wake}`, or null when the core does not fold that command in (a command the core never
+ * serves keeps the answer its own lane sends, unchanged). */
+export function coreCommandFacts(command, sources = null) {
+  if (sources !== null) return commandFactsIndex(sources).get(command) ?? null;
+  if (commandFactsCache === null) commandFactsCache = commandFactsIndex(coreSources());
+  return commandFactsCache.get(command) ?? null;
 }
 
 // ── the migration pointers (docs/49 §7, §8) ───────────────────────────────────────────────────
