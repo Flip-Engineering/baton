@@ -5050,9 +5050,10 @@
         {
           "name": "wait",
           "ordinal": 0,
-          "size": 30,
+          "size": 55,
           "seam": "surface",
           "evidence": [
+            "observation:durable_read",
             "surface:transport_dispatch"
           ]
         },
