@@ -30,20 +30,19 @@ class LocalHeaders {
 }
 
 /** A narrowly-scoped fetch-compatible transport for authenticated HTTP over one owner-only Unix
- * socket. It validates the synthetic HTTPS authority and socket identity on every request, never
- * follows redirects, and bounds response buffering before BatonWebClient parses it. */
+ * socket. It validates the synthetic HTTPS authority and socket identity on every request and
+ * never follows redirects. It carries no size ceiling in either direction (operator ruling,
+ * 2026-09-17, #356): the resident's answer is whatever the deployment is. */
 export function createLocalSocketFetch({
   socketPath,
   baseUrl = 'https://baton.local',
   ownerUid = typeof process.getuid === 'function' ? process.getuid() : null,
-  maxResponseBytes = 2 * 1024 * 1024,
 } = {}) {
   let base;
   try { base = new URL(baseUrl); }
   catch { throw localError('local Baton base URL is invalid'); }
   if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/'
-    || base.search || base.hash || !Number.isSafeInteger(maxResponseBytes)
-    || maxResponseBytes <= 0) {
+    || base.search || base.hash) {
     throw localError('local Baton transport configuration is invalid');
   }
   validateSocket(socketPath, ownerUid);
@@ -55,7 +54,6 @@ export function createLocalSocketFetch({
     validateSocket(socketPath, ownerUid);
     const method = options.method ?? 'GET';
     const body = options.body == null ? null : Buffer.from(options.body);
-    if (body && body.length > 2 * 1024 * 1024) throw localError('local Baton request is too large');
     return new Promise((resolve, reject) => {
       let settled = false;
       const finish = (callback, value) => {
@@ -70,17 +68,13 @@ export function createLocalSocketFetch({
         path: `${target.pathname}${target.search}`,
         headers: { ...(options.headers ?? {}), host: base.host },
       }, (response) => {
-        let size = 0;
+        // Operator ruling (2026-09-17, #356): NO response ceiling on the local transport. A
+        // caller cannot anticipate the size of a resident's answer — a busy swarm's view is
+        // whatever the swarm is — and a ceiling here tore the socket down mid-body and surfaced
+        // as a dead transport, which killed every watch and recruit --follow on a 35-seat
+        // swarm. The answer is read whole; memory is the natural throttle (#258).
         const chunks = [];
-        response.on('data', (chunk) => {
-          size += chunk.length;
-          if (size > maxResponseBytes) {
-            request.destroy(localError('local Baton response exceeds its safe boundary',
-              'local_transport_response_too_large'));
-            return;
-          }
-          chunks.push(chunk);
-        });
+        response.on('data', (chunk) => { chunks.push(chunk); });
         response.on('end', () => {
           const bytes = Buffer.concat(chunks);
           const headers = new LocalHeaders(response.headers);

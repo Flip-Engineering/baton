@@ -47,16 +47,16 @@ test('a request that outlives its own bound stays marked requestBoundElapsed on 
   });
 });
 
-test('an over-boundary response composes the web_response_oversize cause', async () => {
-  const client = makeClient(async () => new Response('x'.repeat(64), {
-    status: 200, headers: { 'content-length': String(4 * 1024 * 1024) },
+// Operator ruling (2026-09-17, #356): the client carries NO response ceiling — a caller cannot
+// anticipate the size of a resident's answer, and the old 2 MB boundary killed every swarm watch
+// and recruit --follow on a 35-seat swarm as a "dead transport". A large answer is read whole.
+test('a large response is read whole — no client-side size ceiling', async () => {
+  const large = JSON.stringify({ ok: true, result: { pad: 'x'.repeat(4 * 1024 * 1024) } });
+  const client = makeClient(async () => new Response(large, {
+    status: 200, headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(large)) },
   }));
-  await assert.rejects(client.command('runs.list', {}), (error) => {
-    assert.equal(error.code, 'cli_protocol_failed');
-    assert.equal(error.detail.cause, 'web_response_oversize');
-    assert.ok(nonemptyRule(error.detail.rule));
-    return true;
-  });
+  const result = await client.command('runs.list', {});
+  assert.equal(result.pad.length, 4 * 1024 * 1024);
 });
 
 test('a non-JSON body composes the web_response_invalid_json cause', async () => {

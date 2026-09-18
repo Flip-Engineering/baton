@@ -3525,7 +3525,10 @@ export class BatonWebClient {
     // slack) broke bridge/CLI opens under fleet load. Per-command waits that legitimately
     // need longer than a plain GET derive their own bound in _requestTimeoutForCommand.
     this.requestTimeoutMs = options.commandTimeoutMs;
-    this.maxJsonResponseBytes = 2 * 1024 * 1024;
+    // Operator ruling (2026-09-17, #356): NO response ceiling on the client. The old 2 MB
+    // maxJsonResponseBytes anticipated the size of the resident's answer, which nothing can — a
+    // watch or recruit --follow on a 35-seat swarm carries the swarm's whole view — and it made
+    // every such read fail as a dead transport. The answer is read whole (#258).
     this.fetch = options.fetchImpl;
     this.clock = options.clock;
     this.sleep = options.sleep;
@@ -3565,17 +3568,10 @@ export class BatonWebClient {
         if (controller.signal.aborted) refusal.requestBoundElapsed = true;
         throw refusal;
       }
-      const declared = Number(response.headers?.get?.('content-length'));
-      if (Number.isFinite(declared) && declared > this.maxJsonResponseBytes) {
-        throw cliCauseRefusal('web_response_oversize', { observed: `content-length ${declared}` });
-      }
       let body;
       try {
         if (typeof response.text === 'function') {
           const raw = await response.text();
-          if (Buffer.byteLength(raw) > this.maxJsonResponseBytes) {
-            throw cliCauseRefusal('web_response_oversize', { observed: `${Buffer.byteLength(raw)} body bytes` });
-          }
           body = JSON.parse(raw);
         } else {
           // Narrow test transports may expose only json(); production fetch responses always
