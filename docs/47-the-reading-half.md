@@ -110,6 +110,10 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    body through ONE exported citation function; reads each cited and each requested doc from the
    repo at the served commit; admits ONE ContextPackage (§1.1); and recruits with
    `options.contextPackage = {digest}`. The runtime attaches (§1.2) and the brief renders (§2).
+   The attach is a fenced O(1) bind through the coordination store that answers its attach
+   receipt — it never reads the Run view, so the recruit's reading leg is unaffected by the
+   deployment's projection ceiling (issue #489: the participant's start composes its view
+   narrowed and never refuses on it).
 2. **What the root still types.** The judgment paragraph — the objective. Composition derives
    the world; it never authors the decision. (`--files <globs>` — scope derivation from the
    issue's file mentions plus the #296 landing-table gates — is NOT in this wave; §9.1.)
@@ -266,3 +270,10 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    into the `new WebNorthbound({…})` literal in `application-deployment.mjs` is one line outside
    every #441 lane's scope. Until it lands, `package.admit` on a real resident refuses typed
    `context_source_unavailable` — the feature is complete and its suites wire the hook by hand.
+
+7. **The attach never reads the Run view — RESOLVED (#489).** `attachContextPackage` binds the
+   package to the run through the coordination store (`package.admitted`/`package.attached` rows,
+   `context_package_not_found` for a digest the store does not hold) and answers the attach
+   receipt; the participant's own start and `approve` compose the Run view NARROWED
+   (`{view: 'narrow'}`), so a brief whose full view exceeds the deployment ceiling admits and
+   attaches instead of refusing `application_run_view_oversize`.

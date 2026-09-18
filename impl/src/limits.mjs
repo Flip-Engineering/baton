@@ -320,9 +320,22 @@ const CONTEXT_PACKAGE = Object.freeze({
 // one NEW bound, and it draws the SAME item ceiling for the same reason — the couplings a brief
 // names are the couplings the seat could have read from the view in one page, and a longer list
 // is counted out loud rather than silently truncated.
+
+// Issue #489: the situation's AGE-SCALING blocks — the contracts published so far and the
+// commits the deployment landed since the swarm's base. Every SEAT the section renders is
+// already bounded (#464's row budget: `view.role.head` per role line, the participant row's
+// commit tail per row) and the settled history is ONE counted line, so what still grew with the
+// swarm's AGE was the contract list: measured on the primary, 54 contract rows rendered
+// 132 587 B of the 158 233 B section (the commits since the base added 24 715 B) while the seats
+// that can act carried 2 rows. The bound is the registry's OWN rendered-slice row for one brief
+// section (`context_package.brief_bytes`, itself `view.knowledge_slice.bytes` x 4), because a
+// situation block is exactly that: a slice of the swarm's record rendered into a brief, with the
+// remainder COUNTED and the read that reaches it named — never a silently short list.
+const BRIEF_SITUATION_BYTES = CONTEXT_PACKAGE_BRIEF_BYTES;
 const BRIEF_COUPLINGS_ITEMS = VIEW['view.seat_read.items'].value;
 const BRIEF = Object.freeze({
   'brief.couplings.items': { lane: 'brief.couplings.items', class: 'view', value: BRIEF_COUPLINGS_ITEMS, unit: 'items', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the couplings situation block)' },
+  'brief.situation.bytes': { lane: 'brief.situation.bytes', class: 'view', value: BRIEF_SITUATION_BYTES, unit: 'bytes', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the age-scaling situation blocks: the published contracts and the commits since the base)' },
 });
 
 // Issue #449: the projection checkpoint's OWN cost ceiling — the bytes one HOUSEWRITING checkpoint
