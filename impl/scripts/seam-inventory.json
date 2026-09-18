@@ -11994,6 +11994,61 @@
           ]
         },
         {
+          "name": "_routeUsageRows",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_routeEligible",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeHeadroom",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeLabel",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routesForSelection",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeSelection",
+          "ordinal": 0,
+          "size": 66,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
           "name": "_workerFor",
           "ordinal": 0,
           "size": 4,
@@ -12257,17 +12312,18 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 88,
+          "size": 101,
           "seam": "effect",
           "evidence": [
             "delegates:admission",
-            "delegates:effect"
+            "delegates:effect",
+            "delegates:observation"
           ]
         },
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 602,
+          "size": 612,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

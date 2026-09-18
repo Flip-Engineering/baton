@@ -98,10 +98,12 @@ const CODEX_QUOTA_REFUSAL_TEXT = String.raw`you(?:'ve| have)? hit your usage lim
 // (claude-session.mjs `claudeResultFailureCode`) plus the live capture that opened #348.
 const CLAUDE_AUTH_REFUSAL_TEXT = String.raw`authentication_error|not logged in[^\n]*please run (?:/login|claude auth login)|failed to authenticate[^\n]*\b401\b|oauth access token has (?:expired|been revoked)`;
 
-// muse: the CLI's own login refusal. Muse's headless `exec --json` reports an unusable login on its
-// terminal frame, which parseMuseEvent preserves as the crash reason; the vocabulary is the login
-// refusal the deployment's own muse gate already names (`muse login`, then the file backend).
-const MUSE_AUTH_REFUSAL_TEXT = String.raw`\b(?:not )?log(?:ged)? ?in\b|\blogin (?:required|expired)\b|\bauthentication (?:failed|required|error)\b|\bunauthorized\b|\baccess token (?:expired|revoked|invalid)\b|\bcredential[s]? (?:expired|rejected|invalid)\b`;
+// muse (#341 part 3): the CLI's OWN credential refusal, captured from a credential-free
+// `muse exec --json` (an empty keyring): "missing meta credentials: run `muse login` or set
+// META_API_KEY, or save credentials at <path>". Only this vocabulary blocks a muse route —
+// `\bunauthorized\b` / "not logged in" matched ANY prose that happened to contain those words,
+// which is a pattern nobody captured and which a route must never be refused by.
+const MUSE_AUTH_REFUSAL_TEXT = String.raw`missing meta credentials|set META_API_KEY|\bmuse login\b`;
 
 // The provider-limit vocabulary every other served provider answers with — the SAME set the
 // provider-faults taxonomy already reads at the omp boundary (#295), plus DeepSeek's documented
@@ -375,6 +377,25 @@ const DIALECT_PRESENTATION = Object.freeze({
       : 'A reviewer will independently enforce the following exact execution contract. Make it pass without changing its executable, argv, working directory, or expected exit.'],
   }),
 });
+/** #341 part 3: the ONE rendering of a deployment's route-usage rows — one `- ` line per served
+ * route, the shape both the seat's brief and the provider-facing `### Route usage` subsection
+ * show. `recruitable` is the GRANT fact (may this seat recruit on the route at all, and is the
+ * route in a state a recruit would be admitted on); it is rendered only when a row carries it, so
+ * a reader with no grant in hand renders exactly what part 1 rendered. */
+export function renderRouteUsageLines(rows) {
+  const lines = [];
+  for (const row of rows) {
+    const r = row.route;
+    const tag = `${r.harness}/${r.model}@${r.effort}`;
+    const parts = [`${tag}: ${row.state}`];
+    if (row.usage) parts.push(`turns=${row.usage.turns} tokens=${row.usage.tokens}`);
+    if (row.quota?.state === 'exhausted') parts.push(`quota=exhausted resetAt=${row.quota.resetAt ?? 'unknown'}`);
+    if (row.concurrency) parts.push(`concurrency=${row.concurrency.inUse}/${row.concurrency.ceiling ?? '∞'}`);
+    if (typeof row.recruitable === 'boolean') parts.push(`recruitable=${row.recruitable}`);
+    lines.push(`- ${parts.join(' | ')}`);
+  }
+  return lines;
+}
 
 /**
  * @param {object} brief
@@ -409,16 +430,7 @@ export function renderBrief(brief, dialect) {
   if (brief.swarm) {
     lines.push('## Swarm', '', brief.swarm);
     if (Array.isArray(brief.routeUsage) && brief.routeUsage.length > 0) {
-      lines.push('', '### Route usage');
-      for (const row of brief.routeUsage) {
-        const r = row.route;
-        const tag = `${r.harness}/${r.model}@${r.effort}`;
-        const parts = [`${tag}: ${row.state}`];
-        if (row.usage) parts.push(`turns=${row.usage.turns} tokens=${row.usage.tokens}`);
-        if (row.quota?.state === 'exhausted') parts.push(`quota=exhausted resetAt=${row.quota.resetAt ?? 'unknown'}`);
-        if (row.concurrency) parts.push(`concurrency=${row.concurrency.inUse}/${row.concurrency.ceiling ?? '∞'}`);
-        lines.push(`- ${parts.join(' | ')}`);
-      }
+      lines.push('', '### Route usage', ...renderRouteUsageLines(brief.routeUsage));
     }
   }
   // Issue #305: the lane contract a recruit was given rides the provider-facing brief as

@@ -13,6 +13,10 @@ import { FRAME_LIMITS } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
 import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
+// #341 part 3: the ONE rendering of the deployment's route-usage rows, shared with the
+// provider-facing brief (adapter.mjs renderBrief) so the seat's brief and the rendered subsection
+// can never spell the same rows differently.
+import { renderRouteUsageLines } from './adapter.mjs';
 
 const clone = (value) => structuredClone(value);
 /** JSON-plain content with absent members dropped. An undefined value means "not sent" to the
@@ -657,6 +661,128 @@ export class SwarmRuntime {
       target: Object.freeze({ ref: served.target.ref ?? null, commit: served.target.commit ?? null }),
       behind,
     });
+  }
+
+  /** #341 part 3: the served routes' usage rows, read from the deployment summary this runtime
+   * already holds (the deployment's ONE derivation — `routeUsageRows` — attached non-enumerably so
+   * a summary that publishes none is simply a runtime with nothing to compare). Null when no
+   * deployment is wired, or when it publishes no rows at all. */
+  _routeUsageRows() {
+    let summary = null;
+    try { summary = typeof this.deploymentSummary === 'function' ? this.deploymentSummary() : null; }
+    catch { return null; }
+    return Array.isArray(summary?.routeUsage) ? summary.routeUsage : null;
+  }
+
+  /** Whether a usage row names a route a recruit could be admitted on right now: ready, and not
+   * exhausted on the quota axis. A blocked row is never chosen — its `code` says who refused it. */
+  _routeEligible(row) {
+    return row?.state !== 'blocked' && row?.quota?.state !== 'exhausted';
+  }
+
+  /** The remaining headroom a usage row carries, DERIVED from the row itself and never from a
+   * threshold this module would have to invent: free concurrency slots (a route with no declared
+   * ceiling has no bound to run out of), then the fewest turns recorded on it. */
+  _routeHeadroom(row) {
+    const ceiling = row?.concurrency?.ceiling;
+    const inUse = row?.concurrency?.inUse;
+    return {
+      slots: typeof ceiling === 'number' ? ceiling - (typeof inUse === 'number' ? inUse : 0)
+        : Number.POSITIVE_INFINITY,
+      turns: typeof row?.usage?.turns === 'number' ? row.usage.turns : 0,
+    };
+  }
+
+  _routeLabel(route) {
+    return `${route.harness}/${route.model}@${route.effort}`;
+  }
+
+  /** The rows a caller's selection names: every named axis matches (exactly first — a route table
+   * is spelled exactly), and when nothing matches exactly the same axes read as PREFIXES, so a
+   * `model: 'gpt-5.6'` selection names the routes that model family serves. */
+  _routesForSelection(rows, selector, axes) {
+    const equal = rows.filter((row) => axes.every((axis) => row.route?.[axis] === selector[axis]));
+    if (equal.length > 0) return equal;
+    return rows.filter((row) => axes.every((axis) => typeof row.route?.[axis] === 'string'
+      && row.route[axis].startsWith(selector[axis])));
+  }
+
+  /** #341 part 3: the routes a recruit compared, why the chosen one was admitted, and the options
+   * the deployment is asked to admit — or null when this runtime has no route rows to compare
+   * (a bare fixture host) or the caller named no route at all (the deployment's own default then
+   * decides, exactly as before).
+   *
+   * With an EXACT route the caller's own choice stands: it is admitted untouched, and the answer
+   * names it beside the routes that were ready as alternatives. With a prefix (a harness or model
+   * — part of a selector, not all of it) the runtime chooses the ready route with the most
+   * remaining headroom and says why; the choice is handed on as an exact selection, so a prefix
+   * can never resolve ambiguously downstream. A refusal is never minted here: when nothing is
+   * eligible the options reach the deployment unchanged and its own admission gate answers. */
+  _routeSelection(args) {
+    const rows = this._routeUsageRows();
+    if (rows === null || rows.length === 0) return null;
+    const options = args.options ?? {};
+    const named = swarmRouteShape(options.exact);
+    // A selection is EXACT only when it names all three axes: a `{harness, model}` (no effort)
+    // names a family, so the same axes read as prefixes rather than an exact route the deployment
+    // would have to resolve ambiguously.
+    const exact = named !== null && named.effort !== null ? named : null;
+    const selector = exact ?? named ?? options;
+    const axes = ['harness', 'model', 'effort']
+      .filter((axis) => typeof selector[axis] === 'string' && selector[axis].length > 0);
+    if (axes.length === 0) return null;
+    const considered = this._routesForSelection(rows, selector, axes);
+    if (considered.length === 0) return null;
+
+    const eligible = considered.filter((row) => this._routeEligible(row));
+    let chosen = null;
+    if (exact !== null) chosen = this._routeEligible(considered[0]) ? considered[0] : null;
+    else if (eligible.length > 0) {
+      chosen = [...eligible].sort((a, b) => {
+        const left = this._routeHeadroom(a);
+        const right = this._routeHeadroom(b);
+        return right.slots - left.slots || left.turns - right.turns;
+      })[0];
+    }
+
+    const reasonFor = (row) => {
+      if (exact !== null) {
+        return row === chosen ? 'named exactly by the caller'
+          : 'ready alternative, not the route the caller named';
+      }
+      if (row === chosen) {
+        const { slots, turns } = this._routeHeadroom(row);
+        return slots === Number.POSITIVE_INFINITY
+          ? `ready with no declared concurrency ceiling; fewest turns compared (${turns})`
+          : `ready with the most remaining headroom (${row.concurrency.inUse}/${row.concurrency.ceiling} in use, ${turns} turns)`;
+      }
+      if (!this._routeEligible(row)) {
+        return `blocked (${row.code ?? 'unknown'})${row.resetAt ? ` until ${row.resetAt}` : ' until a later turn succeeds'}`;
+      }
+      return `ready, but with less remaining headroom than ${this._routeLabel(chosen.route)}`;
+    };
+
+    // An exact selection answers with the caller's own row beside every OTHER route that is ready
+    // (the alternatives it did not name); a prefix answers with every route it matched, each with
+    // the reason it was or was not chosen.
+    const rowsForAnswer = exact === null ? considered
+      : [considered[0], ...rows.filter((row) => row !== considered[0] && this._routeEligible(row))];
+    const answerRows = rowsForAnswer.map((row) => Object.freeze({
+      route: Object.freeze({ ...row.route }),
+      state: row.state ?? null, code: row.code ?? null, resetAt: row.resetAt ?? null,
+      usage: row.usage ?? null, quota: row.quota ?? null,
+      lastProviderRefusal: row.lastProviderRefusal ?? null,
+      reason: reasonFor(row),
+    }));
+    const chosenRow = answerRows.find((row) => row.route.harness === chosen?.route?.harness
+      && row.route.model === chosen?.route?.model && row.route.effort === chosen?.route?.effort) ?? null;
+    return {
+      options: chosen === null ? null : { ...options, exact: Object.freeze({ ...chosen.route }) },
+      routes: Object.freeze({
+        chosen: chosenRow,
+        considered: Object.freeze(answerRows),
+      }),
+    };
   }
 
   /** The participant's current worker, or null when unbound — the ONE lookup inspect and the
@@ -1875,6 +2001,19 @@ export class SwarmRuntime {
         situation.push(`Commits since the base (${commits.baseCommit}): unavailable — this deployment exposes no git authority to the swarm.`);
       }
     }
+    // #341 part 3: what this seat may recruit on. A seat composing sub-lanes chooses across
+    // harnesses, not only within the one it was started on, so the routes the deployment serves
+    // ride the situation with their usage rows — the SAME rows the doctor publishes, rendered by
+    // the ONE renderer (adapter.mjs), and marked `recruitable` for THIS seat's grant: the routes
+    // a seat without the grant could not recruit on say so instead of being silently listed.
+    const routeRows = this._routeUsageRows();
+    if (routeRows !== null && routeRows.length > 0) {
+      const granted = (args.permissions ?? DEFAULT_PERMISSIONS).includes('recruit');
+      const rows = routeRows.map((row) => Object.freeze({
+        ...row, recruitable: granted && this._routeEligible(row),
+      }));
+      situation.push('### Route usage', ...renderRouteUsageLines(rows));
+    }
     // Issue #337: undelivered parked guidance for this seat rides the same Swarm situation
     // section — a one-shot seat's next exec IS this brief. Each line names the parked row's
     // seq, ts and messageId and attributes the message to its sender, so the successor can
@@ -2086,14 +2225,20 @@ export class SwarmRuntime {
       if (caller && permissions.some((permission) => !(caller.permissions ?? DEFAULT_PERMISSIONS).includes(permission))) {
         refuse('Delegation cannot grant authority the caller does not hold', 'swarm_permission_required');
       }
+      // #341 part 3: the routes this recruit compared, and the selection the deployment admits —
+      // the ready route with the most remaining headroom when the caller named a prefix, the
+      // caller's own route when it named one exactly. The rows come from the deployment's own
+      // usage derivation; this runtime derives a CHOICE, never a second route table.
+      const routeSelection = this._routeSelection(args);
+      const admittedOptions = routeSelection?.options ?? args.options ?? {};
       const runId = `run-${hash([args.swarmId, args.participantId]).slice(0, 32)}`;
       // The route and scope this seat is recruited under (issue #283 root comment 1): the
       // deployment's own resolution when it makes one (prepareRun answers with the admitted
       // intent), otherwise the selection the caller named. They ride the membership write, so the
       // view projects what the seat was started as from the durable join — never from a live
       // worker that may since have been rebound, stopped, or restarted.
-      const intent = await this.prepareRun({ runId, objective: args.objective, options: args.options ?? {} }, principal);
-      const recruitedRoute = swarmRouteShape(intent?.route) ?? swarmRouteShape(args.options?.exact);
+      const intent = await this.prepareRun({ runId, objective: args.objective, options: admittedOptions }, principal);
+      const recruitedRoute = swarmRouteShape(intent?.route) ?? swarmRouteShape(admittedOptions.exact);
       const recruitedScope = Array.isArray(intent?.scope) ? [...intent.scope]
         : Array.isArray(args.options?.scope) ? [...args.options.scope] : null;
       const result = await this._once(command, args, principal, async (sharedContext) => {
@@ -2227,7 +2372,7 @@ export class SwarmRuntime {
         // recruit of the same id RESUMES instead of hitting an eternal exists-refusal. The
         // caller still sees the original refusal, unchanged.
         try {
-          await this.startRun({ runId, objective: brief, options: args.options ?? {},
+          await this.startRun({ runId, objective: brief, options: admittedOptions,
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
             ...(workspace ? { workspace } : {}) }, principal, context);
         } catch (error) {
@@ -2291,12 +2436,16 @@ export class SwarmRuntime {
           // commit the target branch has moved past — so it chooses to reincarnate first
           // instead of discovering a stale base on the lane's capture.
           baseBehind: this._baseBehind(),
+          // #341 part 3: what the recruit compared and what it chose — the deployment's own
+          // routeUsage rows, one row per route considered, each saying why it was or was not
+          // chosen. Null when this runtime has no route rows (a bare fixture host).
+          routes: routeSelection?.routes ?? null,
         };
       }, { replaySafe: true, basis: Object.values(swarm.context), context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, runId: result.runId, swarmId: result.swarmId,
           scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null,
-          baseBehind: result.baseBehind ?? null });
+          baseBehind: result.baseBehind ?? null, routes: result.routes ?? null });
     }
     const participant = this._participant(swarm, args.participantId);
     if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId
