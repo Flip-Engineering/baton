@@ -324,6 +324,43 @@ export function assertIsAdapter(obj) {
   }
 }
 
+// ── The adapter listener slot is a CHAIN, never a single owner (#477) ───────────────────────────
+//
+// Every tier spells `onEvent(cb)` as ONE private slot (`_cb`, `_userCb`, `_onEvent`, `_callback`)
+// and delivers to exactly that listener. Two consumers register on the same adapter object — the
+// coordinator's worker-event seam and the deployment's liveness observer — and on the ASYNC open
+// path (coordinationAsyncOpen, #351 lane 3 / #434) the coordinator's registration lands AFTER the
+// liveness wrapper: the wrapper is installed while the deployment opens, and the coordinator
+// registers when its deferred startup reconstruction completes. A registration that REPLACES the
+// slot therefore strands every observer installed before it — measured, a probe's
+// `lifecycle.spawned` / `resource.provider_call` / `lifecycle.turn_completed` all fired and the
+// liveness controller observed none of them, so `ensure()` waited out its (unref'd) deadline and
+// settled `unknown` on every real deployment, silently (#477).
+//
+// The law that makes registration order irrelevant is spelled HERE, once, beside the contract that
+// declares `onEvent`: a registration OBSERVES ALONGSIDE, it never replaces. Both consumers call it,
+// so a tier that adds a fifth private slot name — or a consumer that registers later — cannot drift
+// from the one place that reads the slot.
+const ADAPTER_LISTENER_SLOTS = Object.freeze(['_userCb', '_cb', '_onEvent', '_callback']);
+
+/** The listener an adapter currently delivers to, across every tier's private slot spelling. */
+function adapterListener(adapter) {
+  for (const slot of ADAPTER_LISTENER_SLOTS) {
+    const listener = adapter?.[slot];
+    if (typeof listener === 'function') return listener;
+  }
+  return null;
+}
+
+/** Register `observer` as an ADDITIONAL adapter listener: whoever the adapter already delivers to
+ * keeps receiving every event, so no consumer is orphaned by a later registration — the newest
+ * registration holds the slot and forwards to the one it replaced. */
+export function observeAdapterEvents(adapter, observer) {
+  if (typeof adapter?.onEvent !== 'function' || typeof observer !== 'function') return;
+  const prior = adapterListener(adapter);
+  adapter.onEvent(prior ? (event) => { prior(event); observer(event); } : observer);
+}
+
 // ---------------------------------------------------------------------------
 // renderBrief — the ONE provider-facing brief renderer (audit A-F1/A-I1). Pure function, no side
 // effects.
