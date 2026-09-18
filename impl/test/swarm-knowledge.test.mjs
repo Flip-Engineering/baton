@@ -208,7 +208,8 @@ test('the brief names each knowledge verb with its one situation and the swarm s
   execFileSync('git', ['commit', '-qm', 'land: iface implementation'], { cwd: repo });
 
   const gamma = await delegated.recruit('gamma', 'Build C beside A and B', selection);
-  const view = await swarm.view();
+  // #464 (third half): the roster carries the brief's reach; the scoped read carries the text.
+  const view = await swarm.view({ participantId: 'gamma' });
   const gammaRow = view.participants.find((row) => row.participantId === 'gamma');
   assert.ok(gammaRow.brief, 'the composed brief is written onto the join');
   // The situation projection: peers with scopes, contracts, commits since base (from git).
@@ -243,7 +244,8 @@ test('a resumeFrom successor inherits checkpoint, contracts and carriedForward w
   await swarm.capture('alpha', 'contribution-alpha-handoff');
 
   const bravo = await delegated.recruit('bravo', 'Continue A from alpha', { ...selection, resumeFrom: 'alpha' });
-  const view = await swarm.view();
+  // #464 (third half): the scoped read carries the successor's brief text.
+  const view = await swarm.view({ participantId: 'bravo' });
   const bravoRow = view.participants.find((row) => row.participantId === 'bravo');
   assert.equal(bravoRow.resumeFrom, 'alpha');
   assert.ok(bravoRow.brief, 'the successor carries a composed brief');

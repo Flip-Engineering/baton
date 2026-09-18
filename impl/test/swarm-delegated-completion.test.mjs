@@ -179,7 +179,11 @@ test('the subtree view: the root and the lead see the same delegation, scoped to
   const asRoot = await swarm.view({ participantId: 'lead' });
   const asLead = await delegated.view({ participantId: 'lead' });
   for (const field of ['participants', 'work', 'assignments', 'contributions', 'reviews', 'groups', 'attention']) {
-    assert.deepEqual(asLead[field], asRoot[field], `${field} is the same subtree for the root and the lead`);
+    // #464 (third half): a participant row's `brief` is the caller's REACH of it — its `exposure`
+    // class is a fact of the reader (root vs lead), so the subtree is compared without that field.
+    const comparable = (value) => (field === 'participants' && Array.isArray(value)
+      ? value.map(({ brief, briefReach, ...rest }) => rest) : value);
+    assert.deepEqual(comparable(asLead[field]), comparable(asRoot[field]), `${field} is the same subtree for the root and the lead`);
   }
   assert.equal(asRoot.caller.participantId, null);
   assert.equal(asLead.caller.participantId, 'lead');

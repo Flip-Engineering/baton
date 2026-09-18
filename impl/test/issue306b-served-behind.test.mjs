@@ -284,7 +284,8 @@ test('#306b (d): a recruit on a behind resident is ADMITTED with the typed base_
   assert.deepEqual(recruited.baseBehind, {
     served, branch: null, target: { ref: 'origin/main', commit: target }, behind: 4,
   }, 'the landed baseBehind receipt keeps its exact shape — one derivation, two projections');
-  const view = await fixture.call('view');
+  // #464 (third half): a roster row carries the brief's REACH; the text rides the scoped read.
+  const view = await fixture.call('view', { participantId: 'lane' });
   const seat = view.participants.find((row) => row.participantId === 'lane');
   assert.ok(typeof seat?.brief === 'string' && seat.brief.length > 0, 'the seat carries its composed brief');
   assert.ok(seat.brief.includes(baseLine(served, 4, 'origin/main')),
