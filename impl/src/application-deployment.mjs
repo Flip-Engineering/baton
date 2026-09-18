@@ -2698,9 +2698,12 @@ class BatonDeployment {
         });
       }
       // Issue #351 lane 2: the publication exists only when the loop is free to answer the first
-      // request — the self-check above WAS that request, and the coordination startup is done.
-      // A resident that somehow reached this point mid-replay refuses to publish rather than
-      // leaving a "served" selector pointed at a process that cannot answer.
+      // request — the self-check above WAS that request, and the resident's own startup replay is
+      // done. The fact read here is the RESIDENT's replay state alone (startupStatus), never the
+      // fleet's workers: a wedged worker is a runtime fact, not a startup one, and a resident
+      // whose worker is wedged still publishes and still answers. A resident that somehow
+      // reached this point with its own replay unfinished refuses to publish rather than leaving
+      // a "served" selector pointed at a process that cannot answer.
       const startup = this.#driver?.coordination?.startupStatus?.() ?? null;
       if (startup !== null && startup.state !== 'ready') {
         throw Object.assign(deploymentError('resident startup replay is not finished'), {
