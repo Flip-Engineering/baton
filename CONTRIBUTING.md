@@ -99,7 +99,7 @@ that loop for anyone who wants to reproduce it, either on this repository or the
    Workers hold no GitHub credential; use `--issue N` to admit the cited issue and its referenced
    docs as a context package, or pass the issue text directly in the objective.
 
-3. **Wait for a wake instead of polling:**
+3. **Wait for a wake:**
    ```bash
    node scripts/baton.mjs swarm watch swarm-wave-N --after-seq <cursor> \
      --wake-class contribution_recorded,dead --timeout-ms 1740000 --projection outline
@@ -131,7 +131,7 @@ that loop for anyone who wants to reproduce it, either on this repository or the
 `body.subject`, `body.base {observedHead, rebasedOnto}`, `body.commit {sha, branch}`,
 `body.items[] {id, status: delivered | not_delivered, change, files, test, evidence}`,
 `body.needsFromOthers[]`, and `body.carriedForward[]`. A worker that needs a file outside its scope
-reports that in `needsFromOthers` rather than editing it.
+names it in `needsFromOthers`.
 
 **What a reviewer reads from the ledger.** Every worker's evidence is under
 `.git/baton/application-v3/state/w-<n>.jsonl`; the coordination ledger is

@@ -9,7 +9,7 @@
 
 **Repository:** <https://github.com/Flip-Engineering/baton>
 
-**Cross-harness agent orchestration.** An orchestrator (an AI agent in one full coding harness, or a person at a terminal) directs other full coding-harness sessions as subordinate workers. Each worker gets its own git worktree, a written brief, a communication channel back to the orchestrator, live telemetry, mid-flight guidance, and a durable ledger recording what it did. The orchestrator receives event-driven wakes instead of polling for status, typed refusal codes instead of free-text errors, and a validated contribution report instead of an unstructured chat transcript.
+**Cross-harness agent orchestration.** An orchestrator (an AI agent in one full coding harness, or a person at a terminal) directs other full coding-harness sessions as subordinate workers. Each worker gets its own git worktree, a written brief, a communication channel back to the orchestrator, live telemetry, mid-flight guidance, and a durable ledger recording what it did. The orchestrator is notified when a ledger event occurs, reads typed refusal codes that name the exact field and rule for any malformed request, and receives a validated contribution report with structured fields for what changed.
 
 ---
 
@@ -60,11 +60,11 @@ flowchart TB
 
 **One authority, three access points.** The CLI discovers the resident through `.git/baton/connection.json` and speaks the authenticated bus; the MCP bridge (`impl/scripts/mcp-web.mjs`) projects the same operation table to an agent client; `openBaton({repo, advanced})` embeds the application directly in a Node process. Provider credentials are never passed as command arguments and never reach a worker's environment.
 
-**Wakes instead of polling.** `baton swarm watch <swarm> --follow` prints one JSON frame per coordination row. The bounded form (`--timeout-ms`, `--wake-class`) returns on the first row of a named class, or at its deadline, and resumes with `--after-seq`. Run `baton swarm --help` for the full wake-class set.
+**Wakes.** `baton swarm watch <swarm> --follow` prints one JSON frame per coordination row as it is written. The bounded form (`--timeout-ms`, `--wake-class`) returns on the first row of a named class, or at its deadline, and resumes with `--after-seq`. Run `baton swarm --help` for the full wake-class set.
 
-**Verification is re-run, not trusted.** When a seat reports that a task is done, the system re-runs verification in a fresh worktree at the seat's commit. A worker's own report that its tests pass is treated as a claim to check, not as a fact.
+**Verification.** When a seat reports that a task is done, the system re-runs verification in a fresh worktree at the seat's commit, and that re-run's result is the one that counts.
 
-**Turn-based steering, not hard kills.** Pausable harnesses end turns as checkpoints; the driver can send a nudge, wait, or claim signal instead of killing a worker at a turn boundary. One-shot harnesses receive guidance that is stored and delivered on their next resume. A worker's worktree is preserved on its lane branch when it dies rather than being deleted.
+**Turn-based steering.** Pausable harnesses end turns as checkpoints. Between turns, the driver can send a worker a nudge, wait, or claim signal. One-shot harnesses receive guidance that is stored and delivered on their next resume. A worker's worktree is preserved on its lane branch when it dies.
 
 ---
 
@@ -88,7 +88,7 @@ baton swarm create "First swarm" --swarm-id my-first-swarm
 baton swarm recruit my-first-swarm worker-1 "Fix the failing test in src/parser.js" \
   --options '{"exact":{"harness":"claude-code","model":"claude-sonnet-5","effort":"high"},"scope":["src/parser.js","test/parser.test.js"]}'
 
-# 3. Let baton wake you instead of polling
+# 3. Wait for a wake
 baton swarm watch my-first-swarm --after-seq 0 --wake-class contribution_recorded,dead --follow
 
 # 4. Review and land what the worker reports
@@ -118,19 +118,6 @@ Run `baton doctor --check` to confirm a route is ready before recruiting on it.
 
 ---
 
-## Why baton
-
-Running several coding-agent sessions by hand has known problems: it is easy to lose track of which worktree has which change, a worker's claim that it finished is not checked, a stalled session gives no notification, and there is no durable record of what happened. Baton addresses each of these directly:
-
-- **A durable ledger instead of scrollback.** Every recruit, guidance message, contribution and refusal is a recorded event. A resident restart replays the ledger and continues from where it left off.
-- **Typed refusals instead of free-text errors.** A malformed request is answered with the exact field, the rule that was violated, and the admitted alternatives, consistently across the CLI, MCP, and the web transport.
-- **Re-derived trust instead of self-reported status.** A worker's claim of success is checked by re-running verification in a clean worktree; it is not accepted as reported.
-- **Wakes instead of polling.** The orchestrator, human or AI, blocks on a bounded watch call instead of repeatedly re-reading state in a loop.
-
-Baton has developed itself since September 2026: every change to this codebase since then has gone through its own swarm runtime, recruited on a live resident and landed after review. [docs/PROGRESS.md](docs/PROGRESS.md) is the full per-phase record of that process. [CONTRIBUTING.md](CONTRIBUTING.md) describes how to run the same workflow.
-
----
-
 ## Documentation map
 
 - **[SYSTEM.md](SYSTEM.md)** — the authoritative system design (read it second, after this file).
@@ -147,7 +134,7 @@ Baton has developed itself since September 2026: every change to this codebase s
 | [32](docs/32-reflexive-orchestration.md) | Reflexive orchestration: decision channels, task boards, context packages as typed hand-offs, REPL objects |
 | [33](docs/33-shared-objects-repl-layer.md) | Shared objects and the REPL layer: content-addressed cells, named bindings |
 | [34](docs/34-knowledge-horizons.md) | Knowledge horizons: task → workflow → project graphs, promotion, brief-time activation |
-| [35](docs/35-turn-checkpoints.md) | Turn checkpoints: steer, don't gate |
+| [35](docs/35-turn-checkpoints.md) | Turn checkpoints: steering signals sent between turns |
 | [36](docs/36-unified-control-grammar.md) | One grammar across embedded, web, CLI and MCP; the generated inventories and the conformance gate |
 | [37](docs/37-wave-driver.md) · [37b](docs/37-holistic-runtime-convergence.md) | The shipped wave driver; holistic runtime convergence |
 | [38](docs/38-flip-experience.md) · [38b](docs/38-flip-visual-surfaces.md) | The operator experience and visual surfaces (`baton top`) |
@@ -165,4 +152,4 @@ The earlier corpus (problem framing through the representation ladder, docs 00�
 
 ## Status
 
-Baton is under active development and does not yet have a tagged release or a published package. The [open issue list](https://github.com/Flip-Engineering/baton/issues) is the current work tracker (`bug` + `priority:high` marks something that broke in real use and is sequenced first); [docs/PROGRESS.md](docs/PROGRESS.md) is the historical record. There is currently no LICENSE file in this repository — do not treat its absence as permission to use, copy, or redistribute the code; check with the maintainers before relying on it for anything beyond reading the source.
+Baton is under active development and does not yet have a tagged release or a published package. Every change to this codebase since September 2026 has gone through baton's own swarm runtime: a worker is recruited on a live resident and its contribution is landed after review. [docs/PROGRESS.md](docs/PROGRESS.md) is the full per-phase record of that process, and [CONTRIBUTING.md](CONTRIBUTING.md) describes how to run the same workflow. The [open issue list](https://github.com/Flip-Engineering/baton/issues) is the current work tracker (`bug` + `priority:high` marks something that broke in real use and is sequenced first). There is currently no LICENSE file in this repository; check with the maintainers before relying on the code for anything beyond reading the source.
