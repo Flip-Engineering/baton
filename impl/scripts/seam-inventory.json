@@ -645,7 +645,7 @@
         {
           "name": "_performDrain",
           "ordinal": 0,
-          "size": 134,
+          "size": 151,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -664,6 +664,81 @@
           "seam": "effect",
           "evidence": [
             "effect:timer_arm"
+          ]
+        },
+        {
+          "name": "_settledDrainHolder",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:coordination_authority",
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_releaseSettledHolder",
+          "ordinal": 0,
+          "size": 59,
+          "seam": "effect",
+          "evidence": [
+            "effect:worktree_authority"
+          ]
+        },
+        {
+          "name": "_recordDrainReleases",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordDrainCustodyRetained",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_drainWaitObserve",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_drainReaperFor",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_drainWaitEntry",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_drainWaitingOn",
+          "ordinal": 0,
+          "size": 52,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
           ]
         },
         {
