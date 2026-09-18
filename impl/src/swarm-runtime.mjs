@@ -545,17 +545,21 @@ const RECRUIT_SELECTION_KEYS = Object.freeze([
   'runId', 'scope', 'waveId', 'waveRole', 'waveStart',
 ]);
 /** The Run-start selection axes that are plain text, and the ONE predicate each must satisfy —
- * the deployment's own `nonempty` (non-empty after trim, at most 4096 bytes). */
+ * the deployment's own `nonempty` (non-empty after trim, at most SELECTION_TEXT_BYTES). */
 const RECRUIT_SELECTION_TEXT_KEYS = Object.freeze([
   'profile', 'model', 'harness', 'effort', 'driverKind', 'waveId', 'waveRole',
 ]);
 const RECRUIT_ROUTE_AXES = Object.freeze(['harness', 'model', 'effort']);
 const RECRUIT_RESULT_INTENTS = Object.freeze(['change', 'read_only_evidence']);
 const RECRUIT_SCOPE_ADMITTED = 'one or more repository paths';
-const RECRUIT_SCOPE_RULE = 'an array of 1 to 64 unique repository paths, each non-empty text of at most 4096 bytes';
+/** The id-class text bound the selection axes and scope paths share — the deployment's own
+ * `nonempty` validator's bound (an identity/path bound, uncataloged like every other id-class
+ * bound; frame-economics F1 exempts this ONE declaration and every rule below interpolates it). */
+const SELECTION_TEXT_BYTES = 4_096;
+const RECRUIT_SCOPE_RULE = `an array of 1 to 64 unique repository paths, each non-empty text of at most ${SELECTION_TEXT_BYTES} bytes`;
 
 const isSelectionText = (value) => typeof value === 'string' && value.trim().length > 0
-  && Buffer.byteLength(value) <= 4_096;
+  && Buffer.byteLength(value) <= SELECTION_TEXT_BYTES;
 
 /** #474: a selection without the route selector axes a comparison has already resolved into ONE
  * exact route. The exact route expresses the choice; handing the loose selector along beside it is
@@ -596,7 +600,7 @@ function admitRecruitSelection(options, mode) {
   }
   for (const key of RECRUIT_SELECTION_TEXT_KEYS) {
     if (options[key] !== undefined && !isSelectionText(options[key])) {
-      refused(`options.${key}`, 'non_empty', 'non-empty text of at most 4096 bytes');
+      refused(`options.${key}`, 'non_empty', `non-empty text of at most ${SELECTION_TEXT_BYTES} bytes`);
     }
   }
   if (options.waveStart !== undefined) {
@@ -646,7 +650,7 @@ function admitRecruitSelection(options, mode) {
     if (shape === null || offending !== undefined
       || RECRUIT_ROUTE_AXES.some((axis) => shape[axis] !== undefined && !isSelectionText(shape[axis]))) {
       refused('options.exact', 'closed-set',
-        `an object drawn from {${RECRUIT_ROUTE_AXES.join(', ')}}, each axis non-empty text of at most 4096 bytes`,
+        `an object drawn from {${RECRUIT_ROUTE_AXES.join(', ')}}, each axis non-empty text of at most ${SELECTION_TEXT_BYTES} bytes`,
         {
           admitted: Object.freeze([...RECRUIT_ROUTE_AXES]),
           ...(offending === undefined || offending === null ? {} : { offending: `options.exact.${offending}` }),
