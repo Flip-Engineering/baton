@@ -13559,7 +13559,7 @@
         {
           "name": "_recruitContextPackageBriefSection",
           "ordinal": 0,
-          "size": 35,
+          "size": 43,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"

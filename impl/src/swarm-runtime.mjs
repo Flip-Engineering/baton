@@ -6041,11 +6041,12 @@ export class SwarmRuntime {
   }
 
   /** Issue #441: the `## Context package` section one recruited seat's brief carries — the
-   * package's digest, then per branch its name, digest, byte size and the first
-   * `context_package.brief_bytes` of its text (the registry row, never a literal). The branches
-   * resolve through the store's own resolver, so the seat reads the same bytes the root admitted;
-   * a branch whose bytes are gone renders its identity and says so, never a silent gap. Returns
-   * null for a recruit that named no package — every pre-#441 brief composes exactly as before.
+   * package's digest, the NAMED GAPS the reading leg read about (#480), then per branch its name,
+   * digest, byte size and the first `context_package.brief_bytes` of its text (the registry row,
+   * never a literal). The branches resolve through the store's own resolver, so the seat reads the
+   * same bytes the root admitted; a branch whose bytes are gone renders its identity and says so,
+   * never a silent gap. Returns null for a recruit that named no package — every pre-#441 brief
+   * composes exactly as before.
    */
   _recruitContextPackageBriefSection(options) {
     const selected = readRecruitContextPackageOption(options ?? {});
@@ -6065,6 +6066,14 @@ export class SwarmRuntime {
         + ' admitted before this recruit and attached to your run: the full text of any branch'
         + ' resolves from the package and branch digests below.',
     ];
+    // Issue #480: the leg's NAMED GAPS, in the shape the receipt renders. A citation the root read
+    // about but could not pull has no branch to ride in (the store's package shape carries
+    // branches only), so the brief says it out loud before the branches: a seat that never learns
+    // what is missing reads a silent hole as a complete package. Absent — never an empty line —
+    // when the leg named no gap, so every pre-#480 brief is byte-identical.
+    if (selected.docs.length > 0) {
+      lines.push(sliceUtf8(`Unreadable citations: ${JSON.stringify(selected.docs)}`, row.value));
+    }
     for (const branch of branches) {
       const digest = branch.source?.digest ?? branch.artifact?.digest
         ?? branch.valueRef?.artifactDigest ?? null;

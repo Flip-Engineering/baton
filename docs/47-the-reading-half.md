@@ -29,7 +29,10 @@ parallel channel. The primitives and their landed state:
    issue branch) or `{path, sha, text}` (a doc branch) — the store's content-addressed artifact
    CAS is the only byte store, and `admitContextPackage` resolves every branch exactly once at
    admission. Provenance derives from the admission ledger event (docs/32 §3.3), never from a
-   self-cited field.
+   self-cited field. Every cited or requested path resolves against the deployment's checkout root
+   (§4.2 rule (a)), and a document that root does not carry becomes a NAMED GAP in the recruit's
+   options and on the receipt rather than a branch (§4.2 rule (b)) — the store's package shape
+   carries branches only, so the gaps ride `options.contextPackage.docs`.
 2. **The package reaches the seat by attachment, not by copy.** The recruit effect attaches the
    package to the seat's run with scope `worker:<seat>` (`attachContextPackage` — a fenced O(1)
    pointer binding; it never re-reads branch bytes). The `package.attached` row IS the durable
@@ -59,7 +62,7 @@ ONE row or projection it renders from and the registry row that bounds it (never
 | 1 | the objective | the recruiter's own words | `run.objective` |
 | 2 | the held work item | the ACTIVE assignment row (#345) | — |
 | 3 | `## Swarm situation` | peers, settled count, contracts, commits-since-base, route usage, parked guidance — the durable folds, as today | the existing rows |
-| 4 | `## Context package` (NEW) | the recruit's `options.contextPackage.digest` resolved against the store's package record: package digest, then per branch its name, digest, byte size and the first `context_package.brief_bytes` of its text (the `issue:<n>` branch first) | `context_package.brief_bytes` per rendered branch slice; `context_package.source_bytes` per admitted branch source |
+| 4 | `## Context package` (NEW) | the recruit's `options.contextPackage` resolved against the store's package record: package digest, the leg's NAMED GAPS (`docs: [{path, state, reason}]`, #480 — absent when empty), then per branch its name, digest, byte size and the first `context_package.brief_bytes` of its text (the `issue:<n>` branch first) | `context_package.brief_bytes` per rendered branch slice and per rendered gap line; `context_package.source_bytes` per admitted branch source |
 | 5 | the read-only mode block | the recruit mode (#373) | — |
 | 6 | the contribution contract example | the validator's own schema (#310/#371/#373) | — |
 | 7 | `## Inheritance from <seat>` | the predecessor's durable rows (#318) | — |
@@ -108,18 +111,40 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    `gh issue view N --json number,title,body,labels,url` through an INJECTED reader
    (`issueReader`, so tests never shell); extracts every `docs/NN-…md` citation in the issue
    body through ONE exported citation function; reads each cited and each requested doc from the
-   repo at the served commit; admits ONE ContextPackage (§1.1); and recruits with
-   `options.contextPackage = {digest}`. The runtime attaches (§1.2) and the brief renders (§2).
-2. **What the root still types.** The judgment paragraph — the objective. Composition derives
+   deployment's checkout root at the served commit; admits ONE ContextPackage (§1.1); and recruits
+   with `options.contextPackage = {digest, docs}`. The runtime attaches (§1.2) and the brief
+   renders (§2).
+2. **The two rules #480 added, in one paragraph.** (a) *Every repository-relative path this leg
+   reads resolves against the DEPLOYMENT's checkout root* — the main working tree of the repository
+   the served resident belongs to (`repository.root`; the connection selector is published from that
+   repository's common directory, and `deploymentCheckoutRoot` derives the root from it), never the
+   CLI's own cwd (the incident: every CLI call ran from `<repo>/impl`, where a `docs/…` citation
+   resolved to `impl/docs/…` and was refused as unreadable) and never a lane worktree, which does
+   not exist yet when the root reads — ONE derivation shared by the citations, the `--doc` paths,
+   and the scope paths the deferred `--files` leg (§9.1) will pull the same way. (b) *A named
+   document the checkout does not carry is a NAMED GAP, not a refusal*: the leg composes the issue
+   branch plus one branch per readable document and carries `docs: [{path, state: 'unreadable',
+   reason}]` beside the digest (`options.contextPackage.docs` — the store's package shape is
+   branches only, so a document with no bytes has nowhere else to travel), which the seat's brief
+   renders under `## Context package` and the recruit's receipt carries, so the seat knows what it
+   did not get while the recruit is admitted; the whole leg refuses (`context_doc_unreadable`) only
+   when it composed NO readable member at all — an issue whose title and body carry no text with
+   every named document absent — and that refusal names the remedy: recruit without `--issue`, or
+   name the documents with `--files` once that leg lands (§9.1). A path that ESCAPES the checkout,
+   or a document the reader cannot use (a permission, a directory, an oversize source), stays the
+   refusal it always was: an operator error is never quietly a gap.
+3. **What the root still types.** The judgment paragraph — the objective. Composition derives
    the world; it never authors the decision. (`--files <globs>` — scope derivation from the
    issue's file mentions plus the #296 landing-table gates — is NOT in this wave; §9.1.)
-3. **Refusals are typed pre-effect** — nothing is admitted, no seat joins:
+4. **Refusals are typed pre-effect** — nothing is admitted, no seat joins:
    - `gh` missing or unauthenticated → `issue_reader_unavailable {issue, reason}`;
    - the issue not found → `issue_not_found {issue}`;
-   - a `--doc` path outside the repo or unreadable → `context_doc_unreadable {path}`;
-   - oversize → the registry row's own refusal (`context_package.source_bytes`,
-     `context_package.brief_bytes` — derived, never literal).
-4. The web transport has NO context-package route today (grep: web-northbound.mjs names none);
+   - a named path that ESCAPES the checkout, or a document the reader cannot use →
+     `context_doc_unreadable {path}`; an oversize source → the registry row's own refusal
+     (`context_package.source_bytes`, `context_package.brief_bytes` — derived, never literal);
+   - the leg composed no readable member at all → `context_doc_unreadable` naming the remedy
+     (rule (b) above) — a document the checkout simply does not carry is a gap, never a refusal.
+5. The web transport has NO context-package route today (grep: web-northbound.mjs names none);
    the CLI reaches `application.admitContextPackage`/`attachContextPackage` through a minimal
    typed route pair that mirrors the MCP handlers (docs/32 §3.5) — the same payload shapes, the
    same refusal codes, no second semantics.
@@ -230,6 +255,8 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
 | the three read verbs: dispatch table rows | `swarm-runtime.mjs` · the knowledge-dispatch region (:236–350) |
 | the closed seat verb set, brief/help rows | `swarm-native-access.mjs` · `SWARM_SEAT_VERB_NAMES` + the guidance derivation |
 | the verbs' refusal codes | raised as typed bridge refusals today; the `swarm-refusals.mjs` closed-set rows (`package_not_attached_to_run`, `context_package_not_found`, `context_package_branch_not_found`) are the root's hunk (§9.2) |
+| the ONE checkout root the reading leg resolves against | `application-cli.mjs` · `deploymentCheckoutRoot` (the served `repository.root`; shared by citations, `--doc`, and the deferred `--files` scope paths) |
+| the reading leg's NAMED GAPS (`docs: [{path, state, reason}]`) | `application-cli.mjs` · `composeRecruitContextPackage` (writer); `swarm-contract.mjs` · `readRecruitContextPackageOption` (the closed row shape); `swarm-runtime.mjs` · `_recruitContextPackageBriefSection` (the brief line) |
 | contributions derivation (exported, shared with #433) | `swarm-runtime.mjs` · `contributionLedgerRows` + `SWARM_REVIEW_STATES` over the swarm fold |
 | reviewState closed set | docs/46 §2.1 (`unreviewed \| accepted \| rejected`) — this doc adds nothing |
 | claim refusals | docs/45 §2 (`swarm_claim_conflict`, …) — this doc adds nothing |
