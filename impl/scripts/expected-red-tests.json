@@ -2,10 +2,6 @@
   "schemaVersion": 2,
   "rows": [
     {
-      "key": "",
-      "reason": "#486"
-    },
-    {
       "key": "test/adapter-card-contract.test.mjs :: A-G10 RED: the legacy subprocess tier publishes cards no gate can consume (reason A-G10)",
       "reason": "A-G10"
     },
@@ -460,6 +456,10 @@
     {
       "key": "test/issue268-visibility-red.test.mjs :: #364 RED (stage: SWARM_PARTICIPANT_RUNTIME_STATES not exported): the closed runtime state set is exported and every surface reads the ONE derivation",
       "reason": "#364"
+    },
+    {
+      "key": "test/issue441-reading-half-red.test.mjs :: #441 (d) contributions read serves the fold — accepted rows since a seq, no ledger scan on the read path",
+      "reason": "#486"
     },
     {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
@@ -2009,10 +2009,6 @@
     {
       "file": "test/issue314-mcp-core-surface-red.test.mjs",
       "reason": "#314"
-    },
-    {
-      "file": "test/issue441-reading-half-red.test.mjs",
-      "reason": "#441"
     },
     {
       "file": "test/issue45-startup-reconcile-red.test.mjs",
