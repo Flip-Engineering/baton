@@ -4328,7 +4328,7 @@ export class Coordinator {
       }
       let held = this._capacityReservationHeld(orphan.resource);
       if (held && typeof settlement === 'function') {
-        try { settlement(orphan.resource); } catch { /* the surviving row is named by the wait rows */ }
+        try { await settlement(orphan.resource); } catch { /* the surviving row is named by the wait rows */ }
         held = this._capacityReservationHeld(orphan.resource);
       }
       if (!held) released.push({ workerId: orphan.workerId, resource: orphan.resource, how: 'worker_gone' });
@@ -4338,6 +4338,15 @@ export class Coordinator {
       this._recordDrainReleases(handle, handle ? this._tasks.get(handle.taskId) ?? null : null, [row]);
     }
     return Object.freeze(released);
+  }
+
+  /** Issue #285 G-42: a capacity release from a SYNCHRONOUS dispatch failure path, which cannot
+   * await the promise-returning worktree façade. The row leaves the ledger on the next microtask;
+   * a refusal (the lock another deployment holds) is recorded under `capacity_release`, and the
+   * reservation is left to the #450 orphan sweep, which settles and names it at the drain. */
+  _releaseCapacityDetached(taskId) {
+    if (typeof this._worktrees?.releaseCapacity !== 'function') return;
+    this._bestEffort(Promise.resolve(this._worktrees.releaseCapacity(taskId)), 'capacity_release');
   }
 
   /** Issue #450: the capacity authority's own projection, one question — does it still hold this
@@ -5188,7 +5197,7 @@ export class Coordinator {
 
   _failInitialProviderAdmission(handle, task, admission) {
     if (task?.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
-      && typeof this._worktrees?.releaseCapacity === 'function') this._worktrees.releaseCapacity(task.id);
+      && typeof this._worktrees?.releaseCapacity === 'function') this._releaseCapacityDetached(task.id);
     const evidence = this._coordMapEvent(admission.event);
     this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_turn:${admission.event.seq}`, evidence);
     task.status = 'failed';
@@ -5240,9 +5249,7 @@ export class Coordinator {
     try { providerBrief = this._providerBrief(task.brief, workerId); }
     catch (error) {
       if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
-        && typeof this._worktrees?.releaseCapacity === 'function') {
-        this._worktrees.releaseCapacity(task.id);
-      }
+        && typeof this._worktrees?.releaseCapacity === 'function') this._releaseCapacityDetached(task.id);
       const crashEvent = this._log.append({
         worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle),
         kind: 'lifecycle.crashed', actor: 'policy', ...this._routeAttribution(handle, task),
@@ -5270,7 +5277,7 @@ export class Coordinator {
     } catch (err) {
       try { this._runtimeScopes?.remove?.(workerId); } catch { /* best effort */ }
       if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
-        && typeof this._worktrees?.releaseCapacity === 'function') this._worktrees.releaseCapacity(task.id);
+        && typeof this._worktrees?.releaseCapacity === 'function') this._releaseCapacityDetached(task.id);
       this._releaseProviderTurnAdmission(handle, 'runtime_scope_unavailable');
       const crashEvent = this._log.append({
         worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.crashed', actor: 'policy',

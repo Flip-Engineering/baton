@@ -133,10 +133,10 @@ test('G-32: one derived bound carries every whole-repository git listing past No
   const request = {
     baseSha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null,
   };
-  const token = authority.reserve('worker:g32-estimate', request);
+  const token = await authority.reserve('worker:g32-estimate', request);
   assert.ok(token.bytes >= BULK_COUNT && token.inodes >= BULK_COUNT,
     `the tree estimate read every path (bytes ${token.bytes}, inodes ${token.inodes})`);
-  assert.equal(authority.release(token), true);
+  assert.equal(await authority.release(token), true);
 
   // trackedPathsAtCommit + assertSparseIndexState — `ls-tree --name-only -z` and `ls-files -t -z`
   // over the same tree, inside a sparse creation that validates its own index state.
@@ -192,11 +192,11 @@ test('G-6: pinBaseSha records the stash commit, and a later stash does not move 
 // G-5 — the policy-digest refusal names the ledger
 // ============================================================
 
-test('G-5: the policy-digest refusal names the ledger, both digests, and the gracefulPath', (t) => {
+test('G-5: the policy-digest refusal names the ledger, both digests, and the gracefulPath', async (t) => {
   const fixture = capacityFixture('g5');
   t.after(() => rmSync(fixture.dir, { recursive: true, force: true }));
   const ledger = join('.baton', 'capacity', 'reservations.json');
-  const live = fixture.authority.reserve('verify:policy-change:1', fixture.request);
+  const live = await fixture.authority.reserve('verify:policy-change:1', fixture.request);
   assert.equal(typeof live.id, 'string');
   assert.equal(existsSync(join(fixture.dir, ledger)), true,
     'the named ledger is the file the authority really writes');
@@ -208,7 +208,7 @@ test('G-5: the policy-digest refusal names the ledger, both digests, and the gra
     observe: () => ({ freeBytes: 1 << 30, freeInodes: 1 << 20 }),
   });
 
-  const error = thrown(() => changed.reserve('verify:policy-change:2', fixture.request));
+  const error = await rejection(() => changed.reserve('verify:policy-change:2', fixture.request));
   assert.equal(error?.code, 'worktree_capacity_unavailable');
   assert.equal(error.ledger, ledger);
   assert.equal(error.statePolicyDigest, fixture.authority.policy.digest);
@@ -231,11 +231,11 @@ test('G-5: the policy-digest refusal names the ledger, both digests, and the gra
 // G-35 — reconcile keeps this authority's own live verify reservation
 // ============================================================
 
-test('G-35: reconcile keeps this authority\'s own live verify reservation and settles a dead owner\'s', (t) => {
+test('G-35: reconcile keeps this authority\'s own live verify reservation and settles a dead owner\'s', async (t) => {
   const fixture = capacityFixture('g35');
   t.after(() => rmSync(fixture.dir, { recursive: true, force: true }));
-  const token = fixture.authority.reserve('verify:live-in-process:1', fixture.request);
-  fixture.authority.reserve('verify:dead-owner:1', fixture.request);
+  const token = await fixture.authority.reserve('verify:live-in-process:1', fixture.request);
+  await fixture.authority.reserve('verify:dead-owner:1', fixture.request);
   const before = fixture.authority.snapshot().reservations;
   assert.equal(before.find((row) => row.id === token.id).ownerId, fixture.authority.ownerId);
   assert.equal(before.find((row) => row.id === token.id).pid, process.pid,
@@ -250,7 +250,7 @@ test('G-35: reconcile keeps this authority\'s own live verify reservation and se
   writeFileSync(statePath, `${JSON.stringify(fixture.authority._seal({ ...state, reservations }), null, 2)}\n`,
     { mode: 0o600 });
 
-  const report = fixture.authority.reconcile([]);
+  const report = await fixture.authority.reconcile([]);
   assert.deepEqual(report.removed, ['verify:dead-owner:1'], 'only the proved-dead owner is settled');
   assert.deepEqual(report.retainedVerifiers, ['verify:live-in-process:1']);
   const after = fixture.authority.snapshot().reservations;
@@ -260,9 +260,10 @@ test('G-35: reconcile keeps this authority\'s own live verify reservation and se
   // its own coordinate, and only its owner's release takes it out of the ledger.
   const resourcePath = join(fixture.dir, '.baton', 'verify', 'live-in-process-abcd0123');
   mkdirSync(resourcePath, { recursive: true });
-  assert.equal(typeof fixture.authority.materialize(token, resourcePath).materializedAt, 'string',
+  const materialized = await fixture.authority.materialize(token, resourcePath);
+  assert.equal(typeof materialized.materializedAt, 'string',
     'the surviving reservation materializes after reconcile');
-  assert.equal(fixture.authority.release(token), true, 'its owner releases it');
+  assert.equal(await fixture.authority.release(token), true, 'its owner releases it');
   assert.deepEqual(fixture.authority.snapshot().reservations, []);
 });
 
@@ -270,7 +271,7 @@ test('G-35: reconcile keeps this authority\'s own live verify reservation and se
 // G-33 — the verify label comes from recorded fields, not an id shape
 // ============================================================
 
-test('G-33: materialize derives the verify label from the reservation\'s recorded resource id', (t) => {
+test('G-33: materialize derives the verify label from the reservation\'s recorded resource id', async (t) => {
   const fixture = capacityFixture('g33');
   t.after(() => rmSync(fixture.dir, { recursive: true, force: true }));
   const materializeInto = (name) => {
@@ -281,18 +282,19 @@ test('G-33: materialize derives the verify label from the reservation\'s recorde
 
   // A resourceId with no separator segment: the whole field IS the label, and no character of it
   // is dropped.
-  const whole = fixture.authority.reserve('verify:separatorless-label', fixture.request);
-  assert.equal(typeof fixture.authority.materialize(whole, materializeInto('separatorless-label-0123abcd')).materializedAt,
+  const whole = await fixture.authority.reserve('verify:separatorless-label', fixture.request);
+  const wholeMaterialized = await fixture.authority.materialize(whole, materializeInto('separatorless-label-0123abcd'));
+  assert.equal(typeof wholeMaterialized.materializedAt,
     'string', 'a label without a separator is taken whole');
 
   // The composed deployment shape `verify:<label>:<sequence>` resolves the same label.
-  const composed = fixture.authority.reserve('verify:composed-label:1', fixture.request);
-  assert.equal(typeof fixture.authority.materialize(composed, materializeInto('composed-label-0123abcd')).materializedAt,
-    'string');
+  const composed = await fixture.authority.reserve('verify:composed-label:1', fixture.request);
+  const composedMaterialized = await fixture.authority.materialize(composed, materializeInto('composed-label-0123abcd'));
+  assert.equal(typeof composedMaterialized.materializedAt, 'string');
 
   // The identity guard still refuses a directory that is not this reservation's label.
-  const foreign = fixture.authority.reserve('verify:composed-label:2', fixture.request);
-  const refused = thrown(() => fixture.authority.materialize(foreign, materializeInto('someone-else-0123abcd')));
+  const foreign = await fixture.authority.reserve('verify:composed-label:2', fixture.request);
+  const refused = await rejection(() => fixture.authority.materialize(foreign, materializeInto('someone-else-0123abcd')));
   assert.equal(refused?.code, 'worktree_capacity_unavailable');
 });
 
