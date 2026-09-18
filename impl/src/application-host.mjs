@@ -55,6 +55,11 @@ export const STOP_STAGES = Object.freeze({
   stopRecord: 'stop_record',
   hostClosed: 'host_closed',
   publicationWithdrawal: 'publication_withdrawal',
+  // #461: the last stage of a REINCARNATION's stop — the incarnation's own exit, which is what the
+  // successor's `host.reincarnated` observation waits on. It is entered only by a stop that is
+  // finishing a handoff (an ordinary stop ends at the release the row is minted from), and the
+  // deployment narrates it in the tail the same way it narrates the withdrawal.
+  incarnationExit: 'incarnation_exit',
 });
 
 /** Issue #450: the first second of a stop. Every wait this host takes past it is named durably
@@ -183,15 +188,21 @@ function describeDrainOutcome(application) {
 /** Owns process-signal admission until one operation and its authoritative shutdown both settle. */
 export class SignalLifecycleOwner {
   constructor(options) {
-    closedKeys(options, ['signalEmitter', 'shutdown'], ['announce', 'admittedTrigger'], 'signal lifecycle configuration');
+    closedKeys(options, ['signalEmitter', 'shutdown'], ['announce', 'admittedTrigger', 'withdrawn'], 'signal lifecycle configuration');
     if (typeof options.signalEmitter?.on !== 'function' || typeof options.signalEmitter?.off !== 'function'
       || typeof options.shutdown !== 'function'
       || (options.announce !== undefined && typeof options.announce !== 'function')
+      || (options.withdrawn !== undefined && typeof options.withdrawn !== 'function')
       || (options.admittedTrigger !== undefined && !['SIGINT', 'SIGTERM', 'SIGHUP'].includes(options.admittedTrigger))) {
       throw hostError('signal lifecycle configuration is invalid');
     }
     this.signalEmitter = options.signalEmitter;
     this.shutdownAuthority = options.shutdown;
+    // #461: the incarnation's OWN state, read before the signal path does anything else. An
+    // incarnation that has already withdrawn (its stop completed) narrates no second drain and
+    // must not re-enter its stop: the signal just ends the process. Absent for a caller that has
+    // no withdrawal state to publish — the path then behaves as it always did.
+    this.withdrawnAuthority = options.withdrawn ?? null;
     // #351 lane 3: a signal that arrived while the deployment was still opening is admitted
     // here — the lifecycle treats it exactly like a signal received mid-operation (announce,
     // then the same shutdown authority), instead of never hearing about it.
@@ -218,13 +229,24 @@ export class SignalLifecycleOwner {
         if (!shutdownPromise) shutdownPromise = Promise.resolve().then(() => this.shutdownAuthority(trigger));
         return shutdownPromise;
       };
+      // #461: the incarnation's own state, read FIRST — never a guess, never a throw: a predicate
+      // that cannot answer (a caller whose state read failed) is not a withdrawal.
+      const withdrawnNow = () => {
+        if (this.withdrawnAuthority === null) return false;
+        try { return this.withdrawnAuthority() === true; } catch { return false; }
+      };
       const admitSignal = (kind) => {
         signalCount += 1;
         if (trigger) return;
         trigger = Object.freeze({ kind, detail: null });
         admittedStopTrigger ??= kind; // #351: the FIRST admitted signal is the stop's trigger
         controller.abort(trigger);
-        if (this.announce) this.announce(trigger);
+        // #461: an incarnation that has ALREADY withdrawn narrates no second drain — the live
+        // incident's "signal received; draining participants (count unavailable: coordinator_closed
+        // from coordinator.participants)" was the signal handler reading a coordinator its own stop
+        // had closed. The stop itself is not re-entered either: the shutdown authority is the
+        // deployment's (idempotent) close, which answers its settled outcome at once.
+        if (!withdrawnNow() && this.announce) this.announce(trigger);
         ensureShutdown().catch(() => {});
         resolveSignal(trigger);
       };
@@ -346,6 +368,10 @@ export class BatonWebHost {
     this._start = null;
     this._shutdown = null;
     this._announced = null;
+    // #461: this host is WITHDRAWN once its own shutdown has completed — the state the signal path
+    // reads first, so a SIGTERM arriving after the stop narrates no second drain and re-enters
+    // nothing (`withdrawn` below feeds SignalLifecycleOwner).
+    this.withdrawn = false;
     this._trigger = null;
     // Issue #383: how many client connections this host has seen end in a socket error — a
     // counter the narration cites, so a flood of disconnects is visible without a crash.
@@ -671,6 +697,10 @@ export class BatonWebHost {
     })();
     this._shutdown = shuttingDown;
     shuttingDown.catch(() => { if (this._shutdown === shuttingDown) this._shutdown = null; });
+    shuttingDown.then(
+      () => { this.withdrawn = true; },
+      () => { this.withdrawn = true; },
+    );
     return shuttingDown;
   }
 
@@ -683,6 +713,7 @@ export class BatonWebHost {
       signalEmitter,
       shutdown: () => this.shutdown(),
       announce: (trigger) => this._announceIntent(trigger),
+      withdrawn: () => this.withdrawn === true,
     });
     const lifecycle = await owner.run(async ({ signal }) => {
       let resolveServer;

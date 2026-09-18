@@ -2597,18 +2597,26 @@ function residentApplicationFacade(application, resident, readinessSupplier) {
 //   3. the successor is spawned with BATON_PREDECESSOR_INCARNATION beside BATON_INCARNATION — the
 //      incarnation THIS incarnation minted for it, so `host.successor_started` can name the exact
 //      identity the successor will publish (it adopts it; see #startOrdinaryHost);
-//   4. `host.successor_started {pid, incarnation}`          — the old's LAST row before its release;
-//   5. the old's #351 stop path runs: web admission closes, the fleet drains (the drain policy's
+//   4. `host.successor_started {pid, incarnation, argv, log}` — the old's last WRITE before its
+//      release, carrying the spawn spelling (#461: a reader finds the process by its argv) and the
+//      log its narration rides (#461: its stderr, teed into this incarnation's serve log);
+//   5. `host.stop_waiting {on: successor_publication}`       — #461: the wait the stop takes next,
+//      declared before the release because past it this incarnation writes no row at all;
+//   6. the old's #351 stop path runs: web admission closes, the fleet drains (the drain policy's
 //      own window), and the coordination writer lease is released by the driver close — the
 //      successor waits for that release on the lease's own bound (host.reincarnation.wait_ms),
 //      never refusing coordination_writer_busy at once;
-//   6. the old releases its own resident host/publication leases but KEEPS the published bytes, so
+//   7. the old releases its own resident host/publication leases but KEEPS the published bytes, so
 //      the successor can take the host lease and publish while the repository is never unpublished
 //      (#288: never two publications, never none — the successor REPLACES the selector atomically,
 //      and the old's withdrawal removes a file only when it is still byte-for-byte its own);
-//   7. the old observes the successor's publication (connection.json's incarnation, bounded) and
-//      only then withdraws: removeIfExact deletes nothing of the successor's;
-//   8. the successor records `host.successor_published`, and when the predecessor's process is
+//   8. the old observes the successor's publication (connection.json's incarnation, bounded) and
+//      only then withdraws: removeIfExact deletes nothing of the successor's — and #461, it then
+//      RELEASES the successor's process handle and exits by itself (`incarnation_exit` is the last
+//      stage on the served tail): a child handle keeps a Node event loop alive, so an old that
+//      merely withdrew lingered until an operator signalled it, and its exit is what the successor
+//      observes next;
+//   9. the successor records `host.successor_published`, and when the predecessor's process is
 //      gone, `host.publication_withdrawn` and `host.reincarnated {from, to}`.
 // A successor that dies (or never becomes ready) before publishing: the old records
 // `host.reincarnation_failed {step, cause: {exit, stderrTail}}`, reopens admission and keeps
@@ -2759,6 +2767,9 @@ class BatonDeployment {
   // successor's own declaration: {predecessorIncarnation, predecessorPid, predecessorCommit,
   // incarnation, target, markerPath}.
   #reincarnationHandoff = null;
+  // #461: this incarnation has WITHDRAWN — its close took down every listener and lease it held
+  // and released the successor's process handle. The ONE read the signal path makes first.
+  #withdrawn = false;
   #application;
   #baton;
   #card;
@@ -3632,13 +3643,24 @@ class BatonDeployment {
     this.#webHost?._say?.(`baton serve: host.stopped tail ${said}`);
   }
 
+  /** #461: has this incarnation withdrawn? True from the moment its close has taken down every
+   * listener and lease it held (and released the successor's process handle). It is the state the
+   * signal path reads FIRST: an incarnation that has already withdrawn narrates no second drain
+   * over a coordinator it closed itself, and owns nothing left to count. */
+  withdrawn() {
+    return this.#withdrawn === true;
+  }
+
   /** Issue #437: the participants THIS resident owns right now, read from the projection it
    * already holds — the coordinator's live worker handles judged by the same local-resource
    * predicate the fleet drain targets (`_performDrain`, coordinator.mjs) — never a `runs.list`
    * that re-derives review targets across the ledger. Bounded by the live fleet, so it answers
    * however large the history is; a resident whose coordinator cannot answer says so with the
-   * code the narration then names. */
+   * code the narration then names. An incarnation that has WITHDRAWN owns nothing: its fleet went
+   * with its coordinator, so the honest count is zero — never the refusal (`coordinator_closed`)
+   * the live incident's operator had to read through. */
   ownedParticipantCount() {
+    if (this.#withdrawn === true) return 0;
     const coordinator = this.#driver?.coordinator ?? null;
     if (typeof coordinator?.list !== 'function' || typeof coordinator?.localResourceOwnership !== 'function') {
       throw Object.assign(new Error('this deployment holds no live participant projection'), {
@@ -4090,9 +4112,12 @@ class BatonDeployment {
       leasePath: join(this.#driver.coordination.root, 'writer.lease'),
       deploymentRoot: this.#deploymentRoot,
     };
-    return typeof spawner === 'function' ? spawner(spec) : spawn(spec.command, [...spec.args], {
+    const child = typeof spawner === 'function' ? spawner(spec) : spawn(spec.command, [...spec.args], {
       cwd: spec.cwd, env: spec.env, detached: spec.detached, stdio: [...spec.stdio],
     });
+    // The spec travels beside the handle: the spawn spelling it was GIVEN is what
+    // `host.successor_started` publishes (argv), and the handle is what the release lets go of.
+    return { spec, child };
   }
 
   /** #306: readiness — the successor's marker file (its own declaration that it is up and waiting
@@ -4304,17 +4329,26 @@ class BatonDeployment {
     }
     const incarnation = `instance-${randomUUID()}`;
     handoff.markerPath = reincarnationMarkerPath(this.#deploymentRoot, incarnation);
-    let child;
+    let spawned;
     const tail = { text: '' };
     try {
-      child = this.#successorSpec({ resolved, incarnation, checkout: this.#repository.root });
+      spawned = this.#successorSpec({ resolved, incarnation, checkout: this.#repository.root });
     } catch (error) {
       this.#reincarnation = null;
       throw reincarnationError('reincarnation_failed',
         'the successor could not be spawned', Object.freeze({ step: 'successor_spawn', cause: Object.freeze({ code: error?.code ?? null, message: error?.message ?? null }) }));
     }
-    this.#attachSuccessorStderr(child, tail);
-    handoff.successor = { pid: Number.isSafeInteger(child?.pid) ? child.pid : null, incarnation, child };
+    const child = spawned.child;
+    const stderrListener = this.#attachSuccessorStderr(child, tail);
+    handoff.successor = {
+      pid: Number.isSafeInteger(child?.pid) ? child.pid : null,
+      incarnation,
+      child,
+      // #461: the spawn spelling exactly as handed to the spawner, and the listener the release
+      // detaches — the two facts the closing half of the handoff needs.
+      argv: spawned.spec.args,
+      stderrListener,
+    };
     const ready = await this.#awaitSuccessorReady(child, { markerPath: handoff.markerPath }, tail);
     if (ready.ok !== true) {
       this.#failReincarnation(handoff, 'successor_start', ready.cause);
@@ -4323,11 +4357,33 @@ class BatonDeployment {
       throw reincarnationError(REINCARNATION_REFUSALS.inFlight,
         'this incarnation stopped before the successor was ready', Object.freeze({ since: handoff.since, successorPid: handoff.successor.pid, phase: 'stopped' }));
     }
-    // The old's LAST row before it releases: the incarnation it starts is an identity the old
-    // MINTED, so the row and the successor's own publication name one incarnation, not two.
+    // The old's LAST ROWS before it releases: the incarnation it starts is an identity the old
+    // MINTED, so the row and the successor's own publication name one incarnation, not two. #461:
+    // the row also carries the spawn spelling AS SPAWNED (argv — a reader finds the process without
+    // guessing it; the live incident had to look the pid up) and the log the successor's own
+    // narration rides — its stderr, teed into THIS incarnation's serve log by
+    // `#attachSuccessorStderr`, never a stream that goes nowhere.
     this.#reincarnationRecord('host.successor_started', {
       pid: handoff.successor.pid, incarnation, target: resolved, from, at: this.#clock(),
+      argv: handoff.successor.argv,
+      log: 'stderr',
     }, 'reincarnation:successor_started');
+    // #461: …and the wait the stop takes next, declared while this incarnation STILL holds the
+    // writer authority that can record it: the wait for the successor's publication begins right
+    // after the release (`#completeReincarnationHandoff`), and past that release this incarnation
+    // writes no row at all (the successor records its observations on its behalf). The #351/#450
+    // shape — the wait's own `{resource, reaper, since}` entry — so the live handoff's ~50 s open
+    // is named by a row and not only by the `host_closed` tail number that said a duration.
+    const waitSince = this.#clock();
+    this.#reincarnationRecord('host.stop_waiting', {
+      wait: Object.freeze({
+        on: 'successor_publication',
+        ids: Object.freeze([incarnation]),
+        entries: Object.freeze([Object.freeze({
+          resource: 'successor_publication', reaper: 'successor', since: waitSince,
+        })]),
+      }),
+    }, 'reincarnation:waiting:successor_publication');
     handoff.phase = 'handed';
     // The handoff continues through the old's own stop path, driven by the receipt's caller — the
     // command answers first, and this incarnation then stops admitting, drains, releases and exits.
@@ -4343,22 +4399,56 @@ class BatonDeployment {
     });
   }
 
-  /** #306: the bounded stderr tail the reincarnation failure row carries (#326's bound — the same
-   * derivation the crash rows publish). Never unbounded: the tail is cut at the bound by BYTES,
-   * and a child that carries no stderr stream answers the empty tail (absence, not a guess). */
+  /** #306/#461: the successor's stderr, read for TWO facts — the bounded tail the failure row
+   * carries (#326's bound; never unbounded, cut by BYTES) and the successor's OWN narration, which
+   * is said through this incarnation's serve log line by line instead of being dropped with the
+   * pipe. Returns the listener, so the release at the end of a handoff can detach it. */
   #attachSuccessorStderr(child, tail) {
     const stream = child?.stderr ?? null;
-    if (stream === null || typeof stream.on !== 'function') return;
-    stream.on('data', (chunk) => {
-      const next = `${tail.text}${chunk.toString('utf8')}`;
+    if (stream === null || typeof stream.on !== 'function') return null;
+    const onData = (chunk) => {
+      const text = chunk.toString('utf8');
+      const next = `${tail.text}${text}`;
       tail.text = Buffer.byteLength(next) > MAX_STDERR_TAIL_BYTES
         ? next.slice(-MAX_STDERR_TAIL_BYTES) : next;
-    });
+      for (const line of text.split('\n')) {
+        if (line.length > 0) this.#webHost?._say?.(`baton serve: successor ${line}`);
+      }
+    };
+    stream.on('data', onData);
+    return onData;
+  }
+
+  /** #461: let go of the successor PROCESS. This incarnation is the successor's parent, and a
+   * child's handle (with its stdio pipes) keeps a Node event loop alive — so an old incarnation
+   * that had withdrawn and closed STILL lingered (4 minutes at 0 % CPU in the live incident), and
+   * its exit is exactly what the successor's `host.reincarnated` observation waits on. Releasing
+   * never stops the successor: an unref'd child goes on serving; this incarnation's last act is
+   * its own exit. Idempotent, and safe on a child that already exited. */
+  #releaseSuccessorHandle(handoff) {
+    const successor = handoff?.successor ?? null;
+    const child = successor?.child ?? null;
+    if (child === null || successor.released === true) return;
+    successor.released = true;
+    try {
+      if (typeof successor.stderrListener === 'function'
+        && typeof child.stderr?.removeListener === 'function') {
+        child.stderr.removeListener('data', successor.stderrListener);
+      }
+    } catch { /* a stream already gone needs no detach */ }
+    for (const stream of [child.stdin, child.stdout, child.stderr]) {
+      try { if (typeof stream?.unref === 'function') stream.unref(); } catch { /* idem */ }
+    }
+    try { if (typeof child.unref === 'function') child.unref(); } catch { /* idem */ }
   }
 
   close() {
     if (!this.#closePromise) {
       this.#closePromise = (async () => {
+        // #461: the handoff this stop is finishing, captured ONCE. The record itself is cleared by
+        // the branches below (superseded / concluded), but the successor's process handle is this
+        // incarnation's to let go of on EVERY exit path — that release is what lets the process end.
+        const reincarnation = this.#reincarnation;
         // Issue #351: a close that begins here — an operator's own, not a signal's — is a stop
         // too, and it enters the same first stage a signal handler marks.
         this.#markStopStage(STOP_STAGES.requested);
@@ -4397,7 +4487,7 @@ class BatonDeployment {
           // #306 lane A: a stop that runs while a handoff is in flight. A handoff whose successor
           // was never spawned or never came up is named here (the operator's stop supersedes it);
           // one that reached `handed` owns the withdrawal — see #completeReincarnationHandoff.
-          const handoff = this.#reincarnation;
+          const handoff = reincarnation;
           if (handoff !== null && handoff.phase !== 'handed') {
             this.#reincarnation = null;
             this.#reincarnationRecord('host.reincarnation_failed', {
@@ -4417,6 +4507,7 @@ class BatonDeployment {
             });
             let handoffPublished = null;
             if (handoff !== null && handoff.phase === 'handed') {
+              this.#webHost?._say?.(`baton serve: host.stop_waiting on successor_publication at ${this.#clock()}`);
               handoffPublished = await this.#completeReincarnationHandoff(handoff);
             }
             this.#residentAuthority.close();
@@ -4452,7 +4543,20 @@ class BatonDeployment {
         // Issue #351: the publication withdrawal is the last stage the stop owns before the close
         // returns — past the release, so it rides the serve log rather than the row.
         this.#markStopStage(STOP_STAGES.publicationWithdrawal);
+        // #461: a handoff's stop ends with this incarnation's own EXIT, and the tail says so — the
+        // stage the successor's `host.reincarnated` observation is the other half of. It is marked
+        // only for a handoff (an ordinary stop's tail is the three stages the #351 pins name).
+        if (reincarnation !== null && reincarnation.phase === 'handed') {
+          this.#markStopStage(STOP_STAGES.incarnationExit);
+        }
         this.#sayStopTail();
+        // #461: …and then the old lets go of the successor's PROCESS handle (with its pipes): from
+        // here nothing this incarnation still holds keeps its event loop alive, so the process ends
+        // by itself — exit 0, no signal — while the successor goes on serving. The incarnation is
+        // WITHDRAWN from this point: the state the signal path reads first (a signal in the moment
+        // between the withdrawal and the process's own exit narrates no second drain).
+        this.#releaseSuccessorHandle(reincarnation);
+        if (shutdownFailure === null) this.#withdrawn = true;
         if (shutdownFailure) {
           throw Object.assign(shutdownFailure, { resident: Object.freeze({ state: residentState }) });
         }
