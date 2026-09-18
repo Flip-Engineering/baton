@@ -6447,7 +6447,7 @@
         {
           "name": "armHostStopOutcome",
           "ordinal": 0,
-          "size": 10,
+          "size": 12,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -6456,7 +6456,7 @@
         {
           "name": "_mintHostStopOutcome",
           "ordinal": 0,
-          "size": 13,
+          "size": 20,
           "seam": "observation",
           "evidence": [
             "observation:store_append",

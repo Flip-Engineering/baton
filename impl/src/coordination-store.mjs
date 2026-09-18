@@ -1226,12 +1226,18 @@ export class CoordinationStore {
    * release mints it instead, carrying the checkpoint decision it has just made, because a release
    * that returns IS the converged stop. Armed by the deployment that owns the stop; a store whose
    * release is not a resident's stop is never armed and writes only the checkpoint it always did.
-   */
+   *
+   * Issue #351's stage clock rides the same arming, but as a READER rather than a snapshot: the
+   * stages that follow the arming — the fleet drain the release runs inside, the publication
+   * withdrawal after it — are exactly the ones a slow stop has to name, so only the mint knows
+   * when the timeline ended. Optional; a stop that marks no stage still writes its outcome. */
   armHostStopOutcome(fields) {
     const keys = ['actor', 'key', 'state'];
+    const stages = fields?.stages ?? null;
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-      || Object.keys(fields).sort().join('\0') !== [...keys].sort().join('\0')
-      || keys.some((name) => typeof fields[name] !== 'string' || fields[name].length === 0)) {
+      || Object.keys(fields).sort().join('\0') !== [...keys, ...(stages === null ? [] : ['stages'])].sort().join('\0')
+      || keys.some((name) => typeof fields[name] !== 'string' || fields[name].length === 0)
+      || (stages !== null && typeof stages !== 'function')) {
       throw new TypeError('host stop outcome arming is invalid');
     }
     this._hostStopOutcome = freeze({ ...fields });
@@ -1242,10 +1248,17 @@ export class CoordinationStore {
     const armed = this._hostStopOutcome;
     if (!armed) return null;
     this._hostStopOutcome = null; // one release, one row
+    // The stage timeline is read HERE, at the mint the release performs. A stage reader that
+    // throws costs the row its timings, never the release its exactness.
+    let stages = null;
+    try { stages = typeof armed.stages === 'function' ? armed.stages() : null; } catch { stages = null; }
     try {
       return this._append('driver.recorded', {
         kind: 'host.stopped', state: armed.state, at: this._clock(),
         checkpoint: this._checkpointRelease,
+        // ONE shape: the stop's own timeline, in the order the stages happened. Empty for a stop
+        // that marked none (a bare host fixture), never absent — a reader never has to guess.
+        stages: Array.isArray(stages) ? stages : [],
       }, { actor: armed.actor, key: armed.key });
     } catch {
       return null; // a release that cannot record its outcome is still an exact release

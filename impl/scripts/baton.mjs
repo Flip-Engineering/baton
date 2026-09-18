@@ -102,8 +102,11 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
   }
   // #276(1)/(2): the operator's line at signal receipt, then the drain's own narration (the
   // deployment's host writes its stages), then one exit line. The receipt line is written before
-  // `deployment.close()` — before any drain wait — and the count comes from the deployment's own
-  // `runs.list` projection of the participants this process still owns (never a wire call).
+  // `deployment.close()` — before any drain wait — and the count comes from the projection the
+  // resident ALREADY holds: the deployment's live coordinator rows (#437), never a `runs.list`
+  // that re-derives review targets across the ledger. A deployment that publishes only a run list
+  // is still counted from it, and a read that REFUSES is named with its code — and recorded once —
+  // instead of leaving the operator with an unexplained "count unavailable".
   let announced = null;
   const narration = (trigger) => {
     // Issue #351 lane 2: the durable request is the handler's FIRST act — appended synchronously
@@ -116,10 +119,18 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
         process.stderr.write(`${flipAnnounce('draining', requestedLine, { tty: TTY, color: TTY })}\n`);
       }
     } catch { /* the stop narrates without the row rather than wedging the handler */ }
-    const readRuns = typeof deployment.runs?.list === 'function'
-      ? () => deployment.runs.list()
-      : () => { throw Object.assign(new Error('this deployment publishes no run list'), { code: 'application_host_narration_unavailable' }); };
-    announced = (async () => signalIntentLine(trigger, readRuns))().then(
+    const source = typeof deployment.ownedParticipantCount === 'function'
+      ? { read: 'coordinator.participants', run: () => deployment.ownedParticipantCount() }
+      : typeof deployment.runs?.list === 'function'
+        ? { read: 'runs.list', run: () => deployment.runs.list() }
+        : { read: null, run: () => { throw Object.assign(new Error('this deployment publishes no run list'), { code: 'application_host_narration_unavailable' }); } };
+    const refused = (refusal) => {
+      try {
+        const recorded = typeof deployment.recordNarrationRefused === 'function' ? deployment.recordNarrationRefused(refusal) : null;
+        if (recorded?.line) process.stderr.write(`${flipAnnounce('draining', recorded.line, { tty: TTY, color: TTY })}\n`);
+      } catch { /* the line below is still written */ }
+    };
+    announced = (async () => signalIntentLine(trigger, source, { onRefused: refused }))().then(
       (line) => { process.stderr.write(`${flipAnnounce('draining', `baton serve: ${line}`, { tty: TTY, color: TTY })}\n`); },
       (error) => {
         process.stderr.write(`${flipAnnounce('draining', `baton serve: signal received; draining participants (narration failed: ${error?.code ?? error?.name ?? 'error'}) (${trigger.kind})`, { tty: TTY, color: TTY })}\n`);
