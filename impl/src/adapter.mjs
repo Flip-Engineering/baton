@@ -134,11 +134,31 @@ const PROVIDER_REFUSALS_BY_HARNESS = Object.freeze({
     { code: PROVIDER_REFUSAL_CODES.quota, pattern: PROVIDER_LIMIT_REFUSAL_TEXT, resetAt: PROVIDER_RESET_AT_FROM_TEXT },
     { code: PROVIDER_REFUSAL_CODES.authentication, pattern: String.raw`\b(?:invalid|revoked|expired) (?:api )?key\b|\bunauthorized\b|\b401\b|\bauthentication (?:failed|required|error)\b`, resetAt: null },
   ]),
+  // DeepSeek on its OWN Anthropic-compatible endpoint (DeepseekSessionCli, the GLM session tier
+  // pointed at api.deepseek.com): reaching a provider directly does not change whose refusal it is,
+  // so this harness carries the same documented limit vocabulary — including DeepSeek's 402
+  // ("Insufficient Balance") — the provider-faults taxonomy already reads at the omp boundary.
+  deepseek: providerRefusals('deepseek', [
+    { code: PROVIDER_REFUSAL_CODES.quota, pattern: PROVIDER_LIMIT_REFUSAL_TEXT, resetAt: PROVIDER_RESET_AT_FROM_TEXT },
+  ]),
+});
+
+/** The harness spellings that NAME a provider another harness already answers from. A refusal
+ * vocabulary is a fact about the PROVIDER, not the transport, so a second spelling resolves to the
+ * ONE table object — never a second copy of the same rows that could drift out of step with it. */
+const PROVIDER_REFUSAL_HARNESS_ALIASES = Object.freeze({
+  // The GLM session tier IS Claude Code driving z.ai's Anthropic-compatible endpoint (the one-shot
+  // ZCodeCli's env pattern lifted onto the session adapter), under the class default spelling and
+  // the deployment's shorter one.
+  'glm-via-claude-session': 'glm-via-claude',
+  glm: 'glm-via-claude',
 });
 
 /** The closed refusal table the card for this harness carries. */
 export function providerRefusalsForHarness(harness) {
-  return PROVIDER_REFUSALS_BY_HARNESS[harness] ?? NO_PROVIDER_REFUSALS;
+  const key = typeof harness === 'string' && Object.hasOwn(PROVIDER_REFUSAL_HARNESS_ALIASES, harness)
+    ? PROVIDER_REFUSAL_HARNESS_ALIASES[harness] : harness;
+  return PROVIDER_REFUSALS_BY_HARNESS[key] ?? NO_PROVIDER_REFUSALS;
 }
 
 const refusalMatchers = new Map();
@@ -166,6 +186,37 @@ export function matchProviderRefusal(card, text) {
   if (typeof text !== 'string' || text.length === 0) return null;
   for (const row of rows) if (refusalMatcher(row.pattern).test(text)) return row;
   return null;
+}
+
+/** #387: the adapter-card axis a SESSION route's readiness reads — the closed provider-refusal
+ * table the card publishes for its own harness. Declared beside the vocabulary it checks, in the
+ * SAME `{axis, consumes, validate}` shape every card axis in adapter-contract.mjs declares, so the
+ * card contract admits ONE rule by reference instead of re-deriving it.
+ *
+ * The value must BE `providerRefusalsForHarness(card.harness)`. Cards for the session tiers
+ * (claude-session.mjs, codex-appserver.mjs, kimi-acp.mjs, grok-acp.mjs) published no such key at
+ * all, so `matchProviderRefusal` returned null for every text they ever wrote and a #348-style
+ * provider death left the route reading ready while each successor on it died the same way. That
+ * silent-ready degradation is a CONSTRUCTION error: a card that publishes no table, or one it
+ * assembled itself instead of deriving from its harness, refuses where it is built. */
+export const PROVIDER_REFUSALS_CARD_AXIS = Object.freeze({
+  axis: 'providerRefusals',
+  consumes: 'route readiness matches a crash/turn-failure text against card.providerRefusals (#341/#387)',
+  validate: (value, harness) => {
+    const derived = providerRefusalsForHarness(harness);
+    if (!Object.is(value, derived)) {
+      throw Object.assign(new TypeError(
+        `adapter card for ${harness} does not publish its harness's own provider-refusal table (${derived.length} row(s)): a route read from it can never block on a provider refusal — publish providerRefusals: providerRefusalsForHarness(${JSON.stringify(harness)}), one derivation, never a copy`,
+      ), { code: 'adapter_card_incomplete', detail: { axis: 'providerRefusals', missing: ['providerRefusals'] } });
+    }
+  },
+});
+
+/** The card-contract gate for the axis above: every session tier that can seat a route renders its
+ * card through this, so the tier refuses at construction rather than reading ready forever. */
+export function assertCardProviderRefusals(card) {
+  PROVIDER_REFUSALS_CARD_AXIS.validate(card?.providerRefusals, card?.harness ?? 'unknown');
+  return card;
 }
 
 const STOP_SETTLE_MS = 8;

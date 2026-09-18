@@ -19,7 +19,7 @@ import { FRAME_LIMITS } from './limits.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
-import { CLI_PROMPT_DIALECT, providerRefusalsForHarness, renderBrief } from './adapter.mjs';
+import { CLI_PROMPT_DIALECT, assertCardProviderRefusals, providerRefusalsForHarness, renderBrief } from './adapter.mjs';
 import { assertAdapterCard } from './adapter-contract.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
@@ -307,8 +307,11 @@ class CliAdapter {
   // that loses an axis (a missing governance/modelSelection/workerPolicy block) refuses HERE,
   // naming the axis and the fix — never later, inside a validator, as a generic
   // `worker_policy_invalid` that says nothing about the card.
+  // #387 renders the same card through the provider-refusal axis too: a CLI route whose card lost
+  // its table would otherwise read ready forever while every seat on it died on the provider's own
+  // refusal.
   card() {
-    return assertAdapterCard({
+    return assertCardProviderRefusals(assertAdapterCard({
       harness: this._cfg.harness,
       version: this._cfg.version,
       authPosture: 'subscription',
@@ -323,7 +326,7 @@ class CliAdapter {
       // vocabulary (adapter.mjs). A harness whose refusal text this build has never captured
       // publishes an EMPTY table — honest absence, never a pattern nobody owns.
       providerRefusals: providerRefusalsForHarness(this._cfg.harness),
-    });
+    }));
   }
 
   onEvent(cb) { this._cb = cb; }

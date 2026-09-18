@@ -10,6 +10,7 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { assertCardProviderRefusals, providerRefusalsForHarness } from './adapter.mjs';
 import { renderPrompt } from './cli-adapters.mjs';
 import { guardChildPipes, normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
@@ -634,7 +635,7 @@ export class ClaudeSessionCli {
 
   card() {
     const autonomy = this._cfg.permissionMode === 'bypassPermissions' ? 'unattended' : 'interactive';
-    return {
+    return assertCardProviderRefusals({
       harness: this._cfg.harness,
       version: this._cfg.version,
       authPosture: 'subscription',
@@ -701,7 +702,14 @@ export class ClaudeSessionCli {
       // parsed from untrusted worker prose and the answer rides a plain user-turn continuation.
       // Always 'emulated', never 'native' (D1: no silent emulation).
       decision: this._cfg.approvals ? 'emulated' : 'unsupported',
-    };
+      // #387: the provider refusal text this tier's own provider answers with, from the ONE closed
+      // card vocabulary (adapter.mjs). A session route's readiness matches a crash or a failed turn
+      // against this table exactly as an omp route does, so a #348-style provider death reads
+      // blocked instead of leaving a "ready" route that kills every successor. GlmSessionCli,
+      // KimiSessionCli and DeepseekSessionCli inherit it through their `{...base}` spread, each for
+      // the harness its own card names.
+      providerRefusals: providerRefusalsForHarness(this._cfg.harness),
+    });
   }
 
   onEvent(cb) { this._cb = cb; }
