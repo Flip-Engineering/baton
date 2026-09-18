@@ -6664,7 +6664,18 @@
         {
           "name": "_writeProjectionCheckpoint",
           "ordinal": 0,
-          "size": 67,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:ledger_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_projectionCheckpointWriteSteps",
+          "ordinal": 0,
+          "size": 77,
           "seam": "effect",
           "evidence": [
             "effect:filesystem_mutation",
@@ -6686,19 +6697,39 @@
         {
           "name": "_boundedCheckpointWrite",
           "ordinal": 0,
-          "size": 22,
+          "size": 24,
           "seam": "observation",
           "evidence": [
             "observation:ledger_name"
           ]
         },
         {
-          "name": "_rewriteProjectionCheckpoint",
+          "name": "_checkpointOutcomeFields",
           "ordinal": 0,
-          "size": 16,
+          "size": 8,
           "seam": "observation",
           "evidence": [
+            "admission:validation_vocabulary",
             "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_openCheckpointRefresh",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_dropBorrowedWriterLease",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation"
           ]
         },
         {
@@ -6756,7 +6787,7 @@
         {
           "name": "_resetProjection",
           "ordinal": 0,
-          "size": 88,
+          "size": 91,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",

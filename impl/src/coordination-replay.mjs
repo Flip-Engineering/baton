@@ -541,15 +541,15 @@ function* _loadRun(store, plan) {
     bytes: plan.raw.byteLength, digest: store._loadedLedgerHash.copy().digest('hex'),
     events: store._events.length,
   });
-  // Issue #449(2): the open that found a STALE-SHAPE checkpoint has just replayed the ledger in
-  // full — the one case where the cache the next open needs does not exist. Write it now, while
-  // the rows it caches are the rows this open just folded, so the NEXT open is bounded (#449's
-  // live proof: the second restart reports a used checkpoint and replays only the rows past it).
-  // Recorded BEFORE 'ready' is reported, so a reader that observes ready observes the cache. A
-  // rewrite that cannot land is reported, never raised: the ledger stays authoritative.
-  if (plan.checkpoint.state === 'stale_shape') {
-    store._checkpointRewrite = store._rewriteProjectionCheckpoint('stale_shape_rewrite');
-  }
+  // Issue #449: the open that could not serve itself from the checkpoint on disk has just folded the
+  // projection by replaying, and owes the NEXT open a cache — `_openCheckpointRefresh` is the store's
+  // ONE rule for which states those are and what the row says, so this call site names no state and
+  // no reason of its own. It is a GENERATOR: `yield*` runs the write's own bounded stretches as
+  // yields of THIS fold, so the async open breathes between them exactly as it does between replay
+  // chunks (and the synchronous constructor drains them back-to-back). Recorded BEFORE 'ready' is
+  // reported, so a reader that observes ready observes the cache; a write that cannot land is
+  // reported, never raised — the ledger stays authoritative.
+  store._checkpointRewrite = yield* store._openCheckpointRefresh(plan.checkpoint.state);
   _reportStartup(store, {
     schemaVersion: 1, state: 'ready', source, totalEvents,
     checkpointEvents: checkpoint.throughSeq, replayedEvents: segmentEvents + lines.length,
