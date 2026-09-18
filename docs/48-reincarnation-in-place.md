@@ -364,14 +364,38 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
 6. **The release mints the old's `host.stopped` with the ordinary `stopped` state** — the
    `reincarnating` state §2 step 5 proposed rides the receipt and the marker instead; the row
    vocabulary stays #351's.
-7. **The crash table's re-publish arm did not land.** A successor that dies before its readiness
+7. **The crash table's re-publish arm landed (#306r).** A successor that dies before its readiness
    marker fails the verb with `reincarnation_failed {step: 'successor_start', cause: {exit,
-   signal, stderrTail}}` and the durable row, admission reopened — as designed. But a successor
-   that dies AFTER the marker and BEFORE publishing: the old's bounded publication wait expires,
-   it withdraws and exits with `residentState: 'reconciliation_required'` narrated — no
-   `reincarnation_failed {step: 'publication_handoff'}` row and no re-publish of the old
-   authority. The operator (or a restarted successor) reconciles. A follow-up lane could close
-   this window with the re-publish arm §2 described; part 1 accepted the narrower behavior.
+   signal, stderrTail}}` and the durable row, admission reopened — as designed. A successor that
+   dies (or stalls past the bound) AFTER the marker and BEFORE publishing is now the arm §2
+   described, and it is decided by the successor's OWN facts, never by the timer alone: the old
+   runs a **handoff window** (`#reincarnationWindow`) BEFORE any listener of its own closes, in the
+   order the successor's open reaches each authority — (1) the fleet drain (the ordinary
+   coordinator drain, so its rows land where a stop's rows land), (2) the result export root lease
+   (the successor's own open constructs an application over the same deployment and cannot proceed
+   without it), (3) the coordination writer lease (the release mints the old's `host.stopped`
+   through the armed #351 outcome, as the ordinary stop's release does), (4) the successor's own
+   `opened` state on the readiness marker, which is when (5) the resident and publication leases
+   move, and (6) the publication itself, read as connection.json naming a different incarnation.
+   At any step, the window can end in `host.reincarnation_failed {step: 'publication_handoff',
+   cause: {exit, signal, stderrTail, waitedMs}}` — the child's exit, or the bound with `reason:
+   'publication_timeout'` — and then the old incarnation **RE-PUBLISHES**: it ends the successor's
+   process, re-takes the coordination writer authority through the same lease path the open uses
+   (`claimWriterLease`) and the result export root through the same construction the application
+   performs (`ResultExportLifecycle` over its own root), reopens admission, and goes on serving.
+   Nothing is withdrawn: the publication bytes, the listeners and the process are the same ones
+   that were serving before the handoff, and `host.publication_withdrawn` is never recorded for
+   this incarnation. The row's `authority` column says exactly what the window had handed over:
+   `residentLease`/`publicationLease` are `held` when the successor never reached its own open
+   (the whole authority is the old's again) and `released` when it did — those two lease
+   directories cannot be re-taken without minting a new incarnation (which would repoint the
+   publication), so a failure past that point leaves them free for the next resident start while
+   the publication bytes stay the old incarnation's; `publication: 'intact'` and `writerLease:
+   'reclaimed'` hold in every case. Two more halves of the same arm: the successor publishes
+   `lease_held_by_predecessor` on its marker and stands down typed (its open's lease wait is spent
+   and the predecessor went on serving — the refusal a late publisher draws), and the failure row
+   now wakes the `incarnation_changed` class beside `host.reincarnated`, so a root following the
+   handoff sees its outcome either way instead of silence.
 8. **`host.reincarnated` carries `predecessorExited`** beside `from`/`to` — the successor's
    observation of the predecessor's process (pid liveness, EPERM means alive), never a clock.
 9. **The wake class carries `next: null`** — the WAKE_CLASS_TABLE's one invariant admits a `next`
@@ -416,6 +440,6 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     a successor, while each reincarnate still hands a fresh declaration to its successor.
 
 Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
-(item 11); the §2 crash-table re-publish arm (item 7); docs/39's wake section naming
-`incarnation_changed` and the reincarnation rows beside it; the README docs table row for this
+(item 11); docs/39's wake section naming `incarnation_changed` and the reincarnation rows beside
+it (the class now carries the failure row too, item 7); the README docs table row for this
 document.
