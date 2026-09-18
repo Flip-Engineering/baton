@@ -114,6 +114,17 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/coordination-replay.mjs', className: null, receiver: 'store',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Two more module targets (issue #259 slice 3): the coordinator's brief seam and the
+  // application's briefing surface. Their members are plain exported functions at module scope,
+  // so each target reads the module scope and names the receiver its first parameter carries.
+  Object.freeze({
+    file: 'impl/src/runtime-briefing.mjs', className: null, receiver: 'coordinator',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
+  Object.freeze({
+    file: 'impl/src/application-briefing.mjs', className: null, receiver: 'application',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -167,6 +178,12 @@ const AUTHORITY_RULES = Object.freeze([
   // store's `_load`, a restart path by every other measure, would land in observation on `read_name`.
   { seam: 'recovery', id: 'replay_port', weight: 3, call: /\bcoordinationReplay\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted replay port (coordination-replay.mjs)' },
   { seam: 'surface', id: 'internals_port', weight: 3, call: /\bcoordinationInternals\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted internals module (coordination-internals.mjs)' },
+  // Slice 3 extends the same rule to the brief seam: `_providerBrief` was `observation` before the
+  // move (its body appended the attention receipt and read the coordination store), and the
+  // delegate's call is the evidence that keeps it there. The application's briefing surface needs
+  // no counterpart: both of its delegates are reached by the class dispatcher, so transport
+  // reachability places them before any rule is consulted.
+  { seam: 'observation', id: 'brief_port', weight: 3, call: /\bruntimeBriefing\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted brief seam (runtime-briefing.mjs)' },
 
   // ── the swarm family (issue #284 item S-G4) ─────────────────────────────────
   // SwarmRuntime speaks its own refusal and replay dialects, and both are evidence a name rule
@@ -178,6 +195,13 @@ const AUTHORITY_RULES = Object.freeze([
   { seam: 'admission', id: 'swarm_refusal', weight: 3, call: /\brefuse\(\s*[`'][^`']*[`']\s*,\s*'swarm_[a-z_]+'/u, note: 'refuses with a swarm-scoped typed code' },
   { seam: 'recovery', id: 'operation_lifecycle', weight: 3, call: /recordDriver\('swarm\.operation_(?:requested|completed|unavailable)'/u, note: 'records the replay-keyed operation lifecycle a restart reconciles' },
   { seam: 'observation', id: 'swarm_attention_rows', weight: 3, call: /const organization = \[|organization\.push\(\{ kind: '/u, note: 'derives the swarm view: the attention rows a caller acts on' },
+
+  // The application's campaign briefing reads its pack through the driver it was built around: the
+  // serve lane takes the family head and the ledger head, and the mint lane composes the campaign
+  // body and mints the next pack. The rule names both facts — the driver's coordination authority
+  // and a pack call — so it is evidence for the briefing surface alone; the store's own pack
+  // members, which reach their state directly, are not touched.
+  { seam: 'observation', id: 'campaign_briefing_authority', weight: 3, call: /driver\??\.coordination[\s\S]*\.(?:contextPackHead|contextPack|materializeContextPack|mintContextPack|composeCampaignBriefing)\??\.?\(/u, note: 'reads the driver\'s coordination store to serve or mint the campaign briefing' },
 ]);
 
 // Layer 3 — delegation. A member that calls an already-resolved member of its own class inherits
