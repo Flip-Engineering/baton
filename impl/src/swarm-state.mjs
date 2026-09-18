@@ -21,6 +21,11 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.work_updated',
   'swarm.assignment_updated',
   'swarm.coupling_updated',
+  // Issues #422/#423 (docs/45-open-coordination.md): the joint-coupling, claim and proposal
+  // families — `swarm.claim_updated` is a hold a seat takes for itself on work or a path set,
+  // `swarm.proposal_updated` is a work split the seats it names accept by arriving.
+  'swarm.claim_updated',
+  'swarm.proposal_updated',
   // Issue #425: the runtime-recorded bypass of a live exclusive writer coupling — observed
   // at the seat's projected git wrapper, composed by the runtime, never caller-submittable.
   'swarm.coupling_writer_bypassed',
@@ -38,7 +43,14 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
 // a group arrives at and is released from, an exclusive writer over a shared checkout, and a
 // group failure policy — are declared through `swarm.coupling_updated` records below.
 export const SWARM_COUPLINGS = Object.freeze(['synchronization', 'writer', 'failure']);
-export const SWARM_COUPLING_ACTIONS = Object.freeze(['declare', 'arrive', 'release']);
+// The joint coupling set (docs/45 §4): declare and arrive and release as before; `propose` is a
+// coupling any member may put to its named consent set, and `take`/`yield` are the rotating
+// writer lease's own acts — meaningless on records written before the design and never present
+// in one (docs/45 §11).
+export const SWARM_COUPLING_ACTIONS = Object.freeze(['declare', 'propose', 'arrive', 'take', 'yield', 'release']);
+/** The work-proposal actions (docs/45 §3): the shared verb spellings with the coupling actions are
+ * deliberate — one name per concept — so `propose | arrive | release` mean the same thing here. */
+export const SWARM_PROPOSAL_ACTIONS = Object.freeze(['propose', 'arrive', 'release']);
 export const SWARM_FAILURE_POLICIES = Object.freeze(['independent']);
 
 export const SWARM_WORK_STATUSES = Object.freeze(['open', 'completed', 'cancelled']);
@@ -46,9 +58,15 @@ export const SWARM_ASSIGNMENT_STATUSES = Object.freeze(['active', 'released']);
 export const SWARM_REVIEW_DECISIONS = Object.freeze(['accept', 'reject', 'comment']);
 
 // The remedy note a departed-seat group refusal carries (#395). A named constant, not an inline
-// literal: the fold-admission audit classifies an integrity(...) call by its last quoted
+// literal: the fold-admission audit classifies an integrity(...) call by its LAST literal
 // argument, so the refusal's detail keeps to references and the code literal stays last.
 const DEPARTED_SEAT_REMEDY_NOTE = 'resend exactly these members — the current active set of this group';
+
+// The coordinates a claim refusal carries (docs/45 §2, §2.2). Named constants, not inline
+// literals: the fold-admission audit classifies an integrity(...) call by its LAST literal
+// argument, so a refusal's detail keeps to references and the code literal stays last.
+const CLAIM_MOVE_COORDINATES = Object.freeze({ field: 'participantId', rule: 'claim-holder-or-organize' });
+const CLAIM_PATHS_COORDINATES = Object.freeze({ field: 'paths', rule: 'claimed-paths' });
 
 // One physical workspace identity (`ws-…`): the checkout a participant works in, as recorded at
 // recruitment and at binding. The writer coupling's exclusivity is exactly this identity, so the
@@ -101,6 +119,53 @@ function validOptionalNonEmptyString(value, fieldName, errorFn) {
 function validOptionalNonNegativeInt(value, fieldName, errorFn) {
   if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
     errorFn(`${fieldName} must be a non-negative integer if present`, 'invalid_payload');
+  }
+}
+
+// A path claim's entries are repo-relative and `/`-separated, and name no `..` or leading `./`
+// (docs/45 §2). The rule is a shape rule: it describes a claim, never a record, so it runs on
+// admission and on replay alike without ever refusing recorded history.
+function validClaimPaths(paths) {
+  if (!Array.isArray(paths) || paths.length === 0) {
+    refuse('a path claim names a non-empty paths array', 'invalid_payload');
+  }
+  for (const entry of paths) {
+    if (!isNonEmptyString(entry)) refuse('claim paths must be non-empty strings', 'invalid_payload');
+    if (entry.startsWith('/') || entry.startsWith('./') || entry.split('/').includes('..')) {
+      refuse(`claim path '${entry}' must be repo-relative and name no .. or leading ./`, 'invalid_payload');
+    }
+  }
+}
+
+// The plan a work proposal carries (docs/45 §3): the work items the split creates and the claims
+// that hold them. Shape only: existence, activity and conflicts are the fold's stateful half.
+function validProposalPlan(plan) {
+  if (plan === null || typeof plan !== 'object' || Array.isArray(plan)) {
+    refuse('a proposal carries a plan object: { work: [...], claims: [...] }', 'invalid_payload');
+  }
+  const unknown = Object.keys(plan).find((field) => field !== 'work' && field !== 'claims');
+  if (unknown !== undefined) {
+    refuse(`a proposal plan carries work and claims only; ${unknown} is not a plan field`, 'invalid_payload');
+  }
+  const workIds = new Set();
+  for (const entry of plan.work ?? []) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)
+      || !isNonEmptyString(entry.workId) || !isNonEmptyString(entry.objective)) {
+      refuse('each plan.work entry names a workId and an objective', 'invalid_payload');
+    }
+    if (workIds.has(entry.workId)) {
+      refuse(`plan.work names ${entry.workId} twice — a plan creates each work item once`, 'invalid_payload');
+    }
+    workIds.add(entry.workId);
+  }
+  for (const entry of plan.claims ?? []) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry) || !isNonEmptyString(entry.participantId)) {
+      refuse('each plan.claims entry names the participant that holds the claim', 'invalid_payload');
+    }
+    if (isNonEmptyString(entry.workId) === (entry.paths !== undefined)) {
+      refuse('each plan.claims entry names exactly one target: workId or paths', 'invalid_payload');
+    }
+    if (entry.paths !== undefined) validClaimPaths(entry.paths);
   }
 }
 
@@ -172,6 +237,11 @@ function emptySwarm(swarmId, purpose, meta) {
     swarmId, purpose, status: 'open', closedReason: null, ...meta,
     participants: nullDict(), groups: nullDict(), work: nullDict(),
     assignments: nullDict(), couplings: nullDict(), context: nullDict(), contributions: nullDict(), reviews: nullDict(),
+    // Issues #422/#423: the holds seats take for themselves (`claims`, an assignment-shaped hold
+    // with self-authority, docs/45 §2) and the work splits proposed and accepted by arrival
+    // (`proposals`, docs/45 §3). Both are keyed collections beside `assignments`, so every
+    // collection rule — create-or-replace, CAS, deterministic replay — reads the same way.
+    claims: nullDict(), proposals: nullDict(),
   });
 }
 // Replace one nested collection in a frozen swarm row with a null-prototype dict.
@@ -342,6 +412,29 @@ export function validateSwarmEvent(kind, payload) {
     // `participantId` names the seat the request is about (the arriver, the writer's holder, the
     // seat a release hands back); the actor is never inferred from it.
     validOptionalNonEmptyString(p.releasedBy, 'coupling releasedBy', refuse);
+    // The joint-coupling fields (docs/45 §4): `members` is the consent set a proposal puts its
+    // parameters to, `quorum` is the synchronization point's release threshold, and a writer
+    // record declares either an exclusive writer (`participantId`) or a rotating lease
+    // (`groupId`) — the XOR is checked in the declare arm below.
+    if (p.members !== undefined) {
+      if (!Array.isArray(p.members) || p.members.length === 0 || !p.members.every(isNonEmptyString)) {
+        refuse('coupling members must be a non-empty array of participant identities', 'invalid_payload');
+      }
+      if (new Set(p.members).size !== p.members.length) {
+        refuse('coupling members must be distinct', 'invalid_payload');
+      }
+      if (p.action !== 'propose') {
+        refuse('a coupling names its members when it is proposed; a declare takes its roster from the group', 'invalid_payload');
+      }
+    }
+    if (p.quorum !== undefined) {
+      if (!Number.isSafeInteger(p.quorum) || p.quorum < 1) {
+        refuse('coupling quorum must be a positive integer when present', 'invalid_payload');
+      }
+      if (p.coupling !== 'synchronization') {
+        refuse('only a synchronization point declares a quorum', 'invalid_payload');
+      }
+    }
     validOptionalNonNegativeInt(p.expectedVersion, 'coupling expectedVersion', refuse);
     if (p.policy !== undefined && !SWARM_FAILURE_POLICIES.includes(p.policy)) {
       refuse(`failure policy must be one of: ${SWARM_FAILURE_POLICIES.join(', ')}`, 'invalid_payload');
@@ -352,6 +445,23 @@ export function validateSwarmEvent(kind, payload) {
       }
       if (p.coupling === 'failure' && !(isNonEmptyString(p.groupId) && p.policy !== undefined)) {
         refuse('a failure policy declares groupId and policy', 'invalid_payload');
+      }
+      if (p.coupling === 'writer' && isNonEmptyString(p.participantId) === isNonEmptyString(p.groupId)) {
+        refuse('a writer coupling declares over exactly one of participantId (an exclusive writer) or groupId (a rotating lease)', 'invalid_payload');
+      }
+    }
+    if (p.action === 'propose') {
+      // A failure policy names what happens when OTHER members die — not a consent set's to give
+      // (docs/45 §4.5) — so it is declared, never proposed.
+      if (p.coupling === 'failure') refuse('a failure policy is declared, never proposed', 'invalid_payload');
+      if (p.members === undefined) refuse('a coupling proposal names the members whose arrival is their consent', 'invalid_payload');
+    }
+    if (p.action === 'take' || p.action === 'yield') {
+      if (!isNonEmptyString(p.participantId)) {
+        refuse(`a lease ${p.action} names participantId — the seat taking or yielding the write turn`, 'invalid_payload');
+      }
+      if (isNonEmptyString(p.groupId) || p.members !== undefined || p.quorum !== undefined) {
+        refuse(`a lease ${p.action} carries no coupling parameters`, 'invalid_payload');
       }
     }
     return;
@@ -367,6 +477,51 @@ export function validateSwarmEvent(kind, payload) {
     if (!isNonEmptyString(p.by)) refuse('swarm.coupling_writer_bypassed requires by — the seat that committed', 'invalid_payload');
     if (p.sha !== null && !isNonEmptyString(p.sha)) refuse('coupling_writer_bypassed sha must be a sha string or null', 'invalid_payload');
     if (!isNonEmptyString(p.at)) refuse('swarm.coupling_writer_bypassed requires at — when the commit was observed', 'invalid_payload');
+    return;
+  }
+  if (kind === 'swarm.claim_updated') {
+    if (!isNonEmptyString(p.claimId)) refuse('swarm.claim_updated requires claimId', 'invalid_payload');
+    // The seat that HOLDS the claim: the runtime derives it from the request identity (docs/45 §2
+    // autoFilled), and the fold requires it — a hold attributed to nobody is not an answer.
+    if (!isNonEmptyString(p.participantId)) {
+      refuse('swarm.claim_updated requires participantId — the seat that holds the claim', 'invalid_payload');
+    }
+    if (p.workId !== undefined && p.paths !== undefined) {
+      refuse('a claim names exactly one target: workId or paths', 'invalid_payload');
+    }
+    if (p.workId !== undefined) validOptionalNonEmptyString(p.workId, 'claim workId', refuse);
+    if (p.paths !== undefined) validClaimPaths(p.paths);
+    if (p.status !== undefined && !SWARM_ASSIGNMENT_STATUSES.includes(p.status)) {
+      refuse(`claim status must be one of: ${SWARM_ASSIGNMENT_STATUSES.join(', ')}`, 'invalid_payload');
+    }
+    validOptionalNonEmptyString(p.handoffTo, 'claim handoffTo', refuse);
+    validOptionalNonEmptyString(p.reason, 'claim reason', refuse);
+    validOptionalNonNegativeInt(p.expectedVersion, 'claim expectedVersion', refuse);
+    return;
+  }
+  if (kind === 'swarm.proposal_updated') {
+    if (!isNonEmptyString(p.proposalId)) refuse('swarm.proposal_updated requires proposalId', 'invalid_payload');
+    if (!SWARM_PROPOSAL_ACTIONS.includes(p.action)) {
+      refuse(`proposal action must be one of: ${SWARM_PROPOSAL_ACTIONS.join(', ')}`, 'invalid_payload');
+    }
+    // The acting seat: the proposer consenting by proposing, the member consenting by arriving,
+    // or the proposer withdrawing. Runtime-derived (docs/45 §3 autoFilled) and required by the
+    // fold for the two consent-carrying actions; a withdrawal may name only releasedBy, the same
+    // shape a coupling release has always had.
+    if (p.action !== 'release' && !isNonEmptyString(p.participantId)) {
+      refuse('swarm.proposal_updated requires participantId — the seat proposing or consenting', 'invalid_payload');
+    }
+    if (p.action === 'propose') {
+      if (!Array.isArray(p.members) || p.members.length === 0 || !p.members.every(isNonEmptyString)) {
+        refuse('a proposal names its members — the consent set — as a non-empty array', 'invalid_payload');
+      }
+      if (new Set(p.members).size !== p.members.length) {
+        refuse('proposal members must be distinct', 'invalid_payload');
+      }
+      validProposalPlan(p.plan);
+    }
+    validOptionalNonEmptyString(p.reason, 'proposal reason', refuse);
+    validOptionalNonNegativeInt(p.expectedVersion, 'proposal expectedVersion', refuse);
     return;
   }
   if (kind === 'swarm.assignment_updated') {
@@ -456,6 +611,186 @@ function assertAttribution(swarm, identity, meta, field) {
   integrity(`${field} ${identity} names neither a participant of swarm ${swarm.swarmId} nor the actor of the event that records it`
     + `${isNonEmptyString(meta.actor) ? ` (the actor is ${meta.actor})` : ' (the event carries no actor)'}`,
   'participant_not_found');
+}
+
+// ── joint couplings, claims and work proposals (issues #422/#423, docs/45) ────
+//
+// The helpers below are the stateful half of the design's §2–§4: what a record COVERS, who a
+// rotation's roster is, and which holds overlap. They read the fold's own rows only — a record's
+// authority (who may take, yield, hand off or consent) is the runtime's derivation (docs/45 §4.6),
+// and the fold never reads runtime liveness (§4.2): membership is the only liveness it knows.
+
+/** The recorded checkouts one writer record covers: an exclusive record covers the single
+ * checkout its writer was recorded in; a rotating lease covers its members' recorded checkouts
+ * (docs/45 §4.1). No other coupling kind covers a checkout. */
+function writerCheckouts(record) {
+  if (record.coupling !== 'writer') return [];
+  if (Array.isArray(record.workspaces)) return record.workspaces;
+  return WORKSPACE_ID.test(record.workspaceId ?? '') ? [record.workspaceId] : [];
+}
+
+/** The live roster a rotating lease reads for eligibility to take (docs/45 §4.1): the group's
+ * CURRENT members when the lease was declared over a group, else the consent set the declaration
+ * named — a members-only lease has no group to re-read. */
+function leaseRoster(swarm, record) {
+  if (record.groupId !== null && record.groupId !== undefined) {
+    return [...(ownGet(swarm.groups, record.groupId)?.members ?? [])];
+  }
+  return [...(record.members ?? [])];
+}
+
+/** Two repo-relative paths overlap when they are string-equal or one is a prefix of the other at
+ * a `/` boundary (docs/45 §2): `impl/src` and `impl/src/a.mjs` overlap, `impl/src/x` and
+ * `impl/src/y` do not. */
+function claimPathsOverlap(left, right) {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+/** The first ACTIVE claim on the same recorded checkout whose paths overlap `paths`, or null.
+ * A claim on another checkout never conflicts (the lane model is per-worktree by construction)
+ * and a null workspace conflicts with nothing; one seat's own holds never conflict with each
+ * other (docs/45 §2). `rows` is the claim rows to judge — the swarm's own, or those plus the
+ * rows one admission is minting. */
+function claimConflictFor(rows, { claimId, participantId, workspaceId, paths }) {
+  if (workspaceId === null || !Array.isArray(paths) || paths.length === 0) return null;
+  for (const row of rows) {
+    if (row.status !== 'active' || row.claimId === claimId || row.participantId === participantId) continue;
+    if (row.workspaceId !== workspaceId || !Array.isArray(row.paths)) continue;
+    const overlapping = paths.filter((path) => row.paths.some((held) => claimPathsOverlap(path, held)));
+    if (overlapping.length > 0) return { holder: row.participantId, claimId: row.claimId, paths: overlapping };
+  }
+  return null;
+}
+
+/** The claim row one `swarm.claim_updated` records. `workspaceId` is never caller-supplied: a
+ * fresh claim binds the holder's RECORDED checkout, a hold that moves between seats keeps the
+ * checkout it was taken in, and a seat with no recorded checkout claims with null — absence,
+ * not a guess (docs/45 §2). */
+function claimRow(p, existingClaim, meta, { participantId, workspaceId, workId, paths, status }) {
+  return Object.freeze({
+    claimId: p.claimId, participantId, workId, paths, workspaceId, status,
+    ...(p.reason !== undefined ? { releaseReason: p.reason } : {}),
+    version: (existingClaim?.version ?? 0) + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
+  });
+}
+
+/** One coupling record's shape after a declare or a propose (docs/45 §4.1/§4.5). Fields the
+ * declaration does not carry stay ABSENT rather than null — an old record's key set is history,
+ * and a replayed log must fold byte-identically (docs/45 §11). */
+function couplingRecord(p, shape) {
+  const { members, writer, workspaceId, workspaces, holder, holds, arrivals, carriedArrivals,
+    consents, carriedConsents, proposed } = shape;
+  return {
+    couplingId: p.couplingId, coupling: p.coupling,
+    groupId: p.groupId ?? null, name: p.name ?? null, policy: p.policy ?? null,
+    members, writer, workspaceId, arrivals, carriedArrivals,
+    // Issue #425: the bypasses observed against this writer record — appended by the fold,
+    // carried as history, never rewritten by a re-declare.
+    ...(p.coupling === 'writer' ? { bypasses: Object.freeze([]) } : {}),
+    // A synchronization point's release threshold (docs/45 §4.3): absent means the point
+    // releases explicitly, exactly as every point declared before this design does.
+    ...(p.coupling === 'synchronization' && p.quorum !== undefined ? { quorum: p.quorum } : {}),
+    // The joint fields exist only where the design names them: a lease carries the checkouts it
+    // covers, the live hold and the hold history; a proposal carries its consent set until the
+    // declaration flips it (docs/45 §4.1, §4.5). Absent on every record written before them.
+    ...(workspaces !== undefined ? { workspaces } : {}),
+    ...(holder !== undefined ? { holder, holds } : {}),
+    ...(proposed !== undefined ? { proposed, consents } : {}),
+    ...(carriedConsents !== undefined && carriedConsents !== null ? { carriedConsents } : {}),
+    released: false, releasedBy: null, releaseReason: null,
+  };
+}
+
+/** The distinct recorded checkouts a set of seats works in, sorted — the coverage a rotating
+ * lease declares over (docs/45 §4.1). A seat with no recorded checkout contributes none. */
+function recordedCheckouts(swarm, memberIds) {
+  const covered = new Set();
+  for (const memberId of memberIds) {
+    const workspaceId = ownGet(swarm.participants, memberId)?.workspaceId;
+    if (WORKSPACE_ID.test(workspaceId ?? '')) covered.add(workspaceId);
+  }
+  return [...covered].sort();
+}
+
+/** The unreleased writer record whose coverage overlaps a declaration's, or null: the one-writer
+ * guarantee is per checkout across BOTH record families (docs/45 §4.1). The fold calls this and
+ * raises `swarm_writer_conflict` itself, so the refusal stays inside the audited fold body. The
+ * exemption is the pre-design one — an exclusive record re-declared by the SAME writer over the
+ * same checkout is that seat's own refresh, not a second writer (its own couplingId never
+ * conflicts, excluded before the scan). */
+function conflictingWriterRecord(swarm, couplingId, covered, exclusiveWriter) {
+  for (const row of Object.values(swarm.couplings ?? {})) {
+    if (row.coupling !== 'writer' || row.released || row.couplingId === couplingId) continue;
+    const shared = writerCheckouts(row).filter((workspaceId) => covered.includes(workspaceId));
+    if (shared.length === 0) continue;
+    if (exclusiveWriter !== null && row.writer === exclusiveWriter && shared.includes(row.workspaceId)) continue;
+    return { record: row, workspaceId: shared[0] };
+  }
+  return null;
+}
+
+/** The claims a conflict scan reads: the swarm's own rows, plus — inside one admission — the rows
+ * this same fold is minting, so a plan cannot claim the same paths twice (docs/45 §3). */
+function* swarmClaims(swarm, minting = null) {
+  yield* Object.values(swarm.claims ?? {});
+  if (minting !== null) yield* minting.values();
+}
+
+/** Expand an accepted plan into the rows it names (docs/45 §3): one work item per `plan.work`
+ * entry and one claim per `plan.claims` entry, with the deterministic `${proposalId}-claim-${index}`
+ * identity. Every row is judged BEFORE any is written — a conflict refuses the whole acceptance
+ * and records nothing — so a replay folds exactly what a hand-written sequence would have
+ * produced. */
+function proposalPlanRows(swarm, proposal, meta, admission) {
+  const work = new Map(Object.entries(swarm.work ?? {}));
+  const claims = new Map(Object.entries(swarm.claims ?? {}));
+  for (const entry of proposal.plan.work ?? []) {
+    if (admission && work.has(entry.workId)) {
+      integrity(`the accepted plan creates work ${entry.workId}, which swarm ${swarm.swarmId} already holds`, 'swarm_work_exists', {
+        field: 'plan.work', workId: entry.workId, proposalId: proposal.proposalId,
+      });
+    }
+    work.set(entry.workId, Object.freeze({
+      workId: entry.workId, objective: entry.objective, status: 'open',
+      version: (work.get(entry.workId)?.version ?? 0) + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    }));
+  }
+  (proposal.plan.claims ?? []).forEach((entry, index) => {
+    const claimId = `${proposal.proposalId}-claim-${index}`;
+    const holder = ownGet(swarm.participants, entry.participantId);
+    if (!holder) {
+      integrity(`plan claim ${claimId} names participant ${entry.participantId}, which swarm ${swarm.swarmId} does not hold`, 'participant_not_found', {
+        field: 'plan.claims', claimId, participantId: entry.participantId,
+      });
+    }
+    if (holder.status !== 'active') {
+      integrity(`plan claim ${claimId} names participant ${entry.participantId}, which is not active in swarm ${swarm.swarmId}`, 'participant_not_active', {
+        field: 'plan.claims', claimId, participantId: entry.participantId,
+      });
+    }
+    if (entry.workId !== undefined && !work.has(entry.workId)) {
+      integrity(`plan claim ${claimId} names work ${entry.workId}, which swarm ${swarm.swarmId} does not hold`, 'work_not_found', {
+        field: 'plan.claims', claimId, workId: entry.workId,
+      });
+    }
+    const paths = entry.paths !== undefined ? Object.freeze([...entry.paths]) : null;
+    const workspaceId = holder.workspaceId ?? null;
+    if (admission && paths !== null) {
+      const conflict = claimConflictFor(swarmClaims(swarm, claims),
+        { claimId, participantId: entry.participantId, workspaceId, paths });
+      if (conflict) {
+        integrity(`plan claim ${claimId} claims ${conflict.paths.join(', ')} on checkout ${workspaceId}, where ${conflict.holder} holds ${conflict.claimId}; name disjoint paths, or have that hold released or handed off, then re-arrive`, 'swarm_claim_conflict', {
+          field: 'plan.claims', claimId, participantId: entry.participantId,
+          holder: conflict.holder, holdingClaimId: conflict.claimId, paths: conflict.paths, workspaceId,
+        });
+      }
+    }
+    claims.set(claimId, Object.freeze({
+      claimId, participantId: entry.participantId, workId: entry.workId ?? null, paths, workspaceId, status: 'active',
+      version: 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    }));
+  });
+  return { work, claims };
 }
 
 // `admission` marks a prospective row being judged BEFORE it is written; rows read back from the
@@ -690,13 +1025,34 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       integrity(`coupling ${p.couplingId} is a ${existingCoupling.coupling} record, not a ${p.coupling}`, 'invalid_payload');
     }
     let record;
-    if (p.action === 'declare') {
-      if (p.coupling === 'synchronization' || p.coupling === 'failure') {
+    if (p.action === 'declare' || p.action === 'propose') {
+      const proposed = p.action === 'propose';
+      // A proposed coupling is put to its consent set; the proposer consents by proposing, and an
+      // amendment carries the consents already given forward (docs/45 §4.5). `declared` is true
+      // for every ordinary declare, and for a proposal once every named member has consented.
+      let consents = null;
+      let carriedConsents = null;
+      let declared = true;
+      if (proposed) {
+        for (const memberId of p.members) {
+          const member = ownGet(swarm.participants, memberId);
+          if (!member) integrity(`proposal member ${memberId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+          if (member.status !== 'active') integrity(`proposal member ${memberId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+        }
+        if (!p.members.includes(p.participantId)) {
+          integrity(`the proposer ${p.participantId} is one of the members it names — the proposer consents by proposing`, 'invalid_payload');
+        }
+        consents = Object.freeze([...new Set([p.participantId, ...(existingCoupling?.consents ?? [])])]
+          .filter((seat) => p.members.includes(seat)));
+        const carried = consents.filter((seat) => seat !== p.participantId);
+        carriedConsents = carried.length > 0 ? Object.freeze(carried) : null;
+        declared = p.members.every((seat) => consents.includes(seat));
+      } else if (p.coupling === 'synchronization' || p.coupling === 'failure') {
         if (!ownGet(swarm.groups, p.groupId)) {
           integrity(`coupling group ${p.groupId} not found in swarm ${p.swarmId}`, 'group_not_found');
         }
       }
-      if (p.coupling === 'failure') {
+      if (!proposed && p.coupling === 'failure') {
         const conflict = Object.values(swarm.couplings).find((row) => row.coupling === 'failure' && !row.released
           && row.groupId === p.groupId && row.couplingId !== p.couplingId);
         if (conflict) {
@@ -705,7 +1061,14 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       }
       let writer = null;
       let workspaceId = null;
+      let workspaces;
+      let holder;
+      let holds;
       let members = null;
+      // The exclusivity decision: a declaration whose coverage an unreleased writer record
+      // already covers refuses, naming that record (raised below, in this audited fold body).
+      let conflicting = null;
+      let exclusiveWriter = null;
       // A declare REPLACES the record's parameters. It never discards what the members already
       // reported: the arrivals the point holds are carried forward, and `carriedArrivals` names
       // them on the new record, so a re-declare can never wipe a barrier silently (audit #292).
@@ -715,42 +1078,69 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
         ? Object.freeze(arrivals.map((arrival) => arrival.participantId)) : null;
       if (p.coupling === 'synchronization') {
         // The group roster the point was declared over: seats that later leave the group (by
-        // release or regroup) stay named on the record instead of vanishing from it.
-        members = [...(ownGet(swarm.groups, p.groupId)?.members ?? [])];
+        // release or regroup) stay named on the record instead of vanishing from it. A proposed
+        // point's roster is the consent set it was put to.
+        members = proposed ? [...p.members] : [...(ownGet(swarm.groups, p.groupId)?.members ?? [])];
       }
-      if (p.coupling === 'writer') {
+      if (p.coupling === 'writer' && (proposed || isNonEmptyString(p.groupId))) {
+        // A rotating writer lease (docs/45 §4.1, §4.5): the group — or, for a proposal, the
+        // consent set the last arrival turns into the member roster — holds the write turn over
+        // its members' recorded checkouts, and any member may take it and yield it.
+        if (proposed && !declared) {
+          members = [...p.members];
+        } else {
+          if (proposed) {
+            members = [...consents];
+          } else {
+            const group = ownGet(swarm.groups, p.groupId);
+            if (!group) integrity(`coupling group ${p.groupId} not found in swarm ${p.swarmId}`, 'group_not_found');
+            members = [...group.members];
+          }
+          workspaces = Object.freeze(recordedCheckouts(swarm, members));
+          if (admission && workspaces.length === 0) {
+            integrity(`the members of ${proposed ? 'the consent set' : `group ${p.groupId}`} record no checkout, so a rotating writer lease over them could not be enforced; record the checkout a member works in (a participant is recorded in its checkout when it is recruited into one) before declaring the lease`, 'swarm_writer_workspace_unrecorded');
+          }
+          conflicting = conflictingWriterRecord(swarm, p.couplingId, workspaces, null);
+        }
+        // A re-declare of the SAME lease keeps its hold history and its live hold — a hold is
+        // never dropped silently; a lease declared over another group starts unheld.
+        const carriedHolds = !proposed && existingCoupling !== null
+          && existingCoupling.coupling === 'writer' && existingCoupling.groupId === p.groupId ? existingCoupling : null;
+        holder = carriedHolds?.holder ?? null;
+        holds = Object.freeze([...(carriedHolds?.holds ?? [])]);
+      }
+      if (p.coupling === 'writer' && !proposed && !isNonEmptyString(p.groupId)) {
         if (!isNonEmptyString(p.participantId)) {
           integrity('an exclusive writer claim must name participantId — the writer whose turn over the checkout it is', 'invalid_payload');
         }
-        const holder = ownGet(swarm.participants, p.participantId);
-        if (!holder) integrity(`writer participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
-        if (holder.status !== 'active') integrity(`writer participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+        const writerRow = ownGet(swarm.participants, p.participantId);
+        if (!writerRow) integrity(`writer participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+        if (writerRow.status !== 'active') integrity(`writer participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
         // Exclusivity is a fact about ONE recorded checkout. A claim over a participant with no
         // recorded checkout would name no resource at all, and the one-writer guarantee would be
         // inert exactly where it is promised (docs/39 §Declared coupling) — so at admission it
         // refuses and names the remedy. A row already in the ledger was admitted under the rules
         // of its day and replays as recorded (workspaceId null), never as a startup refusal.
-        if (admission && !WORKSPACE_ID.test(holder.workspaceId ?? '')) {
+        if (admission && !WORKSPACE_ID.test(writerRow.workspaceId ?? '')) {
           integrity(`participant ${p.participantId} has no recorded checkout, so an exclusive writer claim over it could not be enforced; record the checkout its participant works in (a participant is recorded in its checkout when it is recruited into one) before claiming it`, 'swarm_writer_workspace_unrecorded');
         }
-        workspaceId = holder.workspaceId;
-        const conflict = Object.values(swarm.couplings).find((row) => row.coupling === 'writer' && !row.released
-          && row.workspaceId === workspaceId && row.writer !== p.participantId);
-        if (conflict) {
-          integrity(`checkout ${workspaceId} already names the exclusive writer ${conflict.writer} (${conflict.couplingId}); release that record first`, 'swarm_writer_conflict');
-        }
+        workspaceId = writerRow.workspaceId;
+        exclusiveWriter = p.participantId;
         writer = p.participantId;
       }
-      record = {
-        couplingId: p.couplingId, coupling: p.coupling,
-        groupId: p.groupId ?? null, name: p.name ?? null, policy: p.policy ?? null,
-        members, writer, workspaceId, arrivals, carriedArrivals,
-        // Issue #425: the bypasses observed against this writer record — appended by the
-        // fold, carried as history, never rewritten by a re-declare (a re-declared writer
-        // record starts clean; the ledger keeps the old rows).
-        ...(p.coupling === 'writer' ? { bypasses: Object.freeze([]) } : {}),
-        released: false, releasedBy: null, releaseReason: null,
-      };
+      // Exclusivity is per checkout across BOTH record families (docs/45 §4.1) — the one-writer
+      // guarantee cannot depend on which spelling declared it.
+      if (conflicting === null && p.coupling === 'writer') {
+        const coverage = workspaces ?? (WORKSPACE_ID.test(workspaceId ?? '') ? [workspaceId] : []);
+        conflicting = conflictingWriterRecord(swarm, p.couplingId, coverage, exclusiveWriter);
+      }
+      if (conflicting !== null) {
+        integrity(`checkout ${conflicting.workspaceId} already names the writer ${conflicting.record.writer ?? conflicting.record.holder ?? conflicting.record.couplingId} (${conflicting.record.couplingId}); release that record first`, 'swarm_writer_conflict');
+      }
+      record = couplingRecord(p, {
+        members, writer, workspaceId, workspaces, holder, holds, arrivals, carriedArrivals,
+        ...(proposed ? { proposed: !declared, consents, carriedConsents } : {}),
+      });
     } else {
       if (!existingCoupling) {
         integrity(`coupling ${p.couplingId} not found in swarm ${p.swarmId}`, 'coupling_not_found');
@@ -758,28 +1148,132 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       if (existingCoupling.released) {
         integrity(`coupling ${p.couplingId} is already released`, 'swarm_coupling_released');
       }
-      if (p.action === 'arrive') {
+      // A writer record is a LEASE when it carries no exclusive writer: declared over a group
+      // (groupId) or by a consent set (docs/45 §4.1, §4.5). Both rotate; both are taken/yielded.
+      const lease = existingCoupling.coupling === 'writer' && existingCoupling.writer === null;
+      if (p.action === 'take' || p.action === 'yield') {
+        if (!lease) {
+          integrity(`coupling ${p.couplingId} is not a rotating writer lease, so it has no write turn to ${p.action}`, 'invalid_payload');
+        }
+        if (existingCoupling.proposed === true) {
+          integrity(`lease ${p.couplingId} is proposed, not declared: its members have not all consented yet`, 'invalid_payload');
+        }
+      }
+      if (p.action === 'take') {
+        // The fold reads membership, never runtime liveness (docs/45 §4.2): a take is admitted
+        // when the lease is unheld or the holder's membership has ended, and the runtime's
+        // liveness-admitted yield is what ends a live-runtime holder's hold.
+        const taker = ownGet(swarm.participants, p.participantId);
+        if (!taker) integrity(`taking participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+        if (taker.status !== 'active') integrity(`taking participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+        if (!leaseRoster(swarm, existingCoupling).includes(p.participantId)) {
+          integrity(`participant ${p.participantId} is not a member of the group that holds lease ${p.couplingId}`, 'swarm_not_a_member');
+        }
+        if (existingCoupling.holder !== null && existingCoupling.holder !== undefined) {
+          const heldBy = ownGet(swarm.participants, existingCoupling.holder);
+          if (heldBy && heldBy.status === 'active') {
+            integrity(`lease ${p.couplingId} is held by ${existingCoupling.holder}; that seat yields it, or a member takes over once its membership has ended`, 'swarm_writer_lease_held', {
+              couplingId: p.couplingId, holder: existingCoupling.holder,
+            });
+          }
+        }
+        record = { ...existingCoupling, holder: p.participantId,
+          holds: Object.freeze([...(existingCoupling.holds ?? []),
+            Object.freeze({ participantId: p.participantId, actor: meta.actor, seq: meta.seq, ts: meta.ts, yieldedBy: null, yieldReason: null })]) };
+      } else if (p.action === 'yield') {
+        if (existingCoupling.holder === null || existingCoupling.holder === undefined) {
+          integrity(`lease ${p.couplingId} holds no live hold, so there is nothing to yield`, 'swarm_writer_lease_unheld');
+        }
+        if (p.participantId !== existingCoupling.holder) {
+          integrity(`lease ${p.couplingId} is held by ${existingCoupling.holder}, not ${p.participantId}; the holder yields its own hold — a group member may yield a hold whose runtime is gone, which the runtime admits (§4.2)`, 'swarm_writer_lease_held', {
+            couplingId: p.couplingId, holder: existingCoupling.holder,
+          });
+        }
+        const yieldedBy = p.releasedBy ?? p.participantId;
+        assertAttribution(swarm, yieldedBy, meta, 'releasedBy');
+        const holds = [...(existingCoupling.holds ?? [])];
+        for (let at = holds.length - 1; at >= 0; at -= 1) {
+          if (holds[at].participantId === p.participantId && holds[at].yieldedBy === null) {
+            holds[at] = Object.freeze({ ...holds[at], yieldedBy,
+              ...(p.reason !== undefined ? { yieldReason: p.reason } : {}) });
+            break;
+          }
+        }
+        record = { ...existingCoupling, holder: null, holds: Object.freeze(holds) };
+      } else if (p.action === 'arrive') {
         if (!isNonEmptyString(p.participantId)) {
           integrity('an arrival must name participantId — the participant who arrived', 'invalid_payload');
         }
         const arriver = ownGet(swarm.participants, p.participantId);
         if (!arriver) integrity(`arriving participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
         if (arriver.status !== 'active') integrity(`arriving participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
-        const members = ownGet(swarm.groups, existingCoupling.groupId)?.members ?? [];
-        if (!members.includes(p.participantId)) {
-          integrity(`participant ${p.participantId} is not a member of group ${existingCoupling.groupId}`, 'swarm_not_a_member');
+        if (existingCoupling.proposed === true) {
+          // Arrival at a PROPOSED coupling is consent to it (docs/45 §4.5): the consent set is
+          // the record's own `members`, and the last consent declares the record.
+          if (!(existingCoupling.members ?? []).includes(p.participantId)) {
+            integrity(`participant ${p.participantId} is not in the consent set ${JSON.stringify([...(existingCoupling.members ?? [])])} of ${p.couplingId}`, 'swarm_not_a_member');
+          }
+          if ((existingCoupling.consents ?? []).includes(p.participantId)) {
+            integrity(`participant ${p.participantId} has already consented to ${p.couplingId}`, 'swarm_already_arrived');
+          }
+          const nextConsents = Object.freeze([...(existingCoupling.consents ?? []), p.participantId]);
+          const agreed = (existingCoupling.members ?? []).every((seat) => nextConsents.includes(seat));
+          if (!agreed) {
+            record = { ...existingCoupling, consents: nextConsents };
+          } else if (existingCoupling.coupling === 'writer') {
+            // The consent set becomes the member roster and coverage is derived from it; the
+            // declared lease starts unheld.
+            const covered = Object.freeze(recordedCheckouts(swarm, [...nextConsents]));
+            if (admission && covered.length === 0) {
+              integrity('the consenting members record no checkout, so a rotating writer lease over them could not be enforced; record the checkout a member works in (a participant is recorded in its checkout when it is recruited into one) before declaring the lease', 'swarm_writer_workspace_unrecorded');
+            }
+            const conflictingWriter = conflictingWriterRecord(swarm, p.couplingId, covered, null);
+            if (conflictingWriter !== null) {
+              integrity(`checkout ${conflictingWriter.workspaceId} already names the writer ${conflictingWriter.record.writer ?? conflictingWriter.record.holder ?? conflictingWriter.record.couplingId} (${conflictingWriter.record.couplingId}); release that record first`, 'swarm_writer_conflict');
+            }
+            record = { ...existingCoupling, members: [...nextConsents], consents: nextConsents,
+              proposed: false, workspaces: covered, holder: null, holds: Object.freeze([]) };
+          } else {
+            // A synchronization point declared by consent: arrivals start EMPTY — consent to the
+            // point's existence is not arrival at the point (docs/45 §4.5).
+            record = { ...existingCoupling, members: [...nextConsents], consents: nextConsents,
+              proposed: false, arrivals: Object.freeze([]) };
+          }
+        } else if (existingCoupling.coupling === 'synchronization') {
+          const members = ownGet(swarm.groups, existingCoupling.groupId)?.members ?? [];
+          if (!members.includes(p.participantId)) {
+            integrity(`participant ${p.participantId} is not a member of group ${existingCoupling.groupId}`, 'swarm_not_a_member');
+          }
+          if (existingCoupling.arrivals.some((arrival) => arrival.participantId === p.participantId)) {
+            integrity(`participant ${p.participantId} has already arrived at ${p.couplingId}`, 'swarm_already_arrived');
+          }
+          // An arrival is a seat's own report: it carries WHEN it was made and which identity
+          // made it, so "all reports in" is answerable from the artifact, not from a watch log.
+          const nextArrivals = Object.freeze([...existingCoupling.arrivals,
+            Object.freeze({ participantId: p.participantId, actor: meta.actor, seq: meta.seq, ts: meta.ts })]);
+          // Quorum (docs/45 §4.3): the satisfying arrival RELEASES the point in the same fold,
+          // attributed to the arriving seat — never to a lead who notices it completed. A roster
+          // shrunk below the quorum by departures is released by its LAST arrival, because the
+          // threshold is min(quorum, live members); a point declared without a quorum releases
+          // exactly as it always has (explicitly, docs/45 §11).
+          const live = members.filter((memberId) => ownGet(swarm.participants, memberId)?.status === 'active');
+          const arrivedSeats = new Set(nextArrivals.map((arrival) => arrival.participantId));
+          const arrivedCount = live.filter((seat) => arrivedSeats.has(seat)).length;
+          const satisfied = existingCoupling.quorum !== undefined && nextArrivals.length > 0
+            && arrivedCount >= Math.min(existingCoupling.quorum, live.length);
+          record = satisfied
+            ? { ...existingCoupling, arrivals: nextArrivals, released: true, releasedBy: p.participantId, releaseReason: 'quorum reached' }
+            : { ...existingCoupling, arrivals: nextArrivals };
+        } else {
+          integrity(`coupling ${p.couplingId} is a ${existingCoupling.coupling} record; only a synchronization point accepts arrivals`, 'invalid_payload');
         }
-        if (existingCoupling.arrivals.some((arrival) => arrival.participantId === p.participantId)) {
-          integrity(`participant ${p.participantId} has already arrived at ${p.couplingId}`, 'swarm_already_arrived');
-        }
-        // An arrival is a seat's own report: it carries WHEN it was made and which identity made
-        // it, so "all reports in" is answerable from the artifact rather than from a watch log.
-        record = { ...existingCoupling, arrivals: Object.freeze([...existingCoupling.arrivals,
-          Object.freeze({ participantId: p.participantId, actor: meta.actor, seq: meta.seq, ts: meta.ts })]) };
       } else {
         const releasedBy = p.releasedBy ?? p.participantId ?? null;
         assertAttribution(swarm, releasedBy, meta, 'releasedBy');
-        record = { ...existingCoupling, released: true, releasedBy, releaseReason: p.reason ?? null };
+        // Releasing a PENDING proposal withdraws it (docs/45 §4.5): a withdrawn proposal never
+        // expands, and it reads released so the withdrawal is never confused with a declaration.
+        record = { ...existingCoupling, released: true, releasedBy, releaseReason: p.reason ?? null,
+          ...(existingCoupling.proposed === true ? { proposed: false } : {}) };
       }
     }
     const couplings = new Map(Object.entries(swarm.couplings));
@@ -800,8 +1294,10 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     if (!coupling || coupling.coupling !== 'writer') {
       integrity(`coupling ${p.couplingId} is not a writer record in swarm ${p.swarmId}`, 'coupling_not_found');
     }
-    if (p.workspaceId !== coupling.workspaceId) {
-      integrity(`bypass names checkout ${p.workspaceId}, but coupling ${p.couplingId} covers ${coupling.workspaceId}`, 'invalid_payload');
+    // A lease covers its members' checkouts; an exclusive record the single checkout its writer
+    // was recorded in. Either way the bypass must name a checkout this record really covers.
+    if (!writerCheckouts(coupling).includes(p.workspaceId)) {
+      integrity(`bypass names checkout ${p.workspaceId}, but coupling ${p.couplingId} covers ${JSON.stringify(writerCheckouts(coupling))}`, 'invalid_payload');
     }
     const couplings = new Map(Object.entries(swarm.couplings));
     couplings.set(p.couplingId, Object.freeze({
@@ -811,6 +1307,149 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     }));
     swarms.set(p.swarmId, replaceField(swarm, 'couplings', couplings));
+    return;
+  }
+
+  if (kind === 'swarm.claim_updated') {
+    // A claim is an assignment-shaped hold with self-authority (docs/45 §2): create-or-replace
+    // with CAS, like every collection, and a handoff rewrites the holder in ONE row so there is
+    // no free window a third seat could take.
+    const existingClaim = ownGet(swarm.claims, p.claimId) ?? null;
+    const currentVersion = existingClaim?.version ?? 0;
+    if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
+      integrity(`swarm claim ${p.claimId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
+    }
+    if (!ownGet(swarm.participants, p.participantId)) {
+      integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    }
+    if (existingClaim === null && (p.handoffTo !== undefined || p.status === 'released')) {
+      integrity(`claim ${p.claimId} not found in swarm ${p.swarmId}, so it can neither be handed off nor released`, 'swarm_claim_not_found');
+    }
+    if (existingClaim === null && p.workId === undefined && p.paths === undefined) {
+      integrity(`claim ${p.claimId} is new, so it names its target: workId or paths`, 'invalid_payload');
+    }
+    // What only the runtime can decide is WHO may name a seat (docs/45 §4.6); what the fold
+    // refuses is a row that would silently move somebody else's live hold.
+    if (existingClaim !== null && existingClaim.status === 'active' && p.participantId !== existingClaim.participantId) {
+      integrity(`${p.claimId} is held by ${existingClaim.participantId}: a claim moves only from its holder — release or hand off your own claim, or an organizer moves any`, 'swarm_permission_required', {
+        ...CLAIM_MOVE_COORDINATES, claimId: p.claimId, holder: existingClaim.participantId,
+      });
+    }
+    if (p.workId !== undefined && !ownGet(swarm.work, p.workId)) {
+      integrity(`work ${p.workId} not found in swarm ${p.swarmId}`, 'work_not_found');
+    }
+    let handoffTo = null;
+    if (p.handoffTo !== undefined) {
+      const receiver = ownGet(swarm.participants, p.handoffTo);
+      if (!receiver) integrity(`participant ${p.handoffTo} not found in swarm ${p.swarmId}`, 'participant_not_found');
+      if (receiver.status !== 'active') integrity(`participant ${p.handoffTo} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+      if (p.status === 'released') {
+        integrity('a handoff keeps the claim active — release is its own act', 'invalid_payload');
+      }
+      handoffTo = p.handoffTo;
+    }
+    const participantId = handoffTo ?? p.participantId;
+    // The target is replaced whole when re-named, and kept otherwise (the work-objective rule):
+    // naming one side clears the other, so a claim never carries two targets.
+    const namesWork = p.workId !== undefined;
+    const workId = namesWork ? p.workId : (p.paths !== undefined ? null : (existingClaim?.workId ?? null));
+    const paths = p.paths !== undefined ? Object.freeze([...p.paths]) : (namesWork ? null : (existingClaim?.paths ?? null));
+    // A hold that MOVES between seats keeps the checkout it was taken in; a fresh claim binds the
+    // claimant's recorded checkout (docs/45 §2).
+    const movesHold = existingClaim !== null && existingClaim.status === 'active' && participantId !== existingClaim.participantId;
+    const workspaceId = movesHold
+      ? (existingClaim.workspaceId ?? null)
+      : (ownGet(swarm.participants, participantId)?.workspaceId ?? null);
+    if (admission && Array.isArray(paths)) {
+      // Admission-only (#304): a path claim that conflicts refuses BEFORE it is written, and a
+      // resident never refuses its own recorded history at startup.
+      const conflict = claimConflictFor(swarmClaims(swarm), { claimId: p.claimId, participantId, workspaceId, paths });
+      if (conflict) {
+        integrity(`claim ${p.claimId} claims ${conflict.paths.join(', ')} on checkout ${workspaceId}, where ${conflict.holder} holds ${conflict.claimId}; name your own disjoint paths, or ask the holder to release or hand off that hold`, 'swarm_claim_conflict', {
+          ...CLAIM_PATHS_COORDINATES, claimId: p.claimId, participantId,
+          holder: conflict.holder, holdingClaimId: conflict.claimId, paths: conflict.paths, workspaceId,
+        });
+      }
+    }
+    const claims = new Map(Object.entries(swarm.claims ?? {}));
+    claims.set(p.claimId, claimRow(p, existingClaim, meta, {
+      participantId, workspaceId, workId, paths,
+      status: p.status ?? existingClaim?.status ?? 'active',
+    }));
+    swarms.set(p.swarmId, replaceField(swarm, 'claims', claims));
+    return;
+  }
+
+  if (kind === 'swarm.proposal_updated') {
+    // A work split peers accept by arriving (docs/45 §3): the proposer consents by proposing, a
+    // named member's arrival IS its consent, and the last consent expands the plan into the rows
+    // it names — never a side effect, always the rows a hand-written sequence would have written.
+    const existingProposal = ownGet(swarm.proposals, p.proposalId) ?? null;
+    const currentVersion = existingProposal?.version ?? 0;
+    if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
+      integrity(`swarm proposal ${p.proposalId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
+    }
+    if (p.participantId !== undefined && !ownGet(swarm.participants, p.participantId)) {
+      integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    }
+    if (existingProposal === null && p.action !== 'propose') {
+      integrity(`proposal ${p.proposalId} not found in swarm ${p.swarmId}`, 'swarm_proposal_not_found');
+    }
+    if (existingProposal?.released === true && p.action !== 'propose') {
+      integrity(`proposal ${p.proposalId} is withdrawn, so it accepts no consent and never expands`, 'swarm_proposal_released');
+    }
+    let proposal;
+    if (p.action === 'propose') {
+      for (const memberId of p.members) {
+        const member = ownGet(swarm.participants, memberId);
+        if (!member) integrity(`proposal member ${memberId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+        if (member.status !== 'active') integrity(`proposal member ${memberId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+      }
+      if (!p.members.includes(p.participantId)) {
+        integrity(`the proposer ${p.participantId} is one of the members it names — the proposer consents by proposing`, 'invalid_payload');
+      }
+      // An amendment CARRIES the consents already given forward, naming them in
+      // `carriedConsents` (the carried-arrivals rule): re-proposing never wipes consent silently.
+      const consents = Object.freeze([...new Set([p.participantId, ...(existingProposal?.consents ?? [])])]
+        .filter((seat) => p.members.includes(seat)));
+      const carried = consents.filter((seat) => seat !== p.participantId);
+      proposal = {
+        proposalId: p.proposalId, members: Object.freeze([...p.members]), plan: deepFreezeBody(p.plan), consents,
+        ...(carried.length > 0 ? { carriedConsents: Object.freeze(carried) } : {}),
+        proposed: !p.members.every((seat) => consents.includes(seat)),
+        released: false, releasedBy: null, releaseReason: null,
+      };
+    } else if (p.action === 'arrive') {
+      const arriver = ownGet(swarm.participants, p.participantId);
+      if (arriver.status !== 'active') integrity(`consenting participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+      if (!existingProposal.members.includes(p.participantId)) {
+        integrity(`participant ${p.participantId} is not in the consent set ${JSON.stringify([...existingProposal.members])} of ${p.proposalId}`, 'swarm_not_a_member');
+      }
+      if (existingProposal.consents.includes(p.participantId)) {
+        integrity(`participant ${p.participantId} has already consented to ${p.proposalId}`, 'swarm_already_arrived');
+      }
+      const consents = Object.freeze([...existingProposal.consents, p.participantId]);
+      proposal = { ...existingProposal, consents,
+        proposed: !existingProposal.members.every((seat) => consents.includes(seat)) };
+    } else {
+      const releasedBy = p.releasedBy ?? p.participantId ?? null;
+      assertAttribution(swarm, releasedBy, meta, 'releasedBy');
+      proposal = { ...existingProposal, released: true, releasedBy, releaseReason: p.reason ?? null, proposed: false };
+    }
+    // Acceptance IS the expansion — the arrival that completes consent, or a proposal whose
+    // consent set was already complete when it was written.
+    const completes = proposal.proposed === false && proposal.released !== true
+      && (existingProposal === null || existingProposal.proposed === true);
+    const expanded = completes ? proposalPlanRows(swarm, proposal, meta, admission) : null;
+    const proposals = new Map(Object.entries(swarm.proposals ?? {}));
+    proposals.set(p.proposalId, Object.freeze({
+      ...proposal, version: currentVersion + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    }));
+    let next = replaceField(swarm, 'proposals', proposals);
+    if (expanded !== null) {
+      next = replaceField(replaceField(next, 'work', expanded.work), 'claims', expanded.claims);
+    }
+    swarms.set(p.swarmId, next);
     return;
   }
 

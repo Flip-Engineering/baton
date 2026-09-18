@@ -37,6 +37,11 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   group_not_found: row(404, ['fold'], 'the request names a group this swarm does not hold'),
   coupling_not_found: row(404, ['fold'], 'the request names a coupling record this swarm does not hold'),
   contribution_not_found: row(404, ['fold'], 'the request names a contribution this swarm does not hold'),
+  // Issues #422/#423: the claim and proposal families name their rows the way every other family
+  // does — the design's §2/§3 tables name the conflict codes; these two are the family's own
+  // not-found spelling, minted here so a handoff or an arrival names a row that does not exist.
+  swarm_claim_not_found: row(404, ['fold'], 'the request names a claim this swarm does not hold'),
+  swarm_proposal_not_found: row(404, ['fold'], 'the request names a work proposal this swarm does not hold'),
   swarm_recruit_predecessor_unavailable: row(404, ['runtime'], 'the recruit names a resume-from seat this swarm does not hold, or one that is no longer active'),
 
   // ── 409 conflict/state: the swarm holds a row or version the request disagrees with ──
@@ -45,7 +50,7 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_participant_exists: row(409, ['runtime'], 'the seat already exists in this swarm'),
   participant_not_active: row(409, ['fold'], 'the named seat exists but is not active, so it cannot take this role'),
   version_conflict: row(409, ['fold'], 'the request states an expectedVersion the current row does not carry'),
-  swarm_already_arrived: row(409, ['fold'], 'the seat has already arrived at this synchronization point'),
+  swarm_already_arrived: row(409, ['fold'], 'the seat has already arrived at this synchronization point, or already consented to this proposal'),
   swarm_already_closed: row(409, ['fold'], 'the swarm is already closed, so it cannot close again'),
   swarm_closed: row(409, ['runtime'], 'the swarm is no longer open, so it admits no recruitment'),
   swarm_coupling_released: row(409, ['fold'], 'the coupling record is already released, so it cannot release again'),
@@ -53,6 +58,13 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_writer_conflict: row(409, ['fold'], 'the checkout already names an exclusive writer'),
   swarm_writer_workspace_unrecorded: row(409, ['fold'], 'the claimed writer has no recorded checkout, so exclusivity could not be enforced'),
   swarm_not_a_member: row(409, ['fold'], 'the seat is not a member of the group the coupling names'),
+  // Issues #422/#423: the joint-coupling and claim folds' own state conflicts. `swarm_writer_conflict`
+  // stays the declare-time exclusivity conflict; the lease rows below are the take/yield state.
+  swarm_writer_lease_held: row(409, ['fold'], 'the rotating writer lease is held by another seat, which must yield or be taken over after it departs'),
+  swarm_writer_lease_unheld: row(409, ['fold'], 'the rotating writer lease holds no live hold, so there is nothing to yield'),
+  swarm_claim_conflict: row(409, ['fold'], 'the claimed paths overlap another active claim on the same recorded checkout'),
+  swarm_proposal_released: row(409, ['fold'], 'the work proposal is withdrawn, so it accepts no consent and never expands'),
+  swarm_work_exists: row(409, ['fold'], 'the accepted plan names work this swarm already holds'),
   contribution_duplicate: row(409, ['fold'], 'the event records a contribution identity the swarm already holds'),
   contribution_author_mismatch: row(409, ['fold'], 'the revision names an author other than the contribution author'),
   swarm_author_mismatch: row(409, ['runtime'], 'the update names an author other than the caller'),
@@ -82,7 +94,9 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
 
   // ── 403 permission: the caller may, but is not allowed to ──
   swarm_membership_required: row(403, ['runtime'], 'the caller holds no active membership in this swarm'),
-  swarm_permission_required: row(403, ['runtime'], 'the swarm has not granted the caller the authority this operation needs'),
+  // #423 raises this from the fold too: a claim row that names a seat other than the claim's
+  // holder is refused by the state lane (the runtime's §4.6 derivation decides WHO may name it).
+  swarm_permission_required: row(403, ['fold', 'runtime'], 'the swarm has not granted the caller the authority this operation needs'),
   self_check_refused: row(403, ['runtime'], 'a contribution cannot be checked by its own author'),
 
   // ── 503 transient: only where a restart genuinely repairs it ──

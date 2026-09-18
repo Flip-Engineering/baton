@@ -55,11 +55,13 @@ function swarmWithParticipant(swarmId = 'sw1', participantId = 'p1') {
 // ── SWARM_EVENT_KINDS ────────────────────────────────────────────────────────
 
 describe('SWARM_EVENT_KINDS', () => {
-  test('contains all 14 event kinds', () => {
+  test('contains all 16 event kinds', () => {
     const expected = [
       'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound',
       'swarm.participant_left', 'swarm.group_updated', 'swarm.work_updated',
       'swarm.assignment_updated', 'swarm.coupling_updated', 'swarm.coupling_writer_bypassed',
+      // Issues #422/#423: the joint coupling, claim and work-proposal families.
+      'swarm.claim_updated', 'swarm.proposal_updated',
       'swarm.context_updated',
       'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_reviewed', 'swarm.closed',
     ];

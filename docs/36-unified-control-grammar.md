@@ -482,7 +482,7 @@ the MCP tool table, and the web bus gate on.
 | `swarm.check` | `swarmId`, `participantId`, `contributionId`, `checkId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
 | `swarm.stop` | `swarmId`, `participantId`, `reason`, `idempotencyKey`, `view` | `emergency_stop`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 
-**`swarm.update` kinds (closed set, 10).** Every domain change a caller may name; the payload
+**`swarm.update` kinds (closed set, 12).** Every domain change a caller may name; the payload
 fields each kind requires of the caller are read from the payload schemas
 (`impl/src/swarm-event-schemas.mjs`).
 
@@ -492,6 +492,8 @@ fields each kind requires of the caller are read from the payload schemas
 | `swarm.work_updated` | recorded by the coordination store and replayed by the fold | `workId` |
 | `swarm.assignment_updated` | recorded by the coordination store and replayed by the fold | `assignmentId`, `participantId`, `workId`, `status` |
 | `swarm.coupling_updated` | recorded by the coordination store and replayed by the fold | `couplingId`, `coupling`, `action` |
+| `swarm.claim_updated` | recorded by the coordination store and replayed by the fold | `claimId` |
+| `swarm.proposal_updated` | recorded by the coordination store and replayed by the fold | `proposalId`, `action` |
 | `swarm.holder_released` | expanded by the runtime into the events it names | `participantId` |
 | `swarm.context_updated` | recorded by the coordination store and replayed by the fold | `key`, `body` |
 | `swarm.contribution_recorded` | recorded by the coordination store and replayed by the fold | — |
