@@ -36,8 +36,11 @@ export const SWARM_STORE_EVENT_KINDS = Object.freeze(SWARM_EVENT_KINDS.filter((k
 // refusals it records about the mutations it refused. They ride the same coordination log as
 // every driver record (never the swarm fold), and they are NOT caller-submittable: a fabricated
 // operation receipt or refusal would be a lie, so `swarm.update` admits SWARM_EVENT_KINDS only.
+// The two literals below are the lifecycle rows whose shape the schema table does not describe;
+// every described row arrives through its table key, so a kind can never be listed twice
+// (issue #469 moved `swarm.operation_completed` into the table with its objective reference).
 export const SWARM_DRIVER_EVENT_KINDS = Object.freeze([
-  'swarm.operation_requested', 'swarm.operation_completed', 'swarm.operation_unavailable',
+  'swarm.operation_requested', 'swarm.operation_unavailable',
   ...Object.keys(SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS),
 ]);
 

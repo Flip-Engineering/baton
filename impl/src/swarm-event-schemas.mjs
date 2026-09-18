@@ -201,6 +201,32 @@ export const SWARM_EVENT_EXAMPLES = Object.freeze(Object.fromEntries(
 // looks like when a watch wakes on one.
 
 export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
+  // Issue #469: the operation lane's own terminal row — one per successful operation (`_once`),
+  // carrying the answer that operation returned. When the answer named a seat's objective (a
+  // `swarm.stop`'s wrapped run view does) the row carries the REFERENCE that reaches it, never a
+  // copy of the text: the measured `swarm.stop` row was 998 271 B because the same 320 602 B
+  // objective was spelled three times inside it, and 473 such rows held 56 MB of the ledger's
+  // 180 MB parsed window — paid again on every cold open. The pair is the one the participant row
+  // mints (#464): `objectiveRef {kind: 'swarm.participant_joined', seq}` names the join row that
+  // holds the whole text, `objectiveBytes` is the length a reader did not get, and the objective's
+  // first line rides the wrapped answer bounded by the ONE `view.role.head` registry row.
+  'swarm.operation_completed': Object.freeze({
+    summary: Object.freeze('the terminal row of one successful swarm operation, carrying the answer it returned — with the seat\'s objective named by REFERENCE whenever that answer named one'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the operation ran in — null when the command named none', { type: 'string|null' }),
+      command: STRING('the swarm command that completed'),
+      operationKey: STRING('the identity the operation replays under — a hash of the command, the swarm, the caller and the caller\'s idempotency key'),
+      participantId: STRING('the seat the operation is attributed to — null when the caller was not a seat of the swarm', { type: 'string|null' }),
+      objectiveRef: { type: 'json', description: 'the seat\'s objective by REFERENCE — {kind: \'swarm.participant_joined\', seq}, the ledger row that holds the whole text (the same pair the participant row carries, #464) — absent for an operation whose answer named no objective; the objective itself is never a field of this row', expectation: 'the reference object the seat\'s join row minted, or absent', example: { kind: 'swarm.participant_joined', seq: 42 } },
+      objectiveBytes: { type: 'json', description: 'the byte length of the objective text this row did NOT carry, beside objectiveRef — absent with it', expectation: 'a byte count, absent with objectiveRef', example: 320602 },
+      result: JSON_VALUE('the answer the operation returned, with every objective it wrapped replaced by the same reference (and the objective\'s first line bounded by the `view.role.head` registry row) — null for a terminal row whose success the lane settled without an answer'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', command: 'swarm.stop', operationKey: 'swarm-operation:9f2c1d…',
+      participantId: 'ada', objectiveRef: Object.freeze({ kind: 'swarm.participant_joined', seq: 42 }),
+      objectiveBytes: 320602, result: null,
+    }),
+  }),
   'swarm.operation_refused': Object.freeze({
     summary: Object.freeze('a swarm mutation the runtime refused, recorded by the runtime itself'),
     fields: Object.freeze({

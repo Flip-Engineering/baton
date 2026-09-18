@@ -2824,6 +2824,26 @@ export function swarmWakeSummary(view) {
   };
 }
 
+/** Issue #469: `baton swarm stop`'s rendering. The receipt a stop answers with names the seat's
+ * objective by REFERENCE — `objectiveRef {kind, seq}` + `objectiveBytes`, the pair the seat's own
+ * `swarm.participant_joined` row mints (#464) — and carries the objective's FIRST LINE, bounded by
+ * the ONE `view.role.head` registry row the seat row's `role` is cut by. The CLI renders exactly
+ * that resolved form: `objective` prints the line the reference names, so an operator reading the
+ * answer reads the line it decides on and the row that holds the whole text — never the megabytes
+ * the wrapped view used to restate (measured: one `swarm_stop` row was 998 271 B, the same 320 602 B
+ * objective three times). A receipt that names no reference is not a #469-shaped stop answer and
+ * renders untouched. */
+export function swarmStopRendering(answer) {
+  if (!record(answer) || !record(answer.result)) return answer;
+  const view = answer.result;
+  if (!record(view.objectiveRef)) return answer;
+  const line = typeof view.planPreview?.objective === 'string' ? view.planPreview.objective : null;
+  return Object.freeze({
+    ...answer,
+    result: Object.freeze({ ...view, objective: line }),
+  });
+}
+
 function swarmHasLiveParticipant(view) {
   return (view.participants ?? []).some((row) => LIVE_RUNTIME_STATES.has(row.runtime?.state));
 }
@@ -4965,6 +4985,11 @@ export async function runBatonCli(parsed, client, options = {}) {
     // Issue #451: the landing verb's refusal carries its cause, so the CLI renders it under the
     // refusal line. Every other command keeps the transport's own answer untouched.
     if (parsed.name === 'swarm.integrate') return runSwarmIntegrateCli(parsed, client);
+    // Issue #469: a stop's receipt resolves its objective through the reference it carries, so the
+    // printed answer shows the line the reference names rather than a second copy of the text.
+    if (parsed.name === 'swarm.stop') {
+      return swarmStopRendering(await client.command(parsed.name, parsed.args, parsed.idempotencyKey));
+    }
     return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   }
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
