@@ -8,6 +8,10 @@
 // Root hooks validateSwarmEvent and foldSwarmEvent to the same durable coordination
 // log, not a parallel journal. Consumers own the log; this module owns the fold.
 
+// Issue #430: every code `refuse`/`integrity` raise draws from the family's ONE closed refusal
+// set; minting a code outside it is a construction-time error.
+import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
+
 export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.created',
   'swarm.participant_joined',
@@ -61,10 +65,12 @@ export class SwarmIntegrityError extends Error {
 }
 
 function refuse(message, code, detail = null) {
+  assertSwarmRefusalCode(code, 'swarm-state.refuse');
   throw new SwarmRefusal(message, code, detail);
 }
 
 function integrity(message, code) {
+  assertSwarmRefusalCode(code, 'swarm-state.integrity');
   throw new SwarmIntegrityError(message, code);
 }
 

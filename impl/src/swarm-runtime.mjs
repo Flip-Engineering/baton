@@ -9,6 +9,9 @@ import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
   isContributionContractBody, projectContributionContract, validateContributionContract } from './contribution-contract.mjs';
 import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
+// Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
+// minting a code outside it is a construction-time error.
+import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
 import { pathInScopes } from './path-scope.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
@@ -34,7 +37,10 @@ const definedJson = (value) => {
     .map(([key, member]) => [key, definedJson(member)]));
 };
 const hash = (value) => createHash('sha256').update(JSON.stringify(canonicalJson(definedJson(value)))).digest('hex');
-const refuse = (message, code, detail = {}) => { throw Object.assign(new Error(message), { code, detail }); };
+const refuse = (message, code, detail = {}) => {
+  assertSwarmRefusalCode(code, 'swarm-runtime.refuse');
+  throw Object.assign(new Error(message), { code, detail });
+};
 const childrenByParent = (swarm) => {
   const childrenOf = new Map();
   for (const participant of Object.values(swarm.participants)) {
