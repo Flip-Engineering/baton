@@ -11,7 +11,7 @@
 // resume) because the app-server protocol is designed for exactly that, per XA6/XA7/XA8.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { renderBrief } from './adapter.mjs';
+import { assertCardProviderRefusals, providerRefusalsForHarness, renderBrief } from './adapter.mjs';
 import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { guardChildPipes, normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
@@ -270,7 +270,7 @@ export class CodexAppServerCli {
 
   card() {
     const autonomy = this._approvalPolicy === 'never' ? 'unattended' : 'interactive';
-    return {
+    return assertCardProviderRefusals({
       harness: 'codex',
       version: this._version,
       authPosture: 'subscription',
@@ -327,7 +327,10 @@ export class CodexAppServerCli {
         kill: 'native',
         pause: 'unsupported',
       },
-    };
+      // #387: this tier's own provider refusal vocabulary, derived from the harness the card names
+      // (the ONE card vocabulary in adapter.mjs) — the same table an omp route publishes from.
+      providerRefusals: providerRefusalsForHarness('codex'),
+    });
   }
 
   onEvent(cb) {
