@@ -181,6 +181,13 @@ const DEFAULT_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute'])
 const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.group_updated': 'organize', 'swarm.work_updated': 'organize',
   'swarm.assignment_updated': 'organize', 'swarm.coupling_updated': 'organize',
+  // Issues #422/#423 (docs/45 §4.6): the two new kinds exist in the public set, so this table —
+  // the ONE derivation dispatch and the view's `updates` rows share — must declare them too
+  // (the load-time agreement below is the tripwire). They start at the STRICT default, exactly
+  // as `swarm.work_updated` does: the per-payload relaxation (a seat's own claim at contribute,
+  // a member's own consent at read, a group member's propose) is the §4.6 derivation and lands
+  // with this file's runtime lane; until then only an organizer admits them.
+  'swarm.claim_updated': 'organize', 'swarm.proposal_updated': 'organize',
   'swarm.holder_released': 'organize',
   'swarm.context_updated': 'communicate',
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',

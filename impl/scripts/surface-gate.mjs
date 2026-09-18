@@ -365,6 +365,15 @@ const SWARM_FOLD_ADMISSION_PINS = Object.freeze({
   work_dependency_cycle: 'dependency rings re-derive identically; the corpus carries declared dependsOn rows',
   contribution_author_mismatch: 'a revision names its own contribution author, re-derived at replay',
   contribution_revision_conflict: 'one revision per contribution re-derives identically at replay',
+  // The joint couplings, claims and work proposals (issues #422/#423, docs/45): every one of
+  // these re-derives from the SAME projection the admission fold read, so a refusal at replay
+  // names a ledger no same-vintage store wrote.
+  swarm_writer_lease_held: 'a take/yield of a lease re-derives the live hold from the replayed record, seat for seat',
+  swarm_writer_lease_unheld: 'a yield of an unheld lease re-derives identically; the admission fold refuses it before any row lands',
+  swarm_claim_not_found: 'a claim handoff or release names a claim the replayed projection holds at that seq',
+  swarm_permission_required: 'a claim move names the seat the replayed claim holds; the runtime admitted the row for its holder or an organizer, and an organizer names the holder',
+  swarm_proposal_not_found: 'a consent or withdrawal names a proposal the replayed projection holds at that seq',
+  swarm_proposal_released: 'a consent to a withdrawn proposal re-derives identically; the withdrawal is recorded before it',
   // The fold tail: fires only when a kind joins SWARM_EVENT_KINDS without a fold branch —
   // the new kind never reached history, so nothing recorded can refuse here.
   unsupported_event_kind: 'a kind added to SWARM_EVENT_KINDS without a fold branch never reached history',

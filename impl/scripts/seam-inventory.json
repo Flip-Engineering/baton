@@ -12538,10 +12538,10 @@
         {
           "name": "_packageRead",
           "ordinal": 0,
-          "size": 32,
-          "seam": "surface",
+          "size": 43,
+          "seam": "admission",
           "evidence": [
-            "surface:no_authority_touched"
+            "admission:swarm_refusal"
           ]
         },
         {

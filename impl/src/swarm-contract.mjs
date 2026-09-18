@@ -10,6 +10,10 @@ export const SWARM_EVENT_KINDS = Object.freeze([
   'swarm.work_updated',
   'swarm.assignment_updated',
   'swarm.coupling_updated',
+  // Issues #422/#423 (docs/45-open-coordination.md): the joint coupling actions extend
+  // `swarm.coupling_updated`; a claim and a work proposal are their own kinds.
+  'swarm.claim_updated',
+  'swarm.proposal_updated',
   'swarm.holder_released',
   'swarm.context_updated',
   'swarm.contribution_recorded',
@@ -359,6 +363,10 @@ export function swarmChangedRow(kind, payload = {}) {
       return row('assignments', payload.assignmentId ?? null);
     case 'swarm.coupling_updated':
       return row('couplings', payload.couplingId ?? null);
+    case 'swarm.claim_updated':
+      return row('claims', payload.claimId ?? null);
+    case 'swarm.proposal_updated':
+      return row('proposals', payload.proposalId ?? null);
     case 'swarm.context_updated':
       return row('context', payload.key ?? null);
     case 'swarm.contribution_recorded':
