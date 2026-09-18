@@ -198,7 +198,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   wakeRow({
     wakeClass: 'dead', scope: 'deployment', terminal: true,
     next: 'baton swarm update {swarmId} swarm.holder_released',
-    summary: 'a worker runtime crashed; its holder seats are still assigned to it until released',
+    summary: 'a worker runtime died — a crash, or a seat whose provider killed it; its holder seats are still assigned to it until released',
     // #442: a seat whose provider killed its worker IS a worker death, and it is the class that
     // was silent through six GLM kills: the fault death is a FAILED TURN followed by a policy kill,
     // never a crash cert, so nothing derived from `lifecycle.crashed` ever fires for it. The
