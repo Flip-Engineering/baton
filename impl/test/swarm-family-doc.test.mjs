@@ -84,16 +84,32 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   // assignment_holder_gone (the same hold-outlives-the-seat row for a claim), the rotating-lease
   // arm of coupling_writer_gone (minted in the writer block) and shared_checkout_overlap, minted
   // after the per-seat change-set rows whose cold fill it reads.
-  assert.equal(kinds.length, 21, 'the runtime mints twenty-one attention kinds');
+  // #422/#423 lane 2 adds claim_holder_gone and shared_checkout_overlap; #433 adds unreviewed_contribution
+  // (minted beside the contribution rows). The list below is the mint order the extractor reads.
+  assert.equal(kinds.length, 22, 'the runtime mints twenty-two attention kinds');
   assert.deepEqual(kinds, [
-    'worker_lost_on_restart', 'participant_runtime_dead', 'provider_fault', 'member_left_session_live',
+    'worker_lost_on_restart',
+    'participant_runtime_dead',
+    'provider_fault',
+    'member_left_session_live',
     'delegation_orphaned',
-    'assignment_holder_gone', 'claim_holder_gone', 'group_member_gone', 'coupling_writer_gone',
-    'coupling_writer_bypassed', 'closed_with_live_participants', 'check_queued',
-    'check_queue_timeout', 'recruit_queued', 'recruit_queue_timeout',
-    'worktree_foreign_changes', 'turn_ended_without_contribution', 'provider_auth_expired',
+    'assignment_holder_gone',
+    'claim_holder_gone',
+    'group_member_gone',
+    'coupling_writer_gone',
+    'coupling_writer_bypassed',
+    'closed_with_live_participants',
+    'check_queued',
+    'check_queue_timeout',
+    'recruit_queued',
+    'recruit_queue_timeout',
+    'unreviewed_contribution',
+    'worktree_foreign_changes',
+    'turn_ended_without_contribution',
+    'provider_auth_expired',
     'shared_checkout_overlap',
-    'operation_refused', 'operation_unconfirmed',
+    'operation_refused',
+    'operation_unconfirmed',
   ]);
   // Fail closed: a source whose mint sites changed shape must refuse, never render an empty list.
   assert.throws(() => swarmAttentionKinds('const organization = [];'), /could not be read/u);

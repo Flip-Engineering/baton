@@ -62,7 +62,9 @@ async function dispatches(t, surface, spellingOf) {
     assert.ok(row, `${spelling} is advertised on the ${surface} surface`);
     const args = { repoId: REPO_ID, swarmId: 'swarm-1', participantId: 'reviewer', objective: 'Review the change',
       message: 'Focus on the tests', reason: 'Work complete', event: 'swarm.contribution_recorded',
-      contributionId: 'contribution-1', checkId: 'check-1', purpose: 'Ship the release', idempotencyKey: `key-${id}` };
+      contributionId: 'contribution-1', checkId: 'check-1', purpose: 'Ship the release', idempotencyKey: `key-${id}`,
+      // #296: swarm.integrate names the branch it lands onto.
+      target: 'master' };
     // Only the arguments the closed tool schema declares are sent.
     const sent = Object.fromEntries(Object.entries(args).filter(([key]) => Object.hasOwn(row.inputSchema.properties, key)));
     const before = commandCalls.length;

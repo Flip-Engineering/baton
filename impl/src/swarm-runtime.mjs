@@ -3550,7 +3550,9 @@ export class SwarmRuntime {
       .sort((left, right) => compareCanonicalStrings(left.participantId, right.participantId));
     for (const participant of others) {
       const worker = this._workerFor(participant, workers);
-      const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }).length : 0;
+      // A coordinator that offers no turn ledger (a light fixture) reads as no paused turns.
+      const paused = worker && typeof this.coordinator.pausedTurns === 'function'
+        ? this.coordinator.pausedTurns({ workerId: worker.id }).length : 0;
       const liveness = swarmParticipantLiveness(worker, paused);
       const runtime = { workerId: worker?.id ?? null, state: liveness.state, turn: liveness.turn, live: liveness.live };
       if (!this._canAct({ ...participant, runtime })) continue;
@@ -3657,9 +3659,12 @@ export class SwarmRuntime {
     const predecessorWorkerDead = predecessorWorkerId !== null
       && !this.coordinator.list().some((h) => h.id === predecessorWorkerId
         && ['pending', 'working', 'blocked', 'idle', 'stopping'].includes(h.status));
-    const liveHolders = predecessorWorkerDead
-      ? (ctxResult?.holders ?? []).filter((id) => id !== predecessorWorkerId)
-      : (ctxResult?.holders ?? []);
+    // A live predecessor is still USING its checkout: the successor never binds or carries it
+    // (it starts fresh and inherits guidance, the #318 contract); a dead predecessor's checkout
+    // is carriable unless some OTHER live worker holds it. `liveHolders` therefore names the
+    // FOREIGN live holders only, and `predecessorLive` says whether the predecessor itself is.
+    const predecessorLive = predecessorWorkerId !== null && !predecessorWorkerDead;
+    const liveHolders = (ctxResult?.holders ?? []).filter((id) => id !== predecessorWorkerId);
     let snapshotSha = null;
     for (const event of this.store.eventsView()) {
       const kind = event.kind === 'driver.recorded' ? event.payload?.kind : event.kind;
@@ -3669,7 +3674,7 @@ export class SwarmRuntime {
       snapshotSha = typeof payload.sha === 'string' ? payload.sha : null;
     }
     const baseSha = sessionContext?.baseSha ?? null;
-    return { workspaceId, exists, changedPaths, sessionContext, liveHolders, snapshotSha, baseSha };
+    return { workspaceId, exists, changedPaths, sessionContext, liveHolders, predecessorLive, snapshotSha, baseSha };
   }
 
   /** Who parked guidance is from, for the brief line that delivers it (#337): the same
@@ -4584,7 +4589,10 @@ export class SwarmRuntime {
         let predecessorWs = null;
         if (predecessor && !workspace) {
           predecessorWs = this._predecessorWorkspace(current, predecessor.participantId);
-          if (predecessorWs) {
+          if (predecessorWs && predecessorWs.predecessorLive) {
+            // #318: a resume from a seat that is still working inherits its guidance and
+            // contracts only — the checkout stays the predecessor's, the successor starts fresh.
+          } else if (predecessorWs) {
             if (predecessorWs.exists && predecessorWs.liveHolders.length === 0) {
               workspace = {
                 workspaceId: predecessorWs.workspaceId,
@@ -4739,7 +4747,8 @@ export class SwarmRuntime {
         // Issue #385: record the workspace carry after binding. Case 1: the successor is
         // already bound to the predecessor's checkout. Case 2: a new worktree was created
         // and the snapshot diff is applied to it now.
-        if (predecessorWs && predecessor) {
+        // #318 × #385: a live predecessor keeps its checkout — nothing is carried, no row is written.
+        if (predecessorWs && predecessor && !predecessorWs.predecessorLive) {
           let carriedPaths = predecessorWs.changedPaths;
           const carriedWorkspaceId = checkout?.workspaceId ?? predecessorWs.workspaceId;
           if (!predecessorWs.exists && predecessorWs.snapshotSha) {

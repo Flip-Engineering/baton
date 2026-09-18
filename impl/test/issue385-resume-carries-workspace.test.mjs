@@ -199,23 +199,24 @@ test('385-d: workspace.carried_from is in SWARM_EVENT_KINDS and validates + fold
 // (c) Held-workspace refusal
 // ——————————————————————————————————————————————————————————————————
 
-test('385-c: recruiting a successor while the predecessor workspace is live-held is refused', async (t) => {
+test('385-c: a successor of a LIVE predecessor starts in a fresh workspace and carries nothing; a foreign live holder of a dead predecessor\'s checkout refuses', async (t) => {
   const { app, driver } = await fixture(t);
   await createSwarm(app, 'held');
   const alpha = await recruit(app, { swarmId: 'held', participantId: 'alpha', objective: 'Hold workspace' });
   const alphaWorker = await working(driver, alpha.runId);
   assert.ok(alphaWorker.sessionContext, 'alpha has a session context with a workspace');
 
-  await assert.rejects(
-    recruit(app, { swarmId: 'held', participantId: 'bravo', objective: 'Try resume',
-      resumeFrom: 'alpha', key: 'recruit:held:bravo-held' }),
-    (error) => {
-      assert.equal(error.code, 'swarm_workspace_unavailable',
-        'the refusal code is swarm_workspace_unavailable');
-      return true;
-    },
-    'recruiting while the predecessor workspace is held by a live worker is refused',
-  );
+  // #318 × #385: alpha is still working, so bravo inherits alpha's guidance but NOT its checkout —
+  // a fresh workspace, no workspace.carried_from row, never a refusal.
+  const bravo = await recruit(app, { swarmId: 'held', participantId: 'bravo', objective: 'Continue alongside',
+    resumeFrom: 'alpha', key: 'recruit:held:bravo-held' });
+  const bravoWorker = await working(driver, bravo.runId);
+  assert.notEqual(bravoWorker.sessionContext?.ownerTaskId, alphaWorker.sessionContext.ownerTaskId,
+    'a live predecessor keeps its own checkout; the successor starts fresh');
+  const carried = driver.coordination.eventsView()
+    .filter((row) => (row.kind === 'driver.recorded' ? row.payload?.kind : row.kind) === 'workspace.carried_from')
+    .filter((row) => row.payload?.participantId === 'bravo');
+  assert.deepEqual(carried, [], 'nothing is carried from a predecessor that is still using its workspace');
 });
 
 // ——————————————————————————————————————————————————————————————————

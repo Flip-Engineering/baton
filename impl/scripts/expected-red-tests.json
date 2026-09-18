@@ -482,10 +482,6 @@
       "reason": "#441"
     },
     {
-      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (e) a seat's claim on an out-of-scope file is a claim row, not a handover",
-      "reason": "#441"
-    },
-    {
       "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (f) the root's reader refusing (no credential) refuses the recruit naming the issue, and no seat joins",
       "reason": "#441"
     },
