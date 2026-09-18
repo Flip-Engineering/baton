@@ -4,7 +4,7 @@ import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PRO
   validateSwarmCommand, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
   swarmKnowledgeCommand, swarmKnowledgePermission, readRecruitContextPackageOption,
   withoutRecruitContextPackageOption } from './swarm-contract.mjs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
@@ -18,8 +18,12 @@ import { pathInScopes } from './path-scope.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
-import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree } from './worktree.mjs';
+import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts } from './worktree.mjs';
 import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
+// Issue #459: the landing's two out-of-process steps run through the resident's own supervised
+// pool — an ASYNCHRONOUS child of this resident, never a `spawnSync` on its loop — and the gate
+// run takes the host verify lease through the suite runner's seam.
+import { SupervisedProcesses, runSupervisedGateRun, supervisedGateTimeoutMs } from './coordinator.mjs';
 // #341 part 3: the ONE rendering of the deployment's route-usage rows, shared with the
 // provider-facing brief (adapter.mjs renderBrief) so the seat's brief and the rendered subsection
 // can never spell the same rows differently.
@@ -47,18 +51,9 @@ const INTEGRATION_REGENERATORS = Object.freeze([
   'impl/scripts/render-surface-docs.mjs',
 ]);
 
-/** Run one node script in a checkout, returning its status and captured streams. A landing runs
- * the deployment's OWN scripts in the scratch checkout — never a shell, and never a command the
- * caller named. */
-function runNodeScript(cwd, args, env = {}) {
-  const result = spawnSync(process.execPath, args, {
-    cwd, encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024,
-  });
-  return {
-    status: result.status ?? 1,
-    stdout: `${result.stdout ?? ''}`, stderr: `${result.stderr ?? ''}`,
-  };
-}
+/** The suite runner a landing's gate run invokes, and the one script name every row of that step
+ * spells. */
+const INTEGRATION_GATE_RUNNER = 'impl/scripts/run-suite.mjs';
 
 /** The #326 tail for one captured stream: bound the raw bytes by the adapter's own ceiling, then
  * redact with the one sanitizer. The LAST bytes survive — a dying step's own words are the
@@ -72,30 +67,46 @@ function boundedStderrTail(raw) {
   return crashedStderrTail(session);
 }
 
-/** The default regenerators: the three the repository always runs, each told to WRITE. */
-async function defaultIntegrationRegenerate(dir) {
+/** The default regenerators: the three the repository always runs, each told to WRITE.
+ *
+ * Issue #459: each one is an out-of-process child of the resident's supervised pool — never a
+ * `spawnSync` on its loop. A synchronous child froze the resident for the whole step, and the
+ * landing's own gate run waits on an admission the frozen loop is what answers. */
+async function defaultIntegrationRegenerate(dir, { pool = null } = {}) {
   for (const script of INTEGRATION_REGENERATORS) {
-    const result = runNodeScript(dir, [script, '--write']);
-    if (result.status !== 0) {
+    const result = await (pool ?? new SupervisedProcesses()).run({
+      file: script, args: ['--write'], cwd: dir, label: `integration-regenerate:${script}`,
+      timeoutMs: supervisedGateTimeoutMs(),
+    });
+    if (result.status !== 'ok') {
       // Issue #451: the refusal carries the cause — WHICH step died, its exit status, and a
       // bounded, redacted tail of its stderr — so the operator reads why the landing stopped
-      // instead of reproducing the checkout by hand to find out.
+      // instead of reproducing the checkout by hand to find out. A step the supervisor killed at
+      // its deadline says exactly that instead of wearing the exit status of a kill.
       throw Object.assign(new Error(`${script} --write failed in the landing checkout`), {
         code: 'integrate_change_invalid',
-        script, exit: result.status, stderrTail: boundedStderrTail(result.stderr),
+        script, exit: result.code, stderrTail: boundedStderrTail(result.stderr),
+        ...(result.timedOut ? { timedOut: true, timeoutMs: supervisedGateTimeoutMs() } : {}),
       });
     }
   }
 }
 
 /** The default gate runner: the repository's own suite over the derived files, judged by the
- * deployment's expected-red manifest, read back through the runner's machine-readable verdict. */
-async function defaultIntegrationGates(dir, files, context) {
+ * deployment's expected-red manifest, read back through the runner's machine-readable verdict.
+ *
+ * Issue #459: the run is a supervised child that HOLDS THE HOST VERIFY LEASE — taken by this
+ * resident through the suite runner's own seam, then proven to the child by the token digest the
+ * runner publishes to nested runners. The deadlock the issue observed cannot form: the child never
+ * queues behind the process that spawned it, and the resident answers throughout. */
+async function defaultIntegrationGates(dir, files, context, { pool = null, holder = null, leaseAuthority = null } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), 'baton-integrate-'));
   const verdictPath = join(scratch, 'verdict.json');
   try {
-    const result = runNodeScript(dir, ['impl/scripts/run-suite.mjs', ...files], {
-      BATON_SUITE_VERDICT_FILE: verdictPath,
+    const result = await runSupervisedGateRun({
+      file: INTEGRATION_GATE_RUNNER, dir, files, pool, holder, leaseAuthority,
+      env: { BATON_SUITE_VERDICT_FILE: verdictPath },
+      timeoutMs: supervisedGateTimeoutMs(),
     });
     let document = null;
     try {
@@ -104,12 +115,15 @@ async function defaultIntegrationGates(dir, files, context) {
     if (document === null) {
       // A runner that died before it could judge is not a green gate set. Never a bare "failed":
       // the row names the script, its exit status and the #326 tail of what the runner said — the
-      // same bounded, redacted derivation the regenerator refusal carries (issue #451).
+      // same bounded, redacted derivation the regenerator refusal carries (issue #451) — and a run
+      // the supervisor KILLED at its deadline names that, so a timeout is never read as a red gate.
       return {
         files,
         verdictLine: null,
         unexpected: [{
-          row: 'suite-did-not-judge', script: 'impl/scripts/run-suite.mjs', exitStatus: result.status,
+          row: result.timedOut ? 'suite-timed-out' : 'suite-did-not-judge',
+          script: INTEGRATION_GATE_RUNNER, exitStatus: result.status === 'timeout' ? null : result.code,
+          ...(result.timedOut ? { timedOut: true } : {}),
           stderrTail: boundedStderrTail(`${result.stderr || result.stdout}`),
         }],
       };
@@ -917,6 +931,12 @@ export class SwarmRuntime {
     // the served routes (one outstanding probe per route), and only ever a reading aid: the durable
     // facts are the probe row and the deployment's own rows, both of which outlive this map.
     this._routeProbes = new Map();
+    // Issue #459: what THIS incarnation swept at its open (undefined until the first operation —
+    // the sweep runs once), the supervised pool this runtime owns when its coordinator holds none,
+    // and the key its sweep row is recorded under. State of this incarnation alone.
+    this._integrationSweep = undefined;
+    this._gatePool = null;
+    this._sweepId = null;
   }
 
   /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
@@ -940,6 +960,42 @@ export class SwarmRuntime {
       }
     }
     return holders;
+  }
+
+  /** Issue #459: the supervised pool the landing's out-of-process steps run through — the
+   * DEPLOYMENT's own pool when this runtime has a coordinator that owns one (so the resident's
+   * fence kills a gate run it started), else a pool of this runtime's own (a bare fixture host),
+   * which `close()` kills with the same rule. Never a `spawnSync`: the pool exists so a landing
+   * can never freeze the loop that answers it. */
+  _supervisedPool() {
+    const coordinator = this.coordinator;
+    if (coordinator && typeof coordinator.supervisedProcesses === 'function') {
+      const pool = coordinator.supervisedProcesses();
+      if (pool && typeof pool.run === 'function') return pool;
+    }
+    this._gatePool ??= new SupervisedProcesses();
+    return this._gatePool;
+  }
+
+  /** Issue #459: sweep the integration checkouts a previous incarnation left under this
+   * repository's authority, ONCE per runtime incarnation — the first operation is the open. What
+   * was swept is named twice: durably on the runtime's own driver row (the deployment-scope record
+   * a doctor reads), and on the next landing's start row (the row that opens a landing names the
+   * leftovers it had to clear). A sweep that removed nothing records nothing. */
+  async _sweepIntegrationCheckouts(principal) {
+    if (this._integrationSweep !== undefined) return;
+    this._integrationSweep = [];
+    const authority = this.integration;
+    if (!authority || typeof authority.repoRoot !== 'string' || authority.repoRoot.length === 0) return;
+    let swept;
+    try {
+      swept = await sweepIntegrationCheckouts(authority.repoRoot);
+    } catch { return; /* a host that cannot sweep still lands: the checkout refusal names the leftover */ }
+    if (swept.length === 0) return;
+    this._integrationSweep = [...swept];
+    this._recordIntegrationRow('swarm.integration_swept', {
+      repoRoot: authority.repoRoot, swept: [...swept],
+    }, { actor: principal?.actor ?? 'runtime' }, `integration-sweep:${this._sweepId ??= randomUUID()}`);
   }
 
   /** Return this runtime's stale worker leases to the host budget. Called after any membership
@@ -3033,6 +3089,24 @@ export class SwarmRuntime {
           next: { command: 'swarm.recruit', swarmId: swarm.swarmId, participantId: row.participantId } });
       }
     }
+    // Issue #459: the landing's own two lifecycle rows (#459), folded the same way from the
+    // runtime's durable driver rows — the scratch checkout a landing opened, and the code it
+    // stopped with. They annotate the CONTRIBUTION row the landing is about (the projection a
+    // reader already holds), because a landing that settles after its caller is gone must be
+    // readable where the work is, not only in a ledger scan. Latest by seq wins per field: a
+    // retried landing writes its own start and its own failure.
+    const integrationByContribution = new Map();
+    for (const event of ledger) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.swarmId !== swarm.swarmId || typeof payload.contributionId !== 'string') continue;
+      if (payload.kind !== 'swarm.integration_started' && payload.kind !== 'swarm.integration_failed') continue;
+      const row = integrationByContribution.get(payload.contributionId) ?? {};
+      integrationByContribution.set(payload.contributionId, payload.kind === 'swarm.integration_started'
+        ? { ...row, started: { target: payload.target, scratch: payload.scratch,
+          swept: [...(payload.swept ?? [])], seq: event.seq, ts: event.ts ?? null } }
+        : { ...row, failure: { target: payload.target, code: payload.code,
+          detail: payload.detail ?? {}, seq: event.seq, ts: event.ts ?? null } });
+    }
     // #269 item 2: the latest still-queued check per contribution, so the contribution rows name
     // the wait they sit behind. Latest by seq wins; a settled check (admitted / timed_out)
     // replaces its queued row in the fold above and clears the contribution row.
@@ -3390,9 +3464,14 @@ export class SwarmRuntime {
         // (swarm-bridge-truth), where a second copy of a body is the difference between an answer
         // and a refusal.
         const derived = derivedContributions.get(row.contributionId) ?? null;
+        const landing = integrationByContribution.get(row.contributionId) ?? null;
         const projected = { ...row, ...(derived === null ? {} : {
           files: derived.files, decision: derived.decision, reviewState: derived.reviewState,
-        }), ...(contract === null ? {} : { contract }) };
+        }), ...(contract === null ? {} : { contract }),
+        // Issue #459: the landing this contribution has open (its scratch checkout), and the
+        // failure one stopped with — the two rows a landing that outlives its caller leaves.
+        ...(landing?.started === undefined ? {} : { integrationStarted: landing.started }),
+        ...(landing?.failure === undefined ? {} : { integrationFailure: landing.failure }) };
         return queued ? { ...projected, admission: { state: 'queued', authority: queued.authority,
           leaseKind: queued.leaseKind, position: queued.position, ahead: queued.ahead,
           shortfall: queued.shortfall, checkId: queued.checkId, participantId: queued.participantId,
@@ -3486,6 +3565,10 @@ export class SwarmRuntime {
 
   close() {
     this.watchController.abort();
+    // Issue #459: a runtime that owns its own supervised pool (a bare host with no coordinator)
+    // kills what it started, exactly as the resident's fence kills the deployment's pooled
+    // children. A landing's orphaned gate run is never this close's legacy.
+    this._gatePool?.killAll();
   }
 
   async _watch(args, principal, context) {
@@ -4908,14 +4991,13 @@ export class SwarmRuntime {
     return null;
   }
 
-  /** Translate the git authority's typed landing error into the family's refusal, naming what the
-   * caller must act on: the conflicting files AND the landed contribution that touched them, the
-   * verdict's own unexpected rows (never a bare "failed"), the step that died with its exit status
-   * and bounded redacted stderr tail (#451), or the range that was never landable. */
-  _refuseLanding(error, swarm) {
-    const raised = typeof error?.code === 'string' && error.code.startsWith('integrate_')
-      ? error.code : null;
-    if (raised === null) throw error;
+  /** The detail one landing failure carries, in the family's own vocabulary: the conflicting files
+   * AND the landed contribution that touched them, the verdict's own unexpected rows (never a bare
+   * "failed"), the step that died with its exit status and bounded redacted stderr tail (#451), the
+   * admission the gate run could not take (#459), or the range that was never landable. ONE
+   * derivation: the caller's refusal and the durable `swarm.integration_failed` row a caller who is
+   * gone reads back must never disagree about why the landing stopped. */
+  _landingFailureDetail(error, swarm) {
     const detail = {};
     if (Array.isArray(error.paths)) {
       detail.paths = error.paths;
@@ -4936,6 +5018,24 @@ export class SwarmRuntime {
     if (typeof error.script === 'string') detail.script = error.script;
     if (Number.isSafeInteger(error.exit)) detail.exit = error.exit;
     if (typeof error.stderrTail === 'string' && error.stderrTail.length > 0) detail.stderrTail = error.stderrTail;
+    // Issue #459: the gate run could not take the host verify lease. The queue facts and the holder
+    // the wait was behind are the whole actionable content of that refusal.
+    if (error.detail && typeof error.detail === 'object' && !Array.isArray(error.detail)) {
+      for (const field of ['holder', 'holderId', 'leaseKind', 'position', 'ahead', 'shortfall', 'waitMs', 'bypass']) {
+        if (error.detail[field] !== undefined) detail[field] = error.detail[field];
+      }
+    }
+    return detail;
+  }
+
+  /** Translate the git authority's typed landing error into the family's refusal, and nothing else:
+   * the failure row a caller who is gone reads records the error's OWN code, so this switch and that
+   * row can never disagree about which code a landing failed with. */
+  _refuseLanding(error, swarm) {
+    const raised = typeof error?.code === 'string' && error.code.startsWith('integrate_')
+      ? error.code : null;
+    if (raised === null) throw error;
+    const detail = this._landingFailureDetail(error, swarm);
     const message = `Landing did not complete: ${error.message}`;
     // The code is spelled at each call site, never passed through: the #430 owner table is audited
     // by reading the LITERAL second argument of every refuse() in this module, so a variable here
@@ -4949,6 +5049,10 @@ export class SwarmRuntime {
         refuse(message, 'integrate_conflict', detail); break;
       case 'integrate_gates_red':
         refuse(message, 'integrate_gates_red', detail); break;
+      // Issue #459: the gate run could not take the host verify lease within its bound. The landing
+      // never blocked and never half-ran a gate set: it refuses, and the scratch checkout is gone.
+      case 'integrate_gates_busy':
+        refuse(message, 'integrate_gates_busy', detail); break;
       case 'integrate_target_moved':
         refuse(message, 'integrate_target_moved', detail); break;
       case 'integrate_change_invalid':
@@ -5032,7 +5136,15 @@ export class SwarmRuntime {
     ].join('\n');
     const issue = this._integrationIssue(swarm, contract, contribution);
     const mailbox = (value) => `${`${value}`.replace(/[^A-Za-z0-9._-]/gu, '-')}@baton.invalid`;
-    const runGates = typeof authority.runGates === 'function' ? authority.runGates : defaultIntegrationGates;
+    // Issue #459: the operation key every row of THIS attempt is recorded under, the supervised
+    // pool the landing's out-of-process steps run through, and the lease holder the gate run takes
+    // the host verify lease under — one spelling each, so the queue, the refusal and the failure
+    // row all name the same landing.
+    const operationKey = this._operationKey('swarm.integrate', args, principal);
+    const pool = this._supervisedPool();
+    const gateHolder = `integrate:${args.swarmId}:${args.contributionId}`;
+    const swept = [...(this._integrationSweep ?? [])];
+    let started = null;
     let landed;
     try {
       landed = await landContribution(authority.repoRoot, {
@@ -5049,15 +5161,36 @@ export class SwarmRuntime {
         author: { name: contribution.participantId, email: mailbox(contribution.participantId) },
         committer: { name: principal.actor, email: mailbox(principal.actor) },
         dryRun: args.dryRun === true,
+        // Issue #459: the start row the moment the scratch checkout exists — before the squash,
+        // before the regenerators and before any gate. A landing announces itself while it is
+        // still running, so a reader (and the durable record) knows where it opened even when the
+        // caller that asked for it is long gone.
+        started: async ({ dir }) => {
+          started = this._recordIntegrationRow('swarm.integration_started', {
+            swarmId: args.swarmId, contributionId: args.contributionId,
+            participantId: contribution.participantId, target: args.target, scratch: dir,
+            // The checkouts a PREVIOUS incarnation left behind that this open swept: the leftover
+            // is named where the landing that would have reused its directory is announced.
+            ...(swept.length === 0 ? {} : { swept }),
+          }, principal, `swarm-integration-start:${operationKey}`);
+        },
         regenerate: typeof authority.regenerate === 'function'
-          ? authority.regenerate : defaultIntegrationRegenerate,
+          ? authority.regenerate : (dir) => defaultIntegrationRegenerate(dir, { pool }),
         runGates: async (dir, changed, gateContext) => {
           // The gate set is DERIVED from what the squash actually changed — the changed paths, the
           // issues the contribution names, and the seam inventory behind both.
           const gate = gateSetForPaths(changed, { issues: issue === null ? [] : [issue] });
-          const verdict = await runGates(dir, gate.files, {
-            ...gateContext, gate, contributionId: args.contributionId,
-          });
+          // The deployment's own runner when it configured one (a fixture's, an operator's), else
+          // the supervised out-of-process suite runner that holds the host verify lease (#459) —
+          // admitted through the RESIDENT's own host-capacity authority when it has one (the same
+          // authority a seat's admission runs through, so both read one host observation), else
+          // through the suite runner's own seam.
+          const verdict = typeof authority.runGates === 'function'
+            ? await authority.runGates(dir, gate.files, {
+              ...gateContext, gate, contributionId: args.contributionId })
+            : await defaultIntegrationGates(dir, gate.files, {
+              ...gateContext, gate, contributionId: args.contributionId },
+            { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null });
           return {
             files: gate.files,
             verdictLine: verdict?.verdictLine ?? null,
@@ -5066,6 +5199,12 @@ export class SwarmRuntime {
         },
       });
     } catch (error) {
+      // Issue #459: the durable failure row BEFORE the refusal crosses. An outcome that can land
+      // after its caller is gone (a CLI that timed out, a root that moved on) must be readable
+      // from the record: the code the landing failed with, the detail that explains it, and the
+      // #451 stderr tail when a step died. Its own key, so a re-attempt under a new idempotency
+      // key records its own failure rather than replaying the previous one's.
+      if (started !== null) this._recordIntegrationFailure(args, contribution, error, principal, operationKey);
       this._refuseLanding(error, swarm);
     }
     const receipt = {
@@ -5083,12 +5222,47 @@ export class SwarmRuntime {
     // second row under that same key would be a different request wearing one identity.
     const recorded = this._write('swarm.contribution_integrated',
       { swarmId: args.swarmId, ...receipt }, principal,
-      `swarm-integration:${this._operationKey('swarm.integrate', args, principal)}`);
+      `swarm-integration:${operationKey}`);
     this._recordOperationCompleted('swarm.integrate', args, principal, context);
-    return this._mutationResult('swarm.integrate', args, [recorded], principal, context, {
-      integration: receipt,
-      landingComment: this._landingComment(receipt, items),
-    });
+    // The answer's receipt names the START row — the first event of this landing — so a caller can
+    // bound its own observation at the seq this attempt began at (#331/#352's `since` rule), while
+    // the landing's outcome rides `integration` exactly as it always did.
+    return this._mutationResult('swarm.integrate', args, [started, recorded].filter(Boolean),
+      principal, context, {
+        integration: receipt,
+        integrationStarted: started === null ? null : {
+          contributionId: args.contributionId, target: args.target,
+          scratch: started.payload.scratch, seq: started.seq, ts: started.ts,
+          ...(swept.length === 0 ? {} : { swept }),
+        },
+        landingComment: this._landingComment(receipt, items),
+      });
+  }
+
+  /** Issue #459: the durable failure row one landing leaves when it stops after it opened — the
+   * outcome a caller that is gone still reads. The code is the error's OWN code (the same literal
+   * `_refuseLanding` maps 1:1), so the row and the refusal can never spell the failure
+   * differently. */
+  _recordIntegrationFailure(args, contribution, error, principal, operationKey) {
+    const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : 'integrate_change_invalid';
+    try {
+      this._recordIntegrationRow('swarm.integration_failed', {
+        swarmId: args.swarmId, contributionId: args.contributionId,
+        participantId: contribution.participantId, target: args.target,
+        code, detail: this._landingFailureDetail(error, this._swarm(args.swarmId)),
+      }, principal, `swarm-integration-failed:${operationKey}`);
+    } catch { /* the refusal below is the caller's answer; a raced failure row is evidence only */ }
+  }
+
+  /** The ONE write behind the landing's own two lifecycle rows (#459): a runtime-owned driver row,
+   * keyed by the operation it belongs to, answered in the `{kind, payload, seq, ts, actor}` shape
+   * every other recorded row carries so a receipt can name it. Driver rows — not folded swarm
+   * events — because they describe what the RESIDENT did (it opened a scratch checkout, it stopped
+   * with a code), never a change to the swarm's organization; the contribution row the view
+   * carries them beside is read back from the ledger at the ONE projection that annotates it. */
+  _recordIntegrationRow(kind, payload, principal, key) {
+    const event = this.store.recordDriver(kind, payload, { actor: principal.actor, key }).event;
+    return { kind: 'driver.recorded', payload: event.payload, seq: event.seq, ts: event.ts, actor: event.actor };
   }
 
   async _dispatch(command, args, principal, context = null) {
@@ -5099,6 +5273,10 @@ export class SwarmRuntime {
     // to the seat. Issue #438: the writer projection is NOT part of a read — it is written by
     // the apply paths that can change it, never on every command.
     this._drainCommitObservations();
+    // Issue #459: the same open entry sweeps the integration checkouts a previous incarnation left
+    // behind — once per runtime incarnation, before any landing of this one exists, so the
+    // directory a landing is about to create can never collide with a dead one's.
+    await this._sweepIntegrationCheckouts(principal);
     // Issue #364: the same entry reconciles the participant runtime rows against the workers this
     // incarnation recovered — idempotent, so the first operation after a restart folds the lost
     // seats and every later entry is a no-op.

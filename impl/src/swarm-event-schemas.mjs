@@ -217,6 +217,52 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       code: 'work_not_found', field: null, rule: null, participantId: 'builder-a',
     }),
   }),
+  // Issue #459: the landing's own two lifecycle rows. A landing is ASYNCHRONOUS — `swarm.integrate`
+  // answers its receipt and settles later — so what a landing is doing (the scratch checkout it
+  // opened) and how it stopped (the code it failed under) are recorded by the runtime as it runs,
+  // not by the caller that asked. They are driver rows, never caller-submittable and never folded
+  // into the swarm state; `swarm.view` annotates the contribution row it belongs to with both.
+  'swarm.integration_started': Object.freeze({
+    summary: Object.freeze('a landing opened its scratch checkout — recorded by the runtime before the squash or any gate runs'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the landed contribution belongs to'),
+      contributionId: STRING('the contribution being landed'),
+      participantId: STRING('the seat whose work is landing — the contribution\'s own author'),
+      target: STRING('the branch the landing will land onto'),
+      scratch: STRING('the scratch checkout the landing opened (its directory under the worktree authority root)'),
+      swept: STRING_ARRAY('the integration checkouts a previous incarnation left behind that this resident\'s open swept before this landing opened — absent when nothing was swept'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', contributionId: 'contribution-ada-1', participantId: 'ada',
+      target: 'master', scratch: '/repo/.baton/wt/integrate-contribution-ada-1',
+      swept: ['integrate-contribution-grace-2'],
+    }),
+  }),
+  'swarm.integration_failed': Object.freeze({
+    summary: Object.freeze('a landing that opened STOPPED — recorded by the runtime with the typed code it failed under, so a caller that is gone still reads the outcome'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the contribution belongs to'),
+      contributionId: STRING('the contribution whose landing stopped'),
+      participantId: STRING('the seat whose work was landing — the contribution\'s own author'),
+      target: STRING('the branch the landing did not reach'),
+      code: STRING('the typed refusal code the landing failed with (the same code its caller was refused with)'),
+      detail: { type: 'json', description: 'the refusal\'s own detail: the conflicting paths, the gate verdict\'s unexpected rows, the step that died with its exit status and bounded redacted stderr tail (#451), or the host-lease admission a gate run could not take (#459)', expectation: 'an object of refusal detail fields', example: { code: 'integrate_gates_red' } },
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', contributionId: 'contribution-ada-1', participantId: 'ada',
+      target: 'master', code: 'integrate_gates_red', detail: { verdictLine: 'red — passed 3, unexpected 1, expected-red 0' },
+    }),
+  }),
+  'swarm.integration_swept': Object.freeze({
+    summary: Object.freeze('a resident\'s open swept integration scratch checkouts a previous incarnation left behind'),
+    fields: Object.freeze({
+      repoRoot: STRING('the repository whose worktree authority root was swept'),
+      swept: STRING_ARRAY('the integration checkout directory names the open removed, sorted'),
+    }),
+    example: Object.freeze({
+      repoRoot: '/repo', swept: ['integrate-contribution-ada-1'],
+    }),
+  }),
 });
 
 /** One-paragraph description of a refusal row for agent-facing surfaces: what the runtime records

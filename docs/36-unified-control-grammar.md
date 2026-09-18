@@ -503,13 +503,16 @@ fields each kind requires of the caller are read from the payload schemas
 | `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
 
-**Runtime-owned driver kinds (never caller-submittable, 4).** The operation lifecycle and refusal rows the runtime
+**Runtime-owned driver kinds (never caller-submittable, 7).** The operation lifecycle and refusal rows the runtime
 records for itself, disjoint from the caller-submittable set above:
 
 - `swarm.operation_requested`
 - `swarm.operation_completed`
 - `swarm.operation_unavailable`
 - `swarm.operation_refused`
+- `swarm.integration_started`
+- `swarm.integration_failed`
+- `swarm.integration_swept`
 
 **Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
 runtime admission check reads (`impl/src/swarm-runtime.mjs`).

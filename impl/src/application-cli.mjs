@@ -2435,8 +2435,17 @@ function parseSwarmCli(args, idempotencyKey) {
   // never re-arms a child per swarm after a resident restart. `swarm check --follow` (#288 R-5):
   // the caller waits for THIS check's verdict row and reads it back. `swarm recruit --follow`
   // (#331): the caller admits the recruit and waits for THIS seat's admitted / queued / refused
-  // row on the swarm's own feed.
-  const follow = (verb === 'watch' || verb === 'check' || verb === 'recruit') && flag(args, '--follow');
+  // row on the swarm's own feed. `swarm integrate --follow` (#459): the caller starts the landing
+  // and waits for THIS contribution's outcome row — the landing is asynchronous, so the row, not
+  // the answer, is what settles it.
+  //
+  // The token is CONSUMED here, before the closed-argv check, for every follow verb: it is the
+  // observation leg's own vocabulary, and the parse is where "this attempt observes" is decided.
+  // `SWARM_PARSER_LEG_FLAGS` (the closed-set teaching) names the verbs whose USAGE line teaches
+  // the flag: the integrate row's usage does not yet (swarm-surface.mjs, named in the lane's
+  // needsFromOthers), and the #431 pin reads that admission list off the same derivation, so the
+  // teaching stays exactly as wide as the rendered usage lines until that hunk lands.
+  const follow = ['watch', 'check', 'recruit', 'integrate'].includes(verb) && flag(args, '--follow');
   // Issue #441: the recruit's context leg is consumed BEFORE the closed-argv check — `--issue`/
   // `--doc` are the ROOT's own reading (the root host holds the credential), never wire arguments:
   // the recruit carries `options.contextPackage = {digest}`. Every other verb refuses them the
@@ -2522,6 +2531,15 @@ function parseSwarmCli(args, idempotencyKey) {
       ...(values.resumeFrom === undefined ? {} : { resumeFrom: values.resumeFrom }),
       ...(values.view === undefined ? {} : { view: values.view }),
       ...(contextPackage === null ? {} : { contextPackage }),
+      idempotencyKey,
+    };
+  }
+  if (follow && verb === 'integrate') {
+    return {
+      kind: 'swarm_integrate_follow', swarmId: values.swarmId, contributionId: values.contributionId,
+      target: values.target,
+      ...(values.dryRun === undefined ? {} : { dryRun: values.dryRun }),
+      ...(values.view === undefined ? {} : { view: values.view }),
       idempotencyKey,
     };
   }
@@ -3096,6 +3114,112 @@ export async function followSwarmRecruit(parsed, client, options = {}) {
     found = swarmRecruitSeat(view, parsed.participantId, since);
   }
 }
+
+/** Issue #459: the outcome one contribution's landing settled with, read from the view's own row.
+ * `since` is the seq THIS attempt's start row was recorded at — the #352 rule: a row older than
+ * it belongs to a previous attempt and never decides this one's verdict. A contribution carrying
+ * a landing receipt is integrated; one carrying a failure row is failed with that code and
+ * detail; one carrying neither is still running, and null says so. */
+export function swarmIntegrationOutcome(view, contributionId, since) {
+  const contributions = Array.isArray(view?.contributions) ? view.contributions : [];
+  const contribution = contributions.find((row) => row?.contributionId === contributionId) ?? null;
+  if (contribution === null) return null;
+  // A row without a seq cannot be dated, so it decides (the same reading swarmRecruitSeat takes).
+  const atOrAfter = (record) => !Number.isSafeInteger(since) || !Number.isSafeInteger(record?.seq)
+    || record.seq >= since;
+  if (contribution.integration !== undefined && contribution.integration !== null
+    && atOrAfter(contribution.integration)) {
+    return Object.freeze({
+      outcome: 'integrated', contribution,
+      integration: contribution.integration, failure: null,
+    });
+  }
+  if (contribution.integrationFailure !== undefined && contribution.integrationFailure !== null
+    && atOrAfter(contribution.integrationFailure)) {
+    return Object.freeze({
+      outcome: 'failed', contribution,
+      integration: null, failure: contribution.integrationFailure,
+    });
+  }
+  return null;
+}
+
+/** Issue #459: `baton swarm integrate … --follow` — start the landing, then observe the outcome
+ * row it writes, the way the recruit leg observes the seat row (#331/#352). The landing is
+ * ASYNCHRONOUS by design: its receipt is the start row, and what settles the caller is
+ * `swarm.contribution_integrated` or `swarm.integration_failed` on the contribution row. So a
+ * landing that outlives the CLI's request bound is still observable instead of lost to a
+ * transport refusal — and a refusal the command itself raised (a pre-effect one, or the gate
+ * run's `integrate_gates_busy`) prints with its code, exactly as the recruit leg prints one. */
+export async function followSwarmIntegrate(parsed, client, options = {}) {
+  let integrate = null;
+  let refusal = null;
+  try {
+    integrate = await runSwarmIntegrateCli({
+      name: 'swarm.integrate', args: {
+        swarmId: parsed.swarmId, contributionId: parsed.contributionId, target: parsed.target,
+        // Identity-keyed exactly like the recruit leg's own call: the request the transport carries
+        // and the request the runtime dispatches name the same key.
+        idempotencyKey: parsed.idempotencyKey,
+        ...(parsed.dryRun === undefined ? {} : { dryRun: parsed.dryRun }),
+        ...(parsed.view === undefined ? {} : { view: parsed.view }),
+      }, idempotencyKey: parsed.idempotencyKey,
+    }, client);
+  } catch (error) {
+    refusal = error;
+  }
+  // The receipt's own event seq is THIS attempt's start row: only rows at or after it decide
+  // (a failed earlier attempt is never the verdict of this one).
+  const receiptSeq = integrate?.receipt?.event?.seq ?? integrate?.integrationStarted?.seq;
+  const since = Number.isSafeInteger(receiptSeq) ? receiptSeq : undefined;
+  // The outcome may already be durable (a landing that settled inside the request bound), so the
+  // current view is read before any waiting starts.
+  let view = await client.command('swarm.view', { swarmId: parsed.swarmId }, `${parsed.idempotencyKey}:view`);
+  const settled = (found) => Object.freeze({
+    schemaVersion: 1, swarmId: parsed.swarmId, contributionId: parsed.contributionId,
+    outcome: found.outcome, contribution: found.contribution, integrate,
+    integration: found.integration, failure: found.failure,
+    refusal: refusal === null ? null : integrationRefusalRow(refusal, found),
+  });
+  const unobserved = () => Object.freeze({
+    schemaVersion: 1, swarmId: parsed.swarmId, contributionId: parsed.contributionId,
+    outcome: refusal === null ? 'unobserved' : 'refused', contribution: null, integrate,
+    integration: null, failure: null,
+    refusal: refusal === null ? null : integrationRefusalRow(refusal, null),
+  });
+  let found = swarmIntegrationOutcome(view, parsed.contributionId, since);
+  // A typed refusal that crossed is already the whole answer — the landing cannot write an outcome
+  // row under this operation (its failure row, when one landed, is confirmed without a watch).
+  if (refusal !== null && refusal?.code !== 'cli_command_pending') {
+    return found === null ? unobserved() : settled(found);
+  }
+  for (;;) {
+    if (found !== null) return settled(found);
+    if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) {
+      // The swarm is closed and nothing is alive: no further event can write the outcome row.
+      return unobserved();
+    }
+    const cursor = view?.cursor;
+    view = await client.command('swarm.watch', {
+      swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
+    }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
+    if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
+    found = swarmIntegrationOutcome(view, parsed.contributionId, since);
+  }
+}
+
+/** The refusal a landing follow leg prints: the caught refusal's own code when the command itself
+ * refused, else the durable failure row's code — the code the landing stopped under. */
+function integrationRefusalRow(refusal, found) {
+  const code = typeof refusal?.code === 'string' && refusal.code.length > 0 ? refusal.code
+    : typeof found?.failure?.code === 'string' ? found.failure.code : null;
+  const message = typeof refusal?.message === 'string' && refusal.message.length > 0 ? refusal.message
+    : found?.failure?.code !== undefined
+      ? `The landing for ${found.contribution?.contributionId ?? 'this contribution'} failed with ${found.failure.code}`
+      : 'The landing did not settle';
+  return Object.freeze({ code, message });
+}
+
 /** R-5 (issue #288; #331 adds the recruit leg, #353 the stop leg): where a command's verdict
  * lands and which CLI verb reads it. The observation route is what a `cli_command_pending`
  * receipt hands the caller, so it names the durable row the command will write — never a
@@ -3128,6 +3252,16 @@ export function commandObservation(name, args, commandId) {
     return Object.freeze({
       command: `baton swarm view ${value.swarmId}`,
       row: `contributions["${value.contributionId}"] and its attached revision in \`baton swarm view ${value.swarmId}\``,
+    });
+  }
+  // Issue #459: a landing answers its receipt at once and settles later, so a caller whose command
+  // crossed as pending observes the contribution row — the integration receipt or the failure row
+  // is written THERE, and the follow leg is the one that waits for it.
+  if (name === 'swarm.integrate' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
+    return Object.freeze({
+      command: `baton swarm integrate ${value.swarmId} ${value.contributionId}`
+        + `${nonempty(value.target) ? ` --onto ${value.target}` : ''} --follow`,
+      row: `contributions["${value.contributionId}"] in \`baton swarm view ${value.swarmId}\` — the landing receipt, or the \`integrationFailure\` row naming the code it stopped under`,
     });
   }
   const runId = nonempty(value.runId) ? value.runId : (record(value.intent) && nonempty(value.intent.runId) ? value.intent.runId : null);
@@ -4819,6 +4953,7 @@ export async function runBatonCli(parsed, client, options = {}) {
     return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   }
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
+  if (parsed.kind === 'swarm_integrate_follow') return followSwarmIntegrate(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_recruit_follow') {
     const admitted = await admitRecruitContextPackage(parsed, client, options ?? {});
     return followSwarmRecruit(admitted === null ? parsed : {

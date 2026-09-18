@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
 import { Cursor } from './log.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
 import { readOnlyNoChangeVerdict } from './referee.mjs';
@@ -55,6 +56,16 @@ import {
   workspaceHolders,
 } from './shared-workspace-custody.mjs';
 import { normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
+import { HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
+import { MAX_STDERR_TAIL_BYTES } from './cli-adapters.mjs';
+// Issue #459: the supervised gate run takes the host verify lease through the suite runner's OWN
+// seam (`impl/scripts/suite-host-lease.mjs`) — the same admission a seat's suite takes, with the
+// same bound and the same nested-child proof — so the landing holds exactly the lease a verdict
+// holds, and no second reading of the lease protocol can drift from it.
+import {
+  acquireSuiteVerifyLease, createSuiteLeaseAuthority, suiteLeaseTokenDigest, suiteQueueTimeoutDecision,
+  SUITE_VERIFY_LEASE_ENV,
+} from '../scripts/suite-host-lease.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -997,6 +1008,194 @@ function startupReconcilerNext(caught, observed, record, repair) {
   return named ?? repair;
 }
 
+// ── the supervised out-of-process worker (issue #459) ───────────────────────────────────────────
+//
+// A deployment step that runs a bounded, CPU-hungry node script — a landing's gate run is the
+// first — MUST NOT run on the resident's loop. `spawnSync` freezes that loop for the whole child:
+// the 2026-09-18 incident left a resident at 0% CPU for seven minutes with its only child
+// `node impl/scripts/run-suite.mjs` beside it, answering no read and no seat call, because a
+// synchronous child holds an event loop that the host admission seam it waits on needs in order
+// to answer at all. The supervisor below is that seam: an ASYNCHRONOUS spawn, tracked by identity
+// so the resident's own fence kills it (and its process group) rather than orphaning it, bounded
+// by a deadline, and never a shell.
+
+/** The ceiling ONE supervised child's captured stream keeps: the adapter's OWN tail bound (#326),
+ * imported rather than re-minted — a dying step's last words are what a failure row carries, and a
+ * chatty runner can never grow the resident's memory through this seam. Characters are kept, so the
+ * effective byte bound is this ceiling times the widest UTF-8 sequence; the ONE byte-exact bound
+ * (and the redaction) stays where it always was, in the adapter these tails are composed by. */
+const SUPERVISED_STREAM_TAIL_BYTES = MAX_STDERR_TAIL_BYTES;
+
+/** The knob a deployment pins to extend the patience of ONE supervised gate run: the SAME variable
+ * the suite runner honours for a hung file (`BATON_SUITE_IDLE_MS`, run-suite.mjs), and the same
+ * default when nothing is pinned. The resident's deadline is the BACKSTOP behind the runner's own
+ * per-file deadline, never a second policy about how long a suite may take. */
+export const SUPERVISED_GATE_IDLE_ENV = 'BATON_SUITE_IDLE_MS';
+const SUPERVISED_GATE_IDLE_DEFAULT_MS = 600_000;
+
+/** The deadline one supervised gate run is given: the knob's own value when the deployment pinned
+ * a positive one, else the runner's own default. */
+export function supervisedGateTimeoutMs(env = process.env) {
+  const configured = Number.parseInt(`${env?.[SUPERVISED_GATE_IDLE_ENV] ?? ''}`, 10);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : SUPERVISED_GATE_IDLE_DEFAULT_MS;
+}
+
+/** The children THIS resident supervises: one entry per live child, keyed by the identity this
+ * class minted, carrying the process group it may kill and the label its caller named. The set is
+ * process-state, never durable: a child that outlives its resident is exactly the leftover the
+ * landing's own sweep (worktree.mjs, issue #459) removes at the next open. */
+export class SupervisedProcesses {
+  constructor() {
+    /** @type {Map<string, {id: string, pid: number|null, label: string, child: object}>} */
+    this._live = new Map();
+    this._seq = 0;
+  }
+
+  /**
+   * Run ONE node script to completion in its own process group. Resolves — never rejects — with the
+   * exit facts plus the bounded tails of both streams: a caller distinguishes a red run (an exit
+   * status) from a run that never judged, and this seam never turns a child's own failure into an
+   * exception the caller cannot read. `timedOut` marks the run this supervisor killed at its
+   * deadline. `detached` puts the child in its own group so a kill reaches the grandchildren a
+   * runner spawns (test files, nested runners), never only the child itself.
+   */
+  async run({ file, args = [], cwd, env = {}, timeoutMs, label = 'worker' }) {
+    if (typeof file !== 'string' || file.length === 0) throw new TypeError('a supervised worker needs the script it runs');
+    if (typeof cwd !== 'string' || cwd.length === 0) throw new TypeError('a supervised worker needs the directory it runs in');
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError('a supervised worker needs a positive deadline in milliseconds');
+    const id = `supervised-worker-${++this._seq}`;
+    const child = spawn(process.execPath, [file, ...args], {
+      cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+    });
+    const entry = { id, pid: child.pid ?? null, label, child };
+    this._live.set(id, entry);
+    let stdout = ''; let stderr = ''; let timedOut = false;
+    const tail = (current, chunk) => (current.length + chunk.length <= SUPERVISED_STREAM_TAIL_BYTES
+      ? current + chunk : (current + chunk).slice(-SUPERVISED_STREAM_TAIL_BYTES));
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk) => { stdout = tail(stdout, chunk); });
+    child.stderr?.on('data', (chunk) => { stderr = tail(stderr, chunk); });
+    const killGroup = (signal) => {
+      try { process.kill(-child.pid, signal); }
+      catch { try { child.kill(signal); } catch { /* already gone */ } }
+    };
+    const deadline = setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
+    if (typeof deadline.unref === 'function') deadline.unref();
+    const settled = await new Promise((resolve) => {
+      child.once('error', (error) => resolve({ status: 'failed', code: null, signal: null, error: `${error?.message ?? error}` }));
+      child.once('close', (code, signal) => resolve({ status: code === 0 ? 'ok' : 'failed', code, signal }));
+    });
+    clearTimeout(deadline);
+    this._live.delete(id);
+    return Object.freeze({
+      id, label, pid: child.pid ?? null, timedOut, stdout, stderr,
+      status: timedOut ? 'timeout' : settled.status,
+      code: settled.code ?? null, signal: settled.signal ?? null,
+      ...(settled.error === undefined ? {} : { error: settled.error }),
+    });
+  }
+
+  /** Kill every child this resident supervises, each with its whole process group. The first
+   * signal is the caller's; a group that ignores it is escalated ONCE after the same grace every
+   * other kill in this module waits out. Called by the resident's own fence — a stop that left a
+   * gate run burning the host would be a stop that did not stop. */
+  killAll(signal = 'SIGTERM') {
+    const killed = [];
+    for (const entry of [...this._live.values()]) {
+      const pid = entry.pid;
+      if (pid === null) continue;
+      try { process.kill(-pid, signal); killed.push(pid); }
+      catch { try { entry.child.kill(signal); killed.push(pid); } catch { /* already gone */ } }
+      const escalation = setTimeout(() => {
+        try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ }
+      }, KILL_ESCALATION_GRACE_MS);
+      if (typeof escalation.unref === 'function') escalation.unref();
+    }
+    return Object.freeze(killed);
+  }
+}
+
+/** Issue #459: THE integration gate run — one node script (the suite runner over the derived gate
+ * set) run OUT OF PROCESS under this resident's supervision, holding the host verify lease the way
+ * a seat's own suite does.
+ *
+ * The lease is taken HERE, by the resident, through the runner's own seam
+ * (`acquireSuiteVerifyLease`): the child then proves its parent's admission with the token digest
+ * the runner publishes to its children (`BATON_SUITE_VERIFY_LEASE`, #424), so it can never queue
+ * behind the process that spawned it. A lease that cannot be taken within the runner's own bound
+ * refuses typed — `integrate_gates_busy` naming the holder it waited behind — BEFORE any child is
+ * spawned: it never blocks, and it never half-runs a gate set.
+ */
+export async function runSupervisedGateRun({
+  file, dir, files = [], env = {}, holder, label = 'integration-gate',
+  pool = null, leaseAuthority = null, timeoutMs = supervisedGateTimeoutMs(),
+}) {
+  const authority = leaseAuthority ?? createSuiteLeaseAuthority(process.env);
+  // The request ahead of this one, when the admission queue shows one: the holder the wait was
+  // behind is the fact an `integrate_gates_busy` refusal is actionable on. Read without the mutex
+  // (the same non-mutating read the participant projection uses) — evidence, never admission.
+  let ahead = null;
+  // The queue row the seam reported once, when this request waited: its position/ahead/shortfall
+  // are what a refusal names. Absent when the request was admitted (or bypassed) at once.
+  let queued = null;
+  const observeAhead = () => {
+    try {
+      const row = (authority.observeNow?.()?.queue ?? [])
+        .find((entry) => entry?.kind === 'verify' && entry.holder !== holder);
+      if (row) ahead = row.holder ?? null;
+    } catch { /* evidence only */ }
+  };
+  const poll = setInterval(observeAhead, 25);
+  if (typeof poll.unref === 'function') poll.unref();
+  let lease = null;
+  let degraded = null;
+  try {
+    lease = await acquireSuiteVerifyLease({
+      authority, holder, log: () => {},
+      onQueued: (row) => {
+        queued = Object.freeze({ position: row?.position ?? null, ahead: row?.ahead ?? null,
+          shortfall: row?.shortfall ?? null });
+      },
+    });
+  } catch (error) {
+    clearInterval(poll);
+    if (error?.code !== 'host_capacity_queue_timeout') throw error;
+    // The seam's own spent-wait decision, taken verbatim (`suiteQueueTimeoutDecision`): a `memory`
+    // shortfall is a STANDING property of this host — no wait could ever admit the run — so a seat's
+    // own suite proceeds degraded and says so, and a landing's gate run does the same rather than
+    // refusing forever on a small host. Every other dimension (load, budget) is a queue some other
+    // lease will leave, and that one refuses typed, naming the holder the wait was behind.
+    if (suiteQueueTimeoutDecision(error) !== 'proceed-degraded') {
+      throw Object.assign(new Error('the host verify lease could not be taken within its bound'), {
+        code: 'integrate_gates_busy',
+        detail: {
+          holder: ahead, holderId: holder, leaseKind: 'verify',
+          position: queued?.position ?? error.queuePosition ?? null,
+          ahead: queued?.ahead ?? error.queueAhead ?? null,
+          shortfall: queued?.shortfall ?? error.shortfall ?? null,
+          waitMs: error.waitMs ?? null, bypass: error.bypass ?? HOST_CAPACITY_BYPASS,
+        },
+      });
+    }
+    degraded = Object.freeze({
+      reason: error?.shortfall?.dimension ?? 'memory',
+      shortfall: error?.shortfall ?? null, waitMs: error.waitMs ?? null,
+    });
+  }
+  try {
+    const digest = lease === null || lease.token === null ? null : suiteLeaseTokenDigest(lease.token);
+    return await (pool ?? new SupervisedProcesses()).run({
+      file, args: [...files], cwd: dir, label, timeoutMs,
+      env: { ...env, ...(digest === null ? {} : { [SUITE_VERIFY_LEASE_ENV]: digest }) },
+    });
+  } finally {
+    // A degraded run holds nothing to release; a run that took the lease returns it whatever the
+    // child's outcome, so the host's verdict budget is never pinned by a landing that died.
+    if (lease !== null && lease.disabled !== true) await lease.release();
+  }
+}
+
 export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
@@ -1005,6 +1204,10 @@ export class Coordinator {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._closed = false;
+    // Issue #459: the out-of-process deployment steps THIS resident supervises (today the
+    // integration gate run). The pool is process-state beside the worker handles: the resident's
+    // fence kills it, and nothing about it is durable.
+    this._supervised = new SupervisedProcesses();
     this._drainState = 'open';
     this._drainPolicy = normalizeDrainPolicy(opts.drainPolicy);
     this._drainPromise = null;
@@ -2162,6 +2365,13 @@ export class Coordinator {
   /** Irreversibly fence this controller before its durable writer lease is handed off. */
   closeAuthority() {
     if (this._closed) return false;
+    // Issue #459: the fence reaches the out-of-process steps too. A supervised gate run is not a
+    // worker handle the drain converges — it is a child this controller spawned, so a stop that
+    // leaves one burning the host would be a stop that did not stop; killing it here (before the
+    // not-drained checks, which judge worker handles) keeps the fence exactly as abrupt as its
+    // name. The landing that owned the run records its own failure row, and a run that never got
+    // to leaves the scratch checkout to the next open's sweep.
+    this._supervised.killAll();
     // Durable replay handles describe prior ownership; they are not native transports owned by
     // this Coordinator instance. Locally dispatched handles are marked at the resource boundary
     // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
@@ -2179,6 +2389,13 @@ export class Coordinator {
     this._closed = true;
     this._drainState = 'closed';
     return true;
+  }
+
+  /** Issue #459: the pool of out-of-process steps this resident supervises — what the landing's
+   * gate run runs through, so the resident's own fence reaches it. A caller that holds no
+   * coordinator (a bare fixture host) runs the same worker unsupervised. */
+  supervisedProcesses() {
+    return this._supervised;
   }
 
   /** Issue #450: hand this controller the capacity authority's own cleanup settlement. The

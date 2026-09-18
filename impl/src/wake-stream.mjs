@@ -175,11 +175,17 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     // class says a contribution WAITS for a check, this one says the check settled and the work
     // landed on a target. Terminal: the squash is on the branch and the receipt carries what ran,
     // so the acknowledgement is a read, not another command.
+    // Issue #459: a landing that FAILED rides the same class — the other half of the same act, and
+    // the half a caller who is gone can only learn from the record. Terminal for the same reason:
+    // the scratch checkout is gone, whatever the code names is durable on the contribution row,
+    // and the acknowledgement is a read. One class per ledger row (the table's own invariant), so
+    // the failure never mints a second wake vocabulary for landing.
     wakeClass: 'contribution_integrated', scope: 'swarm', terminal: true,
     next: 'baton swarm view {swarmId}',
-    summary: 'a contribution was squashed onto a target and the landing receipt recorded',
-    rows: [ledgerKind('swarm.contribution_integrated')],
-    subject: { field: 'contributionId', kind: 'contribution', fallback: { field: 'swarmId', kind: 'swarm' } },
+    summary: 'a landing settled on a target — the contribution squashed and the receipt recorded, or the landing that opened stopped with the code it failed under',
+    // The landing's own driver rows (issue #459): a landing that FAILED is the other half of the
+    // same act, and the half a caller who is gone can only learn from the record.
+    rows: [ledgerKind('swarm.contribution_integrated'), operationalKind('swarm.integration_failed')],
   }),
   wakeRow({
     wakeClass: 'reviewed', scope: 'swarm', terminal: false, next: null,
