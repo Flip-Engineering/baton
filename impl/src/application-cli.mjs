@@ -2075,8 +2075,52 @@ function buildEpisodeCommand(args, runId, topic, role, idempotencyKey) {
 // whose row requires it. A payload flag takes an inline JSON object or a plain text body — the two
 // forms the wire admits — while --options/--permissions are JSON objects. Effect-kind matching and
 // every permission check stay in the runtime.
+// Issue #431: the argv is CLOSED. A token that begins with `--` and is not in the verb's
+// vocabulary used to be eaten by the positional loop (`swarm stop S --participant P` dispatched
+// participantId '--participant' and the misparse surfaced one hop later as a runtime refusal);
+// now it refuses at the parse, naming the token, the verb's admitted flags and the usage line —
+// the #372 closed-set shape. The vocabulary is ONE derivation: the contract-table flags of the
+// CLI row (swarm-surface.mjs derives them from SWARM_COMMAND_DEFINITIONS) plus the parser-leg
+// flags below. The seat selector keeps ONE spelling — `--participant-id`, the kebab of the
+// contract field the table declares (`evidence search --participant` is that operation's own
+// declared flag, not a swarm verb).
 function swarmKebab(field) {
   return field.replace(/([a-z0-9])([A-Z])/gu, '$1-$2').toLowerCase();
+}
+
+/** Issue #431: the parser-leg flags — the observation leg (#288 R-5) and the wake stream's own
+ * filter/cursor words (#272/#339) — are consumed by THIS parser, not by the contract's argument
+ * tables, so they live here beside the parse, keyed once by verb role. The usage lines render
+ * the same vocabulary from swarm-surface.mjs's keyed derivation (pinned by
+ * swarm-check-follow-help.test.mjs), and issue431-f pins that nothing the usage teaches is
+ * missing here — never a per-call-site flag list. */
+const SWARM_PARSER_LEG_FLAGS = Object.freeze(new Map([
+  ['watch', Object.freeze(['--follow', '--wake-class', '--kinds', '--since'])],
+  ['check', Object.freeze(['--follow'])],
+  ['recruit', Object.freeze(['--follow'])],
+]));
+
+/** The ONE admitted `--` vocabulary for a swarm verb: the contract-table flags of its CLI row
+ * (derived from SWARM_COMMAND_DEFINITIONS) plus the parser-leg flags. */
+function swarmAdmittedFlags(row) {
+  return [...row.flags.map((entry) => entry.flag), ...(SWARM_PARSER_LEG_FLAGS.get(row.verb) ?? [])];
+}
+
+/** The closed argv (#431): a token that begins with `--` and is not in the verb's vocabulary
+ * refuses naming the token, the admitted flags and the usage line — the #372 closed-set shape
+ * (detail {field, rule, admitted, usage}). Runs BEFORE the positional loop, so an unknown flag
+ * can never be eaten as a positional value. */
+function assertSwarmArgvClosed(row, args) {
+  const admitted = swarmAdmittedFlags(row);
+  const offending = args.find((token) => token.startsWith('--') && !admitted.includes(token));
+  if (offending === undefined) return;
+  const error = cliError(
+    `swarm ${row.verb}: ${offending} is not an admitted flag;`
+      + ` admitted flags: ${admitted.length > 0 ? admitted.join(', ') : '(none)'};`
+      + ` usage: ${row.usage}`,
+  );
+  error.detail = { field: offending, rule: 'closed-set', admitted, usage: row.usage };
+  throw error;
 }
 
 function swarmPayload(token) {
@@ -2144,10 +2188,23 @@ function parseSwarmCli(args, idempotencyKey) {
   // (#331): the caller admits the recruit and waits for THIS seat's admitted / queued / refused
   // row on the swarm's own feed.
   const follow = (verb === 'watch' || verb === 'check' || verb === 'recruit') && flag(args, '--follow');
+  assertSwarmArgvClosed(row, args);
   const values = {};
-  for (const field of row.positional) {
+  for (const [index, field] of row.positional.entries()) {
     const token = args.shift();
-    if (!nonempty(token)) throw cliError(`swarm ${verb} requires <${swarmKebab(field)}>`);
+    if (!nonempty(token)) {
+      // Issue #431: a positional the usage marks required refuses at the parse naming its
+      // position and the usage line — the runtime never sees the misparse.
+      const error = cliError(
+        `swarm ${verb} requires positional ${index + 1} of ${row.positional.length}`
+          + ` <${swarmKebab(field)}>; usage: ${row.usage}`,
+      );
+      error.detail = {
+        field: swarmKebab(field), rule: 'required-positional',
+        position: index + 1, usage: row.usage,
+      };
+      throw error;
+    }
     values[field] = token;
   }
   for (const entry of row.flags) {
