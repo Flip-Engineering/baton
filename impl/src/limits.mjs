@@ -166,6 +166,16 @@ const VIEW = Object.freeze({
   // listing against) declared in the ONE registry instead of a private constant — the same
   // derivation the view.run.bytes row serves for the run-view byte bound.
   'view.run.records': { lane: 'view.run.records', class: 'view', value: 100_000, unit: 'items', graceful: 'shed-flagged' },
+  // Issue #441 (lane B): the seat read verbs' page. One row bounds BOTH list reads a seat makes
+  // through the bridge (`run.contributions.read`, `run.peers.read`) — the byte bound of the same
+  // answer is the `wire.frame` row the bridge already enforces, and this row is the ITEM ceiling a
+  // page carries on top of it. The value is the frame row expressed in the family's own prose-body
+  // admission (`message.send.body`): a page of full-length bodies is 512 rows, so a page of this
+  // size is always representable inside one frame, and a longer list PAGES from the seq it names
+  // (`truncated` + `cursor`) rather than shedding rows silently.
+  'view.seat_read.items': { lane: 'view.seat_read.items', class: 'view',
+    value: Math.floor(SUBSTRATE['wire.frame'].value / ADMISSION['message.send.body'].value),
+    unit: 'items', graceful: 'shed-flagged' },
 });
 
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,

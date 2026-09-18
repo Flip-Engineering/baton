@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { createSwarmNativeBridge, SWARM_BRIDGE_GUIDANCE } from './swarm-native-bridge.mjs';
 import { SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES, SWARM_VIEW_PROJECTION_NAMES } from './swarm-contract.mjs';
+import { SWARM_SEAT_READ_COMMANDS, SWARM_SEAT_READ_COMMAND_NAMES } from './swarm-runtime.mjs';
 import { EVIDENCE_SEARCH_FILTERS } from './evidence-search.mjs';
 import { WORKTREE_STASH_BRIEF_SENTENCE, WORKTREE_WRITER_BRIEF_SENTENCE } from './runtime-isolation.mjs';
 
@@ -67,6 +68,28 @@ const SWARM_KNOWLEDGE_GUIDANCE = [
   'A fact you seed is durable and attributed to your seat: every peer finds it with evidence search, it shows on swarm.view `knowledge` rows, and it lands on the wake stream as a `knowledge` row — nobody\u2019s root has to copy it.',
 ].join('\n');
 
+// The seat read verbs' brief block (#441 lane B): derived from the ONE table the runtime's
+// dispatch, the bridge's help and the guidance all read, so the taught set, the admitted set and
+// the served set cannot drift. These are the reads a seat makes of the world it works in — the
+// context package its brief names, what its peers have landed, and what its peers are doing now —
+// beyond whatever the brief itself carries.
+//
+// They ride their OWN block beside the knowledge verbs rather than a line in another sentence:
+// every verb a seat may call is one row here, with the ONE situation it is for, and a verb retired
+// from the participant surface loses its row (there is no other place it could survive).
+const SWARM_SEAT_READ_GUIDANCE = [
+  'The reading half is part of this loop: three read-only verbs read MORE than your brief carries — a context package\u2019s branches, what your peers have landed, and what they are doing now. Read-only means nothing is recorded either way: a refusal is the only thing that can come back, and it is typed.',
+  ...SWARM_SEAT_READ_COMMAND_NAMES.map((name) => `- ${name} [${SWARM_SEAT_READ_COMMANDS[name].permission}] — ${SWARM_SEAT_READ_COMMANDS[name].situation}.`),
+  'Name the digest or the seq you read from your brief; the answer is bounded, and a bounded answer says so (`truncated` with the `cursor` to continue from) rather than dropping rows.',
+].join('\n');
+
+/** The closed set of verbs this file advertises to a seat (issue #372): the #318 knowledge verbs
+ * plus the #441 seat read verbs, in the order the brief teaches them. `swarm.guide` and the
+ * brief's Swarm section render THIS set — a verb outside it is not callable by a seat. */
+export const SWARM_SEAT_VERB_NAMES = Object.freeze([
+  ...SWARM_KNOWLEDGE_COMMAND_NAMES, ...SWARM_SEAT_READ_COMMAND_NAMES,
+]);
+
 export const SWARM_NATIVE_GUIDANCE = [
   'Your native tools, skills, and delegation remain available. You can coordinate directly with this swarm using your own granted authority.',
   'Run node "$BATON_SWARM_CLIENT" swarm.view to see participants, shared context, knowledge, available actions, and your current permissions. Add "projection":"outline" to read one slice instead of the whole record — the bridge answers a view too large for its frame with the projection that fits.',
@@ -76,6 +99,7 @@ export const SWARM_NATIVE_GUIDANCE = [
   'Run node "$BATON_SWARM_CLIENT" swarm.update to publish a finding: {"event":"swarm.contribution_recorded","payload":{"body":"your whole report"}} — put the whole report inside the payload\'s `body` field, the payload shape is closed, and an unknown field refuses. An omitted contributionId is minted per call, so every such update records a NEW contribution; name the same contributionId to extend the contribution you already recorded. Group, work, context, and review updates use the permitted event kinds shown by swarm.view — the `updates` field lists, beside availableActions, exactly the kinds you may send now and the permission that admits each.',
   'Use swarm.guide to speak to a participant, swarm.recruit to bring in help when granted, and swarm.watch to await relevant updates. These commands use participant names; no worker, fence, pause, or approval choreography is required. swarm.capture and swarm.check belong to the root, and the root cannot capture or check your work until a contribution is recorded — ending a turn without publishing leaves the work unreachable.',
   SWARM_KNOWLEDGE_GUIDANCE,
+  SWARM_SEAT_READ_GUIDANCE,
   // Issue #357: the worktrees of one repository share a single stash stack, so the seat's git
   // wrapper refuses stash and the brief names the safe baseline comparison in ONE sentence,
   // derived from the runtime that enforces it.

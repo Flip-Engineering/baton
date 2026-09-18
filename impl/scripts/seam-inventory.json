@@ -12364,6 +12364,43 @@
           ]
         },
         {
+          "name": "_seatReadDispatch",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_packageRead",
+          "ordinal": 0,
+          "size": 32,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contributionsRead",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_peersRead",
+          "ordinal": 0,
+          "size": 57,
+          "seam": "admission",
+          "evidence": [
+            "delegates:observation",
+            "delegates:admission"
+          ]
+        },
+        {
           "name": "_publishedContracts",
           "ordinal": 0,
           "size": 3,
@@ -12440,7 +12477,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 635,
+          "size": 642,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
