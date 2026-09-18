@@ -358,3 +358,20 @@ test('441b-e: every seat read verb refuses an unknown argument key typed, before
   await assert.rejects(beta('run.contributions.read', { since: 'soon' }),
     (error) => error.code === 'swarm_command_invalid' && error.detail?.rule === 'field-predicate');
 });
+
+test('441b-f: the bridge guidance states the contribution-id mechanism the fold enforces', async (t) => {
+  const f = await swarmFixture(t, 'guidance');
+  const publish = (idempotencyKey) => f.command('swarm.update', { swarmId: SWARM_ID,
+    event: 'swarm.contribution_recorded',
+    payload: { contributionId: 'finding-1', participantId: 'beta', body: 'the interface is artifact:iface' },
+    idempotencyKey }, workerPrincipal(f.betaWorker.id));
+  await publish('first');
+  // The guidance a seat reads must state the mechanism the fold enforces: an id the swarm already
+  // holds REFUSES, it never extends — so a correction is its own contribution (finding raised by
+  // kimi-441 while reviewing this lane; the sentence shipped saying the opposite).
+  await assert.rejects(publish('second'), (error) => error.code === 'contribution_duplicate',
+    'a second record under the same contributionId refuses');
+  assert.match(SWARM_NATIVE_GUIDANCE, /never extends/u);
+  assert.match(SWARM_NATIVE_GUIDANCE, /`contribution_duplicate`/u);
+  assert.doesNotMatch(SWARM_NATIVE_GUIDANCE, /name the same contributionId to extend/u);
+});
