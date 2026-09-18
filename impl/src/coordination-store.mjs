@@ -906,6 +906,9 @@ export class CoordinationStore {
     // constructor load is untouched — every existing caller constructs loaded.
     if (opts.deferLoad === true) {
       if (this._canonicalOrderPolicy) throw new TypeError('deferLoad is unavailable under a canonical-order policy');
+      // Issue #351 lane 3: remembered so claimWriterLease can skip the digest re-verification
+      // of a projection that does not exist yet — the async load folds under the held lease.
+      this._deferredLoad = true;
       return;
     }
     if (opts.deferLoad !== undefined) throw new TypeError('deferLoad must be true when provided');
@@ -1373,10 +1376,10 @@ export class CoordinationStore {
     this._writerLease = freeze({ path, token, pid: process.pid, pidStart }); this._writerLeaseRequired = true;
     try {
       if (this._canonicalOrderPolicy) this._ensureCanonicalOrderReceipt();
-      // Construction already folded this exact ledger. Once the exclusive lease is held, a raw
-      // digest equality proves no other writer advanced it in the claim window; parsing and
-      // applying the same history a second time would only amplify startup cost.
-      if (!this._ledgerMatchesLoadedProjection()) this._reloadProjection();
+      // Issue #351 lane 3: a deferred-load store folds its history later, under the lease this
+      // call just claimed (the async open drives the same replay between chunks) — the digest
+      // re-verification below applies only once a load has actually folded the ledger.
+      if (!this._deferredLoad && !this._ledgerMatchesLoadedProjection()) this._reloadProjection();
     } catch (error) { this.releaseWriterLease(); throw error; }
     return clone(this._writerLease);
   }
@@ -16243,6 +16246,17 @@ export function coordinationForLog(log, root = join(log.dir, 'coordination')) {
  * history is. The returned store is fully loaded; every fold error rejects the promise. */
 export async function openCoordinationStoreAsync(root, opts = {}) {
   const store = new CoordinationStore(root, { ...opts, deferLoad: true });
+  await coordinationReplay._load(store, { async: true });
+  return store;
+}
+
+/** Issue #351 lane 3: the same loop-friendly replay, driven on a store the caller constructed
+ * (the production `createDriver` assembles the store with its own policy wiring, defers the
+ * load, claims the writer lease, and awaits THIS). Every fold error rejects the promise — the
+ * #304 replay-refusal contract, typed as ever, now from the async open. */
+export async function loadCoordinationStoreAsync(store) {
+  if (!(store instanceof CoordinationStore)) throw new TypeError('loadCoordinationStoreAsync requires a CoordinationStore');
+  if (store._deferredLoad !== true) throw new TypeError('loadCoordinationStoreAsync requires a deferLoad-constructed store');
   await coordinationReplay._load(store, { async: true });
   return store;
 }

@@ -18,7 +18,7 @@ import { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime,
 import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
-import { CoordinationStore } from './coordination-store.mjs';
+import { CoordinationStore, loadCoordinationStoreAsync } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { withinConcurrencyCeiling } from './concurrency-policy.mjs';
 import { snapshotWorkspace } from './workspace-snapshot.mjs';
@@ -1326,10 +1326,12 @@ export function createDriver(opts) {
   const log = new Log(opts.logDir, () => new Date(now()).toISOString());
   const fences = new FenceTable();
   const router = new AdaptiveRouter({ ...(routeLearningPolicy ?? { mode: 'adaptive' }), now });
+  // Issue #351 lane 3: the worker ledgers are DEFERRED, not eagerly ingested. The measured
+  // open spent 5.5-6.2 s deep-cloning 669 workers' stories (cloneState per event) before the
+  // resident could answer; reads drain what they need, and the open's warm drains the rest
+  // in registry-bounded chunks with a yield between them (story.mjs drainPendingAsync).
   const story = new StoryCompiler({ now });
-  for (const workerId of log.workers()) {
-    for (const event of log.read(workerId)) story.ingest(event);
-  }
+  for (const workerId of log.workers()) story.deferWorker(workerId, () => log.read(workerId));
   const runtimeScopes = opts.runtimeScopes ?? new RuntimeIsolation({
     repoRoot: opts.repoRoot,
     ...(opts.runtimeIsolation ?? {}),
@@ -1367,7 +1369,19 @@ export function createDriver(opts) {
       sourceAttest: opts.contextProgram.sourceAttest,
     });
   }
+  // Issue #351 lane 3: the production open constructs the store DEFERRED and drives lane 2's
+  // chunked-yielding replay through loadCoordinationStoreAsync — the open's loop beats during
+  // the replay instead of blocking for its whole duration (measured: 7.8 s silent on the
+  // 144k-row primary ledger). The default constructor load is untouched for every other
+  // caller; the option is internal to the deployment open path.
+  const coordinationAsyncOpen = opts.coordinationAsyncOpen === true;
+  if (opts.coordinationAsyncOpen !== undefined && !coordinationAsyncOpen) throw new TypeError('coordinationAsyncOpen must be true when provided');
+  if (coordinationAsyncOpen && opts.coordination !== undefined) throw new TypeError('coordinationAsyncOpen cannot be combined with a caller-provided coordination store');
+  if (coordinationAsyncOpen && (routeLearningPolicy || opts.reuseDecisionPolicy !== undefined || sessionRecoveryPolicy)) {
+    throw new TypeError('coordinationAsyncOpen requires an open that reads no projection before the async replay completes');
+  }
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
+    ...(coordinationAsyncOpen ? { deferLoad: true } : {}),
     repoId: deploymentRepoId,
     operationalRead: (worker, seq) => log.at(worker, seq),
     operationalRangeRead: (worker, throughSeq) => log.range(worker, throughSeq),
@@ -1422,6 +1436,10 @@ export function createDriver(opts) {
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
+  // Issue #351 lane 3: the async replay starts UNDER the lease just claimed — the fold's
+  // chunks yield to the loop while the rest of the driver assembles, and the deployment open
+  // awaits the promise before its first projection read. Fold errors reject typed (#304).
+  const coordinationOpened = coordinationAsyncOpen ? loadCoordinationStoreAsync(coordination) : null;
   const workspaceDeploymentId = canonicalDigest({ repoId: deploymentRepoId, logDir: realpathSync(opts.logDir) });
   const workspaceOwnerAuthority = Object.freeze({
     deploymentId: workspaceDeploymentId,
@@ -1802,7 +1820,10 @@ export function createDriver(opts) {
     });
     return operation;
   };
-  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, ready, close, closeAsync, drainAndClose, standingLaws,
+  // Issue #351 lane 3: coordinationOpened is the deferred async replay's promise — non-null
+  // only on the deployment open path (coordinationAsyncOpen); it must be awaited before the
+  // store's first read, and it rejects typed when the replay refuses.
+  return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, ready, close, closeAsync, drainAndClose, standingLaws,
     // The deployment checkout root: the swarm situation projection's git authority (#318) derives
     // the swarm's base commit and the rows landed since from it.
     repoRoot: opts.repoRoot };

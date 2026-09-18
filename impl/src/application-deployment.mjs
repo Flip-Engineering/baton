@@ -282,7 +282,12 @@ const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([
 
 function repositorySnapshot(repoRoot, stateRoot) {
   const head = git(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
-  const dirty = git(['status', '--porcelain=v1', '--untracked-files=all'], repoRoot, {
+  // Issue #351 lane 3: `normal` (not `all`). The row feeds ONE boolean — is the effective
+  // tree dirty — and `normal` answers it identically (an untracked directory is one `??`
+  // row instead of a full walk of its files). `all`'s deep walk of every untracked tree
+  // (on the primary: every lane worktree) was the open's cold git cost; the snapshot write
+  // path below still enumerates everything it needs through `add -A` when dirty.
+  const dirty = git(['status', '--porcelain=v1', '--untracked-files=normal'], repoRoot, {
     encoding: 'utf8',
   }).trim().length > 0;
   const trackedCredentials = git(['ls-files', '-z', '--', ...SNAPSHOT_CREDENTIAL_PATHS], repoRoot)
@@ -3617,6 +3622,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // D1: the stall budget no longer derives from DEFAULT_BUDGET.wallMin — it is the separately
     // frozen DEFAULT_WATCHDOG (20 min < 480 min wall), admission-checked at createDriver.
     watchdog: { ...DEFAULT_WATCHDOG },
+    // Issue #351 lane 3: the open path is ASYNC — the replay chunks yield to the loop, so a
+    // startup heartbeat and a signal handler keep beating however long the history is.
+    coordinationAsyncOpen: true,
   });
   // The floor probe reads the ledger high-water through the authority the driver just built.
   worktreeCapacityRef = driver.worktreeCapacity;
@@ -3697,6 +3705,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // binding lazily, and a reader that never asks for the rows never pays for the ledger read.
   let opened = null;
   try {
+    // Issue #351 lane 3: the open awaits its own async replay here — a fold refusal rejects
+    // typed (the #304 contract) and the catch below closes the driver it now owns — and then
+    // warms the deferred story ingest in registry-bounded chunks with a yield between them,
+    // so the first run view never pays for 669 workers' ledgers in one synchronous stretch.
+    if (driver.coordinationOpened) await driver.coordinationOpened;
+    if (typeof driver.story.drainPendingAsync === 'function') await driver.story.drainPendingAsync();
     contextRuntime.attachCoordination(driver.coordination);
     application = new BatonApplication({
       driver,

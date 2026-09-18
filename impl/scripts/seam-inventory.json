@@ -6164,7 +6164,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 186,
+          "size": 189,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",

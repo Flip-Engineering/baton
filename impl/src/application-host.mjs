@@ -126,14 +126,19 @@ function describeDrainOutcome(application) {
 /** Owns process-signal admission until one operation and its authoritative shutdown both settle. */
 export class SignalLifecycleOwner {
   constructor(options) {
-    closedKeys(options, ['signalEmitter', 'shutdown'], ['announce'], 'signal lifecycle configuration');
+    closedKeys(options, ['signalEmitter', 'shutdown'], ['announce', 'admittedTrigger'], 'signal lifecycle configuration');
     if (typeof options.signalEmitter?.on !== 'function' || typeof options.signalEmitter?.off !== 'function'
       || typeof options.shutdown !== 'function'
-      || (options.announce !== undefined && typeof options.announce !== 'function')) {
+      || (options.announce !== undefined && typeof options.announce !== 'function')
+      || (options.admittedTrigger !== undefined && !['SIGINT', 'SIGTERM', 'SIGHUP'].includes(options.admittedTrigger))) {
       throw hostError('signal lifecycle configuration is invalid');
     }
     this.signalEmitter = options.signalEmitter;
     this.shutdownAuthority = options.shutdown;
+    // #351 lane 3: a signal that arrived while the deployment was still opening is admitted
+    // here — the lifecycle treats it exactly like a signal received mid-operation (announce,
+    // then the same shutdown authority), instead of never hearing about it.
+    this.admittedTrigger = options.admittedTrigger ?? null;
     // #276(1): the operator's only window into a drain that starts at signal receipt. Called
     // synchronously on the first signal, before any shutdown work, and never awaited here — the
     // narration may not delay (or wedge) the drain it describes; the shutdown authority reads the
@@ -172,6 +177,10 @@ export class SignalLifecycleOwner {
       this.signalEmitter.on('SIGINT', onSigint);
       this.signalEmitter.on('SIGTERM', onSigterm);
       this.signalEmitter.on('SIGHUP', onSighup);
+      // #351 lane 3: a signal already received during the open is admitted the moment the
+      // lifecycle owns signal admission — before the operation starts, so the operation sees
+      // an aborted signal and skips the host start, and the shutdown is the usual one.
+      if (this.admittedTrigger !== null) admitSignal(this.admittedTrigger);
       const operationOutcome = Promise.resolve()
         .then(() => operation({ signal: controller.signal }))
         .then((value) => ({ status: 'fulfilled', value }), (error) => ({ status: 'rejected', error }));
