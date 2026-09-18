@@ -253,9 +253,26 @@ const BRIEF = Object.freeze({
   'brief.couplings.items': { lane: 'brief.couplings.items', class: 'view', value: BRIEF_COUPLINGS_ITEMS, unit: 'items', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the couplings situation block)' },
 });
 
+// Issue #449: the projection checkpoint's OWN cost ceiling — the bytes one HOUSEWRITING checkpoint
+// (a clean release, or #229's deferred append-path write) may re-encode beside the ledger. The
+// bound is DERIVED, never invented: a checkpoint exists to serve ONE replay frame, and
+// `view.wake_replay.items` is the registry's own ceiling for how many ledger rows one replay
+// carries, while `view.attention_text.bytes` is the registry's own byte ceiling for one row of a
+// frame's text. A cache that costs more than a frame's own byte budget is not a bounded aid to
+// that frame, and the ledger — which every loader still replays exactly — stays authoritative.
+// The pre-#449 bug applied the FRAME's ROW ceiling to the ledger's row count instead, which
+// skipped every release on a ledger that had done real work. The one write this ceiling does NOT
+// gate is the rewrite an open performs after it has replayed the ledger in full for a stale-shape
+// checkpoint (coordination-replay.mjs): that write is bounded by the replay it follows, and it is
+// the only thing that bounds the NEXT open.
+const CHECKPOINT_PROJECTION_BYTES = VIEW['view.wake_replay.items'].value * VIEW['view.attention_text.bytes'].value;
+const CHECKPOINT = Object.freeze({
+  'checkpoint.projection_bytes': { lane: 'checkpoint.projection_bytes', class: 'substrate', value: CHECKPOINT_PROJECTION_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mjs _boundedCheckpointWrite (the release and deferred housewriting gates)' },
+});
+
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
-export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF });
+export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT });
 
 export const FRAME_LIMITS_VERSION = '1.2.0';
 
