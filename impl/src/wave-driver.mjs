@@ -10,9 +10,11 @@
 //
 // Steering touches turn checkpoints only (L4): nudge dedup is keyed on `checkpoint.requestId`
 // (de818e3), never on the classification string (the run-m1-wave.mjs:146-149 anti-pin). Liveness
-// is the cursor-stripped status view, wave-level (L5): the store-global `cursor` is stripped
+// is the cursor-stripped status view, per member (#396): the store-global `cursor` is stripped
 // exactly as `semanticViewDigest` strips it, so a deployment-wide cursor flap never reads as
-// liveness; one live member resets the wave-level stall clock for all. The L6 termination law
+// liveness; each member's stall clock starts at its OWN last observed progress — one live
+// member never resets a sibling's clock and one hung member never holds a sibling's receipt.
+// The L6 termination law
 // applies a per-member unproductivity budget across a full nudge cycle (park → nudge → re-park
 // with an unchanged `changedPathsDigest`), and `claim_turn` resolves a parked `workerResult` into
 // `work_completed` — opt-in (`finalization: 'claim-on-stall'`) because claim is terminal on a
@@ -471,10 +473,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // values, not a per-iteration copy that falls out of scope.
     const memberKnowledge = new Map();
 
-    const startedAt = Date.now();
-    let lastMarker = '';
-    let lastMarkerAt = startedAt;
+    // #396: per-member stall clocks. Each member's clock starts at its OWN last observed
+    // progress (a change in its cursor-stripped marker digest) — never at a roster-shared
+    // start. One live member no longer resets the clock for all, and one hung member no
+    // longer holds its independent siblings' receipts: the loop ends when every unsettled
+    // member has been individually quiet for a full stallTimeoutMs.
+    const memberProgress = new Map(); // role -> { digest, lastProgressAt, lastProgressIso }
     let basis = null;
+    let stalls = [];
+    let waiting = [];
 
     const aborted = () => policy.signal?.aborted === true;
     const sleep = (ms) => {
@@ -583,6 +590,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
         const decisions = []; // v2 rule 3: members with a pending decision (onDecision candidates).
         const liveMembers = []; // v2 rule 6: non-terminal members + their status-read cursor.
         const classByRole = new Map(); // v2 rule 7: reducer output drives BOTH rendering and steering.
+        // #396: per-member stall attribution inputs — the named wait (if any) and the gating
+        // interaction (if blocked), read from the same status view the digest hashes.
+        const waitingOnByRole = new Map();
+        const gatedByRole = new Map();
         const statusInfo = new Map();
         const runs = wave.runs;
         for (const [role, runHandle] of runs) {
@@ -605,6 +616,17 @@ export function createWaveDriver(baton, rawPolicy = null) {
             markerDigest = 'unavailable';
           }
           if (outline.knowledge) memberKnowledge.set(role, outline.knowledge);
+          // #396: the member's OWN clock — a digest change is its own observed progress and
+          // resets only its clock. A transient 'unavailable' read changes the digest (resets);
+          // only CONSECUTIVE 'unavailable' polls leave it stable and count toward stall (D10).
+          const seen = memberProgress.get(role);
+          if (!seen || seen.digest !== markerDigest) {
+            memberProgress.set(role, {
+              digest: markerDigest,
+              lastProgressAt: Date.now(),
+              lastProgressIso: new Date().toISOString(),
+            });
+          }
           markerParts.push([role, phase, markerDigest]);
           const claimed = memberState.get(role)?.claimed === true;
           statusInfo.set(role, { terminal: terminal || claimed });
@@ -614,6 +636,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
             const checkpoint = checkpointOf(outline);
             const reduced = reduceMember(interactions, checkpoint, outline.waitingOn ?? null);
             classByRole.set(role, reduced.class);
+            // #396: stall attribution rides the reducer's precedence — a blocked member names
+            // its gating interaction; a waiting (never blocked) member names its wait.
+            waitingOnByRole.set(role, outline.waitingOn ?? null);
+            gatedByRole.set(role, reduced.blocked ? (reduced.gated ?? null) : null);
             // v2 rule 7 × D9: a blocked member is suppressed from nudge AND claim — the checkpoint
             // (if any) is NOT admitted to the steerable `paused` set while an interaction is
             // pending. A WAITING member is suppressed the same way: the `!reduced.waiting` clause
@@ -633,10 +659,9 @@ export function createWaveDriver(baton, rawPolicy = null) {
           }
         }
 
-        // L5 wave-level marker: one live member (any per-member digest change) resets the clock for
-        // all. A sibling-ONLY cursor movement is already stripped, so it never resets.
-        const marker = JSON.stringify(markerParts);
-        if (marker !== lastMarker) { lastMarker = marker; lastMarkerAt = Date.now(); }
+        // #396: no roster-wide clock is kept — each member's own digest change already reset
+        // ITS clock above, and a sibling-only cursor movement is stripped from every digest,
+        // so it resets none. markerParts below is render-only (the onProgress line).
 
         if (typeof policy.onProgress === 'function') {
           // v2 rule 7: the reducer's class is the rendered label (a decision-parked member never
@@ -769,13 +794,48 @@ export function createWaveDriver(baton, rawPolicy = null) {
         }
         if (settled === totalMembers) { basis = 'completed'; break; }
 
+        // #396: stall is adjudicated PER MEMBER RELATIONSHIP. A member is stalled when its OWN
+        // clock has been quiet for a full stallTimeoutMs; a member behind a named dependency
+        // (waitingOn, never blocked) reads waiting-on, never stalled. The loop ends when every
+        // unsettled member is individually accounted for — stalled or waiting — never on a
+        // shared start (docs/39 §Loose and tight: independent activities inherit no barrier).
         const now = Date.now();
-        // D4: stall is checked BEFORE cap when both cross in one poll.
-        if (now - lastMarkerAt >= policy.stallTimeoutMs) {
+        const stalledNow = [];
+        const waitingNow = [];
+        let rosterAccounted = true;
+        for (const [role] of runs) {
+          if (statusInfo.get(role)?.terminal) continue;
+          const progress = memberProgress.get(role);
+          const lastProgressAt = progress?.lastProgressAt ?? now;
+          const lastProgressIso = progress?.lastProgressIso ?? new Date(now).toISOString();
+          const gated = gatedByRole.get(role) ?? null;
+          const waitingOn = waitingOnByRole.get(role) ?? null;
+          if (gated === null && waitingOn && typeof waitingOn.kind === 'string') {
+            if (now - lastProgressAt >= policy.stallTimeoutMs) {
+              waitingNow.push({ role, waitingOn, lastProgressAt: lastProgressIso });
+            } else {
+              rosterAccounted = false;
+            }
+            continue;
+          }
+          if (now - lastProgressAt >= policy.stallTimeoutMs) {
+            stalledNow.push({
+              role,
+              lastProgressAt: lastProgressIso,
+              dependsOn: gated === null ? null : { kind: gated.kind ?? null, requestId: gated.requestId ?? null },
+            });
+          } else {
+            rosterAccounted = false;
+          }
+        }
+        if (rosterAccounted) {
           if (policy.finalization === 'claim-on-stall') {
-            // D9: claim fan-out at wave stall — every pending-paused member, one claim each, scope
-            // mismatch tolerated and recorded.
+            // D9: claim fan-out at stall — per stalled member only (a member that just showed
+            // progress is never claimed as stall collateral); scope mismatch tolerated and
+            // recorded. A waiting member is never claimed (the paused admission suppresses it).
+            const stalledRoles = new Set(stalledNow.map((entry) => entry.role));
             for (const { role, run: runHandle, checkpoint } of paused) {
+              if (!stalledRoles.has(role)) continue;
               const state = memberState.get(role) ?? freshState();
               if (!claimedPauseIds.has(checkpoint.requestId)) await claimOnce(role, runHandle, checkpoint, claims, state);
               memberState.set(role, state);
@@ -802,6 +862,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
           } else {
             basis = 'stall';
           }
+          // #396: publish the per-member adjudication — the stall rows name each stalled
+          // member with its own last-progress instant and its dependency (if any); the
+          // waiting rows name each member behind a real dependency (never stalled).
+          stalls = stalledNow;
+          waiting = waitingNow;
           break;
         }
         // #163 law: no wall-clock cap bounds the drive — the loop settles on member terminality
@@ -852,6 +917,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
       remainingCount: stop?.remainingCount ?? evidence.stops.length,
       residueUnknown: stop?.residueUnknown ?? false,
       basis,
+      // #396: the per-member stall adjudication — stalls names each stalled member with its
+      // own last-progress instant and its dependency (if any); waiting names each member
+      // behind a real dependency (never stalled). Both are empty on a clean completion.
+      stalls,
+      waiting,
       nudges,
       claims,
       // Bidirectional v2 rule 3: one driver-evidence line per fired decision callback.
