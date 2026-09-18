@@ -270,9 +270,9 @@ export function createDecisionRequest(fields, { shapeOnly = false } = {}) {
     const actual = typeof fields?.question === 'string' ? Buffer.byteLength(fields.question) : 0;
     if (actual > questionCap) {
       sizeRow ??= { row: FRAME_LIMITS['decision.question'], actual };
-      // The hard-class golden is the boundary text (cap + 1): the refusal names the cap and the
-      // smallest over-cap size; the payload carries the caller's real byte count.
-      errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.question'], MAX_DECISION_QUESTION_BYTES + 1, MAX_DECISION_QUESTION_BYTES));
+      // Issue #398: the hard-class refusal names the caller's OBSERVED byte count and the
+      // registry row it was judged against — never the cap+1 boundary golden.
+      errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.question'], actual, MAX_DECISION_QUESTION_BYTES));
     } else {
       errors.push('question is required (non-empty string)');
     }
