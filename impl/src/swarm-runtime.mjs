@@ -621,9 +621,15 @@ export class SwarmRuntime {
       } catch { resolved = false; }
     }
     if (!resolved) {
+      // #371: the refusal teaches the same triple the contract validator carries — which
+      // field failed, the sha-resolves rule, and what would be admitted.
       refuse(`Contribution commit ${body.commit.sha} does not resolve on the seat's lane branch`
         + ` ${body.commit.branch}: publish the lane's commit first, then report its sha`,
-      'contribution_commit_unresolved', { sha: body.commit.sha, branch: body.commit.branch });
+      'contribution_commit_unresolved', {
+        field: 'body.commit.sha', rule: 'sha-resolves',
+        expectation: 'a commit sha that resolves on the lane branch',
+        sha: body.commit.sha, branch: body.commit.branch,
+      });
     }
     return { body, status: null };
   }
@@ -2166,9 +2172,12 @@ export class SwarmRuntime {
       }
     }
     if (situation.length > 0) blocks.push(['## Swarm situation', ...situation].join('\n'));
-    // Issue #310: the expected contribution shape rides every brief, so the next lane never
-    // has to guess it — rendered from the contract's one derivation, never re-spelled.
-    blocks.push(contributionContractBriefSection());
+    // Issue #310 + #371: the expected contribution shape rides every brief as one worked
+    // example the validator admits, with the closed sets derived from the schema the
+    // validator reads. A seat granted no contribute authority publishes commit null by
+    // design, so its example is the read-only variant.
+    blocks.push(contributionContractBriefSection(
+      { readOnly: !((args.permissions ?? DEFAULT_PERMISSIONS).includes('contribute')) }));
     if (predecessor) {
       const inheritance = [
         `## Inheritance from ${predecessor.participantId}`,

@@ -51,7 +51,8 @@ export const CONTRIBUTION_CONTRACT_SCHEMA = Object.freeze({
       expectation: 'an object with observedHead and rebasedOnto',
       fields: Object.freeze({
         observedHead: STRING('the checkout HEAD the lane worked from', { required: true, example: 'a'.repeat(40) }),
-        rebasedOnto: STRING('the target the lane rebased onto', { required: true, example: 'main' }),
+        rebasedOnto: STRING('the target the lane rebased onto',
+          { required: true, example: 'b'.repeat(40), expectation: 'a sha string (or the observedHead)' }),
       }),
     }),
     commit: Object.freeze({ type: 'object|null', required: true,
@@ -85,11 +86,13 @@ export const CONTRIBUTION_CONTRACT_SCHEMA = Object.freeze({
       description: 'how the lane verified the whole contribution',
       expectation: 'an object with targeted, gates, fullSuite and environmentRed',
       fields: Object.freeze({
-        targeted: BOOLEAN('the targeted tests ran', { required: true, example: true }),
+        targeted: BOOLEAN('the targeted tests ran',
+          { required: true, example: true, expectation: 'boolean' }),
         gates: Object.freeze({ type: 'array', required: true,
           description: 'the gate verdicts the lane collected',
-          expectation: 'an array', example: Object.freeze([]) }),
-        fullSuite: BOOLEAN('the full suite ran', { required: true, example: false }),
+          expectation: 'array of strings', example: Object.freeze([]) }),
+        fullSuite: BOOLEAN('the full suite ran',
+          { required: true, example: false, expectation: 'boolean' }),
         environmentRed: STRINGS('the environment rows that were red and why they are not this lane',
           { required: true, example: Object.freeze([]) }),
       }),
@@ -121,123 +124,109 @@ export function isContributionContractBody(body) {
   return CONTRACT_KEYS.some((key) => Object.hasOwn(body, key));
 }
 
-function contractRefusal(message, field, expectation) {
-  throw Object.assign(new Error(message), {
-    code: 'contribution_contract_invalid',
-    detail: { field, expectation },
-  });
+/** One contract refusal, taught (#371): every contribution_contract_invalid carries the
+ * field, the RULE that failed (type | enum | sha-resolves | required | unknown-field) and
+ * the expectation (the admitted type/values), and its message reads
+ * "<field>: <rule>; expected <expectation>" — the same triple the durable
+ * swarm.operation_refused row and the bridge answer carry. */
+function contractRefusal(field, rule, expectation) {
+  throw Object.assign(
+    new Error(`Contribution contract is invalid: ${field}: ${rule}; expected ${expectation}`),
+    { code: 'contribution_contract_invalid', detail: { field, rule, expectation } });
 }
 
 const isNonEmptyString = (value) => typeof value === 'string' && value.length > 0;
 
-const refuseUnlessRecord = (value, field, expectation) => {
+const refuseUnlessRecord = (value, field, rule, expectation) => {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    contractRefusal(`Contribution contract is invalid: ${field} must be ${expectation}`,
-      field, expectation);
+    contractRefusal(field, rule, expectation);
   }
 };
 
 const refuseUnknown = (value, allowed, field) => {
   const unknown = Object.keys(value).find((key) => !allowed.includes(key));
   if (unknown !== undefined) {
-    contractRefusal(`Contribution contract is invalid: ${field}.${unknown} is not a field of the contribution contract`
-      + ` (fields: ${allowed.join(', ')})`,
-    `${field}.${unknown}`, `one of ${allowed.join(', ')}`);
+    contractRefusal(`${field}.${unknown}`, 'unknown-field', `one of ${allowed.join(', ')}`);
   }
 };
 
 /** The strict validator the runtime runs on a contract-claiming body: closed shape,
- * typed refusals naming the field. Returns the body unchanged when it holds. */
+ * typed refusals naming the field, the rule that failed and the admitted values (#371) —
+ * every expectation read from the SAME schema object the brief renders, never a second
+ * copy. Returns the body unchanged when it holds. */
 export function validateContributionContract(body) {
-  refuseUnlessRecord(body, 'body', 'the contribution contract object');
+  const fields = CONTRIBUTION_CONTRACT_SCHEMA.fields;
+  refuseUnlessRecord(body, 'body', 'type', 'the contribution contract object');
   refuseUnknown(body, CONTRIBUTION_CONTRACT_FIELDS, 'body');
-  for (const name of Object.keys(CONTRIBUTION_CONTRACT_SCHEMA.fields)) {
-    const field = CONTRIBUTION_CONTRACT_SCHEMA.fields[name];
-    if (body[name] === undefined) {
-      if (field.required) {
-        contractRefusal(`Contribution contract is invalid: body.${name} is required (${field.expectation})`,
-          `body.${name}`, field.expectation);
-      }
-      continue;
+  for (const name of Object.keys(fields)) {
+    if (body[name] === undefined && fields[name].required) {
+      contractRefusal(`body.${name}`, 'required', fields[name].expectation);
     }
   }
   if (!isNonEmptyString(body.subject)) {
-    contractRefusal('Contribution contract is invalid: body.subject must be non-empty text',
-      'body.subject', 'non-empty text');
+    contractRefusal('body.subject', 'type', fields.subject.expectation);
   }
-  refuseUnlessRecord(body.base, 'body.base', 'an object with observedHead and rebasedOnto');
+  refuseUnlessRecord(body.base, 'body.base', 'type', fields.base.expectation);
   refuseUnknown(body.base, ['observedHead', 'rebasedOnto'], 'body.base');
   for (const name of ['observedHead', 'rebasedOnto']) {
     if (!isNonEmptyString(body.base[name])) {
-      contractRefusal(`Contribution contract is invalid: body.base.${name} must be non-empty text`,
-        `body.base.${name}`, 'non-empty text');
+      contractRefusal(`body.base.${name}`, 'type', fields.base.fields[name].expectation);
     }
   }
   if (body.commit !== null) {
-    refuseUnlessRecord(body.commit, 'body.commit', 'an object with sha and branch, or null');
+    refuseUnlessRecord(body.commit, 'body.commit', 'type', fields.commit.expectation);
     refuseUnknown(body.commit, ['sha', 'branch'], 'body.commit');
     for (const name of ['sha', 'branch']) {
       if (!isNonEmptyString(body.commit[name])) {
-        contractRefusal(`Contribution contract is invalid: body.commit.${name} must be non-empty text`,
-          `body.commit.${name}`, 'non-empty text');
+        contractRefusal(`body.commit.${name}`, 'type', fields.commit.fields[name].expectation);
       }
     }
   }
   if (!Array.isArray(body.items) || body.items.length === 0) {
-    contractRefusal('Contribution contract is invalid: body.items must be a non-empty array of item rows',
-      'body.items', 'a non-empty array of item rows');
+    contractRefusal('body.items', 'type', fields.items.expectation);
   }
   body.items.forEach((item, index) => {
     const at = `body.items[${index}]`;
-    refuseUnlessRecord(item, at, 'an item row');
+    refuseUnlessRecord(item, at, 'type', 'an item row');
     refuseUnknown(item, ['id', 'status', 'change', 'files', 'test', 'evidence'], at);
     if (!isNonEmptyString(item.id)) {
-      contractRefusal(`Contribution contract is invalid: ${at}.id must be non-empty text`,
-        `${at}.id`, 'non-empty text');
+      contractRefusal(`${at}.id`, 'type', fields.items.items.fields.id.expectation);
     }
     if (!CONTRIBUTION_ITEM_STATUSES.includes(item.status)) {
-      contractRefusal(`Contribution contract is invalid: ${at}.status must be`
-        + ` one of ${CONTRIBUTION_ITEM_STATUSES.join(', ')}`,
-      `${at}.status`, `one of ${CONTRIBUTION_ITEM_STATUSES.join(', ')}`);
+      contractRefusal(`${at}.status`, 'enum', fields.items.items.fields.status.expectation);
     }
     for (const name of ['change', 'test', 'evidence']) {
       if (!isNonEmptyString(item[name])) {
-        contractRefusal(`Contribution contract is invalid: ${at}.${name} must be non-empty text`,
-          `${at}.${name}`, 'non-empty text');
+        contractRefusal(`${at}.${name}`, 'type', fields.items.items.fields[name].expectation);
       }
     }
     if (!Array.isArray(item.files) || !item.files.every(isNonEmptyString)) {
-      contractRefusal(`Contribution contract is invalid: ${at}.files must be an array of non-empty strings`,
-        `${at}.files`, 'an array of non-empty strings');
+      contractRefusal(`${at}.files`, 'type', fields.items.items.fields.files.expectation);
     }
   });
-  refuseUnlessRecord(body.verification, 'body.verification',
-    'an object with targeted, gates, fullSuite and environmentRed');
+  refuseUnlessRecord(body.verification, 'body.verification', 'type', fields.verification.expectation);
   refuseUnknown(body.verification, ['targeted', 'gates', 'fullSuite', 'environmentRed'], 'body.verification');
   for (const name of ['targeted', 'fullSuite']) {
     if (typeof body.verification[name] !== 'boolean') {
-      contractRefusal(`Contribution contract is invalid: body.verification.${name} must be true or false`,
-        `body.verification.${name}`, 'true or false');
+      contractRefusal(`body.verification.${name}`, 'type', fields.verification.fields[name].expectation);
     }
   }
-  if (!Array.isArray(body.verification.gates)) {
-    contractRefusal('Contribution contract is invalid: body.verification.gates must be an array',
-      'body.verification.gates', 'an array');
+  if (!Array.isArray(body.verification.gates)
+    || !body.verification.gates.every(isNonEmptyString)) {
+    contractRefusal('body.verification.gates', 'type', fields.verification.fields.gates.expectation);
   }
   if (!Array.isArray(body.verification.environmentRed)
     || !body.verification.environmentRed.every(isNonEmptyString)) {
-    contractRefusal('Contribution contract is invalid: body.verification.environmentRed must be an array of non-empty strings',
-      'body.verification.environmentRed', 'an array of non-empty strings');
+    contractRefusal('body.verification.environmentRed', 'type',
+      fields.verification.fields.environmentRed.expectation);
   }
   for (const name of ['carriedForward', 'needsFromOthers']) {
     if (!Array.isArray(body[name])) {
-      contractRefusal(`Contribution contract is invalid: body.${name} must be an array`,
-        `body.${name}`, 'an array');
+      contractRefusal(`body.${name}`, 'type', fields[name].expectation);
     }
   }
   if (body.notes !== undefined && typeof body.notes !== 'string') {
-    contractRefusal('Contribution contract is invalid: body.notes must be text when present',
-      'body.notes', 'any text');
+    contractRefusal('body.notes', 'type', fields.notes.expectation);
   }
   return body;
 }
@@ -270,16 +259,67 @@ export function projectContributionContract(body) {
   });
 }
 
+/** The worked example the brief renders (#371): the schema's own example column
+ * materialized into one payload the validator admits — assembled from the SAME schema
+ * object the validator reads, never a hand-typed second copy. The contributing example
+ * shows the commit object form; a read-only seat (a grant without `contribute`) publishes
+ * commit null by design and gets that variant. */
+const exampleFromSchema = (readOnly) => Object.freeze({
+  subject: CONTRIBUTION_CONTRACT_SCHEMA.fields.subject.example,
+  base: Object.freeze({
+    observedHead: CONTRIBUTION_CONTRACT_SCHEMA.fields.base.fields.observedHead.example,
+    rebasedOnto: CONTRIBUTION_CONTRACT_SCHEMA.fields.base.fields.rebasedOnto.example,
+  }),
+  commit: readOnly ? null : Object.freeze({
+    sha: CONTRIBUTION_CONTRACT_SCHEMA.fields.commit.fields.sha.example,
+    branch: CONTRIBUTION_CONTRACT_SCHEMA.fields.commit.fields.branch.example,
+  }),
+  items: [Object.freeze({
+    id: CONTRIBUTION_CONTRACT_SCHEMA.fields.items.items.fields.id.example,
+    status: CONTRIBUTION_CONTRACT_SCHEMA.fields.items.items.fields.status.example,
+    change: CONTRIBUTION_CONTRACT_SCHEMA.fields.items.items.fields.change.example,
+    files: Object.freeze([...CONTRIBUTION_CONTRACT_SCHEMA.fields.items.items.fields.files.example]),
+    test: CONTRIBUTION_CONTRACT_SCHEMA.fields.items.items.fields.test.example,
+    evidence: CONTRIBUTION_CONTRACT_SCHEMA.fields.items.items.fields.evidence.example,
+  })],
+  verification: Object.freeze({
+    targeted: CONTRIBUTION_CONTRACT_SCHEMA.fields.verification.fields.targeted.example,
+    gates: Object.freeze([...CONTRIBUTION_CONTRACT_SCHEMA.fields.verification.fields.gates.example]),
+    fullSuite: CONTRIBUTION_CONTRACT_SCHEMA.fields.verification.fields.fullSuite.example,
+    environmentRed: Object.freeze(
+      [...CONTRIBUTION_CONTRACT_SCHEMA.fields.verification.fields.environmentRed.example]),
+  }),
+  carriedForward: Object.freeze([]),
+  needsFromOthers: Object.freeze([]),
+});
+
+/** The example payload the brief prints verbatim — the contributing form. */
+export const CONTRIBUTION_CONTRACT_EXAMPLE = exampleFromSchema(false);
+
+/** The example for a seat's mode: `readOnly` (a grant without contribute) swaps commit
+ * for null, the form that seat publishes by design. */
+export function contributionContractExample({ readOnly = false } = {}) {
+  return readOnly ? exampleFromSchema(true) : CONTRIBUTION_CONTRACT_EXAMPLE;
+}
+
 /** The expected-shape block the recruit brief renders: the contract a lane publishes, so
- * the next lane never has to guess it. One derivation — the brief renders this, never a
- * re-spelled copy. */
-export function contributionContractBriefSection() {
+ * the next lane never has to guess it (#310) — now a worked example the validator admits,
+ * printed verbatim, with the closed value sets inline and derived from the same schema
+ * object the validator reads (#371), never a hand-typed second copy. */
+export function contributionContractBriefSection({ readOnly = false } = {}) {
+  const fields = CONTRIBUTION_CONTRACT_SCHEMA.fields;
+  const closedSets = [
+    `items[].status ∈ ${fields.items.items.fields.status.enum.join('|')}`,
+    `verification.targeted: ${fields.verification.fields.targeted.expectation}`,
+    `verification.gates: ${fields.verification.fields.gates.expectation}`,
+    `base.rebasedOnto: ${fields.base.fields.rebasedOnto.expectation}`,
+    `commit: {${Object.keys(fields.commit.fields).join(', ')}} or null`,
+  ];
   return ['## Contribution contract',
-    'Publish your report with swarm.update event swarm.contribution_recorded as one JSON object shaped exactly like this'
+    'Publish your report with swarm.update event swarm.contribution_recorded as one JSON object shaped exactly like this worked example, which the validator admits as printed'
     + ' — nothing downstream can consume any other shape:',
-    '{subject, base: {observedHead, rebasedOnto}, commit: {sha, branch} | null,'
-    + ' items: [{id, status: delivered|partial|not_delivered, change, files, test, evidence}],'
-    + ' verification: {targeted, gates, fullSuite, environmentRed}, carriedForward, needsFromOthers, notes}',
+    JSON.stringify(contributionContractExample({ readOnly }), null, 2),
+    `Closed value sets: ${closedSets.join('; ')}.`,
     'A publish naming only a bare-string body (no contributionId) is recorded as a note, not a contribution,'
     + ' and wakes nobody: it never substitutes for the contract above.',
   ].join('\n');
