@@ -12839,7 +12839,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1045,
+          "size": 1053,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"

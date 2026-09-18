@@ -217,6 +217,23 @@ const LIST_PAGE_ITEMS = Math.floor(SUBSTRATE['wire.frame'].value / ADMISSION['me
 // rather than re-typed here.
 const ROLE_HEAD_BYTES = ADMISSION['board.title'].value;
 
+// Issue #464 (the participant row's commit tail — the second half of the issue, after the role
+// head): the wrapper-attributed commits a participant row CARRIES. The live swarm measured one
+// seat's list at 195 049 B (1 241 rows) and the issue's participants page served 6 of 36 rows in
+// 664 761 B, so a roster cannot carry its seats' whole histories. The bound is fixed by the roster
+// the issue measured and by the bridge, which counts an answer TWICE (the MCP envelope mirrors the
+// content): 2 × 36 seats × bound × 216 B (a measured commit row: sha + workspaceId + paths + at +
+// seq) ≤ wire.frame ⇒ bound ≤ 67. The value is the family's ONE list page divided by eight — the
+// share a roster ROW may take of the page a whole read names, so this row moves with that one and
+// no second ceiling is typed here: 512 / 8 = 64, the largest eighth whose 36-seat arithmetic
+// still composes (2 × 36 × 64 × 216 = 995 328 B ≤ 1 048 576 B). A row keeps `commitsTotal` (how
+// many the seat really landed); the rest stays reachable through the seat's OWN scoped read —
+// `swarm.view {swarmId, participantId}`, the #343/#349 ladder on which heavy per-row fields ride
+// whole (docs/43 §4) — and a bridge PAGE, which carries no commit rows at all, is what lets a
+// roster larger than one frame still answer every peer.
+const PARTICIPANT_COMMIT_PAGE_SHARE = 1 / 8;
+const PARTICIPANT_COMMITS_ITEMS = Math.floor(LIST_PAGE_ITEMS * PARTICIPANT_COMMIT_PAGE_SHARE);
+
 const VIEW = Object.freeze({
   'view.board.bytes': { lane: 'view.board.bytes', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
   'view.board.items': { lane: 'view.board.items', class: 'view', value: 512, unit: 'items', graceful: 'shed-flagged' },
@@ -272,6 +289,15 @@ const VIEW = Object.freeze({
   'view.role.head': { lane: 'view.role.head', class: 'view', value: ROLE_HEAD_BYTES, unit: 'bytes',
     graceful: 'shed-flagged',
     enforcedAt: 'swarm-state.mjs foldSwarmEvent (the participant row\'s role line and roleRef: every surface reads that row)' },
+  // Issue #464 (the derivation above): the commit tail a participant row carries — the NEWEST
+  // `commits` rows of the seat's attributions, with `commitsTotal` the whole count beside them, so
+  // a row that did not carry the history says how much of it there is instead of reading as a
+  // complete list. The read that answers the rest is the seat's own participantId-scoped view (the
+  // heavy field rides whole there); ONE derivation — the runtime's participant row — so a page, a
+  // roster, a peer read and the CLI's whole-record view cannot disagree about what a row holds.
+  'view.workspace.commits': { lane: 'view.workspace.commits', class: 'view',
+    value: PARTICIPANT_COMMITS_ITEMS, unit: 'items', graceful: 'shed-flagged',
+    enforcedAt: 'swarm-runtime.mjs inspect (the participant row\'s workspace.commits tail)' },
 });
 
 // Issue #441 (the reading half): the two bounds a recruited ContextPackage draws. A branch

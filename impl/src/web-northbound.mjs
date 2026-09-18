@@ -1364,9 +1364,11 @@ const SWARM_VIEW_PAGE_ROW_FAMILIES = Object.freeze([
 
 // The heavy per-row fields a PAGE leaves out: the per-seat diagnostic records — lastToolRows and
 // the native observation record whose invocations and agents arrays are the bulk a busy seat
-// carries. They ride only a read that names a participantId (#343); whole, narrowed and scoped
-// answers are untouched.
-const SWARM_VIEW_PAGE_HEAVY_PARTICIPANT_FIELDS = Object.freeze(['lastToolRows', 'native']);
+// carries — and (issue #464) the seat's attributed commit rows, which live on the workspace row.
+// A page keeps `workspace.commitsTotal`, so it still says how many commits it did not carry.
+// They ride only a read that names a participantId (#343); whole, narrowed and scoped answers are
+// untouched. A dotted name reaches a nested field; a bare name deletes at the row's top level.
+const SWARM_VIEW_PAGE_HEAVY_PARTICIPANT_FIELDS = Object.freeze(['lastToolRows', 'native', 'workspace.commits']);
 
 // The bounded head a page carries of a contribution body: the declared `context_pack.body`
 // substrate row — no second number. The full body rides the participantId read.
@@ -1395,13 +1397,21 @@ export function readSwarmViewPageCursor(token) {
   return { projection, offset };
 }
 
-// One row as the page serves it. A participant row drops the heavy diagnostic records; a
-// contribution row bounds its body to the head (byte-bounded, never a char guess) and names the
-// size it left out. Every other row crosses whole.
+// One row as the page serves it. A participant row drops the heavy diagnostic records and its
+// commit list; a contribution row bounds its body to the head (byte-bounded, never a char guess)
+// and names the size it left out. Every other row crosses whole.
 function swarmViewPageRow(family, row) {
   if (family === 'participants' && row !== null && typeof row === 'object' && !Array.isArray(row)) {
     const paged = { ...row };
-    for (const field of SWARM_VIEW_PAGE_HEAVY_PARTICIPANT_FIELDS) delete paged[field];
+    for (const field of SWARM_VIEW_PAGE_HEAVY_PARTICIPANT_FIELDS) {
+      const dot = field.indexOf('.');
+      if (dot === -1) { delete paged[field]; continue; }
+      const head = field.slice(0, dot);
+      const nested = paged[head];
+      if (nested === null || typeof nested !== 'object' || Array.isArray(nested)) continue;
+      paged[head] = { ...nested };
+      delete paged[head][field.slice(dot + 1)];
+    }
     return paged;
   }
   if (family === 'contributions' && row !== null && typeof row === 'object' && !Array.isArray(row)
