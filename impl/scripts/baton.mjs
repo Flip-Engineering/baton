@@ -108,6 +108,16 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
   // is still counted from it, and a read that REFUSES is named with its code — and recorded once —
   // instead of leaving the operator with an unexplained "count unavailable".
   let announced = null;
+  // Issue #468: this incarnation's OWN serve log. `deployment.host()` opens `resident/
+  // serve.<incarnation>.log` at open and every host line lands in it; the lines THIS script writes
+  // (the open's replay marker, the flip, the stop's exit lines) are the same incarnation's
+  // narration, so they are written to the same file — a `baton serve` started by hand keeps
+  // stdout/stderr exactly as today AND writes the file, and the successor's narration no longer
+  // depends on a predecessor's process holding a pipe open.
+  const logLine = (line) => {
+    try { process.stderr.write(`${line}\n`); } catch { /* a broken sink never breaks the stop */ }
+    try { deployment.serveLog?.()?.write(line); } catch { /* a missing line, never a missing stop */ }
+  };
   const narration = (trigger) => {
     // Issue #351 lane 2: the durable request is the handler's FIRST act — appended synchronously
     // through the deployment's own writer path (one bounded row, deduped against the drain)
@@ -116,7 +126,7 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
       const requestedLine = typeof deployment.recordStopRequested === 'function'
         ? deployment.recordStopRequested(trigger.kind) : null;
       if (requestedLine) {
-        process.stderr.write(`${flipAnnounce('draining', requestedLine, { tty: TTY, color: TTY })}\n`);
+        logLine(flipAnnounce('draining', requestedLine, { tty: TTY, color: TTY }));
       }
     } catch { /* the stop narrates without the row rather than wedging the handler */ }
     const source = typeof deployment.ownedParticipantCount === 'function'
@@ -127,13 +137,13 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
     const refused = (refusal) => {
       try {
         const recorded = typeof deployment.recordNarrationRefused === 'function' ? deployment.recordNarrationRefused(refusal) : null;
-        if (recorded?.line) process.stderr.write(`${flipAnnounce('draining', recorded.line, { tty: TTY, color: TTY })}\n`);
+        if (recorded?.line) logLine(flipAnnounce('draining', recorded.line, { tty: TTY, color: TTY }));
       } catch { /* the line below is still written */ }
     };
     announced = (async () => signalIntentLine(trigger, source, { onRefused: refused }))().then(
-      (line) => { process.stderr.write(`${flipAnnounce('draining', `baton serve: ${line}`, { tty: TTY, color: TTY })}\n`); },
+      (line) => { logLine(flipAnnounce('draining', `baton serve: ${line}`, { tty: TTY, color: TTY })); },
       (error) => {
-        process.stderr.write(`${flipAnnounce('draining', `baton serve: signal received; draining participants (narration failed: ${error?.code ?? error?.name ?? 'error'}) (${trigger.kind})`, { tty: TTY, color: TTY })}\n`);
+        logLine(flipAnnounce('draining', `baton serve: signal received; draining participants (narration failed: ${error?.code ?? error?.name ?? 'error'}) (${trigger.kind})`, { tty: TTY, color: TTY }));
       },
     );
     return announced;
@@ -161,8 +171,12 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
     crashing = true;
     const code = error?.code ?? error?.name ?? 'error';
     const head = String(error?.stack ?? error?.message ?? error).split('\n').slice(0, 3).join(' | ');
-    process.stderr.write(`${flipAnnounce('failed', `baton serve: ${label} (${code}): ${head} — stopping through the drain`, { tty: TTY, color: TTY })}\n`);
-    try { deployment.recordStopRequested?.(`${label}:${code}`); } catch { /* the stop narrates without the row */ }
+    logLine(flipAnnounce('failed', `baton serve: ${label} (${code}): ${head} — stopping through the drain`, { tty: TTY, color: TTY }));
+    // Issue #468: the code AND the stack head ride the durable trigger row. The narration line
+    // above can be written into a stream that just failed (the 13:36Z EPIPE was reported on the
+    // very pipe that was gone); the row cannot — so the ledger, not a lost pipe, names the stream
+    // and the frame next time.
+    try { deployment.recordStopRequested?.(`${label}:${code}`, { code, stackHead: head }); } catch { /* the stop narrates without the row */ }
     process.exitCode = 1;
     process.emit('SIGTERM');
   };
@@ -178,7 +192,7 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
       // bound or above — the size a replay was audible (loop-blocking) at before this lane.
       const pre = typeof deployment.startupReport === 'function' ? deployment.startupReport() : null;
       if (pre !== null && (pre.rows ?? 0) >= FRAME_LIMITS['view.wake_replay.items'].value) {
-        process.stderr.write(`${flipAnnounce('hosted', `baton serve: replayed (open ${pre.openElapsedMs}ms; ${pre.rows} rows on the ledger; replayed ${pre.replayedEvents ?? 0}; checkpoint ${pre.checkpoint ?? 'unknown'})`, { tty: TTY, color: TTY })}\n`);
+        logLine(flipAnnounce('hosted', `baton serve: replayed (open ${pre.openElapsedMs}ms; ${pre.rows} rows on the ledger; replayed ${pre.replayedEvents ?? 0}; checkpoint ${pre.checkpoint ?? 'unknown'})`, { tty: TTY, color: TTY }));
       }
       // An already-admitted signal skips the host start: the stop is the operation's outcome.
       if (signal.aborted) return null;
@@ -196,8 +210,8 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
         : `; reconstructed ${Math.round(report.reconstructionElapsedMs)}ms`;
       const flip = report === null ? 'answering'
         : `answering (open ${report.openElapsedMs}ms; ${report.rows ?? 0} rows on the ledger; replayed ${report.replayedEvents ?? 0}; checkpoint ${checkpointText}${reconstructedText})`;
-      process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${flip}`, { tty: TTY, color: TTY })}\n`);
-      process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${JSON.stringify(hosted)}`, { tty: TTY, color: TTY })}\n`);
+      logLine(flipAnnounce('hosted', `baton serve: ${flip}`, { tty: TTY, color: TTY }));
+      logLine(flipAnnounce('hosted', `baton serve: ${JSON.stringify(hosted)}`, { tty: TTY, color: TTY }));
       await new Promise((resolveSignal) => {
         if (signal.aborted) resolveSignal();
         else signal.addEventListener('abort', resolveSignal, { once: true });
@@ -211,10 +225,10 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
     const summary = wait === null
       ? (error?.code ?? error?.name ?? 'error')
       : `${error?.code ?? error?.name ?? 'error'} — drain did not converge: ${wait}`;
-    process.stderr.write(`${flipAnnounce('failed', `baton serve: exit non-zero; ${summary}`, { tty: TTY, color: TTY })}\n`);
+    logLine(flipAnnounce('failed', `baton serve: exit non-zero; ${summary}`, { tty: TTY, color: TTY }));
     throw error;
   }
-  process.stderr.write(`${flipAnnounce(outcome.closed?.state, `baton serve: ${JSON.stringify(outcome.closed)}`, { tty: TTY, color: TTY })}\n`);
+  logLine(flipAnnounce(outcome.closed?.state, `baton serve: ${JSON.stringify(outcome.closed)}`, { tty: TTY, color: TTY }));
   if (outcome.closed.state !== 'closed') process.exitCode = 1;
 }
 
