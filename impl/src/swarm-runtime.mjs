@@ -1530,22 +1530,40 @@ export class SwarmRuntime {
     finally { this.pending.delete(key); }
   }
 
-  /** #306 (3): the advisory a recruit carries when the resident serves a commit its target branch
-   * has moved past — {served, target, behind} from the deployment summary's own `served` row, or
-   * null when the resident is current, the target is unknown, or no summary is wired. Advisory
-   * only: the seat is admitted regardless; the root decides whether to reincarnate first. */
+  /** #306 (3) and (lane B): the stale-base facts a recruit carries when the resident serves a
+   * commit its target branch has moved past — read from the deployment summary's own `served` row
+   * (the deployment's ONE served-behind derivation), never from git here. ONE summary read answers
+   * both projections: `baseBehind` is the shape the receipt has carried since #306 (3) (the CLI's
+   * follow leg reads it), `advisory` is the typed `{kind: 'base_behind', ...}` row the receipt and
+   * the brief name. Both are null when the resident is current, the target is unknown, or no
+   * summary is wired. Advisory only: the seat is admitted regardless, and the root decides whether
+   * to reincarnate first. */
   _baseBehind() {
     let summary = null;
     try { summary = typeof this.deploymentSummary === 'function' ? this.deploymentSummary() : null; }
-    catch { return null; }
+    catch { return { baseBehind: null, advisory: null }; }
     const served = summary?.served;
-    const behind = served?.target?.behind;
-    if (!served || typeof served.commit !== 'string' || !Number.isSafeInteger(behind) || behind <= 0) return null;
-    return Object.freeze({
-      served: served.commit, branch: served.branch ?? null,
-      target: Object.freeze({ ref: served.target.ref ?? null, commit: served.target.commit ?? null }),
-      behind,
-    });
+    // The lane-B spelling first (the row's own `behind.count`), the #306 (2) `target.behind` as
+    // the fallback, so a hand-built summary (a fixture, an older shape) reads identically.
+    const count = Number.isSafeInteger(served?.behind?.count)
+      ? served.behind.count : served?.target?.behind;
+    const sha = typeof served?.target?.sha === 'string' ? served.target.sha : served?.target?.commit;
+    if (!served || typeof served.commit !== 'string' || !Number.isSafeInteger(count) || count <= 0) {
+      return { baseBehind: null, advisory: null };
+    }
+    const ref = served.target?.ref ?? null;
+    const targetSha = typeof sha === 'string' ? sha : null;
+    return {
+      baseBehind: Object.freeze({
+        served: served.commit, branch: served.branch ?? null,
+        target: Object.freeze({ ref, commit: targetSha }), behind: count,
+      }),
+      advisory: Object.freeze({
+        kind: 'base_behind', served: served.commit,
+        target: Object.freeze({ ref, sha: targetSha }), count,
+        next: 'baton deployment reincarnate <target>',
+      }),
+    };
   }
 
   /** #341 part 3: the served routes' usage rows, read from the deployment summary this runtime
@@ -4071,10 +4089,12 @@ export class SwarmRuntime {
 
   /** The brief one seat is recruited with (#318 deliverables 3 and 4): the recruiter's objective
    * verbatim, then the swarm situation — the peers and their scopes, the contracts published so
-   * far, the commits landed on the target since the base — and, for a `resumeFrom` successor,
-   * the predecessor's inheritance. The composition is written ONCE onto the join as `brief`, so
-   * the swarm's own record of what a seat was told is the brief every surface renders. */
-  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null) {
+   * far, the commits landed on the target since the base — then, for a seat admitted onto a
+   * resident that serves a commit behind its target, the ONE `## Base` line saying so (#306 lane B),
+   * and, for a `resumeFrom` successor, the predecessor's inheritance. The composition is written
+   * ONCE onto the join as `brief`, so the swarm's own record of what a seat was told is the brief
+   * every surface renders. */
+  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null, baseAdvisory = null) {
     const blocks = [args.objective];
     // Issue #345: the seat's own assignment — the work item the swarm knows it holds — rides the
     // brief first, so "your work item is work-N" is read from the assignment, never retyped.
@@ -4246,6 +4266,17 @@ export class SwarmRuntime {
         ? `- Last checkpoint: ${predecessor.lastCheckpoint.sha} (retained ref ${predecessor.lastCheckpoint.ref})`
         : '- Last checkpoint: none was recorded for this predecessor.');
       blocks.push(lines.join('\n'));
+    }
+    // #306 (3) and (lane B): a seat recruited onto a resident that serves a commit its target has
+    // moved past is TOLD so before it starts — one line naming the served revision, how far behind
+    // it is and what its base therefore is. The same facts (one deployment derivation) the receipt
+    // answers with; a current or unmeasurable resident renders no section at all.
+    if (baseAdvisory !== null) {
+      blocks.push([
+        '## Base',
+        `This resident serves ${baseAdvisory.served}, ${baseAdvisory.count} commits behind`
+          + ` ${baseAdvisory.target.ref ?? 'its target'}; your base is the served commit.`,
+      ].join('\n'));
     }
     if (predecessor) {
       const inheritance = [
@@ -4948,7 +4979,10 @@ export class SwarmRuntime {
         const currentSwarm = this._swarm(args.swarmId);
         const parkedDeliveries = this._undeliveredParkedGuidance(
           [args.participantId, args.resumeFrom ?? null]);
-        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs);
+        // #306 lane B: the stale-base facts, read ONCE here so the line the brief is composed with
+        // and the advisory the receipt carries are the same read of the deployment's own row.
+        const baseFacts = this._baseBehind();
+        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, baseFacts.advisory);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
         // whose work would be starved is not started: while the derived host budget has no room,
         // the request waits IN ORDER as a visible queue entry and its typed queued row is
@@ -5130,10 +5164,11 @@ export class SwarmRuntime {
             ...(queuedRow ? { position: queuedRow.position, ahead: queuedRow.ahead,
               queuedAt: workerLease?.queuedAt ?? null } : {}),
           },
-          // #306 (3): the seat is admitted, and the root is TOLD when this resident serves a
-          // commit the target branch has moved past — so it chooses to reincarnate first
-          // instead of discovering a stale base on the lane's capture.
-          baseBehind: this._baseBehind(),
+          // #306 (3) and (lane B): the seat is admitted, and the root is TOLD when this resident
+          // serves a commit the target branch has moved past — so it chooses to reincarnate
+          // first instead of discovering a stale base on the lane's capture. One derivation, two
+          // projections: the landed `baseBehind`, and the typed `advisory` the brief names.
+          baseBehind: baseFacts.baseBehind, advisory: baseFacts.advisory,
           // #341 part 3: what the recruit compared and what it chose — the deployment's own
           // routeUsage rows, one row per route considered, each saying why it was or was not
           // chosen. Null when this runtime has no route rows (a bare fixture host).
@@ -5143,7 +5178,8 @@ export class SwarmRuntime {
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, runId: result.runId, swarmId: result.swarmId,
           scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null,
-          baseBehind: result.baseBehind ?? null, routes: result.routes ?? null });
+          baseBehind: result.baseBehind ?? null, advisory: result.advisory ?? null,
+          routes: result.routes ?? null });
     }
     const participant = this._participant(swarm, args.participantId);
     if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId
