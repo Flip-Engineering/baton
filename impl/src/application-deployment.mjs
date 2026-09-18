@@ -2617,11 +2617,53 @@ export function routeAdmissionGate(readiness, routeQuota, refusals = null, crede
   };
 }
 
-function residentApplicationFacade(application, resident, readinessSupplier) {
+/** Issue #467: the verbs a STOPPING resident still answers over its own transport — ONE closed
+ * list, and the whole of read admission during a stop. A resident in `stopping` must say so over
+ * its own transport (the CLI's `cli_transport_failed` hid the whole state), and new-turn admission
+ * closes where it is actually decided — the coordinator's drain gate — not by taking the reader's
+ * transport away with it. Every other verb keeps its ordinary path. */
+const STOPPING_READ_VERBS = Object.freeze([
+  'deployment.doctor', 'runs.list', 'swarm.list', 'swarm.view',
+]);
+
+/** Issue #467: the bounded attempts a resident's stop takes per worker wait. Past the last one the
+ * stop PROCEEDS with the worker named abandoned; a third wait does not exist. */
+const STOP_WAIT_ATTEMPT_BOUND = 2;
+
+/** Issue #467: how many stop waits the `stopping` read carries. Bounded like every other published
+ * list — a stop that churned must not grow the read it answers. */
+const MAX_STOPPING_WAITS = 32;
+
+/** Issue #467: the served application of a resident, with the two facts only the deployment can
+ * answer — the resident identity (the card) and, while this incarnation is stopping, the stop
+ * itself: the closed read list above answers `state: 'stopping'` with the waits the stop holds, and
+ * the card carries the same section, so `baton doctor` over the served transport reads it. */
+function residentApplicationFacade(application, resident, readinessSupplier, stoppingSupplier = null) {
+  const stopping = () => {
+    if (stoppingSupplier === null) return null;
+    try { return stoppingSupplier(); } catch { return null; }
+  };
   return new Proxy(application, {
     get(target, key) {
       if (key === 'card') {
-        return () => Object.freeze({ ...target.card(), resident, readiness: readinessSupplier() });
+        return () => Object.freeze({
+          ...target.card(), resident, readiness: readinessSupplier(),
+          ...(stopping() === null ? {} : { stopping: stopping() }),
+        });
+      }
+      if (key === 'command') {
+        return (name, args, principal, context) => {
+          const state = stopping();
+          if (state !== null && STOPPING_READ_VERBS.includes(name)) {
+            const document = { schemaVersion: 1, state: 'stopping', repoId: target.repoId, ...state };
+            if (name === 'deployment.doctor') {
+              const readiness = readinessSupplier();
+              return Promise.resolve(Object.freeze({ ...readiness, ...document }));
+            }
+            return Promise.resolve(Object.freeze(document));
+          }
+          return target.command(name, args, principal, context);
+        };
       }
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -2935,6 +2977,13 @@ class BatonDeployment {
   // the one-stop-one-request fact both the handler and the shutdown path read, so a stop that
   // begins in a signal handler owns exactly one `host.stop_requested` row whichever path runs.
   #stopRequestedAt = null;
+  // Issue #467: the instant THIS incarnation began stopping (set before the request row is even
+  // attempted, because the state a reader asks about is the stop, not the row) and the waits it has
+  // named since — the facts the `stopping` read publishes over the served transport.
+  #stoppingSince = null;
+  #stopWaits = [];
+  #stopWaitAttempts = null;
+
   // Issue #351: the stop's stage clock. Each stage costs the time between entering it and entering
   // the next; the release mints the timeline onto the `host.stopped` row (STOP_STAGES names the
   // vocabulary), so the next slow stop names its stage instead of only its total.
@@ -3189,6 +3238,10 @@ class BatonDeployment {
       ...(hostCapacity ? { hostCapacity } : {}),
       ...(served ? { served } : {}),
     };
+    // Issue #467: a resident that is stopping SAYS SO on the read every client already makes —
+    // `state: 'stopping'` beside the waits the stop holds. Present only while a stop is in flight,
+    const stopping = this.#stoppingState();
+    if (stopping !== null) base.stopping = stopping;
     Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
     // Issue #351 lane 2: the startup truth the publication contract renders — the coordination
     // replay's final state (state/rows/checkpoint) beside the open's elapsed milliseconds, read
@@ -3576,7 +3629,9 @@ class BatonDeployment {
     }, { actor: `deployment:${this.#repository.repoId}:resident` });
     this.#residentSession = Object.freeze({ sessions, sessionId: issued.sessionId });
     const resident = authority.card();
-    const application = residentApplicationFacade(this.#application, resident, () => this.doctorReadiness());
+    // Issue #467: the served facade also carries THIS deployment's stop state, so a resident in
+    // `stopping` says so on the card every client already reads (and on the closed read list).
+    const application = residentApplicationFacade(this.#application, resident, () => this.doctorReadiness(), () => this.#stoppingState());
     const web = new WebNorthbound({
       coordinator: this.#driver.coordinator,
       coordination: this.#driver.coordination,
@@ -3910,6 +3965,75 @@ class BatonDeployment {
     }
     return null;
   }
+  /** Issue #467: the bounded attempt a worker wait belongs to. A wait names the same worker again
+   * only when the stop took another pass at it, and the count is CLOSED by STOP_WAIT_ATTEMPT_BOUND
+   * — past it the stop proceeds instead of waiting a third time. */
+  #stopWaitAttempt(workerIds) {
+    this.#stopWaitAttempts ??= new Map();
+    let attempt = 0;
+    for (const workerId of workerIds) {
+      const next = (this.#stopWaitAttempts.get(workerId) ?? 0) + 1;
+      this.#stopWaitAttempts.set(workerId, next);
+      attempt = Math.max(attempt, next);
+    }
+    return attempt;
+  }
+
+  /** Issue #467: the pid/group liveness the resident observes for the workers a stop is waiting on —
+   * its OWN first-hand reading, from the same durable process rows `#workerProcessGroup` binds and
+   * the coordinator's live handle projection. `alive` is true when any observed worker's process
+   * still exists, false when every observed one is gone, and null when nothing could be observed at
+   * all (an in-process harness holds no pid) — absence is never guessed from silence. */
+  #observeWorkerLiveness(workerIds) {
+    let observed = 0;
+    let alive = null;
+    let handles = [];
+    try { handles = this.#driver?.coordinator?.list?.() ?? []; } catch { handles = []; }
+    for (const workerId of workerIds) {
+      const group = this.#workerProcessGroup(workerId);
+      const pid = (Array.isArray(handles) ? handles : []).find((row) => row?.id === workerId)?.processRef?.pid ?? null;
+      const value = group === null ? reincarnationProcessAlive(pid) : processGroupAlive(group);
+      if (value !== true && value !== false) continue;
+      observed += 1;
+      if (value === true) alive = true;
+      else if (alive !== true) alive = false;
+    }
+    return Object.freeze({ observed, alive });
+  }
+
+  /** Issue #467: one named wait, kept for the `stopping` read. Bounded (MAX_STOPPING_WAITS) so a
+   * stop that churned can never grow the read it answers. */
+  #recordStopWait(row) {
+    this.#stopWaits.push(Object.freeze({
+      on: row.on, ids: Object.freeze([...row.ids]), at: row.at,
+      ...(Number.isSafeInteger(row.attempt) ? { attempt: row.attempt, alive: row.alive ?? null } : {}),
+    }));
+    if (this.#stopWaits.length > MAX_STOPPING_WAITS) this.#stopWaits.shift();
+  }
+
+  /** Issue #467: the workers the coordinator's stop has stopped waiting on, read from the ONE place
+   * that decides it (never a second derivation here). */
+  #stoppingAbandoned() {
+    try { return this.#driver?.coordinator?.abandonedWorkers?.() ?? Object.freeze([]); } catch { return Object.freeze([]); }
+  }
+
+  /** Issue #467: what this incarnation says about its own stop over its own transport — the state,
+   * the waits it holds, and the workers it has stopped waiting on. Null when no stop has begun, so
+   * the served card and the closed read list are byte-identical to today's for a serving resident. */
+  #stoppingState() {
+    const at = this.#stoppingSince;
+    if (at === null) return null;
+    const waits = this.#stopWaits.map((row) => Object.freeze({ ...row }));
+    const abandoned = this.#stoppingAbandoned();
+    return Object.freeze({
+      state: 'stopping',
+      at,
+      waits: Object.freeze(waits),
+      attempts: waits.reduce((max, row) => Math.max(max, Number.isSafeInteger(row.attempt) ? row.attempt : 0), 0),
+      abandoned,
+    });
+  }
+
   /** Issue #351(3): a worker that will not stop is killed BY ITS PROCESS GROUP at the deadline and
    * reaped, and the forced end is recorded on that worker's own operational ledger — the same
    * ledger the coordinator appends to, so the row lands where every other lifecycle row lands.
@@ -3918,14 +4042,23 @@ class BatonDeployment {
   async #stopWorkerGroup(workerId) {
     const group = this.#workerProcessGroup(workerId);
     let signal = null;
+    // Issue #467: an ABSENT group is the absence the kill was about. The kernel answering ESRCH —
+    // to the probe or to the SIGTERM itself — says no process carries this group any more, which is
+    // exactly the confirmation #351's proof-carrying reap exists to establish; reporting it as
+    // unconfirmed made the resident wait out a deadline for a kill that had nothing left to do.
+    let alive = group === null ? null : processGroupAlive(group);
     let confirmed = group === null;
     if (group !== null) {
       try { process.kill(-group, 'SIGTERM'); signal = 'SIGTERM'; }
-      catch (error) { if (error?.code !== 'ESRCH') signal = null; }
-      if (processGroupAlive(group)) {
+      catch (error) {
+        if (error?.code === 'ESRCH') { alive = false; confirmed = true; }
+        else signal = null;
+      }
+      if (alive !== false && processGroupAlive(group)) {
         const reaped = await reapOwnedProcessGroup(group, { timeoutMs: KILL_ESCALATION_GRACE_MS });
         if (reaped.signaled) signal = 'SIGKILL';
         confirmed = reaped.confirmed === true;
+        alive = processGroupAlive(group);
       }
     }
     const log = this.#driver?.log ?? null;
@@ -3950,7 +4083,7 @@ class BatonDeployment {
         });
       } catch { /* the stop the record describes goes on */ }
     }
-    return Object.freeze({ workerId, processGroupId: group, signal, confirmed });
+    return Object.freeze({ workerId, processGroupId: group, signal, confirmed, alive });
   }
 
   /** Issue #351 lane 2: the signal handler's FIRST act. Appends `host.stop_requested {trigger, at}`
@@ -3981,6 +4114,10 @@ class BatonDeployment {
       if (late === null) return null;
       return `baton serve: host.last_resort ${kind} (${named.code ?? 'error'}) at ${at}`;
     }
+    // Issue #467: the instant THIS incarnation began stopping. Set before the request row is even
+    // attempted, because the state a reader asks about is the stop, not the row — and set for a stop
+    // that is already requested too (the state began then).
+    this.#stoppingSince ??= at;
     // Issue #437/#450: the count the operator's one line carries rides the durable request row,
     // read SYNCHRONOUSLY from the projection this resident already holds. A read that refuses is a
     // FACT (`{count: null, refusal: {read, code}}`) — a refused count is itself the named wait, so
@@ -4076,35 +4213,83 @@ class BatonDeployment {
         return { line, recorded: line !== null };
       },
       waiting: async ({ wait }) => {
-        const at = this.#clock();
         // Issue #450: every named wait carries the #360 entry objects — {resource, reaper, since} —
         // so a stop's wait rows and the fleet drain's `control.stop_waiting_on` rows read as ONE
         // shape however the wait arrived (a worker the drain could not release, a quota row a gone
-        // worker left behind, a narration read that outlives the first second).
-        const entries = Array.isArray(wait.entries) && wait.entries.length > 0
-          ? wait.entries.map((entry) => ({
-            resource: entry.resource, reaper: entry.reaper ?? null, since: entry.since,
-          }))
-          : [...wait.ids].map((id) => ({ resource: `${wait.on}:${id}`, reaper: wait.reaper ?? null, since: at }));
-        const released = Array.isArray(wait.released) ? wait.released.map((row) => ({ ...row })) : [];
-        this.#stopRecord('host.stop_waiting', {
-          on: wait.on, ids: [...wait.ids], entries, released, at,
-        }, `waiting:${wait.on}`);
-        const named = wait.ids.length > 0 ? ` ${wait.ids.join(',')}` : '';
-        const line = `baton serve: host.stop_waiting on ${wait.on}${named} at ${at}`;
-        if (wait.on !== 'worker') return { line, released: false };
-        const killed = [];
-        for (const workerId of wait.ids) killed.push(await this.#stopWorkerGroup(workerId));
-        // The named obligations are gone. The stop converges once the coordinator's own stop chain
-        // for those workers completes — a transport that was still confirming its kill when the
-        // drain's deadline passed. The window is the kill-escalation grace the reap above used;
-        // each attempt inside it is bounded by the drain policy this deployment already declared.
-        this.#armStopOutcome('stopped_after_deadline');
-        const application = await this.#retryApplicationShutdown();
-        return {
-          line, released: application?.state === 'closed',
-          killed: Object.freeze(killed), application,
-        };
+        // worker left behind, a narration read that outlives the first second). Issue #467 adds the
+        // BOUNDED attempt loop: the second deadline for a worker is the last one this stop takes,
+        // and past it the stop proceeds with the workers it stopped waiting on named abandoned.
+        let at = this.#clock();
+        let attempt = null;
+        let alive = null;
+        let line = null;
+        for (;;) {
+          // Issue #467: a worker wait carries WHICH bounded attempt it is and the pid/group liveness
+          // the stop observed as it took it. The coordinator's own observation (the drain's wait rows
+          // travel with it) is the strongest reading and wins; the resident's first-hand probe from
+          // the durable process rows is the fallback — never a guess.
+          const entries = Array.isArray(wait.entries) && wait.entries.length > 0
+            ? wait.entries.map((entry) => ({
+              resource: entry.resource, reaper: entry.reaper ?? null, since: entry.since,
+            }))
+            : [...wait.ids].map((id) => ({ resource: `${wait.on}:${id}`, reaper: wait.reaper ?? null, since: at }));
+          const released = Array.isArray(wait.released) ? wait.released.map((row) => ({ ...row })) : [];
+          const seen = wait.observed ?? null;
+          attempt = wait.on === 'worker'
+            ? Math.max(this.#stopWaitAttempt(wait.ids),
+              ...wait.ids.map((workerId) => seen?.[workerId]?.attempt ?? 0))
+            : null;
+          alive = wait.on === 'worker'
+            ? (wait.ids.map((workerId) => seen?.[workerId]?.alive ?? null).find((value) => value !== null)
+              ?? this.#observeWorkerLiveness(wait.ids).alive)
+            : null;
+          const row = {
+            on: wait.on, ids: [...wait.ids], entries, released, at,
+            ...(attempt === null ? {} : { attempt, alive }),
+          };
+          this.#stopRecord('host.stop_waiting', row, `waiting:${wait.on}:${attempt ?? 'once'}`);
+          this.#recordStopWait(row);
+          const named = wait.ids.length > 0 ? ` ${wait.ids.join(',')}` : '';
+          const said = attempt === null ? '' : ` (attempt ${attempt}, alive ${alive ?? 'unobserved'})`;
+          line = `baton serve: host.stop_waiting on ${wait.on}${named}${said} at ${at}`;
+          if (wait.on !== 'worker') return { line, released: false };
+          const killed = [];
+          for (const workerId of wait.ids) killed.push(await this.#stopWorkerGroup(workerId));
+          // Issue #467: the group kill's own absence proof is handed to the ONE place a stop waiter
+          // lives, so the seat that owns the worker settles on the same fact instead of waiting for a
+          // confirmation a process that is already gone can never send.
+          for (const settled of killed) {
+            if (settled.alive !== false) continue;
+            try {
+              this.#driver?.coordinator?.observeStopAbsence?.(settled.workerId, {
+                pid: settled.processGroupId, processGroupId: settled.processGroupId, alive: false,
+              });
+            } catch { /* the bounded attempt below still decides */ }
+          }
+          // The named obligations are gone. The stop converges once the coordinator's own stop chain
+          // for those workers completes — a transport that was still confirming its kill when the
+          // drain's deadline passed. The window is the kill-escalation grace the reap above used;
+          // each attempt inside it is bounded by the drain policy this deployment already declared.
+          this.#armStopOutcome('stopped_after_deadline');
+          const application = await this.#retryApplicationShutdown();
+          if (application?.state === 'closed') {
+            return { line, released: true, killed: Object.freeze(killed), application };
+          }
+          if (attempt !== null && attempt >= STOP_WAIT_ATTEMPT_BOUND) {
+            // The bounded attempts are SPENT. The stop proceeds — the workers it stopped waiting on
+            // are named abandoned on the outcome row, and the next open's reconciliation owns
+            // whatever they still hold — and this host says the line for the attempt it just took.
+            this.#webHost?._say?.(line);
+            return {
+              line: null, released: false, bounded: true,
+              abandoned: this.#stoppingAbandoned(),
+              killed: Object.freeze(killed), application: null,
+            };
+          }
+          // The first attempt did not converge: take the second (final) one, on the same wait.
+          this.#webHost?._say?.(line);
+          at = this.#clock();
+        }
       },
       // The outcome ROW is minted by the release itself (`armHostStopOutcome`): the host that
       // observed the stop has no writer authority left by then, so this step narrates only.
@@ -4130,7 +4315,13 @@ class BatonDeployment {
         const released = this.#driver?.coordinator?.releasedResources?.() ?? [];
         const said = released.length === 0 ? ''
           : ` (released ${released.length}: ${released.map((row) => `${row.resource} ${row.how}`).join(', ')})`;
-        return { line: `baton serve: host.stopped ${state} at ${at}${cache}${said}` };
+        // Issue #467: the workers this stop STOPPED WAITING on are said in the same line as its
+        // outcome, each with the attempt and the liveness the stop observed — an abandoned worker is
+        // never a silent remainder.
+        const abandoned = this.#stoppingAbandoned();
+        const waited = abandoned.length === 0 ? ''
+          : ` (abandoned ${abandoned.length}: ${abandoned.map((row) => `${row.workerId} attempt ${row.attempt}, alive ${row.alive}`).join(', ')})`;
+        return { line: `baton serve: host.stopped ${state} at ${at}${cache}${said}${waited}` };
       },
       /** Issue #351: one mark on the stop's own clock, taken by the host that finished the stage.
        * Best-effort by construction — a host with no clock to mark simply has no stage rows. */
