@@ -1054,6 +1054,7 @@ function trackedTreeBounds(repoRoot, treeish) {
 function defaultCredentialProjection(repoRoot, {
   projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null,
   museCredentialPath = null, museKeychainRead = null, ompCatalogRead = null,
+  ompProviderKeyFiles = null,
 } = {}) {
   const credentials = {};
   const codex = join(homedir(), '.codex', 'auth.json');
@@ -1104,7 +1105,7 @@ function defaultCredentialProjection(repoRoot, {
   return Object.freeze({
     credentialEnv: Object.freeze(credentialEnv), credentialFiles: credentials,
     credentialTrees, credentialDocuments: Object.freeze(credentialDocuments),
-    repoRoot, museKeychainRead, ompCatalogRead,
+    repoRoot, museKeychainRead, ompCatalogRead, ompProviderKeyFiles,
   });
 }
 
@@ -1125,9 +1126,11 @@ const OMP_HOME_ROOT = '.omp';
 const OMP_AGENT_DATABASE = `${OMP_HOME_ROOT}/agent/agent.db`;
 const OMP_AGENT_CONFIG = `${OMP_HOME_ROOT}/agent/config.yml`;
 const OMP_AGENT_MODELS = `${OMP_HOME_ROOT}/agent/models.yml`;
-// The route provider a provider/model id names, and the repository key file its deployment
-// provisioning contract requires. A provider absent from this table has no deployment
-// credential story and fails closed.
+// Issue #494: the route provider a provider/model id names, and the repository key file its
+// deployment provisioning contract requires. These shipped entries are the DEFAULT table; an
+// operator extends it per deployment through advanced.ompCredentials.providerKeyFiles, whose
+// entries merge over these. A provider absent from the resolved table has no deployment
+// credential story and fails closed — the blocked row names the seam.
 const OMP_PROVIDER_KEY_FILES = Object.freeze({
   deepseek: 'deepseek_key.json',
   zai: 'glm_key.json',
@@ -1140,18 +1143,49 @@ function ompAgentDatabasePath() { return join(homedir(), OMP_AGENT_DATABASE); }
 
 function ompAgentConfigured() { return existingRegular(ompAgentDatabasePath()); }
 
-export function ompProviderKeyFile(model) {
+/** #494: the resolved provider→key-file fact for a model id. `providerKeyFiles` extends the
+ * shipped table (the deployment passes its normalized advanced.ompCredentials.providerKeyFiles
+ * record); `null` resolves from the shipped entries alone. */
+export function ompProviderKeyFile(model, providerKeyFiles = null) {
   const separator = model.indexOf('/');
   const provider = separator === -1 ? '' : model.slice(0, separator);
-  return OMP_PROVIDER_KEY_FILES[provider] ?? null;
+  if (providerKeyFiles === null) return OMP_PROVIDER_KEY_FILES[provider] ?? null;
+  return { ...OMP_PROVIDER_KEY_FILES, ...providerKeyFiles }[provider] ?? null;
+}
+
+/** #494: validate the operator's provider→key-file extension and resolve it to the ONE table the
+ * deployment reads — the operator entries merged over the shipped defaults; `null` when the
+ * operator names none. A provider is a bare name (a model id's first path segment); a key file is
+ * a repository-root-relative filename. */
+function normalizeOmpProviderKeyFiles(providerKeyFiles) {
+  if (providerKeyFiles === undefined) return null;
+  if (!record(providerKeyFiles) || Object.keys(providerKeyFiles).length === 0) {
+    throw deploymentError(
+      'advanced ompCredentials.providerKeyFiles must be a non-empty object mapping a provider prefix to a repository key filename',
+    );
+  }
+  for (const [provider, file] of Object.entries(providerKeyFiles)) {
+    if (provider.length === 0 || provider.length > 128 || provider.includes('/')) {
+      throw deploymentError(
+        `advanced ompCredentials.providerKeyFiles provider ${JSON.stringify(provider)} must be a bare provider name (the first path segment of a model id)`,
+      );
+    }
+    if (typeof file !== 'string' || file.length === 0 || file.length > 256
+      || file.startsWith('/') || file.split('/').includes('..')) {
+      throw deploymentError(
+        `advanced ompCredentials.providerKeyFiles.${provider} must be a repository-root-relative key filename`,
+      );
+    }
+  }
+  return Object.freeze({ ...OMP_PROVIDER_KEY_FILES, ...providerKeyFiles });
 }
 
 /** The facts an omp route's ready-when cell documents, declared once: the agent database every
  * omp route needs and the route provider's repository key file. */
-function ompRouteReadinessFacts(model) {
+function ompRouteReadinessFacts(model, providerKeyFiles = null) {
   return Object.freeze({
     agentDatabase: `~/${OMP_AGENT_DATABASE}`,
-    keyFile: ompProviderKeyFile(model),
+    keyFile: ompProviderKeyFile(model, providerKeyFiles),
   });
 }
 
@@ -1214,8 +1248,9 @@ export function ompModelCatalog({ catalogRead = defaultOmpCatalogRead, now = Dat
  * file, AND (#342) the harness catalog defining the model and its effort. Blocked rows name the
  * missing file or the models/efforts the catalog does define; contents of key files are never
  * read or surfaced. */
-export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead = null } = {}) {
-  const facts = ompRouteReadinessFacts(model);
+export function ompRouteReadiness(repoRoot, model, effort = null,
+  { catalogRead = null, providerKeyFiles = null } = {}) {
+  const facts = ompRouteReadinessFacts(model, providerKeyFiles);
   if (!ompAgentConfigured()) {
     return Object.freeze({
       state: 'blocked', code: 'omp_agent_unconfigured',
@@ -1223,9 +1258,12 @@ export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead 
     });
   }
   if (facts.keyFile === null) {
+    const provider = model.slice(0, Math.max(0, model.indexOf('/')));
     return Object.freeze({
       state: 'blocked', code: 'route_unavailable',
-      summary: `omp route ${model} names no provider with a registered deployment credential file.`,
+      summary: provider === ''
+        ? `omp route ${model} names no provider prefix; route omp models as provider/model and map the provider under advanced.ompCredentials.providerKeyFiles.`
+        : `omp route ${model} names provider ${provider} with no deployment credential mapping; add {"${provider}": "<repository key file>.json"} under advanced.ompCredentials.providerKeyFiles and reopen Baton.`,
     });
   }
   if (!existingRegular(join(repoRoot, facts.keyFile))) {
@@ -1267,8 +1305,8 @@ export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead 
 
 /** The ready-when cell the generated fleet-routes table documents — rendered from the very facts
  * ompRouteReadiness resolves, so the documented contract cannot drift from the gate. */
-function ompRouteReadyWhen(model) {
-  const facts = ompRouteReadinessFacts(model);
+function ompRouteReadyWhen(model, providerKeyFiles = null) {
+  const facts = ompRouteReadinessFacts(model, providerKeyFiles);
   return facts.keyFile === null
     ? `\`${facts.agentDatabase}\` present and a registered provider credential file`
     : `\`${facts.agentDatabase}\` present, repo \`${facts.keyFile}\` present, and \`omp models --json\` defining the model and effort`;
@@ -1276,7 +1314,7 @@ function ompRouteReadyWhen(model) {
 
 /** The ready-when contract each registered route family documents — the same facts the gates
  * above and deploymentReadiness enforce, so the generated fleet-routes table cannot drift. */
-export function routeReadinessContract(route) {
+export function routeReadinessContract(route, providerKeyFiles = null) {
   switch (route.harness) {
     case 'codex': return '`~/.codex/auth.json` present';
     case 'muse': return 'a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`)';
@@ -1286,7 +1324,7 @@ export function routeReadinessContract(route) {
       return route.provider === 'kimi'
         ? 'the private kimi-through-claude credential present'
         : 'bounded version + auth status probes';
-    case 'omp': return ompRouteReadyWhen(route.model);
+    case 'omp': return ompRouteReadyWhen(route.model, providerKeyFiles);
     default: return 'the deployment readiness derivation reports ready';
   }
 }
@@ -2054,7 +2092,10 @@ function deploymentReadiness(
         });
       }
     } else if (route.harness === 'omp') {
-      const ompGate = ompRouteReadiness(repoRoot, route.model, route.effort, { catalogRead: projection.ompCatalogRead ?? null });
+      const ompGate = ompRouteReadiness(repoRoot, route.model, route.effort, {
+        catalogRead: projection.ompCatalogRead ?? null,
+        providerKeyFiles: projection.ompProviderKeyFiles ?? null,
+      });
       if (ompGate.state === 'blocked') {
         return Object.freeze({
           ...publicFields, state: 'blocked', code: ompGate.code, summary: ompGate.summary, runtime,
@@ -5858,10 +5899,13 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // deployment, an explicit advanced.ompCredentials.catalogRead shim otherwise, never a
   // host exec for a fixture deployment.
   const rawOmpCredentials = advanced.ompCredentials ?? {};
-  closed(rawOmpCredentials, ['catalogRead'], 'advanced ompCredentials');
+  closed(rawOmpCredentials, ['catalogRead', 'providerKeyFiles'], 'advanced ompCredentials');
   if (rawOmpCredentials.catalogRead !== undefined && typeof rawOmpCredentials.catalogRead !== 'function') {
     throw deploymentError('advanced ompCredentials.catalogRead must be a function');
   }
+  // Issue #494: the operator's provider→key-file extension, resolved once to the table every
+  // omp readiness fact and the credential projection read.
+  const ompProviderKeyFiles = normalizeOmpProviderKeyFiles(rawOmpCredentials.providerKeyFiles);
   const ompCatalogRead = routes.some((route) => route.harness === 'omp')
     ? (rawOmpCredentials.catalogRead ?? (usesBuiltInAdapters ? defaultOmpCatalogRead : null))
     : null;
@@ -5925,6 +5969,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     museCredentialPath,
     museKeychainRead,
     ompCatalogRead,
+    ompProviderKeyFiles,
   });
   const adapterAuthentication = await projectedAdapterAuthentication(
     adapters, repository.root, runtimeRoot, projection,
