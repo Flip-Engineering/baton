@@ -13260,6 +13260,15 @@
           ]
         },
         {
+          "name": "_runStopRefusal",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
           "name": "_guidanceParkedFromLabel",
           "ordinal": 0,
           "size": 6,
@@ -13455,7 +13464,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 944,
+          "size": 950,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

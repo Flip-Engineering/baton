@@ -4845,6 +4845,21 @@ export class SwarmRuntime {
     }
   }
 
+  /** Issue #473: a stop the run-stop leg refused crosses with the RUN it named. The coordinator's
+   * `stopRunTargets` is handed worker ids and never a runId, so its own refusal detail names the
+   * workers and the waits they are holding but not the run this seat's stop belongs to. This is the
+   * ONE seam that knows both, so the coordinator's refusal detail gains `runId` beside its
+   * `waitingOn` rows and its `timeoutMs` — the caller then reads the seat, the run and what to wait
+   * for from the refusal itself, instead of guessing them from the ledger. Every other failure
+   * crosses untouched, and the coordinator's own code, message and detail stay byte-stable. */
+  _runStopRefusal(error, runId) {
+    if (error?.code !== 'coordinator_run_stop_incomplete') return error;
+    const detail = error.detail !== null && typeof error.detail === 'object' && !Array.isArray(error.detail)
+      ? error.detail : {};
+    error.detail = { ...detail, runId };
+    return error;
+  }
+
   /** Who parked guidance is from, for the brief line that delivers it (#337): the same
    * namespaces as the coordinator's guidanceSenderLabel — the web/MCP owner sessions and the
    * bare orchestrator actor are the root, a swarm-native actor names its seat, anything else
@@ -6758,7 +6773,13 @@ export class SwarmRuntime {
         const seatWorker = this._workerFor(participant, workers);
         const paused = seatWorker ? this.coordinator.pausedTurns({ workerId: seatWorker.id }) : [];
         const live = seatWorker !== null && swarmParticipantLiveness(seatWorker, paused.length).live;
-        const stopped = live ? await this.stopRun(participant.runId, args.reason, principal) : { state: 'closed' };
+        // Issue #473: the run-stop leg's refusal crosses carrying the run this stop named — the
+        // seat's stop is the one seam that knows both the run and the coordinator's own detail.
+        let stopped = { state: 'closed' };
+        if (live) {
+          try { stopped = await this.stopRun(participant.runId, args.reason, principal); }
+          catch (error) { throw this._runStopRefusal(error, participant.runId); }
+        }
         // Issue #350: a stop settles membership — ONE representation, the existing
         // swarm.participant_left fold (reason stopped|completed, never a second status
         // field), so the seat reads status left on every projection and no "active"
