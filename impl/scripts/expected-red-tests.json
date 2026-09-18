@@ -1823,6 +1823,10 @@
   ],
   "converged": [
     {
+      "file": "test/async-lock-wait-285-red.test.mjs",
+      "reason": "#285"
+    },
+    {
       "file": "test/atlas-orientation-red.test.mjs",
       "reason": "#81"
     },
@@ -2053,6 +2057,10 @@
     {
       "file": "test/ledger-compaction-223-red.test.mjs",
       "reason": "#223"
+    },
+    {
+      "file": "test/log-archival-285-red.test.mjs",
+      "reason": "#285"
     },
     {
       "file": "test/mcp-packaging-red.test.mjs",
@@ -2355,6 +2363,10 @@
       "reason": "#22"
     },
     {
+      "file": "test/replay-progress-285-red.test.mjs",
+      "reason": "#285"
+    },
+    {
       "file": "test/reply-chains-red.test.mjs",
       "reason": "#105"
     },
@@ -2381,6 +2393,10 @@
     {
       "file": "test/scratchpad-write-158-red.test.mjs",
       "reason": "#158"
+    },
+    {
+      "file": "test/segment-adopt-skip-fold-285-red.test.mjs",
+      "reason": "#285"
     },
     {
       "file": "test/semantic-progress-red.test.mjs",
