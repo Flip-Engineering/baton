@@ -296,7 +296,11 @@ attention reason for the orchestrator); `interrupt`/`kill` are explicit `watchdo
 The orchestrator does not watch the swarm; the swarm wakes the orchestrator. `swarm.watch` is the
 runtime's own wake: it blocks until an event that concerns the swarm (a participant's turn ends or
 pauses, a contribution or review lands, a member dies, the organization changes) and returns the
-refreshed view with `watch.event` naming what woke it. `baton swarm watch <id> --follow` turns
+refreshed view with `watch.event` naming what woke it. The bounded form
+(`--timeout-ms`, with or without `--wake-class`) answers the wake FRAME first —
+`watch {reason: event|timeout, matchedSeq, event}` — over the `outline` projection by default;
+rows ride the answer only when the caller names a wider `--projection` (#356), and a stream that
+ends says why (`baton.wake_stream_ended.reason`, a closed set). `baton swarm watch <id> --follow` turns
 that into a feed: one JSON line per wake (`baton.swarm_wake`: the event, the `attention` rows, every
 participant's status/state/turn, contribution and work counts) for as long as the swarm is open or
 anything in it is alive. A harness session, a person's terminal, or a script reads that feed as its
