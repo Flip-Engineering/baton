@@ -428,6 +428,12 @@ function blockVerifyBudget(root, t, holder = 'seat-busy') {
 }
 
 test('459f: a gate run that cannot take the host verify lease refuses integrate_gates_busy', needsGit, async (t) => {
+  // The landing's gate run honours the operator bypass (BATON_HOST_CAPACITY_DISABLED=1) exactly as
+  // a seat's suite does — under it nothing is acquired and nothing can be busy. This row pins the
+  // STAGED authority's refusal, so the ambient bypass a parallel gate runner pins must not win here.
+  const bypass = process.env.BATON_HOST_CAPACITY_DISABLED;
+  delete process.env.BATON_HOST_CAPACITY_DISABLED;
+  t.after(() => { if (bypass !== undefined) process.env.BATON_HOST_CAPACITY_DISABLED = bypass; });
   const w = await world(t, { gate: { sleepMs: 0, green: true } });
   // A host whose verdict lane is already taken, with one request QUEUED ahead of anything this
   // landing asks for: the wait behind that request is what the refusal names.
