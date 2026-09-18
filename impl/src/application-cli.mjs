@@ -536,6 +536,16 @@ function flag(args, name) {
   return true;
 }
 function noRemainder(args) { if (args.length > 0) throw cliError(`unexpected argument ${args[0]}`); }
+/** #306 lane A: a reincarnation target is a commit-ish — a ref name, a sha, or any revision
+ * `git rev-parse` accepts. It is never a flag (the value comes from the caller's own argv, and a
+ * leading `-` would be read as one by the git authority the resident resolves it through). */
+function reincarnationTarget(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 1024
+    || value.includes('\0') || value.startsWith('-')) {
+    throw cliError('reincarnation target must be a non-empty commit-ish', 'cli_invalid');
+  }
+  return value;
+}
 function id(value, label) {
   if (!/^[A-Za-z0-9._:-]{1,256}$/u.test(value ?? '')) throw cliError(`${label} is invalid`);
   return value;
@@ -1460,9 +1470,9 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     summary: 'Read-only connection diagnosis from local files; `--check` also verifies the resident authority.',
   }),
   Object.freeze({
-    host: true, token: 'serve', verb: 'baton serve', argv: Object.freeze(['serve']), kind: 'serve',
-    parser: 'baton-cli',
-    summary: 'Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection.',
+    host: true, token: 'serve', verb: 'baton serve [CONFIG_MODULE] [--reincarnate <commit-ish>]',
+    argv: Object.freeze(['serve']), kind: 'serve', parser: 'baton-cli',
+    summary: 'Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection. `--reincarnate` sends the reincarnation verb to the RUNNING resident instead.',
   }),
   Object.freeze({
     host: true, token: 'setup', verb: 'baton setup', argv: Object.freeze(['setup']), kind: 'setup',
@@ -1513,9 +1523,9 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     summary: 'Search the deployment\u2019s evidence and contributions by swarm, participant, kind, path or free text.',
   }),
   Object.freeze({
-    token: 'deployment', verb: 'baton deployment watch',
+    token: 'deployment', verb: 'baton deployment watch (or reincarnate <commit-ish>)',
     argv: Object.freeze(['deployment', 'watch', '--follow']), kind: 'wake_watch', parser: 'baton-cli',
-    summary: 'Attach to the deployment wake stream and print one JSON frame per coordination row.',
+    summary: 'Attach to the deployment wake stream and print one JSON frame per coordination row, or reincarnate the RUNNING resident onto a commit in place.',
   }),
   Object.freeze({
     token: 'waves', verb: 'baton waves', argv: Object.freeze(['waves', 'list']), kind: 'command',
@@ -1576,6 +1586,26 @@ function topLevelVerbHelpBlocks(topic) {
     ].join('\n'),
   ];
 }
+
+/** #306 lane A: the reincarnation verb's help row. The two spellings are ONE command, and the
+ * topic renders it wherever the deployment family is read (`baton help deployment`,
+ * `baton help deployment.reincarnate`) — the refusals it can draw are named here, in the closed set
+ * the deployment raises them with. */
+function reincarnationHelpBlocks(topic) {
+  if (topic !== 'deployment' && topic !== 'deployment.reincarnate') return null;
+  return [
+    'reincarnate — one verb, two spellings:\n'
+    + '  baton deployment reincarnate <commit-ish>\n'
+    + '  baton serve --reincarnate <commit-ish>',
+    'The RUNNING resident of this checkout starts a successor over the same deployment, hands the '
+    + 'published connection over, and exits 0 through its own stop path. The successor serves '
+    + '<commit-ish>; participant rows, workspaces, contracts, parked guidance and claims survive, '
+    + 'and each seat\'s next turn runs under the new incarnation. In-flight one-shot turns complete '
+    + 'on the old incarnation first.',
+    'Refusals (typed, before any effect): reincarnation_target_unreachable, reincarnation_in_flight, '
+    + 'reincarnation_checkout_held, reincarnation_same_commit.',
+  ];
+}
 export function batonCliHelp(topic = 'application') {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
   const commandById = new Map(registry.cli.commands.map((command) => [command.id, command]));
@@ -1620,6 +1650,7 @@ export function batonCliHelp(topic = 'application') {
     // the vocabulary — from the stream's own closed table, never a hand list.
     return [
       `No local help is available for ${topic}.\nUse baton help for the application overview.`,
+      ...(reincarnationHelpBlocks(topic) ?? []),
       ...(wakeWatchHelpBlocks(topic) ?? []),
       ...(recruitContextHelpBlocks(topic) ?? []),
     ].join('\n\n');
@@ -1641,6 +1672,7 @@ export function batonCliHelp(topic = 'application') {
     blocks.push(`Deprecated: use baton ${operation.aliases[0].replaceAll('.', ' ')}.`);
   }
   return [...blocks, ...(topLevelVerbHelpBlocks(helpTopic) ?? []),
+    ...(reincarnationHelpBlocks(topic) ?? []),
     ...(wakeWatchHelpBlocks(topic) ?? []),
     ...(recruitContextHelpBlocks(topic) ?? [])].join('\n\n');
 }
@@ -3187,6 +3219,18 @@ export function parseBatonCli(rawArgs) {
   }
   if (args[0] === 'serve') {
     args.shift();
+    // #306 lane A: `baton serve --reincarnate <commit-ish>` is the SAME verb as
+    // `baton deployment reincarnate <commit-ish>` — not a second serve. It resolves to the one
+    // reincarnation command, which the RUNNING resident of this checkout executes; a checkout with
+    // no resident refuses at discovery (there is nothing to hand the publication over from).
+    const reincarnate = take(args, '--reincarnate');
+    if (reincarnate !== null) {
+      noRemainder(args);
+      return {
+        kind: 'command', command: 'deployment.reincarnate', name: 'deployment.reincarnate',
+        args: { target: reincarnationTarget(reincarnate) }, idempotencyKey,
+      };
+    }
     const configPath = args.shift() ?? null;
     if (configPath !== null && !nonempty(configPath)) throw cliError('CONFIG_MODULE is invalid');
     noRemainder(args);
@@ -3202,8 +3246,20 @@ export function parseBatonCli(rawArgs) {
   if (args[0] === 'evidence') return parseEvidenceCli(args, idempotencyKey);
   if (args[0] === 'deployment') {
     args.shift();
-    if (args.shift() !== 'watch') {
-      throw cliError('deployment requires the watch verb: baton deployment watch --follow', 'cli_command_unavailable');
+    const verb = args.shift();
+    // #306 lane A: `baton deployment reincarnate <commit-ish>` is the SAME verb as
+    // `baton serve --reincarnate <commit-ish>` — one command, sent to the RUNNING resident of this
+    // checkout (never a second `baton serve`: the live resident refuses application_host_busy).
+    if (verb === 'reincarnate') {
+      const target = reincarnationTarget(args.shift());
+      noRemainder(args);
+      return {
+        kind: 'command', command: 'deployment.reincarnate', name: 'deployment.reincarnate',
+        args: { target }, idempotencyKey,
+      };
+    }
+    if (verb !== 'watch') {
+      throw cliError('deployment requires the watch or reincarnate verb: baton deployment watch --follow, or baton deployment reincarnate <commit-ish>', 'cli_command_unavailable');
     }
     return parseDeploymentWatch(args, idempotencyKey);
   }

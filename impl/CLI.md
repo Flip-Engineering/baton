@@ -81,7 +81,7 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 | Top-level verb | Parser argv | Serves |
 |---|---|---|
 | `baton doctor` | `doctor` | Read-only connection diagnosis from local files; `--check` also verifies the resident authority. |
-| `baton serve` | `serve` | Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection. |
+| `baton serve [CONFIG_MODULE] [--reincarnate <commit-ish>]` | `serve` | Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection. `--reincarnate` sends the reincarnation verb to the RUNNING resident instead. |
 | `baton setup` | `setup` | Install an explicit-network connection profile (schema-v1 HTTPS deployments). |
 | `baton route HARNESS/MODEL@EFFORT` | `route mock/model-a@low` | Resolve one exact route tuple against the served registry. |
 | `baton credentials install kimi` | `credentials install kimi` | Install the Kimi provider credential interactively; credentials are never CLI arguments. |
@@ -91,7 +91,7 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 | `baton explore OBJECTIVE` | `explore objective` | The single-route read-only evidence preset. |
 | `baton swarm` | `swarm list` | Create, staff, guide and read living swarms (`baton help swarm`). |
 | `baton evidence search` | `evidence search` | Search the deployment’s evidence and contributions by swarm, participant, kind, path or free text. |
-| `baton deployment watch` | `deployment watch --follow` | Attach to the deployment wake stream and print one JSON frame per coordination row. |
+| `baton deployment watch (or reincarnate <commit-ish>)` | `deployment watch --follow` | Attach to the deployment wake stream and print one JSON frame per coordination row, or reincarnate the RUNNING resident onto a commit in place. |
 | `baton waves` | `waves list` | Run, compile, start, stop and inspect workflow waves. |
 | `baton runs list` | `runs list` | List the Runs this authenticated connection may observe. |
 | `baton help [TOPIC]` | `help` | Render one help topic; `baton --help` is the application overview. |
@@ -239,7 +239,7 @@ truth. Each row is resolved live by `parseBatonCli` in `impl/test/host-verb-inve
 | Host verb | Parser argv | Serves |
 |---|---|---|
 | `baton doctor` | `doctor` | Read-only connection diagnosis from local files; `--check` also verifies the resident authority. |
-| `baton serve` | `serve` | Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection. |
+| `baton serve [CONFIG_MODULE] [--reincarnate <commit-ish>]` | `serve` | Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection. `--reincarnate` sends the reincarnation verb to the RUNNING resident instead. |
 | `baton setup` | `setup` | Install an explicit-network connection profile (schema-v1 HTTPS deployments). |
 | `baton route HARNESS/MODEL@EFFORT` | `route mock/model-a@low` | Resolve one exact route tuple against the served registry. |
 | `baton credentials install kimi` | `credentials install kimi` | Install the Kimi provider credential interactively; credentials are never CLI arguments. |

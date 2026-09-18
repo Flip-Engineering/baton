@@ -1,6 +1,6 @@
 import { pathMatchesScope } from './path-scope.mjs';
-import { createHash, randomBytes } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { execFileSync, spawn } from 'node:child_process';
 import {
   chmodSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync,
   openSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync, writeFileSync,
@@ -32,7 +32,7 @@ import {
 } from './context-runtime.mjs';
 import { GrokAcpCli } from './grok-acp.mjs';
 import { KimiAcpCli } from './kimi-acp.mjs';
-import { MuseCli } from './cli-adapters.mjs';
+import { MAX_STDERR_TAIL_BYTES, MuseCli } from './cli-adapters.mjs';
 import { OmpRpcCli } from './omp-rpc.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeWorktreeCapacityPolicy, workspaceCapacityPressure, WorktreeCapacityError } from './worktree-capacity.mjs';
@@ -2580,7 +2580,185 @@ function residentApplicationFacade(application, resident, readinessSupplier) {
   });
 }
 
+// ── #306 lane A: in-place reincarnation ──────────────────────────────────────────────────────────
+//
+// A resident's seat workers are child processes of THIS process on stdio pipes, so a successor
+// cannot inherit them: `deployment.reincarnate` is a DRAIN-RESTART IN PLACE (#204). The old
+// incarnation admits no new turns, lets the ones in flight settle, spawns the successor over the
+// same state directory, hands the publication over, and only then withdraws its own listeners and
+// exits 0 through the #351 stop path. Participant rows, workspaces (#428 custody on disk),
+// contracts, parked guidance (#337) and claims survive unchanged — #364's
+// `swarm.participant_runtime_lost` is the row that already says a seat's worker died with an
+// earlier incarnation; its NEXT turn runs under the successor.
+//
+// The handoff, in the order the durable rows land and the leases move:
+//   1. `host.reincarnation_requested {target, from}`        — the request, before any effect;
+//   2. admission closes; `host.stop_waiting {on: worker}`   — the #351 row naming in-flight turns;
+//   3. the successor is spawned with BATON_PREDECESSOR_INCARNATION beside BATON_INCARNATION — the
+//      incarnation THIS incarnation minted for it, so `host.successor_started` can name the exact
+//      identity the successor will publish (it adopts it; see #startOrdinaryHost);
+//   4. `host.successor_started {pid, incarnation}`          — the old's LAST row before its release;
+//   5. the old's #351 stop path runs: web admission closes, the fleet drains (the drain policy's
+//      own window), and the coordination writer lease is released by the driver close — the
+//      successor waits for that release on the lease's own bound (host.reincarnation.wait_ms),
+//      never refusing coordination_writer_busy at once;
+//   6. the old releases its own resident host/publication leases but KEEPS the published bytes, so
+//      the successor can take the host lease and publish while the repository is never unpublished
+//      (#288: never two publications, never none — the successor REPLACES the selector atomically,
+//      and the old's withdrawal removes a file only when it is still byte-for-byte its own);
+//   7. the old observes the successor's publication (connection.json's incarnation, bounded) and
+//      only then withdraws: removeIfExact deletes nothing of the successor's;
+//   8. the successor records `host.successor_published`, and when the predecessor's process is
+//      gone, `host.publication_withdrawn` and `host.reincarnated {from, to}`.
+// A successor that dies (or never becomes ready) before publishing: the old records
+// `host.reincarnation_failed {step, cause: {exit, stderrTail}}`, reopens admission and keeps
+// serving. A successor that dies AFTER the old committed to its stop cannot be undone — the old
+// then withdraws its own publication rather than leave a selector pointing at a dead process, and
+// its exit is non-zero (`closed_degraded`).
+
+const REINCARNATION_HANDOFF_ENV = Object.freeze({
+  predecessorIncarnation: 'BATON_PREDECESSOR_INCARNATION',
+  predecessorPid: 'BATON_PREDECESSOR_PID',
+  predecessorCommit: 'BATON_PREDECESSOR_COMMIT',
+  incarnation: 'BATON_INCARNATION',
+  target: 'BATON_REINCARNATION_TARGET',
+});
+
+/** #306: the deployment's reincarnation refusal set — the four request refusals the lane brief
+ * fixes, every one drawn BEFORE any effect (nothing spawned, no row written, no lease moved). */
+export const REINCARNATION_REFUSALS = Object.freeze({
+  targetUnreachable: 'reincarnation_target_unreachable',
+  inFlight: 'reincarnation_in_flight',
+  checkoutHeld: 'reincarnation_checkout_held',
+  sameCommit: 'reincarnation_same_commit',
+});
+
+const REINCARNATION_IDENTIFIER = /^[A-Za-z0-9._:-]{1,256}$/u;
+
+function reincarnationError(code, message, detail) {
+  return Object.assign(new Error(message), { code, ...(detail === undefined ? {} : { detail }) });
+}
+
+/** The ONE spelling of the successor's handoff marker. The successor writes it (its first act,
+ * BEFORE its open blocks on the writer lease), so the old incarnation has readiness evidence that
+ * is stronger than "the child is still alive" — and the successor can publish its own progress on
+ * it. The old deletes it on every exit path of a completed handoff; a successor that outlives a
+ * crashed predecessor deletes it after `host.reincarnated`. */
+export function reincarnationMarkerPath(deploymentRoot, incarnation) {
+  return join(deploymentRoot, 'resident', `handoff.${incarnation}.json`);
+}
+
+/** The handoff the AMBIENT environment declares, or null. Only a process the old incarnation
+ * spawned with the handoff variables enters handoff mode — an ordinary `baton serve` never reads
+ * here, and a malformed declaration is absence (the successor then starts as any other resident,
+ * and the old's readiness wait fails it). */
+function reincarnationHandoffFromEnvironment(env, deploymentRoot) {
+  const predecessor = env?.[REINCARNATION_HANDOFF_ENV.predecessorIncarnation];
+  if (typeof predecessor !== 'string' || !REINCARNATION_IDENTIFIER.test(predecessor)) return null;
+  const incarnation = env?.[REINCARNATION_HANDOFF_ENV.incarnation];
+  if (typeof incarnation !== 'string' || !REINCARNATION_IDENTIFIER.test(incarnation)) return null;
+  const pid = Number.parseInt(env?.[REINCARNATION_HANDOFF_ENV.predecessorPid] ?? '', 10);
+  const commit = env?.[REINCARNATION_HANDOFF_ENV.predecessorCommit] ?? null;
+  const target = env?.[REINCARNATION_HANDOFF_ENV.target] ?? null;
+  return Object.freeze({
+    predecessorIncarnation: predecessor,
+    predecessorPid: Number.isSafeInteger(pid) && pid > 0 ? pid : null,
+    predecessorCommit: typeof commit === 'string' && GIT_SHA_40.test(commit) ? commit : null,
+    target: typeof target === 'string' && GIT_SHA_40.test(target) ? target : null,
+    incarnation,
+    markerPath: reincarnationMarkerPath(deploymentRoot, incarnation),
+  });
+}
+
+function writeReincarnationMarker(handoff, pid, state) {
+  try {
+    writeFileSync(handoff.markerPath, `${JSON.stringify({
+      schemaVersion: 1,
+      incarnation: handoff.incarnation,
+      pid,
+      predecessor: Object.freeze({
+        incarnation: handoff.predecessorIncarnation, commit: handoff.predecessorCommit,
+      }),
+      target: Object.freeze({ sha: handoff.target, ref: null }),
+      state,
+      at: new Date().toISOString(),
+    })}\n`, { mode: 0o600 });
+  } catch { /* a marker that cannot be written never blocks the successor's own open */ }
+}
+
+/** The ONE turn-admission refusal a deployment with a handoff in progress draws — the same object
+ * every seam raises (the route-admission gate the application consults, and the deployment's own
+ * start-family methods), so a new turn cannot be refused two ways. */
+function turnAdmissionRefusalOf(handoff) {
+  if (handoff === null) return null;
+  return Object.freeze({
+    code: REINCARNATION_REFUSALS.inFlight,
+    message: `this resident is reincarnating onto ${handoff.target.sha}, so it admits no new turns `
+      + 'until the successor publishes (or the handoff fails)',
+    detail: Object.freeze({
+      since: handoff.since,
+      successorPid: handoff.successor === null ? null : handoff.successor.pid,
+      phase: handoff.phase,
+    }),
+  });
+}
+
+/** Is the process one this machine still runs? The predecessor-exit observation the successor's
+ * `host.reincarnated` watcher makes — never a clock, never a guess: EPERM means alive. */
+function reincarnationProcessAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return error?.code === 'EPERM' ? true : error?.code === 'ESRCH' ? false : null; }
+}
+
+
+/** #306: open the coordination driver. A handoff successor finds the writer lease held by the
+ * predecessor until that incarnation's own stop releases it, so it WAITS on the handoff's declared
+ * window — never an instant `coordination_writer_busy` refusal. A resident started any other way
+ * keeps the immediate refusal (the store's own). An attempt that partially assembled has already
+ * released whatever it claimed (createDriver's own catch), so a retry never doubles a lease. */
+async function openDriverForHandoff(createDriver, options, handoff, waitMs) {
+  const bound = Number.isSafeInteger(waitMs) && waitMs > 0
+    ? waitMs : FRAME_LIMITS['host.reincarnation.wait_ms'].value;
+  const deadline = Date.now() + bound;
+  for (;;) {
+    try { return createDriver(options); }
+    catch (error) {
+      if (handoff === null || error?.code !== 'coordination_writer_busy' || Date.now() >= deadline) throw error;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+  }
+}
+
+/** #306: the same wait for the resident HOST lease (`application_host_busy`): the successor can
+ * take it only after the predecessor's stop released it, and that release is inside the same
+ * declared window. */
+async function openResidentAuthorityForHandoff({ create, handoff, waitMs }) {
+  const bound = Number.isSafeInteger(waitMs) && waitMs > 0
+    ? waitMs : FRAME_LIMITS['host.reincarnation.wait_ms'].value;
+  const deadline = Date.now() + bound;
+  for (;;) {
+    try { return create(); }
+    catch (error) {
+      if (handoff === null || error?.code !== 'application_host_busy' || Date.now() >= deadline) throw error;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+  }
+}
 class BatonDeployment {
+  // #306 lane A: the handoff in progress, or null. ONE shape:
+  // {since, target: {sha, ref}, from: {incarnation, commit}, successor: {pid, incarnation, child},
+  //  phase: 'waiting'|'handed', released, published, markerPath}. The phase moves only forward;
+  // a failure clears the whole record (admission reopens with it).
+  #reincarnation = null;
+  // #306: how long this deployment gives each handoff phase (the successor's readiness and
+  // publication waits, and the successor's own lease wait) — the registry row, overridable by the
+  // owner for a fixture (advanced.resident.reincarnationWaitMs).
+  #reincarnationWaitMs = null;
+  // #306: the handoff THIS process was spawned into (null for any other resident) — the
+  // successor's own declaration: {predecessorIncarnation, predecessorPid, predecessorCommit,
+  // incarnation, target, markerPath}.
+  #reincarnationHandoff = null;
   #application;
   #baton;
   #card;
@@ -2674,6 +2852,15 @@ class BatonDeployment {
     // when the driver (replay included) is in hand — the publication row's `elapsedMs`.
     this.#startupElapsedMs = Number.isSafeInteger(deployment.startupElapsedMs)
       ? deployment.startupElapsedMs : null;
+    // #306: the handoff's own bound (each phase) — the deployment option wins over the registry row.
+    this.#reincarnationWaitMs = Number.isSafeInteger(deployment.reincarnationWaitMs)
+      ? deployment.reincarnationWaitMs : null;
+    // #306 lane A: the application's route-admission gate reads THIS deployment's own handoff
+    // state — one derivation, so a new turn is never refused two ways.
+    if (deployment.reincarnationAuthority !== undefined && deployment.reincarnationAuthority !== null) {
+      deployment.reincarnationAuthority.refusal = () => this.turnAdmissionRefusal();
+    }
+    this.#reincarnationHandoff = deployment.reincarnationHandoff ?? null;
     this.#card = Object.freeze({ ...application.card(), readiness });
     const runs = this.#baton.runs;
     this.runs = Object.freeze({
@@ -2688,6 +2875,16 @@ class BatonDeployment {
       startMany: (requests) => this.startMany(requests),
     });
     this.swarms = this.#baton.swarms;
+    // #306 lane A: the deployment's own reincarnation authority, installed on the application the
+    // dispatch reaches — the verb (this deployment's reincarnate()) and the turn-admission read the
+    // route gate consults are ONE object, so the application can never admit a turn the deployment
+    // has closed, and never route the verb anywhere but at this deployment.
+    if (deployment.reincarnationAuthority !== undefined && deployment.reincarnationAuthority !== null) {
+      deployment.reincarnationAuthority.verb = (request) => this.reincarnate(request);
+      Object.defineProperty(this.#application, 'reincarnationAuthority', {
+        value: deployment.reincarnationAuthority, enumerable: false, configurable: true,
+      });
+    }
     this.waves = Object.freeze({
       start: (options = {}) => {
         for (const member of options?.members ?? []) {
@@ -3070,12 +3267,14 @@ class BatonDeployment {
     return this.#served ? servedWakeFact(servedRow(this.#repository.root, this.#served)) : null;
   }
   async run(objective, route = {}) {
+    this.#assertAdmitsTurns();
     this.#assertRouteReady(route);
     await this.#livenessGate(route);
     return this.#baton.runs.start(objective, route);
   }
 
   async startMany(requests) {
+    this.#assertAdmitsTurns();
     if (Array.isArray(requests)) {
       for (const request of requests) {
         if (record(request)) this.#assertRouteReady(request);
@@ -3085,6 +3284,7 @@ class BatonDeployment {
   }
 
   async workflow(objective, options = {}) {
+    this.#assertAdmitsTurns();
     if (record(options) && Array.isArray(options.team)) {
       for (const member of options.team) {
         if (record(member) && record(member.exact)) this.#assertRouteReady({ exact: member.exact });
@@ -3094,11 +3294,13 @@ class BatonDeployment {
   }
 
   async explore(objective, options = {}) {
+    this.#assertAdmitsTurns();
     this.#assertRouteReady(options);
     return this.#baton.explore(objective, options);
   }
 
   async review(objective, options = {}) {
+    this.#assertAdmitsTurns();
     if (record(options) && Array.isArray(options.routes)) {
       for (const exact of options.routes) {
         if (record(exact)) this.#assertRouteReady({ exact });
@@ -3193,15 +3395,31 @@ class BatonDeployment {
 
   async #startOrdinaryHost() {
     const options = this.#residentOptions;
-    const authority = new ResidentAuthority({
-      deploymentRoot: this.#deploymentRoot,
-      commonDir: this.#repository.common,
-      repoId: this.#repository.repoId,
-      env: options.env,
-      home: options.home,
-      ownerUid: options.ownerUid,
-      now: options.now,
+    // #306 lane A: a handoff successor can only take the host lease once the old incarnation has
+    // released it — and that release is the old's own stop, bounded by the handoff's declared
+    // window. Waiting (never an instant `application_host_busy`) is what makes the handoff
+    // possible at all; a resident started any other way is refused exactly as before.
+    const handoff = this.#reincarnationHandoff;
+    const authority = await openResidentAuthorityForHandoff({
+      create: () => new ResidentAuthority({
+        deploymentRoot: this.#deploymentRoot,
+        commonDir: this.#repository.common,
+        repoId: this.#repository.repoId,
+        env: options.env,
+        home: options.home,
+        ownerUid: options.ownerUid,
+        now: options.now,
+      }),
+      handoff,
+      waitMs: options.reincarnationWaitMs,
     });
+    if (handoff !== null) {
+      // #306: the old incarnation MINTED this incarnation and named it in `host.successor_started`,
+      // so the successor ADOPTS it (one identity from the row through connection.json, the profile
+      // and the doctor). The host lease keeps the lease's own minted identity, which is never
+      // published. A successor started without a handoff mints its own, as it always did.
+      authority.incarnation = handoff.incarnation;
+    }
     this.#residentAuthority = authority;
     const sessions = new WebSessionStore(authority.sessionRoot, {
       now: options.now,
@@ -3288,10 +3506,25 @@ class BatonDeployment {
           code: 'application_host_startup_unfinished',
         });
       }
-      return authority.publish({
+      const published = authority.publish({
         token: issued.token,
         registryDigest: doctor.application.agentExperience.registryDigest,
       });
+      if (handoff !== null) {
+        // #306: the successor's own half of the handoff record. `host.successor_started` (the old's
+        // row) named THIS incarnation, so the two rows join; `host.reincarnated` follows when the
+        // predecessor's process is gone — the successor waits for that on the observed fact, never
+        // a clock (records it once, then clears the marker the old left it).
+        writeReincarnationMarker(handoff, process.pid, 'published');
+        this.#reincarnationRecord('host.successor_published', {
+          pid: process.pid, incarnation: authority.incarnation,
+          from: Object.freeze({ incarnation: handoff.predecessorIncarnation, commit: handoff.predecessorCommit }),
+          target: Object.freeze({ sha: handoff.target, ref: null }),
+          at: this.#clock(),
+        }, 'reincarnation:successor_published');
+        this.#watchPredecessorExit(handoff, authority);
+      }
+      return published;
     } catch (error) {
       try { await server.batonShutdown({ drainMs: options.webDrainMs }); } catch {}
       try { sessions.revoke(issued.sessionId, {
@@ -3321,17 +3554,24 @@ class BatonDeployment {
    * authoritative). The rows ride `driver.recorded` on the resident's own ledger, the same channel
    * every other deployment-owned row uses, so no new kind is invented for them.
    */
-  #stopRecord(kind, payload, key) {
+  #stopRecord(kind, payload, key, prefix = 'host.stop') {
     const coordination = this.#driver?.coordination ?? null;
     if (typeof coordination?.recordDriver !== 'function') return null;
     this.#stopToken ??= randomBytes(8).toString('hex');
     try {
       const recorded = coordination.recordDriver(kind, payload, {
         actor: `deployment:${this.#repository.repoId}:resident`,
-        key: `host.stop:${this.#stopToken}:${key}`,
+        key: `${prefix}:${this.#stopToken}:${key}`,
       });
       return recorded?.event ?? null;
     } catch { return null; } // a ledger that cannot take the row must never block the stop itself
+  }
+
+  /** #306: the same durable lane for the reincarnation rows — one idempotency prefix of its own,
+   * so a handoff row and a stop row can never collide, and both replay as ordinary
+   * `driver.recorded` rows. */
+  #reincarnationRecord(kind, payload, key) {
+    return this.#stopRecord(kind, payload, key, 'host.reincarnation');
   }
 
   /** Issue #351: enter one stage of this stop. The stage that was IN PROGRESS is closed with the
@@ -3705,6 +3945,417 @@ class BatonDeployment {
   }
 
 
+  /** #306 lane A: the target a reincarnation request names, resolved through the git authority
+   * (#301). A target the checkout can already name is resolved locally; one it cannot is looked for
+   * in the deployment's configured remote (`git fetch` of the ONE remote — `origin` when there is
+   * one, else the first configured), then resolved again. A target that resolves to no commit is
+   * refused typed, BEFORE any effect. */
+  #resolveReincarnationTarget(target) {
+    const repo = this.#repository.root;
+    const revParse = (value) => {
+      try {
+        const sha = execFileSync('git', ['rev-parse', '--verify', '--quiet', `${value}^{commit}`], {
+          cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+        }).trim();
+        return GIT_SHA_40.test(sha) ? sha : null;
+      } catch { return null; }
+    };
+    let sha = revParse(target);
+    let fetched = false;
+    if (sha === null) {
+      const remotes = (() => {
+        try {
+          return execFileSync('git', ['remote'], { cwd: repo, encoding: 'utf8', timeout: 10_000 })
+            .split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+        } catch { return []; }
+      })();
+      const remote = remotes.includes('origin') ? 'origin' : remotes[0] ?? null;
+      if (remote !== null) {
+        try {
+          execFileSync('git', ['fetch', remote], {
+            cwd: repo, encoding: 'utf8', stdio: ['ignore', 'ignore', 'ignore'], timeout: 60_000,
+          });
+          fetched = true;
+        } catch { /* an unreachable remote is absence, refused below with what was tried */ }
+        sha = revParse(target);
+      }
+      if (sha === null) {
+        throw reincarnationError(REINCARNATION_REFUSALS.targetUnreachable,
+          `the reincarnation target ${target} resolves to no commit in this deployment`,
+          Object.freeze({ target, remote, fetched }));
+      }
+    }
+    const ref = (() => {
+      try {
+        const name = execFileSync('git', ['rev-parse', '--symbolic-full-name', target], {
+          cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+        }).trim();
+        return name.length > 0 && !name.startsWith('--') ? name : null;
+      } catch { return null; }
+    })();
+    return Object.freeze({ sha, ref: GIT_SHA_40.test(target) ? null : ref ?? target });
+  }
+
+  /** #306: the live workers whose own checkout IS the deployment's serving directory. Moving the
+   * serving checkout to the target sha (`git checkout --detach`) would stomp their HEAD, so the
+   * request refuses typed instead. Read from the coordinator's live handles — the same projection
+   * the fleet drain targets — never from a disk scan. */
+  #servingCheckoutHolders() {
+    const coordinator = this.#driver?.coordinator ?? null;
+    if (typeof coordinator?.list !== 'function') return Object.freeze([]);
+    const serving = realpathSync(this.#repository.root);
+    const holders = [];
+    let rows = [];
+    try { rows = coordinator.list(); } catch { return Object.freeze([]); }
+    for (const handle of rows) {
+      if (typeof handle?.worktree !== 'string' || handle.worktree.length === 0) continue;
+      let observed = null;
+      try { observed = realpathSync(handle.worktree); } catch { continue; }
+      if (observed !== serving) continue;
+      if (['dead', 'exited'].includes(handle.status)) continue;
+      holders.push(handle.id);
+    }
+    return Object.freeze(holders.sort());
+  }
+
+  /** #306: the turns in flight RIGHT NOW — the coordinator's own `turnInFlight` fact on each live
+   * handle, the same reading its liveness projection publishes. */
+  #inFlightTurnIds() {
+    const coordinator = this.#driver?.coordinator ?? null;
+    if (typeof coordinator?.list !== 'function') return Object.freeze([]);
+    let rows = [];
+    try { rows = coordinator.list(); } catch { return Object.freeze([]); }
+    return Object.freeze(rows
+      .filter((handle) => handle?.turnInFlight === true && !['dead', 'exited'].includes(handle.status))
+      .map((handle) => handle.id).sort());
+  }
+
+  /** #306: wait for the named turns to settle. A worker the projection no longer holds, or one
+   * whose `turnInFlight` cleared, is settled; the bound is this deployment's declared handoff
+   * window (the registry row), after which the handoff proceeds to the stop path — whose own drain
+   * is exactly the act that ends a turn which will not end itself. */
+  async #awaitInFlightTurns(ids) {
+    const deadline = Date.now() + this.#reincarnationWait();
+    const pending = new Set(ids);
+    while (pending.size > 0 && Date.now() < deadline) {
+      const coordinator = this.#driver?.coordinator ?? null;
+      let rows = [];
+      try { rows = coordinator?.list?.() ?? []; } catch { rows = []; }
+      const live = new Map(rows.map((handle) => [handle.id, handle]));
+      for (const id of [...pending]) {
+        const handle = live.get(id);
+        if (!handle || handle.turnInFlight !== true || ['dead', 'exited'].includes(handle.status)) pending.delete(id);
+      }
+      if (pending.size > 0) await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+    }
+    return Object.freeze([...pending].sort());
+  }
+
+  #reincarnationWait() {
+    return Number.isSafeInteger(this.#reincarnationWaitMs) && this.#reincarnationWaitMs > 0
+      ? this.#reincarnationWaitMs
+      : FRAME_LIMITS['host.reincarnation.wait_ms'].value;
+  }
+
+  /** #306: the successor's spawn declaration — everything the successor needs to open the same
+   * state directory, wait on the leases the old holds, publish the identity the old named, and be
+   * recognized as THIS handoff's other half. `spawnSuccessor` (resident options) is the injected
+   * seam: production spawns `node <target checkout>/impl/scripts/baton.mjs serve` with the same
+   * arguments this incarnation was started with (minus the reincarnation flag itself). */
+  #successorSpec({ resolved, incarnation, checkout }) {
+    const script = join(checkout, 'impl', 'scripts', 'baton.mjs');
+    const invocation = process.argv.slice(2).filter((argument) => argument !== '--reincarnate');
+    const args = [script, ...invocation];
+    const markerPath = reincarnationMarkerPath(this.#deploymentRoot, incarnation);
+    const env = {
+      ...process.env,
+      [REINCARNATION_HANDOFF_ENV.predecessorIncarnation]: this.#residentAuthority.incarnation,
+      [REINCARNATION_HANDOFF_ENV.predecessorPid]: String(process.pid),
+      [REINCARNATION_HANDOFF_ENV.predecessorCommit]: this.#served?.commit ?? '',
+      [REINCARNATION_HANDOFF_ENV.incarnation]: incarnation,
+      [REINCARNATION_HANDOFF_ENV.target]: resolved.sha,
+    };
+    const spawner = this.#residentOptions?.spawnSuccessor ?? null;
+    const spec = {
+      command: process.execPath,
+      args: Object.freeze(args),
+      cwd: checkout,
+      env: Object.freeze(env),
+      detached: false,
+      stdio: Object.freeze(['ignore', 'ignore', 'pipe']),
+      markerPath,
+      selectorPath: this.#residentAuthority.selectorPath,
+      profilePath: this.#residentAuthority.profilePath,
+      tokenPath: this.#residentAuthority.tokenPath,
+      leasePath: join(this.#driver.coordination.root, 'writer.lease'),
+      deploymentRoot: this.#deploymentRoot,
+    };
+    return typeof spawner === 'function' ? spawner(spec) : spawn(spec.command, [...spec.args], {
+      cwd: spec.cwd, env: spec.env, detached: spec.detached, stdio: [...spec.stdio],
+    });
+  }
+
+  /** #306: readiness — the successor's marker file (its own declaration that it is up and waiting
+   * on the leases) versus the child's exit. A child that dies first fails the handoff with the
+   * bounded stderr tail (#326's bound, the same derivation the crash rows use). */
+  async #awaitSuccessorReady(child, spec, tail) {
+    const deadline = Date.now() + this.#reincarnationWait();
+    let exited = null;
+    const onExit = (code, signal) => { exited = { code, signal }; };
+    if (typeof child.once === 'function') child.once('exit', onExit);
+    try {
+      while (Date.now() < deadline) {
+        if (exited !== null) {
+          return { ok: false, cause: Object.freeze({ exit: exited.code, signal: exited.signal, stderrTail: tail.text }) };
+        }
+        if (existsSync(spec.markerPath)) return { ok: true };
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+      }
+      return { ok: false, cause: Object.freeze({ exit: null, signal: null, stderrTail: tail.text, reason: 'readiness_timeout' }) };
+    } finally {
+      if (typeof child.removeListener === 'function') child.removeListener('exit', onExit);
+    }
+  }
+
+  /** #306: the published incarnation, read from the deployment's own publication (connection.json)
+   * — the ONE read both incarnations agree on. Null when nothing readable is published. */
+  #publishedIncarnation() {
+    const selectorPath = this.#residentAuthority?.selectorPath ?? null;
+    if (selectorPath === null || !existsSync(selectorPath)) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(selectorPath, 'utf8'));
+      return REINCARNATION_IDENTIFIER.test(parsed?.incarnation ?? '') ? parsed.incarnation : null;
+    } catch { return null; }
+  }
+
+  /** #306: the old incarnation's half of the publication handoff. The successor needs the resident
+   * host lease and the publication lease before it can publish at all, so the old releases BOTH —
+   * while KEEPING the published bytes — and then waits, bounded, for a DIFFERENT incarnation to
+   * appear in connection.json. Only after that does close() withdraw (and `removeIfExact` then
+   * removes nothing of the successor's). Returns true when the successor published. */
+  async #completeReincarnationHandoff(handoff) {
+    const authority = this.#residentAuthority;
+    handoff.released = true;
+    try { authority.publicationLease.release(); } catch { /* a lease already released is the state we want */ }
+    try { authority.lease.release(); } catch { /* idem */ }
+    const deadline = Date.now() + this.#reincarnationWait();
+    while (Date.now() < deadline) {
+      const published = this.#publishedIncarnation();
+      if (published !== null && published !== authority.incarnation) {
+        handoff.published = true;
+        handoff.publishedIncarnation = published;
+        return true;
+      }
+
+      await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+    }
+    return false;
+  }
+  /** #306: the successor's own end of the handoff. When the predecessor's process is GONE, the
+   * withdrawal the old performed is a fact this incarnation can record on its behalf — the old
+   * could not, its writer authority ended with its release (the lane brief's "record it via the
+   * successor"). The observation is the process itself, never a clock: a predecessor alive at the
+   * bound leaves the pair unwritten and the wait retries nothing (absence, not a guess). */
+  #watchPredecessorExit(handoff, authority) {
+    const pid = handoff.predecessorPid;
+    if (pid === null) return;
+    const bound = this.#reincarnationWait();
+    const deadline = Date.now() + bound;
+    const poll = () => {
+      const alive = reincarnationProcessAlive(pid);
+      if (alive === true && Date.now() < deadline) return false;
+      const at = this.#clock();
+      if (alive === false) {
+        this.#reincarnationRecord('host.publication_withdrawn', {
+          incarnation: handoff.predecessorIncarnation, at,
+        }, 'reincarnation:publication_withdrawn');
+      }
+      this.#reincarnationRecord('host.reincarnated', {
+        from: Object.freeze({ incarnation: handoff.predecessorIncarnation, commit: handoff.predecessorCommit }),
+        to: Object.freeze({ incarnation: authority.incarnation, commit: handoff.target }),
+        predecessorExited: alive,
+        at,
+      }, 'reincarnation:reincarnated');
+      try { rmSync(handoff.markerPath, { force: true }); } catch { /* the marker is our own */ }
+      return true;
+    };
+    if (poll()) return;
+    const timer = setInterval(() => { if (poll()) clearInterval(timer); }, 100);
+    if (typeof timer.unref === 'function') timer.unref();
+  }
+
+  /** #306: a handoff that failed before the old committed to its stop — the successor never became
+   * ready, or died before publishing. The failure is durable, admission reopens (the handoff record
+   * clears), and the old incarnation goes on serving. */
+  #failReincarnation(handoff, step, cause) {
+    this.#reincarnation = null;
+    const at = this.#clock();
+    this.#reincarnationRecord('host.reincarnation_failed', {
+      step,
+      target: handoff.target,
+      successor: handoff.successor === null ? null : Object.freeze({
+        pid: handoff.successor.pid, incarnation: handoff.successor.incarnation,
+      }),
+      cause,
+      at,
+    }, `reincarnation:failed:${step}`);
+    try { rmSync(handoff.markerPath, { force: true }); } catch { /* a stale marker is harmless */ }
+    this.#webHost?._say?.(`baton serve: host.reincarnation_failed ${step} `
+      + `(${cause?.exit ?? cause?.reason ?? 'error'}) at ${at}; this incarnation keeps serving`);
+    throw reincarnationError('reincarnation_failed',
+      `the successor did not come up (${step}); this incarnation reopens admission and keeps serving`,
+      Object.freeze({ step, cause, target: handoff.target }));
+  }
+
+  /** #306: the ONE turn-admission read this deployment publishes — null when it admits turns, the
+   * typed refusal otherwise. The route-admission gate the application consults and the deployment's
+   * own start-family methods read THIS, so a new turn is never refused two ways. */
+  turnAdmissionRefusal() {
+    return turnAdmissionRefusalOf(this.#reincarnation);
+  }
+
+  #assertAdmitsTurns() {
+    const refusal = this.turnAdmissionRefusal();
+    if (refusal !== null) throw reincarnationError(refusal.code, refusal.message, refusal.detail);
+  }
+
+  /** `deployment.reincarnate {target}`: start a successor over this same deployment, hand the
+   * publication over, and exit 0 through the #351 stop path. The full protocol is the module
+   * comment above; this method is the request half (rows 1-4), and the continuation is the old's
+   * own close() — so the caller's receipt is delivered before this incarnation stops answering. */
+  async reincarnate({ target } = {}) {
+    if (typeof target !== 'string' || target.length === 0 || target.length > 1024 || target.includes('\0')) {
+      throw reincarnationError('reincarnation_target_invalid', 'a reincarnation target is a non-empty commit-ish');
+    }
+    if (this.#reincarnation !== null) {
+      const refusal = turnAdmissionRefusalOf(this.#reincarnation);
+      throw reincarnationError(refusal.code, refusal.message, refusal.detail);
+    }
+    if (this.#closePromise !== null) {
+      throw reincarnationError(REINCARNATION_REFUSALS.inFlight,
+        'this incarnation is already stopping; it cannot reincarnate', Object.freeze({ since: null, successorPid: null, phase: 'closing' }));
+    }
+    if (this.#residentAuthority === null) {
+      throw reincarnationError('reincarnation_unavailable',
+        'this deployment is not hosting a resident, so there is no publication to hand over');
+    }
+    // Every refusal is drawn BEFORE any effect: the target resolves, the checkout is free, the
+    // commit is not the one already served — and only then does the request leave a row.
+    const resolved = this.#resolveReincarnationTarget(target);
+    if (this.#served !== null && resolved.sha === this.#served.commit) {
+      throw reincarnationError(REINCARNATION_REFUSALS.sameCommit,
+        `this resident already serves ${resolved.sha}; a reincarnation must move the served commit`,
+        Object.freeze({ target: resolved, served: Object.freeze({ commit: this.#served.commit }) }));
+    }
+    const holders = this.#servingCheckoutHolders();
+    if (holders.length > 0) {
+      throw reincarnationError(REINCARNATION_REFUSALS.checkoutHeld,
+        `the serving checkout is held by a live worker (${holders.join(', ')}); the successor cannot move it`,
+        Object.freeze({ holders }));
+    }
+    const from = Object.freeze({
+      incarnation: this.#residentAuthority.incarnation, commit: this.#served?.commit ?? null,
+    });
+    const handoff = {
+      since: this.#clock(),
+      target: resolved,
+      from,
+      successor: null,
+      phase: 'waiting',
+      released: false,
+      published: false,
+      markerPath: null,
+    };
+    this.#reincarnation = handoff;
+    this.#reincarnationRecord('host.reincarnation_requested', {
+      target: resolved, from, at: handoff.since,
+    }, 'reincarnation:requested');
+
+    // The in-flight one-shot turns complete on THIS incarnation: the wait is named with the #351
+    // row before it starts, and the handoff's own bound governs (the stop path's drain is the act
+    // that ends a turn which will not end itself).
+    const inFlight = this.#inFlightTurnIds();
+    if (inFlight.length > 0) {
+      this.#reincarnationRecord('host.stop_waiting', {
+        on: 'worker', ids: inFlight, at: this.#clock(),
+      }, 'reincarnation:waiting:worker');
+      this.#webHost?._say?.(`baton serve: host.stop_waiting on worker ${inFlight.join(',')} at ${this.#clock()}`);
+      await this.#awaitInFlightTurns(inFlight);
+    }
+    if (this.#reincarnation !== handoff) {
+      // The stop overtook the request (a signal): the handoff never spawned anything.
+      throw reincarnationError(REINCARNATION_REFUSALS.inFlight,
+        'this incarnation stopped before the successor could be spawned', Object.freeze({ since: handoff.since, successorPid: null, phase: 'stopped' }));
+    }
+
+    // The successor serves the SAME directory, moved to the target commit first (its code, its
+    // doctor row and its served revision are all the target's).
+    try {
+      execFileSync('git', ['checkout', '--detach', resolved.sha], {
+        cwd: this.#repository.root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: 60_000,
+      });
+    } catch (error) {
+      const tail = typeof error?.stderr === 'string'
+        ? error.stderr.slice(-MAX_STDERR_TAIL_BYTES) : null;
+      this.#reincarnation = null;
+      throw reincarnationError(REINCARNATION_REFUSALS.checkoutHeld,
+        `the serving checkout could not be moved to ${resolved.sha}`,
+        Object.freeze({ holders: Object.freeze([]), reason: 'checkout_not_clean', stderrTail: tail }));
+    }
+    const incarnation = `instance-${randomUUID()}`;
+    handoff.markerPath = reincarnationMarkerPath(this.#deploymentRoot, incarnation);
+    let child;
+    const tail = { text: '' };
+    try {
+      child = this.#successorSpec({ resolved, incarnation, checkout: this.#repository.root });
+    } catch (error) {
+      this.#reincarnation = null;
+      throw reincarnationError('reincarnation_failed',
+        'the successor could not be spawned', Object.freeze({ step: 'successor_spawn', cause: Object.freeze({ code: error?.code ?? null, message: error?.message ?? null }) }));
+    }
+    this.#attachSuccessorStderr(child, tail);
+    handoff.successor = { pid: Number.isSafeInteger(child?.pid) ? child.pid : null, incarnation, child };
+    const ready = await this.#awaitSuccessorReady(child, { markerPath: handoff.markerPath }, tail);
+    if (ready.ok !== true) {
+      this.#failReincarnation(handoff, 'successor_start', ready.cause);
+    }
+    if (this.#reincarnation !== handoff) {
+      throw reincarnationError(REINCARNATION_REFUSALS.inFlight,
+        'this incarnation stopped before the successor was ready', Object.freeze({ since: handoff.since, successorPid: handoff.successor.pid, phase: 'stopped' }));
+    }
+    // The old's LAST row before it releases: the incarnation it starts is an identity the old
+    // MINTED, so the row and the successor's own publication name one incarnation, not two.
+    this.#reincarnationRecord('host.successor_started', {
+      pid: handoff.successor.pid, incarnation, target: resolved, from, at: this.#clock(),
+    }, 'reincarnation:successor_started');
+    handoff.phase = 'handed';
+    // The handoff continues through the old's own stop path, driven by the receipt's caller — the
+    // command answers first, and this incarnation then stops admitting, drains, releases and exits.
+    setImmediate(() => { this.close().catch(() => { /* the stop narrates its own failure */ }); });
+    return Object.freeze({
+      schemaVersion: 1,
+      state: 'reincarnating',
+      at: this.#clock(),
+      target: resolved,
+      from,
+      successor: Object.freeze({ pid: handoff.successor.pid, incarnation }),
+      next: 'the successor opens the same state directory and publishes connection.json; this incarnation then withdraws and exits 0',
+    });
+  }
+
+  /** #306: the bounded stderr tail the reincarnation failure row carries (#326's bound — the same
+   * derivation the crash rows publish). Never unbounded: the tail is cut at the bound by BYTES,
+   * and a child that carries no stderr stream answers the empty tail (absence, not a guess). */
+  #attachSuccessorStderr(child, tail) {
+    const stream = child?.stderr ?? null;
+    if (stream === null || typeof stream.on !== 'function') return;
+    stream.on('data', (chunk) => {
+      const next = `${tail.text}${chunk.toString('utf8')}`;
+      tail.text = Buffer.byteLength(next) > MAX_STDERR_TAIL_BYTES
+        ? next.slice(-MAX_STDERR_TAIL_BYTES) : next;
+    });
+  }
+
   close() {
     if (!this.#closePromise) {
       this.#closePromise = (async () => {
@@ -3743,21 +4394,59 @@ class BatonDeployment {
         }
         let residentState = 'closed';
         if (this.#residentAuthority) {
+          // #306 lane A: a stop that runs while a handoff is in flight. A handoff whose successor
+          // was never spawned or never came up is named here (the operator's stop supersedes it);
+          // one that reached `handed` owns the withdrawal — see #completeReincarnationHandoff.
+          const handoff = this.#reincarnation;
+          if (handoff !== null && handoff.phase !== 'handed') {
+            this.#reincarnation = null;
+            this.#reincarnationRecord('host.reincarnation_failed', {
+              step: 'superseded_by_stop',
+              target: handoff.target,
+              successor: handoff.successor === null ? null : Object.freeze({
+                pid: handoff.successor.pid, incarnation: handoff.successor.incarnation,
+              }),
+              cause: Object.freeze({ reason: 'stop_superseded_the_handoff' }),
+              at: this.#clock(),
+            }, 'reincarnation:failed:superseded');
+            try { rmSync(handoff.markerPath, { force: true }); } catch { /* a stale marker is harmless */ }
+          }
           try {
             this.#residentSession?.sessions.revoke(this.#residentSession.sessionId, {
               actor: `deployment:${this.#repository.repoId}:resident`, reason: 'deployment_closed',
             });
+            let handoffPublished = null;
+            if (handoff !== null && handoff.phase === 'handed') {
+              handoffPublished = await this.#completeReincarnationHandoff(handoff);
+            }
             this.#residentAuthority.close();
-          } catch {
-            // Issue #351(2): the third obligation a resident's stop owns — its own publication.
-            // A withdrawal that fails NAMES that wait rather than leaving a selector pointing at a
-            // process that is exiting (the state #276(3) exists to prevent).
-            residentState = 'reconciliation_required';
-            const at = this.#clock();
-            this.#stopRecord('host.stop_waiting', {
-              on: 'publication', ids: [this.#residentAuthority.deploymentId ?? this.#repository.repoId], at,
-            }, 'waiting:publication');
-            this.#webHost?._say?.(`baton serve: host.stop_waiting on publication at ${at}`);
+            if (handoffPublished === false) residentState = 'reconciliation_required';
+          } catch (error) {
+            if (handoff !== null && handoff.phase === 'handed' && error?.code === 'application_host_lease_lost') {
+              // The handoff released the leases exactly (the successor needed them to publish), so
+              // close()'s own assertion is the expected refusal — AFTER it removed the socket and
+              // whatever publication bytes were still OURS. The successor's bytes were never ours.
+              residentState = handoff.published === true ? 'closed' : 'reconciliation_required';
+            } else {
+              // Issue #351(2): the third obligation a resident's stop owns — its own publication.
+              // A withdrawal that fails NAMES that wait rather than leaving a selector pointing at a
+              // process that is exiting (the state #276(3) exists to prevent).
+              residentState = 'reconciliation_required';
+              const at = this.#clock();
+              this.#stopRecord('host.stop_waiting', {
+                on: 'publication', ids: [this.#residentAuthority.deploymentId ?? this.#repository.repoId], at,
+              }, 'waiting:publication');
+              this.#webHost?._say?.(`baton serve: host.stop_waiting on publication at ${at}`);
+            }
+          }
+          if (handoff !== null && handoff.phase === 'handed') {
+            // The handoff's own end: the marker is the old incarnation's to clear, and the
+            // successor says the rest of it (`host.successor_published` / `host.reincarnated`).
+            try { rmSync(handoff.markerPath, { force: true }); } catch { /* idem */ }
+            this.#reincarnation = null;
+            this.#webHost?._say?.(handoff.published === true
+              ? `baton serve: host.publication_withdrawn ${handoff.from.incarnation} → ${handoff.publishedIncarnation}`
+              : `baton serve: host.reincarnation_failed successor_publish (the successor never published); this incarnation withdrew its own publication`);
           }
         }
         // Issue #351: the publication withdrawal is the last stage the stop owns before the close
@@ -3854,7 +4543,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
   const adapterOptions = normalizeAdapterOptions(advanced.adapterOptions);
   const rawResident = advanced.resident ?? {};
-  closed(rawResident, ['commandTimeoutMs', 'env', 'home', 'now', 'ownerUid', 'pollMs', 'sessionTtlMs', 'webDrainMs'], 'advanced resident');
+  closed(rawResident, [
+    'commandTimeoutMs', 'env', 'home', 'now', 'ownerUid', 'pollMs', 'reincarnationWaitMs',
+    'sessionTtlMs', 'spawnSuccessor', 'webDrainMs',
+  ], 'advanced resident');
   const residentOptions = Object.freeze({
     env: rawResident.env ?? process.env,
     home: rawResident.home ?? rawResident.env?.HOME ?? process.env.HOME ?? homedir(),
@@ -3865,6 +4557,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     webDrainMs: rawResident.webDrainMs ?? 5_000,
     commandTimeoutMs: rawResident.commandTimeoutMs ?? 30_000,
     pollMs: rawResident.pollMs ?? 100,
+    // #306 lane A: the handoff's own bound (each phase) and the injected spawner. Both are
+    // deployment-owned seams: production spawns `node <checkout>/impl/scripts/baton.mjs serve`
+    // itself, and a fixture supplies a child handle instead of a second real resident.
+    reincarnationWaitMs: rawResident.reincarnationWaitMs ?? null,
+    spawnSuccessor: rawResident.spawnSuccessor ?? null,
   });
   if (!record(residentOptions.env) || typeof residentOptions.home !== 'string'
     || (residentOptions.ownerUid !== null && !Number.isSafeInteger(residentOptions.ownerUid))
@@ -3873,6 +4570,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     || !Number.isSafeInteger(residentOptions.webDrainMs) || residentOptions.webDrainMs <= 0
     || !Number.isSafeInteger(residentOptions.commandTimeoutMs) || residentOptions.commandTimeoutMs <= 0
     || !Number.isSafeInteger(residentOptions.pollMs) || residentOptions.pollMs <= 0
+    || (residentOptions.reincarnationWaitMs !== null
+      && (!Number.isSafeInteger(residentOptions.reincarnationWaitMs) || residentOptions.reincarnationWaitMs <= 0))
+    || (residentOptions.spawnSuccessor !== null && typeof residentOptions.spawnSuccessor !== 'function')
     || residentOptions.pollMs > residentOptions.commandTimeoutMs) {
     throw deploymentError('advanced resident configuration is invalid');
   }
@@ -4213,7 +4913,14 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // on a configured route is never evicted by the retention ceiling.
     maxEntries: Math.max(1, routes.length),
   });
-  const driver = createDriver({
+  // #306 lane A: the successor half. A process the old incarnation spawned into a handoff writes
+  // its readiness marker BEFORE its open blocks on the writer lease the old still holds, and waits
+  // for that release on the handoff's own bound — the release IS the old's drain completing, so a
+  // handoff successor never refuses `coordination_writer_busy` at once. A resident started any
+  // other way reads nothing here and keeps the old immediate refusal.
+  const reincarnationHandoff = reincarnationHandoffFromEnvironment(process.env, deploymentRoot);
+  if (reincarnationHandoff !== null) writeReincarnationMarker(reincarnationHandoff, process.pid, 'waiting');
+  const driverOptions = {
     routeQuotaAuthority: routeQuota,
     repoRoot: repository.root,
     repoId: repository.repoId,
@@ -4256,7 +4963,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // Issue #351 lane 3: the open path is ASYNC — the replay chunks yield to the loop, so a
     // startup heartbeat and a signal handler keep beating however long the history is.
     coordinationAsyncOpen: true,
-  });
+  };
+  const driver = await openDriverForHandoff(
+    createDriver, driverOptions, reincarnationHandoff, residentOptions.reincarnationWaitMs,
+  );
   // The floor probe reads the ledger high-water through the authority the driver just built.
   worktreeCapacityRef = driver.worktreeCapacity;
   // Issue #450: the coordinator may never fail a stop on a reservation whose worker is gone. The
@@ -4353,6 +5063,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // deployment that is constructed once the application is ready — so the closure reads this
   // binding lazily, and a reader that never asks for the rows never pays for the ledger read.
   let opened = null;
+  // #306 lane A: the ONE read of "is a handoff in its admission-closed window?" that the
+  // application's route-admission gate consults. The deployment installs the real read at
+  // construction (below), so the gate and the deployment's own start-family methods can never
+  // disagree about whether new turns are admitted.
+  const reincarnationAuthority = { refusal: () => null };
   try {
     // Issue #351 lane 3: the open awaits its own async replay here — a fold refusal rejects
     // typed (the #304 contract) and the catch below closes the driver it now owns — and then
@@ -4412,7 +5127,14 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // ledger-derived provider refusals (#341 part 2), never a second derivation. A run or
       // explore naming a blocked route refuses inside start(), before goal/plan records, worktree,
       // capacity reservation, or worker spawn — and the refusal names the ready alternatives.
-      routeAdmission: routeAdmissionGate(readiness, routeQuota, routeRefusals, claudeCredentialLifetime),
+      routeAdmission: (options) => {
+        // #306 lane A: a handoff in progress closes NEW-turn admission at the same gate every other
+        // admission reads, so a run admitted while the resident is reincarnating is refused typed
+        // before goal/plan records — and the read clears with a failed handoff (admission reopens).
+        const refusal = reincarnationAuthority.refusal();
+        if (refusal !== null) throw reincarnationError(refusal.code, refusal.message, refusal.detail);
+        return routeAdmissionGate(readiness, routeQuota, routeRefusals, claudeCredentialLifetime)(options);
+      },
     });
     await application.ready;
     opened = new BatonDeployment(application, principal, readiness, {
@@ -4422,6 +5144,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
       refusals: routeRefusals, degrades: routeDegrades,
       hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,
+      reincarnationWaitMs: residentOptions.reincarnationWaitMs,
+      reincarnationAuthority,
+      reincarnationHandoff,
       liveness: livenessController,
       claudeCredentialProbe,
       claudeCredentialLifetime,
