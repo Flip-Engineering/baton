@@ -241,6 +241,9 @@ if (changedPaths.length > 0 && writeExpectedRedRequested) {
 const implRoot = new URL('../', import.meta.url);
 const implRootPath = fileURLToPath(implRoot);
 const testRoot = new URL('../test/', import.meta.url);
+// Issue #463: the checkout root this runner lives in (`impl/..`), the SECOND root a positional
+// file name may be spelled against — the repo-relative form the #300 pre-verdict contract appends.
+const checkoutRootPath = fileURLToPath(new URL('../../', import.meta.url));
 const reporterUrl = new URL('./suite-verdict-reporter.mjs', import.meta.url).href;
 const watchdogUrl = new URL('./suite-orphan-watchdog.mjs', import.meta.url).href;
 const manifestPath = new URL('./expected-red-tests.json', import.meta.url);
@@ -261,8 +264,21 @@ const parallelism = Number.parseInt(process.env.BATON_SUITE_PARALLELISM ?? '', 1
 // a seat-run suite has no parent token and admits like any other verdict.
 let suiteLeaseDigest = null;
 
+/** Resolve one positional file name to the name this run REPORTS and hands `node --test`.
+ *
+ * Issue #463: a name is read against the runner's OWN roots, never the caller's working directory.
+ * The SUITE ROOT comes first — the root this runner derives its lanes, its verdict rows and its
+ * file arguments from, where a test file is `test/<file>` — then the CHECKOUT root, the
+ * repo-relative spelling the pre-verdict contract appends (`impl/test/<file>`). A landing ran this
+ * runner from the scratch checkout root and handed it bare basenames, so every name resolved one
+ * directory too high and `node --test` answered "exited 1 without reporting" for a file that was
+ * never there; the caller's cwd is not part of the contract. A name outside both roots keeps its
+ * absolute path, so a fixture may still run a file it owns. */
 function relativeTestPath(file) {
-  const absolute = resolve(process.cwd(), file);
+  const named = `${file}`;
+  const fromSuiteRoot = resolve(implRootPath, named);
+  const absolute = [fromSuiteRoot, resolve(checkoutRootPath, named)]
+    .find((candidate) => !relative(implRootPath, candidate).startsWith('..')) ?? fromSuiteRoot;
   const rel = relative(implRootPath, absolute);
   return rel.startsWith('..') ? absolute : rel;
 }
