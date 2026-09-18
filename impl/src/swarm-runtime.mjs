@@ -1538,6 +1538,16 @@ export class SwarmRuntime {
       const workspaceId = typeof observation.workspaceId === 'string' && observation.workspaceId.length > 0 ? observation.workspaceId : null;
       const at = typeof observation.at === 'string' && observation.at.length > 0 ? observation.at : null;
       const paths = Array.isArray(observation.paths) ? observation.paths.filter((path) => typeof path === 'string') : [];
+      // Issue #447: an observation naming a swarm this deployment does not hold is NOT this
+      // deployment's row — a test fixture run inside a lane worktree spools its own `s1`/`peer`
+      // commits into the live wrapper spool. Skipped before any write: never a recorded row for
+      // a swarm that does not exist, never a refusal on the read path that drained it.
+      let swarm = null;
+      try { swarm = this.store.swarm(swarmId); } catch { swarm = null; }
+      if (!swarm) {
+        this.skippedForeignObservations = (this.skippedForeignObservations ?? 0) + 1;
+        continue;
+      }
       const observationKey = hash(['worktree-commit', swarmId, participantId, workspaceId, sha, at]);
       this.store.recordDriver('worktree.commit_recorded', {
         swarmId, participantId, workspaceId, sha, at, paths,
@@ -1545,7 +1555,6 @@ export class SwarmRuntime {
       // The seat's workspace identity, resolved the same way the composer resolves it: the
       // observation's own workspace when the wrapper named one, else the seat's durable binding
       // — the participant row's workspace or its worker's recorded checkout.
-      const swarm = this.store.swarm(swarmId);
       const seat = swarm?.participants?.[participantId] ?? null;
       const worker = this.coordinator.list().find((row) => row.id === observation.workerId) ?? null;
       const seatWorkspaceId = workspaceId
