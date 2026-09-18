@@ -88,6 +88,11 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
 
   // ── 503 transient: only where a restart genuinely repairs it ──
   swarm_runtime_closed: row(503, ['runtime'], 'the swarm runtime is shut down for this deployment; restart the resident to serve the swarm family again'),
+  // #441 lane B: the seat read verbs (run.package.read) raise these three; the store spells the
+  // two context-package codes identically, so one row per code keeps the web status map total.
+  package_not_attached_to_run: row(403, ['runtime'], 'the context package digest is not attached to the caller\'s run or its swarm'),
+  context_package_not_found: row(404, ['runtime'], 'the request names a context package this deployment does not hold'),
+  context_package_branch_not_found: row(404, ['runtime'], 'the request names a branch the context package does not carry'),
 });
 
 // The spelling pairs that are the SAME rule under two names (fold spelling first) — both stay as
