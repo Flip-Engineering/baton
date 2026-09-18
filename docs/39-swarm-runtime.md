@@ -792,8 +792,12 @@ it. The deployment's route row for that (harness, model) reads `degraded` with t
 readiness consult). `resetAt` is a zone-qualified instant or `null`; a provider string with no
 zone (zai reports Beijing wall time) keeps `resetAtText`. A fault-settled seat stays a resumable
 predecessor for `swarm.recruit --resume-from` — its work is on disk and the death was the
-provider's; a seat the root stopped is not (#452, open). Observed live 09:50Z: fold, wake and
-refusal within one second of the provider's 429.
+provider's. A seat the root settled (left/stopped, left/completed) is resumable while its
+workspace is carriable — the retained checkout or the stop's snapshot commit (#452); a settled
+seat with nothing to carry refuses `swarm_recruit_predecessor_unavailable` naming its status,
+left reason, workspace state (`retained | snapshot | none`) and the closed resumable set
+`SWARM_RESUMABLE_PREDECESSOR_STATES`. Observed live 09:50Z: fold, wake and refusal within one
+second of the provider's 429.
 
 **A successor carries its predecessor's workspace (#385).** `--resume-from <seat>` whose worker
 is dead binds the predecessor's retained checkout (#428 custody) when no other live worker holds
