@@ -50,15 +50,17 @@ import { pathToFileURL } from 'node:url';
 import { FRAME_LIMITS, composeFrameLimitRefusal } from './limits.mjs';
 
 import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
-  SWARM_COMMAND_ROWS, SWARM_COMMAND_SCHEMAS, SWARM_VIEW_PROJECTIONS, SWARM_BRIDGE_TRANSPORT,
+  SWARM_COMMAND_ROWS, SWARM_COMMAND_SCHEMAS, SWARM_VIEW_PROJECTIONS, SWARM_VIEW_PROJECTION_NAMES,
+  SWARM_EVENT_KINDS, SWARM_BRIDGE_TRANSPORT,
   SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
   projectSwarmView, swarmCommandFieldSummary, swarmIdentityKeyedCommand,
   swarmKnowledgeCommand,
   validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
-import { EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
+import { EVIDENCE_SEARCH_FILTERS, EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
+import { WAKE_CLASSES } from './wake-stream.mjs';
 // The knowledge verbs' shared shape validator (the ONE authority the runtime dispatch also runs),
 // and the canonical schema accessor its help renders from.
-import { validateSwarmKnowledgeCommand } from './swarm-runtime.mjs';
+import { SWARM_PERMISSIONS, validateSwarmKnowledgeCommand } from './swarm-runtime.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
 export { SWARM_COMMANDS, validateSwarmCommandArgs, SWARM_KNOWLEDGE_COMMAND_NAMES };
@@ -595,6 +597,18 @@ function bridgeHelpText(command = null) {
       }),
       '',
       'Per-command help: node swarm-native-bridge.mjs <swarm.command> --help',
+      '',
+      'Closed sets (every refusal that names one of these carries the admitted values in',
+      'detail.admitted; a closed-set refusal reads "<field> must be one of: ..."):',
+      `  swarm.view projection — one of: ${[...SWARM_VIEW_PROJECTION_NAMES].join(', ')}`,
+      `  swarm.update event — one of: ${[...SWARM_EVENT_KINDS].join(', ')}`,
+      `  wake classes — one of: ${[...WAKE_CLASSES].join(', ')}`,
+      `  permissions — one of: ${[...SWARM_PERMISSIONS].join(', ')}`,
+      `  evidence.search fields — one of: ${[...EVIDENCE_SEARCH_FILTERS].join(', ')}`,
+      '',
+      'Per-verb arguments (every closed set above is named again where the verb takes it):',
+      ...SWARM_COMMANDS.map((name) => `  ${name} — ${[...SWARM_COMMAND_DEFINITIONS[name].args].join(', ') || 'no arguments'}`),
+      ...SWARM_KNOWLEDGE_COMMAND_NAMES.map((name) => `  ${name} — ${(name === 'evidence.search' ? [...EVIDENCE_SEARCH_FILTERS] : Object.keys(canonicalOperationForCommand(name)?.inputSchema?.properties ?? {})).join(', ')}`),
       '',
       `Identity comes from the environment: ${SWARM_BRIDGE_ENV_KEYS.url} and ${SWARM_BRIDGE_ENV_KEYS.token}`,
       `are required for real calls; ${SWARM_BRIDGE_ENV_KEYS.swarmId} auto-fills the swarmId argument.`,
