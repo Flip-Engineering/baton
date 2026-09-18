@@ -12354,7 +12354,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 49,
+          "size": 52,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12675,7 +12675,17 @@
         {
           "name": "_routeUsageRows",
           "ordinal": 0,
-          "size": 7,
+          "size": 6,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_deploymentRouteRows",
+          "ordinal": 0,
+          "size": 6,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -12711,6 +12721,15 @@
           ]
         },
         {
+          "name": "_noteOwnRouteRow",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_indexRouteProbe",
           "ordinal": 0,
           "size": 16,
@@ -12738,15 +12757,6 @@
           ]
         },
         {
-          "name": "_observeRouteProbeTurns",
-          "ordinal": 0,
-          "size": 11,
-          "seam": "observation",
-          "evidence": [
-            "observation:record_name"
-          ]
-        },
-        {
           "name": "_probeAnswer",
           "ordinal": 0,
           "size": 9,
@@ -12758,7 +12768,7 @@
         {
           "name": "_recordRouteRecovered",
           "ordinal": 0,
-          "size": 16,
+          "size": 17,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -12822,7 +12832,7 @@
         {
           "name": "_routeDegradeFor",
           "ordinal": 0,
-          "size": 27,
+          "size": 25,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -12840,7 +12850,7 @@
         {
           "name": "_admitRouteProbe",
           "ordinal": 0,
-          "size": 25,
+          "size": 27,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -12849,7 +12859,7 @@
         {
           "name": "_settleRouteProbes",
           "ordinal": 0,
-          "size": 13,
+          "size": 17,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -13187,7 +13197,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1077,
+          "size": 1084,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13669,7 +13679,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1006,
+          "size": 1005,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
