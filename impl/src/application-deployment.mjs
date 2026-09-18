@@ -25,6 +25,7 @@ import { GOAL_PLAN_CEILINGS } from './goal-plan.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
+import { aaCredentialPath } from './adapter.mjs';
 import { createRecipes } from './recipes.mjs';
 import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
@@ -41,6 +42,7 @@ import { ResidentAuthority, stableDeploymentId } from './resident-authority.mjs'
 import { DEFAULT_RUN_LINEAGE_POLICY } from './run-lineage.mjs';
 import { inspectToolchainProjection } from './toolchain-projection.mjs';
 import { DEFAULT_WORKER_POLICY_REQUEST, resolveWorkerPolicy } from './worker-policy.mjs';
+import { modelProfileReader } from './model-profile.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { ensureBatonExcluded } from './worktree.mjs';
 import { WebSessionStore } from './web-auth.mjs';
@@ -108,12 +110,22 @@ const KIMI_TOKEN_WIRE_FIELDS = Object.freeze([
 const KIMI_CREDENTIAL_FILES = Object.freeze([
   'config.toml', 'device_id', 'credentials/kimi-code.json', 'oauth/kimi-code',
 ]);
+// #429: every fleet family declares its measured-profile mapping ONCE, beside its own route — the
+// Artificial Analysis catalog slug the family's model id maps to, and the billing basis the plan is
+// settled on. `billing: 'api'` is per-token API billing (the provider's own key file pays it), so
+// the profile carries the published prices; `'subscription'` is a flat plan — muse, Kimi and
+// zai/glm on this fleet are subscriptions, NOT per-token API billing — whose profile keeps the
+// measured indices and states `price: null, priceReason: 'subscription'`. `aaSlug: null` is a model
+// Artificial Analysis publishes no row for (this deployment's own contributor model): its routes
+// carry `profile: null` and the table claims nothing. A slug the catalog does not define degrades
+// to `model_unmeasured`, never to a guessed measurement.
 const GLM_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
   // #228 (operator-ordered migration): deepseek/glm ride omp (OhMyPi) as FIRST-CLASS
   // providers — native provider support, no anthropic-compat translation, no orphaned
   // claude-code member processes. Route ids are provider/model paths.
   harness: 'omp', model: 'zai/glm-5.3-flash', effort,
+  aaSlug: 'glm-5-3-flash', billing: 'subscription',
 }));
 // Kimi K3 rides omp's built-in `kimi-code` provider (the Kimi Code API key, provisioned as
 // kimi_key.json at the repository root and in omp's own provider config) — the operator's
@@ -121,6 +133,7 @@ const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
 const KIMI_OMP_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const kimiOmpRoutes = () => KIMI_OMP_EFFORTS.map((effort) => Object.freeze({
   harness: 'omp', model: 'kimi-code/k3', effort,
+  aaSlug: 'kimi-k3', billing: 'subscription',
 }));
 const DEEPSEEK_FLASH_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const DEEPSEEK_PRO_EFFORTS = Object.freeze(['low', 'medium']);
@@ -128,11 +141,13 @@ const deepseekRoutes = () => [
   ...DEEPSEEK_FLASH_EFFORTS.map((effort) => Object.freeze({
     // The provider's canonical API name for V4.1 Flash. The old V4 name is an alias.
     harness: 'omp', model: 'deepseek/deepseek-flash', effort,
+    aaSlug: 'deepseek-flash', billing: 'api',
   })),
   // The pro[1m] label precedes its unpublished update: retain it as an explicit pre-update
   // opt-in only. Flash stays first so it is the adapter-configured default model.
   ...DEEPSEEK_PRO_EFFORTS.map((effort) => Object.freeze({
     harness: 'omp', model: 'deepseek/deepseek-v4-pro[1m]', effort,
+    aaSlug: 'deepseek-v4-pro', billing: 'api',
   })),
 ];
 
@@ -148,18 +163,25 @@ export function deepseekCredentialProjection(repoRoot) {
 const DEFAULT_ROUTES = Object.freeze([
   ...['minimal', 'low', 'medium', 'high', 'xhigh'].map((effort) => Object.freeze({
     harness: 'codex', model: 'gpt-5.6-sol', effort,
+    aaSlug: 'gpt-5-6-sol', billing: 'subscription',
   })),
   ...['low', 'high', 'max'].map((effort) => Object.freeze({
     harness: 'kimi-code', model: 'kimi-code/k3', effort,
+    aaSlug: 'kimi-k3', billing: 'subscription',
   })),
   ...['low', 'medium', 'high'].map((effort) => Object.freeze({
     harness: 'grok', model: 'grok-4.5', effort,
+    aaSlug: 'grok-4-5', billing: 'subscription',
   })),
   ...['low', 'medium', 'high', 'xhigh', 'max'].map((effort) => Object.freeze({
     harness: 'claude-code', provider: 'claude', model: 'claude-opus-4-6', effort,
+    aaSlug: 'claude-opus-4-6', billing: 'subscription',
   })),
   ...['low', 'medium', 'high', 'xhigh', 'max'].map((effort) => Object.freeze({
+    // No Artificial Analysis row exists for this deployment's own contributor model: the family
+    // declares no slug, so its routes carry `profile: null` rather than a borrowed measurement.
     harness: 'muse', model: 'muse-spark-1.3-contributor', effort,
+    aaSlug: null, billing: 'subscription',
   })),
   ...deepseekRoutes(),
   ...glmRoutes(),
@@ -277,6 +299,10 @@ function servedRow(repoRoot, served) {
 
 const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([
   'glm_key.json', 'deepseek_key.json', 'kimi_key.json',
+  // #429: a stray copy of the Artificial Analysis key at the repository root is credential material
+  // like the provider keys above — never in a deployment snapshot (`aa_key` is the file name
+  // adapter.mjs declares under the operator's config root; `.gitignore` covers the tracked copy).
+  'aa_key',
   '.env', '.env.local', '.env.development', '.env.test', '.env.production',
 ]);
 
@@ -332,13 +358,24 @@ function repositorySnapshot(repoRoot, stateRoot) {
   }
 }
 
+/** The ONE normalization every served route passes through — DEFAULT_ROUTES, the locally configured
+ * fleet, and an `advanced.routes` injection alike — so the shape that reaches readiness, the doctor
+ * and the recruit comparison is decided here and nowhere else.
+ *
+ * #429 adds the measured-profile declaration the route carries: `aaSlug` (the Artificial Analysis
+ * catalog slug, null when the model has no measured row) and `billing` (the closed basis
+ * `subscription | api`). Both are MATERIALIZED, so a reader never has to distinguish "absent" from
+ * "null": an undeclared `billing` reads `subscription`, the conservative basis that claims no price
+ * — a per-token price is never inferred from the absence of a declaration. */
+const ROUTE_BILLING_BASES = Object.freeze(['subscription', 'api']);
+
 function normalizeRoutes(value = DEFAULT_ROUTES) {
   if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
     throw deploymentError('advanced routes must be a non-empty bounded array');
   }
   const seen = new Set();
   return value.map((route) => {
-    closed(route, ['effort', 'harness', 'model', 'provider'], 'advanced route');
+    closed(route, ['aaSlug', 'billing', 'effort', 'harness', 'model', 'provider'], 'advanced route');
     for (const field of ['harness', 'model', 'effort']) {
       if (typeof route[field] !== 'string' || route[field].length === 0 || route[field].length > 256) {
         throw deploymentError(`advanced route ${field} is invalid`);
@@ -348,10 +385,22 @@ function normalizeRoutes(value = DEFAULT_ROUTES) {
       && (typeof route.provider !== 'string' || route.provider.length === 0 || route.provider.length > 128)) {
       throw deploymentError('advanced route provider is invalid');
     }
+    if (route.aaSlug !== undefined && route.aaSlug !== null
+      && (typeof route.aaSlug !== 'string' || route.aaSlug.length === 0 || route.aaSlug.length > 256
+        || /[\u0000-\u001f\u007f]/u.test(route.aaSlug))) {
+      throw deploymentError('advanced route aaSlug is invalid');
+    }
+    if (route.billing !== undefined && !ROUTE_BILLING_BASES.includes(route.billing)) {
+      throw deploymentError(`advanced route billing must be one of: ${ROUTE_BILLING_BASES.join(', ')}`);
+    }
     const assembly = JSON.stringify(route);
     if (seen.has(assembly)) throw deploymentError('advanced routes contain a duplicate');
     seen.add(assembly);
-    return Object.freeze({ ...route });
+    return Object.freeze({
+      ...route,
+      aaSlug: typeof route.aaSlug === 'string' ? route.aaSlug : null,
+      billing: route.billing ?? 'subscription',
+    });
   });
 }
 
@@ -480,6 +529,9 @@ function kimiThroughClaudeCredential() {
 // credential exists, and rendered in the fleet-routes table from this same declaration.
 const KIMI_THROUGH_CLAUDE_ROUTE = Object.freeze({
   harness: 'claude-code', provider: 'kimi', model: 'kimi-k3[1m]', effort: 'max',
+  // #429: the same Kimi K3 subscription the native kimi-code family settles on, reached through
+  // the Claude CLI instead of the native harness.
+  aaSlug: 'kimi-k3', billing: 'subscription',
 });
 
 function kimiAuthenticationSummary(code) {
@@ -1049,6 +1101,14 @@ function defaultOmpCatalogRead() {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 20_000, maxBuffer: 8 * 1024 * 1024,
     });
   } catch { return null; }
+}
+
+// #429: the production catalog fetch — the host's own `fetch`, ONE request, bounded by the deadline
+// the reader passes it (the deployment's command deadline), so a hung provider can never pin the
+// doctor past the request its caller is holding. Every failure path is typed by model-profile.mjs;
+// a fixture deployment injects its own fetch and never reaches this.
+function defaultModelProfileFetch(url, options = {}) {
+  return globalThis.fetch(url, options);
 }
 
 /** `Map<selector, {provider, id, thinking: string[]|null}>` over the harness catalog, or null
@@ -2331,6 +2391,10 @@ class BatonDeployment {
   #adapters = {};
   #routes = [];
   #routeQuota = null;
+  // #429: the measured-profile reader this deployment serves its route tables with — null for a
+  // deployment that maps no route to an Artificial Analysis model (a fixture/bare deployment), in
+  // which case no row claims a profile at all.
+  #profiles = null;
   // #341 part 2: the ONE ledger-derived provider-refusal index this deployment reads (built in
   // openBatonDeployment, where the ledger and the adapter cards are both in hand).
   #routeRefusals = null;
@@ -2373,6 +2437,7 @@ class BatonDeployment {
     this.#routeRefusals = deployment.refusals ?? null;
     this.#adapters = deployment.adapters ?? {};
     this.#routes = deployment.routes ?? [];
+    this.#profiles = deployment.modelProfiles ?? null;
     // Issue #351 lane 2: the open's own elapsed milliseconds, stamped by openBatonDeployment
     // when the driver (replay included) is in hand — the publication row's `elapsedMs`.
     this.#startupElapsedMs = Number.isSafeInteger(deployment.startupElapsedMs)
@@ -2456,6 +2521,10 @@ class BatonDeployment {
     // open-time snapshot.
     const credential = claudeCredentialFacts(this.#claudeCredentialProbe);
     const grokCredential = this.#grokCredentialProbe ? this.#grokCredentialProbe() : null;
+    // #429: the measured profile of every served route, read ONCE for this doctor read (see
+    // #profileRows) — null when this deployment maps no route to an Artificial Analysis model, in
+    // which case no row claims a profile field at all.
+    const profiles = this.#profileRows();
     const routes = Object.freeze(this.#readiness.routes.map((route) => {
       let row = route;
       if (route.harness === 'claude-code' && route.model.startsWith('claude-') && credential) {
@@ -2508,7 +2577,7 @@ class BatonDeployment {
       // preflight, the doctor consumers) while leaving the pre-existing enumerable row shape
       // (DP5's closed pin) and serialized doctor output unchanged.
       const live = this.#composeLive(row);
-      const composed = { ...row };
+      const composed = profiles === null ? { ...row } : { ...row, profile: profiles.get(key) ?? null };
       Object.defineProperty(composed, 'liveness', { value: live.liveness, enumerable: false });
       Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
       // #341 part 2: the last refusal THIS deployment's ledger holds for the route — published by
@@ -2542,7 +2611,9 @@ class BatonDeployment {
     // is, read fresh from the checkout's refs — so a root sees "this resident serves d9b8164c,
     // 4 behind master" on the doctor instead of discovering it on a stale-based lane.
     const served = this.#served ? servedRow(this.#repository.root, this.#served) : null;
-    const routeUsage = this.#routeUsageRows(routes);
+    // #429: the usage rows — the same ONE derivation the recruit's route comparison reads — are
+    // composed with THIS read's own profile map, so a route's usage row and doctor row agree.
+    const routeUsage = this.#routeUsageRows(routes, profiles);
     const base = {
       ...this.#readiness, ready, routes, routeUsage,
       ...(workspace ? { workspace } : {}),
@@ -2562,7 +2633,15 @@ class BatonDeployment {
   }
 
   card() { return Object.freeze({ ...this.#card, readiness: this.doctorReadiness() }); }
-  async doctor() { return this.doctorReadiness(); }
+
+  /** The explicit doctor read. #429: this is the ONE seam that refreshes the measured-profile
+   * catalog — awaited here (an async caller), never inside the synchronous card read, and never on
+   * the resident's request loop: a refresh that is still fresh is skipped, one already in flight is
+   * joined, and every failure degrades the profile row rather than refusing the doctor. */
+  async doctor() {
+    if (this.#profiles) await this.#profiles.refresh();
+    return this.doctorReadiness();
+  }
 
   /** #341 part 3: the served routes' usage rows, re-derived on every read through the ONE doctor
    * derivation — so the rows a recruit compares and a seat's brief renders ARE the rows the doctor
@@ -2602,8 +2681,10 @@ class BatonDeployment {
   /** #341: the per-route usage row — turns, tokens, usd, the card's concurrency ceiling, and the
    * route's provider-derived state, read off the SAME composed doctor rows this document publishes
    * (never a second reading of the ledger), so the usage row and the readiness row can never
-   * disagree about what the provider said. */
-  #routeUsageRows(doctorRows) {
+   * disagree about what the provider said. #429: `profiles` is the doctor read's own per-route
+   * profile map (or null when this deployment has no profile authority), so the row a recruit
+   * compares carries the SAME measured profile the doctor publishes for that route. */
+  #routeUsageRows(doctorRows, profiles = null) {
     const log = this.#driver?.log ?? null;
     const stateOf = new Map((doctorRows ?? []).map((row) => [
       routeQuotaKey({ harness: row.harness, model: row.model, effort: row.effort }), row,
@@ -2645,6 +2726,10 @@ class BatonDeployment {
       }
       return Object.freeze({
         route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
+        // #429: the measured profile the route comparison reads — the SAME row the doctor publishes
+        // for this route (one read of the cache per doctor read), present only when this deployment
+        // has a profile authority at all.
+        ...(profiles === null ? {} : { profile: profiles.get(key) ?? null }),
         state: blocked ? 'blocked' : 'ready',
         code,
         resetAt,
@@ -2673,6 +2758,22 @@ class BatonDeployment {
       weight: bucket.weight,
       ...(Object.hasOwn(bucket, 'seededFrom') ? { seededFrom: bucket.seededFrom } : {}),
     });
+  }
+
+  /** #429: the measured profile of every SERVED route, keyed by the exact route identity the usage
+   * rows use — read from `this.#routes`, which carries the `aaSlug`/`billing` declaration the public
+   * readiness rows do not, and read ONCE per doctor read so a route's doctor row and its usage row
+   * can never publish two different profiles. Null when this deployment has no profile authority (a
+   * fixture/bare deployment): then no row claims the field at all. */
+  #profileRows() {
+    if (!this.#profiles) return null;
+    const rows = this.#profiles.profilesFor(this.#routes);
+    const byKey = new Map();
+    this.#routes.forEach((route, index) => {
+      const key = routeQuotaKey(route);
+      if (key !== null) byKey.set(key, rows[index]);
+    });
+    return byKey;
   }
 
   /** §4.2.1: the fleet_roster projection — a closed, bounded, sanitized document over the four
@@ -3285,7 +3386,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -3505,6 +3606,52 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const ompCatalogRead = routes.some((route) => route.harness === 'omp')
     ? (rawOmpCredentials.catalogRead ?? (usesBuiltInAdapters ? defaultOmpCatalogRead : null))
     : null;
+
+  // #429: the measured-profile reader — the ONE authority the doctor's route table, the recruit's
+  // comparison and the seat brief read. It is wired the way the omp catalog reader above is: for a
+  // built-in-adapter deployment (the served fleet) whenever a route declares an Artificial Analysis
+  // slug, or for an explicit advanced.modelProfiles shim — so a fixture deployment never dials the
+  // provider by accident. Every read is served from the deployment's own state-dir cache; only the
+  // explicit doctor read (and a stale cache any read notices) makes the ONE request, the fetch is
+  // injected, and an absent key or an unreadable catalog is a DEGRADED row, never a refusal.
+  const rawModelProfiles = advanced.modelProfiles ?? {};
+  closed(rawModelProfiles, ['env', 'fetchImpl', 'key', 'keyPath', 'now', 'timeoutMs'], 'advanced modelProfiles');
+  for (const field of ['fetchImpl', 'now']) {
+    if (rawModelProfiles[field] !== undefined && typeof rawModelProfiles[field] !== 'function') {
+      throw deploymentError(`advanced modelProfiles.${field} must be a function`);
+    }
+  }
+  for (const field of ['key', 'keyPath']) {
+    if (rawModelProfiles[field] !== undefined
+      && (typeof rawModelProfiles[field] !== 'string' || rawModelProfiles[field].length === 0
+        || rawModelProfiles[field].includes('\0'))) {
+      throw deploymentError(`advanced modelProfiles.${field} must be a non-empty string`);
+    }
+  }
+  if (rawModelProfiles.env !== undefined
+    && (!record(rawModelProfiles.env) || Array.isArray(rawModelProfiles.env))) {
+    throw deploymentError('advanced modelProfiles.env must be one object');
+  }
+  if (rawModelProfiles.timeoutMs !== undefined
+    && (!Number.isSafeInteger(rawModelProfiles.timeoutMs) || rawModelProfiles.timeoutMs <= 0)) {
+    throw deploymentError('advanced modelProfiles.timeoutMs must be a positive safe integer');
+  }
+  const modelProfiles = (Object.keys(rawModelProfiles).length > 0
+    || (usesBuiltInAdapters && routes.some((route) => route.aaSlug !== null)))
+    ? modelProfileReader({
+      stateDir: stateRoot,
+      key: typeof rawModelProfiles.key === 'string' ? rawModelProfiles.key : null,
+      env: rawModelProfiles.env ?? residentOptions.env,
+      keyPath: rawModelProfiles.keyPath
+        ?? aaCredentialPath({ env: residentOptions.env, home: residentOptions.home }),
+      now: rawModelProfiles.now ?? residentOptions.now,
+      fetchImpl: rawModelProfiles.fetchImpl ?? defaultModelProfileFetch,
+      timeoutMs: rawModelProfiles.timeoutMs ?? residentOptions.commandTimeoutMs,
+    })
+    : null;
+  // The open starts the reader's ONE refresh (deduped, freshness-gated, never awaited and never
+  // throwable) so the first route-table read is served measured profiles instead of a cold cache.
+  if (modelProfiles) modelProfiles.refresh();
   const projection = defaultCredentialProjection(repository.root, {
     projectNativeKimi: nativeKimiAuthentication?.state === 'ready',
     claudeCredentialCache,
@@ -3793,6 +3940,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       claudeCredentialCache,
       grokCredentialProbe,
       grokCredentialCache,
+      // #429: the measured-profile reader the route tables are served from (null for a deployment
+      // that maps no route to an Artificial Analysis model).
+      modelProfiles,
     });
     return opened;
   } catch (error) {

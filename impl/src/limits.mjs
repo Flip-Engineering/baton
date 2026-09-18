@@ -101,6 +101,14 @@ const ADMISSION = Object.freeze({
   'target_set.per_ledger_event': { lane: 'target_set.per_ledger_event', class: 'admission', value: 1, unit: 'targets_per_event', graceful: null, enforcedAt: 'coordination-store run stop target-set admission', refusalCode: 'target_set_capacity' },
 });
 
+// #429: the measured model-profile catalog's refresh window, derived from the provider's OWN
+// published request budget rather than from a preference: Artificial Analysis limits its free tier
+// to 1,000 requests per day, so one request's share of that budget is a day / 1,000 — the smallest
+// cache window whose refresh cadence cannot outrun the budget it draws on. Declared ONCE and read
+// by the substrate row below; the reader in model-profile.mjs imports THAT row, never this constant
+// and never a literal of its own.
+const MODEL_PROFILE_REFRESH_MS = 86_400_000 / 1000;
+
 const SUBSTRATE = Object.freeze({
   'scanner.window.decision': { lane: 'scanner.window.decision', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
   'scanner.window.scratchpad': { lane: 'scanner.window.scratchpad', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
@@ -132,6 +140,14 @@ const SUBSTRATE = Object.freeze({
   // cataloged coaching refusalCode: the ceiling refusal is a request-shape refusal, not a byte
   // lane, so its code rode the ONE `webWaitCeilingRefusalCode` derivation beside this row.
   'web.wait_ceiling_ms': { lane: 'web.wait_ceiling_ms', class: 'substrate', value: 30_000, unit: 'ms', graceful: null, enforcedAt: 'web-northbound.mjs validateEnvelope (the application run.wait arm and the legacy coordinator wait arm)' },
+  // Issue #429: the measured model-profile catalog's staleness bound — the window a cached
+  // Artificial Analysis catalog stays admissible before the reader refetches. The derivation is the
+  // PROVIDER'S OWN published request budget, never a preference of ours (its free tier is limited
+  // to 1,000 requests per day): see MODEL_PROFILE_REFRESH_MS above. A response that declares its own
+  // freshness (`cache-control: max-age` minus `age`) overrides this fallback with the window the
+  // provider itself stated; this row is what a response that declares nothing is judged against,
+  // and what the read publishes as `boundMs`.
+  'model_profile.catalog_staleness_ms': { lane: 'model_profile.catalog_staleness_ms', class: 'substrate', value: MODEL_PROFILE_REFRESH_MS, unit: 'ms', graceful: null, enforcedAt: 'model-profile.mjs readCachedCatalog (the deployment profile reader)' },
 });
 
 const VIEW = Object.freeze({
@@ -196,6 +212,12 @@ export const FRAME_LIMITS_DIGEST = createHash('sha256')
 /** Issue #394: the web wait ceiling, read from the ONE registry row above — the bound both wait
  * arms of web-northbound.mjs compare against. Never re-declared by a consumer. */
 export const WEB_WAIT_CEILING_ROW = FRAME_LIMITS['web.wait_ceiling_ms'];
+
+/** Issue #429: the measured-profile catalog's staleness bound, read from the ONE registry row above
+ * — the window model-profile.mjs judges a cached Artificial Analysis catalog against (and the
+ * `boundMs` it publishes), overridden only by a freshness window the provider's own response
+ * declares. Never re-declared by a consumer. */
+export const MODEL_PROFILE_STALENESS_ROW = FRAME_LIMITS['model_profile.catalog_staleness_ms'];
 
 /** The web wait DEFAULT: the resident's own choice of how much of the transport deadline to keep
  * for serializing and delivering the answer — a stated FRACTION of the ceiling (5/6: 25 s of the

@@ -16,12 +16,14 @@
 // so one-shot Cluster-B tests (adapter/worktree/referee) keep working.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, constants as fsConstants, fstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
 import { renderAttentionSection } from './messages.mjs';
 import { advertisesBatonControlSurface } from './control-surface-unification.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 // ── #341 part 2: the closed provider-refusal table a card carries ───────────────────────────────
 //
@@ -1208,5 +1210,64 @@ export class GlmAdapter extends ClaudeAdapter {
     // No configured limit at this tier: such a constraint belongs to a deployment caller that
     // declares one (advanced.adapterOptions.concurrencyCeiling), never to a subclass default.
     return { ...super.card(), harness: 'glm-via-claude', providerRefusals: providerRefusalsForHarness('glm-via-claude') };
+  }
+}
+
+// ── #429: the Artificial Analysis catalog credential ────────────────────────────────────────────
+//
+// The measured model profile (#429) is read from the provider's own catalog, and that read needs
+// one credential. WHERE it lives is declared HERE, once, with the other credential facts the
+// readiness reads — so the reader, the deployment and the tests never spell the location twice:
+//
+//   BATON_AA_KEY             the environment variable (the deployment's own env, i.e.
+//                            `advanced.resident.env`, else this process's)
+//   ~/.config/baton/aa_key   else the operator's key file under the config root
+//                            `kimi-credential-setup.mjs` already resolves for Baton's private
+//                            credentials ($XDG_CONFIG_HOME/baton/... when XDG_CONFIG_HOME is set)
+//
+// The key is read at the deployment ROOT and nowhere else: RuntimeIsolation's secret-name sweep
+// keeps `BATON_AA_KEY` out of every worker's environment, the file never leaves the host, the value
+// is never printed, logged or echoed in an error, and a stray copy at the repository root is
+// covered by .gitignore and by the deployment snapshot's credential exclusions. An absent
+// credential is a DEGRADED profile row on the doctor, never a refusal.
+export const AA_CREDENTIAL_ENV = 'BATON_AA_KEY';
+export const AA_CREDENTIAL_FILE = 'aa_key';
+
+/** The key file's read bound is the registry's own credential-file row (limits.mjs), never a
+ * literal here: a key that does not fit the declared credential-file bound is not a key. */
+const CREDENTIAL_FILE_MAX_BYTES = FRAME_LIMITS['credential.file'].value;
+
+/** The path of the key file the readiness reads, resolved from the SAME config root every other
+ * Baton-private credential resolves under. */
+export function aaCredentialPath({
+  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(),
+} = {}) {
+  const configured = env.XDG_CONFIG_HOME;
+  const configRoot = typeof configured === 'string' && configured.length > 0 ? configured : join(home, '.config');
+  return join(configRoot, 'baton', AA_CREDENTIAL_FILE);
+}
+
+/** The key itself, or null when there is none to read. The file is read bounded by the registry's
+ * `credential.file` row through a no-follow descriptor — a link, a directory, an oversized or
+ * unreadable file, or an empty value is ABSENCE (the caller degrades its row). Nothing here ever
+ * throws or carries the value: an error message names the path, never the key. */
+export function readAaCredential({
+  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(), path = null,
+  maxBytes = CREDENTIAL_FILE_MAX_BYTES,
+} = {}) {
+  const configured = env?.[AA_CREDENTIAL_ENV];
+  if (typeof configured === 'string' && configured.trim().length > 0) return configured.trim();
+  const file = typeof path === 'string' && path.length > 0 ? path : aaCredentialPath({ env, home });
+  let descriptor;
+  try {
+    descriptor = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size === 0 || stat.size > maxBytes) return null;
+    const value = readFileSync(descriptor, 'utf8').trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) { try { closeSync(descriptor); } catch { /* already closed */ } }
   }
 }
