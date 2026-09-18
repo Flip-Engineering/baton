@@ -12992,7 +12992,7 @@
         {
           "name": "_inheritancePredecessor",
           "ordinal": 0,
-          "size": 47,
+          "size": 80,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"

@@ -236,6 +236,18 @@ const boundedCarryText = (value) => {
 // its profile carries). Declared ONCE here, beside the comparison that reads it; the refusal an
 // unknown value draws names THIS set, and the answer names the axis it ordered on.
 export const SWARM_ROUTE_PREFER_AXES = Object.freeze(['quality', 'design']);
+// #452: the closed set of predecessor states `swarm.recruit --resume-from` admits — a live seat,
+// a seat its PROVIDER killed (#442), and a seat the ROOT settled (#350 `stopped`, #332
+// `completed`) while its stop left a CARRIABLE workspace behind: the #428-retained checkout on
+// disk, or the snapshot commit on its lane branch. Declared ONCE here, beside the admission that
+// reads it; the refusal a settled seat with neither draws names THIS set, and its detail carries
+// the predecessor's own {status, leftReason, workspace}.
+export const SWARM_RESUMABLE_PREDECESSOR_STATES = Object.freeze([
+  'active',
+  'left:provider_fault',
+  'left:stopped with a carriable workspace (retained checkout or snapshot)',
+  'left:completed with a carriable workspace (retained checkout or snapshot)',
+]);
 // ── repository reads (issue #301) ────────────────────────────────────────────────────────────────
 const GIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 /** The ONE place the runtime spawns git: one read-only query over a checkout the deployment
@@ -4118,11 +4130,44 @@ export class SwarmRuntime {
     // `swarm.recruit --resume-from` — so a fault-settled seat stays a resumable predecessor.
     // Its work is on disk and its contracts are published; the death was the provider's doing,
     // not the seat's, and refusing here would leave the root with no way to continue the lane
-    // (a settled identity cannot re-join either). Every other non-active status keeps refusing.
+    // (a settled identity cannot re-join either).
     const faultSettled = predecessor.status === 'left' && predecessor.leftReason === 'provider_fault';
-    if (predecessor.status !== 'active' && !faultSettled) {
-      refuse('Swarm recruit predecessor is not an active participant', 'swarm_recruit_predecessor_unavailable',
-        { participantId: resumeFrom, status: predecessor.status });
+    // #452: a seat the ROOT settled — `swarm.stop`'s `stopped` (#350), or the `completed` #332's
+    // completion derivation settles — is the same kind of predecessor while its workspace is still
+    // CARRIABLE: the #428-retained checkout on disk, or the snapshot commit the stop left on its
+    // lane branch. Stopping a seat to re-route it by hand (#443's manual policy) is exactly this
+    // path, and refusing it left the root with no next step at all — a settled identity cannot
+    // re-join either. A settled seat with NEITHER has nothing left to carry and refuses, naming
+    // what it does have (#376: never a bare "not active"): the workspace observation below is the
+    // SAME derivation the carry decision reads (`_predecessorWorkspace`), never a second rule.
+    const stopSettled = predecessor.status === 'left'
+      && (predecessor.leftReason === 'stopped' || predecessor.leftReason === 'completed');
+    const workspace = predecessor.status === 'left' && !faultSettled
+      ? this._predecessorWorkspace(swarm, resumeFrom) : null;
+    // 'retained' — the checkout is still on disk; 'snapshot' — the checkout is gone but its lane
+    // branch holds a snapshot commit; 'none' — neither: nothing a successor could carry.
+    const workspaceState = workspace === null ? 'none'
+      : workspace.exists === true ? 'retained'
+        : (typeof workspace.snapshotSha === 'string' && workspace.snapshotSha.length > 0
+          ? 'snapshot' : 'none');
+    if (predecessor.status !== 'active' && !faultSettled
+      && !(stopSettled && workspaceState !== 'none')) {
+      const leftReason = predecessor.leftReason ?? null;
+      refuse(
+        `Swarm recruit predecessor ${resumeFrom} is not resumable: it settled as`
+        + ` ${predecessor.status}${leftReason === null ? '' : `/${leftReason}`}`
+        + ` with workspace ${workspaceState}`
+        + ` — resumable predecessors are: ${SWARM_RESUMABLE_PREDECESSOR_STATES.join('; ')}`
+        + (stopSettled
+          ? ' (nothing of this seat\'s work remains to carry, and a settled identity cannot'
+            + ' re-join, so a fresh recruit without --resume-from continues the lane)'
+          : ''),
+        'swarm_recruit_predecessor_unavailable',
+        {
+          participantId: resumeFrom, status: predecessor.status, leftReason,
+          workspace: workspaceState, resumable: SWARM_RESUMABLE_PREDECESSOR_STATES,
+        },
+      );
     }
     const ledger = this.store.eventsView();
     const binding = predecessor.bindings.at(-1);

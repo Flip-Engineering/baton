@@ -44,7 +44,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // not-found spelling, minted here so a handoff or an arrival names a row that does not exist.
   swarm_claim_not_found: row(404, ['fold'], 'the request names a claim this swarm does not hold'),
   swarm_proposal_not_found: row(404, ['fold'], 'the request names a work proposal this swarm does not hold'),
-  swarm_recruit_predecessor_unavailable: row(404, ['runtime'], 'the recruit names a resume-from seat this swarm does not hold, or one that is no longer active'),
+  // #452: the rule now names what a settled predecessor keeps: a root-settled seat is a resumable
+  // predecessor while its workspace is carriable (retained checkout or snapshot), and the refusal
+  // names that state and the closed set instead of a bare "no longer active".
+  swarm_recruit_predecessor_unavailable: row(404, ['runtime'], 'the recruit names a resume-from seat this swarm does not hold, or a settled one whose workspace carries nothing to continue'),
 
   // ── 409 conflict/state: the swarm holds a row or version the request disagrees with ──
   swarm_duplicate: row(409, ['fold'], 'the event creates a swarm the deployment already holds'),
