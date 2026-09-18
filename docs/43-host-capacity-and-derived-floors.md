@@ -222,6 +222,18 @@ then reads `{state: 'ok', resetAt: null}` again. The `baton route usage` CLI ver
 exposes the same rows. The brief renderer's `## Swarm` section includes a
 `### Route usage` subsection when the brief carries usage rows.
 
+A participant row's `workspace` carries the seat's commit attributions as a BOUNDED TAIL (#464,
+the second half): `commits` is the newest `view.workspace.commits` rows of the
+`worktree.commit_recorded` ledger (#425), newest first, with `commitsTotal` the whole count beside
+it — so a roster never pays a busy seat's history (the live swarm measured one seat at 195 049 B /
+1 241 rows) and a bounded row still says how much of it there is. The bound derives in
+`impl/src/limits.mjs` from the family's ONE list page (a share of `view.served_behind.commits`,
+never a hand-typed ceiling). The read that answers the rest is the seat's OWN scoped read —
+`swarm.view {swarmId, participantId}`, on which heavy per-row fields ride whole (#343/#349) — and
+a bridge PAGE drops the commit rows entirely the way it drops `lastToolRows` and the native
+observation record, keeping `commitsTotal`: a 36-seat swarm whose seats are busier than the bound
+answers its whole roster in one frame again.
+
 Both the doctor and the view's `deployment` summary also carry `served` (#306 part 2):
 `{commit, branch, target: {ref, commit, behind}}` — the revision this deployment
 SERVES, read once at open and frozen for its life (the code that loaded is the code

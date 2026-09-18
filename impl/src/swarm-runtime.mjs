@@ -444,6 +444,17 @@ const inDeclaredScope = (path, scope) => {
     return true;
   }
 };
+/** Issue #464: the commits a participant row carries, NEWEST first — the reading order a tail is
+ * scanned in, and the ONE order the row's `commits` has whatever the seat's history length. The
+ * roster row carries the newest `view.workspace.commits` registry-row's worth (the derivation
+ * lives in limits.mjs; no literal here) and a read that NAMES this seat carries the list WHOLE
+ * (`whole`, the #343/#349 ladder), so nothing is lost — the count the roster row did not carry is
+ * published beside it as `commitsTotal`. */
+function participantCommitsNewestFirst(rows, whole = false) {
+  const bound = FRAME_LIMITS['view.workspace.commits'].value;
+  const carried = whole || rows.length <= bound ? rows.slice() : rows.slice(rows.length - bound);
+  return carried.reverse();
+}
 /** docs/45 §2's path-overlap rule, read by the shared_checkout_overlap observation: two
  * repo-relative paths overlap when they are string-equal or one is a prefix of the other at a `/`
  * boundary (`impl/src` and `impl/src/a.mjs` overlap; `impl/src/x` and `impl/src/y` do not). The
@@ -2811,14 +2822,22 @@ export class SwarmRuntime {
         this._noteWorkspaceObservation(this._workspaceObservationKey(workspaceId, workerId),
           { target: liveBase.target, behind: liveBase.behind });
       }
+      // Issue #464: the seat's whole attributed history, read ONCE — the roster row carries its
+      // bounded tail, and a read that NAMES this seat carries it whole (the #343/#349 ladder).
+      const seatCommits = commitsByParticipant.get(participant.participantId) ?? [];
       const workspace = workspaceId === null ? null : Object.freeze({
         ...(physicalOwnerId !== null
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
           : { physicalOwnerId: workspaceId, shared: false, holderCount: 0 }),
         workspaceId,
-        // Issue #425: the commits the wrapper attributed to this seat, in ledger order — the
-        // workspace projection's per-seat commit list, derived from the durable rows.
-        commits: Object.freeze([...(commitsByParticipant.get(participant.participantId) ?? [])]),
+        // Issue #425: the commits the wrapper attributed to this seat — the workspace projection's
+        // per-seat commit list, derived from the durable rows. Issue #464: the roster carries the
+        // BOUNDED tail (newest first, `view.workspace.commits`) with `commitsTotal` the whole
+        // count, so a busy seat's 195 KB history is never paid by every reader; the seat's OWN
+        // participantId-scoped read carries the whole list (the #343/#349 ladder: heavy per-row
+        // fields ride a read that names the participant), which is the reach for the rest.
+        commits: Object.freeze(participantCommitsNewestFirst(seatCommits, scopedHere)),
+        commitsTotal: seatCommits.length,
         branch: observation?.branch ?? custody?.branch ?? worker?.sessionContext?.branch ?? null,
         headSha: observation?.headSha ?? custody?.headSha ?? worker?.sessionContext?.baseSha ?? null,
         snapshotSha: custody?.snapshotSha ?? null,
