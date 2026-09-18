@@ -16,6 +16,7 @@
 
 import { pathMatchesScope } from './path-scope.mjs';
 import { canonicalMemberState } from './application-semantics.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 // docs/36 §7.2: the registry owns the member-state vocabulary. The internal WorkerStatus stream
 // (idle/working/blocked/input_required/paused/interrupted/stopping/exited/orphaned) is projected
@@ -127,6 +128,11 @@ export const DEFAULT_STALL_MS = 120_000;
 export const DEFAULT_LOOP_REPEAT_THRESHOLD = 3;
 export const BUDGET_THRESHOLDS = Object.freeze([0.5, 0.8, 1.0]);
 export const MAX_ACTION_SIGNATURE_WINDOW = 10;
+
+// Issue #351 lane 3: the chunk bound the deferred story ingest folds per synchronous stretch
+// before offering the event loop a breath — the SAME declared registry row lane 2's replay
+// chunks at, never a constant of this module's own.
+const STORY_INGEST_CHUNK_EVENTS = FRAME_LIMITS['view.wake_replay.items'].value;
 
 // States in which "stalled" must never fire — the worker is legitimately
 // waiting on someone else, not silently stuck.
@@ -734,32 +740,113 @@ export class StoryCompiler {
     this.loopThreshold = opts.loopThreshold ?? DEFAULT_LOOP_REPEAT_THRESHOLD;
     this._now = opts.now ?? (() => Date.now());
     this._state = initialState();
+    // Issue #351 lane 3: worker ledgers the open did NOT eagerly ingest. Each entry carries
+    // the worker id and a zero-arg reader over that worker's ledger; reads drain what they
+    // need, the open's warm drains everything in registry-bounded chunks with yields.
+    this._pending = [];
+  }
+
+  /**
+   * Register one worker ledger for deferred ingest (issue #351 lane 3): the open must not
+   * clone every worker's story before the resident can answer. Re-registering a worker
+   * replaces its reader; the fold's per-worker stale-seq guard keeps either order honest.
+   * @param {string} workerId
+   * @param {() => LogEvent[]} read
+   */
+  deferWorker(workerId, read) {
+    if (typeof workerId !== 'string' || workerId.length === 0) throw new TypeError('deferWorker requires a worker id');
+    if (typeof read !== 'function') throw new TypeError('deferWorker requires a ledger reader');
+    this._pending = this._pending.filter((entry) => entry.workerId !== workerId);
+    this._pending.push({ workerId, read });
+  }
+
+  /** @returns {string[]} worker ids whose ledger is registered but not yet ingested */
+  pendingWorkers() {
+    return this._pending.map((entry) => entry.workerId);
+  }
+
+  /** Ingest in place — the per-event deep clone the fold used to pay (cloneState over EVERY
+   * worker for EVERY event, O(events × workers), 5.5 s of a 669-worker open) was thrown away
+   * by the next event; the compiler owns its state, and every read below already returns
+   * copies, so the live fold applies directly. The pure `foldEvent` export is unchanged. */
+  _applyInPlace(event) {
+    applyEvent(this._state, event);
+  }
+
+  _drainPendingFor(workerId) {
+    const index = this._pending.findIndex((entry) => entry.workerId === workerId);
+    if (index === -1) return;
+    const [entry] = this._pending.splice(index, 1);
+    for (const event of entry.read()) this._applyInPlace(event);
+  }
+
+  _drainAllPending() {
+    while (this._pending.length > 0) {
+      const entry = this._pending.shift();
+      for (const event of entry.read()) this._applyInPlace(event);
+    }
+  }
+
+  /**
+   * Drain every pending worker ledger in registry-bounded chunks, offering the event loop a
+   * breath (one macrotask) between chunks — the open's post-publication warm (issue #351
+   * lane 3). A concurrent read that drains a worker first is absorbed by the fold's
+   * stale-seq guard; the result is the same state either way.
+   * @returns {Promise<{workers: number, events: number}>}
+   */
+  async drainPendingAsync() {
+    const workers = this._pending.length;
+    let events = 0;
+    while (this._pending.length > 0) {
+      const entry = this._pending[0];
+      let sinceYield = 0;
+      for (const event of entry.read()) {
+        this._applyInPlace(event);
+        events += 1;
+        sinceYield += 1;
+        if (sinceYield >= STORY_INGEST_CHUNK_EVENTS) {
+          sinceYield = 0;
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      }
+      this._pending.shift();
+    }
+    return Object.freeze({ workers, events });
   }
 
   /** @param {LogEvent} event */
   ingest(event) {
-    this._state = foldEvent(this._state, event);
+    // Ordering: anything still pending replays BEFORE a live event, so a live record for a
+    // deferred worker never precedes its own history.
+    this._drainAllPending();
+    this._applyInPlace(event);
   }
 
   /** @param {LogEvent[]} events */
   ingestBatch(events) {
-    for (const e of events) this.ingest(e);
+    this._drainAllPending();
+    for (const e of events) this._applyInPlace(e);
   }
 
   /** @param {{now?:number}} [opts] @returns {string} */
   narrative(opts = {}) {
+    this._drainAllPending();
     const now = opts.now ?? this._now();
     return renderNarrative(this._state, { now });
   }
 
   /** @param {{now?:number}} [opts] @returns {Signal[]} */
   signals(opts = {}) {
+    this._drainAllPending();
     const now = opts.now ?? this._now();
     return computeSignals(this._state, { now, stallMs: this.stallMs, loopThreshold: this.loopThreshold });
   }
 
   /** @param {string} workerId @returns {WorkerStory|null} */
   workerState(workerId) {
+    // First read of ONE deferred worker ingests exactly that worker's ledger (issue #351
+    // lane 3): the run view that needs one seat pays for one seat.
+    this._drainPendingFor(workerId);
     const w = this._state.workers.get(workerId);
     return w ? cloneWorkerStory(w) : null;
   }
@@ -769,6 +856,7 @@ export class StoryCompiler {
    * @returns {{workerId:string, taskId:string|null, state:string}[]}
    */
   memberStates() {
+    this._drainAllPending();
     return [...this._state.workers.values()].map((w) => ({
       workerId: w.workerId,
       taskId: w.taskId ?? null,
@@ -778,6 +866,7 @@ export class StoryCompiler {
 
   /** @returns {Object} a plain deep-copy snapshot, not the live Map */
   snapshot() {
+    this._drainAllPending();
     const workers = {};
     for (const [id, w] of this._state.workers) {
       workers[id] = {
@@ -795,6 +884,7 @@ export class StoryCompiler {
   }
 
   reset() {
+    this._pending = [];
     this._state = initialState();
   }
 }

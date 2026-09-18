@@ -14,6 +14,7 @@ import { BatonWebHost, SignalLifecycleOwner, describeDrainWait, signalIntentLine
 import { flipAnnounce, flipLine } from '../src/brand.mjs';
 import { callConfiguredMcpTool } from '../src/configured-mcp-client.mjs';
 import { assertCliMcpControlParity, normalizeControlSurfaceError } from '../src/control-surface-unification.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 import { openBaton } from '../src/index.mjs';
 import { createLocalSocketFetch } from '../src/local-web-transport.mjs';
 import {
@@ -63,7 +64,36 @@ function clientFor(connection) {
 }
 
 
-async function serveDeployment(rawDeployment) {
+// Issue #351 lane 3: a signal that arrives while the deployment is still OPENING used to hit
+// Node's default disposition — the process died mid-open with no stop row, no drain, no lease
+// release (the measured `SIGTERM ignored for ten minutes` was its other face: a handler that
+// never got a turn). These handlers stand in for the lifecycle's own admission during the
+// open: they keep the process alive and remember the first trigger; serveDeployment admits it
+// the moment the lifecycle owns signal admission, and the stop row lands through the
+// deployment's own writer path.
+function admitOpenSignals() {
+  const state = { kind: null };
+  const admit = (kind) => {
+    if (state.kind !== null) return;
+    state.kind = kind;
+    process.stderr.write(`${flipAnnounce('draining', `baton serve: ${kind} received during open; the stop row lands once the ledger writer exists`, { tty: TTY, color: TTY })}\n`);
+  };
+  process.on('SIGINT', admit);
+  process.on('SIGTERM', admit);
+  process.on('SIGHUP', admit);
+  return {
+    release() {
+      process.off('SIGINT', admit);
+      process.off('SIGTERM', admit);
+      process.off('SIGHUP', admit);
+    },
+    pendingTrigger() {
+      return state.kind;
+    },
+  };
+}
+
+async function serveDeployment(rawDeployment, admittedTrigger = null) {
   const deployment = rawDeployment?.convergence ? rawDeployment : wrapProductionDeployment(rawDeployment, { repoRoot: process.cwd() });
   if (!deployment || typeof deployment.host !== 'function' || typeof deployment.close !== 'function') {
     throw Object.assign(new Error('serve deployment factory returned an invalid deployment'), {
@@ -101,6 +131,10 @@ async function serveDeployment(rawDeployment) {
     signalEmitter: process,
     shutdown: async () => { await announced; return deployment.close(); },
     announce: narration,
+    // #351 lane 3: a signal received during the open is admitted here, the moment the
+    // lifecycle owns signal admission — the announce above then writes the stop row through
+    // the deployment's own writer path and the usual shutdown runs.
+    ...(admittedTrigger !== null ? { admittedTrigger } : {}),
   });
   // Issue #383: a resident never dies silently. An exception nobody caught (the EPIPE that took
   // two residents down on 2026-09-18 before the per-connection handler existed) is narrated with
@@ -125,6 +159,15 @@ async function serveDeployment(rawDeployment) {
   let outcome;
   try {
     outcome = await lifecycle.run(async ({ signal }) => {
+      // Issue #351 lane 3: the replaying→published sequence in the operator's log. The
+      // replay's own marker precedes the flip line for any ledger at the registry's chunk
+      // bound or above — the size a replay was audible (loop-blocking) at before this lane.
+      const pre = typeof deployment.startupReport === 'function' ? deployment.startupReport() : null;
+      if (pre !== null && (pre.rows ?? 0) >= FRAME_LIMITS['view.wake_replay.items'].value) {
+        process.stderr.write(`${flipAnnounce('hosted', `baton serve: replayed (open ${pre.openElapsedMs}ms; ${pre.rows} rows on the ledger; replayed ${pre.replayedEvents ?? 0}; checkpoint ${pre.checkpoint ?? 'unknown'})`, { tty: TTY, color: TTY })}\n`);
+      }
+      // An already-admitted signal skips the host start: the stop is the operation's outcome.
+      if (signal.aborted) return null;
       const hosted = await deployment.host();
       // Issue #351 lane 2: the ONE line at the flip — the publication exists and the loop was
       // free enough to answer the self-check; the row says how long the startup took (replay
@@ -272,14 +315,21 @@ try {
       });
     } else if (parsed.kind === 'serve') {
       if (parsed.configPath === null) {
-        await serveDeployment(await openBaton({ repo: process.cwd() }));
+        const openSignals = admitOpenSignals();
+        let deployment;
+        try { deployment = await openBaton({ repo: process.cwd() }); }
+        finally { openSignals.release(); }
+        await serveDeployment(deployment, openSignals.pendingTrigger());
       } else {
         const module = await import(pathToFileURL(resolve(parsed.configPath)).href);
         const factory = module.createBatonDeployment ?? module.createBatonWebHost ?? module.default;
         if (typeof factory !== 'function') throw Object.assign(new Error('serve config must export default, createBatonDeployment(), or createBatonWebHost()'), { code: 'cli_config_invalid' });
-        const configured = await factory();
+        const openSignals = admitOpenSignals();
+        let configured;
+        try { configured = await factory(); }
+        finally { openSignals.release(); }
         if (configured && typeof configured.host === 'function' && typeof configured.close === 'function') {
-          await serveDeployment(configured);
+          await serveDeployment(configured, openSignals.pendingTrigger());
         } else {
           const host = configured instanceof BatonWebHost ? configured : new BatonWebHost(configured);
           const outcome = await host.serve(process, (listening) => {
