@@ -249,8 +249,10 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
 });
 
 // RC-2 (renderer): pinned composition shape; salt is an input (two renders with the same salt are
-// identical; different salts differ); byte cap enforced. The renderer never mints its own salt.
-test('RC-2: renderObjective composes the pinned shape with salt as an input — identical salt is identical, different salts differ, the byte cap refuses', () => {
+// identical; different salts differ); the objective lane is the machinery's (issue #368 —
+// wave.member.objective from the registry, advisory + pass-through above it, never a refusal).
+// The renderer never mints its own salt.
+test('RC-2: renderObjective composes the pinned shape with salt as an input — identical salt is identical, different salts differ, the objective rides the registry lane', () => {
   const args = { task: 'Write the report for feature X.', constraints: ['Be concise.', 'Cite the contract.'], salt: 'salt-one', role: 'alpha' };
   const objective = renderObjective(args);
   // Pinned shape: task, then constraint lines, then [attempt: <salt> <role>].
@@ -276,12 +278,15 @@ test('RC-2: renderObjective composes the pinned shape with salt as an input — 
     (error) => error?.code === 'recipe_renderer_invalid' && /salt/u.test(error.message),
     'the renderer refuses to mint its own salt',
   );
-  // Byte cap enforced on the rendered objective.
-  assert.throws(
-    () => renderObjective({ task: 'x'.repeat(5_000), constraints: [], salt: 's', role: 'r' }),
-    (error) => error?.code === 'recipe_oversize',
-    'an oversize rendered objective refuses',
-  );
+  // The objective lane is the machinery's (issue #368): a 5 KB rendered objective — over the
+  // retired head cap, under the registry lane — is admitted whole with no advisory.
+  const advisories = [];
+  const fiveKb = renderObjective({
+    task: 'x'.repeat(5_000), constraints: [], salt: 's', role: 'r',
+    onAdvisory: (entry) => advisories.push(entry),
+  });
+  assert.ok(fiveKb.includes('x'.repeat(5_000)), 'a 5 KB rendered objective is admitted whole');
+  assert.deepEqual(advisories, [], 'below the registry lane value there is no advisory');
 });
 
 // RC-3 (manifest identity): first run mints the manifest (exact rendered members); retry with the

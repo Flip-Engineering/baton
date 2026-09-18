@@ -22,18 +22,18 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { createWaveDriver } from './wave-driver.mjs';
 import { runWorkflow } from './workflow-interpreter.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
-// Rule 1 caps. The descriptor/task/constraint caps are derived so a fully-maxed card (2KiB task +
-// 8×240B constraints) stays under the machinery's objective ceiling — the rendered objective can
-// never exceed OBJECTIVE_MAX_BYTES by construction, so admission is the sole gate.
+// Rule 1 caps. The descriptor/task/constraint caps are the recipe admission gates; the rendered
+// objective itself rides the machinery's own objective lane (limits.mjs wave.member.objective),
+// read here from the registry — never re-declared — so a fully-maxed card still passes through
+// whole exactly as the wave driver admits it.
 const DESCRIPTOR_MAX_BYTES = 8 * 1024;
 const TASK_MAX_BYTES = 2 * 1024;
 const CONSTRAINT_MAX_BYTES = 240;
 const MAX_CONSTRAINTS = 8;
 const MAX_MEMBERS = 8;
 const MAX_SCOPE = 64;
-// Mirrors wave-driver.mjs OBJECTIVE_MAX_BYTES (the machinery's own objective ceiling).
-const RENDERED_OBJECTIVE_MAX_BYTES = 4096;
 const ATTACH_SETTLE_TIMEOUT_MS = 5_000;
 
 const RECIPE_TOP_FIELDS = Object.freeze(['name', 'version', 'members', 'policy']);
@@ -291,8 +291,11 @@ export function recipeDigest(recipe) {
 
 // Rule 2: one renderer, salt as an input. Composes the pinned shape (task, then constraint lines,
 // then [attempt: <salt> <role>]) — the same salt-line form createWaveDriver would prepend, appended
-// here because the wrapper is the sole salt owner. The renderer never mints its own salt.
-export function renderObjective({ task, constraints, salt, role } = {}) {
+// here because the wrapper is the sole salt owner. The renderer never mints its own salt. The
+// rendered objective rides the machinery's objective lane: below the registry value it passes with
+// no advisory; above it the renderer emits wave-driver's own spill-aware advisory shape and still
+// passes the objective through — never a refusal in front of a spill lane (wave-driver.mjs OQ5).
+export function renderObjective({ task, constraints, salt, role, onAdvisory } = {}) {
   if (typeof task !== 'string' || task.length === 0) {
     throw recipeError('renderObjective "task" must be a non-empty string', 'recipe_renderer_invalid');
   }
@@ -307,8 +310,9 @@ export function renderObjective({ task, constraints, salt, role } = {}) {
   }
   const objective = [task, ...constraints, `[attempt: ${salt} ${role}]`].join('\n');
   const bytes = Buffer.byteLength(objective);
-  if (bytes > RENDERED_OBJECTIVE_MAX_BYTES) {
-    throw recipeError(`rendered objective is ${bytes} bytes (limit ${RENDERED_OBJECTIVE_MAX_BYTES})`, 'recipe_oversize');
+  const limit = FRAME_LIMITS['wave.member.objective'].value;
+  if (bytes > limit && typeof onAdvisory === 'function') {
+    onAdvisory({ role, bytes, limit, spill: true, lane: 'wave.member.objective' });
   }
   return objective;
 }
@@ -323,12 +327,13 @@ function resolveTask(templateTask, runtimeTask) {
 
 // Render one member into the durable, serializable shape the manifest and waves.attach carry. The
 // objective is fully rendered (task resolved + constraints + the salt line).
-export function renderMember(member, task, salt) {
+export function renderMember(member, task, salt, onAdvisory) {
   const objective = renderObjective({
     task: resolveTask(member.objectiveTemplate.task, task),
     constraints: member.objectiveTemplate.constraints,
     salt,
     role: member.role,
+    onAdvisory,
   });
   const rendered = {
     role: member.role,
