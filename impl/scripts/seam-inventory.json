@@ -6653,12 +6653,22 @@
         {
           "name": "_projectionCheckpointPayload",
           "ordinal": 0,
-          "size": 20,
+          "size": 31,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
             "observation:ledger_name",
             "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_boundedSwarmProjection",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
           ]
         },
         {
@@ -6675,13 +6685,33 @@
         {
           "name": "_projectionCheckpointWriteSteps",
           "ordinal": 0,
-          "size": 77,
+          "size": 83,
           "seam": "effect",
           "evidence": [
             "effect:filesystem_mutation",
             "observation:record_name",
             "observation:ledger_name",
             "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_projectionByteBreakdown",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:ledger_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_emptyProjectionShape",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name"
           ]
         },
         {
@@ -6697,7 +6727,7 @@
         {
           "name": "_boundedCheckpointWrite",
           "ordinal": 0,
-          "size": 24,
+          "size": 25,
           "seam": "observation",
           "evidence": [
             "observation:ledger_name"
@@ -6707,6 +6737,16 @@
           "name": "_checkpointOutcomeFields",
           "ordinal": 0,
           "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_checkpointByteFields",
+          "ordinal": 0,
+          "size": 9,
           "seam": "observation",
           "evidence": [
             "admission:validation_vocabulary",
@@ -6787,7 +6827,7 @@
         {
           "name": "_resetProjection",
           "ordinal": 0,
-          "size": 91,
+          "size": 92,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",

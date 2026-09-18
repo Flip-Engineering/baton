@@ -1173,6 +1173,30 @@ function participantRole(role, seq) {
   };
 }
 
+/** Issue #465: the participant row's brief budget — the third half of #464's rule, at the same
+ * derivation seam. The composed recruit brief is a RENDERING of a ledger row, not a fact of its
+ * own: on the clone's checkpoint (288 671 406 B, 51 327 rows at the write) every participant row's
+ * `brief` re-serializes byte-identically to the `swarm.participant_joined` payload the fold
+ * consumed (measured: 114/114 rows identical, 8 693 521 B of UTF-8 text, a median 86 035 B and a
+ * maximum 159 624 B per seat). The projection pays 17 422 263 B for the family and 99.3% of it is
+ * this ONE field — and each later seat's brief renders every earlier peer's lines, so the family is
+ * quadratic in the roster.
+ *
+ * Under the rule the views already follow (#464) the projection keeps the FACT (the join row) and
+ * NAMES it: `briefBytes` is the length a projection that carries no text leaves behind and
+ * `briefRef` is the `swarm.participant_joined` row that holds the whole brief — the `roleRef`
+ * shape, minted HERE, at the join, where the seq is the join's own (a later
+ * `swarm.participant_bound` re-mints the row with its own seq, so a reference derived from the
+ * row's live `seq` would name a row that holds no brief). The live fold row keeps the text; the
+ * checkpoint body is what renders the reference (`_boundedSwarmProjection`). */
+export function participantBrief(brief, seq) {
+  if (typeof brief !== 'string' || brief.length === 0) return { briefBytes: 0, briefRef: null };
+  return {
+    briefBytes: Buffer.byteLength(brief, 'utf8'),
+    briefRef: Object.freeze({ kind: 'swarm.participant_joined', seq }),
+  };
+}
+
 /** The largest prefix of `text` that is at most `cap` UTF-8 bytes, cut on a code-point boundary:
  * a role line is never a broken code point (the discipline the bridge's bounded text keeps). */
 function headBytes(text, cap) {
@@ -1236,6 +1260,9 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       scope: p.scope === undefined || p.scope === null ? null : Object.freeze([...p.scope]),
       resumeFrom: p.resumeFrom ?? null,
       brief: p.brief ?? null,
+      // Issue #465: the brief's own reach — its length and the join row that holds it, minted here
+      // where the seq IS the join's (`participantRole` above takes the same seq for the role's).
+      ...participantBrief(p.brief, meta.seq),
       status: 'active', leftReason: null, bindings: Object.freeze([]),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });

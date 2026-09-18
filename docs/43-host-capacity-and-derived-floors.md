@@ -265,6 +265,14 @@ A resident's open is three phases, each named on the `baton serve` flip lines an
 
 A signal that arrives during the open is admitted and remembered; the stop row lands through the deployment's own writer once the ledger writer exists, and the usual drain follows.
 
+The checkpoint's body is a projection of the ledger and never a second copy of it: every housewriting
+outcome carries the projection's measured bytes by family — `bytesByFamily`, read from the SAME
+serialize the `checkpoint.projection_bytes` ceiling judges, with `projectionBaselineBytes` and
+`sharedBytes` beside it so the entries close on the measured bytes exactly — and the family that
+carried a rendering re-points at the ledger row holding it (measured on the clone's 288 671 406-byte
+checkpoint: the swarm snapshot's per-seat rows, 17 422 263 B of which 99.3% was the composed recruit
+brief, now `briefBytes` + `briefRef` and 126 805 B; issue #465).
+
 
 ## 6. Restart truth: lost seats and refused starts (#364, #384)
 
