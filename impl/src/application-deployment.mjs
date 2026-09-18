@@ -5072,7 +5072,10 @@ class BatonDeployment {
     handoff.phase = 'handed';
     // The handoff continues through the old's own stop path, driven by the receipt's caller — the
     // command answers first, and this incarnation then stops admitting, drains, releases and exits.
-    setImmediate(() => { this.close().catch(() => { /* the stop narrates its own failure */ }); });
+    // #470: the handoff's OWN stop enters through the private path — it is the one close that may
+    // end in the re-publish. Any close() asked for from outside (an operator's stop, a signal's
+    // shutdown) is a stop, and supersedes a handoff that fails.
+    setImmediate(() => { this.#runClose().catch(() => { /* the stop narrates its own failure */ }); });
     return Object.freeze({
       schemaVersion: 1,
       state: 'reincarnating',
@@ -5135,7 +5138,25 @@ class BatonDeployment {
     try { if (typeof child.unref === 'function') child.unref(); } catch { /* idem */ }
   }
 
+  /** close() MEANS close. #470: inside a reincarnation handoff window the incarnation's own stop is
+   * already running (`reincarnate()` scheduled it), and a close asked for from outside joins it —
+   * but a window whose successor never publishes ends in the RE-PUBLISH (#306r), an outcome that
+   * keeps the incarnation serving. The operator's stop was asked for all the same: it waits for
+   * the window's verdict and, when the handoff failed, supersedes the re-publish with the ordinary
+   * stop — `host.stopped`, the withdrawal, the listener closed. A handoff that published ends in
+   * the committed withdrawal as before; the handoff's own scheduled stop never chains (it enters
+   * through `#runClose` directly), so #306r's arm is exactly as it was for a handoff nobody asked
+   * to stop. */
   close() {
+    return this.#runClose().then((verdict) => {
+      if (verdict?.state !== 'serving') return verdict;
+      this.#webHost?._say?.(`baton serve: host.stop_requested supersedes the failed handoff at ${this.#clock()}; `
+        + 'this incarnation stops (the re-publish held only until the stop that was already asked for)');
+      return this.#runClose();
+    });
+  }
+
+  #runClose() {
     if (!this.#closePromise) {
       this.#closePromise = (async () => {
         // #461: the handoff this stop is finishing, captured ONCE. The record itself is cleared by

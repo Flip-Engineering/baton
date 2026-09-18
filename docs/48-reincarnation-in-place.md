@@ -396,6 +396,12 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
    and the predecessor went on serving — the refusal a late publisher draws), and the failure row
    now wakes the `incarnation_changed` class beside `host.reincarnated`, so a root following the
    handoff sees its outcome either way instead of silence.
+   A stop asked for INSIDE the window is a stop (#470): an operator's `close()` or a signal's
+   shutdown joins the window, and when the handoff fails it supersedes the re-publish with the
+   ordinary stop (`host.stopped`, the withdrawal, the listener closed) instead of being answered
+   with `{state: 'serving', handoff: 'publication_failed'}` — that answer had swallowed the stop,
+   kept the listener open and left the process alive. Only the handoff's OWN scheduled stop may
+   end in the re-publish.
 8. **`host.reincarnated` carries `predecessorExited`** beside `from`/`to` — the successor's
    observation of the predecessor's process (pid liveness, EPERM means alive), never a clock.
 9. **The wake class carries `next: null`** — the WAKE_CLASS_TABLE's one invariant admits a `next`

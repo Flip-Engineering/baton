@@ -186,8 +186,7 @@ test('306r-a: a successor that dies between its marker and its publication is na
   stub.crash({ code: 9, tail: 'the successor died between its marker and its publication\n' });
 
   // The window ends in the named failure, and the incarnation goes on serving.
-  const closed = await deployment.close();
-  const failed = hostRow(f.ledgerPath, 'host.reincarnation_failed');
+  const failed = await closeWindow(deployment, f);
   assert.ok(failed, 'the failed handoff is durable — a follower never sees silence');
   assert.equal(failed.payload.step, 'publication_handoff',
     `the failure names the publication handoff step: ${JSON.stringify(failed.payload)}`);
@@ -206,7 +205,6 @@ test('306r-a: a successor that dies between its marker and its publication is na
     'no withdrawal is recorded: the old never gave the publication up');
   assert.ok(existsSync(f.writerLeasePath),
     'the old re-took the coordination writer authority (the same lease path the open uses)');
-  assert.notEqual(closed.state, 'closed', `the incarnation did not exit: ${JSON.stringify(closed)}`);
   assert.equal(deployment.withdrawn(), false, 'the incarnation is not withdrawn');
 });
 
@@ -217,12 +215,10 @@ test('306r-b: a successor that stalls past the bound is named with waitedMs, kil
   });
 
   const startedAt = Date.now();
-  const closed = await deployment.close();
+  const failed = await closeWindow(deployment, f);
   const waitedMs = Date.now() - startedAt;
   assert.ok(waitedMs >= WAIT_MS - 200,
     `the window waited its declared bound before giving up: ${waitedMs}ms`);
-
-  const failed = hostRow(f.ledgerPath, 'host.reincarnation_failed');
   assert.ok(failed, 'the stalled handoff is durable');
   assert.equal(failed.payload.step, 'publication_handoff');
   assert.ok(Number.isSafeInteger(failed.payload.cause.waitedMs) && failed.payload.cause.waitedMs >= WAIT_MS - 200,
@@ -234,7 +230,7 @@ test('306r-b: a successor that stalls past the bound is named with waitedMs, kil
   assert.equal(deployment.turnAdmissionRefusal(), null, 'admission reopens');
   assert.equal(selectorOf(f).incarnation, oldIncarnation, 'the publication is still the old incarnation\'s');
   assert.ok(existsSync(f.writerLeasePath), 'the old holds the writer authority again');
-  assert.notEqual(closed.state, 'closed', 'the incarnation did not exit');
+  assert.equal(deployment.withdrawn(), false, 'the incarnation did not exit');
 });
 
 test('306r-c: a successor that reaches for the lease after the re-publish is refused, typed', async (t) => {
@@ -242,7 +238,7 @@ test('306r-c: a successor that reaches for the lease after the re-publish is ref
   const { deployment, stub } = await handoff(t, f, {
     onSpawn: (child) => { child.becomeReady(); return child; },
   });
-  await closeWindow(deployment);
+  await closeWindow(deployment, f);
   assert.equal(stub.journal.killed, true, 'the stalled successor was ended by the re-publish');
 
   // A successor-side open over the SAME deployment now meets the writer authority the old holds
@@ -290,7 +286,7 @@ test('306r-d: the re-publish failure wakes the incarnation_changed class', async
   const { deployment } = await handoff(t, f, {
     onSpawn: (child) => { child.becomeReady(); return child; },
   });
-  await closeWindow(deployment);
+  await closeWindow(deployment, f);
   const failed = hostRow(f.ledgerPath, 'host.reincarnation_failed');
   assert.ok(failed, 'the failure row is durable');
   assert.equal(wakeClassFor(failed)?.wakeClass, 'incarnation_changed',
@@ -301,10 +297,13 @@ test('306r-d: the re-publish failure wakes the incarnation_changed class', async
   assert.equal(frame.seq, failed.seq, 'the frame names the row it came from');
 });
 
-/** Await the window the reincarnate request started (the old's own close), and pin the one fact
- * every failure arm of it shares: the incarnation did not exit. */
-async function closeWindow(deployment) {
-  const closed = await deployment.close();
-  assert.notEqual(closed?.state, 'closed', `the incarnation kept serving: ${JSON.stringify(closed)}`);
-  return closed;
+/** Await the window the reincarnate request started (the old's own close) through the facts the
+ * window publishes — its durable failure row and the admission it reopens — and pin the one fact
+ * every failure arm of it shares: the incarnation did not exit. #470: a close() of the test's own
+ * is a STOP (it would supersede the re-publish), so the window is never awaited through one. */
+async function closeWindow(deployment, f) {
+  const failed = await until(() => hostRow(f.ledgerPath, 'host.reincarnation_failed'), { label: 'the window\'s failure row' });
+  await until(() => deployment.turnAdmissionRefusal() === null, { label: 'admission reopening after the re-publish' });
+  assert.equal(deployment.withdrawn(), false, 'the incarnation kept serving');
+  return failed;
 }
