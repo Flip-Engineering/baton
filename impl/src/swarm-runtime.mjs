@@ -70,6 +70,11 @@ const sliceUtf8 = (text, maxBytes) => {
   return new TextDecoder('utf-8', { fatal: false })
     .decode(bytes.subarray(0, maxBytes)).replace(/\uFFFD+$/u, '');
 };
+// #444: the closed axes a recruit's route comparison may order on — `quality` (the default: the
+// route's MEASURED Artificial Analysis intelligence index) and `design` (the best Design Arena Elo
+// its profile carries). Declared ONCE here, beside the comparison that reads it; the refusal an
+// unknown value draws names THIS set, and the answer names the axis it ordered on.
+export const SWARM_ROUTE_PREFER_AXES = Object.freeze(['quality', 'design']);
 // ── repository reads (issue #301) ────────────────────────────────────────────────────────────────
 const GIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 /** One read-only git query over a checkout the deployment itself owns, or null when it cannot be
@@ -1075,6 +1080,20 @@ export class SwarmRuntime {
       && row.route[axis].startsWith(selector[axis])));
   }
 
+  /** #444: the datum ONE compared route publishes on the requested preference axis, or null when it
+   * publishes none — the measured Artificial Analysis intelligence index for `quality`, the best
+   * Design Arena arena's Elo for `design`. Null is ABSENCE, never a zero: an unmeasured route is not
+   * evidence of a strong one, and it never outranks a route that IS measured on the axis. */
+  _routeAxisFact(row, prefer) {
+    if (prefer === 'design') {
+      const best = row?.profile?.design?.arenas?.[0] ?? null;
+      return best === null ? null : Object.freeze({ value: best.elo, label: `${best.arena} ${best.elo}` });
+    }
+    const quality = row?.profile?.intelligence;
+    return typeof quality === 'number' && Number.isFinite(quality)
+      ? Object.freeze({ value: quality, label: `${quality} intelligence` }) : null;
+  }
+
   /** #341 part 3: the routes a recruit compared, why the chosen one was admitted, and the options
    * the deployment is asked to admit — or null when this runtime has no route rows to compare
    * (a bare fixture host) or the caller named no route at all (the deployment's own default then
@@ -1082,14 +1101,30 @@ export class SwarmRuntime {
    *
    * With an EXACT route the caller's own choice stands: it is admitted untouched, and the answer
    * names it beside the routes that were ready as alternatives. With a prefix (a harness or model
-   * — part of a selector, not all of it) the runtime chooses the ready route with the most
-   * remaining headroom and says why; the choice is handed on as an exact selection, so a prefix
-   * can never resolve ambiguously downstream. A refusal is never minted here: when nothing is
-   * eligible the options reach the deployment unchanged and its own admission gate answers. */
+   * — part of a selector, not all of it) the runtime chooses among the ready routes and says why:
+   * #444 orders that choice on `options.prefer` — the measured quality index (the default) or the
+   * best design Elo — and falls back to #341's most-remaining-headroom rule for the candidates that
+   * publish no datum on the requested axis, so an unmeasured fleet compares exactly as it did
+   * before. The choice is handed on as an exact selection, so a prefix can never resolve
+   * ambiguously downstream. A refusal is never minted here EXCEPT for an unknown preference axis:
+   * when nothing is eligible the options reach the deployment unchanged and its own admission gate
+   * answers. */
   _routeSelection(args) {
+    const options = args.options ?? {};
+    // The caller's own vocabulary decides the order, and a misspelling never silently orders on the
+    // default: an unknown axis refuses TYPED with the closed set, before any effect.
+    const prefer = options.prefer ?? 'quality';
+    if (!SWARM_ROUTE_PREFER_AXES.includes(prefer)) {
+      refuse(`options.prefer must be one of: ${SWARM_ROUTE_PREFER_AXES.join(', ')}`,
+        'swarm_command_invalid',
+        {
+          field: 'options.prefer', rule: 'closed-set',
+          admitted: Object.freeze([...SWARM_ROUTE_PREFER_AXES]),
+          correction: `options.prefer must be one of: ${SWARM_ROUTE_PREFER_AXES.join(', ')}`,
+        });
+    }
     const rows = this._routeUsageRows();
     if (rows === null || rows.length === 0) return null;
-    const options = args.options ?? {};
     const named = swarmRouteShape(options.exact);
     // A selection is EXACT only when it names all three axes: a `{harness, model}` (no effort)
     // names a family, so the same axes read as prefixes rather than an exact route the deployment
@@ -1103,14 +1138,26 @@ export class SwarmRuntime {
     if (considered.length === 0) return null;
 
     const eligible = considered.filter((row) => this._routeEligible(row));
+    // The axis the comparison ACTUALLY ordered the ready candidates on: the requested preference
+    // when the chosen route publishes its datum, #341's unchanged headroom rule when none does —
+    // the answer publishes it as `orderedBy`, so a caller reads the basis instead of inferring it.
+    let orderedOn = null;
     let chosen = null;
     if (exact !== null) chosen = this._routeEligible(considered[0]) ? considered[0] : null;
     else if (eligible.length > 0) {
       chosen = [...eligible].sort((a, b) => {
-        const left = this._routeHeadroom(a);
-        const right = this._routeHeadroom(b);
-        return right.slots - left.slots || left.turns - right.turns;
+        const left = this._routeAxisFact(a, prefer);
+        const right = this._routeAxisFact(b, prefer);
+        // A route measured on the requested axis ranks ahead of one that is not; two measured routes
+        // rank by the datum itself; everything else is #341 part 3's own comparison.
+        if (left !== null && right === null) return -1;
+        if (left === null && right !== null) return 1;
+        if (left !== null && right !== null && left.value !== right.value) return right.value - left.value;
+        const leftHead = this._routeHeadroom(a);
+        const rightHead = this._routeHeadroom(b);
+        return rightHead.slots - leftHead.slots || leftHead.turns - rightHead.turns;
       })[0];
+      orderedOn = this._routeAxisFact(chosen, prefer) === null ? 'headroom' : prefer;
     }
 
     const reasonFor = (row) => {
@@ -1118,7 +1165,13 @@ export class SwarmRuntime {
         return row === chosen ? 'named exactly by the caller'
           : 'ready alternative, not the route the caller named';
       }
+      const fact = this._routeAxisFact(row, prefer);
       if (row === chosen) {
+        if (fact !== null) {
+          return prefer === 'design'
+            ? `ready with the best design Elo (${fact.label}) among the routes compared`
+            : `ready with the highest measured quality (${fact.label}) among the routes compared`;
+        }
         const { slots, turns } = this._routeHeadroom(row);
         return slots === Number.POSITIVE_INFINITY
           ? `ready with no declared concurrency ceiling; fewest turns compared (${turns})`
@@ -1126,6 +1179,11 @@ export class SwarmRuntime {
       }
       if (!this._routeEligible(row)) {
         return `blocked (${row.code ?? 'unknown'})${row.resetAt ? ` until ${row.resetAt}` : ' until a later turn succeeds'}`;
+      }
+      if (orderedOn === 'quality' || orderedOn === 'design') {
+        return fact === null
+          ? `ready, but publishes no ${orderedOn} datum to compare on`
+          : `ready, but behind ${this._routeLabel(chosen.route)} on the ${orderedOn} axis (${fact.label})`;
       }
       return `ready, but with less remaining headroom than ${this._routeLabel(chosen.route)}`;
     };
@@ -1140,10 +1198,11 @@ export class SwarmRuntime {
       state: row.state ?? null, code: row.code ?? null, resetAt: row.resetAt ?? null,
       usage: row.usage ?? null, quota: row.quota ?? null,
       lastProviderRefusal: row.lastProviderRefusal ?? null,
-      // #429: the route's MEASURED profile (Artificial Analysis intelligence / coding index, output
-      // speed, time-to-first-token, and the price an api-billed route pays) — read from the
-      // deployment's own caught rows, never fetched here: the comparison ranks on the same facts the
-      // doctor publishes, and a route with no mapped slug (or no authority wired) carries null.
+      // #429/#444: the route's MEASURED profile (Artificial Analysis intelligence / coding index,
+      // output speed, time-to-first-token, the price an api-billed route pays, and the design
+      // arenas it is ranked in) — read from the deployment's own caught rows, never fetched here:
+      // the comparison ranks on the same facts the doctor publishes, and a route with no mapped
+      // slug (or no authority wired) carries null.
       profile: row.profile ?? null,
       reason: reasonFor(row),
     }));
@@ -1154,6 +1213,10 @@ export class SwarmRuntime {
       routes: Object.freeze({
         chosen: chosenRow,
         considered: Object.freeze(answerRows),
+        // The axis this comparison ordered on — the requested preference when the chosen route
+        // carries its datum, `headroom` for #341's rule, null when nothing was ordered (an exact
+        // selection, or nothing eligible). The chosen row's reason names the same basis in words.
+        orderedBy: orderedOn,
       }),
     };
   }

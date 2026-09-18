@@ -5,5 +5,8 @@ deepseek_key.json
 kimi_key.json
 # #429: the Artificial Analysis catalog key (read from BATON_AA_KEY or $XDG_CONFIG_HOME/baton/aa_key)
 aa_key
+# #444: the Design Arena rankings key (read from BATON_DESIGNARENA_KEY or
+# $XDG_CONFIG_HOME/baton/designarena_key) — credential material like aa_key above.
+designarena_key
 impl/*.tgz
 baton-status.json
