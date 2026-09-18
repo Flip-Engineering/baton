@@ -114,6 +114,13 @@ const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
   // claude-code member processes. Route ids are provider/model paths.
   harness: 'omp', model: 'zai/glm-5.3-flash', effort,
 }));
+// Kimi K3 rides omp's built-in `kimi-code` provider (the Kimi Code API key, provisioned as
+// kimi_key.json at the repository root and in omp's own provider config) — the operator's
+// sub-orchestrator seat (2026-09-18). Efforts are the catalog's thinking levels for k3.
+const KIMI_OMP_EFFORTS = Object.freeze(['low', 'high', 'max']);
+const kimiOmpRoutes = () => KIMI_OMP_EFFORTS.map((effort) => Object.freeze({
+  harness: 'omp', model: 'kimi-code/k3', effort,
+}));
 const DEEPSEEK_FLASH_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const DEEPSEEK_PRO_EFFORTS = Object.freeze(['low', 'medium']);
 const deepseekRoutes = () => [
@@ -155,6 +162,7 @@ const DEFAULT_ROUTES = Object.freeze([
   })),
   ...deepseekRoutes(),
   ...glmRoutes(),
+  ...kimiOmpRoutes(),
 ]);
 
 function deploymentError(message) {
@@ -267,7 +275,7 @@ function servedRow(repoRoot, served) {
 }
 
 const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([
-  'glm_key.json', 'deepseek_key.json',
+  'glm_key.json', 'deepseek_key.json', 'kimi_key.json',
   '.env', '.env.local', '.env.development', '.env.test', '.env.production',
 ]);
 
@@ -994,6 +1002,7 @@ const OMP_AGENT_MODELS = `${OMP_HOME_ROOT}/agent/models.yml`;
 const OMP_PROVIDER_KEY_FILES = Object.freeze({
   deepseek: 'deepseek_key.json',
   zai: 'glm_key.json',
+  'kimi-code': 'kimi_key.json',
 });
 
 /** The omp agent database — the one fact registration, the credential projection and the omp

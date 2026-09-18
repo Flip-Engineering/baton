@@ -140,4 +140,5 @@ test('DS-4: deepseek_key.json is ignored beside the existing GLM key', () => {
     .split(/\r?\n/u).map((entry) => entry.trim());
   assert.equal(entries.includes('glm_key.json'), true, 'the GLM ignore rule remains present');
   assert.equal(entries.includes('deepseek_key.json'), true);
+  assert.equal(entries.includes('kimi_key.json'), true, 'the Kimi Code key file (the omp kimi-code route) is ignored the same way');
 });

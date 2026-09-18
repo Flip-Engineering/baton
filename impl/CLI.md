@@ -442,6 +442,7 @@ The zero-assembly deployment registers these route families (`baton doctor` for 
 | `omp` | `deepseek/deepseek-flash` | low/high/max | `~/.omp/agent/agent.db` present, repo `deepseek_key.json` present, and `omp models --json` defining the model and effort |
 | `omp` | `deepseek/deepseek-v4-pro[1m]` | low/medium | `~/.omp/agent/agent.db` present, repo `deepseek_key.json` present, and `omp models --json` defining the model and effort |
 | `omp` | `zai/glm-5.3-flash` | low/high/max | `~/.omp/agent/agent.db` present, repo `glm_key.json` present, and `omp models --json` defining the model and effort |
+| `omp` | `kimi-code/k3` | low/high/max | `~/.omp/agent/agent.db` present, repo `kimi_key.json` present, and `omp models --json` defining the model and effort |
 | `claude-code` (provider kimi, conditional) | `kimi-k3[1m]` | max | the private kimi-through-claude credential present |
 
 <!-- END GENERATED: cli-fleet-routes -->
