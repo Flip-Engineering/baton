@@ -272,9 +272,12 @@ const VIEW = Object.freeze({
   // page carries on top of it. The value is the frame row expressed in the family's own prose-body
   // admission (`message.send.body`): a page of full-length bodies is 512 rows, so a page of this
   // size is always representable inside one frame, and a longer list PAGES from the seq it names
-  // (`truncated` + `cursor`) rather than shedding rows silently.
+  // (`truncated` + `cursor`) rather than shedding rows silently. Issue #311: the same ceiling
+  // bounds the situation projection's lists (`_situation` — peers, contracts, siblings,
+  // published, commits), each counting its remainder in its own `…Omitted` field.
   'view.seat_read.items': { lane: 'view.seat_read.items', class: 'view', value: LIST_PAGE_ITEMS,
-    unit: 'items', graceful: 'shed-flagged' },
+    unit: 'items', graceful: 'shed-flagged',
+    enforcedAt: 'swarm-runtime.mjs _peersRead/_contributionsRead pages and _situation lists (the deployment-level situation projection, #311)' },
   // Issue #306 (lane B): the commits a served-behind row names — the rows between the revision a
   // resident serves and the target it is measured against, each `{sha, subject}`. The page is the
   // family's ONE list page (above): a doctor row is read by the same consumers, and `behind.count`

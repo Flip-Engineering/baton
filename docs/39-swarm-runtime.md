@@ -1127,3 +1127,58 @@ beside `swarmId`/`participantId`, so a probe's answering turn is read on the Run
 (`route.observed` is keyed by the Run). The lane reads that field where the row carries it, and a
 row recorded before the field existed reads as the seat spelling — the Run every such row was
 admitted on, since the first incarnation is the only spelling those rows ever had.
+
+## The situation projection is deployment-level and the view serves it (issue #311, 2026-09-18)
+
+Issue #311 asked for three things; two were already landed when it was audited (#318's knowledge
+verb table and successor inheritance, #273/#337's guidance provenance and receipts — a
+participant-to-participant message IS `swarm.guide` between seats, with `from {kind:
+root|lead|peer, participantId}` and the guide's own durable row as its receipt). What was missing
+was the situation itself: the recruit brief rendered a per-swarm situation (#318 deliverable 4)
+and `swarm.view` served the raw collections, but no projection served the composed situation, and
+nothing named the seats at work in the repository's OTHER swarms. This change closes that half.
+
+**One derivation, two surfaces.** `_situation` (`impl/src/swarm-runtime.mjs`) assembles the block
+the `situation` projection serves and the recruit brief's new blocks render: this swarm's can-act
+peers with their scopes (the viewing seat excluded), the can-act seats of every other swarm of the
+deployment with their swarm id and their whole declared scope, the contributions and contracts
+those sibling swarms published, the commits landed on the target since the swarm's base, and the
+viewing seat's predecessor when it joined with `resumeFrom`. The brief gains two blocks — "Sibling
+seats at work in this repository's other swarms" and "Published in this repository's other swarms"
+— rendered only when non-empty, so a one-swarm deployment's brief composes byte-identically.
+
+**The sibling row is the #301 overlap row widened.** #301's recruit receipt names the seats whose
+scopes overlap the requested one; the situation names every can-act sibling with its whole scope,
+because the gap the issue measured was not only collision warning but "what siblings own". A
+published row is subject plus a reference — `{swarmId, contributionId, participantId, seq,
+subject, contract}` — never the body, the items, or the contract text; the swarm's own
+publications are not repeated (they already ride the view's `contributions` family and the
+brief's contracts block).
+
+**The predecessor block reads the fold, never the recruit-time admission.** `_inheritancePredecessor`
+refuses an unresumable predecessor, which is correct at recruit and wrong at read time (a view
+never refuses recorded history, #304). The situation's predecessor block derives for the viewing
+seat only: the predecessor's participant row, its last checkpoint from the ONE per-seat checkpoint
+derivation `run.peers.read` renders (`seatCheckpointRows`, extracted from `_peersRead` for this),
+and its published contracts from `contributionContractRows`. A caller with no seat, and a seat
+that resumed from nobody, read `predecessor: null`.
+
+**Commits are measured against the swarm's base, as #318 recorded.** The issue's phrasing ("since
+this participant's base") predates #318's design decision: the base is the commit `swarm.create`
+recorded from the deployment's git authority, a stored reference the commits are derived from at
+read time. A seat's own drift against the target already rides its participant row as
+`base {observedHead, target, behind}` (#301), so the situation keeps one commit list and the seat
+reads its own distance beside it.
+
+**Bounds and scoping follow the existing rows.** Every list the block carries is capped at the
+`view.seat_read.items` ceiling with the remainder counted in a `…Omitted` field; a seat's bridge
+is bound to its own swarm, so a brief's count line names the bound rather than a read the seat
+cannot make. The block is built for the whole record and the `situation` slice only (#438's
+read-path policy: the cross-swarm scan and the commits read are paid by the two projections that
+promise them), and a participant-scoped view withholds out-of-subtree role lines in
+`situation.peers` exactly as it does in `participants` (2026-09-14 audit S-F3). The projection
+name joins the ONE table (`SWARM_VIEW_PROJECTIONS`), so the validator, the MCP schema, the CLI
+and bridge help, the brief's grammar section, and the bridge's measured frame-fit advice all
+derive it. Red-first: `impl/test/issue311-situation-projection.test.mjs` pins the projection's
+declaration, every block's shape and honesty rules, the brief rendering, and the slicer parity
+(`view(projection)` is byte-identical to `projectSwarmView(full, projection)`).
