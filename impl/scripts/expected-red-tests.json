@@ -1863,6 +1863,30 @@
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
       "reason": "#87"
+    },
+    {
+      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (a) recruit --issue N parses, admits ONE package with an issue branch, and attaches it to the seat",
+      "reason": "#441"
+    },
+    {
+      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (b) the recruit brief renders the package branches with digests and the issue title",
+      "reason": "#441"
+    },
+    {
+      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (c) a seat reads the package back through the bridge by digest",
+      "reason": "#441"
+    },
+    {
+      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (d) contributions read serves the fold — accepted rows since a seq, no ledger scan on the read path",
+      "reason": "#441"
+    },
+    {
+      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (e) a seat's claim on an out-of-scope file is a claim row, not a handover",
+      "reason": "#441"
+    },
+    {
+      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (f) the root's reader refusing (no credential) refuses the recruit naming the issue, and no seat joins",
+      "reason": "#441"
     }
   ],
   "converged": [

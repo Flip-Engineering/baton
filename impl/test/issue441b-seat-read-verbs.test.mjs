@@ -300,12 +300,13 @@ test('441b-c: peers.read lists the other live seat with its checkpoint, never th
   assert.deepEqual(beta.holds.filter((row) => row.kind === 'work'), [
     { kind: 'work', assignmentId: 'a-1', workId: 'work-1' },
   ]);
-  // The control for the zero above: the SAME runtime, the same seats, the same bridge — the view's
-  // live workspace reads really do spawn (branch, HEAD, status, base per seat), so the peers read's
-  // silence is a measured property of that read and not of an inert fixture.
+  // The control for the zero above: the SAME runtime, the same seats, the same bridge — the WHOLE
+  // record (`full`) still reads the repository at read time for #301's base (rev-parse HEAD plus
+  // rev-list per seat; the slices no longer spawn since #438), so the peers read's silence is a
+  // measured property of that read and not of an inert fixture.
   const viewBefore = spawnCount();
-  await alpha('swarm.view', { swarmId: SWARM_ID, projection: 'workspace' });
-  assert.ok(spawnCount() > viewBefore, 'the live workspace reads still spawn (the control)');
+  await alpha('swarm.view', { swarmId: SWARM_ID, projection: 'full' });
+  assert.ok(spawnCount() > viewBefore, 'the whole-record view: its live base reads still spawn (the control)');
 });
 
 test('441b-d: the closed seat verb set and the brief teach exactly the three new read verbs', () => {
