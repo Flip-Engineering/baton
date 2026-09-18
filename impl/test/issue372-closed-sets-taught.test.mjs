@@ -22,8 +22,11 @@ const refused = (fn) => {
   assert.fail('expected a typed refusal');
 };
 
+// The bridge path resolves from this file, never from the runner's cwd (run-suite runs from
+// impl/, the seat ran from the repo root — the same file must pass in both).
+const BRIDGE = new URL('../src/swarm-native-bridge.mjs', import.meta.url).pathname;
 const bridgeHelp = (args) => new Promise((resolve, reject) => {
-  execFile(process.execPath, ['impl/src/swarm-native-bridge.mjs', ...args], { timeout: 15000 },
+  execFile(process.execPath, [BRIDGE, ...args], { timeout: 15000 },
     (error, stdout, stderr) => error ? reject(new Error(stderr || error.message)) : resolve(stdout));
 });
 
