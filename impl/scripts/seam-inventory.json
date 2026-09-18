@@ -12109,7 +12109,61 @@
         {
           "name": "_updatePermission",
           "ordinal": 0,
-          "size": 8,
+          "size": 30,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_couplingPermission",
+          "ordinal": 0,
+          "size": 41,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_proposalProposer",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_leaseRoster",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_seatLive",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_couplingSatisfied",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_groupCoordination",
+          "ordinal": 0,
+          "size": 43,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12523,7 +12577,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 808,
+          "size": 921,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12676,7 +12730,7 @@
         {
           "name": "_peersRead",
           "ordinal": 0,
-          "size": 57,
+          "size": 86,
           "seam": "admission",
           "evidence": [
             "delegates:observation",
@@ -12747,9 +12801,27 @@
           ]
         },
         {
+          "name": "_briefCouplingLines",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_renderCouplingSituation",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 119,
+          "size": 149,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
@@ -12769,7 +12841,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 710,
+          "size": 743,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

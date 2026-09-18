@@ -208,9 +208,20 @@ const CONTEXT_PACKAGE = Object.freeze({
   'context_package.brief_bytes': { lane: 'context_package.brief_bytes', class: 'view', value: CONTEXT_PACKAGE_BRIEF_BYTES, unit: 'bytes', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the rendered slice per branch)' },
 });
 
+// Issue #423 (docs/45 §6/§8): the bounds a recruited seat's two new situation sections draw.
+// The peers-now section IS the seat read's own page (`view.seat_read.items` above, the row
+// `_peersRead` already pages with), so it declares no second bound; the couplings block is the
+// one NEW bound, and it draws the SAME item ceiling for the same reason — the couplings a brief
+// names are the couplings the seat could have read from the view in one page, and a longer list
+// is counted out loud rather than silently truncated.
+const BRIEF_COUPLINGS_ITEMS = VIEW['view.seat_read.items'].value;
+const BRIEF = Object.freeze({
+  'brief.couplings.items': { lane: 'brief.couplings.items', class: 'view', value: BRIEF_COUPLINGS_ITEMS, unit: 'items', graceful: 'shed-flagged', enforcedAt: 'swarm-runtime.mjs _composeRecruitBrief (the couplings situation block)' },
+});
+
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
-export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE });
+export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF });
 
 export const FRAME_LIMITS_VERSION = '1.2.0';
 

@@ -146,7 +146,12 @@ test('inspect gives each participant usable payload examples only for their perm
   const view = await f.call('view', {}, caller);
   assert.deepEqual(Object.keys(view.updatePayloads),
     view.updates.filter((row) => row.event !== undefined).map((row) => row.event));
+  // docs/45 §4.6: the two new kinds ride the SAME derivation dispatch enforces, so a seat with
+  // contribute is told it may take its own claim, and every seat is told its own consent (an
+  // arrival at a proposal) is sendable at read — beside the kinds that were already advertised.
   assert.deepEqual(view.updates.filter((row) => row.event !== undefined), [
+    { event: 'swarm.claim_updated', permission: 'contribute' },
+    { event: 'swarm.proposal_updated', permission: 'read' },
     { event: 'swarm.context_updated', permission: 'communicate' },
     { event: 'swarm.contribution_recorded', permission: 'contribute' },
     { event: 'swarm.participant_left', permission: 'read' },

@@ -466,58 +466,6 @@
       "reason": "#268"
     },
     {
-      "key": "test/issue422-joint-couplings-red.test.mjs :: #422 RED (stage: design-not-landed): a group member with communicate declares a rotating writer lease over its own group",
-      "reason": "#422"
-    },
-    {
-      "key": "test/issue422-joint-couplings-red.test.mjs :: #422 RED (stage: design-not-landed): a hold whose holder left the swarm is takeable; a dead-runtime hold pages coupling_writer_gone with the yield remedy",
-      "reason": "#422"
-    },
-    {
-      "key": "test/issue422-joint-couplings-red.test.mjs :: #422 RED (stage: design-not-landed): a member with communicate proposes a coupling; arrival is consent; full consent declares it",
-      "reason": "#422"
-    },
-    {
-      "key": "test/issue422-joint-couplings-red.test.mjs :: #422 RED (stage: design-not-landed): a quorum synchronization point releases on the quorum-th arrival, attributed to the arriver",
-      "reason": "#422"
-    },
-    {
-      "key": "test/issue422-joint-couplings-red.test.mjs :: #422 RED (stage: design-not-landed): group tightness is derived per group and never stored on the swarm (#374)",
-      "reason": "#422"
-    },
-    {
-      "key": "test/issue422-joint-couplings-red.test.mjs :: #422 RED (stage: design-not-landed): the lease rotates — take refuses while held naming the holder, yield frees it, another member takes",
-      "reason": "#422"
-    },
-    {
-      "key": "test/issue423-claims-and-peers-red.test.mjs :: #423 RED (stage: design-not-landed): a claim whose holder is gone raises claim_holder_gone naming the release",
-      "reason": "#423"
-    },
-    {
-      "key": "test/issue423-claims-and-peers-red.test.mjs :: #423 RED (stage: design-not-landed): a claimed path observed changed on a shared checkout raises shared_checkout_overlap before any commit",
-      "reason": "#423"
-    },
-    {
-      "key": "test/issue423-claims-and-peers-red.test.mjs :: #423 RED (stage: design-not-landed): a contribute seat claims a work item and every peer sees the hold",
-      "reason": "#423"
-    },
-    {
-      "key": "test/issue423-claims-and-peers-red.test.mjs :: #423 RED (stage: design-not-landed): a handoff moves the hold in one row; a non-holder cannot move it",
-      "reason": "#423"
-    },
-    {
-      "key": "test/issue423-claims-and-peers-red.test.mjs :: #423 RED (stage: design-not-landed): a path claim on a checkout another peer holds refuses naming the holder; another checkout never conflicts",
-      "reason": "#423"
-    },
-    {
-      "key": "test/issue423-claims-and-peers-red.test.mjs :: #423 RED (stage: design-not-landed): a work-splitting proposal accepted by arrival writes its work items and claims",
-      "reason": "#423"
-    },
-    {
-      "key": "test/issue423-claims-and-peers-red.test.mjs :: #423 RED (stage: design-not-landed): the peers-now brief section renders held work and last checkpoints from the durable rows",
-      "reason": "#423"
-    },
-    {
       "key": "test/issue433-contributions-projection-red.test.mjs :: #433 RED (stage: design-not-landed): an unreviewed_contribution attention row after one recruit-brief cadence",
       "reason": "#433"
     },

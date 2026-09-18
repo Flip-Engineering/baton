@@ -2,10 +2,11 @@
 // (`take`/`yield` with the hold history), quorum synchronization points, and coupling proposals
 // whose arrival is consent, as specified by docs/45-open-coordination.md §4 and §11.
 //
-// These rows are the STATE half of `impl/test/issue422-joint-couplings-red.test.mjs`: they drive
-// `foldSwarmEvent` directly, so they prove the fold, the shape validator and the contract while
-// the runtime lane (permissions, view projection, attention rows, brief) is still outstanding.
-// The red file's rows stay red until that lane lands and stay listed in the expected-red manifest.
+// These rows are the STATE half of `impl/test/issue422-joint-couplings.test.mjs`: they drive
+// `foldSwarmEvent` directly, so they prove the fold, the shape validator and the contract on
+// their own. The runtime half landed with them: the pairs file's rows are green, its
+// expected-red manifest entries are retired, and its `-red` suffix came off in that change
+// (docs/44 rule 3).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
