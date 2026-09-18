@@ -89,9 +89,11 @@ cancellation of observer-owned drives when their last observer leaves; `pumpDrai
 when those drives have actually ended. Signal-ignoring facades remain visibly unconfirmed; see
 [the revised wave operations](31-wave-driver-ax.md).
 
-**Admission-time objective ergonomics:** after salting, each objective over 4096 bytes
-(`validText`, `application.mjs:225-226`) rejects at driver admission with an error carrying
-the byte count. (The machinery's oversize error is `application_intent_invalid`
+**Admission-time objective ergonomics:** after salting, each objective is bounded by the ONE
+registry row `wave.member.objective` (`limits.mjs`, the spill ceiling since #358): an
+objective over it is admitted and spilled with an advisory naming the bytes and the row it
+read — never a head cap, never a rejection below the row (#368 retired the recipe
+renderer's 4096-byte re-declaration). (The machinery's oversize error is `application_intent_invalid`
 `application.mjs:1094-1096`; `'Run objective is required'` is the EMPTY-objective client
 error, `application-client.mjs:112` — neither names the cap, hence the driver precheck.)
 
@@ -119,7 +121,8 @@ completion authority to an automatic policy prompt. The worker watchdog is neutr
 - **D5 — salt semantics:** identical members across two `run()` calls attach to distinct runs
   (attempt id differs); a retry INSIDE one `run()` re-attaches (same recorded salt);
   `saltObjectives:false` with identical members across calls SHARES runs, pinned as opted-in
-  behavior. Post-salt >4096-byte objective rejects with the byte count.
+  behavior. A post-salt objective over the `wave.member.objective` registry row is admitted
+  with an advisory carrying the byte count and the row value (#358, #368).
 - **D6 — termination law (rewritten per R46R-1):** a member that parks twice with an unchanged
   `changedPathsDigest` is nudged exactly `unproductiveNudgeBudget` times, then NOT nudged
   again; with `finalization: 'claim-on-stall'` it receives exactly one `claim_turn` and the
