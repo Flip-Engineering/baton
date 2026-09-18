@@ -489,3 +489,44 @@ test('#336: every code the swarm fold raises crosses typed — a coded fold refu
     assert.equal(response.body.error.retryable, false, `${code}: a coded fold refusal is never retryable`);
   }
 });
+
+// -------------------------------------------------------------------------------------------
+// #335 — a coded application refusal that carries its own teaching crosses with it (the #336
+// rule generalized): the route refusal's requested selector, grammar and served routes reach an
+// HTTP caller byte-identically instead of the fixed "application precondition failed".
+// -------------------------------------------------------------------------------------------
+
+test('#335: application_route_not_allowed crosses the web lane with the mint site\'s own message and detail', async () => {
+  const detail = {
+    field: 'route', requested: 'muse/muse-spark-1.3-contributor@high', grammar: '[provider/]model | HARNESS/MODEL@EFFORT',
+    served: [{ harness: 'muse', model: 'muse-spark-1.3-contributor', effort: 'high', state: 'ready', code: null }],
+  };
+  const message = 'route muse/muse-spark-1.3-contributor@high is not served: muse selectors carry no provider prefix ([provider/]model); served: muse/muse-spark-1.3-contributor@high (ready)';
+  const { web, issued } = fixture({
+    command: async () => { throw Object.assign(new Error(message), { code: 'application_route_not_allowed', detail }); },
+  });
+  const response = await send(web, {
+    path: '/v1/commands',
+    body: envelope({ commandId: 'issue335-cmd-1', idempotencyKey: 'issue335-key-1' }),
+    headers: { authorization: `Bearer ${issued.token}` },
+  });
+  assert.equal(response.status, 400, 'a route refusal is a precondition, at 400');
+  assert.equal(response.body.error.code, 'application_route_not_allowed', 'the code crosses as itself');
+  assert.equal(response.body.error.message, message, 'the mint site\'s own teaching crosses byte-identically');
+  assert.equal(response.body.error.retryable, false);
+  assert.deepEqual(response.body.error.detail, detail, 'requested, grammar and served routes cross in detail');
+});
+
+test('#335: a coded application refusal with no detail keeps the fixed class message', async () => {
+  const { web, issued } = fixture({
+    command: async () => { throw Object.assign(new Error('secret internal text'), { code: 'application_run_conflict' }); },
+  });
+  const response = await send(web, {
+    path: '/v1/commands',
+    body: envelope({ commandId: 'issue335-cmd-2', idempotencyKey: 'issue335-key-2' }),
+    headers: { authorization: `Bearer ${issued.token}` },
+  });
+  assert.equal(response.status, 409);
+  assert.equal(response.body.error.code, 'application_run_conflict');
+  assert.equal(response.body.error.message, 'application state conflict', 'no detail — the fixed class message stands, the internal text never crosses');
+});

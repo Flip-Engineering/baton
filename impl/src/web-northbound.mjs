@@ -524,6 +524,18 @@ function dispatchFailure(cause) {
   if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('application_')) {
     const conflict = ['application_plan_stale', 'application_plan_denied', 'application_run_conflict', 'application_run_incomplete', 'application_profile_stale',
       'application_closed', 'application_detached'].includes(goalPlanCode);
+    // #335 (the #336 rule generalized): a coded application refusal that carries its OWN
+    // teaching — a message and a detail record composed at the mint site (the route refusal's
+    // requested selector, grammar and served routes) — crosses with them byte-identically, so an
+    // HTTP caller learns what an in-process caller learns. A refusal with no detail keeps the
+    // fixed class message below.
+    const detail = isRecord(cause?.detail) ? cause.detail : null;
+    if (detail !== null && typeof cause?.message === 'string' && cause.message.length > 0) {
+      const field = typeof detail.field === 'string' ? safeFieldName(detail.field) : null;
+      return failure(conflict ? 409 : 400, goalPlanCode, cause.message, {
+        retryable: false, ...(field !== null ? { field } : {}), detail,
+      });
+    }
     return { httpStatus: conflict ? 409 : 400, body: { ok: false, error: { code: goalPlanCode, message: conflict ? 'application state conflict' : 'application precondition failed' } } };
   }
   if (goalPlanCode === 'goal_plan_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority forbidden' } } };
