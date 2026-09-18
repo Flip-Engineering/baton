@@ -636,7 +636,8 @@ async function captureError(promise) {
 // The two HARDCODED goldens (blocker 10): a value change or a helper-wording change fails
 // these rows until someone deliberately edits THIS string.
 const GOLDEN_GRACEFUL = 'message.send.body is 1048577 bytes (cap 1048576); over-cap bodies spill to a durable artifact — resend with a digest-citable head';
-const GOLDEN_HARD = 'decision.question is 2049 bytes (cap 2048); resend within the 2048-byte cap';
+// #398: the refusal names the OBSERVED byte count (the B4 question is 16 + 2048 = 2064 bytes), never cap+1.
+const GOLDEN_HARD = 'decision.question is 2064 bytes (cap 2048); resend within the 2048-byte cap';
 
 test('B1 (GOLDEN, graceful class): a send beyond the spill ceiling draws the spill_body_exceeded coaching refusal', async () => {
   const adapter = new ScriptableAdapter();
