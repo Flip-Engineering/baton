@@ -28,6 +28,7 @@ import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frame
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
+import { observeAdapterEvents } from './adapter.mjs';
 import {
   KILL_ESCALATION_GRACE_MS,
   processAuthorityPayload, processAuthorityState, processGroupAlive, processReadyPayload,
@@ -1867,7 +1868,16 @@ export class Coordinator {
     }
 
     for (const [sourceVendor, adapter] of Object.entries(this._adapters)) {
-      adapter.onEvent((e) => {
+      // #477: a registration OBSERVES ALONGSIDE, it never replaces (adapter.mjs
+      // observeAdapterEvents — the ONE derivation of the adapter listener chain). This seam is
+      // registered from the startup reconstruction, so on the async open path
+      // (coordinationAsyncOpen, #351 lane 3 / #434) it lands AFTER the deployment's liveness
+      // observer, which route-liveness.mjs installs while the deployment opens. A plain `onEvent`
+      // here replaced that wrapper: the probe's terminal wire then reached no liveness observer,
+      // every probe settled `unknown`, and the readiness tier never verified or blocked — silently.
+      // The helper forwards to whoever registered before this seam, so both observers stay fed and
+      // registration order stops deciding who sees the adapter.
+      observeAdapterEvents(adapter, (e) => {
         if (this._closed) return;
         if (!e || typeof e !== 'object' || e.actor !== 'worker') {
           const handle = this._workers.get(e?.worker);

@@ -87,7 +87,7 @@
         {
           "name": "_startupReconstructionPasses",
           "ordinal": 0,
-          "size": 289,
+          "size": 298,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

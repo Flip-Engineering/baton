@@ -4,6 +4,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { FRAME_LIMITS } from './limits.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
+import { observeAdapterEvents } from './adapter.mjs';
 
 // RouteLiveness — the #47 bounded actual-inference readiness tier
 // (docs/reference/evidence/frontier-sweep-2026-08-03/readiness-credentials-contract.md §4.1).
@@ -124,18 +125,18 @@ export class RouteLiveness {
   _wrapAdapters() {
     for (const [vendor, adapter] of Object.entries(this._adapters)) {
       if (typeof adapter?.onEvent !== 'function') continue;
-      // The adapter listener is single-slot; the coordinator already registered its callback.
-      // Capture it across every adapter's private storage spelling (GrokAcpCli/ClaudeSessionCli/
-      // OmpRpcCli use `_cb`, the readiness suite's ScriptableAdapter uses `_onEvent`, MockAdapter
-      // uses `_userCb`, and `_callback` is captured so a future spelling can never silently
-      // orphan the coordinator again) so the wrapper forwards instead of replacing. An orphaned
-      // listener is not a degraded read path — it deafens the coordinator to EVERY worker event
-      // (the #230 false-stall murder: omp members' live turns read as no_progress_evidence).
-      const prior = adapter._userCb ?? adapter._cb ?? adapter._onEvent ?? adapter._callback ?? null;
-      adapter.onEvent((event) => {
-        if (prior) prior(event);
-        this._onAdapterEvent(event, vendor);
-      });
+      // #477: a registration OBSERVES ALONGSIDE, it never replaces (adapter.mjs
+      // observeAdapterEvents, the ONE derivation of the adapter listener chain). This wrapper is
+      // installed while the deployment OPENS, and on the async open path (coordinationAsyncOpen,
+      // #351 lane 3 / #434) the coordinator registers its own listener only when its deferred
+      // startup reconstruction completes — AFTER this wrapper. Both registrations therefore land in
+      // this order, and the helper is what keeps each of them fed: it captures whatever listener the
+      // slot already holds (the coordinator's, on the synchronous path) and forwards to it, so the
+      // wrapper can never orphan the coordinator and the coordinator's later registration can never
+      // orphan this observer — the orphaning that made every probe settle `unknown` on a real
+      // deployment and deafened the controller to worker-turn refresh-token death (§4.3.3) on the
+      // async open path.
+      observeAdapterEvents(adapter, (event) => this._onAdapterEvent(event, vendor));
     }
   }
 

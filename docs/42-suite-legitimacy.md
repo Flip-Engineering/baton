@@ -234,3 +234,23 @@ single-slot fixture, the probe's terminal wire reached nobody, the gate's `ensur
 and the loop drained: 26 rows of `readiness-credentials-red.test.mjs` and 15 of
 `readiness-honesty-red.test.mjs` were cancelled with zero assertions. The fixtures now deliver
 every event to every registered observer, in registration order.
+
+**The orphaning itself was the production defect (#477).** The paragraph above records a
+measurement made on a fixture; what it measured was the served path. A registration that REPLACES
+the listener slot strands every observer installed before it — the coordinator's deferred
+registration landed after `_wrapAdapters` had wrapped the adapter, so on a real `openBatonDeployment`
+the probe's terminal wire reached no liveness observer, `ensure()` waited out its (unref'd) deadline
+and settled `unknown` EVERY time, and the readiness tier never verified and never blocked. The chain
+now lives in ONE place, `impl/src/adapter.mjs` `observeAdapterEvents` (beside the contract that
+declares `onEvent`): it captures whatever listener the slot holds and forwards to it, so a
+registration OBSERVES ALONGSIDE and never replaces, whichever of the two registrants lands last.
+`route-liveness.mjs` `_wrapAdapters` and the coordinator's deferred seam both call it, so no fixture
+shape can decide the outcome.
+
+That makes the two fixtures' deliver-to-every-observer wiring a fixture-side guard rather than the
+reason their rows assert — a fixture that fans out more generously than the tier it stands in for
+can hide exactly this class of defect (here it would, since a single-slot adapter was the tier's real
+shape). The served-path rows therefore live outside those fixtures, over a real `openBatonDeployment`
+with a SINGLE-slot scriptable adapter: `impl/test/issue477-liveness-observer-survives-startup.test.mjs`
+pins that a probe settles `verified`, that the later registration forwards through the observer it
+replaced, and that a worker turn's `invalid_grant` still fans out to the credential's rows.
