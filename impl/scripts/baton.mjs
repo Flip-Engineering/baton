@@ -201,6 +201,15 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
     logLine(flipAnnounce('draining', `baton serve: the declared parent (pid ${parentPid}) is gone; stopping`, { tty: TTY, color: TTY }));
     admitParentExit();
   });
+  // Issue #482: the incarnation's OWN stop, as the serve loop's third end. A handoff schedules this
+  // incarnation's close itself (`reincarnate`), so neither a signal nor the declared parent's exit
+  // ever arrives: the loop waits, every handle goes over to the successor, and the loop drains under
+  // an unsettled top-level await — Node then ends the process with exit 13 and "Detected unsettled
+  // top-level await", which a supervisor reads as a failure. The wait is the deployment's own
+  // (`whenStopped`), so it settles on the SAME withdrawal the signal path reads first, in the same
+  // act. Built before the host starts, so a stop that lands during the open is never missed; a
+  // deployment that publishes no such read keeps today's behavior (there is nothing to watch).
+  const stopSettled = typeof deployment.whenStopped === 'function' ? deployment.whenStopped() : null;
   const lifecycle = new SignalLifecycleOwner({
     signalEmitter: process,
     shutdown: async () => { await announced; return deployment.close(); },
@@ -271,6 +280,13 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
         // #471: the declared parent's exit ends this wait the way a signal does; the request row
         // above already named the trigger, and the shutdown is the same deployment.close().
         if (parentExited !== null) parentExited.then(() => resolveSignal());
+        // Issue #482: …and so does this incarnation's own stop. Its outcome is what the loop has
+        // been waiting for all along: the operation ends, the lifecycle runs the same shutdown a
+        // signal runs — this incarnation's close, already settled, so it answers its own verdict —
+        // and `serveDeployment` resolves, leaving `baton serve` to end through a settled top-level
+        // await (exit 0). A stop that failed rejects that same close, and the refusal is narrated
+        // and crossed exactly as a signal-driven stop's failure is.
+        if (stopSettled !== null) stopSettled.then(() => resolveSignal());
       });
       return hosted;
     });

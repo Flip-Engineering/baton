@@ -472,7 +472,11 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     successor's parent and the child handle with its stdio pipes kept the loop alive. Now
     `close()` releases the successor's process handle after the withdrawal (unref child + stdio,
     detach the stderr listener) and the old exits by itself; the served tail's last stage is
-    `incarnation_exit`, said only by a stop that finished a handoff. The publication wait is a
+    `incarnation_exit`, said only by a stop that finished a handoff. #482: that exit is a SETTLED
+    one — `baton serve` ends its serve loop on the deployment's own stop
+    (`deployment.whenStopped()`, built beside the `withdrawn()` read the signal path makes), so
+    `serveDeployment` resolves and the process ends through its top-level await with exit 0,
+    never under Node's "Detected unsettled top-level await" (exit 13). The publication wait is a
     durable `host.stop_waiting {wait: {on: 'successor_publication', entries: [{resource,
     reaper: 'successor', since}]}}` row recorded at the commit point right after
     `host.successor_started` (past the release the old holds no writer authority). The signal
