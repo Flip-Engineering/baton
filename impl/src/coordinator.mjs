@@ -3199,6 +3199,20 @@ export class Coordinator {
     };
   }
 
+  /** #435: whether `worktree` IS the checkout the worktree authority owns for `ownerTaskId`
+   * (`<repoRoot>/.baton/wt/<ownerTaskId>`), compared by real path. Only such a checkout has a
+   * lane branch for the #428 custody repair; a fixture's or embedder's checkout elsewhere is
+   * outside the authority and is preserved through capture alone. */
+  _isAuthorityCheckout(worktree, ownerTaskId) {
+    if (typeof this._repoRoot !== 'string' || typeof ownerTaskId !== 'string' || ownerTaskId.length === 0) return false;
+    try {
+      const expected = realpathSync(join(this._repoRoot, '.baton', 'wt', ownerTaskId));
+      return realpathSync(worktree) === expected;
+    } catch {
+      return false;
+    }
+  }
+
   /** Whether this handle works in a checkout it deliberately shares with another live holder — or
    * one it adopted as a shared attachment. Such a checkout is captured live, never committed. */
   _sharedCheckoutCustody(handle, task) {
@@ -9704,7 +9718,13 @@ export class Coordinator {
         // checkout (the catch below), never guesses.
         const laneBranch = task.sessionContext?.branch ?? null;
         const ownerTaskId = task.sessionContext?.ownerTaskId ?? task.id;
-        if (laneBranch && typeof handle.worktree === 'string' && existsSync(handle.worktree)) {
+        // #435: the custody repair applies to a checkout the worktree authority owns — the one
+        // at <repoRoot>/.baton/wt/<ownerTaskId>. A fixture or embedder manager that keeps its
+        // checkouts elsewhere has no lane branch for the authority to repair, and running the
+        // repair there turned every exact-kill preservation into `preservation_failed`
+        // (phase70/71/72 pins) because the authority refuses a path outside its root.
+        if (laneBranch && typeof handle.worktree === 'string' && existsSync(handle.worktree)
+          && this._isAuthorityCheckout(handle.worktree, ownerTaskId)) {
           await Promise.resolve(ensureLaneBranchAtHead(this._repoRoot, ownerTaskId, {
             worktree: handle.worktree,
           }));
@@ -9816,7 +9836,10 @@ export class Coordinator {
     const ownerTaskId = task.sessionContext?.ownerTaskId ?? task.id;
     // The removal row is recorded only for a checkout that actually existed: the facade's
     // reservation-only paths resolve without touching a worktree, and those are not removals.
-    const worktreePath = ownerTaskId ? join(this._repoRoot, '.baton', 'wt', ownerTaskId) : null;
+    // #435: a fixture or embedder coordinator may carry no repository root at all; the custody
+    // row is derived only for a checkout the worktree authority (rooted there) can own.
+    const worktreePath = ownerTaskId && typeof this._repoRoot === 'string'
+      ? join(this._repoRoot, '.baton', 'wt', ownerTaskId) : null;
     const present = worktreePath !== null && existsSync(worktreePath);
     await Promise.resolve(this._worktrees.remove(ownerTaskId, {
       ...(excludeHolderId ? { excludeHolderId } : {}),
