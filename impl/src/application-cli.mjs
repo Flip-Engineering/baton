@@ -724,6 +724,22 @@ function repositoryIdentityFromMetadata(start) {
   });
 }
 
+/** Issue #480: the ONE checkout root every repository-relative path the recruit's reading leg
+ * resolves against — the MAIN working tree of the repository the served resident belongs to, the
+ * one the resident names as `repository.root` (application-deployment.mjs opens every deployment
+ * over it; the driver's `repoRoot` and the runtime's `_repositoryRoot` carry that same fact to
+ * every repository-relative read the deployment makes). It is derived from the git COMMON
+ * directory the connection discovery already walks up to: the common directory is one repository's
+ * `.git`, and its parent IS that repository's main checkout — a linked worktree's own git
+ * directory points its `commondir` back at the same place, so a lane worktree (this CLI's, or a
+ * seat's that does not exist yet) can never become the root. Never the process cwd: the incident's
+ * every CLI call ran from `<repo>/impl`, where a `docs/…` citation resolved to `impl/docs/…`.
+ * The citation leg, the `--doc` paths, and the scope paths the deferred `--files` leg will pull
+ * all read THIS derivation, so the checkout a recruit reads from has exactly one name. */
+export function deploymentCheckoutRoot({ cwd = process.cwd() } = {}) {
+  return dirname(realpathSync(findRepositoryMetadata(cwd).commonDir));
+}
+
 /** Resolve one complete connection authority: either the compatibility environment or discovery. */
 export function discoverBatonConnection({
   cwd = process.cwd(), env = process.env, home = env.HOME,
@@ -2313,9 +2329,18 @@ export function readGitHubIssue({ issue, exec = execFileSync } = {}) {
   return issue_;
 }
 
-/** Read one repository doc the recruit pulls: inside the checkout the CLI runs from, bounded by
- * the registry row, or a typed refusal naming the path. */
-function readContextDoc(path, repoRoot = process.cwd()) {
+/** Read one repository doc the recruit's reading leg pulls: the bytes of the document at the
+ * deployment's checkout root, or the typed outcome the caller judges. Three outcomes, because
+ * three facts (#480):
+ *   • the checkout does not carry the document → `{ absent: true }`: a NAMED GAP in the package,
+ *     never a refusal of the whole recruit — a citation that was never committed is something the
+ *     seat must read about, not a reason to withhold the issue it cites;
+ *   • the path escapes the checkout, or is not a document this reader can use → the
+ *     `context_doc_unreadable` refusal naming the path (an operator error: a mistyped or escaping
+ *     path is never quietly a gap);
+ *   • the document exceeds the branch ceiling → `context_source_oversize` with its measured bytes.
+ */
+function readContextDoc(path, repoRoot) {
   const row = FRAME_LIMITS['context_package.source_bytes'];
   const unreadable = () => contextReadRefusal('context_doc_unreadable',
     `context doc ${path} is outside this checkout or unreadable`,
@@ -2323,9 +2348,19 @@ function readContextDoc(path, repoRoot = process.cwd()) {
   if (typeof path !== 'string' || path.length === 0 || path.includes('\0')) throw unreadable();
   const root = resolve(repoRoot);
   const absolute = resolve(root, path);
+  // Containment is judged LEXICALLY first: a path that leaves the checkout (`../…`) is the
+  // operator's own error whether or not something sits there, so it refuses even when nothing does.
+  if (absolute === root || !absolute.startsWith(`${root}${sep}`)) throw unreadable();
   let real;
+  try { real = realpathSync(absolute); }
+  catch (cause) {
+    // ENOENT is the document this checkout does not carry; every other failure — a permission, a
+    // path component that is not a directory — stays the refusal it was.
+    if (cause?.code === 'ENOENT') return { absent: true };
+    throw unreadable();
+  }
   let realRoot;
-  try { real = realpathSync(absolute); realRoot = realpathSync(root); }
+  try { realRoot = realpathSync(root); }
   catch { throw unreadable(); }
   if (real !== realRoot && !real.startsWith(`${realRoot}${sep}`)) throw unreadable();
   let bytes;
@@ -2336,7 +2371,7 @@ function readContextDoc(path, repoRoot = process.cwd()) {
       `${path} is ${bytes.length} bytes (cap ${row.value}); the context package branch row is ${row.lane}`,
       { field: 'path', detail: { path, bytes: bytes.length, limit: row.value, lane: row.lane } });
   }
-  return bytes;
+  return { bytes };
 }
 
 /** The ONE document the issue branch carries: its title, its labels and its body — the seat reads
@@ -2386,15 +2421,60 @@ function takeRecruitContextLeg(args) {
   return leg.issue === null ? null : Object.freeze({ issue: leg.issue, docs: Object.freeze([...leg.docs]) });
 }
 
+/** The ONE composition of the recruit's reading leg (#480): the issue document as its own branch,
+ * one branch per repository document the issue cites or the operator names, and the NAMED GAPS —
+ * every named document the deployment's checkout does not carry, in the closed row shape the
+ * seat's brief and the recruit's receipt both render (`{path, state, reason}`). The members are
+ * what the package carries; a document that is absent has no bytes to carry, so its branch is the
+ * gap row instead. */
+function composeRecruitContextPackage(issue, request, repoRoot) {
+  const branches = [];
+  // The issue is a MEMBER only when it carries text a seat can read (a title or a body): a leg
+  // whose every member is unreadable composed nothing, and `admitRecruitContextPackage` says so
+  // instead of admitting a package the store's own one-branch rule would refuse.
+  if (issueCarriesText(issue)) {
+    branches.push({
+      name: `issue:${request.issue}`,
+      text: renderIssueDocument({ ...issue, number: request.issue }),
+    });
+  }
+  const gaps = [];
+  // The citation set: the `docs/…` paths the issue body names plus every `--doc` — ONE set, sorted,
+  // so two spellings of one document can never become two branches.
+  for (const path of [...new Set([...citedDocsInIssue(issue.body), ...request.docs])].sort()) {
+    const read = readContextDoc(path, repoRoot);
+    if (read.absent === true) {
+      gaps.push(Object.freeze({ path, state: 'unreadable', reason: 'absent' }));
+      continue;
+    }
+    branches.push({
+      name: contextDocBranchName(path, createHash('sha256').update(read.bytes).digest('hex')),
+      text: read.bytes.toString('utf8'),
+    });
+  }
+  return Object.freeze({ branches, gaps: Object.freeze(gaps) });
+}
+
+/** Whether the document the issue reader answered carries text a seat can read. */
+function issueCarriesText(issue) {
+  return [issue?.title, issue?.body]
+    .some((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
 /** Admits the recruit's context package before the recruit leaves this process: reads the issue
- * through the root's credential, pulls the docs the issue cites plus every `--doc`, hands the
- * documents to the resident's context-package port as ONE package, and answers its digest — or
- * null when this recruit named no issue (every pre-#441 recruit touches nothing here). */
+ * through the root's credential, pulls the docs the issue cites plus every `--doc` from the
+ * deployment's own checkout root, hands the documents to the resident's context-package port as
+ * ONE package, and answers its digest and its NAMED GAPS — or null when this recruit named no
+ * issue (every pre-#441 recruit touches nothing here). */
 async function admitRecruitContextPackage(parsed, client, options) {
   const request = parsed?.contextPackage ?? null;
   if (request === null) return null;
   const reader = options?.issueReader ?? readGitHubIssue;
-  const repoRoot = options?.contextRepoRoot ?? process.cwd();
+  // Issue #480: the deployment's checkout root — never this process's cwd (the incident: every
+  // CLI call ran from `<repo>/impl`, where a `docs/…` citation resolves to `impl/docs/…`) and
+  // never a lane worktree that does not exist yet. ONE derivation, read by every
+  // repository-relative path this leg pulls.
+  const repoRoot = options?.contextRepoRoot ?? deploymentCheckoutRoot();
   let issue_;
   try {
     issue_ = await reader({ issue: request.issue, exec: execFileSync });
@@ -2409,17 +2489,18 @@ async function admitRecruitContextPackage(parsed, client, options) {
       `the issue reader answered nothing usable for issue ${request.issue}`,
       { field: 'issue', detail: { issue: request.issue, reason: 'the reader answered no issue document' } });
   }
-  const docs = [...new Set([...citedDocsInIssue(issue_.body), ...request.docs])].sort();
-  const branches = [{
-    name: `issue:${request.issue}`,
-    text: renderIssueDocument({ ...issue_, number: request.issue }),
-  }];
-  for (const path of docs) {
-    const bytes = readContextDoc(path, repoRoot);
-    branches.push({
-      name: contextDocBranchName(path, createHash('sha256').update(bytes).digest('hex')),
-      text: bytes.toString('utf8'),
-    });
+  const { branches, gaps } = composeRecruitContextPackage(issue_, request, repoRoot);
+  if (branches.length === 0) {
+    // #480: the refusal remains only for a package with NO readable member at all — an issue whose
+    // title and body carry no text, with every document it names absent from this checkout. It
+    // names the remedy, because a refused recruit is the operator's to fix: drop the reading leg,
+    // or name the documents explicitly.
+    const missing = gaps.map((gap) => gap.path).sort().join(', ');
+    throw contextReadRefusal('context_doc_unreadable',
+      `the reading leg delivered no readable member for issue ${request.issue}: the issue carries no`
+        + ` text and no named document is in this checkout${missing.length === 0 ? '' : ` (${missing})`}`
+        + ' — recruit without --issue, or name the documents with --files once that leg lands (docs/47 §9.1)',
+      { field: 'issue', detail: { issue: request.issue, rule: 'no-readable-member', docs: gaps } });
   }
   const admitted = await client.command('package.admit',
     { name: `issue-${request.issue}`, branches },
@@ -2429,9 +2510,13 @@ async function admitRecruitContextPackage(parsed, client, options) {
   }
   // Issue #455 hand-back: the port answers whether this admission was fresh or the reuse of a
   // digest the deployment already holds; the recruit's receipt carries that half through.
+  // Issue #480: the gaps are the reading's other half — the documents the checkout does not carry,
+  // which have no branch to ride in — and they travel with the digest so the seat's brief can name
+  // what it did not get.
   return Object.freeze({
     digest: admitted.packageDigest, reused: admitted.reused === true,
     admittedEvent: admitted.admittedEvent ?? null, branches: admitted.branches ?? [],
+    gaps,
   });
 }
 function parseSwarmCli(args, idempotencyKey) {
@@ -2654,8 +2739,13 @@ function recruitLegHelpBlocks(topic) {
     '  --issue N pulls the GitHub issue through this host\'s own `gh` credential and admits ONE',
     '  ContextPackage whose branches are `issue:N` and `doc:<path>@<sha>` for every repository doc',
     '  the issue body cites (plus every --doc); the seat\'s brief renders the package and its run',
-    '  carries the attachment (scope worker:<seat>). A worker never calls gh. The reader refuses',
-    '  typed before any effect: issue_reader_unavailable, issue_not_found, context_doc_unreadable.',
+    '  carries the attachment (scope worker:<seat>). A worker never calls gh. Every cited and named',
+    '  doc resolves against the DEPLOYMENT\'s checkout root, never this shell\'s cwd; a document that',
+    '  checkout does not carry is a NAMED GAP on the recruit receipt (contextPackage.docs) and in the',
+    '  seat\'s brief, and the recruit is admitted. The reader refuses typed before any effect:',
+    '  issue_reader_unavailable, issue_not_found, context_doc_unreadable (a path outside the',
+    '  checkout, or a leg that composed no readable member at all — the refusal then names the',
+    '  remedy).',
   ].join('\n'), [
     'route probe:',
     '  baton swarm recruit <SWARM_ID> <PARTICIPANT_ID> <OBJECTIVE> \\',
@@ -5118,15 +5208,21 @@ export async function runBatonCli(parsed, client, options = {}) {
           ...parsed.args,
           options: {
             ...(record(parsed.args.options) ? parsed.args.options : {}),
-            contextPackage: { digest: admitted.digest },
+            // Issue #480: the leg's NAMED GAPS ride beside the digest — the documents the issue's
+            // citations or the operator's --doc flags named that this checkout does not carry. They
+            // are the half of the reading with no branch to ride in, so the seat's brief renders
+            // them from here (the store's package shape carries branches only).
+            contextPackage: { digest: admitted.digest, docs: admitted.gaps },
           },
         }, parsed.idempotencyKey);
         // Issue #455 hand-back: the receipt says what the admit did — `reused: true` when the
         // deployment already held this exact package (a second lane on one issue, a --resume-from
         // successor), false when this recruit's read admitted it. The digest stays the ONE name of
         // the package either way; the admission event is the row a reader walks to.
+        // Issue #480: the receipt carries the gap list — what the leg read about but did not pull.
         const receipt = Object.freeze({
           digest: admitted.digest, reused: admitted.reused, admittedEvent: admitted.admittedEvent,
+          docs: admitted.gaps,
         });
         return record(answer) ? Object.freeze({ ...answer, contextPackage: receipt }) : answer;
       }
@@ -5151,7 +5247,9 @@ export async function runBatonCli(parsed, client, options = {}) {
       ...parsed,
       options: {
         ...(record(parsed.options) ? parsed.options : {}),
-        contextPackage: { digest: admitted.digest },
+        // Issue #480: the follow leg composes the same request — the gaps travel with the digest
+        // so the seat's brief names what the leg could not pull.
+        contextPackage: { digest: admitted.digest, docs: admitted.gaps },
       },
     }, client, options ?? {});
   }

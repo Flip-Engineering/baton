@@ -633,29 +633,53 @@ for (const name of SWARM_COMMAND_NAMES) {
  * context-package port before it recruits, and the runtime attaches it to the seat's run with
  * scope `worker:<seat>` once the run is bound. The field's closed shape lives HERE, beside the
  * recruit's other vocabulary, so the CLI's writer and the runtime's reader cannot drift; the
- * digest travels, never the package: the seat's brief resolves the branch text from the store. */
-export const SWARM_RECRUIT_CONTEXT_PACKAGE_FIELDS = Object.freeze(['digest']);
+ * digest travels, never the package: the seat's brief resolves the branch text from the store.
+ * Issue #480: `docs` is the reading leg's NAMED GAPS — the documents the issue's citations or the
+ * root's `--doc` flags named that the deployment's checkout does not carry, as the closed rows
+ * `{path, state: 'unreadable', reason}` the seat's brief and the recruit's receipt render. The
+ * store's package shape carries branches only, so a document with no bytes has nowhere else to
+ * travel; the optional field keeps every pre-#480 caller's `{digest}` exactly as admissible. */
+export const SWARM_RECRUIT_CONTEXT_PACKAGE_FIELDS = Object.freeze(['digest', 'docs']);
 
-/** Read (and validate) the recruit's context-package option: the digest, or null when the caller
- * named none. A malformed option refuses with the recruit's own closed-set teaching. */
+/** The ONE state a named gap can be in: the document could not be read as this seat's reading. */
+export const SWARM_RECRUIT_CONTEXT_PACKAGE_GAP_STATES = Object.freeze(['unreadable']);
+
+/** One gap row, exactly: the path the leg named, the state, and why the checkout could not answer. */
+function isContextPackageGapRow(row) {
+  return row !== null && typeof row === 'object' && !Array.isArray(row)
+    && Object.keys(row).sort().join(',') === 'path,reason,state'
+    && typeof row.path === 'string' && row.path.length > 0
+    && SWARM_RECRUIT_CONTEXT_PACKAGE_GAP_STATES.includes(row.state)
+    && typeof row.reason === 'string' && row.reason.length > 0;
+}
+
+/** Read (and validate) the recruit's context-package option: the digest and its named gaps, or
+ * null when the caller named none. A malformed option refuses with the recruit's own closed-set
+ * teaching. */
 export function readRecruitContextPackageOption(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) return null;
   const value = options.contextPackage;
   if (value === undefined) return null;
   const fields = SWARM_RECRUIT_CONTEXT_PACKAGE_FIELDS;
   if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).sort().join('\0') !== [...fields].sort().join('\0')
-    || !/^[a-f0-9]{64}$/u.test(value.digest ?? '')) {
+    || Object.keys(value).some((key) => !fields.includes(key))
+    || !/^[a-f0-9]{64}$/u.test(value.digest ?? '')
+    || (value.docs !== undefined && (!Array.isArray(value.docs) || !value.docs.every(isContextPackageGapRow)))) {
     throw swarmError(
       'swarm.recruit options.contextPackage must name an admitted context package by digest',
       'swarm_command_invalid',
       {
         field: 'options.contextPackage', rule: 'closed-set',
-        correction: `pass {${fields.join(', ')}} with the 64-hex package digest an admission answered with`,
+        correction: `pass {${fields.join(', ')}} with the 64-hex package digest an admission answered with and, when the leg could not read a document it named, the gap rows {path, state, reason}`,
       },
     );
   }
-  return Object.freeze({ digest: value.digest });
+  return Object.freeze({
+    digest: value.digest,
+    docs: Object.freeze((value.docs ?? []).map((row) => Object.freeze({
+      path: row.path, state: row.state, reason: row.reason,
+    }))),
+  });
 }
 
 /** The Run-start selection without the recruit's own context-package option: the intent a
