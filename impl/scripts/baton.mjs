@@ -368,7 +368,12 @@ try {
           process.off('SIGTERM', stopOnSignal);
         }
       }
-      if (followPages === 0) process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, result), null, 2)}\n`);
+      // Issue #365: a follow that ended through its ended row (an aborted signal, or a wake
+      // stream that closed) prints that row even when pages already streamed — the ended row is
+      // the leg's own verdict, never swallowed by the pages it delivered.
+      if (followPages === 0 || (typeof result?.kind === 'string' && result.kind.endsWith('_ended'))) {
+        process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, result), null, 2)}\n`);
+      }
     }
   }
 } catch (error) {

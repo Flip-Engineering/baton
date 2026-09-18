@@ -123,6 +123,13 @@ export const HOST_LOCAL_CLI_COMMANDS = new Set(['run.debug']);
 // vocabulary (legacy `work_completed` resolves to `result_ready`). Every membership check
 // canonicalizes its input, so a still-legacy view phase and its canonical spelling behave alike.
 const TERMINAL_RUN_PHASES = new Set(['result_ready', 'completed', 'failed', 'cancelled', 'denied', 'stopped']);
+
+/** #365: the ONE membership check the follow legs read — the canonical phase a Run rests at is
+ * where every follow leg ends, including the stream legs whose server envelope flag
+ * (APPLICATION_RUN_TERMINAL_PHASES) never names a manual-result run resting at work_completed. */
+function cliTerminalRunPhase(phase) {
+  return TERMINAL_RUN_PHASES.has(canonicalRunPhase(phase));
+}
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
 const DEFAULT_APPLICATION_WAIT_MS = 30_000;
 const WEB_WAIT_TRANSPORT_SLACK_MS = 15_000;
@@ -2282,6 +2289,41 @@ function parseDeploymentWatch(args, idempotencyKey) {
     follow: true, stopOnClosedWake: false, idempotencyKey,
   };
 }
+/** Issue #365: the ONE option set every CLI follow leg admits — the wake watch, the run stream
+ * legs and the run follow leg validate through this one helper, so no leg can drift from the
+ * others about what a caller may pass (the entry passes `{signal, onFollowPage}` for every
+ * streaming verb). An unknown key refuses closed-set (#372/#376 shape): the offending key named,
+ * the admitted keys beside it, and the admitted set carried in the refusal detail. */
+function assertCliFollowOptions(options, label) {
+  if (!record(options)) throw cliError(`${label}`, 'cli_config_invalid');
+  const offending = Object.keys(options)
+    .filter((key) => !CLI_FOLLOW_OPTION_KEYS.includes(key)).sort()[0];
+  if (offending !== undefined) {
+    const error = cliError(
+      `${label}: ${offending} must be one of: ${CLI_FOLLOW_OPTION_KEYS.join(', ')}`,
+      'cli_config_invalid',
+    );
+    error.detail = { field: offending, rule: 'closed-set', admitted: [...CLI_FOLLOW_OPTION_KEYS] };
+    throw error;
+  }
+  if (options.signal !== undefined && options.signal !== null
+    && !(options.signal instanceof AbortSignal)) {
+    throw cliError(`${label}: signal must be an AbortSignal`, 'cli_config_invalid');
+  }
+  if (options.onFollowPage !== undefined && typeof options.onFollowPage !== 'function') {
+    throw cliError(`${label}: onFollowPage must be a function`, 'cli_config_invalid');
+  }
+  return options;
+}
+
+const CLI_FOLLOW_OPTION_KEYS = Object.freeze(['onFollowPage', 'signal']);
+
+/** Issue #365: the deployment card projects followPolicy.mode only, never the profile's own
+ * ceiling. A profile that enables follow without publishing that number is still followed: this
+ * client pages at its own bound instead of refusing (`--wait` names the bound explicitly), and
+ * the profile's server-side maxWaitMs stays the ceiling — a page wait it refuses surfaces typed
+ * as application_follow_invalid, never silently loosened. */
+const CLI_FOLLOW_PAGE_WAIT_MS = 1_000;
 
 /** One attachment, one line per frame, for as long as the caller waits. Returns when the caller
  * stops it (a signal), when the stream ends, or — for the swarm verb — when that swarm's own
@@ -2293,6 +2335,7 @@ function parseDeploymentWatch(args, idempotencyKey) {
  * their seq; observation rows (which borrow the ledger head as their cursor) key by their
  * observation kind beside it, so a crossing and the head row it coincides with stay two wakes. */
 export async function followWakes(parsed, client, options = {}) {
+  const follow = assertCliFollowOptions(options ?? {}, 'CLI follow options are invalid');
   let frames = 0;
   let cursor = null;
   let closed = null;
@@ -2302,7 +2345,7 @@ export async function followWakes(parsed, client, options = {}) {
     : `row:${frame?.seq}`);
   const attachment = client.wakes({
     filter: { kinds: parsed.kinds, swarms: parsed.swarms, since: parsed.since },
-    ...(options.signal === undefined || options.signal === null ? {} : { signal: options.signal }),
+    ...(follow.signal === undefined || follow.signal === null ? {} : { signal: follow.signal }),
     onFrame: async (frame) => {
       if (Number.isSafeInteger(frame?.seq)) {
         const key = rowKey(frame);
@@ -2313,13 +2356,13 @@ export async function followWakes(parsed, client, options = {}) {
       frames += 1;
       if (parsed.stopOnClosedWake && frame?.wakeClass === 'closed' && frame.observation !== true
         && (parsed.swarms ?? []).includes(frame.swarmId)) closed = frame;
-      await options.onFollowPage?.(frame);
+      await follow.onFollowPage?.(frame);
       if (closed !== null) attachment.close();
     },
     onLagged: async (lagged) => {
       frames += 1;
       if (Number.isSafeInteger(lagged?.cursor)) cursor = lagged.cursor;
-      await options.onFollowPage?.(lagged);
+      await follow.onFollowPage?.(lagged);
     },
   });
   const outcome = await attachment.done;
@@ -3604,13 +3647,20 @@ export class BatonWebClient {
     return { authorization: `Bearer ${this.#token}`, origin: this.origin, ...(json ? { 'content-type': 'application/json' } : {}) };
   }
 
-  async _json(path, options = {}, requestTimeoutMs = this.requestTimeoutMs) {
+  async _json(path, options = {}, requestTimeoutMs = this.requestTimeoutMs, signal = null) {
     if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0
       || requestTimeoutMs > (24 * 60 * 60 * 1_000) + WEB_WAIT_TRANSPORT_SLACK_MS) {
       throw cliCauseRefusal('request_timeout_invalid', { observed: `requestTimeoutMs ${observedValue(requestTimeoutMs)}` });
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    // Issue #365: a follow leg's caller signal rides the SAME controller as the request bound,
+    // so an aborted wait destroys the in-flight fetch (no dangling long-poll) instead of racing it.
+    const abortWait = () => controller.abort();
+    if (signal !== null && signal !== undefined) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener('abort', abortWait, { once: true });
+    }
     try {
       let response;
       try {
@@ -3678,6 +3728,7 @@ export class BatonWebClient {
       return body;
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener?.('abort', abortWait);
     }
   }
 
@@ -3769,7 +3820,11 @@ export class BatonWebClient {
     return page;
   }
 
-  async command(name, args, idempotencyKey = randomUUID()) {
+  async command(name, args, idempotencyKey = randomUUID(), options = {}) {
+    // Issue #365: a follow leg's caller signal rides every transport wait this dispatch makes —
+    // the wait-envelope POST, the reconcile poll loop and its sleep — so an aborted wait ends
+    // promptly instead of holding the leg until the resident's own bound.
+    const waitSignal = options?.signal ?? null;
     // The canonical grammar spelling resolves to the bus command it dispatches (`run watch` →
     // run.follow, `run view` → run.inspect): admission and the wire envelope carry the transport
     // the resident serves, never a canonical name the resident does not know.
@@ -3802,7 +3857,7 @@ export class BatonWebClient {
         try {
           body = await this._json('/v1/commands', {
             method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
-          }, this._requestTimeoutForCommand(bus, pageArgs));
+          }, this._requestTimeoutForCommand(bus, pageArgs), waitSignal);
         } catch (error) {
           const pending = await this._pendingReceiptOrNull(name, pageArgs, envelope, error);
           if (pending !== null) throw pending;
@@ -3813,7 +3868,7 @@ export class BatonWebClient {
           continue;
         }
         const result = body.status === 'admitted'
-          ? await this.reconcile(envelope.commandId, { name: bus, args: pageArgs })
+          ? await this.reconcile(envelope.commandId, { name: bus, args: pageArgs }, waitSignal)
           : (body.result ?? body);
         drained = drained.concat(result?.items ?? []);
         const next = listContinuationCursor(result);
@@ -3830,14 +3885,18 @@ export class BatonWebClient {
     try {
       body = await this._json('/v1/commands', {
         method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
-      }, this._requestTimeoutForCommand(name, args));
+      }, this._requestTimeoutForCommand(name, args), waitSignal);
     } catch (error) {
+      // A caller's own stop is not "the command outlived its bound": skip the pending-receipt
+      // probe (it would make a SIGINT'd follow read as a pending command) and surface the wait
+      // refusal the leg translates into its ended row.
+      if (waitSignal?.aborted) throw error;
       const pending = await this._pendingReceiptOrNull(name, args, envelope, error);
       if (pending !== null) throw pending;
       throw error;
     }
     if (body.status !== 'admitted') return body.result ?? body;
-    return this.reconcile(envelope.commandId, { name, args });
+    return this.reconcile(envelope.commandId, { name, args }, waitSignal);
   }
 
   /** R-5 (issue #288): a command that outlives THIS caller's request bound while the deployment
@@ -3925,17 +3984,19 @@ export class BatonWebClient {
    * first, the pending refusal keeps the record addressable (its commandId) beside the row
    * that will carry the verdict (the command's observation route, e.g. the recruit's seat
    * row — never a bare "retry later"), so the command stays observable instead of lost. */
-  async reconcile(commandId, context = {}) {
+  async reconcile(commandId, context = {}, signal = null) {
     id(commandId, 'command ID');
     const deadline = this.clock() + this.commandTimeoutMs;
     while (this.clock() < deadline) {
-      const body = await this._json(`/v1/commands/${encodeURIComponent(commandId)}`, { headers: this._headers() });
+      const body = await this._json(
+        `/v1/commands/${encodeURIComponent(commandId)}`, { headers: this._headers() }, undefined, signal,
+      );
       if (body.command?.status !== 'admitted') {
         const outcome = body.command?.outcome;
         if (!outcome || outcome.httpStatus >= 400) throw cliError(outcome?.body?.error?.code ?? 'command outcome unavailable', outcome?.body?.error?.code ?? 'cli_command_failed');
         return outcome.body?.result ?? outcome.body;
       }
-      await this.sleep(this.pollMs);
+      await this._pollWaitOrAbort(signal);
     }
     const detail = { commandId };
     if (typeof context?.name === 'string') {
@@ -3945,6 +4006,27 @@ export class BatonWebClient {
       cliError('Baton Web command remains admitted', 'cli_command_pending'),
       { detail },
     );
+  }
+
+  /** Issue #365: the reconcile poll's sleep is a transport wait like any other — a caller's
+   * signal ends it at once (the refusal is the ONE wait-abort cause the follow legs already
+   * translate into their ended row), never a slice of pollMs held after the caller stopped. */
+  async _pollWaitOrAbort(signal) {
+    if (signal === null || signal === undefined) return this.sleep(this.pollMs);
+    if (signal.aborted) {
+      throw cliCauseRefusal('web_transport_failed', { observed: 'the caller aborted the wait' });
+    }
+    await new Promise((resolve, reject) => {
+      const abort = () => {
+        clearTimeout(timer);
+        reject(cliCauseRefusal('web_transport_failed', { observed: 'the caller aborted the wait' }));
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', abort);
+        resolve();
+      }, this.pollMs);
+      signal.addEventListener('abort', abort, { once: true });
+    });
   }
 
   async downloadExport({ runId, receipt, destination }) {
@@ -4256,90 +4338,145 @@ export async function runBatonCli(parsed, client, options = {}) {
   if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_watch_filtered') return watchSwarmFiltered(parsed, client);
   if (parsed.kind === 'stream') {
-    if (!options || typeof options !== 'object' || Array.isArray(options)
-      || Object.keys(options).some((key) => key !== 'onFollowPage')
-      || (options.onFollowPage !== undefined && typeof options.onFollowPage !== 'function')) {
-      throw cliError('CLI stream options are invalid', 'cli_config_invalid');
-    }
+    // Issue #365: the entry passes `{signal, onFollowPage}` for every streaming verb — the SAME
+    // closed option set the wake watch admits, validated by the ONE shared helper.
+    const follow = assertCliFollowOptions(options, 'CLI stream options are invalid');
+    const signal = follow.signal ?? null;
+    const onFollowPage = follow.onFollowPage;
     const item = `execution:${parsed.channel}`;
     const request = (extra = {}) => client.command('run.inspect', {
       runId: parsed.runId, depth: 'content', section: 'execution', item,
       ...(parsed.recipient ? { recipient: parsed.recipient } : {}), ...extra,
-    }, `${parsed.idempotencyKey}:${parsed.channel}:${extra.pageCursor ?? 'initial'}:${extra.cursor ?? 'now'}`);
-    let view = await request();
-    if (parsed.channel === 'progress') {
-      const assertProgress = (candidate) => {
-        if (candidate?.runId !== parsed.runId || candidate.content?.runId !== parsed.runId
-          || candidate.content?.kind !== 'baton.run_progress') {
-          throw cliError('Baton returned progress for a different Run or channel',
+    }, `${parsed.idempotencyKey}:${parsed.channel}:${extra.pageCursor ?? 'initial'}:${extra.cursor ?? 'now'}`,
+    { signal });
+    let cursor = null;
+    try {
+      let view = await request();
+      if (parsed.channel === 'progress') {
+        const assertProgress = (candidate) => {
+          if (candidate?.runId !== parsed.runId || candidate.content?.runId !== parsed.runId
+            || candidate.content?.kind !== 'baton.run_progress') {
+            throw cliError('Baton returned progress for a different Run or channel',
+              'cli_protocol_failed');
+          }
+        };
+        assertProgress(view);
+        if (!parsed.follow) return view;
+        await onFollowPage?.(view);
+        // #365: a manual-result run rests at work_completed (canonical result_ready) — the
+        // envelope's terminal flag (APPLICATION_RUN_TERMINAL_PHASES) never names it, so the
+        // loop ends on the CLI's OWN follow end, the same phases the status follow leg ends on.
+        while (!view.terminal && !cliTerminalRunPhase(view.content?.phase)) {
+          cursor = view.cursor;
+          view = await request({ cursor: view.cursor });
+          assertProgress(view);
+          if (view.changed || view.terminal) await onFollowPage?.(view);
+        }
+        // The leg ended on the CLI's own follow end, not the server's flag: the returned view
+        // says so, so the projection teaches no follow command past the end it reached.
+        return view.terminal === true ? view : { ...view, terminal: true };
+      }
+      const assertTimeline = (candidate) => {
+        const content = candidate?.content;
+        if (candidate?.runId !== parsed.runId || content?.runId !== parsed.runId
+          || content?.kind !== 'baton.run_timeline.page'
+          || content.channel !== parsed.channel || !Array.isArray(content.items)
+          || content.items.some((entry) => entry?.runId !== parsed.runId)
+          || typeof content.cursor !== 'string' || typeof content.hasMore !== 'boolean'
+          || (content.hasMore && content.items.length === 0)) {
+          throw cliError('Baton returned an invalid or cross-Run timeline page',
             'cli_protocol_failed');
         }
       };
-      assertProgress(view);
-      if (!parsed.follow) return view;
-      await options.onFollowPage?.(view);
-      while (!view.terminal) {
-        view = await request({ cursor: view.cursor });
-        assertProgress(view);
-        if (view.changed || view.terminal) await options.onFollowPage?.(view);
-      }
-      return view;
-    }
-    const assertTimeline = (candidate) => {
-      const content = candidate?.content;
-      if (candidate?.runId !== parsed.runId || content?.runId !== parsed.runId
-        || content?.kind !== 'baton.run_timeline.page'
-        || content.channel !== parsed.channel || !Array.isArray(content.items)
-        || content.items.some((entry) => entry?.runId !== parsed.runId)
-        || typeof content.cursor !== 'string' || typeof content.hasMore !== 'boolean'
-        || (content.hasMore && content.items.length === 0)) {
-        throw cliError('Baton returned an invalid or cross-Run timeline page',
-          'cli_protocol_failed');
-      }
-    };
-    assertTimeline(view);
-    if (!parsed.follow) return view;
-    if ((view.content?.items?.length ?? 0) > 0) await options.onFollowPage?.(view);
-    for (;;) {
-      if (view.terminal && !view.content.hasMore) return view;
-      view = await request({
-        pageCursor: view.content.cursor,
-        ...(!view.content.hasMore ? { cursor: view.cursor } : {}),
-      });
       assertTimeline(view);
-      if ((view.content?.items?.length ?? 0) > 0) await options.onFollowPage?.(view);
+      if (!parsed.follow) return view;
+      if ((view.content?.items?.length ?? 0) > 0) await onFollowPage?.(view);
+      for (;;) {
+        if (Number.isSafeInteger(view.cursor)) cursor = view.cursor;
+        if (view.terminal && !view.content.hasMore) return view;
+        if (!view.changed && view.timedOut && !view.content.hasMore) {
+          // A quiet wait: the deployment's own bound elapsed with nothing new. The envelope's
+          // terminal flag can stay false for a manual-result run resting at result_ready —
+          // read the run once and end when the CLI's own follow end is reached (#365); the
+          // returned view says so, teaching no follow command past the end it reached.
+          const status = await client.command(
+            'run.status', { runId: parsed.runId },
+            `${parsed.idempotencyKey}:status:${view.cursor}`, { signal },
+          );
+          if (cliTerminalRunPhase(status?.phase)) return { ...view, terminal: true };
+        }
+        view = await request({
+          pageCursor: view.content.cursor,
+          ...(!view.content.hasMore ? { cursor: view.cursor } : {}),
+        });
+        assertTimeline(view);
+        if ((view.content?.items?.length ?? 0) > 0) await onFollowPage?.(view);
+      }
+    } catch (error) {
+      // Issue #365: an aborted signal ends the leg the way followWakes ends — a final ended row
+      // naming the reason, exit through the normal path, no dangling wait (the signal already
+      // rode every transport wait above).
+      if (signal?.aborted) {
+        return Object.freeze({
+          schemaVersion: 1, kind: 'baton.run_stream_ended', runId: parsed.runId,
+          channel: parsed.channel, cursor, reason: 'aborted',
+        });
+      }
+      throw error;
     }
   }
   if (parsed.kind === 'follow') {
-    if (!options || typeof options !== 'object' || Array.isArray(options)
-      || Object.keys(options).some((key) => key !== 'onFollowPage')
-      || (options.onFollowPage !== undefined && typeof options.onFollowPage !== 'function')) {
-      throw cliError('CLI follow options are invalid', 'cli_config_invalid');
-    }
-    let view = await client.command('run.status', { runId: parsed.runId }, `${parsed.idempotencyKey}:status`);
-    if (TERMINAL_RUN_PHASES.has(canonicalRunPhase(view?.phase))) return view;
-    let timeoutMs = parsed.timeoutMs;
-    if (timeoutMs === null) {
-      const doctor = await client.doctor();
-      const profile = doctor?.application?.profiles?.find((candidate) => candidate.name === view?.profile?.name
-        && candidate.digest === view?.profile?.digest);
-      timeoutMs = profile?.followPolicy?.mode === 'enabled' ? profile.followPolicy.maxWaitMs : null;
-      if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-        throw cliError('Run profile does not enable follow', 'application_follow_unavailable');
+    // Issue #365: the entry passes `{signal, onFollowPage}` — the SAME closed option set the
+    // wake watch admits, validated by the ONE shared helper.
+    const follow = assertCliFollowOptions(options, 'CLI follow options are invalid');
+    const signal = follow.signal ?? null;
+    let cursor = null;
+    try {
+      let view = await client.command(
+        'run.status', { runId: parsed.runId }, `${parsed.idempotencyKey}:status`, { signal },
+      );
+      if (TERMINAL_RUN_PHASES.has(canonicalRunPhase(view?.phase))) return view;
+      let timeoutMs = parsed.timeoutMs;
+      if (timeoutMs === null) {
+        const doctor = await client.doctor();
+        const profile = doctor?.application?.profiles?.find((candidate) => candidate.name === view?.profile?.name
+          && candidate.digest === view?.profile?.digest);
+        timeoutMs = profile?.followPolicy?.mode === 'enabled' ? profile.followPolicy.maxWaitMs : null;
+        if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+          if (profile?.followPolicy?.mode === 'enabled') {
+            // Issue #365: the card projects followPolicy.mode only — a profile that enables
+            // follow without publishing its own ceiling is followed at this client's page bound
+            // instead of refused (`--wait` names the bound explicitly).
+            timeoutMs = CLI_FOLLOW_PAGE_WAIT_MS;
+          } else {
+            throw cliError('Run profile does not enable follow', 'application_follow_unavailable');
+          }
+        }
       }
-    }
-    let cursor = view.cursor;
-    for (let page = 0; ; page += 1) {
-      view = await client.command('run.follow', {
-        runId: parsed.runId, afterCursor: cursor, timeoutMs,
-      }, `${parsed.idempotencyKey}:follow:${page}:${cursor}`);
-      await options.onFollowPage?.(view);
-      if (!view?.follow || !Number.isSafeInteger(view.follow.throughCursor)
-        || view.follow.throughCursor < cursor) {
-        throw cliError('Baton Web returned an invalid follow page', 'cli_protocol_failed');
+      cursor = view.cursor;
+      for (let page = 0; ; page += 1) {
+        view = await client.command('run.follow', {
+          runId: parsed.runId, afterCursor: cursor, timeoutMs,
+        }, `${parsed.idempotencyKey}:follow:${page}:${cursor}`, { signal });
+        await follow.onFollowPage?.(view);
+        if (!view?.follow || !Number.isSafeInteger(view.follow.throughCursor)
+          || view.follow.throughCursor < cursor) {
+          throw cliError('Baton Web returned an invalid follow page', 'cli_protocol_failed');
+        }
+        cursor = view.follow.throughCursor;
+        if (view.follow.terminal || TERMINAL_RUN_PHASES.has(canonicalRunPhase(view.phase))) return view;
       }
-      cursor = view.follow.throughCursor;
-      if (view.follow.terminal || TERMINAL_RUN_PHASES.has(canonicalRunPhase(view.phase))) return view;
+    } catch (error) {
+      // Issue #365: an aborted signal ends the leg the way followWakes ends — a final ended row
+      // naming the reason, exit through the normal path, no dangling wait (the signal already
+      // rode every transport wait above).
+      if (signal?.aborted) {
+        return Object.freeze({
+          schemaVersion: 1, kind: 'baton.run_follow_ended', runId: parsed.runId,
+          cursor, reason: 'aborted',
+        });
+      }
+      throw error;
     }
   }
   if (parsed.kind === 'adopt') {
