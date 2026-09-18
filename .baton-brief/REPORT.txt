@@ -1,0 +1,21 @@
+PROBE SEAT ds-385check3 (issue #385 live check) — recruited with --resume-from ds-385mk.
+
+(1) The '## Inheritance' section of my brief, verbatim, in full:
+
+## Inheritance from ds-385mk
+- Last checkpoint: none was recorded for this predecessor.
+
+(That is the entire section: the heading plus that one line. There is NO carried-workspace line, NO workspace id, NO carried paths, and NO snapshot sha anywhere in the brief.)
+
+(2) git status --short — verbatim (the command printed nothing; exit 0):
+
+<no output>
+
+(3) git log --oneline -3 — verbatim:
+1a830bfe #445: the owner-socket transport's idle bound derives from the registry
+374aa9d8 Wave 14 gate follow-up: a live predecessor's successor starts fresh (#318 × #385), the brief's peers read tolerates a light coordinator, seven pins move to the landed verb/attention/flag truth, the #441 (e) row retired
+3cb80ed6 Wave 14 landing follow-up: the deployment wires the #296 landing authority, claims/proposals are sliced view fields, four stale custody/message pins move to the landed truth, #448 listed, docs name the landed files
+
+(4) Does impl/PROBE-385.txt exist in my checkout? NO — ABSENT.
+
+Corroborating detail: .baton-brief/BRIEF.md is also ABSENT from this worktree root, so the four items above are the whole of what a successor seat can observe here. My checkout is the fresh base (HEAD 1a830bfe, matching the served head), with no untracked or modified files, and the predecessor ds-385mk's two uncommitted changes (impl/PROBE-385.txt, impl/README.md) did NOT reach it. The brief states only "no checkpoint", never a carry and never a reason, so a reader cannot distinguish "nothing to carry" from "carry failed".
