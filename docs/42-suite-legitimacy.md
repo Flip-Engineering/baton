@@ -171,6 +171,15 @@ Over-selection is the safe direction for both entries: the subset is a fast firs
 the gate. Under-selection is what would hide a failure the full suite then finds 25 minutes
 later.
 
+The native landing (`swarm integrate`, #296/#463/#466) runs the SAME selection: its gate set is
+the runner's own selector (`impl/src/verification-selection.mjs`, the function `--changed` calls)
+over the checkout the squash produced, UNIONED with the landing table's region gates — one
+derivation, never a second table — and the receipt's `selection.provenance` names the runner's
+reasons (`changed`, `imports`, `fixture-path`) beside `region`. An empty derivation runs no gate
+and says `skipped: 'no_affected_tests'`. A landing's `issue` is the seat's context-package issue
+(the `issue:<n>` branch), else `null`; the region labels and the swarm's purpose are never
+consulted.
+
 ## 7. Served-host fixtures and the suite root (#446)
 
 A parallel gate hands every test process its run's SUITE ROOT as `TMPDIR`
