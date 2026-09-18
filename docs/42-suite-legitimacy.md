@@ -193,3 +193,44 @@ system root (`mkdtempSync('/tmp/<fixture>-')`), never under the ambient `TMPDIR`
 measured fall-back — the #446 fixture measured with a one-character stand-in for mkdtemp's six
 and missed a 68..72-byte band. Ledger and session roots stay under the ambient root; only the one
 path the kernel bounds leaves it. Row `316-sse-d` pins both ends of the band.
+
+## 8. A cancelled row is never an expected red (#460)
+
+Node reports a test whose awaited operation never settled as `cancelledByParent` — "Promise
+resolution is still pending but the event loop has already resolved" — and with it cancels EVERY
+row after it in the same file. That is not a red row: it asserts nothing, so the verdict cannot
+tell a broken harness from a pinned gap, and the design the row names is neither proven missing nor
+present. The suite's rule runs in both directions.
+
+**A fixture's awaits are bounded and named.** Every await a fixture takes on the deployment's own
+settle chain — the spawn gate (`deployment.run`), the run's approval, the fixture open and close,
+the wave preflight — carries a declared bound and fails the row naming the wait it abandoned
+(`spawnWorker(a4p-sibling): run.approve never settled within 120000ms`), never leaving a pending
+promise. The bound is a number the suite already declares: the deployment's probe deadline, the
+registry row `route.probe_deadline_ms` that `impl/src/route-liveness.mjs` takes its own default
+from — so a fixture never invents a second timeout vocabulary. A bound miss carries the typed
+marker `fixture_wait_unsettled` and is rethrown by the fixture helpers: a row must never read "the
+wait never settled" as "the deployment refused".
+
+**A cancelled row is an unexpected failure.** `computeVerdict` keeps the count on the verdict line
+(`N of them cancelled by a dangling await earlier in their file`) so the shape of the debt stays
+visible while the harness is repaired. Listing a cancelled row in the manifest is a transient
+bridge, never a resting state: the row has no assertion to attribute, so its reason would name a
+gap nobody measured. #460's rows were listed that way, and are retired with the repair.
+
+The two failure shapes stay distinct in the verdict: a HANG costs its file the progress deadline
+(`fileHung`, `testTimeoutFailure`, `testAborted` — `isHang`), while a dangling await drains the loop
+in milliseconds (`cancelledByParent` — `isCancelled`). The 2026-09-13 audit
+(`docs/audits/2026-09-13-runtime-policy/dangling-awaits.md`) is the first repair of this class;
+#460 is the regression it caught, measured at master `6aad8694`.
+
+The #460 measurements, recorded so the next reader does not have to re-derive them: both files'
+fixture adapters kept ONE `onEvent` listener, while the deployment installs TWO observers on one
+adapter object — the liveness controller wraps the adapter while the deployment opens
+(`route-liveness.mjs` `_wrapAdapters`, which captures whatever listener exists at that moment), and
+the coordinator registers its own when its deferred startup reconstruction completes (#351 lane 3
+made the deployment open path async). The later registration orphaned the earlier observer on a
+single-slot fixture, the probe's terminal wire reached nobody, the gate's `ensure()` never settled
+and the loop drained: 26 rows of `readiness-credentials-red.test.mjs` and 15 of
+`readiness-honesty-red.test.mjs` were cancelled with zero assertions. The fixtures now deliver
+every event to every registered observer, in registration order.
