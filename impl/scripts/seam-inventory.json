@@ -12429,8 +12429,8 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 113,
-          "seam": "effect",
+          "size": 119,
+          "seam": "admission",
           "evidence": [
             "delegates:admission",
             "delegates:effect",
@@ -12438,9 +12438,18 @@
           ]
         },
         {
+          "name": "_recruitContextPackageBriefSection",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 635,
+          "size": 664,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

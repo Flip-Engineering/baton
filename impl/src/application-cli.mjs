@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { processState } from './resident-authority.mjs';
 import {
@@ -9,7 +10,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { TextDecoder } from 'node:util';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalRunPhase } from './application-semantics.mjs';
 import { parseBatonTopCli } from './baton-top.mjs';
-import { FRAME_LIMITS_DIGEST } from './limits.mjs';
+import { FRAME_LIMITS, FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
@@ -1602,6 +1603,7 @@ export function batonCliHelp(topic = 'application') {
     blocks.push(...swarmHelp.paragraphs);
     blocks.push(...(swarmProjectionHelpBlocks(topic) ?? []));
     blocks.push(...(wakeWatchHelpBlocks(topic) ?? []));
+    blocks.push(...(recruitContextHelpBlocks(topic) ?? []));
     return blocks.join('\n\n');
   }
   if (!definition && CANONICAL_CLI_BY_KEY.has(topic)) {
@@ -1619,6 +1621,7 @@ export function batonCliHelp(topic = 'application') {
     return [
       `No local help is available for ${topic}.\nUse baton help for the application overview.`,
       ...(wakeWatchHelpBlocks(topic) ?? []),
+      ...(recruitContextHelpBlocks(topic) ?? []),
     ].join('\n\n');
   }
   const usage = [
@@ -1638,7 +1641,8 @@ export function batonCliHelp(topic = 'application') {
     blocks.push(`Deprecated: use baton ${operation.aliases[0].replaceAll('.', ' ')}.`);
   }
   return [...blocks, ...(topLevelVerbHelpBlocks(helpTopic) ?? []),
-    ...(wakeWatchHelpBlocks(topic) ?? [])].join('\n\n');
+    ...(wakeWatchHelpBlocks(topic) ?? []),
+    ...(recruitContextHelpBlocks(topic) ?? [])].join('\n\n');
 }
 
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
@@ -2181,6 +2185,208 @@ function parseEvidenceCli(args, idempotencyKey) {
   noRemainder(args);
   return { kind: 'command', name: 'evidence.search', args: values, idempotencyKey };
 }
+// ── Issue #441: the recruit's reading leg ───────────────────────────────────────────────────────
+//
+// A seat cannot read the world it works in (#347: no gh credential in the worker runtime). The
+// ROOT's CLI can: it runs on the host that holds the credential, so `baton swarm recruit …
+// --issue N [--doc PATH …]` pulls the issue and every doc the issue cites into ONE ContextPackage
+// (docs/32 §3.3 REFLEX-3) through the resident's context-package port, then recruits with the
+// package's digest. Nothing here is a second channel: the documents ride the package, the package
+// rides the coordination store, and the seat's brief renders the same bytes.
+
+/** The reading leg's closed rule text, keyed by the refusal code it explains. */
+const CONTEXT_READ_RULES = Object.freeze({
+  issue_reader_unavailable: 'the issue reader on this host is missing or unauthenticated',
+  issue_not_found: 'the reader holds no such issue',
+  context_doc_unreadable: 'the doc is outside this checkout or unreadable',
+  context_source_oversize: 'the document exceeds the context package branch ceiling',
+});
+
+/** Issue #441: the ONE branch-name derivation for a doc the root pulled. The hub's branch-name
+ * grammar admits `[A-Za-z0-9._:-]` only — a path separator and an `@` are not branch-name
+ * characters — so a doc branch spells its path with the separators flattened to `.` and carries
+ * the revision (the sha256 of the exact bytes the CLI read) after the final `:`. One derivation,
+ * both the writer (the CLI) and any reader that wants to recover the citation. */
+export function contextDocBranchName(path, sha) {
+  return `doc:${`${path}`.replaceAll('/', '.').replace(/[^A-Za-z0-9._-]/gu, '-')}:${sha}`;
+}
+
+/** The ONE composer for every reading-leg refusal: the typed code, the fact judged (the issue
+ * number or the doc path) and — for a measured refusal — the bytes and the bound. */
+function contextReadRefusal(code, message, { field = null, detail = {} } = {}) {
+  const error = cliError(message, code);
+  error.detail = { code, field, rule: CONTEXT_READ_RULES[code] ?? null, ...detail };
+  return error;
+}
+
+/** The ONE derivation of a repository doc the issue body cites: every `docs/NN-….md` path it
+ * names is a document the seat must be able to read, so the recruit pulls it without the root
+ * retyping it. A path outside `docs/` is never guessed into the package. Exported because the
+ * citation spelling is a contract: one regex, one function, both surfaces read it. */
+export const CONTEXT_DOC_CITATION = /(?:^|[\s`(（[<,:;])(docs\/[A-Za-z0-9._/-]+\.md)/gu;
+
+/** Every distinct `docs/…md` path a text cites, sorted. */
+export function citedDocsInIssue(text) {
+  if (typeof text !== 'string' || text.length === 0) return [];
+  const found = new Set();
+  for (const match of text.matchAll(CONTEXT_DOC_CITATION)) found.add(match[1]);
+  return [...found].sort();
+}
+
+/** The default issue reader: the ROOT host's own `gh issue view`, the ONE credential in play.
+ * The reader contract: answer `{number, title, body, labels, url}`, or throw typed — a missing or
+ * unauthenticated reader and a missing issue are DIFFERENT facts, and both are named. */
+export function readGitHubIssue({ issue, exec = execFileSync } = {}) {
+  let raw;
+  try {
+    raw = exec('gh', ['issue', 'view', String(issue), '--json', 'number,title,body,labels,url'],
+      { encoding: 'utf8', maxBuffer: FRAME_LIMITS['context_package.source_bytes'].value * 2 });
+  } catch (cause) {
+    const observed = `${cause?.stderr ?? ''}\n${cause?.message ?? ''}`;
+    if (cause?.code === 'ENOENT') {
+      throw contextReadRefusal('issue_reader_unavailable',
+        `the issue reader is unavailable for issue ${issue}: gh is not installed on this host`,
+        { field: 'issue', detail: { issue, reason: 'gh is not installed on this host' } });
+    }
+    if (/not logged in|gh auth login|authentication|HTTP 401|HTTP 403/u.test(observed)) {
+      throw contextReadRefusal('issue_reader_unavailable',
+        `the issue reader is unavailable for issue ${issue}: gh is not authenticated on this host`,
+        { field: 'issue', detail: { issue, reason: 'gh is not authenticated on this host' } });
+    }
+    if (/not found|could not resolve to an issue|no issues found/u.test(observed)) {
+      throw contextReadRefusal('issue_not_found', `issue ${issue} was not found by the issue reader`,
+        { field: 'issue', detail: { issue } });
+    }
+    throw contextReadRefusal('issue_reader_unavailable',
+      `the issue reader is unavailable for issue ${issue}: ${observed.split('\n')[0].trim()}`,
+      { field: 'issue', detail: { issue, reason: observed.split('\n')[0].trim() } });
+  }
+  let issue_ = null;
+  try { issue_ = JSON.parse(raw); } catch { issue_ = null; }
+  if (!record(issue_) || typeof issue_.body !== 'string' || typeof issue_.title !== 'string') {
+    throw contextReadRefusal('issue_reader_unavailable',
+      `the issue reader answered nothing usable for issue ${issue}`,
+      { field: 'issue', detail: { issue, reason: 'the reader answered no issue document' } });
+  }
+  return issue_;
+}
+
+/** Read one repository doc the recruit pulls: inside the checkout the CLI runs from, bounded by
+ * the registry row, or a typed refusal naming the path. */
+function readContextDoc(path, repoRoot = process.cwd()) {
+  const row = FRAME_LIMITS['context_package.source_bytes'];
+  const unreadable = () => contextReadRefusal('context_doc_unreadable',
+    `context doc ${path} is outside this checkout or unreadable`,
+    { field: 'path', detail: { path } });
+  if (typeof path !== 'string' || path.length === 0 || path.includes('\0')) throw unreadable();
+  const root = resolve(repoRoot);
+  const absolute = resolve(root, path);
+  let real;
+  let realRoot;
+  try { real = realpathSync(absolute); realRoot = realpathSync(root); }
+  catch { throw unreadable(); }
+  if (real !== realRoot && !real.startsWith(`${realRoot}${sep}`)) throw unreadable();
+  let bytes;
+  try { bytes = readFileSync(real); }
+  catch { throw unreadable(); }
+  if (bytes.length > row.value) {
+    throw contextReadRefusal('context_source_oversize',
+      `${path} is ${bytes.length} bytes (cap ${row.value}); the context package branch row is ${row.lane}`,
+      { field: 'path', detail: { path, bytes: bytes.length, limit: row.value, lane: row.lane } });
+  }
+  return bytes;
+}
+
+/** The ONE document the issue branch carries: its title, its labels and its body — the seat reads
+ * what the root read, title first. */
+function renderIssueDocument(issue) {
+  const labels = Array.isArray(issue.labels)
+    ? issue.labels.map((label) => (typeof label === 'string' ? label : label?.name)).filter(Boolean)
+    : [];
+  return [
+    `# ${issue.title}`,
+    `Issue ${issue.number}${issue.url ? ` — ${issue.url}` : ''}${labels.length > 0 ? ` — labels: ${labels.join(', ')}` : ''}`,
+    '',
+    issue.body,
+  ].join('\n');
+}
+
+/** The recruit's context leg at the parse: `--issue N [--doc PATH …]`, consumed before the
+ * closed-argv check because these flags are the ROOT's own reading (not wire arguments — the
+ * recruit carries `options.contextPackage = {digest}`). Keyed by verb role, like the parser-leg
+ * flags: no other swarm verb admits them. */
+function takeRecruitContextLeg(args) {
+  const leg = { issue: null, docs: [] };
+  const usage = 'baton swarm recruit <SWARM_ID> <PARTICIPANT_ID> <OBJECTIVE> --issue N [--doc PATH …]';
+  const malformed = (flag, expectation) => {
+    const error = cliError(`${flag} ${expectation}; usage: ${usage}`, 'cli_invalid');
+    error.detail = { field: flag, rule: 'positive-integer', usage };
+    return error;
+  };
+  for (let index = 0; index < args.length;) {
+    const token = args[index];
+    if (token !== '--issue' && token !== '--doc') { index += 1; continue; }
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith('--')) {
+      if (token === '--issue') throw malformed('--issue', 'requires an issue number');
+      throw Object.assign(cliError(`--doc requires a repository path; usage: ${usage}`), {
+        detail: { field: '--doc', rule: 'required-value', usage },
+      });
+    }
+    if (token === '--issue') {
+      if (!/^[1-9][0-9]{0,9}$/u.test(value)) throw malformed('--issue', 'takes a positive issue number');
+      leg.issue = Number(value);
+    } else if (!leg.docs.includes(value)) {
+      leg.docs.push(value);
+    }
+    args.splice(index, 2);
+  }
+  return leg.issue === null ? null : Object.freeze({ issue: leg.issue, docs: Object.freeze([...leg.docs]) });
+}
+
+/** Admits the recruit's context package before the recruit leaves this process: reads the issue
+ * through the root's credential, pulls the docs the issue cites plus every `--doc`, hands the
+ * documents to the resident's context-package port as ONE package, and answers its digest — or
+ * null when this recruit named no issue (every pre-#441 recruit touches nothing here). */
+async function admitRecruitContextPackage(parsed, client, options) {
+  const request = parsed?.contextPackage ?? null;
+  if (request === null) return null;
+  const reader = options?.issueReader ?? readGitHubIssue;
+  const repoRoot = options?.contextRepoRoot ?? process.cwd();
+  let issue_;
+  try {
+    issue_ = await reader({ issue: request.issue, exec: execFileSync });
+  } catch (error) {
+    if (typeof error?.code === 'string' && Object.hasOwn(CONTEXT_READ_RULES, error.code)) throw error;
+    throw contextReadRefusal('issue_reader_unavailable',
+      `the issue reader is unavailable for issue ${request.issue}: ${error?.message ?? error}`,
+      { field: 'issue', detail: { issue: request.issue, reason: `${error?.message ?? error}` } });
+  }
+  if (!record(issue_) || typeof issue_.body !== 'string') {
+    throw contextReadRefusal('issue_reader_unavailable',
+      `the issue reader answered nothing usable for issue ${request.issue}`,
+      { field: 'issue', detail: { issue: request.issue, reason: 'the reader answered no issue document' } });
+  }
+  const docs = [...new Set([...citedDocsInIssue(issue_.body), ...request.docs])].sort();
+  const branches = [{
+    name: `issue:${request.issue}`,
+    text: renderIssueDocument({ ...issue_, number: request.issue }),
+  }];
+  for (const path of docs) {
+    const bytes = readContextDoc(path, repoRoot);
+    branches.push({
+      name: contextDocBranchName(path, createHash('sha256').update(bytes).digest('hex')),
+      text: bytes.toString('utf8'),
+    });
+  }
+  const admitted = await client.command('package.admit',
+    { name: `issue-${request.issue}`, branches },
+    `${parsed.idempotencyKey}:context-package`);
+  if (!record(admitted) || !/^[a-f0-9]{64}$/u.test(admitted.packageDigest ?? '')) {
+    throw cliError('Baton Web returned an invalid context package admission', 'cli_protocol_failed');
+  }
+  return Object.freeze({ digest: admitted.packageDigest, branches: admitted.branches ?? [] });
+}
 function parseSwarmCli(args, idempotencyKey) {
   if (args[0] !== 'swarm') return null;
   args.shift();
@@ -2199,6 +2405,11 @@ function parseSwarmCli(args, idempotencyKey) {
   // (#331): the caller admits the recruit and waits for THIS seat's admitted / queued / refused
   // row on the swarm's own feed.
   const follow = (verb === 'watch' || verb === 'check' || verb === 'recruit') && flag(args, '--follow');
+  // Issue #441: the recruit's context leg is consumed BEFORE the closed-argv check — `--issue`/
+  // `--doc` are the ROOT's own reading (the root host holds the credential), never wire arguments:
+  // the recruit carries `options.contextPackage = {digest}`. Every other verb refuses them the
+  // #431 way, because no other verb admits them.
+  const contextPackage = verb === 'recruit' ? takeRecruitContextLeg(args) : null;
   assertSwarmArgvClosed(row, args);
   const values = {};
   for (const [index, field] of row.positional.entries()) {
@@ -2259,6 +2470,7 @@ function parseSwarmCli(args, idempotencyKey) {
       ...(values.shareWorkspaceWith === undefined ? {} : { shareWorkspaceWith: values.shareWorkspaceWith }),
       ...(values.resumeFrom === undefined ? {} : { resumeFrom: values.resumeFrom }),
       ...(values.view === undefined ? {} : { view: values.view }),
+      ...(contextPackage === null ? {} : { contextPackage }),
       idempotencyKey,
     };
   }
@@ -2287,7 +2499,11 @@ function parseSwarmCli(args, idempotencyKey) {
       idempotencyKey,
     };
   }
-  return { kind: 'command', name: row.command, args: values, idempotencyKey };
+  return {
+    kind: 'command', name: row.command, args: values,
+    ...(contextPackage === null ? {} : { contextPackage }),
+    idempotencyKey,
+  };
 }
 
 // ── the watch verbs (issue #294) ────────────────────────────────────────────────────────────────
@@ -2322,6 +2538,22 @@ function wakeWatchHelpBlocks(topic) {
     ].join('\n'),
     `wake classes (the closed set --wake-class admits):\n${wakeClassHelpLines().map((line) => `  ${line}`).join('\n')}`,
   ];
+}
+
+/** Issue #441: the recruit's context leg, taught by the ONE help renderer beside the verb — the
+ * parser consumes these flags before the closed-argv check, so the help and the parse must name
+ * the same spelling. */
+function recruitContextHelpBlocks(topic) {
+  if (topic !== 'swarm' && topic !== 'swarm.recruit') return null;
+  return [[
+    'context package:',
+    '  baton swarm recruit <SWARM_ID> <PARTICIPANT_ID> <OBJECTIVE> --issue N [--doc PATH …]',
+    '  --issue N pulls the GitHub issue through this host\'s own `gh` credential and admits ONE',
+    '  ContextPackage whose branches are `issue:N` and `doc:<path>@<sha>` for every repository doc',
+    '  the issue body cites (plus every --doc); the seat\'s brief renders the package and its run',
+    '  carries the attachment (scope worker:<seat>). A worker never calls gh. The reader refuses',
+    '  typed before any effect: issue_reader_unavailable, issue_not_found, context_doc_unreadable.',
+  ].join('\n')];
 }
 
 /** The ONE wake class axis both watch verbs accept (#272). `--wake-class` is the taught spelling
@@ -4398,10 +4630,34 @@ export async function runBatonCli(parsed, client, options = {}) {
         idempotencyKey: parsed.idempotencyKey,
       }, client);
     }
+    // Issue #441: a recruit that named an issue admits the ONE package the seat will read BEFORE
+    // the recruit leaves this process — the digest rides the recruit's options, and the runtime
+    // attaches it to the seat's run. A recruit that named no issue takes this path untouched.
+    if (parsed.name === 'swarm.recruit') {
+      const admitted = await admitRecruitContextPackage(parsed, client, options ?? {});
+      if (admitted !== null) {
+        return client.command(parsed.name, {
+          ...parsed.args,
+          options: {
+            ...(record(parsed.args.options) ? parsed.args.options : {}),
+            contextPackage: { digest: admitted.digest },
+          },
+        }, parsed.idempotencyKey);
+      }
+    }
     return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   }
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
-  if (parsed.kind === 'swarm_recruit_follow') return followSwarmRecruit(parsed, client, options ?? {});
+  if (parsed.kind === 'swarm_recruit_follow') {
+    const admitted = await admitRecruitContextPackage(parsed, client, options ?? {});
+    return followSwarmRecruit(admitted === null ? parsed : {
+      ...parsed,
+      options: {
+        ...(record(parsed.options) ? parsed.options : {}),
+        contextPackage: { digest: admitted.digest },
+      },
+    }, client, options ?? {});
+  }
   if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_watch_filtered') return watchSwarmFiltered(parsed, client);
