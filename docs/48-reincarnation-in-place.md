@@ -403,9 +403,17 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     path reads the incarnation's state first: a withdrawn deployment answers 0 participants and
     `SignalLifecycleOwner` narrates no second drain (`withdrawn` predicate, wired by `baton serve`).
     `host.successor_started` carries `argv` (the spawn spelling) and `log: 'stderr'`; the
-    successor's stderr is teed into the old's serve log. Open beside it: #462 — the successor's
-    seats inherit `BATON_INCARNATION` / `BATON_PREDECESSOR_*`, so an in-process deployment a seat
-    opens believes it is a successor.
+    successor's stderr is teed into the old's serve log.
+14. **The handoff declaration is consumed by the incarnation it names (#462, landed
+    `b3486836`).** The successor reads `BATON_INCARNATION` / `BATON_PREDECESSOR_INCARNATION` /
+    `BATON_PREDECESSOR_PID` / `BATON_PREDECESSOR_COMMIT` / `BATON_REINCARNATION_TARGET` into its
+    own incarnation state at open and deletes the ONE closed list
+    `REINCARNATION_HANDOFF_ENV_KEYS` (derived from the spec that mints them) from its environment
+    in the same act; a malformed declaration is consumed too. Every child environment is built
+    over that declaration-free base (the worker runtime's `baseEnv`, the #459 gate run, the
+    regenerators, a seat's nested `baton serve`), and `#successorSpec` re-bases on it before it
+    mints the NEXT successor's own five keys — so no process an incarnation spawns believes it is
+    a successor, while each reincarnate still hands a fresh declaration to its successor.
 
 Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
 (item 11); the §2 crash-table re-publish arm (item 7); docs/39's wake section naming
