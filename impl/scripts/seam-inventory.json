@@ -12181,9 +12181,19 @@
           ]
         },
         {
+          "name": "_settleCheckoutWriterState",
+          "ordinal": 0,
+          "size": 47,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:key_name"
+          ]
+        },
+        {
           "name": "inspect",
           "ordinal": 0,
-          "size": 663,
+          "size": 702,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -12382,7 +12392,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 627,
+          "size": 635,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
