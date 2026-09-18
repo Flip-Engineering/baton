@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
-  projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
+  SWARM_VIEW_PROJECTIONS, projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
   validateSwarmCommand, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
   swarmKnowledgeCommand, swarmKnowledgePermission, readRecruitContextPackageOption,
   withoutRecruitContextPackageOption } from './swarm-contract.mjs';
@@ -72,17 +72,25 @@ const sliceUtf8 = (text, maxBytes) => {
 };
 // ── repository reads (issue #301) ────────────────────────────────────────────────────────────────
 const GIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-/** One read-only git query over a checkout the deployment itself owns, or null when it cannot be
- * answered (no checkout, detached state the query cannot name, git absent). Never mutates, never
- * invents: a null is "observed nothing", which the derivations below surface as absence. */
-const gitRead = (args, cwd) => {
-  if (typeof cwd !== 'string' || cwd.length === 0) return null;
+/** The ONE place the runtime spawns git: one read-only query over a checkout the deployment
+ * itself owns, reported with WHETHER it answered — `{ ok, out }`. A query that succeeds and
+ * prints nothing is an empty OBSERVATION (a clean `git status` is exactly that, issue #438),
+ * while a failed query, an absent checkout or an absent git is absence, never an empty guess.
+ * Never mutates, never invents. */
+const gitQuery = (args, cwd) => {
+  if (typeof cwd !== 'string' || cwd.length === 0) return { ok: false, out: '' };
   try {
     const ran = spawnSync('git', args, { cwd, encoding: 'utf8' });
-    if (ran.status !== 0 || typeof ran.stdout !== 'string') return null;
-    const out = ran.stdout.trim();
-    return out.length > 0 ? out : null;
-  } catch { return null; }
+    if (ran.status !== 0 || typeof ran.stdout !== 'string') return { ok: false, out: '' };
+    return { ok: true, out: ran.stdout.trim() };
+  } catch { return { ok: false, out: '' }; }
+};
+/** The same query, read as the value the derivations below want: the output, or null when it
+ * cannot be answered (no checkout, detached state the query cannot name, git absent) — "observed
+ * nothing", which every derivation surfaces as absence. */
+const gitRead = (args, cwd) => {
+  const { ok, out } = gitQuery(args, cwd);
+  return ok && out.length > 0 ? out : null;
 };
 /** The checkout facts one worker's session context names: the worktree its process runs in and
  * the repository that worktree was created from. A worker without a recorded checkout reads
@@ -101,17 +109,31 @@ const targetRefOf = (repoRoot) => {
   const branch = gitRead(['symbolic-ref', '--short', 'HEAD'], repoRoot);
   return branch ?? 'HEAD';
 };
+/** The deployment target facts ONE view memoizes per repository (#438): the branch the
+ * deployment's own checkout has current (the branch every Baton worktree forks from) and the
+ * commit it names. Reading them once per repository instead of once per seat is the difference
+ * between a roster read that scales with the fleet and one that scales with the repositories
+ * in it. A caller without a memo (`captureBase`, the capture path's own read) reads live. */
+const targetFactsOf = (repoRoot, memo) => {
+  const cached = memo?.get(repoRoot) ?? null;
+  if (cached !== null) return cached;
+  const targetRef = targetRefOf(repoRoot);
+  const facts = Object.freeze({ targetRef, targetCommit: gitRead(['rev-parse', targetRef], repoRoot) });
+  if (memo) memo.set(repoRoot, facts);
+  return facts;
+};
 /** A participant's base, derived from the repository at read time (issue #301): the commit its
  * checkout shows, the deployment target that checkout is measured against, and how many target
  * commits the checkout lacks — so drift is visible BEFORE a capture, not discovered after one.
- * Unobservable seats (unbound, no checkout recorded) carry `base: null`. */
-const participantBase = (worker) => {
+ * Unobservable seats (unbound, no checkout recorded) carry `base: null`. `memo` is the #438
+ * per-view repository memo above; the live read itself stays the WHOLE record's derivation and
+ * the seat's own scoped read, never the roster slice's (see inspect's read-path policy). */
+const participantBase = (worker, memo = null) => {
   const checkout = checkoutOf(worker);
   if (!checkout) return null;
   const observedHead = gitRead(['rev-parse', 'HEAD'], checkout.worktree);
   if (!observedHead || !GIT_SHA.test(observedHead)) return null;
-  const targetRef = targetRefOf(checkout.repoRoot);
-  const targetCommit = gitRead(['rev-parse', targetRef], checkout.repoRoot);
+  const { targetRef, targetCommit } = targetFactsOf(checkout.repoRoot, memo);
   if (!targetCommit || !GIT_SHA.test(targetCommit)) return null;
   const behind = gitRead(['rev-list', '--count', `${observedHead}..${targetRef}`], checkout.repoRoot);
   return {
@@ -155,17 +177,20 @@ const porcelainPaths = (stdout) => {
   }
   return [...paths].sort();
 };
-/** Issue #357 remainder (#357): the seat worktree's own change set — `git status --porcelain`
- * in the checkout the binding recorded, the same read-only git authority the #301 base
- * derivation above already shells out to at read time. Null when the seat has no checkout
- * or the tree cannot be read: absence, never an empty guess that would silence a gone tree. */
-const worktreeChangedPaths = (worker) => {
-  const checkout = checkoutOf(worker);
-  if (!checkout) return null;
-  const out = gitRead(['status', '--porcelain', '--untracked-files=all'], checkout.worktree);
-  if (out === null) return null;
-  return { worktree: checkout.worktree, paths: porcelainPaths(out) };
-};
+/** Issue #438: the shape ONE cached workspace observation always has. `paths` is null until a
+ * live status read observed the working tree (an empty array is a CLEAN tree, which is evidence;
+ * null is absence), `source` is the closed set of places the row's truth may come from,
+ * `turnEpoch` is the seat's fence epoch when the observation was taken (the turn boundary the
+ * next view compares against), and `target`/`behind` ride along when a live read took the #301
+ * base facts with it. */
+const EMPTY_WORKSPACE_OBSERVATION = Object.freeze({
+  key: null, worktree: null, branch: null, headSha: null, dirty: false, paths: null,
+  observedAt: null, source: 'rows', target: null, behind: null, turnEpoch: null,
+});
+/** The cache is a working set, not a ledger: a long-lived resident must not keep one entry per
+ * workspace it has ever seen. Past the ceiling the oldest observation is evicted — its seat's
+ * row falls back to the durable rows, never to a wrong value. */
+const WORKSPACE_OBSERVATION_CEILING = 512;
 /** A scope entry the matcher cannot read never accuses: an unreadable glob treats every path
  * as in-scope, so a malformed declared scope pages nobody. Silence over a false foreign row. */
 const inDeclaredScope = (path, scope) => {
@@ -594,6 +619,17 @@ export class SwarmRuntime {
     this.deploymentSummary = deploymentSummary;
     this.pending = new Map();
     this.watchController = new AbortController();
+    // Issue #438: the ONE change-driven workspace observation cache every workspace row derives
+    // its live facts from, keyed by the workspace identity (or by its worker when a seat has no
+    // workspace yet) and stamped with the source its truth came from — `rows` when nothing was
+    // observed, else the wrapper's commit, the seat's own turn seam, or an explicit live read.
+    // The read path NEVER spawns git for these facts; the cache is written here, by the events
+    // that can actually change them. Bounded: a long-lived resident must not accumulate one
+    // entry per workspace it has ever seen.
+    this.workspaceObservations = new Map();
+    // Issue #425/#438: how many worker leases the last writer-state projection saw, so a lease
+    // set that changed (a resident restart) is re-projected once instead of on every read.
+    this.projectedLeaseCount = 0;
   }
 
   /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
@@ -1382,16 +1418,14 @@ export class SwarmRuntime {
    * git seam. The projected writer files (runtime-isolation.mjs) are rewritten here — by the
    * ONE component that folds coupling events — on every coupling change and binding, so the
    * file a wrapper reads at commit time cannot go stale: the write happens in the same
-   * synchronous apply path that appended the event, before the mutating answer returns. The
-   * wrappers' own commit observations drain here into the durable rows: attribution always
-   * (`worktree.commit_recorded`), and `swarm.coupling_writer_bypassed` when the observation
-   * saw another seat as the checkout's live writer. A bypass whose named record no longer
-   * matches the fold (a re-declare over another checkout between the act and this drain)
-   * composes no row — a stale sensor line must never refuse the fold nor fabricate a bypass
-   * against a checkout the coupling does not cover. */
-  _settleCheckoutWriterState() {
+   * synchronous apply path that appended the event, before the mutating answer returns.
+   * Issue #438: this half is EVENT-DRIVEN — it is called by the mutating apply paths that can
+   * change a checkout's writer (a coupling change, a binding) and NEVER by a read, so a view
+   * neither rewrites nor re-reads every checkout's writer state. */
+  _projectCheckoutWriterState() {
     const scopes = this.coordinator?._runtimeScopes ?? null;
-    if (!scopes || typeof scopes.takeCommitObservations !== 'function') return;
+    if (!scopes || typeof scopes.projectWriterCoupling !== 'function') return;
+    this.projectedLeaseCount = scopes.leases?.size ?? 0;
     for (const swarm of this.store.swarms()) {
       const writers = new Map();
       for (const record of Object.values(swarm.couplings ?? {})) {
@@ -1412,6 +1446,27 @@ export class SwarmRuntime {
         });
       }
     }
+  }
+
+  /** Issue #425: the wrappers' own commit observations drain here into the durable rows:
+   * attribution always (`worktree.commit_recorded`), and `swarm.coupling_writer_bypassed` when
+   * the observation saw another seat as the checkout's live writer. A bypass whose named record
+   * no longer matches the fold (a re-declare over another checkout between the act and this
+   * drain) composes no row — a stale sensor line must never refuse the fold nor fabricate a
+   * bypass against a checkout the coupling does not cover.
+   * Issue #438: the drain IS the change probe (an empty spool costs one skipped read per
+   * lease and nothing else), so every runtime entry may run it; what it must never do is
+   * rewrite per-checkout state when nothing changed, which is why the writer projection above
+   * no longer rides this path. The observation it takes is ALSO the workspace observation the
+   * roster reads: the seat's wrapper saw this checkout's HEAD at commit time, so the cache is
+   * stamped `wrapper` here and the next view needs no read of its own. */
+  _drainCommitObservations() {
+    const scopes = this.coordinator?._runtimeScopes ?? null;
+    if (!scopes || typeof scopes.takeCommitObservations !== 'function') return;
+    // A lease set that changed since the last projection (a resident restart re-creating its
+    // leases) must not wait for the next coupling change: those lease's writer files are
+    // re-derived once here. The count makes that at most once per lease change, never per read.
+    if ((scopes.leases?.size ?? 0) !== this.projectedLeaseCount) this._projectCheckoutWriterState();
     for (const observation of scopes.takeCommitObservations()) {
       const swarmId = typeof observation.swarmId === 'string' && observation.swarmId.length > 0 ? observation.swarmId : null;
       const participantId = typeof observation.participantId === 'string' && observation.participantId.length > 0 ? observation.participantId : null;
@@ -1424,10 +1479,25 @@ export class SwarmRuntime {
       this.store.recordDriver('worktree.commit_recorded', {
         swarmId, participantId, workspaceId, sha, at, paths,
       }, { actor: 'baton-runtime', key: `worktree-commit:${observationKey}` });
+      // The seat's workspace identity, resolved the same way the composer resolves it: the
+      // observation's own workspace when the wrapper named one, else the seat's durable binding
+      // — the participant row's workspace or its worker's recorded checkout.
+      const swarm = this.store.swarm(swarmId);
+      const seat = swarm?.participants?.[participantId] ?? null;
+      const worker = this.coordinator.list().find((row) => row.id === observation.workerId) ?? null;
+      const seatWorkspaceId = workspaceId
+        ?? (typeof seat?.workspaceId === 'string' && seat.workspaceId.length > 0 ? seat.workspaceId : null)
+        ?? (typeof worker?.sessionContext?.ownerTaskId === 'string' && worker.sessionContext.ownerTaskId.length > 0
+          ? worker.sessionContext.ownerTaskId : null);
+      if (sha !== null) {
+        this._noteWorkspaceObservation(
+          this._workspaceObservationKey(seatWorkspaceId, observation.workerId ?? null),
+          { headSha: sha, ...(at === null ? {} : { observedAt: at }), source: 'wrapper' },
+        );
+      }
       const couplingId = typeof observation.couplingId === 'string' && observation.couplingId.length > 0 ? observation.couplingId : null;
       const writer = typeof observation.writer === 'string' && observation.writer.length > 0 ? observation.writer : null;
       if (couplingId === null || writer === null || writer === participantId) continue;
-      const swarm = this.store.swarm(swarmId);
       const record = swarm
         ? Object.values(swarm.couplings ?? {}).find((row) => row.couplingId === couplingId) ?? null : null;
       if (!record || record.coupling !== 'writer' || record.workspaceId !== workspaceId) continue;
@@ -1437,10 +1507,135 @@ export class SwarmRuntime {
     }
   }
 
+  /** Issue #425: the ONE mutation-path settle — the writer projection a coupling change or a
+   * binding must leave fresh on the lease, then the spool drain those writes then answer to. */
+  _settleCheckoutWriterState() {
+    this._projectCheckoutWriterState();
+    this._drainCommitObservations();
+  }
+
+  /** Issue #438: the cache key one workspace row and its observation share — the workspace
+   * identity when the seat has one, else the worker's own (a checkout observed before any
+   * binding still reads as that worker's row, never as another seat's). */
+  _workspaceObservationKey(workspaceId, workerId) {
+    if (typeof workspaceId === 'string' && workspaceId.length > 0) return workspaceId;
+    return typeof workerId === 'string' && workerId.length > 0 ? `worker:${workerId}` : null;
+  }
+
+  /** Issue #438: ONE live read of one checkout — the whole triple the workspace row shows
+   * (branch, HEAD, dirt) plus the working-tree change set (#357) out of the SAME status call,
+   * so a live observation costs one spawn fewer than the two reads it replaces. Callers, and
+   * the whole of them: an explicit `--participant-id` read of THIS seat (trigger c), the cold
+   * fill a projection carrying the attention rows pays once per workspace, and the refresh a
+   * moved turn seam pays once per turn boundary (trigger b). Never the roster, never a slice
+   * that carries neither. */
+  _readWorkspaceLive(checkout, source, turnEpoch = null) {
+    const branch = gitRead(['branch', '--show-current'], checkout.worktree);
+    const head = gitRead(['rev-parse', 'HEAD'], checkout.worktree);
+    const status = gitQuery(['status', '--porcelain', '--untracked-files=all'], checkout.worktree);
+    return {
+      worktree: checkout.worktree,
+      branch: branch ?? null,
+      headSha: typeof head === 'string' && GIT_SHA.test(head) ? head : null,
+      // A status that ANSWERED is evidence even when it printed nothing: an empty porcelain
+      // report is a clean tree (`paths: []`), which only a FAILED read leaves unknown (null).
+      dirty: status.ok && status.out.length > 0,
+      paths: status.ok ? porcelainPaths(status.out) : null,
+      // The turn seam this observation was taken under (#438 trigger b): the NEXT view compares
+      // the worker row's epoch against this one to learn whether the seat moved on.
+      turnEpoch,
+      observedAt: new Date().toISOString(),
+      source,
+    };
+  }
+
+  /** Issue #438: store one observation, merged over what the cache already knew (a wrapper
+   * observation names a new HEAD and says nothing about the branch or the dirt, so those stay).
+   * `undefined` means "not sent", exactly as it does on the command contract. */
+  _noteWorkspaceObservation(key, observation) {
+    if (key === null || observation === null) return null;
+    const sent = Object.fromEntries(Object.entries(observation).filter(([, value]) => value !== undefined));
+    const next = Object.freeze({ ...(this.workspaceObservations.get(key) ?? EMPTY_WORKSPACE_OBSERVATION),
+      ...sent, key });
+    this.workspaceObservations.set(key, next);
+    if (this.workspaceObservations.size > WORKSPACE_OBSERVATION_CEILING) {
+      const oldest = [...this.workspaceObservations.entries()]
+        .sort((a, b) => compareCanonicalStrings(a[1].observedAt ?? '', b[1].observedAt ?? ''));
+      for (const [evicted] of oldest.slice(0, this.workspaceObservations.size - WORKSPACE_OBSERVATION_CEILING)) {
+        this.workspaceObservations.delete(evicted);
+      }
+    }
+    return next;
+  }
+
+  /** The observation one seat's workspace row stands on. `live` is the caller's explicit
+   * `--participant-id` read of THIS seat — the one place the read path may spawn (#438). */
+  _workspaceObservationFor(worker, workspaceId, { live = false } = {}) {
+    const key = this._workspaceObservationKey(workspaceId, worker?.id ?? null);
+    if (key === null) return null;
+    const cached = this.workspaceObservations.get(key) ?? null;
+    if (!live) return cached;
+    const checkout = checkoutOf(worker);
+    if (!checkout) return cached;
+    return this._noteWorkspaceObservation(key,
+      this._readWorkspaceLive(checkout, 'live', this._turnEpochOf(worker)));
+  }
+
+  /** Issue #438 (b): the seat's turn boundary — the worker row's own fence epoch (#305's
+   * bookkeeping: a new epoch IS a turn boundary). The #305 progress rows ride the worker's
+   * log, which the ledger this runtime folds does not carry (measured: a full turn window of
+   * `turn.progress` rows lands on the log and NONE on the coordination view), so the epoch the
+   * fence table publishes on the worker row is the signal that is actually reachable here. A
+   * seat whose epoch moved since its observation was taken is re-observed ONCE at that
+   * boundary, through the same live read the cold fill and the scoped call already pay — and
+   * only on a projection that reads at all: the roster and the outline never notice, never
+   * spawn. */
+  _turnEpochOf(worker) {
+    return Number.isSafeInteger(worker?.turnEpoch) ? worker.turnEpoch : null;
+  }
+
+  /** Issue #438: the seat worktree's own change set (#357), served from the observation cache
+   * — one observation, reviewed, never a spawn per view. The live `git status` is the COLD fill
+   * and the TURN-SEAM refresh, paid only where the projection actually carries the attention
+   * rows the change set feeds (the roster and the outline never do) and only until that
+   * workspace is observed again: an unchanged workspace answers every later view for free. */
+  _workspaceChangeSetFor(worker, workspaceId, { live = false } = {}) {
+    const key = this._workspaceObservationKey(workspaceId, worker?.id ?? null);
+    if (key === null) return null;
+    const cached = this.workspaceObservations.get(key) ?? null;
+    const epoch = this._turnEpochOf(worker);
+    // Trigger (b): the seat crossed a turn boundary since this workspace was observed.
+    const crossed = epoch !== null && cached !== null && cached.turnEpoch !== epoch;
+    if (cached !== null && cached.paths !== null && !crossed) {
+      return { worktree: cached.worktree ?? checkoutOf(worker)?.worktree ?? null, paths: cached.paths };
+    }
+    if (!live) return null;
+    const checkout = checkoutOf(worker);
+    if (!checkout) return null;
+    const observed = this._noteWorkspaceObservation(key,
+      this._readWorkspaceLive(checkout, crossed ? 'turn' : 'live', epoch));
+    return observed.paths === null ? null : { worktree: checkout.worktree, paths: observed.paths };
+  }
+
+  /** Issue #428/#438: the ONE workspace identity a seat's row resolves — the LIVE worker's
+   * checkout owner when its runtime is live, else the durable binding's workspace, else the
+   * participant row's own. The composer, the change-set fill and the attention derivation all
+   * read this one derivation, so they can never observe the same seat under two identities. */
+  _workspaceIdOf(participant, worker, workspaceIdByParticipant) {
+    const physicalOwnerId = worker && swarmParticipantLiveness(worker).live
+      ? worker.sessionContext?.ownerTaskId ?? null : null;
+    return physicalOwnerId
+      ?? workspaceIdByParticipant.get(participant.participantId) ?? null
+      ?? (typeof participant.workspaceId === 'string' ? participant.workspaceId : null);
+  }
+
   inspect(swarm, principal, context, scopeId = null, projection = SWARM_VIEW_DEFAULT_PROJECTION) {
-    // Issue #425: drain before the projection reads the fold — the rows this settle writes
-    // must be folded into THIS view, so the swarm row is re-read after the settle.
-    this._settleCheckoutWriterState();
+    // Issue #425: drain before the projection reads the fold — the rows this drain writes must
+    // be folded into THIS view, so the swarm row is re-read after it. Issue #438: the drain is
+    // the ONLY half of the settle a read runs; the writer projection is event-driven (a coupling
+    // change, a binding) and the drain itself is the cheap change probe — an empty spool is one
+    // skipped read per lease, and the writer files are not rewritten for a view.
+    this._drainCommitObservations();
     // Issue #364: the restart reconciliation reads the same way — a view is a runtime entry, so
     // the lost seats are folded (and their host leases released) before this view projects them.
     this._reconcileParticipantRuntimes();
@@ -1462,6 +1657,23 @@ export class SwarmRuntime {
     const permissions = caller?.permissions ?? (caller ? DEFAULT_PERMISSIONS : SWARM_PERMISSIONS);
     const workers = this.coordinator.list();
     const ledger = this.store.eventsView();
+    // Issue #438: the ONE read-path spawn policy, derived from the projection contract itself
+    // (SWARM_VIEW_PROJECTIONS — never a second list of projection names): only the WHOLE record
+    // carries the live derivations (#301's read-time base, the #357 change set), because only
+    // the whole record promises the repository as it is now; a slice reads the rows and the
+    // observation cache. `attention` carries the change set's rows, so its cold fill may read
+    // once per workspace; the roster and the outline never do.
+    const projectionShape = SWARM_VIEW_PROJECTIONS[projection] ?? SWARM_VIEW_PROJECTIONS[SWARM_VIEW_DEFAULT_PROJECTION];
+    const wholeRecord = projectionShape.rows === null;
+    const carriesAttention = wholeRecord || projectionShape.rows.includes('attention');
+    // The turn seam (trigger b) rides the worker row's fence epoch, compared inside the
+    // observation cache — never a fold of #305 rows, which this ledger does not carry.
+    // One repository memo per view: the deployment target facts every live base read needs.
+    const repoFacts = new Map();
+    // The workspace identity of each seat's worker, recorded by the participants composer below
+    // and read by the attention derivation (the #357 change set is per checkout, and the
+    // checkout is the one the workspace row already resolved).
+    const workspaceIdByWorker = new Map();
     const delegations = this._delegations(swarm);
     const evidenceFor = this._workEvidence(swarm);
     // Guidance projection: the nudges addressed to each worker, read from the message.sent
@@ -1600,6 +1812,21 @@ export class SwarmRuntime {
       }));
       commitsByParticipant.set(payload.participantId, rows);
     }
+    // Issue #438: the change set's cold fill, taken BEFORE the participant rows are built so a
+    // seat's row reads the same `source` in every view of one unchanged state — the fill IS the
+    // observation the row then shows. Only a projection that carries the attention rows pays it
+    // (the roster, the outline, and the other slices never do), and only until that workspace is
+    // observed: the cache answers every later view with no read at all.
+    if (carriesAttention) {
+      for (const participant of Object.values(swarm.participants)) {
+        if (participant.status !== 'active') continue;
+        const worker = this._workerFor(participant, workers);
+        if (!worker) continue;
+        const workspaceId = this._workspaceIdOf(participant, worker, workspaceIdByParticipant);
+        workspaceIdByWorker.set(worker.id, workspaceId);
+        this._workspaceChangeSetFor(worker, workspaceId, { live: true });
+      }
+    }
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
@@ -1629,21 +1856,25 @@ export class SwarmRuntime {
       const completed = this._seatCompleted(swarm, participant, workers, {
         paused, guidance, contributed: contributors.has(participant.participantId),
       });
-      // The seat's workspace custody (issue #428): the live checkout's facts beside the
-      // durable custody rows, so a REMOVED seat still projects what it held and how the
-      // checkout went. The live reads reuse the #301 read-only git authority; a seat with
-      // no checkout and no custody rows carries workspace: null.
+      // The seat's workspace custody (issue #428): the DURABLE custody rows beside the seat's
+      // own last observation, so a REMOVED seat still projects what it held and how the checkout
+      // went. Issue #438: this row spawns nothing — the live triple comes from the observation
+      // cache, the checkout/binding facts from the rows, and the row SAYS where its truth came
+      // from. A seat with no checkout and no custody rows carries workspace: null.
       const physicalOwnerId = alive ? worker.sessionContext?.ownerTaskId ?? null : null;
-      const workspaceId = physicalOwnerId
-        ?? workspaceIdByParticipant.get(participant.participantId)
-        ?? (typeof participant.workspaceId === 'string' ? participant.workspaceId : null);
+      const workspaceId = this._workspaceIdOf(participant, worker, workspaceIdByParticipant);
       const custody = workspaceId !== null ? custodyByWorkspace.get(workspaceId) ?? null : null;
       const checkout = checkoutOf(worker);
-      const liveBranch = checkout ? gitRead(['branch', '--show-current'], checkout.worktree) : null;
-      const liveHead = checkout ? gitRead(['rev-parse', 'HEAD'], checkout.worktree) : null;
-      const liveDirty = checkout
-        ? (gitRead(['status', '--porcelain'], checkout.worktree) ?? '').length > 0
-        : false;
+      const workerId = worker?.id ?? null;
+      if (workerId !== null) workspaceIdByWorker.set(workerId, workspaceId);
+      // The one place a read may spawn: the caller named THIS seat (issue #438, trigger c).
+      const scopedHere = scopeId !== null && scopeId === participant.participantId;
+      const observation = this._workspaceObservationFor(worker, workspaceId, { live: scopedHere });
+      const liveBase = wholeRecord || scopedHere ? participantBase(worker, repoFacts) : null;
+      if (liveBase !== null && scopedHere) {
+        this._noteWorkspaceObservation(this._workspaceObservationKey(workspaceId, workerId),
+          { target: liveBase.target, behind: liveBase.behind });
+      }
       const workspace = workspaceId === null ? null : Object.freeze({
         ...(physicalOwnerId !== null
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
@@ -1652,11 +1883,16 @@ export class SwarmRuntime {
         // Issue #425: the commits the wrapper attributed to this seat, in ledger order — the
         // workspace projection's per-seat commit list, derived from the durable rows.
         commits: Object.freeze([...(commitsByParticipant.get(participant.participantId) ?? [])]),
-        branch: liveBranch ?? custody?.branch ?? null,
-        headSha: liveHead ?? custody?.headSha ?? null,
+        branch: observation?.branch ?? custody?.branch ?? worker?.sessionContext?.branch ?? null,
+        headSha: observation?.headSha ?? custody?.headSha ?? worker?.sessionContext?.baseSha ?? null,
         snapshotSha: custody?.snapshotSha ?? null,
-        dirty: liveDirty,
+        dirty: observation?.dirty ?? false,
         removed: custody?.removed ?? null,
+        // Issue #438: where this row's live facts came from — the durable rows when nothing was
+        // observed, else the seat's wrapper commit, its own turn seam, or an explicit live read.
+        // Only the SOURCE rides the row: the cache keeps its `observedAt`, and a per-view
+        // timestamp here would make two views of one unchanged state differ by when they ran.
+        source: observation?.source ?? 'rows',
       });
       return { ...clone(participant), mode: recruitModes.get(participant.participantId) ?? 'change',
         delegation: delegations.get(participant.participantId) ?? null,
@@ -1689,9 +1925,16 @@ export class SwarmRuntime {
         // whose harness takes no mid-turn delivery, with its delivery state.
         guidance: [...guidance, ...(parkedGuidanceByParticipant.get(participant.participantId) ?? [])],
         // Drift before capture (issue #301): the base this seat's checkout shows against the
-        // deployment's target, derived from the repository at read time. A seat with no checkout
-        // to observe carries base: null — absence, never a guess.
-        base: participantBase(worker),
+        // deployment's target. The WHOLE record and the seat the caller named read the
+        // repository now; a slice serves the seat's own last observation (its cached head, and
+        // the target/behind a live read took with it) — never a spawn per seat (issue #438).
+        // A seat with no checkout and nothing observed carries base: null, never a guess.
+        base: liveBase ?? (observation === null && checkout === null ? null : {
+          observedHead: observation?.headSha
+            ?? (typeof worker?.sessionContext?.baseSha === 'string' ? worker.sessionContext.baseSha : null),
+          target: observation?.target ?? null,
+          behind: observation?.behind ?? null,
+        }),
         // Issue #442: the typed provider fault this seat's runtime ended under, or null — the
         // class, the exact route it is a fact about, the provider's own reset answer (its instant
         // when the answer zone-qualified one, its text otherwise) and the snapshot the death
@@ -1893,18 +2136,25 @@ export class SwarmRuntime {
     }
     // Issue #357 remainder (#357/#310/#346): three rows from facts the runtime already
     // holds, derived here beside the other organization rows — view-derived, never
-    // ledger-written, never a second store. The worktree change set is read ONCE per
-    // worker (one `git status` per seat per view, the same cost the #301 base read pays)
-    // and shared by the foreign-scope and unpublished-turn rows; the crash projection is
-    // the already-wired `lastCrash` authority; contributions come from the fold above.
-    // How many paths a row may name is the attention-push item bound from the ONE limits
+    // ledger-written, never a second store. Issue #438: the worktree change set is served from
+    // the workspace observation cache — a live `git status` is paid ONLY as the cold fill, and
+    // only where the requested projection carries these rows at all (the roster and the outline
+    // never do) — then shared by the foreign-scope and unpublished-turn rows; the crash
+    // projection is the already-wired `lastCrash` authority; contributions come from the fold
+    // above. How many paths a row may name is the attention-push item bound from the ONE limits
     // registry — never a fresh constant — with the omitted remainder counted, not dropped
     // silently. Only active membership pages: a settled (left) seat was already acted on.
     const attentionPathBound = FRAME_LIMITS['view.attention_push.items'].value;
     const changedByWorker = new Map();
     const changedOf = (worker) => {
       if (!worker) return null;
-      if (!changedByWorker.has(worker.id)) changedByWorker.set(worker.id, worktreeChangedPaths(worker));
+      if (!changedByWorker.has(worker.id)) {
+        // The cold fill already ran (above, before the rows were built) for every projection
+        // that carries these rows; this reads the cache the fill wrote, never the checkout.
+        changedByWorker.set(worker.id, this._workspaceChangeSetFor(
+          worker, workspaceIdByWorker.get(worker.id) ?? null,
+        ));
+      }
       return changedByWorker.get(worker.id);
     };
     const boundSeqByParticipant = new Map();
@@ -3036,11 +3286,12 @@ export class SwarmRuntime {
 
   async _dispatch(command, args, principal, context = null) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
-    // Issue #425: every runtime entry refreshes the projected writer files and drains the
-    // commit spools, so a coupling change or a seat's commit is seen at the next operation —
-    // and the mutating arms below (a coupling declare/release, a recruit binding) settle
-    // again after their writes, before the answer ever returns to the seat.
-    this._settleCheckoutWriterState();
+    // Issue #425: every runtime entry drains the commit spools, so a seat's commit is seen at
+    // the next operation — and the mutating arms below (a coupling declare/release, a recruit
+    // binding) project the writer files again after their writes, before the answer ever returns
+    // to the seat. Issue #438: the writer projection is NOT part of a read — it is written by
+    // the apply paths that can change it, never on every command.
+    this._drainCommitObservations();
     // Issue #364: the same entry reconciles the participant runtime rows against the workers this
     // incarnation recovered — idempotent, so the first operation after a restart folds the lost
     // seats and every later entry is a no-op.
