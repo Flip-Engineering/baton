@@ -10437,10 +10437,21 @@ export class Coordinator {
       // Issue #428: the custody row records exactly what the removal is backed by — the
       // pinned sha and the lane branch that now names it. It rides the coordination ledger
       // (driver.recorded) so the swarm projection derives custody from it.
+      // Issue #453: it also names the SNAPSHOT's own changed paths — `git diff --name-only
+      // base..snapshot` through the same worktree authority every other change reading uses —
+      // never the pre-snapshot working-tree list, which reads 0 for the untracked files a crash
+      // leaves behind and left the row unusable for noticing a carry that carried nothing. An
+      // authority that cannot answer records null (unreadable), never an empty list.
+      let snapshotPaths = null;
+      if (typeof this._worktrees?.changedPathsAtCommit === 'function' && task.sessionContext?.baseSha) {
+        try { snapshotPaths = [...this._worktrees.changedPathsAtCommit(task.sessionContext.baseSha, sha)]; }
+        catch { snapshotPaths = null; }
+      }
       this._coordRecord('worktree.snapshotted', {
         workspaceId: task.sessionContext?.ownerTaskId ?? task.id, participantId: null,
         workerId: handle.id, taskId: task.id, sha, branch: task.sessionContext?.branch ?? null,
         snapshotted: captured?.snapshotted === true, stopSeq: stopEvent?.seq ?? null,
+        paths: snapshotPaths,
       }, `worktree.snapshotted:${handle.id}:${event.seq}`);
       task.checkpoint = checkpoint;
       task.progressPreservation = Object.freeze({ state: 'pinned', eventSeq: event.seq });

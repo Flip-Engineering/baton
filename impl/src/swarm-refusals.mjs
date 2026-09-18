@@ -74,6 +74,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   work_dependency_cycle: row(409, ['fold'], 'the declared dependencies make the work wait on itself through a ring'),
   swarm_participant_unbound: row(409, ['runtime'], 'the seat holds no current worker binding (joined, never bound, or the binding is gone)'),
   swarm_workspace_unavailable: row(409, ['runtime'], 'the shared-checkout guard refuses this claim between the named seats'),
+  // Issue #453: `swarm.recruit --resume-from` found the predecessor's checkout gone and its
+  // snapshot carrying work the successor would not get. The carry is a fact or a refusal — never a
+  // silent no-op that hands the root a successor which lost the work.
+  swarm_workspace_carry_failed: row(409, ['runtime'], 'the predecessor\'s snapshot could not be carried into the successor\'s checkout, so the resume would lose the work it names'),
   swarm_replay_conflict: row(409, ['runtime'], 'the operation or contribution identity already names another request or author'),
   swarm_operation_unconfirmed: row(409, ['runtime'], 'the same idempotencyKey was attempted with an unconfirmed outcome; only swarm.recruit and swarm.holder_released replay under their key'),
   swarm_completion_unproven: row(409, ['runtime'], 'work completion cites no accepted contribution basis that evidences it'),

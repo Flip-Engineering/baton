@@ -125,6 +125,12 @@ const isScopeClaimId = (claimId) => typeof claimId === 'string' && claimId.start
 // shape is named once here rather than re-spelled at each site that carries it.
 const WORKSPACE_ID = /^ws-[a-f0-9]{32}$/u;
 
+// Issue #453: the closed set of outcomes a `resume-from` workspace carry records — `bound` (the
+// successor works in the predecessor's own checkout), `applied` (the checkout was gone and the
+// snapshot's changes were applied to the successor's new one) and `skipped` (nothing was carried,
+// and the row says why). A row recorded before #453 carries none of the three and folds as null.
+export const SWARM_CARRY_HOW = Object.freeze(['bound', 'applied', 'skipped']);
+
 // Issue #296: one exact commit id — sha1 or sha256, never abbreviated. The landing receipt's whole
 // value is that the root can re-run `git show <sha>` against it, so an abbreviated or invented id
 // must refuse at admission rather than land as a receipt nobody can verify.
@@ -701,6 +707,31 @@ export function validateSwarmEvent(kind, payload) {
     if (!isNonEmptyString(p.participantId)) refuse('workspace.carried_from requires participantId', 'invalid_payload');
     if (!WORKSPACE_ID.test(p.workspaceId)) refuse('workspace.carried_from requires a valid workspaceId', 'invalid_payload');
     if (!isNonEmptyString(p.predecessor)) refuse('workspace.carried_from requires predecessor', 'invalid_payload');
+
+    // Issue #453: a carry is a FACT or a REFUSAL. `how` is the closed outcome (SWARM_CARRY_HOW),
+    // absent only on a row recorded before #453 (it folds as null — "not recorded", never an
+    // invented fact); a `skipped` carry must say why, and a carry that happened carries no reason.
+    if (p.how !== undefined && p.how !== null && !SWARM_CARRY_HOW.includes(p.how)) {
+      refuse(`workspace.carried_from how must be one of ${SWARM_CARRY_HOW.join(', ')}`, 'invalid_payload');
+    }
+    const reason = p.reason ?? null;
+    if (p.how === 'skipped') {
+      if (reason === null || typeof reason !== 'object' || Array.isArray(reason)) {
+        refuse('workspace.carried_from requires a reason for a skipped carry', 'invalid_payload');
+      }
+      if (Array.isArray(reason.missing)) {
+        if (reason.missing.length === 0 || !reason.missing.every(isNonEmptyString)
+          || reason.error !== undefined) {
+          refuse('workspace.carried_from reason {missing} must name the inputs the carry lacked',
+            'invalid_payload');
+        }
+      } else if (!isNonEmptyString(reason.error)) {
+        refuse('workspace.carried_from reason must be {missing: [...]} or {error: <text>}',
+          'invalid_payload');
+      }
+    } else if (reason !== null && reason !== undefined) {
+      refuse('workspace.carried_from reason belongs to a skipped carry only', 'invalid_payload');
+    }
     if (!Array.isArray(p.paths) || !p.paths.every(isNonEmptyString)) {
       refuse('workspace.carried_from requires paths as an array of non-empty strings', 'invalid_payload');
     }
@@ -1665,6 +1696,12 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
         workspaceId: p.workspaceId, predecessor: p.predecessor,
         paths: Object.freeze([...p.paths]),
         snapshotSha: p.snapshotSha ?? null,
+        // #453: the outcome and, for a skip, why — a pre-#453 row folds null/null, never a guess.
+        how: p.how ?? null,
+        reason: p.reason === undefined || p.reason === null ? null
+          : Object.freeze(Array.isArray(p.reason.missing)
+            ? { missing: Object.freeze([...p.reason.missing]) }
+            : { error: p.reason.error }),
         seq: meta.seq, ts: meta.ts,
       }),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,

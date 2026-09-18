@@ -2197,12 +2197,36 @@ export function workspaceExists(repoRoot, taskId) {
   return existsSync(dir);
 }
 
+/** #453: the bounded cause of a failed snapshot carry — the git stderr tail (the #326 discipline:
+ * a readable line, never a raw `Command failed` dump) — kept on the error so the refusal that
+ * answers it names the reason instead of swallowing it into an empty carry. */
+const SNAPSHOT_CARRY_TAIL_BYTES = 480;
+function snapshotCarryFailure(cwd, error) {
+  const stderr = Buffer.isBuffer(error?.stderr) ? error.stderr.toString('utf8') : String(error?.stderr ?? '');
+  const text = stderr.trim().length > 0 ? stderr.trim() : String(error?.message ?? error);
+  const tail = text.slice(-SNAPSHOT_CARRY_TAIL_BYTES);
+  return Object.assign(new Error(`snapshot carry into ${cwd} failed: ${tail}`), {
+    code: 'snapshot_carry_failed', detail: tail, cause: error,
+  });
+}
+
 /** Apply the diff between baseSha and snapshotSha from the repository into a target worktree.
- * Used when a predecessor's workspace was removed but its snapshot commit is available. */
+ * Used when a predecessor's workspace was removed but its snapshot commit is available. Returns
+ * the changed paths the target now holds; a failure throws with its bounded cause on `detail`
+ * (#453), never a silently empty carry. */
 export function applySnapshotToWorktree(repoRoot, snapshotSha, targetDir, baseSha) {
-  const patch = gitFile(['diff', '--binary', baseSha, snapshotSha], repoRoot, { encoding: 'buffer' });
+  let patch;
+  try {
+    patch = gitFile(['diff', '--binary', baseSha, snapshotSha], repoRoot, { encoding: 'buffer' });
+  } catch (error) {
+    throw snapshotCarryFailure(targetDir, error);
+  }
   if (patch.length > 0) {
-    execFileSync('git', ['apply', '--whitespace=nowarn'], { cwd: targetDir, input: patch });
+    try {
+      gitFile(['apply', '--whitespace=nowarn'], targetDir, { input: patch, stdio: 'pipe' });
+    } catch (error) {
+      throw snapshotCarryFailure(targetDir, error);
+    }
   }
   return changedPathsFromBase(targetDir, baseSha);
 }
