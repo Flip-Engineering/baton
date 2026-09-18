@@ -323,27 +323,7 @@ export class BatonWebHost {
       // it — down twice on 2026-09-18. Each accepted connection gets a handler that ends only
       // that connection and narrates once; a malformed request (`clientError`) is answered by
       // closing that socket. Neither ever reaches `process`.
-      if (typeof this.server.on === 'function') {
-        // One connection counts once, whichever event reaches it first: Node's own http error
-        // path and the destroy below re-raise 'error' on the same socket.
-        const counted = new WeakSet();
-        const ended = (socket, error) => {
-          if (counted.has(socket)) return;
-          counted.add(socket);
-          this.clientSocketErrors += 1;
-          // Node routes a transport error on a parsing socket through 'clientError' too, so the
-          // narration reads the ERROR (a parser code is a malformed request; anything else is
-          // the peer's connection ending), never the event it happened to arrive on.
-          const code = errorCode(error);
-          const what = /^HPE_/u.test(code) ? 'malformed client request' : 'client connection';
-          this._say(`baton serve: ${what} ended by ${code} (${this.clientSocketErrors} so far); the resident goes on`);
-          try { socket.destroy(); } catch { /* already gone */ }
-        };
-        this.server.on('connection', (socket) => {
-          socket.on('error', (error) => ended(socket, error));
-        });
-        this.server.on('clientError', (error, socket) => ended(socket, error));
-      }
+      this._guardClientSockets(this.server);
       try {
         if (this.listenOptions.path) this.server.listen(this.listenOptions.path);
         else this.server.listen(this.listenOptions.port, this.listenOptions.host);
@@ -358,6 +338,31 @@ export class BatonWebHost {
    * it reports on (a redirected sink that throws is a broken log, not a broken shutdown). */
   _say(line) {
     try { this.report(line); } catch { /* the lifecycle this line describes goes on */ }
+  }
+
+  /** Issue #383: every server this host owns (the local transport AND the wake binding — the
+   * third EPIPE of 2026-09-18 came through the wake server) gets the same guard. One connection
+   * counts once, whichever event reaches it first: Node's own http error path and the destroy
+   * below re-raise 'error' on the same socket. */
+  _guardClientSockets(server) {
+    if (typeof server?.on !== 'function') return;
+    const counted = new WeakSet();
+    const ended = (socket, error) => {
+      if (!socket || counted.has(socket)) return;
+      counted.add(socket);
+      this.clientSocketErrors += 1;
+      // Node routes a transport error on a parsing socket through 'clientError' too, so the
+      // narration reads the ERROR (a parser code is a malformed request; anything else is the
+      // peer's connection ending), never the event it happened to arrive on.
+      const code = errorCode(error);
+      const what = /^HPE_/u.test(code) ? 'malformed client request' : 'client connection';
+      this._say(`baton serve: ${what} ended by ${code} (${this.clientSocketErrors} so far); the resident goes on`);
+      try { socket.destroy(); } catch { /* already gone */ }
+    };
+    server.on('connection', (socket) => {
+      socket.on('error', (error) => ended(socket, error));
+    });
+    server.on('clientError', (error, socket) => ended(socket, error));
   }
 
   /** #276(1): what this host will do, in one line, the moment a signal arrives. */
@@ -424,6 +429,7 @@ export class BatonWebHost {
       res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'content-length': '46' });
       res.end('{"ok":false,"error":{"code":"not_found"}}');
     });
+    this._guardClientSockets(server);
     const binding = attachWakeWebSocket({ server, stream, authenticate });
     this.wakeBinding = Object.freeze({ server, ...binding });
     server.once('error', () => { try { server.close(); } catch { /* never bound */ } });

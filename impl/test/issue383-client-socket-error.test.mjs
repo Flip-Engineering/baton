@@ -96,3 +96,41 @@ test('#383 (c): the host starts with zero client socket errors and the counter i
   const { host } = fixture(t);
   assert.equal(host.clientSocketErrors, 0);
 });
+
+test('#383 (d): the wake binding is a second server the host owns — its accepted sockets carry the same guard', async (t) => {
+  // The third EPIPE of 2026-09-18 came through the wake server, not the local transport.
+  const directory = mkdtempSync('/tmp/bt383-wake-');
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const coordination = new CoordinationStore(join(directory, 'coordination'));
+  const sessions = new WebSessionStore(join(directory, 'sessions'));
+  const commands = Object.entries(APPLICATION_COMMAND_DEFINITIONS).filter(([, d]) => d.web).map(([name]) => name);
+  const application = {
+    repoId: REPO, ready: Promise.resolve(),
+    card() { return { schemaVersion: 1, repoId: REPO, commands, agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } }; },
+    async authorizeReplay() { return true; },
+    async command() { return { schemaVersion: 1, items: [], continuation: null }; },
+    async shutdown() { return { schemaVersion: 1, state: 'closed', ownership: { workers: 0 } }; },
+  };
+  const web = new WebNorthbound({ coordinator: new Proxy({}, { get: () => () => [] }), coordination, sessions, application, repoIds: [REPO], allowedOrigins: [ORIGIN] });
+  const server = createLocalAuthenticatedWebServer(web);
+  const port = 40_000 + Math.floor(Math.random() * 20_000);
+  const lines = [];
+  const host = new BatonWebHost({
+    application, server, listen: { path: join(directory, 'resident.sock') }, wakes: { host: '127.0.0.1', port }, webDrainMs: 2_000,
+    report: (line) => lines.push(line),
+    shutdownPrincipal: { actor: 'deployment:resident', principalId: 'local-owner', sessionId: 'local-owner-session' },
+  });
+  await host.start();
+  t.after(() => host.shutdown?.({ trigger: { kind: 'test' } }).catch(() => {}));
+  const wakeServer = host.wakeBinding?.server;
+  assert.ok(wakeServer, 'the wake binding published its server');
+  const accepted = new Promise((resolve) => wakeServer.once('connection', resolve));
+  const client = connect({ host: '127.0.0.1', port });
+  const serverSide = await accepted;
+  const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE', errno: -32, syscall: 'write' });
+  assert.doesNotThrow(() => serverSide.emit('error', epipe), 'the wake server\'s accepted socket has an error handler');
+  client.destroy();
+  await sleep(20);
+  assert.equal(host.clientSocketErrors, 1, 'the wake connection counted on the same counter');
+  assert.ok(lines.some((line) => /client connection ended by EPIPE \(1 so far\)/u.test(line)), `narrated: ${JSON.stringify(lines)}`);
+});
