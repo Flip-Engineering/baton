@@ -9374,9 +9374,27 @@ export class CoordinationStore {
       throw new CoordinationRefusal('Context Program authority is unavailable', 'context_package_unavailable');
     }
     const normalized = this._normalizeContextPackage(fields, false);
+    // Issue #455: a ContextPackage is CONTENT-ADDRESSED — the digest IS `canonicalDigest` of the
+    // normalized body above (docs/32 §3.3's immutable, digest-named branches; docs/47 §6's "no
+    // mutable refs") — so a second admission of an already-admitted digest is not a conflict: it is
+    // the SAME package, and the record that already holds it is this call's answer. What stood here
+    // was a `context_package_conflict` refusal, and it refused every second lane on one issue, every
+    // `--resume-from` successor and every re-recruit after a provider fault (#442's own remedy) at
+    // the door — the #441 recruit leg could never re-read the world it had already read.
+    //
+    // `context_package_conflict` is RETIRED from this path rather than narrowed to "a different
+    // package claiming the same identity": equal digest implies an equal normalized body, so no such
+    // pair exists to judge here. A reuse appends nothing and re-resolves nothing — the admission is
+    // the durable fact, and `resolveContextPackageBranch` stays the one lazy revalidation point
+    // (docs/47 §93.5) — while a changed body or a changed doc ref is a different digest and takes
+    // the fresh-admission path below, leaving every older run on the package it was admitted with.
     if (this._contextPackages.has(normalized.packageDigest)) {
-      throw new CoordinationRefusal(`duplicate context package ${normalized.packageDigest}`,
-        'context_package_conflict');
+      const reused = this.contextPackage(normalized.packageDigest);
+      return {
+        ok: true, result: 'reused', reused: true,
+        event: clone(this._events[reused.admittedEvent - 1]),
+        package: reused,
+      };
     }
     for (const branch of normalized.branches) this._resolveContextPackageBranchContent(branch, false);
     const { packageId: _packageId, ...payload } = normalized;
