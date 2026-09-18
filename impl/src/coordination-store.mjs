@@ -856,6 +856,11 @@ export class CoordinationStore {
     // replay, and the temp files it swept. Both are reported through `startupStatus()`
     // non-enumerably, like #397's reason/detail, so the pinned enumerable shape stays exact.
     this._checkpointRewrite = null;
+    // G-7: the rows the running replay has READ so far — the progress dimension that moves while
+    // a covered prefix is rebuilt, read by `startupStatus()` and reported non-enumerably there so
+    // the pinned enumerable startup shape stays exact.
+    this._startupReadEvents = null;
+    this._startupReplayedEvents = null;
     this._checkpointSweep = null;
     // Issue #351: the resident's stop outcome, armed by the deployment that owns the stop and
     // minted by the release itself — see armHostStopOutcome.

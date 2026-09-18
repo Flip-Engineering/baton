@@ -7,6 +7,8 @@
 //   G-35  reconcile keeps this authority's own live verify reservation
 //   G-33  materialize derives the verify label from the reservation's recorded resource id
 //   G-4   contribution_check_unconfirmed carries the new-checkId remedy as gracefulPath
+//   G-7   a startup failure keeps the counts the open had, and the archived replay reports progress
+//   G-42  the capacity lock wait yields the event loop, and the live admission path takes it
 //
 // The G-32 fixture is a real repository of enough paths: 6000 tracked paths of ~226 bytes put
 // every listing the cited calls run — `status` (~1.4 MB), `ls-tree -r -l -z` (~1.7 MB),
@@ -15,18 +17,21 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { ContributionService } from '../src/contribution-service.mjs';
+import { CoordinationStore, loadCoordinationStoreAsync } from '../src/coordination-store.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 import {
   DirtyRepoError, createFromBase, gitListingMaxBuffer, pinBaseSha, sparseCheckoutIdentity,
 } from '../src/worktree.mjs';
 import {
   WorktreeCapacityAuthority, loadOrCreateWorktreeCapacityIntegrityKey,
 } from '../src/worktree-capacity.mjs';
+import { createBrief, createDriver, MockAdapter } from '../src/index.mjs';
 
 const SHA_40 = /^[a-f0-9]{40}$/u;
 const BULK_COUNT = 6000; // ls-tree -r -l -z over these paths is ~1.7 MB; status ~1.4 MB
@@ -330,4 +335,216 @@ test('G-4: a spent check identity refuses with the new-checkId gracefulPath', as
   assert.equal(recorded.code, 'worktree_capacity_exceeded');
   assert.deepEqual(recorded.verificationAttempt, { verifierStarted: false });
   assert.match(recorded.gracefulPath ?? '', /mint a new checkId/u);
+});
+
+
+// ============================================================
+// G-7 — the startup report keeps the counts it had, and the archived replay reports progress
+// ============================================================
+
+/** A synthetic ledger of `rows` coordination rows written as raw bytes (the #351 fixture shape):
+ * cheap to build at the sizes the replay's own chunk bound needs, and a history the fold replays. */
+function seedLedger(directory, rows) {
+  mkdirSync(directory, { recursive: true });
+  const chunks = [];
+  for (let seq = 1; seq <= rows; seq += 1) {
+    chunks.push(JSON.stringify({
+      schemaVersion: 1, seq, ts: '2026-09-18T00:00:00.000Z', kind: 'mcp.audit', actor: 'issue285-fixture',
+      idempotencyKey: `issue285:${seq}`, payload: { seq, tool: 'coordination.read', body: 'x'.repeat(120) },
+    }));
+    if (chunks.length === 4_096) { appendFileSync(join(directory, 'events.jsonl'), `${chunks.join('\n')}\n`); chunks.length = 0; }
+  }
+  if (chunks.length > 0) appendFileSync(join(directory, 'events.jsonl'), `${chunks.join('\n')}\n`);
+}
+
+test('G-7: a startup failure reports the counts the open already had, never zeros', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-issue285-g7-failure-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const rows = 5;
+  const store = new CoordinationStore(directory);
+  for (let seq = 1; seq <= rows; seq += 1) {
+    store.recordDriver(`g7.row.${seq}`, { seq }, { actor: 'test:issue285', key: `issue285:g7:${seq}` });
+  }
+  store.releaseWriterLease({ requireOwned: true });
+  // The release wrote a checkpoint covering every good row; drop it so the reopen folds the ledger
+  // itself and the refusal is the FIRST failure the fold meets.
+  rmSync(join(directory, 'projection.checkpoint'), { force: true });
+  // A durable row the fold refuses (the legacy wave roster): replay dies at seq `rows + 1` after
+  // folding every row before it.
+  appendFileSync(join(directory, 'events.jsonl'), `${JSON.stringify({
+    schemaVersion: 1, seq: rows + 1, ts: '2026-09-18T00:00:00.000Z', kind: 'driver.recorded',
+    actor: 'legacy-store', idempotencyKey: 'issue285:g7:legacy',
+    payload: { kind: 'wave.started', waveId: 'w-legacy', roster: 'garbage' },
+  })}\n`);
+
+  let failure = null;
+  assert.throws(() => new CoordinationStore(directory, {
+    startupProgress: (entry) => { failure = entry; },
+  }), (error) => error?.code === 'wave_registry_invalid');
+  assert.equal(failure.state, 'failed');
+  assert.equal(failure.totalEvents, rows + 1, 'the failure names the ledger size the open had counted');
+  assert.equal(failure.replayedEvents, rows, 'and how many rows it had folded when the fold refused');
+  assert.equal(failure.checkpointEvents, 0, 'no row was served by a checkpoint');
+});
+
+test('G-7: the archived replay reports progress while the segments and the covered prefix are rebuilt', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-issue285-g7-progress-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const chunk = FRAME_LIMITS['view.wake_replay.items'].value;
+  const rows = chunk * 4;
+  const cut = chunk * 2 + 1;
+  seedLedger(directory, rows);
+  const writer = new CoordinationStore(directory);
+  const receipt = writer.compact({ beforeSeq: cut });
+  assert.equal(receipt.archivedThroughSeq, cut - 1, 'the fixture archives one segment of `cut - 1` rows');
+  writer.releaseWriterLease({ requireOwned: true });
+
+  const reopened = new CoordinationStore(directory, { deferLoad: true });
+  const snapshots = [];
+  let settled = false;
+  const pending = loadCoordinationStoreAsync(reopened).then(
+    () => { settled = true; },
+    (error) => { settled = true; throw error; },
+  );
+  while (!settled) {
+    snapshots.push(reopened.startupStatus());
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+  }
+  await pending;
+
+  const segmentReports = snapshots.filter((entry) => entry.state === 'replaying'
+    && entry.replayedEvents > 0 && entry.replayedEvents < cut - 1);
+  assert.ok(segmentReports.length > 0,
+    'the segment fold reports progress while the archived prefix is folded');
+  const readReports = snapshots.filter((entry) => entry.state === 'replaying'
+    && (entry.readEvents ?? 0) > 0 && (entry.readEvents ?? 0) < rows);
+  assert.ok(readReports.length > 0, 'the covered-prefix rebuild reports its own progress');
+  const status = reopened.startupStatus();
+  assert.equal(status.state, 'ready');
+  assert.equal(status.totalEvents, rows, 'the archived prefix is counted in the ledger size');
+  assert.equal(status.replayedEvents, cut - 1, 'the rows whose fold ran are the archived prefix');
+  assert.equal(status.checkpointEvents, rows - (cut - 1), 'the covered window is served by the checkpoint');
+  assert.equal(status.checkpointEvents + status.replayedEvents, status.totalEvents,
+    'every row is either served by the checkpoint or folded — the counts the open had are never dropped');
+});
+
+
+// ============================================================
+// G-42 — the capacity lock wait yields the event loop
+// ============================================================
+
+const HOLD_MS = 600;         // how long the holder process owns the lock
+const RELEASE_LAG_MS = 150;  // the gap between the holder's "my hold ends" signal and its release
+const BEAT_MS = 5;           // the heartbeat the parent measures the loop's freedom with
+const BEATS_FLOOR = 5;       // 600ms of a free loop beats far more than this; a blocked loop beats none
+
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+async function until(fn, label, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await fn()) return;
+    await sleep(5);
+  }
+  throw new Error(`timeout waiting for ${label}`);
+}
+
+/** A holder process that owns the repository lock across a real wait: it signals readiness from
+ * inside the injected `observe` (called while the lock is held) and signals the end of its hold
+ * just before releasing, so the parent measures the loop's freedom inside exactly that window. */
+function holderSource() {
+  return `
+import fs from 'node:fs';
+import { WorktreeCapacityAuthority, loadOrCreateWorktreeCapacityIntegrityKey } from ${JSON.stringify(new URL('../src/worktree-capacity.mjs', import.meta.url).href)};
+const [repoRoot, readyPath, releasePath, policyJson, requestJson] = process.argv.slice(2);
+const buffer = new Int32Array(new SharedArrayBuffer(4));
+const authority = new WorktreeCapacityAuthority({
+  repoRoot,
+  policy: JSON.parse(policyJson),
+  integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(repoRoot),
+  estimate: () => ({ bytes: 40, inodes: 3 }),
+  observe: () => {
+    fs.writeFileSync(readyPath, 'held');
+    Atomics.wait(buffer, 0, 0, ${HOLD_MS});
+    fs.writeFileSync(releasePath, 'released');
+    // The signal precedes the release by a real gap, so the parent's "it had not landed yet"
+    // reading is a fact about the waiter rather than a race with the waiter's own poll.
+    Atomics.wait(buffer, 0, 0, ${RELEASE_LAG_MS});
+    return { freeBytes: 1 << 30, freeInodes: 1 << 20 };
+  },
+});
+authority.reserve('worker:g42-holder', JSON.parse(requestJson));
+`;
+}
+
+test('G-42: the promise-returning wave waits for the lock without freezing the event loop', async (t) => {
+  const fixture = capacityFixture('g42-wait');
+  t.after(() => rmSync(fixture.dir, { recursive: true, force: true }));
+  const readyPath = join(fixture.dir, 'g42-ready');
+  const releasePath = join(fixture.dir, 'g42-release');
+  const childPath = join(fixture.dir, 'g42-holder.mjs');
+  writeFileSync(childPath, holderSource());
+  const holder = spawn(process.execPath, [
+    childPath, fixture.dir, readyPath, releasePath, JSON.stringify(POLICY), JSON.stringify(fixture.request),
+  ], { stdio: 'ignore' });
+  t.after(() => { try { holder.kill('SIGKILL'); } catch { /* already gone */ } });
+  await until(() => existsSync(readyPath), 'the holder to take the lock');
+
+  const beats = { count: 0 };
+  const timer = setInterval(() => { beats.count += 1; }, BEAT_MS);
+  t.after(() => clearInterval(timer));
+  let settled = false;
+  const pending = fixture.authority.reserveManyAsync([{ id: 'worker:g42-async', request: fixture.request }])
+    .then((rows) => { settled = true; return rows; });
+  await until(() => existsSync(releasePath), 'the holder to end its hold');
+  const beatsDuringHold = beats.count;
+  assert.equal(settled, false, 'the async wave waits for the live holder instead of landing early');
+  assert.ok(beatsDuringHold >= BEATS_FLOOR,
+    `the event loop kept beating while the lock was held (${beatsDuringHold} beats)`);
+  const rows = await pending;
+  clearInterval(timer);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'worker:g42-async');
+  assert.equal(fixture.authority.snapshot().reservations.some((row) => row.id === 'worker:g42-async'), true,
+    'the wave landed under the same identity the sync cadence mints');
+});
+
+test('G-42: the advisory admission path reserves through the async cadence, never the blocking twin', async (t) => {
+  const { dir } = makeRepo('g42-wire', [['src/selected.txt', 'selected\n']]);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const logDir = mkdtempSync(join(tmpdir(), 'baton-issue285-g42-log-'));
+  t.after(() => rmSync(logDir, { recursive: true, force: true }));
+  const driver = createDriver({
+    repoRoot: dir,
+    logDir,
+    repoId: 'issue285-g42',
+    adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [] } }) },
+    worktreeCapacity: POLICY,
+    worktreeCapacityEstimate: () => ({ bytes: 40, inodes: 3 }),
+    worktreeCapacityObserve: () => ({ freeBytes: 1 << 30, freeInodes: 1 << 20 }),
+  });
+  t.after(async () => {
+    try { await driver.drainAndClose('issue285:g42-wire'); }
+    catch { try { driver.coordination.releaseWriterLease(); } catch { /* best effort */ } }
+  });
+  await driver.ready;
+
+  const facade = driver.coordinator._worktrees;
+  const asyncCalls = [];
+  const syncCalls = [];
+  const reserveCapacityAsync = facade.reserveCapacityAsync.bind(facade);
+  facade.reserveCapacityAsync = (...args) => { asyncCalls.push(args[0]); return reserveCapacityAsync(...args); };
+  const reserveCapacity = facade.reserveCapacity.bind(facade);
+  facade.reserveCapacity = (...args) => { syncCalls.push(args[0]); return reserveCapacity(...args); };
+
+  await driver.coordinator.spawn('mock', createBrief({
+    goal: 'reserve through the async cadence',
+    constraints: [],
+    pathScope: ['src/**'],
+    definitionOfDone: 'the advisory admission took the promise-returning cadence',
+    verification: { command: 'true', expectExit: 0, timeoutMs: 2_000 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }), { taskId: 'g42-wire' });
+  assert.deepEqual(asyncCalls, ['g42-wire'], 'the advisory spawn reserved through the promise-returning cadence');
+  assert.deepEqual(syncCalls, [], 'and never through the blocking twin');
 });

@@ -171,6 +171,14 @@ export function startupStatus(store) {
       value: clone(store._checkpointSweep), enumerable: false,
     });
   }
+  // G-7: the rows the replay had READ when this report was composed — the dimension that moves
+  // while a covered prefix is rebuilt and not folded. Non-enumerable like #397's reason/detail
+  // above, and for the same reason: the pinned enumerable shape stays exact, so a spread/JSON
+  // reader never sees it and the deployment's startup row reads it explicitly.
+  if ((state.state === 'replaying' || state.state === 'failed')
+    && Number.isSafeInteger(store._startupReadEvents)) {
+    Object.defineProperty(report, 'readEvents', { value: store._startupReadEvents, enumerable: false });
+  }
   return report;
 }
 
@@ -390,16 +398,38 @@ export function _load(store, opts = {}) {
   }
 }
 
+/** G-7: the failure keeps the counts the open had ALREADY reported — a replay that died part-way
+ * says how far it got instead of reporting zeros. `checkpoint: 'unusable'` still names that the
+ * open produced no state, and the failure record below stays the repair's warrant. */
 function _reportLoadFailure(store, error) {
+  const prior = store._startupState ?? null;
   _reportStartup(store, {
-    schemaVersion: 1, state: 'failed', source: 'ledger', totalEvents: 0,
-    checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unusable',
+    schemaVersion: 1, state: 'failed',
+    source: prior?.source ?? 'ledger',
+    totalEvents: prior?.totalEvents ?? 0,
+    checkpointEvents: prior?.checkpointEvents ?? 0,
+    replayedEvents: Number.isSafeInteger(store._startupReplayedEvents)
+      ? store._startupReplayedEvents : (prior?.replayedEvents ?? 0),
+    checkpoint: 'unusable',
     // Issue #290: a fold refusal names the seq it died on, so the operator can pass exactly
     // that seq to the quarantine verb — the failure record is the repair's warrant.
     failure: {
       code: error?.code ?? 'coordination_startup_failed',
       seq: error?.coordinationSeq ?? null,
     },
+  });
+}
+
+/** G-7: ONE composition for the replay's progress reports. `replayedEvents` counts the rows whose
+ * fold has RUN — monotone through every pass, so `checkpointEvents + replayedEvents` totals the
+ * ledger — and both counters live on the store while a load runs, so a failure mid-fold reports
+ * the exact count it had rather than the last chunk boundary's. `readEvents` rides
+ * `startupStatus()` non-enumerably, exactly as #397's reason/detail and #449's rewrite/sweep do:
+ * the pinned enumerable startup shape stays exact. */
+function _reportReplayProgress(store, { source, totalEvents, checkpointEvents, checkpoint }) {
+  _reportStartup(store, {
+    schemaVersion: 1, state: 'replaying', source, totalEvents,
+    checkpointEvents, replayedEvents: store._startupReplayedEvents, checkpoint, failure: null,
   });
 }
 
@@ -458,11 +488,13 @@ function _loadPlan(store) {
   const segmentEvents = (segments.segments ?? []).reduce((sum, segment) => sum + (segment.throughSeq - segment.fromSeq + 1), 0);
   const totalEvents = checkpoint.coversSeq + lines.length;
   const source = _replaySource(checkpoint.state, { base, tailRows: lines.length, ledgerBytes: raw.byteLength });
-  _reportStartup(store, {
-    schemaVersion: 1, state: 'replaying',
-    source,
-    totalEvents, checkpointEvents: checkpoint.coversSeq - base, replayedEvents: 0,
-    checkpoint: checkpoint.state, failure: null,
+  // G-7: the plan's own report opens the progress sequence at zero read / zero folded; every pass
+  // below advances the live counters and reports as it runs, so the archived prefix is silent only
+  // for the stretch it is actually working through.
+  store._startupReplayedEvents = 0;
+  store._startupReadEvents = 0;
+  _reportReplayProgress(store, {
+    source, totalEvents, checkpointEvents: checkpoint.coversSeq - base, checkpoint: checkpoint.state,
   });
   return {
     raw, base, segments, checkpoint, prefixLines, lines, segmentEvents, totalEvents, source,
@@ -493,6 +525,15 @@ function* _loadRun(store, plan) {
   let restoredCoversSeq = checkpoint.coversSeq;
   let restoredSource = source;
   let adopted = false;
+  // G-7: the fold's own progress, reported as each pass runs. The two counters live on the store
+  // (`_startupReplayedEvents` counts rows whose fold has RUN — monotone through every pass, so
+  // `checkpointEvents + replayedEvents` totals the ledger; `_startupReadEvents` counts rows read
+  // back so far, the dimension that moves while a covered prefix is rebuilt and not folded), so a
+  // failure mid-fold reports the exact count it had. Both are composed by _reportReplayProgress.
+  const reportProgress = () => _reportReplayProgress(store, {
+    source: restoredSource, totalEvents, checkpointEvents: restoredCoversSeq - base,
+    checkpoint: restoredState,
+  });
   store._loading = true;
   try {
     // Issue #465(4): ONE derivation of "the ledger says this row" — shared by the cold replay path
@@ -509,6 +550,7 @@ function* _loadRun(store, plan) {
       const frozen = freeze(event);
       store._events.push(frozen);
       store._byKey.set(frozen.idempotencyKey, frozen);
+      store._startupReadEvents += 1;
       return frozen;
     };
     // Issue #290: a quarantined seq keeps its durable bytes parsed in the ledger (sequence
@@ -548,14 +590,15 @@ function* _loadRun(store, plan) {
       for (let offset = 0; offset < segmentLines.length; offset += 1) {
         const index = segment.fromSeq - 1 + offset;
         foldRow(readRow(parsed(segmentLines[offset], `coordination segment ${segment.digest} line ${offset + 1}`), index));
-        if (breathe()) yield;
+        store._startupReplayedEvents += 1;
+        if (breathe()) { reportProgress(); yield; }
       }
     }
     // The rows the checkpoint's projection covers: read back from the ledger file the checkpoint's
     // digest proved, indexed, and NOT folded — the state that fold produced is the body's.
     for (let offset = 0; offset < prefixLines.length; offset += 1) {
       readRow(parsed(prefixLines[offset], `coordination line ${base + offset + 1}`), base + offset);
-      if (breathe()) yield;
+      if (breathe()) { reportProgress(); yield; }
     }
     if (checkpoint.projection !== null) {
       const problem = yield* _adoptProjectionCheckpoint(store, checkpoint);
@@ -571,23 +614,20 @@ function* _loadRun(store, plan) {
       }
     }
     if (!adopted) {
-      // The covered rows, folded in the order they were read: the cold path's own work.
+      // The covered rows, folded in the order they were read: the cold path's own work. The
+      // archived prefix already folded above (G-7 counts it once), so only the covered live rows
+      // past it count as new folds here.
       for (let index = 0; index < store._events.length; index += 1) {
         foldRow(store._events[index]);
-        if (breathe()) yield;
+        if (index >= segmentEvents) store._startupReplayedEvents += 1;
+        if (breathe()) { reportProgress(); yield; }
       }
     }
     for (let offset = 0; offset < lines.length; offset += 1) {
       const index = restoredCoversSeq + offset;
       foldRow(readRow(parsed(lines[offset], `coordination line ${index + 1}`), index));
-      if (breathe()) yield;
-      if ((offset + 1) % 256 === 0) _reportStartup(store, {
-        schemaVersion: 1, state: 'replaying',
-        source: restoredSource,
-        totalEvents, checkpointEvents: restoredCoversSeq - base,
-        replayedEvents: (adopted ? 0 : segmentEvents) + offset + 1,
-        checkpoint: restoredState, failure: null,
-      });
+      store._startupReplayedEvents += 1;
+      if (breathe()) { reportProgress(); yield; }
     }
     _validateRecoveryReplayTransactions(store);
     _validateGoalPlanReplayTransactions(store);
@@ -609,7 +649,7 @@ function* _loadRun(store, plan) {
   _reportStartup(store, {
     schemaVersion: 1, state: 'ready', source: restoredSource, totalEvents,
     checkpointEvents: restoredCoversSeq - base,
-    replayedEvents: (adopted ? 0 : segmentEvents) + lines.length,
+    replayedEvents: store._startupReplayedEvents,
     checkpoint: restoredState, failure: null,
   });
 }

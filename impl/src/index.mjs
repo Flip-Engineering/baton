@@ -358,7 +358,7 @@ function worktreeManager(repoRoot, opts = {}) {
     if (transaction.finalizationPromise) return transaction.finalizationPromise;
     const operation = Promise.resolve().then(async () => {
       if (transaction.capacityReservation && opts.worktreeCapacity) {
-        if (!opts.worktreeCapacity.release(transaction.capacityReservation)) {
+        if (!await opts.worktreeCapacity.releaseAsync(transaction.capacityReservation)) {
           throw Object.assign(new Error('physical workspace capacity release was not confirmed'), {
             code: 'worktree_capacity_unavailable',
           });
@@ -366,7 +366,7 @@ function worktreeManager(repoRoot, opts = {}) {
         transaction.capacityReservation = null;
       }
       if (transaction.capacityOutcomeUnknown && opts.worktreeCapacity) {
-        if (!opts.worktreeCapacity.settleForCleanup(`worker:${transaction.physicalOwnerId}`)) {
+        if (!await opts.worktreeCapacity.settleForCleanupAsync(`worker:${transaction.physicalOwnerId}`)) {
           throw Object.assign(new Error('unknown physical workspace capacity was not settled'), {
             code: 'worktree_capacity_unavailable',
           });
@@ -387,128 +387,259 @@ function worktreeManager(repoRoot, opts = {}) {
     transaction.finalizationPromise = tracked;
     return tracked;
   };
-  return {
-    reserveCapacity(taskId, requestedBaseSha = null, binding = null) {
+  // ── the capacity members' TWO cadences (G-42) ────────────────────────────────────────────────
+  // Each member's WORK is planned here (every check, allocation and receipt step that does not
+  // take the repository capacity lock) and committed after the lock step; the member pairs below
+  // differ only in the cadence's own lock-taking call (`authority.reserve` vs
+  // `authority.reserveAsync`), so no member body is written twice. The lock is held exactly as
+  // long as the blocking cadence holds it — across the authority call alone, never across the git
+  // spawns or the receipt finalization around it.
+
+  /** The ONE refusal a failed capacity reservation raises: the unknown-outcome cleanup runs first,
+   * and a cleanup that cannot complete names both facts. */
+  const capacityReservationRefusal = (taskId, ownerReceipt, error) => {
+    const cleanupError = retainUnknownCapacityOutcome(taskId, ownerReceipt);
+    if (cleanupError) {
+      return Object.assign(new Error('capacity reservation outcome requires exact cleanup', {
+        cause: cleanupError,
+      }), {
+        code: cleanupError?.code ?? 'worktree_capacity_unavailable',
+        reservationError: error?.code ?? null,
+      });
+    }
+    return error;
+  };
+
+  /** The wave's own refusal: every owner of the failed wave settles or is retained by name. */
+  const capacityWaveRefusal = (plan, error) => {
+    const cleanupErrors = plan.owners.map((owner, index) => retainUnknownCapacityOutcome(
+      plan.prepared[index].taskId, owner,
+    )).filter(Boolean);
+    if (cleanupErrors.length > 0) {
+      return Object.assign(new Error('capacity wave outcome requires exact cleanup', {
+        cause: cleanupErrors[0],
+      }), {
+        code: cleanupErrors[0]?.code ?? 'worktree_capacity_unavailable',
+        reservationError: error?.code ?? null,
+      });
+    }
+    return error;
+  };
+
+  /** The single-task reservation's pre-lock plan. `short` answers a caller that needs no
+   * reservation at all (no authority configured, or the exact pending replay). */
+  const planReserveCapacity = (taskId, requestedBaseSha, binding) => {
+    worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
+    if (failedWorkerTransactions.has(taskId)) throw failedTransactionPending();
+    if (!opts.worktreeCapacity) return { short: true, result: null };
+    const selected = requestedBaseSha ?? opts.deploymentBaseSha
+      ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+    if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
+    localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
+    const existing = pendingWorkerReservations.get(taskId);
+    if (existing) {
+      if (existing.capacitySettled === true) throw failedTransactionPending();
+      if (existing.selected !== selected || !pendingBindingMatches(existing, taskId, binding)) {
+        throw Object.assign(new Error('pending capacity reservation is bound to another base'), {
+          code: 'worktree_capacity_reservation_conflict',
+        });
+      }
+      return { short: true, result: existing.result ?? Object.freeze({
+        baseSha: selected, reservation: existing.reservation, ownerReceipt: existing.ownerReceipt,
+      }) };
+    }
+    const ownerReceipt = allocateOwner(taskId, selected, binding);
+    return {
+      short: false,
+      taskId,
+      selected,
+      ownerReceipt,
+      id: `worker:${ownerReceipt.physicalOwnerId}`,
+      request: capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+    };
+  };
+
+  /** The post-lock half of a single reservation: the caller's result and the pending record. */
+  const commitReserveCapacity = (plan, reservation) => {
+    const result = Object.freeze({ baseSha: plan.selected, reservation, ownerReceipt: plan.ownerReceipt });
+    pendingWorkerReservations.set(plan.taskId, {
+      selected: plan.selected, reservation, ownerReceipt: plan.ownerReceipt, result,
+    });
+    return result;
+  };
+
+  /** The wave's pre-lock plan: validation, the exact-replay check, and the owner allocations. */
+  const planReserveCapacityMany = (entries) => {
+    if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('capacity wave must contain at least one task');
+    const prepared = entries.map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+        || Object.keys(entry).sort().join(',') !== ['attemptId', 'processGeneration', 'requestedBaseSha', 'runId', 'taskId'].sort().join(',')) {
+        throw new TypeError('capacity wave entry is invalid');
+      }
+      const { taskId, requestedBaseSha } = entry;
       worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
-      if (failedWorkerTransactions.has(taskId)) throw failedTransactionPending();
-      if (!opts.worktreeCapacity) return null;
       const selected = requestedBaseSha ?? opts.deploymentBaseSha
         ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
       if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-      const existing = pendingWorkerReservations.get(taskId);
-      if (existing) {
-        if (existing.capacitySettled === true) throw failedTransactionPending();
-        if (existing.selected !== selected || !pendingBindingMatches(existing, taskId, binding)) {
-          throw Object.assign(new Error('pending capacity reservation is bound to another base'), {
-            code: 'worktree_capacity_reservation_conflict',
-          });
-        }
-        return existing.result ?? Object.freeze({
-          baseSha: selected, reservation: existing.reservation, ownerReceipt: existing.ownerReceipt,
-        });
-      }
-      const ownerReceipt = allocateOwner(taskId, selected, binding);
-      let reservation;
-      try { reservation = opts.worktreeCapacity.reserve(
-        `worker:${ownerReceipt.physicalOwnerId}`,
-        capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      ); } catch (error) {
-        const cleanupError = retainUnknownCapacityOutcome(taskId, ownerReceipt);
-        if (cleanupError) {
-          throw Object.assign(new Error('capacity reservation outcome requires exact cleanup', {
-            cause: cleanupError,
-          }), {
-            code: cleanupError?.code ?? 'worktree_capacity_unavailable',
-            reservationError: error?.code ?? null,
-          });
-        }
-        throw error;
-      }
-      const result = Object.freeze({ baseSha: selected, reservation, ownerReceipt });
-      pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt, result });
-      return result;
-    },
-    reserveCapacityMany(entries) {
-      if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('capacity wave must contain at least one task');
-      const prepared = entries.map((entry) => {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)
-          || Object.keys(entry).sort().join(',') !== ['attemptId', 'processGeneration', 'requestedBaseSha', 'runId', 'taskId'].sort().join(',')) {
-          throw new TypeError('capacity wave entry is invalid');
-        }
-        const { taskId, requestedBaseSha } = entry;
-        worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
-        const selected = requestedBaseSha ?? opts.deploymentBaseSha
-          ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
-        if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
-        localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-        return { taskId, selected, binding: {
-          runId: entry.runId ?? null, attemptId: entry.attemptId,
-          processGeneration: entry.processGeneration,
-        } };
-      });
-      if (new Set(prepared.map(({ taskId }) => taskId)).size !== prepared.length) throw new TypeError('capacity wave contains duplicate tasks');
-      if (prepared.some(({ taskId }) => failedWorkerTransactions.has(taskId))) {
+      return { taskId, selected, binding: {
+        runId: entry.runId ?? null, attemptId: entry.attemptId,
+        processGeneration: entry.processGeneration,
+      } };
+    });
+    if (new Set(prepared.map(({ taskId }) => taskId)).size !== prepared.length) throw new TypeError('capacity wave contains duplicate tasks');
+    if (prepared.some(({ taskId }) => failedWorkerTransactions.has(taskId))) {
+      throw failedTransactionPending();
+    }
+    if (!opts.worktreeCapacity) return { short: true, result: Object.freeze(prepared.map(() => null)) };
+    const priorPending = prepared.map(({ taskId }) => pendingWorkerReservations.get(taskId) ?? null);
+    if (priorPending.some(Boolean)) {
+      if (priorPending.some((pending) => pending?.capacitySettled === true)) {
         throw failedTransactionPending();
       }
-      if (!opts.worktreeCapacity) return Object.freeze(prepared.map(() => null));
-      const priorPending = prepared.map(({ taskId }) => pendingWorkerReservations.get(taskId) ?? null);
-      if (priorPending.some(Boolean)) {
-        if (priorPending.some((pending) => pending?.capacitySettled === true)) {
-          throw failedTransactionPending();
-        }
-        const exactReplay = priorPending.every(Boolean) && priorPending.every((pending, index) => {
-          const candidate = prepared[index];
-          const receipt = pending.ownerReceipt;
-          return pending.selected === candidate.selected
-            && receipt.runId === candidate.binding.runId
-            && receipt.attemptId === candidate.binding.attemptId
-            && receipt.processGeneration === candidate.binding.processGeneration;
+      const exactReplay = priorPending.every(Boolean) && priorPending.every((pending, index) => {
+        const candidate = prepared[index];
+        const receipt = pending.ownerReceipt;
+        return pending.selected === candidate.selected
+          && receipt.runId === candidate.binding.runId
+          && receipt.attemptId === candidate.binding.attemptId
+          && receipt.processGeneration === candidate.binding.processGeneration;
+      });
+      if (!exactReplay) {
+        throw Object.assign(new Error('capacity wave conflicts with pending physical reservations'), {
+          code: 'worktree_capacity_reservation_conflict',
         });
-        if (!exactReplay) {
-          throw Object.assign(new Error('capacity wave conflicts with pending physical reservations'), {
-            code: 'worktree_capacity_reservation_conflict',
-          });
-        }
-        return Object.freeze(priorPending.map((pending) => pending.result ?? Object.freeze({
-          baseSha: pending.selected,
-          reservation: pending.reservation,
-          ownerReceipt: pending.ownerReceipt,
-        })));
       }
-      const owners = [];
-      try {
-        for (const { taskId, selected, binding } of prepared) owners.push(allocateOwner(taskId, selected, binding));
-      } catch (error) {
-        for (const owner of owners) worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, owner.physicalOwnerId, { requireAllocated: true });
-        throw error;
-      }
-      let reservations;
-      try { reservations = opts.worktreeCapacity.reserveMany(prepared.map(({ selected }, index) => ({
+      return { short: true, result: Object.freeze(priorPending.map((pending) => pending.result ?? Object.freeze({
+        baseSha: pending.selected,
+        reservation: pending.reservation,
+        ownerReceipt: pending.ownerReceipt,
+      }))) };
+    }
+    const owners = [];
+    try {
+      for (const { taskId, selected, binding } of prepared) owners.push(allocateOwner(taskId, selected, binding));
+    } catch (error) {
+      for (const owner of owners) worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, owner.physicalOwnerId, { requireAllocated: true });
+      throw error;
+    }
+    return {
+      short: false,
+      prepared,
+      owners,
+      entries: prepared.map(({ selected }, index) => ({
         id: `worker:${owners[index].physicalOwnerId}`,
         request: capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      }))); } catch (error) {
-        const cleanupErrors = owners.map((owner, index) => retainUnknownCapacityOutcome(
-          prepared[index].taskId, owner,
-        )).filter(Boolean);
-        if (cleanupErrors.length > 0) {
-          throw Object.assign(new Error('capacity wave outcome requires exact cleanup', {
-            cause: cleanupErrors[0],
-          }), {
-            code: cleanupErrors[0]?.code ?? 'worktree_capacity_unavailable',
-            reservationError: error?.code ?? null,
-          });
-        }
-        throw error;
+      })),
+    };
+  };
+
+  /** The post-lock half of a wave: one result and one pending record per prepared task. */
+  const commitReserveCapacityMany = (plan, reservations) => Object.freeze(plan.prepared.map(({ taskId, selected }, index) => {
+    const reservation = reservations[index];
+    const ownerReceipt = plan.owners[index];
+    const result = Object.freeze({ baseSha: selected, reservation, ownerReceipt });
+    pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt, result });
+    return result;
+  }));
+
+  /** The release wave's pre-lock plan: which pending records exist, and which are unsettled. */
+  const planReleaseCapacityMany = (taskIds) => {
+    if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
+      throw new TypeError('capacity release wave requires unique task ids');
+    }
+    const owned = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }))
+      .filter(({ pending }) => pending);
+    if (!opts.worktreeCapacity) return { short: true, result: Object.freeze(taskIds.map(() => true)) };
+    if (owned.length === 0) return { short: true, result: Object.freeze(taskIds.map(() => false)) };
+    return { short: false, taskIds, owned, unsettled: owned.filter(({ pending }) => pending.capacitySettled !== true) };
+  };
+
+  const markReleasedCapacityMany = (plan, released) => {
+    plan.unsettled.forEach(({ pending }, index) => {
+      if (released[index]) pending.capacitySettled = true;
+    });
+  };
+
+  const commitReleaseCapacityMany = (plan) => {
+    const byTask = new Map();
+    for (const { taskId, pending } of plan.owned) {
+      if (pending.capacitySettled !== true) { byTask.set(taskId, false); continue; }
+      try { byTask.set(taskId, finalizePendingReceipt(taskId, pending)); }
+      catch { byTask.set(taskId, false); }
+    }
+    return Object.freeze(plan.taskIds.map((taskId) => byTask.get(taskId) ?? false));
+  };
+
+  /** The settlement wave's pre-lock plan and its ONE incomplete-wave refusal. */
+  const planSettleCapacityMany = (taskIds) => {
+    if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
+      throw new TypeError('capacity settlement wave requires unique task ids');
+    }
+    const owned = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }))
+      .filter(({ pending }) => pending);
+    if (!opts.worktreeCapacity || owned.length === 0) return { short: true, result: Object.freeze(taskIds.map(() => true)) };
+    return { short: false, taskIds, owned, unsettled: owned.filter(({ pending }) => pending.capacitySettled !== true) };
+  };
+
+  const incompleteCapacitySettlement = () => Object.assign(new Error('capacity settlement wave is incomplete'), {
+    code: 'worktree_capacity_release_failed',
+  });
+
+  const markSettledCapacityMany = (plan, outcomes) => {
+    if (!Array.isArray(outcomes) || outcomes.length !== plan.unsettled.length) throw incompleteCapacitySettlement();
+    plan.unsettled.forEach(({ pending }, index) => {
+      if (outcomes[index]) pending.capacitySettled = true;
+    });
+    if (plan.owned.some(({ pending }) => pending.capacitySettled !== true)) throw incompleteCapacitySettlement();
+  };
+
+  const commitSettleCapacityMany = (plan) => {
+    for (const { taskId, pending } of plan.owned) {
+      try {
+        if (!finalizePendingReceipt(taskId, pending)) throw new Error('receipt finalization refused');
+      } catch (cause) {
+        throw Object.assign(new Error('capacity settlement receipt finalization is incomplete', {
+          cause,
+        }), { code: 'worktree_cleanup_failed' });
       }
-      const results = prepared.map(({ taskId, selected }, index) => {
-        const reservation = reservations[index];
-        const ownerReceipt = owners[index];
-        const result = Object.freeze({ baseSha: selected, reservation, ownerReceipt });
-        pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt, result });
-        return result;
-      });
-      return Object.freeze(results);
+    }
+    return Object.freeze(plan.taskIds.map(() => true));
+  };
+  return {
+    reserveCapacity(taskId, requestedBaseSha = null, binding = null) {
+      const plan = planReserveCapacity(taskId, requestedBaseSha, binding);
+      if (plan.short) return plan.result;
+      let reservation;
+      try { reservation = opts.worktreeCapacity.reserve(plan.id, plan.request); }
+      catch (error) { throw capacityReservationRefusal(plan.taskId, plan.ownerReceipt, error); }
+      return commitReserveCapacity(plan, reservation);
+    },
+    /** Promise-returning twin of `reserveCapacity` (G-42): the lock wait yields the event loop. */
+    async reserveCapacityAsync(taskId, requestedBaseSha = null, binding = null) {
+      const plan = planReserveCapacity(taskId, requestedBaseSha, binding);
+      if (plan.short) return plan.result;
+      let reservation;
+      try { reservation = await opts.worktreeCapacity.reserveAsync(plan.id, plan.request); }
+      catch (error) { throw capacityReservationRefusal(plan.taskId, plan.ownerReceipt, error); }
+      return commitReserveCapacity(plan, reservation);
+    },
+    reserveCapacityMany(entries) {
+      const plan = planReserveCapacityMany(entries);
+      if (plan.short) return plan.result;
+      let reservations;
+      try { reservations = opts.worktreeCapacity.reserveMany(plan.entries); }
+      catch (error) { throw capacityWaveRefusal(plan, error); }
+      return commitReserveCapacityMany(plan, reservations);
+    },
+    /** Promise-returning twin of `reserveCapacityMany` (G-42): the lock wait yields the event loop. */
+    async reserveCapacityManyAsync(entries) {
+      const plan = planReserveCapacityMany(entries);
+      if (plan.short) return plan.result;
+      let reservations;
+      try { reservations = await opts.worktreeCapacity.reserveManyAsync(plan.entries); }
+      catch (error) { throw capacityWaveRefusal(plan, error); }
+      return commitReserveCapacityMany(plan, reservations);
     },
     releaseCapacity(taskId) {
       const pending = pendingWorkerReservations.get(taskId);
@@ -519,65 +650,49 @@ function worktreeManager(repoRoot, opts = {}) {
       }
       return finalizePendingReceipt(taskId, pending);
     },
+    /** Promise-returning twin of `releaseCapacity` (G-42): the lock wait yields the event loop. */
+    async releaseCapacityAsync(taskId) {
+      const pending = pendingWorkerReservations.get(taskId);
+      if (!pending || !opts.worktreeCapacity) return false;
+      if (pending.capacitySettled !== true) {
+        if (!await opts.worktreeCapacity.releaseAsync(pending.reservation)) return false;
+        pending.capacitySettled = true;
+      }
+      return finalizePendingReceipt(taskId, pending);
+    },
     releaseCapacityMany(taskIds) {
-      if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
-        throw new TypeError('capacity release wave requires unique task ids');
-      }
-      const entries = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }));
-      const owned = entries.filter(({ pending }) => pending);
-      if (!opts.worktreeCapacity) return Object.freeze(taskIds.map(() => true));
-      if (owned.length === 0) return Object.freeze(taskIds.map(() => false));
-      const unsettled = owned.filter(({ pending }) => pending.capacitySettled !== true);
-      if (unsettled.length > 0) {
-        const released = opts.worktreeCapacity.releaseMany(
-          unsettled.map(({ pending }) => pending.reservation),
-        );
-        unsettled.forEach(({ pending }, index) => {
-          if (released[index]) pending.capacitySettled = true;
-        });
-      }
-      const byTask = new Map();
-      for (const { taskId, pending } of owned) {
-        if (pending.capacitySettled !== true) { byTask.set(taskId, false); continue; }
-        try { byTask.set(taskId, finalizePendingReceipt(taskId, pending)); }
-        catch { byTask.set(taskId, false); }
-      }
-      return Object.freeze(taskIds.map((taskId) => byTask.get(taskId) ?? false));
+      const plan = planReleaseCapacityMany(taskIds);
+      if (plan.short) return plan.result;
+      if (plan.unsettled.length > 0) markReleasedCapacityMany(plan, opts.worktreeCapacity.releaseMany(
+        plan.unsettled.map(({ pending }) => pending.reservation),
+      ));
+      return commitReleaseCapacityMany(plan);
+    },
+    /** Promise-returning twin of `releaseCapacityMany` (G-42): the lock wait yields the event loop. */
+    async releaseCapacityManyAsync(taskIds) {
+      const plan = planReleaseCapacityMany(taskIds);
+      if (plan.short) return plan.result;
+      if (plan.unsettled.length > 0) markReleasedCapacityMany(plan, await opts.worktreeCapacity.releaseManyAsync(
+        plan.unsettled.map(({ pending }) => pending.reservation),
+      ));
+      return commitReleaseCapacityMany(plan);
     },
     settleCapacityMany(taskIds) {
-      if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
-        throw new TypeError('capacity settlement wave requires unique task ids');
-      }
-      const owned = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }))
-        .filter(({ pending }) => pending);
-      if (!opts.worktreeCapacity || owned.length === 0) return Object.freeze(taskIds.map(() => true));
-      const unsettled = owned.filter(({ pending }) => pending.capacitySettled !== true);
-      const outcomes = unsettled.length === 0 ? [] : opts.worktreeCapacity.releaseMany(
-        unsettled.map(({ pending }) => pending.reservation),
-      );
-      if (!Array.isArray(outcomes) || outcomes.length !== unsettled.length) {
-        throw Object.assign(new Error('capacity settlement wave is incomplete'), {
-          code: 'worktree_capacity_release_failed',
-        });
-      }
-      unsettled.forEach(({ pending }, index) => {
-        if (outcomes[index]) pending.capacitySettled = true;
-      });
-      if (owned.some(({ pending }) => pending.capacitySettled !== true)) {
-        throw Object.assign(new Error('capacity settlement wave is incomplete'), {
-          code: 'worktree_capacity_release_failed',
-        });
-      }
-      for (const { taskId, pending } of owned) {
-        try {
-          if (!finalizePendingReceipt(taskId, pending)) throw new Error('receipt finalization refused');
-        } catch (cause) {
-          throw Object.assign(new Error('capacity settlement receipt finalization is incomplete', {
-            cause,
-          }), { code: 'worktree_cleanup_failed' });
-        }
-      }
-      return Object.freeze(taskIds.map(() => true));
+      const plan = planSettleCapacityMany(taskIds);
+      if (plan.short) return plan.result;
+      if (plan.unsettled.length > 0) markSettledCapacityMany(plan, opts.worktreeCapacity.releaseMany(
+        plan.unsettled.map(({ pending }) => pending.reservation),
+      ));
+      return commitSettleCapacityMany(plan);
+    },
+    /** Promise-returning twin of `settleCapacityMany` (G-42): the lock wait yields the event loop. */
+    async settleCapacityManyAsync(taskIds) {
+      const plan = planSettleCapacityMany(taskIds);
+      if (plan.short) return plan.result;
+      if (plan.unsettled.length > 0) markSettledCapacityMany(plan, await opts.worktreeCapacity.releaseManyAsync(
+        plan.unsettled.map(({ pending }) => pending.reservation),
+      ));
+      return commitSettleCapacityMany(plan);
     },
     async create(taskId, requestedBaseSha = null, binding = null) {
       const failedTransaction = failedWorkerTransactions.get(taskId);
@@ -609,7 +724,7 @@ function worktreeManager(repoRoot, opts = {}) {
       }
       if (pending && pending.selected !== selected) {
         if (pending.capacitySettled !== true) {
-          const released = opts.worktreeCapacity.release(pending.reservation);
+          const released = await opts.worktreeCapacity.releaseAsync(pending.reservation);
           if (!released) throw new TypeError('capacity reservation base SHA disagrees with worktree creation');
           pending.capacitySettled = true;
         }
@@ -625,20 +740,11 @@ function worktreeManager(repoRoot, opts = {}) {
       if (pending) pendingWorkerReservations.delete(taskId);
       let ownerReceipt = pending?.ownerReceipt ?? allocateOwner(taskId, selected, binding);
       if (!capacityReservation && opts.worktreeCapacity) {
-        try { capacityReservation = opts.worktreeCapacity.reserve(
+        try { capacityReservation = await opts.worktreeCapacity.reserveAsync(
           `worker:${ownerReceipt.physicalOwnerId}`,
           capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
         ); } catch (error) {
-          const cleanupError = retainUnknownCapacityOutcome(taskId, ownerReceipt);
-          if (cleanupError) {
-            throw Object.assign(new Error('capacity reservation outcome requires exact cleanup', {
-              cause: cleanupError,
-            }), {
-              code: cleanupError?.code ?? 'worktree_capacity_unavailable',
-              reservationError: error?.code ?? null,
-            });
-          }
-          throw error;
+          throw capacityReservationRefusal(taskId, ownerReceipt, error);
         }
       }
       let r = null;
@@ -649,7 +755,7 @@ function worktreeManager(repoRoot, opts = {}) {
         });
         ownerReceipt = r.ownerReceipt;
         if (capacityReservation) {
-          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir);
+          capacityReservation = await opts.worktreeCapacity.materializeAsync(capacityReservation, r.dir);
           workerReservations.set(ownerReceipt.physicalOwnerId, capacityReservation);
         }
         return {
@@ -766,7 +872,7 @@ function worktreeManager(repoRoot, opts = {}) {
     async createVerifyWorktree(taskId, sha, verifyOpts = {}) {
       const reservationId = `verify:${taskId}:${++verifyReservationSeq}`;
       let capacityReservation;
-      if (opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(
+      if (opts.worktreeCapacity) capacityReservation = await opts.worktreeCapacity.reserveAsync(
         reservationId,
         capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
       );
@@ -774,20 +880,20 @@ function worktreeManager(repoRoot, opts = {}) {
       try {
         r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], requiredPaths: verifyOpts.requiredPaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
         if (capacityReservation) {
-          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir ?? r.path);
+          capacityReservation = await opts.worktreeCapacity.materializeAsync(capacityReservation, r.dir ?? r.path);
           verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
         }
         return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
         if (r?.cleanup) await r.cleanup();
-        if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        if (capacityReservation) await opts.worktreeCapacity.releaseAsync(capacityReservation);
         throw error;
       }
     },
     async createBaseVerifyWorktree(taskId, sha) {
       const label = `${taskId}-base`; const reservationId = `verify:${label}:${++verifyReservationSeq}`;
       let capacityReservation;
-      if (opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(
+      if (opts.worktreeCapacity) capacityReservation = await opts.worktreeCapacity.reserveAsync(
         reservationId,
         capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
       );
@@ -795,13 +901,13 @@ function worktreeManager(repoRoot, opts = {}) {
       try {
         r = await worktreeMod.freshVerifySandbox(repoRoot, label, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
         if (capacityReservation) {
-          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir ?? r.path);
+          capacityReservation = await opts.worktreeCapacity.materializeAsync(capacityReservation, r.dir ?? r.path);
           verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
         }
         return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
         if (r?.cleanup) await r.cleanup();
-        if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        if (capacityReservation) await opts.worktreeCapacity.releaseAsync(capacityReservation);
         throw error;
       }
     },

@@ -30,12 +30,14 @@ const RESERVATION_FIELDS = Object.freeze([
 ]);
 
 // Independent deployments mutate one repository ledger, so every capacity mutation serializes on
-// a published owner record. The API is synchronous: it cannot await a holder, so ordinary
-// contention is absorbed by blocking this thread in short slices until a deadline. The deadline is
-// real elapsed time (`performance.now`, monotonic), never the injectable domain clock — fixtures
-// freeze that clock for timestamps, and a frozen clock must never become an unbounded wait. Every
-// non-progress turn of the acquisition loop ends in `_waitSlice`, so no state (live holder, live
-// gate, dead lock, churn) can loop past the deadline.
+// a published owner record. Every mutation has TWO cadences over ONE protocol: the synchronous API
+// absorbs ordinary contention by blocking this thread in short `Atomics.wait` slices until the
+// deadline, and the promise-returning `*Async` cadence waits with the event loop free, so a
+// contended reservation never freezes a resident's command loop (G-42). The deadline is real
+// elapsed time (`performance.now`, monotonic), never the injectable domain clock — fixtures freeze
+// that clock for timestamps, and a frozen clock must never become an unbounded wait. Every
+// non-progress turn of the acquisition loop ends in a wait, so no state (live holder, live gate,
+// dead lock, churn) can loop past the deadline.
 const LOCK_POLL_MS = 5;
 const DEFAULT_LOCK_WAIT_MS = 5_000;
 const LOCK_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
@@ -311,6 +313,9 @@ export class WorktreeCapacityAuthority {
     this.root = join(repoRoot, '.baton', 'capacity');
     this.statePath = join(this.root, 'reservations.json');
     this.lockPath = join(this.root, 'lock');
+    // G-42: the generation this instance holds while the async cadence runs a critical section —
+    // null on the synchronous cadence (which holds it only across its own synchronous body).
+    this._heldGeneration = null;
     this.reaperPath = `${this.lockPath}.reaper`;
   }
 
@@ -468,38 +473,65 @@ export class WorktreeCapacityAuthority {
   // — never adopted, never waited on, never deleted.
   // -----------------------------------------------------------------------------------------
   _lock(fn) {
+    if (this._heldGeneration !== null) return this._lockedBody(fn); // reentrant: _lockAsync holds it
+    this._ensureRootChecked();
+    const generation = this._acquire();
+    try { return this._lockedBody(fn); } finally { this._removeOwner(this.lockPath, LOCK_LABEL, generation); }
+  }
+
+  /** G-42: the promise-returning cadence of the SAME surface. The lock WAIT yields the event loop
+   * (one macrotask per non-progress turn) instead of blocking it in `Atomics.wait` slices, so a
+   * contended reservation never freezes a resident's command loop; the critical section itself
+   * stays synchronous and completes in one turn, so the lock is never held across an await. Every
+   * `*Async` twin delegates to its synchronous sibling, whose own `_lock` sees this instance
+   * already holding the published lock and runs that body under it — ONE body per operation, two
+   * cadences of the wait, no second implementation to drift. The body's own error mapping stays
+   * with the synchronous sibling (`_lockedBody`), so an unexpected failure is a typed
+   * `worktree_capacity_unavailable` on both cadences. */
+  async _lockAsync(fn) {
+    if (this._heldGeneration !== null) return this._lockedBody(fn);
+    this._ensureRootChecked();
+    const generation = await this._acquireAsync();
+    this._heldGeneration = generation;
+    try { return fn(); } finally {
+      this._heldGeneration = null;
+      this._removeOwner(this.lockPath, LOCK_LABEL, generation);
+    }
+  }
+
+  _lockedBody(fn) {
+    try { return fn(); }
+    catch (error) {
+      if (error instanceof WorktreeCapacityError) throw error;
+      throw typed('worktree capacity state update failed', 'worktree_capacity_unavailable', error);
+    }
+  }
+
+  _ensureRootChecked() {
     try { this._ensureRoot(); }
     catch (error) {
       if (error instanceof WorktreeCapacityError) throw error;
       throw typed('worktree capacity root could not be confirmed', 'worktree_capacity_unavailable', error);
     }
-    const generation = this._acquire();
-    try { return fn(); }
-    catch (error) {
-      if (error instanceof WorktreeCapacityError) throw error;
-      throw typed('worktree capacity state update failed', 'worktree_capacity_unavailable', error);
-    } finally { this._removeOwner(this.lockPath, LOCK_LABEL, generation); }
   }
 
-  // Every turn below returns, throws, or reaches `_waitSlice`, which refuses once the monotonic
-  // deadline passes — no observed state can make this loop unbounded.
-  _acquire() {
+  // The acquisition state machine: ONE protocol, two drivers. Every turn below returns, throws, or
+  // yields the milliseconds left until the monotonic deadline (never a retry count), and
+  // `_waitFor` refuses once that deadline passes — no observed state (live holder, live gate, dead
+  // lock, churn) can make this loop unbounded. `_acquire` waits each step out by blocking this
+  // thread in slices; `_acquireAsync` awaits a timer, leaving the event loop free.
+  *_acquireSteps() {
     const deadline = performance.now() + this.lockWaitMs;
     let firstAttempt = true;
     let lastWait = { detail: 'repeated ownership changes prevented acquisition', extra: {} };
-    const wait = (detail, extra) => {
-      lastWait = { detail, extra };
-      this._waitSlice(deadline, detail, extra);
-    };
     for (;;) {
-      if (!firstAttempt && performance.now() >= deadline) {
-        this._waitSlice(deadline, lastWait.detail, lastWait.extra);
-      }
+      if (!firstAttempt && performance.now() >= deadline) this._refuseLockWait(lastWait.detail, lastWait.extra);
       firstAttempt = false;
       const gate = this._observeOwner(this.reaperPath, REAPER_LABEL);
       if (gate !== null && livePid(gate.pid)) {
         // A reap is in flight and its tombstone rename may land on any lock published now.
-        wait(`the live reaper (pid ${gate.pid}) still held the recovery gate`, { holderPid: gate.pid });
+        lastWait = { detail: `the live reaper (pid ${gate.pid}) still held the recovery gate`, extra: { holderPid: gate.pid } };
+        yield this._waitFor(deadline, lastWait.detail, lastWait.extra);
         continue;
       }
       const generation = randomBytes(16).toString('hex');
@@ -507,16 +539,58 @@ export class WorktreeCapacityAuthority {
       this._removeOwner(this.lockPath, LOCK_LABEL, generation); // no-op unless we published it
       const observed = this._observeOwner(this.lockPath, LOCK_LABEL);
       if (observed === null) {
-        wait('the lock could not be published and confirmed', {});
+        lastWait = { detail: 'the lock could not be published and confirmed', extra: {} };
+        yield this._waitFor(deadline, lastWait.detail, lastWait.extra);
       } else if (livePid(observed.pid)) {
-        wait(`the live holder (pid ${observed.pid}) still held it`, { holderPid: observed.pid });
+        lastWait = { detail: `the live holder (pid ${observed.pid}) still held it`, extra: { holderPid: observed.pid } };
+        yield this._waitFor(deadline, lastWait.detail, lastWait.extra);
       } else if (gate !== null) {
         // A dead lock under a dead gate is inert forever, and reclamation needs the gate.
-        wait(`a dead reaper gate (pid ${gate.pid}) blocks reclamation of the dead holder (pid ${observed.pid})`, { gatePid: gate.pid });
+        lastWait = { detail: `a dead reaper gate (pid ${gate.pid}) blocks reclamation of the dead holder (pid ${observed.pid})`, extra: { gatePid: gate.pid } };
+        yield this._waitFor(deadline, lastWait.detail, lastWait.extra);
       } else if (!this._reap(observed)) {
-        wait(`the dead holder (pid ${observed.pid}) could not be reclaimed`, {});
+        lastWait = { detail: `the dead holder (pid ${observed.pid}) could not be reclaimed`, extra: {} };
+        yield this._waitFor(deadline, lastWait.detail, lastWait.extra);
       }
     }
+  }
+
+  _acquire() {
+    const steps = this._acquireSteps();
+    let step = steps.next();
+    while (!step.done) {
+      waitForLockSlice(Math.min(LOCK_POLL_MS, step.value));
+      step = steps.next();
+    }
+    return step.value;
+  }
+
+  async _acquireAsync() {
+    const steps = this._acquireSteps();
+    let step = steps.next();
+    while (!step.done) {
+      const remaining = step.value;
+      await new Promise((resolve) => { setTimeout(resolve, Math.min(LOCK_POLL_MS, remaining)); });
+      step = steps.next();
+    }
+    return step.value;
+  }
+
+  /** The wait request one non-progress turn yields: the milliseconds left until the deadline, or
+   * the typed pre-effect refusal once it has passed. */
+  _waitFor(deadline, detail, extra) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) this._refuseLockWait(detail, extra);
+    return remaining;
+  }
+
+  /** The typed refusal every cadence ends in once the deadline passes: PRE-EFFECT (no reservation
+   * or release was applied) and naming the exact obstacle. */
+  _refuseLockWait(detail, extra) {
+    throw Object.assign(typed(
+      `worktree capacity reservation lock is busy: ${detail} at the ${this.lockWaitMs}ms wait deadline; no capacity effect was applied`,
+      'worktree_capacity_unavailable',
+    ), { lockContention: true, ...extra });
   }
 
   // A published lock counts only once both facts are re-observed: the file still carries this
@@ -532,18 +606,6 @@ export class WorktreeCapacityAuthority {
       this._removeOwner(this.lockPath, LOCK_LABEL, generation);
       throw error;
     }
-  }
-
-  // Waits one poll slice, or refuses pre-effect once the monotonic deadline has passed.
-  _waitSlice(deadline, detail, extra) {
-    const remaining = deadline - performance.now();
-    if (remaining <= 0) {
-      throw Object.assign(typed(
-        `worktree capacity reservation lock is busy: ${detail} at the ${this.lockWaitMs}ms wait deadline; no capacity effect was applied`,
-        'worktree_capacity_unavailable',
-      ), { lockContention: true, ...extra });
-    }
-    waitForLockSlice(Math.min(LOCK_POLL_MS, remaining));
   }
 
   // Reaps one proved-dead generation and reports whether it made progress. The reaper gate is
@@ -621,6 +683,11 @@ export class WorktreeCapacityAuthority {
 
   reserve(id, request) {
     return this.reserveMany([{ id, request }])[0];
+  }
+
+  /** Promise-returning twin of `reserve` (G-42): the lock wait yields the event loop. */
+  reserveAsync(id, request) {
+    return this._lockAsync(() => this.reserve(id, request));
   }
 
   reserveMany(entries) {
@@ -733,8 +800,18 @@ export class WorktreeCapacityAuthority {
     });
   }
 
+  /** Promise-returning twin of `reserveMany` (G-42): the lock wait yields the event loop. */
+  reserveManyAsync(entries) {
+    return this._lockAsync(() => this.reserveMany(entries));
+  }
+
   release(token) {
     return this.releaseMany([token])[0];
+  }
+
+  /** Promise-returning twin of `release` (G-42): the lock wait yields the event loop. */
+  releaseAsync(token) {
+    return this._lockAsync(() => this.release(token));
   }
 
   materialize(token, resourcePath) {
@@ -798,6 +875,11 @@ export class WorktreeCapacityAuthority {
     });
   }
 
+  /** Promise-returning twin of `materialize` (G-42): the lock wait yields the event loop. */
+  materializeAsync(token, resourcePath) {
+    return this._lockAsync(() => this.materialize(token, resourcePath));
+  }
+
   releaseMany(tokens) {
     if (!Array.isArray(tokens) || tokens.length === 0) {
       throw new TypeError('capacity release wave must contain a non-empty token list');
@@ -823,6 +905,11 @@ export class WorktreeCapacityAuthority {
     });
   }
 
+  /** Promise-returning twin of `releaseMany` (G-42): the lock wait yields the event loop. */
+  releaseManyAsync(tokens) {
+    return this._lockAsync(() => this.releaseMany(tokens));
+  }
+
   releaseAbsent(id) {
     if (typeof id !== 'string' || id.length === 0) throw new TypeError('capacity absent-resource release id is invalid');
     return this._lock(() => {
@@ -831,6 +918,11 @@ export class WorktreeCapacityAuthority {
       if (state.reservations.length !== before) this._write(state);
       return state.reservations.length !== before;
     });
+  }
+
+  /** Promise-returning twin of `releaseAbsent` (G-42): the lock wait yields the event loop. */
+  releaseAbsentAsync(id) {
+    return this._lockAsync(() => this.releaseAbsent(id));
   }
 
   settleForCleanup(id) {
@@ -848,6 +940,11 @@ export class WorktreeCapacityAuthority {
     });
   }
 
+  /** Promise-returning twin of `settleForCleanup` (G-42): the lock wait yields the event loop. */
+  settleForCleanupAsync(id) {
+    return this._lockAsync(() => this.settleForCleanup(id));
+  }
+
   adoptWorker(id) {
     return this._lock(() => {
       const state = this._read(); const index = state.reservations.findIndex((row) => row.id === id && row.kind === 'worker');
@@ -855,6 +952,11 @@ export class WorktreeCapacityAuthority {
       const row = Object.freeze({ ...state.reservations[index], ownerId: this.ownerId, nonce: randomBytes(16).toString('hex'), pid: process.pid });
       state.reservations[index] = row; this._write(state); return row;
     });
+  }
+
+  /** Promise-returning twin of `adoptWorker` (G-42): the lock wait yields the event loop. */
+  adoptWorkerAsync(id) {
+    return this._lockAsync(() => this.adoptWorker(id));
   }
 
   reconcile(activeWorkerIds = [], retainedWorkerIds = []) {
@@ -898,6 +1000,11 @@ export class WorktreeCapacityAuthority {
     });
   }
 
+  /** Promise-returning twin of `reconcile` (G-42): the lock wait yields the event loop. */
+  reconcileAsync(activeWorkerIds = [], retainedWorkerIds = []) {
+    return this._lockAsync(() => this.reconcile(activeWorkerIds, retainedWorkerIds));
+  }
+
   snapshot() {
     return this._lock(() => {
       const state = this._read();
@@ -920,6 +1027,11 @@ export class WorktreeCapacityAuthority {
     });
   }
 
+  /** Promise-returning twin of `snapshot` (G-42): the lock wait yields the event loop. */
+  snapshotAsync() {
+    return this._lockAsync(() => this.snapshot());
+  }
+
   /** The effective floor, resolved fresh from the ledger and the measured runtime footprint —
    * what the doctor's capacity section shows beside the observation (#307). */
   floor() {
@@ -927,5 +1039,10 @@ export class WorktreeCapacityAuthority {
       const state = this._read();
       return this.#effectiveFloor(state.estimateHighWater);
     });
+  }
+
+  /** Promise-returning twin of `floor` (G-42): the lock wait yields the event loop. */
+  floorAsync() {
+    return this._lockAsync(() => this.floor());
   }
 }

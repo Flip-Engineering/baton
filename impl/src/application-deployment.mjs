@@ -4220,6 +4220,10 @@ class BatonDeployment {
         state: reconstruction?.state === 'running' ? 'reconstructing' : status.state,
         source: status.source, rows: status.totalEvents,
         replayedEvents: status.replayedEvents, checkpointEvents: status.checkpointEvents,
+        // G-7: the rows the replay had read when this row was composed — the progress dimension
+        // that moves while a covered prefix is rebuilt, and the count a failed open reports
+        // beside the rows it had folded. Read directly, like reason/detail above.
+        readEvents: status.readEvents ?? null,
         checkpoint: status.checkpoint,
         // #397: the invariant a refused checkpoint failed and the compared values. Read DIRECTLY —
         // startupStatus attaches them non-enumerable so its pinned enumerable shape stays exact.
@@ -6086,7 +6090,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // reconciliation uses for a retained owner — is handed to the controller here, where the
   // deployment that owns the authority builds it.
   driver.coordinator.attachCapacitySettlement(
-    (resource) => driver.worktreeCapacity.settleForCleanup(resource),
+    (resource) => driver.worktreeCapacity.settleForCleanupAsync(resource),
   );
   // #346: the live re-projection. Every adoption by the credential cache rewrites the credential
   // document of every LIVE claude lease through the runtime registry the driver just built — a

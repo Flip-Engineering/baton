@@ -2494,6 +2494,21 @@ export class Coordinator {
     return true;
   }
 
+  /** G-42: the promise-returning cadence of one worktree-façade capacity member — the async twin
+   * when the façade offers it (the repository capacity lock's wait then yields this resident's
+   * event loop instead of blocking it), the blocking member otherwise, so a fixture façade with
+   * only the blocking surface keeps working. Null when the façade has neither, which is the
+   * "no capacity authority" answer every call site already handles. */
+  _capacityMember(name) {
+    const facade = this._worktrees;
+    for (const candidate of [`${name}Async`, name]) {
+      if (typeof facade?.[candidate] === 'function') {
+        return (...args) => Promise.resolve(facade[candidate](...args));
+      }
+    }
+    return null;
+  }
+
   /** DC2-DC6: irreversibly fence admission, durably bind one fixed target set, and
    * converge every locally-owned resource through the ordinary stop state machine. */
   drain(ctx = {}) {
@@ -4328,7 +4343,9 @@ export class Coordinator {
       }
       let held = this._capacityReservationHeld(orphan.resource);
       if (held && typeof settlement === 'function') {
-        try { settlement(orphan.resource); } catch { /* the surviving row is named by the wait rows */ }
+        // G-42: the deployment hands in the promise-returning settlement, whose capacity-lock wait
+        // yields this loop — await it before reading the projection back.
+        try { await Promise.resolve(settlement(orphan.resource)); } catch { /* the surviving row is named by the wait rows */ }
         held = this._capacityReservationHeld(orphan.resource);
       }
       if (!held) released.push({ workerId: orphan.workerId, resource: orphan.resource, how: 'worker_gone' });
@@ -6138,8 +6155,9 @@ export class Coordinator {
     const releaseWaveCapacity = async () => {
       const taskIds = [...reservedCapacityTaskIds];
       if (taskIds.length === 0) return;
-      if (typeof this._worktrees?.releaseCapacityMany === 'function') {
-        const outcomes = await Promise.resolve(this._worktrees.releaseCapacityMany(taskIds));
+      const releaseCapacityMany = this._capacityMember('releaseCapacityMany');
+      if (releaseCapacityMany !== null) {
+        const outcomes = await releaseCapacityMany(taskIds);
         if (!Array.isArray(outcomes) || outcomes.length !== taskIds.length
           || outcomes.some((released) => released !== true)) {
           throw Object.assign(new Error('plan wave capacity cleanup is incomplete'), {
@@ -6148,8 +6166,9 @@ export class Coordinator {
         }
         return;
       }
+      const releaseCapacity = this._capacityMember('releaseCapacity');
       const outcomes = await Promise.allSettled(taskIds.map((taskId) => (
-        Promise.resolve(this._worktrees?.releaseCapacity?.(taskId))
+        Promise.resolve(releaseCapacity === null ? undefined : releaseCapacity(taskId))
       )));
       if (outcomes.some((outcome) => outcome.status === 'rejected' || outcome.value !== true)) {
         throw Object.assign(new Error('plan wave capacity cleanup is incomplete'), {
@@ -6157,10 +6176,12 @@ export class Coordinator {
         });
       }
     };
-    if (typeof this._worktrees?.reserveCapacityMany === 'function') {
-      const reservations = await Promise.resolve(this._worktrees.reserveCapacityMany(prepared.map(({ taskId, runId, workerId }) => ({
+    const reserveCapacityMany = this._capacityMember('reserveCapacityMany');
+    const reserveCapacity = this._capacityMember('reserveCapacity');
+    if (reserveCapacityMany !== null) {
+      const reservations = await reserveCapacityMany(prepared.map(({ taskId, runId, workerId }) => ({
         taskId, requestedBaseSha: null, runId, attemptId: workerId, processGeneration: 1,
-      }))));
+      })));
       if (!Array.isArray(reservations) || reservations.length !== prepared.length) {
         throw Object.assign(new Error('plan wave capacity authority returned an invalid result'), {
           code: 'plan_wave_capacity_invalid',
@@ -6169,9 +6190,9 @@ export class Coordinator {
       prepared.forEach(({ taskId }, index) => {
         if (reservations[index] !== null) reservedCapacityTaskIds.push(taskId);
       });
-    } else if (typeof this._worktrees?.reserveCapacity === 'function') {
+    } else if (reserveCapacity !== null) {
       const reservations = await Promise.allSettled(prepared.map((member) => (
-        this._worktrees.reserveCapacity(member.taskId, null, {
+        reserveCapacity(member.taskId, null, {
           runId: member.runId, attemptId: member.workerId, processGeneration: 1,
         })
       )));
@@ -6243,10 +6264,9 @@ export class Coordinator {
         this._seedCoordinationTasks();
         const targetWorkerIds = prepared.map((member) => member.workerId).sort();
         const outcome = await this.stopRunTargets(targetWorkerIds, 'policy');
-        if (typeof this._worktrees?.settleCapacityMany === 'function') {
-          const settled = await Promise.resolve(this._worktrees.settleCapacityMany(
-            prepared.map((member) => member.taskId),
-          ));
+        const settleCapacityMany = this._capacityMember('settleCapacityMany');
+        if (settleCapacityMany !== null) {
+          const settled = await settleCapacityMany(prepared.map((member) => member.taskId));
           if (!Array.isArray(settled) || settled.length !== prepared.length
             || settled.some((value) => value !== true)) {
             throw Object.assign(new Error('plan wave capacity settlement is incomplete'), {
@@ -6459,8 +6479,9 @@ export class Coordinator {
         revisionParentTaskId = planState.node.revision.parent.taskId;
         worktreeBaseSha = planState.node.revision.parent.resultSha;
         const retainedRef = planState.node.revision.parent.retainedResultRef;
+        const capacityMember = this._capacityMember('reserveCapacity');
         if (!this._worktrees || typeof this._worktrees.resolveResult !== 'function'
-          || typeof this._worktrees.reserveCapacity !== 'function') {
+          || capacityMember === null) {
           throw Object.assign(new Error('Plan revision result-base authority is unavailable'), {
             code: 'plan_revision_base_unavailable',
           });
@@ -6471,12 +6492,13 @@ export class Coordinator {
             code: 'plan_revision_result_ref_mismatch',
           });
         }
-        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
+        const prepared = await capacityMember(taskId, worktreeBaseSha, {
           runId, attemptId: workerId, processGeneration: 1,
         });
         capacityPreflightDone = true;
         if (prepared?.baseSha && prepared.baseSha !== worktreeBaseSha) {
-          await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
+          const releaseCapacity = this._capacityMember('releaseCapacity');
+          if (releaseCapacity !== null) await releaseCapacity(taskId);
           throw Object.assign(new Error('Plan revision capacity base differs from its Candidate'), {
             code: 'plan_revision_base_mismatch',
           });
@@ -6561,7 +6583,10 @@ export class Coordinator {
           : this._coordination.createPlanGatedTask(taskFields(), opts.goalPlan, routeBinding, planAuth);
         coordinationVersion = created.task.version;
       } catch (error) {
-        if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
+        if (capacityPrepared) {
+          const releaseCapacity = this._capacityMember('releaseCapacity');
+          if (releaseCapacity !== null) await releaseCapacity(taskId);
+        }
         throw error;
       }
     }
@@ -6569,16 +6594,20 @@ export class Coordinator {
     try {
       // A session that adopts an existing shared checkout consumes the reservation that checkout
       // already holds: it must not reserve (or later settle) capacity of its own.
+      const reserveCapacity = this._capacityMember('reserveCapacity');
       if (!capacityPreflightDone && !capacityPrepared && sessionRequest.mode === 'new'
         && attachedWorkspace === null
-        && typeof this._worktrees?.reserveCapacity === 'function') {
-        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
+        && reserveCapacity !== null) {
+        const prepared = await reserveCapacity(taskId, worktreeBaseSha, {
           runId, attemptId: workerId, processGeneration: 1,
         });
         if (prepared?.baseSha) worktreeBaseSha = prepared.baseSha;
         capacityPrepared = prepared !== null;
         if (this._drainState !== 'open') {
-          if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
+          if (capacityPrepared) {
+            const releaseCapacity = this._capacityMember('releaseCapacity');
+            if (releaseCapacity !== null) await releaseCapacity(taskId);
+          }
           throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
         }
       }
@@ -6592,7 +6621,10 @@ export class Coordinator {
         this._grantOrientationContextPacks(taskId, runId, workerId, coordinationVersion, admittedBrief);
       }
     } catch (error) {
-      if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
+      if (capacityPrepared) {
+        const releaseCapacity = this._capacityMember('releaseCapacity');
+        if (releaseCapacity !== null) await releaseCapacity(taskId);
+      }
       if (planState) {
         // Issue #35: the admission refusal is the only fact that explains this cancellation;
         // carry its typed code on the transition so the Run view and timeline can surface it.
