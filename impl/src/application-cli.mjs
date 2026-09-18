@@ -1633,7 +1633,7 @@ export function batonCliHelp(topic = 'application') {
     blocks.push(...swarmHelp.paragraphs);
     blocks.push(...(swarmProjectionHelpBlocks(topic) ?? []));
     blocks.push(...(wakeWatchHelpBlocks(topic) ?? []));
-    blocks.push(...(recruitContextHelpBlocks(topic) ?? []));
+    blocks.push(...(recruitLegHelpBlocks(topic) ?? []));
     return blocks.join('\n\n');
   }
   if (!definition && CANONICAL_CLI_BY_KEY.has(topic)) {
@@ -1652,7 +1652,7 @@ export function batonCliHelp(topic = 'application') {
       `No local help is available for ${topic}.\nUse baton help for the application overview.`,
       ...(reincarnationHelpBlocks(topic) ?? []),
       ...(wakeWatchHelpBlocks(topic) ?? []),
-      ...(recruitContextHelpBlocks(topic) ?? []),
+      ...(recruitLegHelpBlocks(topic) ?? []),
     ].join('\n\n');
   }
   const usage = [
@@ -1674,7 +1674,7 @@ export function batonCliHelp(topic = 'application') {
   return [...blocks, ...(topLevelVerbHelpBlocks(helpTopic) ?? []),
     ...(reincarnationHelpBlocks(topic) ?? []),
     ...(wakeWatchHelpBlocks(topic) ?? []),
-    ...(recruitContextHelpBlocks(topic) ?? [])].join('\n\n');
+    ...(recruitLegHelpBlocks(topic) ?? [])].join('\n\n');
 }
 
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
@@ -2458,12 +2458,12 @@ function parseSwarmCli(args, idempotencyKey) {
   // the recruit carries `options.contextPackage = {digest}`. Every other verb refuses them the
   // #431 way, because no other verb admits them.
   const contextPackage = verb === 'recruit' ? takeRecruitContextLeg(args) : null;
-  // Issue #456: the operator's route probe — `swarm recruit … --route-probe` admits ONE recruit onto
-  // a route its provider degraded, before the clear the refusal names (`options.routeProbe: true`,
-  // the field the runtime reads). Like the context leg it is consumed BEFORE the closed-argv check:
-  // it is the ROOT's own decision about a route, not a wire argument on the recruit schema, and the
-  // #431 admitted-flag derivation (`swarmAdmittedFlags`) stays exactly the contract's own set.
-  const routeProbe = verb === 'recruit' && flag(args, '--route-probe');
+  // Issue #475: the operator's route probe has ONE spelling — `options.routeProbe`, carried by the
+  // flag the recruit already teaches (`--options '{"routeProbe": true}'`). #456 consumed a
+  // `--route-probe` token here, outside the verb's declared vocabulary and outside every rendered
+  // usage line, and the refusal that offered it as a remedy was naming a flag an operator cannot
+  // find — or, #431-style, a flag the closed argv would have refused had the parser not eaten it.
+  // The undeclared token is gone: the closed argv now refuses it like any other invented flag.
   assertSwarmArgvClosed(row, args);
   const values = {};
   for (const [index, field] of row.positional.entries()) {
@@ -2506,11 +2506,6 @@ function parseSwarmCli(args, idempotencyKey) {
     } else {
       values[entry.field] = token;
     }
-  }
-  // The probe choice rides the recruit's options beside whatever the caller named (the JSON
-  // `--options` was just parsed above), so the wire carries ONE options object either way.
-  if (routeProbe) {
-    values.options = { ...(record(values.options) ? values.options : {}), routeProbe: true };
   }
   // The wake flags are parsed before the remainder check, so `--wake-class`/`--kinds`/`--since` are
   // the stream's vocabulary rather than an unexpected argument — on BOTH watch forms (#339): the
@@ -2616,10 +2611,11 @@ function wakeWatchHelpBlocks(topic) {
   ];
 }
 
-/** Issue #441: the recruit's context leg, taught by the ONE help renderer beside the verb — the
- * parser consumes these flags before the closed-argv check, so the help and the parse must name
- * the same spelling. */
-function recruitContextHelpBlocks(topic) {
+/** Issue #441/#475: the recruit's OWN legs, taught by the ONE help renderer beside the verb — the
+ * parser consumes every one of these flags before the closed-argv check, so the help and the parse
+ * must name the same spellings, and a refusal that offers one of them as a remedy must be offering
+ * something the verb really admits. */
+function recruitLegHelpBlocks(topic) {
   if (topic !== 'swarm' && topic !== 'swarm.recruit') return null;
   return [[
     'context package:',
@@ -2629,6 +2625,15 @@ function recruitContextHelpBlocks(topic) {
     '  the issue body cites (plus every --doc); the seat\'s brief renders the package and its run',
     '  carries the attachment (scope worker:<seat>). A worker never calls gh. The reader refuses',
     '  typed before any effect: issue_reader_unavailable, issue_not_found, context_doc_unreadable.',
+  ].join('\n'), [
+    'route probe:',
+    '  baton swarm recruit <SWARM_ID> <PARTICIPANT_ID> <OBJECTIVE> \\',
+    '    --options \'{"exact":{"harness":"omp","model":"zai/glm-5.3-flash","effort":"high"},"routeProbe":true}\'',
+    '  options.routeProbe: true admits ONE recruit onto a route its provider degraded, before the',
+    '  instant that route\'s own clear publishes — the operator\'s hand on the mechanism a degrade',
+    '  admits by itself at `clearsAt`. It is the runtime\'s own leg, stripped from the Run intent like',
+    '  the context package; while a probe already holds the episode the recruit refuses',
+    '  `route_degraded`, naming the probe seat that holds it.',
   ].join('\n')];
 }
 

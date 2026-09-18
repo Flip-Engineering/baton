@@ -888,3 +888,51 @@ lands, "what was carried" can be an empty list for a predecessor whose snapshot 
 **A resident reincarnates in place (#306, part 1).** `deployment.reincarnate {target}` (`baton deployment reincarnate <commit-ish>`, `baton serve --reincarnate <commit-ish>`) is a drain-restart: the old incarnation records `host.reincarnation_requested`, closes new-turn admission, waits for in-flight one-shot turns with the #351 stop rows, starts the successor over the same deployment (`host.successor_started {pid, incarnation, argv, log}` — the successor adopts the incarnation the old minted, `argv` is the spawn spelling a reader greps for, and `log` is the path of the successor's OWN serve log, `resident/serve.<incarnation>.log` (#468; the old's tee of the successor's stderr covers the handoff window only). Every resident stream is guarded (#468): a socket, SSE or stdio failure records `host.stream_error {stream, code, at}` and a worker pipe failure the seat's `lifecycle.pipe_error`, never a throw to `process`; the last-resort trigger row carries `code` and `stackHead`), records the publication wait as a durable `host.stop_waiting {wait: {on: 'successor_publication', entries: [{resource, reaper: 'successor', since}]}}` row before releasing the writer lease last so the successor's open can take it, and withdraws its own publication only after observing the successor's (`host.successor_published`, `host.publication_withdrawn`, then the successor's `host.reincarnated {from, to, predecessorExited}`). After the withdrawal the old incarnation releases the successor's process handle and exits by itself — the last tail stage `incarnation_exit` (#461); a signal to an already-withdrawn incarnation drains nothing (it answers 0 participants); a successor that dies before publishing leaves `host.reincarnation_failed {step, cause}` and the old incarnation keeps serving. Participants' rows, checkouts, contracts, parked guidance and claims survive; their next turn runs under the successor. Refusals: `reincarnation_target_unreachable`, `reincarnation_in_flight`, `reincarnation_checkout_held`, `reincarnation_same_commit`; the one bound is `host.reincarnation.wait_ms`. The doctor's `served` block names `target {ref, sha}`, `behind {count, commits}` and `upToDate`; a recruit on a behind resident is admitted with the typed `advisory {kind: 'base_behind', …}` and its brief's `## Base` line; the `incarnation_changed` wake class keys on `host.reincarnated`. The web-lane admission and the canonical operation row for the verb are the last wiring (lane ds-306w).
 
 **The situation section reads one derivation (#441 lane C).** The brief's `## Swarm situation` renders peers-now and `N contributions recorded on this swarm` from the participants fold and the ONE exported contributions derivation the `contributions` projection and `run.contributions.read` share; `run.peers.read` and the brief's peer rows share `renderPeerNowLine`. The projection's contribution rows carry the derivation's `files`, `decision` and `reviewState` beside the fold's body.
+
+## The probe's own turn closes the degrade (issue #475, 2026-09-18)
+
+**The answering turn is the clearing (#475).** #456 admitted ONE probe at a degrade's `clearsAt` and
+then asked a LATER route read whether the deployment still reported the episode — a reading that
+never sees the probe's turn, because a probe seat's rows are not attributed to the route's
+model/effort coordinates (`application-deployment.mjs` `deriveRouteRefusals`). Observed live
+15:10–15:15Z: the probe answered (`route.observed` 15:11–15:12Z naming the model the provider really
+served, a contribution at 15:12:40Z, `participant_left {reason: 'completed'}` at 15:14:47Z) and the
+route still read `degraded`, so the next recruit was refused against a probe that had already
+answered. The runtime now reads the two facts the PROVIDER produced — the durable admission
+(`route.probe_admitted`) and the seat's own `route.observed` on the route its Run was admitted on,
+recorded after that admission — at the runtime entry (`_observeRouteProbeTurns`, beside the #442
+fault observation), and mints `route.recovered {route, at, episodeAt, probeKey, probeAt, clearsAt,
+probeAdmissionSeq}` at the instant the turn was OBSERVED, keyed `route.recovered:<probeKey>` so the
+clearing lands once however often it is read. `route.observed` is the earlier of the two durable
+facts a successful turn leaves (it lands while the turn runs; the seat's contribution only at the
+end of it) and the one that speaks about the ROUTE rather than about the seat's output, which is the
+whole question a probe asks. `_settleRouteProbes` stays beside it as the reading aid for a route the
+deployment's OWN derivation already retired, writing the same row under the same key.
+
+**Every runtime-side reader sees the closed episode (#475).** `_routeUsageRows` reconciles the
+deployment's route table with the recovery the ledger holds: a route whose CURRENT episode is
+closed reads `ready` with `quota.state: 'ok'` for the recruit comparison, the eligibility every
+admission reads, the refusal text and the brief — even while the deployment's own row still reports
+the episode. Exactly the episode is matched (the clearing names the admission, the admission names
+the episode identity: `clearsAt`, else `since`), so a route the provider faulted AGAIN reads
+degraded until ITS probe answers; a row the deployment derives as `blocked` keeps its own verdict,
+because a refusal of its own is not a probe's to clear.
+
+**A probe that is out is named, and a probe that stopped answering is released (#475).** A refusal
+minted while an episode's probe stands names the SEAT the admission row recorded and the instant
+that row carries (`probeSeat`, `probeAdmittedAt` — never "an unrecorded instant", which the old
+in-memory map produced the moment `route.probe_deadline_ms` passed), and its remedy is the caller's
+own: wait for that seat's turn, or stop it. No probe flag is offered, because a second probe cannot
+be admitted while the episode's ONE probe is out. A probe whose seat has settled without answering
+— or whose worker is gone once the probe deadline has passed — releases the episode, and the next
+recruit admits the next ATTEMPT: the admission key is the episode's identity for attempt 1 (the
+#456 key, byte-identical) and `<key>:<n>` after that. A probe whose turn the provider faulted clears
+nothing: the coordinator's fold re-arms the episode with the new window and reset, and the refusal
+names the probe seat and the typed fault it died of beside the new `resetAt`.
+
+**The operator's probe has ONE spelling (#475).** `options.routeProbe: true`, carried by the
+recruit's own `--options` flag (`baton swarm recruit … --options '{"routeProbe": true}'`), is the
+only spelling: #456 consumed an undeclared `--route-probe` token before the closed-argv check —
+never taught by any usage line, and refused #431-style by the verb's own admitted vocabulary — while
+the refusal offered that token as its remedy. The token is gone; the closed argv refuses it like any
+other invented flag and the remedy names the flag the verb really admits.
