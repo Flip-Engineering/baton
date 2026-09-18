@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { createHash } from 'node:crypto';
 
 import { FRAME_LIMITS } from './limits.mjs';
+import { CONTRIBUTION_NOTE_KIND } from './contribution-contract.mjs';
 
 // Issue #294: the deployment-scope wake stream.
 //
@@ -106,6 +107,12 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     summary: 'a contribution was reviewed — accepted, revised, or rejected',
     rows: [ledgerKind('swarm.contribution_reviewed')],
     subject: { field: 'contributionId', kind: 'contribution', fallback: { field: 'swarmId', kind: 'swarm' } },
+  }),
+  wakeRow({
+    wakeClass: 'note', scope: 'swarm', terminal: false, next: null,
+    summary: 'a participant published a plain-text note — recorded, not a contribution, never a check target',
+    rows: [operationalKind(CONTRIBUTION_NOTE_KIND)],
+    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
     wakeClass: 'knowledge', scope: 'swarm', terminal: false, next: null,

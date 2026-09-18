@@ -6,6 +6,8 @@ import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PRO
 import { createHash } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
+import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
+  isContributionContractBody, projectContributionContract, validateContributionContract } from './contribution-contract.mjs';
 import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
@@ -279,16 +281,26 @@ const KNOWLEDGE_METHODS = Object.freeze({
   'run.scratchpad.elevate': 'scratchpadElevate',
 });
 
-/** The contribution body fields that publish a contract or carried-forward work (#310's minimal
- * fields, defined here until #310 lands its own shape): an object body may carry
- * `contract` — what a successor must keep true — and `carriedForward` — the items it hands on.
- * Both are read by the situation projection and by a `resumeFrom` successor's brief. */
+/** The pre-#310 minimal hand-off fields a body may still carry: `contract` — what a
+ * successor must keep true — and `carriedForward` — the items it hands on. The contract
+ * itself now lives in impl/src/contribution-contract.mjs; these stay readable so rows
+ * written before it landed keep composing into briefs exactly as before. */
 export const SWARM_CONTRIBUTION_CONTRACT_FIELDS = Object.freeze(['contract', 'carriedForward']);
 
+/** Contracts published so far: one row per contribution whose body claims the contribution
+ * contract (subject plus its verbatim hand-off arrays) or carries the legacy minimal
+ * hand-off. Ordinary evidence — string findings, absent bodies — publishes no row. Both
+ * are read by the situation projection and by a `resumeFrom` successor's brief. */
 const contributionContractRows = (swarm) => Object.values(swarm.contributions ?? {})
   .map((contribution) => {
     const body = contribution.body;
     if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+    if (isContributionContractBody(body)) {
+      return { contributionId: contribution.contributionId, participantId: contribution.participantId,
+        subject: typeof body.subject === 'string' ? body.subject : null,
+        carriedForward: Array.isArray(body.carriedForward) ? [...body.carriedForward] : [],
+        needsFromOthers: Array.isArray(body.needsFromOthers) ? [...body.needsFromOthers] : [] };
+    }
     const carriedForward = Array.isArray(body.carriedForward) ? body.carriedForward : null;
     const contract = body.contract === undefined ? null : body.contract;
     if (contract === null && carriedForward === null) return null;
@@ -504,6 +516,62 @@ export class SwarmRuntime {
     };
     if (_mutationView(args)) envelope.view = this.inspect(this._swarm(args.swarmId), principal, context);
     return envelope;
+  }
+
+  /** A bare-string contribution body — a payload naming only a string body, with no
+   * contribution identity of its own — is a NOTE (#310): recorded durably as the runtime's
+   * own note driver row — never folded into a contribution, never waking the
+   * contribution_recorded class — and surfaced by the contributions projection beside
+   * contribution rows with kind 'note', so a reader still finds the text. The receipt names
+   * the note kind; the row is replay-safe under the operation key, like every other
+   * runtime-owned row. */
+  _recordContributionNote(args, principal, context, caller) {
+    const key = `swarm-note:${this._operationKey('swarm.update', args, principal)}`;
+    const text = typeof args.payload === 'string' ? args.payload : args.payload?.body;
+    const payload = { swarmId: args.swarmId, participantId: caller?.participantId ?? null, body: text };
+    const event = this.store.recordDriver(CONTRIBUTION_NOTE_KIND, payload,
+      { actor: principal.actor, key }).event;
+    const write = { kind: 'driver.recorded', payload: event.payload,
+      seq: event.seq, ts: event.ts, actor: event.actor };
+    this._recordOperationCompleted('swarm.update', args, principal, context);
+    return this._mutationResult('swarm.update', args, [write], principal, context,
+      { kind: 'note', participantId: payload.participantId });
+  }
+
+  /** Admission for a contract-claiming body (#310), after the closed shape validated: a
+   * named commit must resolve on the seat's lane branch (`git cat-file -e` in the seat's
+   * worktree — the checkout its worker row names), refusing contribution_commit_unresolved
+   * naming sha and branch when it does not; commit:null on a dirty worktree is admitted
+   * with the runtime's uncommitted_work stamp. Returns the body to write and the receipt
+   * status (null when unstamped). */
+  _admitContributionContract(swarm, payload) {
+    const body = payload.body;
+    const participant = Object.hasOwn(swarm.participants, payload.participantId)
+      ? swarm.participants[payload.participantId] : null;
+    const worker = participant ? this._workerFor(participant, this.coordinator.list()) : null;
+    const checkout = worker ? checkoutOf(worker) : null;
+    const worktree = checkout?.worktree ?? null;
+    if (body.commit === null) {
+      if (typeof worktree === 'string' && worktree.length > 0
+        && (gitRead(['status', '--porcelain'], worktree) ?? '').length > 0) {
+        return { body: { ...body, status: CONTRIBUTION_UNCOMMITTED_STATUS },
+          status: CONTRIBUTION_UNCOMMITTED_STATUS };
+      }
+      return { body, status: null };
+    }
+    let resolved = false;
+    if (typeof worktree === 'string' && worktree.length > 0) {
+      try {
+        resolved = spawnSync('git', ['cat-file', '-e', body.commit.sha],
+          { cwd: worktree, encoding: 'utf8' }).status === 0;
+      } catch { resolved = false; }
+    }
+    if (!resolved) {
+      refuse(`Contribution commit ${body.commit.sha} does not resolve on the seat's lane branch`
+        + ` ${body.commit.branch}: publish the lane's commit first, then report its sha`,
+      'contribution_commit_unresolved', { sha: body.commit.sha, branch: body.commit.branch });
+    }
+    return { body, status: null };
   }
 
   /** The advisory scope-overlap rows one requested scope raises (issue #301): every ACTIVE
@@ -1136,6 +1204,22 @@ export class SwarmRuntime {
       return [couplingId, row];
     });
     const contributionEntries = Object.entries(swarm.contributions ?? {});
+    // Issue #310: the notes this swarm recorded (bare-body publishes with no contribution
+    // identity): they ride the contributions collection with kind 'note' — recorded, not
+    // contributions — so a reader finds the text where it looks for published material. A
+    // scoped view carries only work-bound rows, the way every workless contribution before
+    // them already read.
+    const noteRows = [];
+    if (!scope) {
+      for (const event of ledger) {
+        if (event.kind !== 'driver.recorded') continue;
+        const note = event.payload;
+        if (note?.kind !== CONTRIBUTION_NOTE_KIND || note?.swarmId !== swarm.swarmId) continue;
+        noteRows.push({ kind: 'note',
+          participantId: typeof note.participantId === 'string' ? note.participantId : null,
+          body: note.body ?? null, seq: event.seq, ts: event.ts });
+      }
+    }
     const scopedContributionIds = scope ? new Set(contributionEntries
       .filter(([, contribution]) => contribution.workId && scopeWorkIds.has(contribution.workId))
       .map(([contributionId]) => contributionId)) : null;
@@ -1160,16 +1244,21 @@ export class SwarmRuntime {
       // groups and attention are ARRAYS of rows — the collections a caller iterates — while the
       // identity-addressed families (work, assignments, reviews, context) stay keyed objects.
       // Every read path (view, watch, bridge, MCP) carries these rows through unchanged.
-      contributions: rowsOf(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
+      contributions: [...rowsOf(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
         && scopeWorkIds.has(contribution.workId)).map((row) => {
         // #269 item 2: a contribution whose check still waits on the host authority reads as
         // queued where the contribution reads — the position, ahead and shortfall of the wait.
         const queued = queuedCheckByContribution.get(row.contributionId) ?? null;
-        return queued ? { ...row, admission: { state: 'queued', authority: queued.authority,
+        // Issue #310: a contract-claiming body projects its contract as rows beside the stored
+        // row — subject, commit, item statuses, verification summary, hand-off counts.
+        const contract = projectContributionContract(row.body);
+        const projected = contract === null ? row : { ...row, contract };
+        return queued ? { ...projected, admission: { state: 'queued', authority: queued.authority,
           leaseKind: queued.leaseKind, position: queued.position, ahead: queued.ahead,
           shortfall: queued.shortfall, checkId: queued.checkId, participantId: queued.participantId,
-          seq: queued.seq, ts: queued.ts } } : row;
+          seq: queued.seq, ts: queued.ts } } : projected;
       }),
+      ...noteRows],
       reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
       // A group is a roster: a scoped view carries the groups its subtree is ON, by the same
       // roster-intersection rule the couplings below use. A group with no member in scope is not
@@ -1769,7 +1858,10 @@ export class SwarmRuntime {
     if (contracts.length > 0) {
       situation.push('Contracts published so far (keep these true in shared territory):');
       for (const row of contracts) {
-        situation.push(`- ${row.contributionId} by ${row.participantId}: ${JSON.stringify(row.contract ?? row.carriedForward)}`);
+        situation.push(`- ${row.contributionId} by ${row.participantId}: ${JSON.stringify(row.contract ?? row.subject ?? row.carriedForward)}`);
+        // Issue #310: a successor cites what a sibling hands on verbatim — never paraphrased.
+        for (const item of row.carriedForward ?? []) situation.push(`  carries forward: ${JSON.stringify(item)}`);
+        for (const item of row.needsFromOthers ?? []) situation.push(`  needs from others: ${JSON.stringify(item)}`);
       }
     }
     const commits = this._commitsSinceBase(swarm);
@@ -1802,6 +1894,9 @@ export class SwarmRuntime {
       }
     }
     if (situation.length > 0) blocks.push(['## Swarm situation', ...situation].join('\n'));
+    // Issue #310: the expected contribution shape rides every brief, so the next lane never
+    // has to guess it — rendered from the contract's one derivation, never re-spelled.
+    blocks.push(contributionContractBriefSection());
     if (predecessor) {
       const inheritance = [
         `## Inheritance from ${predecessor.participantId}`,
@@ -1897,7 +1992,18 @@ export class SwarmRuntime {
       if (typeof args.payload === 'string' && args.event !== 'swarm.contribution_recorded') {
         refuse('This update needs its target fields; conversation text belongs in body', 'swarm_payload_invalid');
       }
+      // Issue #310: a BARE-string contribution body — a payload naming only a string body,
+      // with no contribution identity of its own — is a NOTE: recorded, not a contribution,
+      // never waking the contribution_recorded class. A whole-payload text finding keeps its
+      // long-standing reading as a contribution, and anything else flows through the ordinary
+      // admission below.
+      if (args.event === 'swarm.contribution_recorded'
+        && typeof args.payload === 'object' && args.payload !== null && !Array.isArray(args.payload)
+        && typeof args.payload.body === 'string' && !Object.hasOwn(args.payload, 'contributionId')) {
+        return this._recordContributionNote(args, principal, context, caller);
+      }
       const payload = { ...(typeof args.payload === 'string' ? { body: args.payload } : clone(args.payload ?? {})), swarmId: args.swarmId };
+      let contributionStatus = null;
       let externalJoin = null;
       if (args.event === 'swarm.contribution_recorded') {
         if (!payload.participantId && !caller) {
@@ -1937,6 +2043,14 @@ export class SwarmRuntime {
       if (caller && args.event === 'swarm.contribution_recorded' && payload.participantId !== caller.participantId) {
         refuse('Contributions must name their actual author', 'swarm_author_mismatch');
       }
+      // Issue #310: a contract-claiming body is validated closed and its commit claim is
+      // verified against the seat's lane branch; commit:null on a dirty worktree is stamped.
+      if (args.event === 'swarm.contribution_recorded' && isContributionContractBody(payload.body)) {
+        validateContributionContract(payload.body);
+        const admitted = this._admitContributionContract(swarm, payload);
+        payload.body = admitted.body;
+        contributionStatus = admitted.status;
+      }
       // Reviews and releases are attributed to their ACTOR: a member's own participant name, or
       // the acting principal's label when an external orchestrator acts. A caller-named identity
       // that is not the actor is a misattribution and refuses — an organizer's act never lands as
@@ -1960,7 +2074,8 @@ export class SwarmRuntime {
         return this._mutationResult(command, args, [recorded], principal, context,
           { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false });
       }
-      return this._mutationResult(command, args, [externalJoin, recorded].filter(Boolean), principal, context);
+      return this._mutationResult(command, args, [externalJoin, recorded].filter(Boolean), principal, context,
+        contributionStatus === null ? {} : { status: contributionStatus });
     }
     if (swarm.status !== 'open' && command === 'swarm.recruit') refuse('Swarm recruitment is closed', 'swarm_closed');
     if (command === 'swarm.recruit') {
