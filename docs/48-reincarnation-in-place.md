@@ -402,7 +402,10 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     `host.successor_started` (past the release the old holds no writer authority). The signal
     path reads the incarnation's state first: a withdrawn deployment answers 0 participants and
     `SignalLifecycleOwner` narrates no second drain (`withdrawn` predicate, wired by `baton serve`).
-    `host.successor_started` carries `argv` (the spawn spelling) and `log: 'stderr'`; the
+    `host.successor_started` carries `argv` (the spawn spelling) and `log` — since #468 the PATH
+    of the incarnation's own serve log (`resident/serve.<incarnation>.log`, opened by the
+    successor at open and named again on its `host.reincarnated`), so no incarnation's narration
+    depends on a predecessor's pipe; the
     successor's stderr is teed into the old's serve log.
 14. **The handoff declaration is consumed by the incarnation it names (#462, landed
     `b3486836`).** The successor reads `BATON_INCARNATION` / `BATON_PREDECESSOR_INCARNATION` /

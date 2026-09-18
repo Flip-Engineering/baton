@@ -32,6 +32,9 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { incarnationServeLogPath } from '../src/application-deployment.mjs';
+// macOS names the temp root both as /var/… and /private/var/…; the successor derives its log
+// path from its real cwd, the fixture from the symlinked tmpdir — one file, one spelling.
+const realpathOf = (p) => String(p).replace(/^\/private\//u, '/');
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { HOST_CAPACITY_BYPASS } from '../src/host-capacity.mjs';
 import { Log } from '../src/log.mjs';
@@ -383,7 +386,8 @@ function spawnSuccessor(spec) {
     const logPath = started.payload.log;
     assert.equal(typeof logPath, 'string', 'the row names the successor\'s log');
     assert.notEqual(logPath, 'stderr', '#461\'s stream name is replaced by a path');
-    assert.equal(logPath, incarnationServeLogPath(resident.deploymentRoot, started.payload.incarnation),
+    // macOS /private/var vs /var: one file, compared by realpath (the §2.4 rule).
+    assert.equal(realpathOf(logPath), realpathOf(incarnationServeLogPath(resident.deploymentRoot, started.payload.incarnation)),
       'the path is the successor\'s own derivation — one name for both halves of the handoff');
 
     // The successor's OWN narration: the flip line it writes at open, written by the successor
