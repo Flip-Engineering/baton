@@ -173,25 +173,35 @@ test('RT-1: doctor reports every served omp route blocked with its own file name
   }
   assert.equal(blocked.ready, false, 'a deployment whose only family is credential-blocked is not ready');
 
-  // One provider's key file: exactly that provider's routes turn ready, the other stays blocked.
+  // One provider's key file: exactly that provider's routes turn ready; every OTHER served
+  // provider (zai, kimi-code, whatever the family declares — #440: the list is derived, never
+  // hand-kept) stays blocked naming ITS OWN file.
   provisionKey(fixture.repo, 'deepseek_key.json');
   const mixed = await servedOmpDoctor({ repo: fixture.repo, home, label: 'mixed' });
   const deepseek = ompRows(mixed).filter((row) => row.model.startsWith('deepseek/'));
-  const zai = ompRows(mixed).filter((row) => row.model.startsWith('zai/'));
+  const others = ompRows(mixed).filter((row) => !row.model.startsWith('deepseek/'));
   assert.equal(deepseek.length, OMP_ROUTES.filter((route) => route.model.startsWith('deepseek/')).length);
-  assert.equal(zai.length, OMP_ROUTES.filter((route) => route.model.startsWith('zai/')).length);
+  assert.equal(others.length, OMP_ROUTES.filter((route) => !route.model.startsWith('deepseek/')).length);
+  assert.ok(others.length > 0, 'the served omp family declares more than one provider');
   assert.equal(deepseek.every((row) => row.state === 'ready'), true,
     `a provisioned deepseek key file must make every deepseek effort ready, got ${JSON.stringify(deepseek.map((row) => [row.model, row.effort, row.state, row.code]))}`);
-  assert.equal(zai.every((row) => row.state === 'blocked' && row.code === 'authentication_required'), true,
-    'the deepseek key file must never satisfy a zai route');
-  assert.equal(zai.every((row) => row.summary.includes('glm_key.json')), true);
+  for (const row of others) {
+    assert.equal(row.state === 'blocked' && row.code === 'authentication_required', true,
+      `the deepseek key file must never satisfy ${row.model}`);
+    assert.ok(row.summary.includes(deploymentModule.ompProviderKeyFile(row.model)),
+      `the blocked ${row.model} row names its own file, got: ${row.summary}`);
+  }
   assert.equal(mixed.ready, true, 'a deployment with a ready route is ready');
 
-  // Both key files: the whole served family reads ready.
-  provisionKey(fixture.repo, 'glm_key.json');
+  // Every key file the served family declares: the whole family reads ready. The file list is
+  // the family's own declaration (ompProviderKeyFile over the served routes), so a provider that
+  // joins DEFAULT_ROUTES later is provisioned here without anyone editing this row (#440).
+  const declaredFiles = new Set(OMP_ROUTES.map((route) => deploymentModule.ompProviderKeyFile(route.model)));
+  assert.ok(declaredFiles.size >= 2 && ![...declaredFiles].includes(null), 'every served omp route declares a key file');
+  for (const file of declaredFiles) if (file !== 'deepseek_key.json') provisionKey(fixture.repo, file);
   const complete = await servedOmpDoctor({ repo: fixture.repo, home, label: 'complete' });
   assert.equal(ompRows(complete).every((row) => row.state === 'ready'), true,
-    `every served omp route must read ready with both key files present, got ${JSON.stringify(ompRows(complete).map((row) => [row.model, row.effort, row.state, row.code]))}`);
+    `every served omp route must read ready with every declared key file present (${[...declaredFiles].join(', ')}), got ${JSON.stringify(ompRows(complete).map((row) => [row.model, row.effort, row.state, row.code]))}`);
 });
 
 test('RT-2: ompRouteReadiness is the one per-provider derivation — never either-file-for-both-providers', () => {
