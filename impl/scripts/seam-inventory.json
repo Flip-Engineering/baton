@@ -6717,7 +6717,7 @@
         {
           "name": "_projectionCheckpointPayload",
           "ordinal": 0,
-          "size": 31,
+          "size": 40,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -6733,6 +6733,26 @@
           "evidence": [
             "observation:projection_name",
             "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_referencedSecondCopies",
+          "ordinal": 0,
+          "size": 65,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_projectionReferenceValue",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:ledger_name",
+            "observation:story_ingest"
           ]
         },
         {
@@ -8736,7 +8756,7 @@
         {
           "name": "_apply",
           "ordinal": 0,
-          "size": 1236,
+          "size": 1244,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -10697,6 +10717,16 @@
           ]
         },
         {
+          "name": "_resolvedSpill",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
           "name": "recordSwarm",
           "ordinal": 0,
           "size": 20,
@@ -10820,7 +10850,7 @@
         {
           "name": "materializeSpill",
           "ordinal": 0,
-          "size": 5,
+          "size": 6,
           "seam": "effect",
           "evidence": [
             "effect:action_name"

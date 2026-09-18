@@ -294,6 +294,40 @@ carried a rendering re-points at the ledger row holding it (measured on the clon
 checkpoint: the swarm snapshot's per-seat rows, 17 422 263 B of which 99.3% was the composed recruit
 brief, now `briefBytes` + `briefRef` and 126 805 B; issue #465).
 
+The rest of the body's second copies follow the same rule, through ONE reference grammar and ONE
+reader (`PROJECTION_REFERENCES` + `_projectionReferenceValue` in `impl/src/coordination-store.mjs`):
+a row keeps its IDENTITY and OUTCOME and names the ledger row that holds the text as
+`{<field>Ref {kind, seq}, <field>Bytes}`, and every consumer resolves the pair from that row — the
+ledger is the source, the projection the pointer. Two families are converted where they are FOLDED,
+because every reader of those rows already goes through the store's own accessors: a completed web
+command keeps `{commandId, status, outcome.httpStatus}` and references the response body it recorded
+(`outcome.bodyBytes` + `outcome.bodyRef`, resolved by `webCommand`/`webCommandByScope` — measured on
+the clone, `_webCommands` was 39 206 146 B of the 288 871 406-byte body; the request content is
+never on the row to reference, only `requestAxes`' digest map is), and a spill keeps
+`{spillId, digest, bytes, lane}` where `bytes` IS the referenced body's length (5 845 234 B;
+`materializeSpill` and the mint receipt answer the body unchanged). Three are referenced in the
+checkpoint BODY only, because consumers outside the store read those rows whole
+(`coordination-replay.mjs`'s `plan.nodes`, the application's goal/plan readers): a goal's
+`objective` (11 971 429 B), a plan's `nodes` (12 071 920 B) and a task's `brief` (12 141 185 B), each
+as `objectiveRef`/`nodesRef`/`briefRef` beside its `<field>Bytes`, with a family and its head map
+rendered from the ONE row they alias. On this lane's fixture (one 200 KB web answer, one 50 KB
+spill, one 40 KB objective, one 3 KB node objective, one 4 KB brief) the projection falls 622 288 B
+→ 317 961 B over a 310 578-byte ledger, and the release write gets FASTER (24.1 ms → 17.3 ms
+median, five rounds) even though the render walk costs 0.9 ms: what leaves the body is text the
+checkpoint used to serialize and fsync twice over.
+
+What is left is the parsed window, and that is the honest answer to "why is this still over the
+ceiling": `_events` + `_byKey` are the ledger's own rows, cached as parsed objects — 180 159 961 B
+of the clone's 288 871 406 B, and after this lane the whole remainder. The ceiling the registry
+derives (`checkpoint.projection_bytes` = `view.wake_replay.items` × `view.attention_text.bytes`, 4096
+rows × 4096 bytes = 16 MiB) is a ROW ceiling times a row's text, so a checkpoint fits it exactly when
+the live window it caches is within `view.wake_replay.items` rows — the clone's window is 51 327
+rows, 12.5× that row ceiling, which is why its release write reports `release_checkpoint_unbounded`
+at 189 MB whatever the text families do. The lever is the compaction cut (#223 `compact({beforeSeq})`),
+not another rendering: an operator cadence that keeps the live window inside the registry's row
+ceiling is what makes the release write land, and until it exists the open's own refresh write is
+the one that caches (issue #465 item 4/5).
+
 
 ## 6. Restart truth: lost seats and refused starts (#364, #384)
 
