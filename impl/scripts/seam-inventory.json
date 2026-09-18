@@ -16,16 +16,37 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 698,
-          "seam": "effect",
+          "size": 482,
+          "seam": "admission",
           "evidence": [
-            "recovery:reconcile_call",
-            "effect:worktree_authority",
             "admission:authority_check",
             "admission:policy_gate",
             "observation:log_append",
-            "observation:coordination_authority",
             "observation:story_ingest",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "completeDeferredStartup",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
+          "name": "_startupReconstruction",
+          "ordinal": 0,
+          "size": 231,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "effect:worktree_authority",
+            "effect:action_verb",
+            "observation:log_append",
+            "observation:coordination_authority",
             "observation:durable_read"
           ]
         },
@@ -6640,7 +6661,7 @@
         {
           "name": "_append",
           "ordinal": 0,
-          "size": 50,
+          "size": 55,
           "seam": "observation",
           "evidence": [
             "observation:store_append",

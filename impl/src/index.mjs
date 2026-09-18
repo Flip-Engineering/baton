@@ -1439,7 +1439,10 @@ export function createDriver(opts) {
   // Issue #351 lane 3: the async replay starts UNDER the lease just claimed — the fold's
   // chunks yield to the loop while the rest of the driver assembles, and the deployment open
   // awaits the promise before its first projection read. Fold errors reject typed (#304).
-  const coordinationOpened = coordinationAsyncOpen ? loadCoordinationStoreAsync(coordination) : null;
+  // Issue #434: the replay is STARTED only once the coordinator exists (below) — its
+  // constructor must not see a half-folded projection — and the coordinator's projection-derived
+  // startup reconstruction runs when the replay resolves, before the deployment's first read.
+  let coordinationOpened = null;
   const workspaceDeploymentId = canonicalDigest({ repoId: deploymentRepoId, logDir: realpathSync(opts.logDir) });
   const workspaceOwnerAuthority = Object.freeze({
     deploymentId: workspaceDeploymentId,
@@ -1674,6 +1677,12 @@ export function createDriver(opts) {
   });
   liveWorkspaceHoldersFor = (physicalOwnerId, holderOpts) =>
     coordinator.liveWorkspaceHolders(physicalOwnerId, holderOpts);
+  if (coordinationAsyncOpen) {
+    coordinationOpened = loadCoordinationStoreAsync(coordination).then((store) => {
+      coordinator.completeDeferredStartup();
+      return store;
+    });
+  }
 
   let providerPoller = null;
   if (opts.providerPolling !== undefined) {

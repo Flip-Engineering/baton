@@ -1435,6 +1435,33 @@ export class Coordinator {
     // against live and durable state) by value; nothing is inferred from the shape of an id.
     this._replayedIds = { workers: new Set(), tasks: new Set(), requests: new Set() };
 
+    // Issue #434: everything below reads the coordination projection (snapshot, task seeding,
+    // plan-node settlement, the worker-log replay, startup reconciliation). A store opened
+    // DEFERRED (#351 lane 3, createDriver's coordinationAsyncOpen) has no projection yet, and
+    // its first chunk may already be folded — reading it here seeded a partial world and the
+    // settle loop APPENDED before the load finished (TypeError on _loadedLedgerHash, the
+    // 2026-09-18 unservable master). On that path the driver runs the reconstruction once the
+    // async replay resolves; every other caller reconstructs here, exactly as before.
+    if (this._coordination?._deferredLoad === true) {
+      this._startupReconstructionPending = true;
+    } else {
+      this._startupReconstruction();
+    }
+  }
+
+  /** Issue #434: the deferred-open completion — createDriver calls this after
+   * loadCoordinationStoreAsync resolves; a second call is a no-op receipt. */
+  completeDeferredStartup() {
+    if (this._startupReconstructionPending !== true) return false;
+    if (this._coordination?._deferredLoad === true) {
+      throw new CoordinationRefusal('coordination store is still replaying: completeDeferredStartup runs after loadCoordinationStoreAsync resolves', 'coordination_store_loading');
+    }
+    this._startupReconstruction();
+    return true;
+  }
+
+  _startupReconstruction() {
+    this._startupReconstructionPending = false;
     // One bounded startup clone feeds every reconstruction pass. Per-worker snapshot cloning made
     // replay proportional to worker-count times the complete coordination state.
     this._startupCoordinationSnapshot = this._coordination.snapshot();

@@ -1747,6 +1747,11 @@ export class CoordinationStore {
 
   _append(kind, payload, { actor, key }, fixedTs = null, beforeWrite = null) {
     this._assertWriterLease();
+    // Issue #434: no append before a deferred open's replay resolves — the ledger identity the
+    // append extends does not exist yet. Typed, so the next early writer is a one-line diagnosis.
+    if (this._deferredLoad === true) {
+      throw new CoordinationRefusal('coordination store is still replaying (loadCoordinationStoreAsync has not resolved): no append before the deferred open completes', 'coordination_store_loading');
+    }
     if (typeof actor !== 'string' || actor.length === 0) throw new TypeError('coordination actor required');
     if (typeof key !== 'string' || key.length === 0) throw new TypeError('coordination idempotency key required');
     const prior = this._byKey.get(key);
@@ -16258,5 +16263,8 @@ export async function loadCoordinationStoreAsync(store) {
   if (!(store instanceof CoordinationStore)) throw new TypeError('loadCoordinationStoreAsync requires a CoordinationStore');
   if (store._deferredLoad !== true) throw new TypeError('loadCoordinationStoreAsync requires a deferLoad-constructed store');
   await coordinationReplay._load(store, { async: true });
+  // Issue #434: the projection now exists — appends are admitted and the ledger/projection
+  // equality check (#331's reload) is live again.
+  store._deferredLoad = false;
   return store;
 }
