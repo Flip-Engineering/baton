@@ -482,6 +482,10 @@
       "reason": "#441"
     },
     {
+      "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
+      "reason": "#460"
+    },
+    {
       "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
       "reason": "#24"
     },
@@ -918,6 +922,10 @@
       "reason": "#460"
     },
     {
+      "key": "test/phase59-worktree-capacity-authority.test.mjs :: P92.2-PO2/WC32: internal post-add failure remains intact until capacity-first outer rollback",
+      "reason": "#460"
+    },
+    {
       "key": "test/phase62-web-goal-plan.test.mjs :: GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures refuse safely",
       "reason": "design"
     },
@@ -1067,6 +1075,10 @@
     {
       "key": "test/phase80-application-revision-red.test.mjs :: AR80-4: the bound deployment round ceiling pauses without exposing a caller loop knob",
       "reason": "credential"
+    },
+    {
+      "key": "test/phase80-revision-restart-stop-red.test.mjs :: AR80-RS2: a working revision lost across restart exposes exact typed recovery and forbids redelivery",
+      "reason": "#460"
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-1: ordinary Workflow Context is source-grounded, credential-excluding, and restart-readable",
@@ -1525,6 +1537,10 @@
       "reason": "#69"
     },
     {
+      "key": "test/run-show-verification-verdict.test.mjs :: V7: a candidate-owned exit mismatch reads as its own closed code on run show",
+      "reason": "#460"
+    },
+    {
       "key": "test/scratchpad-write-red.test.mjs :: A1-2 stage[cli-append-json-shape-missing]: the non-note JSON body path parses into the closed per-kind shape (H2.3)",
       "reason": "#158"
     },
@@ -1873,6 +1889,10 @@
       "reason": "#102"
     },
     {
+      "key": "test/wave-observability-red.test.mjs :: A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)",
+      "reason": "#460"
+    },
+    {
       "key": "test/worker-verdict-surface-red.test.mjs :: C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing)",
       "reason": "#79"
     },
@@ -1923,6 +1943,10 @@
     {
       "key": "test/worker-verdict-surface-red.test.mjs :: D9 (RED): the suppression epoch DERIVES from the profile digest and the admission SHA — different inputs derive different epochs, never a hardcoded constant (stage: live-composition-missing / epoch-missing)",
       "reason": "#61"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: FP-14-dispatch (stage: tools absent): each tool dispatches its facade command with the CONNECTION-derived principal",
+      "reason": "#460"
     },
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
