@@ -146,6 +146,37 @@ const OPEN_CHECKPOINT_REASONS = Object.freeze({
   stale_authority: 'stale_authority_rewrite',
 });
 
+/** Issue #465(3): the projection's REFERENCE grammar — the ledger kinds a projection row may point
+ * at, and where inside that row's payload the referenced value lives. ONE table, so every writer of
+ * a `{kind, seq}` reference and the ONE reader (`_projectionReferenceValue`) cannot disagree about
+ * what a pair means; a kind that is not in here is not a reference and resolves to null, never to a
+ * guessed value. The pairing is the #464/#469 derivation (a `roleRef`/`briefRef`/`objectiveRef`
+ * names the `swarm.participant_joined` row that holds the text), applied to the families the
+ * checkpoint measured as second copies of their own ledger rows. */
+const PROJECTION_REFERENCES = Object.freeze({
+  // #465(1): a completed web command's response body. The row keeps the receipt's identity and
+  // outcome (`{httpStatus, bodyBytes, bodyRef}`) — the request content never rides the row at all
+  // (only `requestAxes`' digest map does), so the response body is the one second copy.
+  'web.command_completed': (payload) => payload?.outcome?.body ?? null,
+  'web.command_failed': (payload) => payload?.outcome?.body ?? null,
+  // #465(2): a spill's digest-addressed body. The row already carries the body's byte length as
+  // its own `bytes`, so the reference's pair is `bodyRef {kind, seq}` beside that number.
+  'spill.minted': (payload) => payload?.body ?? null,
+  // #465(3): the checkpoint body's second-copy families — a task's brief, a goal's objective and a
+  // plan's nodes, each a byte-identical copy of the field the ledger row already holds.
+  'task.created': (payload) => payload?.brief ?? null,
+  'goal.version_defined': (payload) => payload?.goal?.objective ?? null,
+  'plan.version_proposed': (payload) => payload?.plan?.nodes ?? null,
+});
+
+/** Issue #465(3): what a reference stands for, in bytes — the text a reader carries if it resolves
+ * the pair: the exact UTF-8 length of a string, or of the JSON text an object-valued field
+ * serializes to. ONE derivation, so every family's `<field>Bytes` is the same measurement (and the
+ * spill row's existing `bytes` — minted as `Buffer.byteLength(body)` — is the same number). */
+function referencedBytes(value) {
+  return Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value), 'utf8');
+}
+
 /** Issue #290: the wave.started roster well-formedness rule, shared by the replay fold and the
  * prospective write gate so the two can never drift — the fold refuses a genuinely malformed
  * roster (neither a well-formed object-array nor a well-formed string-array) as an integrity
@@ -1125,6 +1156,15 @@ export class CoordinationStore {
     // is bounded by the registry rows that bound a row's carried text, never by how long a
     // recruiter's brief happens to be.
     payload._swarms = this._boundedSwarmProjection(payload._swarms);
+    // Issue #465(3): the remaining second-copy families. A task's brief, a goal's objective and a
+    // plan's nodes are byte-identical copies of the field their own ledger row already holds, so
+    // the body carries `{<field>Ref {kind, seq}, <field>Bytes}` and a reader resolves the text
+    // from that row — one reference grammar, the same `_projectionReferenceValue` the fold's own
+    // readers use (below). The fold keeps these rows whole: their text is read directly by
+    // consumers outside this store (`coordination-replay.mjs` `plan.nodes`, the application's
+    // goal/plan readers), so the reference is the BODY's rendering, exactly as a participant row's
+    // brief is above.
+    this._referencedSecondCopies(payload);
     // #223: the checkpoint is a parsed-event cache for the LIVE WINDOW. When the ledger has
     // been compacted (archived events live in segments, not in events.jsonl), the cache holds
     // only the window events — they are the exact bytes of the current ledger, so the
@@ -1175,6 +1215,114 @@ export class CoordinationStore {
     }
     return bounded;
   }
+
+  /** Issue #465(1)(3): the checkpoint body's SECOND-COPY families — a row whose text is
+   * byte-identical to a ledger row's own field hands the text back to the row that holds it. Measured
+   * on the clone's checkpoint, these are what the non-window families keep: `_webCommands`
+   * 39 206 146 B, `_tasks` 12 141 185 B, `_plans` 12 071 920 B, `_goals` 11 971 429 B and `_spills`
+   * 5 845 234 B of the 288 871 406-byte body — every byte of it text the `web.command_completed` /
+   * `task.created` / `plan.version_proposed` / `goal.version_defined` / `spill.minted` row already
+   * carries. The row keeps its identity (id, version, digest, the event seqs it was folded from, the
+   * derived state) and the body carries `<field>: null`, `<field>Bytes` and `<field>Ref {kind, seq}`
+   * — the pair the ONE reader resolves through.
+   *
+   * A `_spills` row carries its pair from the FOLD (every reader of a spill row is this store's own
+   * accessor, so the fold hands the bytes back and `materializeSpill` composes them again). The
+   * `_webCommands`, goal, plan and task rows are rendered HERE: the two web-command readers are
+   * delegates into the extracted internals port whose bijection pin requires them to stay bare calls,
+   * and consumers outside this store read the goal/plan/task rows whole (`coordination-replay.mjs`'s
+   * `plan.nodes`, the application's goal/plan readers) — so the fold keeps those rows and the body
+   * points at the ledger row.
+   *
+   * Rendering is memoized BY ROW IDENTITY for the duration of one payload: a family and its head map
+   * are set from the SAME frozen row (the fold does `this._plans.set(key, frozen);
+   * this._planHeads.set(headKey, frozen)`), so both families render to the one rendered row and the
+   * body never pays for the text a second time — nor does it lose the alias. A row whose field is
+   * absent, or whose seq is not the row's own event, is passed through untouched: the reference is
+   * only minted where the pair it names is provable from the row itself. */
+  _referencedSecondCopies(payload) {
+    const memo = new Map();
+    const rendered = (row, render) => {
+      if (row === null || typeof row !== 'object' || Array.isArray(row)) return row;
+      const prior = memo.get(row);
+      if (prior !== undefined) return prior;
+      const next = render(row) ?? row;
+      memo.set(row, next);
+      return next;
+    };
+    const family = (rows, render) => {
+      if (!(rows instanceof Map) || rows.size === 0) return rows;
+      let changed = false;
+      const out = new Map();
+      for (const [key, row] of rows) {
+        const next = rendered(row, render);
+        if (next !== row) changed = true;
+        out.set(key, next);
+      }
+      return changed ? out : rows;
+    };
+    /** A row whose OWN `<name>` field is byte-identical to a field of the ledger row `seqField`
+     * names — the goal objective, the plan nodes, the task brief. */
+    const own = (name, kind, seqField) => (row) => {
+      const text = row[name];
+      const seq = row[seqField];
+      if (text === null || text === undefined || !Number.isSafeInteger(seq)) return row;
+      return freeze({
+        ...row,
+        [name]: null,
+        [`${name}Bytes`]: referencedBytes(text),
+        [`${name}Ref`]: freeze({ kind, seq }),
+      });
+    };
+    payload._goals = family(payload._goals, own('objective', 'goal.version_defined', 'definedEvent'));
+    payload._goalHeads = family(payload._goalHeads, own('objective', 'goal.version_defined', 'definedEvent'));
+    payload._plans = family(payload._plans, own('nodes', 'plan.version_proposed', 'proposedEvent'));
+    payload._planHeads = family(payload._planHeads, own('nodes', 'plan.version_proposed', 'proposedEvent'));
+    payload._tasks = family(payload._tasks, own('brief', 'task.created', 'createdEvent'));
+    // #465(1): a completed web command's ANSWER body, inside the outcome the row keeps. Measured on
+    // the clone, `_webCommands` was 39 206 146 B of the 288 871 406-byte body and the whole of it
+    // was `outcome.body`; the request content is not a copy at all (the row carries `requestDigest`
+    // and a `requestAxes` digest map — the ledger deliberately carries no request content), so the
+    // answer body is the one thing to point at. The row keeps the OUTCOME a reader decides on
+    // (`httpStatus`) and the pair names the terminal ledger row — the kind its own `status` was
+    // minted from in the fold. An outcome with no body has nothing to reference and is passed on.
+    payload._webCommands = family(payload._webCommands, (row) => {
+      const outcome = row.outcome;
+      const seq = row.completedEvent;
+      if (outcome === null || typeof outcome !== 'object' || Array.isArray(outcome)
+        || outcome.body === null || outcome.body === undefined || !Number.isSafeInteger(seq)) return row;
+      const { body, ...head } = outcome;
+      return freeze({
+        ...row,
+        outcome: freeze({
+          ...head,
+          body: null,
+          bodyBytes: referencedBytes(body),
+          bodyRef: freeze({
+            kind: row.status === 'failed' ? 'web.command_failed' : 'web.command_completed', seq,
+          }),
+        }),
+      });
+    });
+  }
+
+  /** Issue #465: the ONE reader of a projection REFERENCE (`{kind, seq}`). It answers the value the
+   * ledger row the pair names holds — a composed brief, a web command's response body, a spill's
+   * bytes, a task brief, a goal's objective, a plan's nodes — read from `_events`, which carries the
+   * FULL history (archived rows included; compaction only decides what the checkpoint caches), so a
+   * reference resolves in O(1) and never needs a disk read. A pair that names an absent row, or a
+   * row of another kind, resolves to null: a reference that cannot be read is absence, never a
+   * guessed value. The kind's reader is the PROJECTION_REFERENCES row — never a second grammar. */
+  _projectionReferenceValue(reference) {
+    if (reference === null || typeof reference !== 'object' || Array.isArray(reference)) return null;
+    const read = typeof reference.kind === 'string' ? PROJECTION_REFERENCES[reference.kind] : undefined;
+    const { seq } = reference;
+    if (read === undefined || !Number.isSafeInteger(seq) || seq < 1 || seq > this._events.length) return null;
+    const event = this._events[seq - 1];
+    if (event?.seq !== seq || event.kind !== reference.kind) return null;
+    return read(event.payload) ?? null;
+  }
+
 
   /** Issue #449: the ONE writer of the projection checkpoint. It returns the bytes it MEASURED
    * (`bytes`), whether the checkpoint was written (`written`), and whether those bytes ARE a
@@ -8608,6 +8756,10 @@ export class CoordinationStore {
       this._webCommandScopes.set(p.scopeKey, p.commandId);
     } else if (event.kind === 'web.command_completed' || event.kind === 'web.command_failed') {
       const old = this._webCommands.get(p.commandId);
+      // Issue #465(1): the row keeps the receipt's identity and the recorded outcome WHOLE — the
+      // two readers above this fold are delegates into the extracted internals port and stay bare
+      // (their bijection pin counts them), so the reference this family carries is the checkpoint
+      // BODY's rendering, applied in `_referencedSecondCopies` beside the task/goal/plan families.
       this._webCommands.set(p.commandId, freeze({ ...clone(old), status: event.kind === 'web.command_completed' ? 'completed' : 'failed', outcome: clone(p.outcome), completedEvent: event.seq, completedAt: event.ts }));
     } else if (event.kind === 'mcp.call_admitted') {
       const call = freeze({ ...clone(p), status: 'admitted', admittedEvent: event.seq, admittedAt: event.ts, outcome: null, completedEvent: null });
@@ -8650,9 +8802,13 @@ export class CoordinationStore {
     } else if (event.kind === 'spill.minted') {
       // Decision 4: a digest-addressed durable spill artifact. Content-addressed (spillId =
       // spill:sha256:<digest of the body's UTF-8 bytes>), idempotent by auth key, replay-derived.
+      // Issue #465(2): the body is the ledger row's own (`spill.minted.payload.body`, measured at
+      // 5 845 234 B of the clone's 288 871 406-byte projection), so the folded row references it —
+      // `bytes` is already that body's exact length, and `materializeSpill` resolves the pair.
       const spill = freeze({
         spillId: p.spillId, digest: p.digest, bytes: p.bytes, lane: p.lane ?? null,
-        body: p.body, observedSeq: event.seq, observedAt: event.ts,
+        body: null, bodyRef: freeze({ kind: 'spill.minted', seq: event.seq }),
+        observedSeq: event.seq, observedAt: event.ts,
       });
       this._spills.set(spill.spillId, spill);
     } else if (event.kind === 'context.read') {
@@ -12998,6 +13154,21 @@ export class CoordinationStore {
     return coordinationInternals.waveRegistry(this._waveRegistry);
   }
 
+  /** Issue #465(2): the ONE reader of a spill row — the digest-addressed identity the fold kept
+   * (spillId, digest, `bytes` — the body's exact length — lane, the observed seqs) with the body
+   * resolved from the `spill.minted` ledger row the row references. Every caller that used to
+   * receive the row with the body inline (`mintSpill`, `materializeSpill`) receives exactly that,
+   * composed in one place; a reference that cannot be read answers null, never the text of another
+   * spill. */
+  _resolvedSpill(spillId) {
+    const spill = this._spills.get(spillId);
+    if (spill === undefined) return null;
+    // The row's own shape, exactly — the pair is the projection's bookkeeping and the body is what
+    // every caller of this reader asked for (`mintSpill`'s receipt, `materializeSpill`'s answer).
+    const { bodyRef, ...rest } = spill;
+    return { ...clone(rest), body: bodyRef === undefined ? spill.body ?? null : this._projectionReferenceValue(bodyRef) };
+  }
+
   // #161: the plan-object projection reads — cloned snapshots so a reader never mutates the
   // replay-derived _campaignPlans map (folds apply events; they never authorize, H2.3).
   /** Validate against current state before appending: rejected edits must never poison replay. */
@@ -13133,20 +13304,21 @@ export class CoordinationStore {
       if (prior.kind !== 'spill.minted' || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
         throw new CoordinationRefusal('spill idempotency conflict', 'spill_conflict');
       }
-      return { ok: true, result: 'idempotent', event: clone(prior), spill: clone(this._spills.get(spillId)) };
+      return { ok: true, result: 'idempotent', event: clone(prior), spill: this._resolvedSpill(spillId) };
     }
     if (this._spills.has(spillId)) {
       // Content-addressed: the same body is already durable under this digest — no new event.
-      return { ok: true, result: 'idempotent', event: null, spill: clone(this._spills.get(spillId)) };
+      return { ok: true, result: 'idempotent', event: null, spill: this._resolvedSpill(spillId) };
     }
     const event = this._append('spill.minted', payload, auth);
-    return { ok: true, result: 'minted', event: clone(event), spill: clone(this._spills.get(spillId)) };
+    return { ok: true, result: 'minted', event: clone(event), spill: this._resolvedSpill(spillId) };
   }
 
   materializeSpill(spillId) {
-    const spill = this._spills.get(spillId);
-    if (!spill) return null;
-    return { spillId: spill.spillId, digest: spill.digest, bytes: spill.bytes, body: spill.body };
+    const spill = this._resolvedSpill(spillId);
+    return spill === null
+      ? null
+      : { spillId: spill.spillId, digest: spill.digest, bytes: spill.bytes, body: spill.body };
   }
 
   /** Epic #81 (O-6): append an attempt-scoped context.pack_granted receipt, atomically with the
