@@ -229,8 +229,12 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     capabilities: Object.freeze(['observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
+  // Issue #443 hand-back: `policy` lets a swarm be OPENED with its re-route policy declared —
+  // `{rerouteOnProviderFault, reroutePreferApi}`, the same fields one `swarm.policy_updated` row
+  // carries (the fold's closed sets validate them; this surface checks only the shape, exactly as
+  // the recruit's `options` row does). The runtime writes that row in the same mutation.
   'swarm.create': Object.freeze({
-    args: Object.freeze(['purpose', 'swarmId', 'idempotencyKey', 'view']),
+    args: Object.freeze(['purpose', 'swarmId', 'policy', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -476,10 +480,13 @@ const SWARM_FIELD_RULES = Object.freeze({
   message: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   reason: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   payload: Object.freeze({ check: isBody, expectation: 'a JSON object or a non-empty text body' }),
-  options: Object.freeze({ check: isJsonObject, expectation: 'a JSON object' }),
-  // Issue #443: a swarm-level policy is declared through `swarm.update` event `swarm.policy_updated`
-  // (the fold's closed sets validate its fields) — the ONE place swarm-level policy lives.
+  // Issue #443: the re-route policy a swarm may be OPENED with. Only the SHAPE is checked here — the
+  // fields a policy row may carry are the fold's closed sets (swarm-state.mjs SWARM_POLICY_FIELDS /
+  // SWARM_REROUTE_MODES), and the runtime validates against those tables before the swarm lands. A
+  // policy declared later rides a `swarm.policy_updated` payload and is judged by the same fold.
+  policy: Object.freeze({ check: isJsonObject, expectation: 'a JSON object naming the policy fields to declare' }),
   permissions: Object.freeze({ check: (value) => Array.isArray(value) && value.every(isText), expectation: 'an array of permission names' }),
+  options: Object.freeze({ check: isJsonObject, expectation: 'a JSON object' }),
   // `mode` (#373) names the seat's contribution contract; its closed set is SWARM_RECRUIT_MODES,
   // declared once and named by every refusal and help surface that renders the field.
   mode: Object.freeze({
@@ -525,7 +532,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   'swarm.list': Object.freeze({ required: Object.freeze([]), optional: Object.freeze([]) }),
   'swarm.create': Object.freeze({
     required: Object.freeze(['purpose', 'idempotencyKey']),
-    optional: Object.freeze(['swarmId', 'view']),
+    optional: Object.freeze(['swarmId', 'policy', 'view']),
   }),
   'swarm.view': Object.freeze({
     required: Object.freeze(['swarmId']),
@@ -773,9 +780,9 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.create',
-    description: 'Create one living swarm for an evolving purpose. Answers with a mutation receipt — the recorded event {kind, seq, ts, actor}, the rows it changed, and next, the step that follows; view: true adds the whole refreshed view.',
+    description: 'Create one living swarm for an evolving purpose; an optional policy declares the swarm\'s re-route policy on the first row (rerouteOnProviderFault, reroutePreferApi — the same fields a swarm.policy_updated row carries). Answers with a mutation receipt — the recorded event {kind, seq, ts, actor}, the rows it changed, and next, the step that follows; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
-    properties: Object.freeze({ purpose: TEXT_SCHEMA, swarmId: ID_SCHEMA, view: VIEW_SCHEMA }),
+    properties: Object.freeze({ purpose: TEXT_SCHEMA, swarmId: ID_SCHEMA, policy: JSON_OBJECT_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['purpose']),
   }),
   Object.freeze({
