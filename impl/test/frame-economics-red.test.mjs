@@ -1706,7 +1706,7 @@ const F_EXEMPTIONS = Object.freeze([
   ['coordinator.mjs', /maxPaths > 16_384/u, 'uncataloged: path COUNT'],
   ['coordinator.mjs', /stringField\(opts\.(taskId|idempotencyKey), '(taskId|idempotencyKey)', 4_096\)/u, 'uncataloged: identity fields'],
   ['coordinator.mjs', /Buffer\.byteLength\(requestId\) > 4_096/u, 'uncataloged: requestId id-class'],
-  ['coordinator.mjs', /_orientationRecordCitation\(packDigest, scope, freshnessDigest, maxLine = 4096\)/u, 'uncataloged: orientation citation line bound'],
+  ['coordinator.mjs', /_orientationRecordCitation\(packDigest, scope, freshnessDigest, maxLine = 4096(, resolution = null)?\)/u, 'uncataloged: orientation citation line bound'],
   ['coordinator.mjs', /Buffer\.byteLength\(JSON\.stringify\(candidate\)\) > 4096/u, 'uncataloged: orientation candidate bound'],
   ['credential-projection.mjs', /DEFAULT_(FILE|TOTAL)_LIMIT = /u, 'uncataloged: credential projection file bounds (NOT the credential.file lane)'],
   ['evidence-search.mjs', /MAX_SEARCH_TEXT_BYTES = 4096/u, 'uncataloged: evidence search text schema bound (mirrors the #318 query cap)'],
