@@ -88,6 +88,17 @@ const ADMISSION = Object.freeze({
   // Issue #294: one wake-filter token (a class/swarm/participant name) admitted into a subscribe
   // or since request — the same admission-class bound every other named-token lane uses.
   'wake.filter_token': { lane: 'wake.filter_token', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'wake-stream.mjs parseWakeFilter', refusalCode: 'invalid_wake_filter' },
+  // Issue #366 (with #286 G-41): the ONE bound a run-stop target set is judged against at
+  // ADMISSION, and its derivation is the ledger itself. A run stop's target set is a projection of
+  // the ledger — every target is a task/worker the ledger already holds, and each such row costs
+  // the ledger at least one event — so the physical bound is the ledger's own event count: ONE
+  // target per event. The 100_000 literal this replaces refused rows the ledger had already
+  // accepted (the #286 G-41 sin): on replay it re-judged a recorded run stop and made a large
+  // recorded run's own ledger unloadable. It is judged at admission only, by the ONE helper that
+  // reads it (coordination-store.mjs assertTargetSetAdmissible). A FLEET DRAIN's target set is not
+  // a projection of the ledger (it is the local controller's live fleet), so no bound is derived
+  // for that admission — its bound is the deployment's own drain policy, per #286 G-41.
+  'target_set.per_ledger_event': { lane: 'target_set.per_ledger_event', class: 'admission', value: 1, unit: 'targets_per_event', graceful: null, enforcedAt: 'coordination-store run stop target-set admission', refusalCode: 'target_set_capacity' },
 });
 
 const SUBSTRATE = Object.freeze({
