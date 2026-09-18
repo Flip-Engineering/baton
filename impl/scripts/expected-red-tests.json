@@ -1453,10 +1453,6 @@
       "reason": "#158"
     },
     {
-      "key": "test/seam-inventory.test.mjs :: SI5 (S-G4): SwarmRuntime is a declared target, mapped across all four seams, and an unmapped member refuses",
-      "reason": "#454"
-    },
-    {
       "key": "test/seat-telemetry-red.test.mjs :: A-L (lint): blocking-decision dispatch holds a working seat; ceiling-skip mints the receipt; adapterFor diverges on pausability",
       "reason": "#146"
     },
