@@ -1997,21 +1997,28 @@ function turnVerdictOf(payload) {
 }
 
 /** The provider text a died or failed turn row carries, in the order the adapters spell it: the
- * crash error, the process's own last words, the typed failure message, then the turn summary. */
-function refusalTextsOf(payload) {
+ * crash error, the process's own last words, the typed failure message — and, for a CRASH row
+ * only, the row's own summary.
+ *
+ * #341 part 3: a CRASH cert is the adapter's typed provider fault, so its words are read wherever
+ * the adapter put them; a failed TURN is read on its structured fault text alone, never on the
+ * free `summary`. A seat whose own failure summary happened to mention "quota" used to refuse the
+ * route for every later recruit — prose about a worker is not evidence about a route. */
+function refusalTextsOf(payload, kind) {
   if (!record(payload)) return [];
   const failure = record(payload.failure) ? payload.failure
     : record(payload.result?.failure) ? payload.result.failure : null;
-  return [payload.error, payload.stderrTail, failure?.message, payload.summary, payload.result?.summary]
-    .filter((value) => typeof value === 'string' && value.length > 0);
+  const texts = [payload.error, payload.stderrTail, failure?.message];
+  if (kind === 'lifecycle.crashed') texts.push(payload.summary, payload.result?.summary);
+  return texts.filter((value) => typeof value === 'string' && value.length > 0);
 }
 
 /** The refusal one ledger row carries, or null. Two forms of evidence, both closed:
  * the boundary's OWN typed quota code (#295 — an adapter that already classified its provider's
- * answer needs no second reading of it), or a row whose text matches a row of the route card's
- * refusal table (#341 part 2 — the provider's own words, and nothing else). */
-function refusalEvidenceOf(payload, card) {
-  const texts = refusalTextsOf(payload);
+ * answer needs no second reading of it), or the text of a row the adapter typed as a provider
+ * fault (#341 part 2 — the provider's own words, as far as `kind` admits them, and nothing else). */
+function refusalEvidenceOf(payload, card, kind) {
+  const texts = refusalTextsOf(payload, kind);
   if (payload?.code === PROVIDER_FAULT_CODES.quota) {
     const detail = record(payload.detail) ? payload.detail : null;
     return {
@@ -2101,7 +2108,7 @@ function deriveRouteRefusals({ log, routes, cardContext }) {
           }
           if (verdict !== 'failed') continue;
         }
-        const evidence = refusalEvidenceOf(event.payload, cardFor(entry.route));
+        const evidence = refusalEvidenceOf(event.payload, cardFor(entry.route), kind);
         if (!evidence || !ledgerPositionAfter(position, entry.refusal)) continue;
         const text = publishedRefusalText(evidence.text);
         const resetAt = evidence.resetAt
@@ -2551,6 +2558,11 @@ class BatonDeployment {
 
   card() { return Object.freeze({ ...this.#card, readiness: this.doctorReadiness() }); }
   async doctor() { return this.doctorReadiness(); }
+
+  /** #341 part 3: the served routes' usage rows, re-derived on every read through the ONE doctor
+   * derivation — so the rows a recruit compares and a seat's brief renders ARE the rows the doctor
+   * publishes, and the usage row and the readiness row can never disagree. */
+  routeUsageRows() { return this.doctorReadiness().routeUsage; }
 
   /** #47 spawn/preflight gate: consult the liveness cache and probe only on stale or absent
    * (never probe per call). Static readiness stays the substrate (assertRouteReady first). */
@@ -3679,6 +3691,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     repository.repoId, residentOptions.ownerUid,
   );
   let application;
+  // #341 part 3: the deployment instance the summary below reads its usage rows from. The summary
+  // is built with the application (the swarm runtime reads it), while the rows belong to the
+  // deployment that is constructed once the application is ready — so the closure reads this
+  // binding lazily, and a reader that never asks for the rows never pays for the ledger read.
+  let opened = null;
   try {
     contextRuntime.attachCoordination(driver.coordination);
     application = new BatonApplication({
@@ -3708,13 +3725,25 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // floor beside the host capacity and queue, so an orchestrator sees the pressure before a
       // recruit is refused. The workspace probe is the doctor's own; the host probe reads the
       // shared lease directory without mutating it.
-      deploymentSummary: () => Object.freeze({
-        workspace: workspaceProbe(),
-        hostCapacity: hostCapacityProbe ? hostCapacityProbe() : null,
-        // #306 (2): the served revision and its drift from the target ride the swarm view's
-        // deployment rows, so a root recruiting lanes sees the stale base before it recruits.
-        served: servedRow(repository.root, served),
-      }),
+      deploymentSummary: () => {
+        const summary = {
+          workspace: workspaceProbe(),
+          hostCapacity: hostCapacityProbe ? hostCapacityProbe() : null,
+          // #306 (2): the served revision and its drift from the target ride the swarm view's
+          // deployment rows, so a root recruiting lanes sees the stale base before it recruits.
+          served: servedRow(repository.root, served),
+        };
+        // #341 part 3: the served routes' usage rows — the deployment's ONE derivation
+        // (`routeUsageRows`), reachable to the readers that compare routes (the swarm runtime's
+        // recruit answer and the seat's brief). Attached NON-enumerably, the DP5 pattern the
+        // doctor rows already use, so the serialized summary every existing consumer pins and the
+        // swarm view's own `deployment` slice do not move.
+        Object.defineProperty(summary, 'routeUsage', {
+          enumerable: false,
+          get: () => (opened === null ? null : opened.routeUsageRows()),
+        });
+        return Object.freeze(summary);
+      },
       // Issue #324: run admission consults route readiness pre-effect through the same gate
       // recruit admission reads — the deployment's own rows, quota authority (#295) and
       // ledger-derived provider refusals (#341 part 2), never a second derivation. A run or
@@ -3723,7 +3752,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       routeAdmission: routeAdmissionGate(readiness, routeQuota, routeRefusals, claudeCredentialLifetime),
     });
     await application.ready;
-    return new BatonDeployment(application, principal, readiness, {
+    opened = new BatonDeployment(application, principal, readiness, {
       // Issue #351 lane 2: the open's own elapsed milliseconds — the replay-to-assembly cost the
       // publication contract publishes at the flip. openStartedAtMs is stamped at entry.
       startupElapsedMs: Date.now() - openStartedAtMs,
@@ -3736,6 +3765,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       grokCredentialProbe,
       grokCredentialCache,
     });
+    return opened;
   } catch (error) {
     try {
       if (application) await application.shutdown(principal);
