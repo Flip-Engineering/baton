@@ -174,7 +174,11 @@ test('the client buffers under the bound the bridge published, so a raised ceili
   // The body stays under the published 4096-byte ceiling with the row content the view now carries
   // (issue #433 adds `reviewState` to every contribution row): the row is what this test prices,
   // not the ceiling it answers under.
-  await f.call('update', { event: 'swarm.contribution_recorded', payload: { contributionId: 'c-fit', participantId: 'alpha', body: 'y'.repeat(1900) } });
+  // #441 lane C (3de7f9d8) added the ONE derivation's `files`/`decision`/`reviewState` to the
+  // contributions row: a 1900-byte body now renders 4159 bytes against this fixture's 4096 cap, so
+  // the fixture body shrinks — the pin is that the CLIENT buffers under the published bound, not
+  // that a particular body length fits.
+  await f.call('update', { event: 'swarm.contribution_recorded', payload: { contributionId: 'c-fit', participantId: 'alpha', body: 'y'.repeat(1700) } });
   const view = await f.send('swarm.view', { swarmId: 'baton', projection: 'contributions' });
   assert.deepEqual(view.contributions.map((row) => row.contributionId), ['c-fit']);
   assert.equal(SWARM_BRIDGE_REFUSAL_COMMAND, 'swarm.bridge_refusal', 'the report verb is not a swarm command');
