@@ -21,15 +21,20 @@
 //       attachmentClosedReason/attachmentClosedFrame) — never a second reason set — and a stream that
 //       fails mid-attachment names `error` that way too;
 //   (c) the SSE leg and the loopback binding name the SAME end for one resident stop in one
-//       process, so the two transports cannot tell a consumer two stories about one shutdown.
+//       process, so the two transports cannot tell a consumer two stories about one shutdown;
+//   (d) the served host VALIDATES under either end of the ambient-root band a parallel gate hands
+//       its files (#446): the fixture mints its socket root under the short system root instead of
+//       measuring the ambient one — the derivation whose five-byte optimism made every row of this
+//       file fail `Web host configuration is invalid` inside a gate and pass alone.
 //
-// Hermetic: temp dirs under os.tmpdir(), a real coordination ledger, the real authenticated Web host
-// on an owner-only Unix socket, no provider process, no network beyond loopback. `git stash` is
-// never used.
+// Hermetic: temp dirs under os.tmpdir() — the socket root under the short system root, because the
+// host refuses a bound path over the kernel's 103-byte sun_path — a real coordination ledger, the
+// real authenticated Web host on an owner-only Unix socket, no provider process, no network beyond
+// loopback. `git stash` is never used.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -101,11 +106,14 @@ async function servedResident(t, { stream = null, binding = null } = {}) {
     wakes: stream ?? new WakeStream({ coordination, pollMs: 25 }),
   });
   const server = createLocalAuthenticatedWebServer(web);
-  // sun_path is bounded (104 bytes); a fixture under a deep ambient TMPDIR falls back to the short
-  // system temp root, exactly as the #294 binding row does.
-  const socketBase = Buffer.byteLength(join(tmpdir(), 'baton-316sse-sock-x', 'resident.sock')) > 103
-    ? '/tmp' : tmpdir();
-  const socketDir = mkdtempSync(join(socketBase, 'baton-316sse-sock-'));
+  // sun_path is bounded (104 bytes) and the host refuses a bound path over 103, so the socket root
+  // is minted under the SHORT system temp root — the rule the resident fixtures already follow
+  // (issue276/288/351/356/365/445/450) — never derived from the ambient one: `mkdtemp` appends SIX
+  // random characters, so a probe that stands them in with one character reads five bytes short. An
+  // ambient root of 65..69 bytes (a suite root minted under this host's system temp dir is 67) was
+  // then admitted and minted a 104..108-byte socket path the host refused: every row of this file,
+  // but only inside a gate that hands its files that root (#446; row 316-sse-d).
+  const socketDir = mkdtempSync('/tmp/baton-316sse-');
   roots.push(socketDir);
   const socketPath = join(socketDir, 'resident.sock');
   const host = new BatonWebHost({
@@ -277,4 +285,39 @@ test('316-sse-c: the SSE leg and the loopback binding name the same end for one 
   assert.equal(sseFrame.reason, wsFrame.reason, 'the SSE leg names the same end, never a second story');
   assert.equal(sseFrame.resumeFrom, lastSeq);
   assert.equal(wsFrame.resumeFrom, lastSeq, 'both resumeFrom the last seq each attachment delivered');
+});
+
+// ── (d) the served host survives the ambient root a gate hands it ───────────────────────────────
+
+/** Issue #446: a parallel gate hands every file a TMPDIR of its own — the run's SUITE ROOT, which
+ * is the gate's temp parent plus '/baton-suite-XXXXXX' (19 bytes). The band below is the ambient
+ * root the #316 fixture could not survive: its guard measured the ambient root with a probe that
+ * stood `mkdtemp`'s SIX random characters in with ONE — five bytes short — so a 65..69-byte
+ * ambient root was admitted and minted a 104..108-byte socket path, past the host's 103-byte
+ * sun_path bound, and EVERY row of this file failed `Web host configuration is invalid`; the same
+ * file passed under the deeper root a solo run happens to have. Both ends are exercised: a
+ * measure-then-fall-back derivation can re-admit one of them, never both. */
+const AMBIENT_ROOT_BAND = Object.freeze([65, 69]);
+
+test('316-sse-d: the served host validates under either end of the ambient-root band a gate hands it', { timeout: 60_000 }, async (t) => {
+  const previous = process.env.TMPDIR;
+  t.after(() => { process.env.TMPDIR = previous; });
+  for (const bytes of AMBIENT_ROOT_BAND) {
+    const root = join('/tmp', 'b'.repeat(bytes - '/tmp/'.length));
+    assert.equal(Buffer.byteLength(root), bytes, 'the fixture root IS the ambient length under test');
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    roots.push(root);
+    process.env.TMPDIR = root;
+    // The host's own configuration validator is the assertion: it refuses a bound path over 103
+    // bytes, so a fixture that answered here is a fixture a gate can hand any root to.
+    const resident = await servedResident(t);
+    const follow = followWakes({ ...FOLLOW, since: resident.coordination.ledgerHeadSeq() },
+      resident.client, {});
+    await until(() => admittedAttachments(resident.coordination) >= 1,
+      `the served transport to admit a follower under a ${bytes}-byte ambient root`);
+    await resident.host.shutdown();
+    const ended = await follow;
+    assert.equal(ended.kind, 'baton.wake_stream_ended',
+      `the served attachment ends honestly under a ${bytes}-byte ambient root`);
+  }
 });
