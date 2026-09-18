@@ -47,6 +47,7 @@ import { validateContextMapResultLineage } from './context-result-lineage.mjs';
 import { validateContextEffectResultLineage } from './context-effect-result-lineage.mjs';
 import {
   contextEffectNodeBinding, normalizeContextEffectCall, normalizeContextEffectSource,
+  projectContextCallState,
 } from './context-call.mjs';
 import {
   contextMapCallIdentity, contextMapNodeBinding, normalizeContextMapCall,
@@ -8460,21 +8461,22 @@ export class CoordinationStore {
     const sourceSessionId = generic ? admitted.authority.sessionId : admitted.source.sessionId;
     const sourceCellId = generic && admitted.source.kind === 'cell'
       ? admitted.source.id : admitted.source.cellId;
-    const stopped = this._runStopByTarget.has(sourceRunId)
-      || this._runStops.has(sourceRunId)
-      || this._contextSessions.get(sourceSessionId)?.state === 'stopped'
-      || this._contextCells.get(sourceCellId)?.state === 'stopped';
-    const state = ['completed', 'failed'].includes(admitted.state) ? admitted.state
-      : admitted.state === 'stopped' ? 'stopped'
-      : stopped ? 'stopped'
-      : !plan ? 'plan_pending'
-        : !approval ? 'awaiting_plan_approval'
-          : approval.disposition === 'rejected' ? 'denied'
-            : children.length === 0 ? 'approved'
-              : children.every((child) => TERMINAL.has(child.state))
-                ? 'settlement_ready' : 'running';
+    // Issue #390: the call view's state and its waitingOn are derived by the ONE projection in
+    // context-call.mjs. The stop row is the store's own target resolution (_runStopByTarget →
+    // the owning _runStops row), whose receipt is folded only by run.stop_completed.
+    const projection = projectContextCallState({
+      admittedState: admitted.state,
+      stop: this.runStop(sourceRunId),
+      hasPlan: plan !== null,
+      approvalDisposition: approval?.disposition ?? null,
+      hasChildren: children.length > 0,
+      childrenSettled: children.length > 0
+        && children.every((child) => TERMINAL.has(child.state)),
+      sessionStopped: this._contextSessions.get(sourceSessionId)?.state === 'stopped',
+      cellStopped: this._contextCells.get(sourceCellId)?.state === 'stopped',
+    });
     return clone({
-      ...admitted, state,
+      ...admitted, state: projection.state, waitingOn: projection.waitingOn,
       plan: plan ? {
         planId: plan.planId, version: plan.version, digest: plan.digest,
         predecessor: clone(plan.predecessor),
