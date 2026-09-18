@@ -316,14 +316,20 @@ test('admitContextPackage replay: the same idempotency key replays without re-ap
   f.store.releaseWriterLease();
 });
 
-test('admitting duplicate package content under a new idempotency key is refused', () => {
+test('admitting duplicate package content under a new idempotency key reuses the admitted record (#455)', () => {
   const f = fixture('dup-content');
   const fields = packageFields([artifactBranch('a', f.res)]);
-  f.store.admitContextPackage(fields, { actor: 'test', key: 'admit-1' });
-  assert.equal(
-    refusalCode(() => f.store.admitContextPackage(fields, { actor: 'test', key: 'admit-2' })),
-    'context_package_conflict',
-  );
+  const first = f.store.admitContextPackage(fields, { actor: 'test', key: 'admit-1' });
+  // Issue #455: the digest IS the normalized body, so a second admission of it is the SAME package,
+  // never a conflict. The receipt names the existing record and its ORIGINAL admission, and the
+  // ledger gains nothing — `context_package_conflict` is retired from this path.
+  const second = f.store.admitContextPackage(fields, { actor: 'test', key: 'admit-2' });
+  assert.equal(second.result, 'reused');
+  assert.equal(second.reused, true);
+  assert.equal(second.package.packageDigest, first.package.packageDigest);
+  assert.equal(second.package.admittedEvent, first.package.admittedEvent);
+  assert.equal(second.event.seq, first.event.seq, 'the receipt event is the original admission');
+  assert.equal(f.store.contextPackage(first.package.packageDigest).admittedEvent, first.event.seq);
   f.store.releaseWriterLease();
 });
 
