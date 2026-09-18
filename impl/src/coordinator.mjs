@@ -4,7 +4,7 @@
 // trust gate. See spec/IMPLEMENTATION.md (CLUSTER 1 — CORE) and spec/RECONCILIATION.md
 // (D1/D9/D10/D11), which is authoritative over any conflicting cluster spec.
 
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
@@ -12549,7 +12549,14 @@ export class Coordinator {
     try {
       answered = this._answerContextRead(handle, task, payload.query, runId);
     } catch (error) {
-      return { ok: false, result: error?.code ?? 'context_read_refused' };
+      const refusalCode = error?.code ?? 'context_read_refused';
+      // Issue #389 (b): the detail refusal is typed AND self-describing — the worker's
+      // receipt carries the file, the requested range, the actual line count and the
+      // next action, never a bare code. No other refusal shape changes.
+      if (refusalCode === 'orientation_detail_unavailable' && error?.detail && typeof error.detail === 'object') {
+        return { ok: false, result: refusalCode, detail: error.detail, reason: String(error?.message ?? refusalCode) };
+      }
+      return { ok: false, result: refusalCode };
     }
     // BD3-A/A6: the read mints a context.read audit event — its own class with ZERO promotion
     // weight, never the scratch.read family (minScratchReaders never counts these). Epic #81
@@ -12859,9 +12866,72 @@ export class Coordinator {
     return current;
   }
 
-  _orientationRecordCitation(packDigest, scope, freshnessDigest, maxLine = 4096) {
+  _orientationRecordCitation(packDigest, scope, freshnessDigest, maxLine = 4096, resolution = null) {
     if (!this._orientationCitations) this._orientationCitations = new Map();
-    this._orientationCitations.set(packDigest, { freshnessDigest, maxLine, scopeDigest: scope.scopeDigest });
+    // Issue #389: a content-backed citation pins how its lines resolve — the ladder's
+    // own baseRoot plus the admitted {path, lineCount} table from the repo.map payload.
+    // A citation admitted without repository content (the synthetic no-atlas lane)
+    // carries no resolution and detail keeps its legacy contained-scope answer.
+    this._orientationCitations.set(packDigest, {
+      freshnessDigest, maxLine, scopeDigest: scope.scopeDigest,
+      ...(resolution ? { resolution } : {}),
+    });
+  }
+
+  _orientationDetailUnavailable(citation, reason, file, startLine, endLine, lineCount, next) {
+    return Object.assign(
+      new Error(`orientation detail for "${file}" is unavailable (${reason}): requested lines ${startLine}..${endLine} but the file has ${lineCount} lines — next: ${next}`),
+      { code: 'orientation_detail_unavailable', detail: { citation, reason, file, range: { start: startLine, end: endLine }, lineCount, next } },
+    );
+  }
+
+  _orientationDetailLines(citation, query, admitted) {
+    const resolution = admitted.resolution ?? null;
+    const files = Array.isArray(resolution?.files) ? resolution.files : [];
+    const baseRoot = resolution?.baseRoot ?? null;
+    if (typeof baseRoot !== 'string' || baseRoot.length === 0 || files.length === 0) return [];
+    const startLine = query.range.start.line; const endLine = query.range.end.line;
+    // The file selector has two spellings: top-level `path`, and `range.path` (the
+    // contract's canonical spelling — the range names the cited file it spans).
+    const topPath = typeof query.path === 'string' && query.path.length > 0 ? query.path : null;
+    const rangePath = typeof query.range?.path === 'string' && query.range.path.length > 0 ? query.range.path : null;
+    const named = topPath ?? rangePath;
+    const selected = named !== null
+      ? files.find((entry) => entry?.path === named) ?? null
+      : (files.length === 1 ? files[0] : null);
+    if (named !== null && !selected) {
+      throw this._orientationDetailUnavailable(citation, 'file_not_admitted', named, startLine, endLine, 0,
+        're-issue code.orient.map or code.orient.region for a live citation that admits the file, then descend from that citation');
+    }
+    if (!selected) {
+      const admittedPaths = files.map((entry) => entry?.path).filter((path) => typeof path === 'string').sort().join(', ');
+      throw Object.assign(
+        new Error(`orientation detail is unavailable (file_ambiguous): the citation admits ${files.length} files (${admittedPaths}) — next: name one admitted file via path and re-issue code.orient.detail`),
+        { code: 'orientation_detail_unavailable', detail: { citation, reason: 'file_ambiguous', file: null, range: { start: startLine, end: endLine }, lineCount: 0, next: 'name one admitted file via path' } },
+      );
+    }
+    // The read is anchored at the ladder's own baseRoot — the same root index.build
+    // scanned and the overlay resolves — never a second root or reader. Admitted paths
+    // are repo-relative; an escape or symlink (the ladder never admits either) refuses.
+    let text;
+    try {
+      const root = resolve(baseRoot);
+      const absolute = resolve(join(baseRoot, selected.path));
+      const rel = relative(root, absolute);
+      if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) throw new Error('path escapes the orientation root');
+      if (lstatSync(absolute).isSymbolicLink()) throw new Error('orientation content is never served through a symlink');
+      text = readFileSync(absolute, 'utf8');
+    } catch (cause) {
+      if (cause?.code === 'orientation_detail_unavailable') throw cause;
+      throw this._orientationDetailUnavailable(citation, 'file_absent', selected.path, startLine, endLine, 0,
+        're-issue code.orient.map or code.orient.region for a live citation, then descend from that citation');
+    }
+    const all = text.split(/\r?\n/);
+    if (endLine > all.length) {
+      throw this._orientationDetailUnavailable(citation, 'range_outside_file', selected.path, startLine, endLine, all.length,
+        `narrow the range to 1..${all.length} and re-issue code.orient.detail against the live citation`);
+    }
+    return all.slice(startLine - 1, endLine).map((lineText, index) => ({ line: startLine + index, text: lineText }));
   }
 
   _orientationSyntheticModule(repoId, rootPath) {
@@ -12884,7 +12954,7 @@ export class Coordinator {
 
   _codeOrientationMap(query, scope) {
     const atlas = this._orientationAtlas();
-    let modules; let coverage = this._orientationEmptyCoverage(); let freshnessInputs = {};
+    let modules; let coverage = this._orientationEmptyCoverage(); let freshnessInputs = {}; let mapFiles = [];
     if (atlas) {
       const baseRoot = this._orientationAtlasBaseRoot();
       const result = this._orientationAtlasMap(atlas, baseRoot);
@@ -12898,6 +12968,7 @@ export class Coordinator {
         byModule.get(rootPath).push(file);
       }
       modules = [...byModule.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([rootPath, members]) => this._orientationRollupModule(scope.repoId, rootPath, members));
+      mapFiles = [...byModule.values()].flat();
       coverage = result?.coverage ?? coverage;
       freshnessInputs = { baseTreeSha: result?.provenance?.baseTreeSha ?? null, indexEpoch: result?.provenance?.index_epoch ?? null, overlayDigest: result?.provenance?.overlay_digest ?? null };
     } else {
@@ -12906,7 +12977,8 @@ export class Coordinator {
     const map = this._orientationBound({ modules }, 2048);
     const freshnessDigest = this._orientationFreshness(scope, freshnessInputs.baseTreeSha, freshnessInputs.indexEpoch, freshnessInputs.overlayDigest);
     const packDigest = canonicalDigest({ map, op: 'code.orient.map' });
-    this._orientationRecordCitation(packDigest, scope, freshnessDigest);
+    this._orientationRecordCitation(packDigest, scope, freshnessDigest, undefined,
+      atlas ? { baseRoot: this._orientationAtlasBaseRoot(), files: mapFiles.map((file) => ({ path: file.path, lineCount: file.lines })) } : null);
     const rendered = { coverage, freshnessDigest, map, packDigest, scopeDigest: scope.scopeDigest };
     const orientation = this._renderContextRead({ kind: 'code', items: map.modules.flatMap((module) => module.leaves) });
     const deliverable = `${orientation.deliverable}\npackDigest: ${packDigest}\n${JSON.stringify(map)}`;
@@ -12919,11 +12991,12 @@ export class Coordinator {
     if (!this._orientationInScope(rootPath, scope, atlas)) {
       throw Object.assign(new Error('orientation region is outside the attempt pathScope'), { code: 'context_scope_forbidden' });
     }
-    let leaves; let freshnessInputs = {};
+    let leaves; let freshnessInputs = {}; let regionFiles = [];
     if (atlas) {
       const baseRoot = this._orientationAtlasBaseRoot();
       const result = this._orientationAtlasMap(atlas, baseRoot);
       const files = (Array.isArray(result?.payload) ? result.payload : []).filter((file) => rootPath === '.' || file.path === rootPath || file.path.startsWith(`${rootPath}/`));
+      regionFiles = files;
       leaves = files.map((file) => ({ entryPoints: [], moduleDigest: canonicalDigest({ path: file.path }), path: file.path, source: 'generated', symbols: file.symbols ?? 0 }));
       freshnessInputs = { baseTreeSha: result?.provenance?.baseTreeSha ?? null, indexEpoch: result?.provenance?.index_epoch ?? null, overlayDigest: result?.provenance?.overlay_digest ?? null };
     } else {
@@ -12942,7 +13015,10 @@ export class Coordinator {
     const region = { leaves: page, moduleDigest, moduleKey };
     const freshnessDigest = this._orientationFreshness(scope, freshnessInputs.baseTreeSha, freshnessInputs.indexEpoch, freshnessInputs.overlayDigest);
     const packDigest = canonicalDigest({ op: 'code.orient.region', region });
-    this._orientationRecordCitation(packDigest, scope, freshnessDigest);
+    // The citation admits the disclosed page files (a truncated tail stays behind the cursor).
+    const regionCounts = new Map(regionFiles.map((file) => [file.path, file.lines]));
+    this._orientationRecordCitation(packDigest, scope, freshnessDigest, undefined,
+      atlas ? { baseRoot: this._orientationAtlasBaseRoot(), files: page.map((leaf) => ({ path: leaf.path, lineCount: regionCounts.get(leaf.path) ?? null })) } : null);
     const rendered = { freshnessDigest, mergeAuthority: false, packDigest, region, scopeDigest: scope.scopeDigest, status: truncated ? 'needs_resume' : 'ok', verificationAuthority: false, ...(truncated ? { cursor: `orientation:${packDigest}:${page.length}` } : {}) };
     const orientation = this._renderContextRead({ kind: 'code', items: page });
     const deliverable = `${orientation.deliverable}\npackDigest: ${packDigest}\n${JSON.stringify(region)}`;
@@ -12963,7 +13039,15 @@ export class Coordinator {
     if (!Number.isSafeInteger(startLine) || !Number.isSafeInteger(endLine) || startLine < 1 || endLine < startLine || endLine > admitted.maxLine) {
       throw Object.assign(new Error('orientation detail range is outside the citation scope'), { code: 'context_scope_forbidden' });
     }
-    const detail = { citation, lines: [], mergeAuthority: false, range, verificationAuthority: false };
+    // Issue #389: serve the cited lines from the ladder's own resolution, or refuse
+    // typed when the file is absent or the range falls outside it. A citation admitted
+    // without repository content (synthetic lane) keeps its legacy ok:true answer but
+    // says why it served nothing and what to do next — an empty answer is never silent.
+    const lines = this._orientationDetailLines(citation, query, admitted);
+    const detail = { citation, lines, mergeAuthority: false, range, verificationAuthority: false };
+    if (!admitted.resolution) {
+      detail.note = 'the citation discloses no file content (synthetic orientation lane without a code index); served lines are unavailable — next: re-issue code.orient.map on a lane with an atlas-index capability, then descend from that citation';
+    }
     const packDigest = canonicalDigest({ detail, op: 'code.orient.detail' });
     const freshnessDigest = admitted.freshnessDigest;
     const rendered = { detail, freshnessDigest, mergeAuthority: false, packDigest, scopeDigest: admitted.scopeDigest, verificationAuthority: false };
