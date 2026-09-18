@@ -2,8 +2,9 @@
 //
 // run-suite.mjs acquires a `verify` lease from the host capacity authority before starting
 // lanes and releases it at the verdict, printing the queued row (position, ahead, shortfall —
-// the #329 shape) while it waits. BATON_HOST_CAPACITY_DISABLED=1 stays the bypass, a
-// suite-runner child stays unwired, the worker's verify projects onto the swarm view
+// the #329 shape) while it waits. BATON_HOST_CAPACITY_DISABLED=1 stays the bypass, a runner
+// nested under a lease-holding parent (#424: proven by the parent's token digest in
+// BATON_SUITE_VERIFY_LEASE) stays unwired, the worker's verify projects onto the swarm view
 // participant row as verify {state, position, ahead} from the lease holder name
 // participant:<swarm>:<seat>, and the deployment summary's hostCapacity.used.leases.verify
 // counts worker suites.
@@ -23,7 +24,7 @@ import {
 } from '../src/host-capacity.mjs';
 import {
   acquireSuiteVerifyLease, DEFAULT_SUITE_LEASE_WAIT_MS, formatSuiteQueueRow, suiteLeaseDisabled,
-  suiteLeaseNested, suiteLeaseWaitMs, suiteQueueTimeoutDecision,
+  suiteLeaseNested, SUITE_VERIFY_LEASE_ENV, suiteLeaseWaitMs, suiteQueueTimeoutDecision,
 } from '../scripts/suite-host-lease.mjs';
 
 const G = 1024 ** 3;
@@ -87,11 +88,16 @@ test('S333-2: the bypass never touches the lease directory', async (t) => {
   assert.equal(existsSync(untouched), false, 'the bypass creates neither the root nor a record');
   assert.equal(suiteLeaseDisabled({ BATON_HOST_CAPACITY_DISABLED: '1' }), true);
   assert.equal(suiteLeaseDisabled({}), false);
-  assert.equal(suiteLeaseNested({ BATON_TEST_SUITE_ROOT: '/tmp/x' }), true,
-    'a runner spawned from a test file stays unwired');
+  // #424: the parent's own lease token is the proof — the inherited suite root alone is not.
+  const parentDigest = randomBytes(32).toString('hex');
+  assert.equal(suiteLeaseNested({ BATON_TEST_SUITE_ROOT: '/tmp/x' }), false,
+    'the suite root alone never nests a runner: a seat inherits that root and still admits');
   assert.equal(suiteLeaseNested({}), false);
   const nested = await acquireSuiteVerifyLease({
-    env: { BATON_TEST_SUITE_ROOT: '/tmp/x', BATON_HOST_CAPACITY_ROOT: untouched },
+    env: {
+      BATON_TEST_SUITE_ROOT: '/tmp/x', [SUITE_VERIFY_LEASE_ENV]: parentDigest,
+      BATON_HOST_CAPACITY_ROOT: untouched,
+    },
     log: () => { throw new Error('a nested run prints no queue row'); },
   });
   assert.equal(nested.disabled, true);
@@ -180,6 +186,9 @@ test('S333-4: a staged authority with no room queues run-suite, which prints the
   // A top-level runner admits through the authority even when this test itself runs as a
   // suite child: drop the suite-child marker the child environment would otherwise inherit.
   delete env.BATON_TEST_SUITE_ROOT;
+  // #424: the suite child's parent token would nest the runner this test spawns as a top-level
+  // one; drop it with the root marker.
+  delete env[SUITE_VERIFY_LEASE_ENV];
   const { done } = runRunner(t, { file: 'test/suite-verdict.test.mjs', env: {
     ...env, BATON_HOST_CAPACITY_ROOT: root, BATON_HOST_CAPACITY_WAIT_MS: '1500',
     BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: parent,
@@ -252,11 +261,12 @@ test('S333-7: a nested runner stays unwired — the suite\'s self-checks never q
   blockVerifyBudget(root, t);
   const tmpParent = mkdtempSync(join(tmpdir(), 'baton-s333-tmp-'));
   t.after(() => rmSync(tmpParent, { recursive: true, force: true }));
-  // A runner spawned from a test file carries BATON_TEST_SUITE_ROOT: even with no room on
-  // the authority it runs its lanes immediately, the way deployments stay unwired for suite
-  // children (a suite host is oversubscribed by design).
+  // A runner spawned from a test file carries BATON_TEST_SUITE_ROOT and its parent's token
+  // digest: even with no room on the authority it runs its lanes immediately, because the
+  // parent that spawned it holds the very lease the nested verdict would queue behind (#424).
   const { done } = runRunner(t, { file: 'test/suite-verdict.test.mjs', env: {
     ...process.env, BATON_TEST_SUITE_ROOT: join(tmpParent, 'suite-root'),
+    [SUITE_VERIFY_LEASE_ENV]: randomBytes(32).toString('hex'),
     BATON_HOST_CAPACITY_ROOT: root, BATON_HOST_CAPACITY_WAIT_MS: '1500',
     BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: tmpParent,
   } });

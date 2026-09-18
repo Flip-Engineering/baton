@@ -216,6 +216,11 @@ export function hostCapacityObservation({
  *                 one-minute load equal to the core count the host is already oversubscribed,
  *                 and new heavy work queues.
  *   memoryTight   availableBytes < suiteBytes — available memory cannot fund one more verdict.
+ *   suiteLanes    saturated ? 1 : min(usableCores, floor(usableBytes / coreShare)) — the suite
+ *                 runner's default file parallelism (#297/#424), stated here beside the other
+ *                 derivations because the observation's LOAD is one of its terms: a host already
+ *                 at its core count takes ONE lane, never a full-width burst into a host that is
+ *                 already oversubscribed (the 2026-09-18 load-58 incident, #424).
  *
  * A worker (a recruited participant) has NO derived slot (operator ruling, 2026-09-18, retiring
  * the #329 "one core share per worker" rule): a worker is not a thread, its footprint is not
@@ -323,10 +328,15 @@ export function projectParticipantVerify(queue, verifyHolders, holder) {
 }
 
 /** The suite runner's default file parallelism — the same derivation every resident reads
- * (#297 item 3): one core for the runner's own loop, and no more lanes than the memory the host
- * can fund at one share per lane. BATON_SUITE_PARALLELISM remains the operator override. */
+ * (#297 item 3), plus the observation's load (#424): one core for the runner's own loop, no more
+ * lanes than the memory the host can fund at one share per lane, and ONE lane when the host is
+ * already saturated at its own core count. The lane width is the guard that outlives admission:
+ * a run the authority cannot admit proceeds degraded without mutual exclusion, and then the only
+ * thing between it and the host is this count. BATON_SUITE_PARALLELISM remains the operator
+ * override, and only the derivation's own terms decide the number. */
 export function defaultSuiteParallelism(observation = undefined) {
   const capacity = deriveHostCapacity(observation ?? hostCapacityObservation());
+  if (capacity.saturated) return 1;
   const memoryLanes = Math.max(1, Math.floor(capacity.usableBytes / capacity.coreShareBytes));
   return Math.max(1, Math.min(capacity.usableCores, memoryLanes));
 }
