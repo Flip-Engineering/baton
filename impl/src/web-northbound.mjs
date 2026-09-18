@@ -18,7 +18,13 @@ import { projectSwarmView, SWARM_VIEW_PROJECTIONS } from './swarm-contract.mjs';
 // the runtime raises; the fold status table below is DERIVED from it, never hand-kept.
 import { SWARM_REFUSAL_CODES } from './swarm-refusals.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalAndTransportNames } from './application-semantics.mjs';
-import { WakeStream, deriveWakeFrame, parseWakeFilter, wakeClassRow } from './wake-stream.mjs';
+import {
+  WakeStream, attachmentClosedFrame, attachmentClosedReason, deriveWakeFrame, parseWakeFilter, wakeClassRow,
+} from './wake-stream.mjs';
+// Issue #316 (b): the outcome the ONE attachment-end mapping reads as `restart` — the resident
+// itself is ending a wake attachment (a shutdown or restart, or an authority that stopped serving
+// it), never a transport the client closed. `_handleWakes` names its end through it.
+const RESIDENT_STOPPING = Object.freeze({ status: 'ended', reason: 'resident_stopping' });
 
 // Issue #233 (canonical naming unification): every web-flagged application definition is
 // admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
@@ -2896,12 +2902,34 @@ export class WebNorthbound {
     const controller = new AbortController();
     let closed = false;
     let acceptWrites = true;
-    const finish = () => {
+    // Issue #316 (b): the seq THIS attachment reached, and the ONE typed final frame written from it.
+    // The SSE leg ends through the same wake-stream rendering the loopback binding writes, so a
+    // follower over either transport is told the same story — why the attachment ended, and the
+    // cursor its next one resumes from — never a bare stream end.
+    let delivered = null;
+    let failed = false;
+    const writeAttachmentClosed = (reason) => {
+      // The typed end rides an OPENED attachment only: a refused or never-answered request says
+      // nothing here (its refusal is the answer), and a socket that is already gone cannot hear it.
+      if (res.headersSent !== true || res.writableEnded === true || res.destroyed === true) return;
+      const frame = attachmentClosedFrame(reason, { resumeFrom: delivered });
+      // The SSE id restates the cursor the frame carries, so a reconnecting EventSource resumes
+      // from the same seq the frame names.
+      const cursor = Number.isSafeInteger(frame.resumeFrom) ? `id: ${frame.resumeFrom}\n` : '';
+      try { res.write(`${cursor}event: ended\ndata: ${JSON.stringify(frame)}\n\n`); }
+      catch { /* the client is already gone; the end is still named on the audit row */ }
+    };
+    // The ONE end path (#316 b): every cause names itself through the ONE closed reason set —
+    // `restart` when the resident stops serving this attachment (its own shutdown, a revoked
+    // session), `transport_closed` when the client went away, `error` when the stream failed.
+    const finish = (outcome = RESIDENT_STOPPING) => {
       if (closed) return;
       closed = true;
+      writeAttachmentClosed(attachmentClosedReason(outcome));
       controller.abort();
       if (this._wakeConnections) this._wakeConnections.delete(finish);
     };
+    const clientGone = () => finish({ status: 'stopped' });
     const writeFrame = (type, id, value) => {
       if (closed || !acceptWrites) return;
       let accepted = false;
@@ -2909,11 +2937,11 @@ export class WebNorthbound {
       catch { accepted = false; }
       if (accepted) return;
       acceptWrites = false;
-      finish();
+      clientGone();
       try { res.end(); } catch { /* the socket is already terminal */ }
     };
-    res.on?.('close', finish);
-    res.on?.('error', finish);
+    res.on?.('close', clientGone);
+    res.on?.('error', clientGone);
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store',
       connection: 'keep-alive', 'x-accel-buffering': 'no',
@@ -2929,7 +2957,7 @@ export class WebNorthbound {
     const pulse = () => {
       if (closed || !acceptWrites) return;
       try { acceptWrites = res.write(': wake attachment open\n\n') !== false; } catch { acceptWrites = false; }
-      if (!acceptWrites) { finish(); try { res.end(); } catch { /* terminal already */ } }
+      if (!acceptWrites) { clientGone(); try { res.end(); } catch { /* terminal already */ } }
     };
     pulse();
     const heartbeat = setInterval(pulse, this.wakeHeartbeatMs);
@@ -2941,16 +2969,23 @@ export class WebNorthbound {
         signal: controller.signal,
         onFrame: async (frame) => {
           if (!this._liveAuthorized(principal, origin)) { finish(); try { res.end(); } catch { /* terminal */ } return; }
+          if (Number.isSafeInteger(frame?.seq) && (delivered === null || frame.seq > delivered)) delivered = frame.seq;
           writeFrame('wake', frame.seq, frame);
         },
-        onLagged: async (lagged) => { writeFrame('lagged', lagged.cursor, lagged); },
+        onLagged: async (lagged) => {
+          if (Number.isSafeInteger(lagged?.cursor)) delivered = lagged.cursor;
+          writeFrame('lagged', lagged.cursor, lagged);
+        },
       });
     } catch (cause) {
       try { this._audit('wake_stream_read_failed', ctx, { since: filter.since, reason: cause?.code ?? cause?.name ?? 'wake_stream_failed' }); }
       catch { /* stream loss is never fatal to the resident */ }
+      failed = true;
     } finally {
       clearInterval(heartbeat);
-      finish();
+      // A stream that FAILED names an error; a watch that returned names the resident's own stop —
+      // the reason the loopback binding gives its own consumers when the stream ends under them.
+      finish(failed ? { status: 'error' } : RESIDENT_STOPPING);
       try { res.end(); } catch { /* terminal already */ }
     }
     return undefined;
