@@ -64,6 +64,8 @@ export const SWARM_VIEW_DEFAULT_PROJECTION = 'full';
 const SWARM_VIEW_SLICED_FIELDS = Object.freeze([
   'participants', 'work', 'assignments', 'contributions', 'reviews', 'groups', 'couplings', 'context',
   'knowledge', 'attention', 'updatePayloads',
+  // Issue #423 (lane 2 hand-back): the two new collections are view fields, sliced like the rest.
+  'claims', 'proposals',
 ]);
 // How a projection narrows a participant row it carries: `whole` is the row the view built, and a
 // named slice keeps the seat's identity plus the one field the projection is about.

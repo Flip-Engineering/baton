@@ -4321,7 +4321,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 95,
+          "size": 100,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",

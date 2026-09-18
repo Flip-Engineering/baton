@@ -267,7 +267,7 @@ test('an exclusive writer over a shared checkout is one claim at a time, and a g
   await assert.rejects(delegated.couple({ couplingId: 'writer-second', coupling: 'writer', action: 'declare', participantId: 'joiner' }),
     (error) => error.code === 'swarm_writer_conflict' && /sharer/u.test(error.message));
   await assert.rejects(root.swarms.open(swarm.id).couple({ couplingId: 'writer-anon', coupling: 'writer', action: 'declare' }),
-    (error) => error.code === 'invalid_payload' && /must name participantId/u.test(error.message));
+    (error) => error.code === 'invalid_payload' && /exactly one of participantId/u.test(error.message));
 
   // Release frees the checkout; a new claim then lands.
   await delegated.couple({ couplingId: 'writer-main', coupling: 'writer', action: 'release', reason: 'sharer turn done' });

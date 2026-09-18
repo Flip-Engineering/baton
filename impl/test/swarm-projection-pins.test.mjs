@@ -144,7 +144,8 @@ test('the view pins live checkout custody against the coordinator attachment it 
   const attachment = driver.coordinator.workspaceAttachment(leadWorker.id);
   for (const participantId of ['lead', 'sharer']) {
     const row = byId.get(participantId);
-    assert.deepEqual(row.workspace, {
+    // #438: the workspace row also carries branch/headSha/dirty/commits/source; custody is the triple.
+    assert.deepEqual({ physicalOwnerId: row.workspace.physicalOwnerId, shared: row.workspace.shared, holderCount: row.workspace.holderCount }, {
       physicalOwnerId: attachment.workspaceId, shared: true, holderCount: attachment.holderCount,
     }, `${participantId} carries the live shared checkout`);
   }
@@ -157,7 +158,9 @@ test('the view pins live checkout custody against the coordinator attachment it 
   await swarm.stop('alpha', 'runtime lost');
   const stopped = (await swarm.view()).participants.find((row) => row.participantId === 'alpha');
   assert.equal(['dead', 'exited'].includes(stopped.runtime.state), true);
-  assert.equal(stopped.workspace, null);
+  // #428/#438: a stopped seat keeps its custody row — no holders, and the removal named — never null.
+  assert.equal(stopped.workspace.holderCount, 0);
+  assert.equal(stopped.workspace.removed?.reason, 'stop');
 });
 
 test('every projected row family pins its seq and ts', async (t) => {

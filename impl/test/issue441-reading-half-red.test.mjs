@@ -16,7 +16,7 @@
 // rows is the implementing lane's first act, named in docs/47 §8.
 //
 // Fixture: the light SwarmRuntime harness (the swarm-runtime.test.mjs pattern, as
-// issue423-claims-and-peers-red.test.mjs uses it) plus the CLI parse for the --issue spelling.
+// issue423-claims-and-peers.test.mjs uses it) plus the CLI parse for the --issue spelling.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 

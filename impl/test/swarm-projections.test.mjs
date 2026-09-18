@@ -157,9 +157,11 @@ test('workspace projects live checkout custody: shared adopters, solo holders, a
   let view = await swarm.view();
   const byId = new Map(view.participants.map((row) => [row.participantId, row]));
   // The lead and both adopters hold ONE physical checkout together.
-  assert.deepEqual(byId.get('lead').workspace, { physicalOwnerId: leadOwner, shared: true, holderCount: 3 });
-  assert.deepEqual(byId.get('sharer').workspace, { physicalOwnerId: leadOwner, shared: true, holderCount: 3 });
-  assert.deepEqual(byId.get('joiner').workspace, { physicalOwnerId: leadOwner, shared: true, holderCount: 3 });
+  // #438: the workspace row also carries branch/headSha/dirty/commits/source; custody is the triple.
+  const custody = (row) => ({ physicalOwnerId: row.workspace.physicalOwnerId, shared: row.workspace.shared, holderCount: row.workspace.holderCount });
+  assert.deepEqual(custody(byId.get('lead')), { physicalOwnerId: leadOwner, shared: true, holderCount: 3 });
+  assert.deepEqual(custody(byId.get('sharer')), { physicalOwnerId: leadOwner, shared: true, holderCount: 3 });
+  assert.deepEqual(custody(byId.get('joiner')), { physicalOwnerId: leadOwner, shared: true, holderCount: 3 });
   // The builders work in checkouts of their own: held, not shared.
   assert.deepEqual(byId.get('alpha').workspace.shared, false);
   assert.deepEqual(byId.get('alpha').workspace.holderCount, 1);
@@ -170,7 +172,9 @@ test('workspace projects live checkout custody: shared adopters, solo holders, a
   view = await swarm.view();
   const beta = view.participants.find((row) => row.participantId === 'beta');
   assert.equal(['dead', 'exited'].includes(beta.runtime.state), true, 'the stopped participant is gone');
-  assert.equal(beta.workspace, null);
+  // #428/#438: a stopped seat keeps its custody row — no holders, and the removal named — never null.
+  assert.equal(beta.workspace.holderCount, 0);
+  assert.equal(beta.workspace.removed?.reason, 'stop');
   assert.equal(view.participants.find((row) => row.participantId === 'lead').workspace.holderCount, 3,
     'the departed holder held its own checkout; the shared custody count is unchanged');
 });

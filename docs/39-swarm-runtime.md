@@ -298,7 +298,7 @@ runtime's own wake: it blocks until an event that concerns the swarm (a particip
 pauses, a contribution or review lands, a member dies, the organization changes) and returns the
 refreshed view with `watch.event` naming what woke it. The bounded form
 (`--timeout-ms`, with or without `--wake-class`) answers the wake FRAME first —
-`watch {reason: event|timeout, matchedSeq, event}` — over the `outline` projection by default;
+`watch {reason: event|timeout, matchedSeq, event, events, pendingSince}` (#433: `events` carries EVERY admitted wake row since `afterSeq` up to the frame bound, `pendingSince` the first uncarried seq, `matchedSeq` the last carried one) — over the `outline` projection by default;
 rows ride the answer only when the caller names a wider `--projection` (#356), and a stream that
 ends says why (`baton.wake_stream_ended.reason`, a closed set). `baton swarm watch <id> --follow` turns
 that into a feed: one JSON line per wake (`baton.swarm_wake`: the event, the `attention` rows, every

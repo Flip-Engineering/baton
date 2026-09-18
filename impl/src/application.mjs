@@ -3813,6 +3813,11 @@ export class BatonApplication {
   _swarmRuntime() {
     this._swarmService ??= new SwarmRuntime({
       store: this.driver.coordination, coordinator: this.driver.coordinator,
+      // Issue #296: the deployment's landing authority — the repository the driver holds; the
+      // runtime derives regenerate/runGates itself. Null on a driver without a repository root,
+      // and swarm.integrate then refuses swarm_command_unavailable.
+      integration: typeof this.driver?.repoRoot === 'string' && this.driver.repoRoot.length > 0
+        ? { repoRoot: this.driver.repoRoot } : null,
       // Issue #326: the participant row's crash fact reads the seat's own durable ledger —
       // the same log the debug leg projects — never a second store. Null when unreadable.
       lastCrash: (workerId) => {

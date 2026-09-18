@@ -1,8 +1,8 @@
 # Open coordination: joint couplings, claims, and peers-now (issues #422, #423, #374)
 
 Design direction: 2026-09-18, design seat kimi-design. Stage: `design-not-landed` — this
-document is pinned red-before by `impl/test/issue422-joint-couplings-red.test.mjs` and
-`impl/test/issue423-claims-and-peers-red.test.mjs`; every row there asserts behaviour specified
+document is pinned red-before by `impl/test/issue422-joint-couplings.test.mjs` and
+`impl/test/issue423-claims-and-peers.test.mjs`; every row there asserts behaviour specified
 here against the current runtime and fails until the implementation lands. This document changes
 no shipped behaviour. The migration note (§11) is the contract that existing records keep their
 meaning.

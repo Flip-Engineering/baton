@@ -10,7 +10,7 @@ parallel channel. The primitives and their landed state:
 | text-artifact admit into the CAS | `context-program.mjs` `StatelessContextBench.admitSource` (:686) → `_writeArtifact` (:739) (`<artifactRoot>/<digest>.json`, mode 0600, wx) | landed |
 | branch read projection | `application.mjs` `projectContextPackageBranch` (:547); MCP `baton_package_read` (`mcp-northbound.mjs` :2760–2766) | landed (MCP only) |
 | KG-3 activation | docs/34 §KG-3 rules 8–9: `recallPreview` (`coordination-store.mjs`), rendered at the `_providerBrief`/spawn seam (`coordinator.mjs` :4512, :4784) | landed |
-| contributions fold + review state | `swarm-state.mjs` `contributions`/`reviews` collections; docs/46 §2 (`reviewState` derivation) | fold landed; projection pending (#433) |
+| contributions fold + review state | `swarm-state.mjs` `contributions`/`reviews` collections; docs/46 §2 (`reviewState` derivation) | landed (#433, 2223154b: `contributions` projection with `reviewState`, `run.contributions.read` shares its derivation) |
 | peers-now | docs/45 §6 (brief section); docs/46 §6–7 (coverage, cost rule) | peers block landed in `_composeRecruitBrief`; claims pending (#423) |
 | participant bridge verbs | `swarm-contract.mjs` `SWARM_KNOWLEDGE_COMMANDS` (:158); `swarm-runtime.mjs` knowledge dispatch (:243–350); `swarm-native-access.mjs` guidance | landed for the #318 set |
 
