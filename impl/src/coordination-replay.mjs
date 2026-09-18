@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { deserialize } from 'node:v8';
+import { FRAME_LIMITS } from './limits.mjs';
 import {
   COORDINATION_QUARANTINE_FILE,
   CoordinationIntegrityError,
@@ -312,136 +313,203 @@ export function _loadSegmentState(store, raw) {
   return { archivedThroughSeq: needed, segments: active };
 }
 
-/** Moved from `CoordinationStore._load` (issue #259 slice 1). State: the store, passed explicitly. */
-export function _load(store) {
+/** Issue #351 lane 2: the chunk bound every replay stretch obeys. DERIVED, never invented —
+ * `view.wake_replay.items` is the registry's own ceiling for how many ledger rows one replay
+ * carries (the same row that bounds the release-time checkpoint), so it is also the bound the
+ * startup replay folds per synchronous stretch before the event loop is offered a breath. */
+const REPLAY_CHUNK_EVENTS = FRAME_LIMITS['view.wake_replay.items'].value;
+
+/** One macrotask of loop freedom between replay chunks. */
+const _loopYield = () => new Promise((resolve) => setImmediate(resolve));
+
+/** Moved from `CoordinationStore._load` (issue #259 slice 1). State: the store, passed explicitly.
+ * Issue #351 lane 2: split at its only yieldable seam. `_loadPlan` does the bounded prelude
+ * (ledger read, segment index, checkpoint restore, tail split — each a single bounded stretch
+ * whose cost is the artifact format's own, not the history's), and `_loadRun` folds the history
+ * in chunks of REPLAY_CHUNK_EVENTS events. One fold path, two cadences: the default drains the
+ * chunk generator plainly (every fold error propagates SYNCHRONOUSLY — the constructor either
+ * returns fully loaded or throws, never a half-loaded store), and `{ async: true }` awaits a
+ * macrotask between chunks instead, so a startup heartbeat and a signal handler keep beating
+ * however long the history is. */
+export function _load(store, opts = {}) {
+  if (opts.async === true) {
+    return (async () => {
+      try {
+        const plan = _loadPlan(store);
+        const run = _loadRun(store, plan);
+        for (;;) {
+          const step = run.next();
+          if (step.done) break;
+          await _loopYield();
+        }
+      } catch (error) {
+        _reportLoadFailure(store, error);
+        throw error;
+      }
+    })();
+  }
+  try {
+    const plan = _loadPlan(store);
+    // Plain `.next()` drain: the fold errors propagate SYNCHRONOUSLY — no microtask can slip
+    // into the synchronous open.
+    const run = _loadRun(store, plan);
+    let step;
+    do { step = run.next(); } while (!step.done);
+  } catch (error) {
+    _reportLoadFailure(store, error);
+    throw error;
+  }
+}
+
+function _reportLoadFailure(store, error) {
+  _reportStartup(store, {
+    schemaVersion: 1, state: 'failed', source: 'ledger', totalEvents: 0,
+    checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unusable',
+    // Issue #290: a fold refusal names the seq it died on, so the operator can pass exactly
+    // that seq to the quarantine verb — the failure record is the repair's warrant.
+    failure: {
+      code: error?.code ?? 'coordination_startup_failed',
+      seq: error?.coordinationSeq ?? null,
+    },
+  });
+}
+
+function _loadPlan(store) {
   const raw = existsSync(store.file) ? readFileSync(store.file) : Buffer.alloc(0);
   _reportStartup(store, {
     schemaVersion: 1, state: 'starting', source: 'ledger', totalEvents: 0,
     checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unchecked', failure: null,
   });
-  try {
-    // Issue #290: the quarantine ledger is loaded before any replay so every fold below (and
-    // every checkpoint restore path) skips exactly the seqs a repair has durably quarantined.
-    loadQuarantine(store);
-    // Issue #290 (accepted loss window): ledger appends are group-committed — fsynced on the
-    // next drain tick and again on clean release — so an OS-level crash can lose at most the
-    // events appended since the last drain. Such a loss can truncate the tail mid-line; this
-    // refusal is the typed surface of exactly that window, and a restart re-reads whatever
-    // complete prefix survived. The housekeeping artifacts (checkpoint, segments, receipts)
-    // are fsynced individually, never ahead of the truth they accelerate beyond this window.
-    if (raw.byteLength > 0 && raw.at(-1) !== 0x0a) {
-      throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
-    }
-    const segments = _loadSegmentState(store, raw);
-    const base = segments.archivedThroughSeq;
-    store._segmentIndex = base > 0 ? segments : null;
-    const checkpoint = store._restoreProjectionCheckpoint(raw, base);
-    const tail = raw.subarray(checkpoint.prefixBytes);
-    const text = tail.toString('utf8');
-    if (!Buffer.from(text, 'utf8').equals(tail)) {
-      throw new CoordinationIntegrityError('coordination stream is not exact UTF-8', 'invalid_utf8');
-    }
-    const lines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
-    const segmentEvents = (segments.segments ?? []).reduce((sum, segment) => sum + (segment.throughSeq - segment.fromSeq + 1), 0);
-    const totalEvents = base + checkpoint.throughSeq + lines.length;
-    const replaySource = (checkpointState) => (base > 0
-      ? (checkpointState === 'valid' ? (lines.length > 0 ? 'segments_checkpoint_tail' : 'segments_checkpoint')
-        : checkpointState === 'corrupt' ? 'segments_ledger_fallback' : 'segments_ledger')
-      : checkpointState === 'valid' ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
-        : checkpointState === 'corrupt' ? 'ledger_fallback'
-          : raw.byteLength === 0 ? 'empty' : 'ledger');
-    _reportStartup(store, {
-      schemaVersion: 1, state: 'replaying',
-      source: replaySource(checkpoint.state),
-      totalEvents, checkpointEvents: checkpoint.throughSeq, replayedEvents: 0,
-      checkpoint: checkpoint.state, failure: null,
-    });
-    store._loading = true;
-    try {
-      const applyReplayEvent = (event, index) => {
-        if (event.schemaVersion !== 1) throw new CoordinationIntegrityError(`unsupported schema version at seq ${event.seq}`, 'schema_version');
-        if (event.seq !== index + 1) throw new CoordinationIntegrityError(`coordination sequence gap at line ${index + 1}`, 'sequence_gap');
-        if (typeof event.idempotencyKey !== 'string' || store._byKey.has(event.idempotencyKey)) {
-          throw new CoordinationIntegrityError(`duplicate/missing idempotency key at seq ${event.seq}`, 'duplicate_key');
-        }
-        const frozen = freeze(event);
-        store._events.push(frozen);
-        store._byKey.set(frozen.idempotencyKey, frozen);
-        // Issue #290: a quarantined seq keeps its durable bytes parsed in the ledger (sequence
-        // contiguity, idempotent-retry adjudication, and checkpoint byte-equality all hold);
-        // only the fold that refused is withheld. Any fold failure names its seq and kind so an
-        // operator can pass exactly that seq to the quarantine verb.
-        if (store._quarantine.has(frozen.seq)) return;
-        try { store._apply(frozen); }
-        catch (error) {
-          error.coordinationSeq = frozen.seq;
-          error.coordinationKind = frozen.kind;
-          throw error;
-        }
-      };
-      for (const segment of segments.segments ?? []) {
-        const bytes = readFileSync(store._segmentFilePath(segment.digest));
-        if (sha256Bytes(bytes) !== segment.digest) {
-          throw new CoordinationIntegrityError('coordination segment digest mismatch', 'coordination_segment_integrity');
-        }
-        const text = bytes.toString('utf8');
-        if (!Buffer.from(text, 'utf8').equals(bytes)) {
-          throw new CoordinationIntegrityError('coordination segment is not exact UTF-8', 'invalid_utf8');
-        }
-        if (bytes.byteLength > 0 && bytes.at(-1) !== 0x0a) {
-          throw new CoordinationIntegrityError('coordination segment has a truncated tail', 'coordination_segment_truncated');
-        }
-        const segmentLines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
-        for (let offset = 0; offset < segmentLines.length; offset += 1) {
-          let event;
-          try { event = JSON.parse(segmentLines[offset]); }
-          catch { throw new CoordinationIntegrityError(`invalid JSON at coordination segment ${segment.digest} line ${offset + 1}`, 'invalid_json'); }
-          applyReplayEvent(event, segment.fromSeq - 1 + offset);
-        }
-      }
-      for (let index = 0; index < (checkpoint.events ?? []).length; index += 1) {
-        applyReplayEvent(checkpoint.events[index], base + index);
-      }
-      for (let offset = 0; offset < lines.length; offset += 1) {
-        const index = base + checkpoint.throughSeq + offset;
-        let event;
-        try { event = JSON.parse(lines[offset]); }
-        catch { throw new CoordinationIntegrityError(`invalid JSON at coordination line ${index + 1}`, 'invalid_json'); }
-        applyReplayEvent(event, index);
-        if ((offset + 1) % 256 === 0) _reportStartup(store, {
-          schemaVersion: 1, state: 'replaying',
-          source: replaySource(checkpoint.state),
-          totalEvents, checkpointEvents: checkpoint.throughSeq,
-          replayedEvents: segmentEvents + offset + 1, checkpoint: checkpoint.state, failure: null,
-        });
-      }
-      _validateRecoveryReplayTransactions(store);
-      _validateGoalPlanReplayTransactions(store);
-    } finally { store._loading = false; }
-    const source = replaySource(checkpoint.state);
-    _reportStartup(store, {
-      schemaVersion: 1, state: 'ready', source, totalEvents,
-      checkpointEvents: checkpoint.throughSeq, replayedEvents: segmentEvents + lines.length,
-      checkpoint: checkpoint.state, failure: null,
-    });
-    store._loadedLedgerHash = createHash('sha256').update(raw);
-    store._loadedLedgerIdentity = freeze({
-      bytes: raw.byteLength, digest: store._loadedLedgerHash.copy().digest('hex'),
-      events: store._events.length,
-    });
-  } catch (error) {
-    _reportStartup(store, {
-      schemaVersion: 1, state: 'failed', source: 'ledger', totalEvents: 0,
-      checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unusable',
-      // Issue #290: a fold refusal names the seq it died on, so the operator can pass exactly
-      // that seq to the quarantine verb — the failure record is the repair's warrant.
-      failure: {
-        code: error?.code ?? 'coordination_startup_failed',
-        seq: error?.coordinationSeq ?? null,
-      },
-    });
-    throw error;
+  // Issue #290: the quarantine ledger is loaded before any replay so every fold below (and
+  // every checkpoint restore path) skips exactly the seqs a repair has durably quarantined.
+  loadQuarantine(store);
+  // Issue #290 (accepted loss window): ledger appends are group-committed — fsynced on the
+  // next drain tick and again on clean release — so an OS-level crash can lose at most the
+  // events appended since the last drain. Such a loss can truncate the tail mid-line; this
+  // refusal is the typed surface of exactly that window, and a restart re-reads whatever
+  // complete prefix survived. The housekeeping artifacts (checkpoint, segments, receipts)
+  // are fsynced individually, never ahead of the truth they accelerate beyond this window.
+  if (raw.byteLength > 0 && raw.at(-1) !== 0x0a) {
+    throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
   }
+  const segments = _loadSegmentState(store, raw);
+  const base = segments.archivedThroughSeq;
+  store._segmentIndex = base > 0 ? segments : null;
+  const checkpoint = store._restoreProjectionCheckpoint(raw, base);
+  const tail = raw.subarray(checkpoint.prefixBytes);
+  const text = tail.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(tail)) {
+    throw new CoordinationIntegrityError('coordination stream is not exact UTF-8', 'invalid_utf8');
+  }
+  const lines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
+  const segmentEvents = (segments.segments ?? []).reduce((sum, segment) => sum + (segment.throughSeq - segment.fromSeq + 1), 0);
+  const totalEvents = base + checkpoint.throughSeq + lines.length;
+  const replaySource = (checkpointState) => (base > 0
+    ? (checkpointState === 'valid' ? (lines.length > 0 ? 'segments_checkpoint_tail' : 'segments_checkpoint')
+      : checkpointState === 'corrupt' ? 'segments_ledger_fallback' : 'segments_ledger')
+    : checkpointState === 'valid' ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
+      : checkpointState === 'corrupt' ? 'ledger_fallback'
+        : raw.byteLength === 0 ? 'empty' : 'ledger');
+  _reportStartup(store, {
+    schemaVersion: 1, state: 'replaying',
+    source: replaySource(checkpoint.state),
+    totalEvents, checkpointEvents: checkpoint.throughSeq, replayedEvents: 0,
+    checkpoint: checkpoint.state, failure: null,
+  });
+  return {
+    raw, base, segments, checkpoint, lines, segmentEvents, totalEvents,
+    source: replaySource(checkpoint.state),
+  };
+}
+
+/** The replay's fold work as a GENERATOR that yields at chunk boundaries — never awaiting on
+ * its own. The default `_load` drains it with `.next()` in a plain loop, so every fold
+ * error propagates SYNCHRONOUSLY to the constructor (a half-loaded store can never survive a
+ * failed open); the `{ async: true }` mode awaits a macrotask between `.next()` calls instead.
+ * One fold path, two cadences, no microtask can slip into the synchronous open. */
+function* _loadRun(store, plan) {
+  const { base, segments, checkpoint, lines, segmentEvents, totalEvents, source } = plan;
+  store._loading = true;
+  try {
+    const applyReplayEvent = (event, index) => {
+      if (event.schemaVersion !== 1) throw new CoordinationIntegrityError(`unsupported schema version at seq ${event.seq}`, 'schema_version');
+      if (event.seq !== index + 1) throw new CoordinationIntegrityError(`coordination sequence gap at line ${index + 1}`, 'sequence_gap');
+      if (typeof event.idempotencyKey !== 'string' || store._byKey.has(event.idempotencyKey)) {
+        throw new CoordinationIntegrityError(`duplicate/missing idempotency key at seq ${event.seq}`, 'duplicate_key');
+      }
+      const frozen = freeze(event);
+      store._events.push(frozen);
+      store._byKey.set(frozen.idempotencyKey, frozen);
+      // Issue #290: a quarantined seq keeps its durable bytes parsed in the ledger (sequence
+      // contiguity, idempotent-retry adjudication, and checkpoint byte-equality all hold);
+      // only the fold that refused is withheld. Any fold failure names its seq and kind so an
+      // operator can pass exactly that seq to the quarantine verb.
+      if (store._quarantine.has(frozen.seq)) return;
+      try { store._apply(frozen); }
+      catch (error) {
+        error.coordinationSeq = frozen.seq;
+        error.coordinationKind = frozen.kind;
+        throw error;
+      }
+    };
+    // One bounded stretch = at most REPLAY_CHUNK_EVENTS applied events. The segment file read
+    // and the checkpoint restore outside this counter are the artifact formats' own bounds.
+    let sinceYield = 0;
+    for (const segment of segments.segments ?? []) {
+      const bytes = readFileSync(store._segmentFilePath(segment.digest));
+      if (sha256Bytes(bytes) !== segment.digest) {
+        throw new CoordinationIntegrityError('coordination segment digest mismatch', 'coordination_segment_integrity');
+      }
+      const text = bytes.toString('utf8');
+      if (!Buffer.from(text, 'utf8').equals(bytes)) {
+        throw new CoordinationIntegrityError('coordination segment is not exact UTF-8', 'invalid_utf8');
+      }
+      if (bytes.byteLength > 0 && bytes.at(-1) !== 0x0a) {
+        throw new CoordinationIntegrityError('coordination segment has a truncated tail', 'coordination_segment_truncated');
+      }
+      const segmentLines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
+      for (let offset = 0; offset < segmentLines.length; offset += 1) {
+        let event;
+        try { event = JSON.parse(segmentLines[offset]); }
+        catch { throw new CoordinationIntegrityError(`invalid JSON at coordination segment ${segment.digest} line ${offset + 1}`, 'invalid_json'); }
+        applyReplayEvent(event, segment.fromSeq - 1 + offset);
+        sinceYield += 1;
+        if (sinceYield >= REPLAY_CHUNK_EVENTS) { sinceYield = 0; yield; }
+      }
+    }
+    for (let index = 0; index < (checkpoint.events ?? []).length; index += 1) {
+      applyReplayEvent(checkpoint.events[index], base + index);
+      sinceYield += 1;
+      if (sinceYield >= REPLAY_CHUNK_EVENTS) { sinceYield = 0; yield; }
+    }
+    for (let offset = 0; offset < lines.length; offset += 1) {
+      const index = base + checkpoint.throughSeq + offset;
+      let event;
+      try { event = JSON.parse(lines[offset]); }
+      catch { throw new CoordinationIntegrityError(`invalid JSON at coordination line ${index + 1}`, 'invalid_json'); }
+      applyReplayEvent(event, index);
+      sinceYield += 1;
+      if (sinceYield >= REPLAY_CHUNK_EVENTS) { sinceYield = 0; yield; }
+      if ((offset + 1) % 256 === 0) _reportStartup(store, {
+        schemaVersion: 1, state: 'replaying',
+        source,
+        totalEvents, checkpointEvents: checkpoint.throughSeq,
+        replayedEvents: segmentEvents + offset + 1, checkpoint: checkpoint.state, failure: null,
+      });
+    }
+    _validateRecoveryReplayTransactions(store);
+    _validateGoalPlanReplayTransactions(store);
+  } finally { store._loading = false; }
+  _reportStartup(store, {
+    schemaVersion: 1, state: 'ready', source, totalEvents,
+    checkpointEvents: checkpoint.throughSeq, replayedEvents: segmentEvents + lines.length,
+    checkpoint: checkpoint.state, failure: null,
+  });
+  store._loadedLedgerHash = createHash('sha256').update(plan.raw);
+  store._loadedLedgerIdentity = freeze({
+    bytes: plan.raw.byteLength, digest: store._loadedLedgerHash.copy().digest('hex'),
+    events: store._events.length,
+  });
 }
 
 /** Moved from `CoordinationStore._recoveryBatchIdentity` (issue #259 slice 1). Reads no store state. */
@@ -1407,11 +1475,24 @@ export function _restoreProjectionCheckpoint(store, raw, base = 0) {
       throw new Error('checkpoint projection is invalid');
     }
     const parsedPrefix = projection._events.map((event) => freeze(event));
-    const parsedBytes = Buffer.from(parsedPrefix.length === 0 ? ''
-      : `${parsedPrefix.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
-    if (parsedBytes.byteLength !== envelope.prefixBytes
-      || !parsedBytes.equals(raw.subarray(0, envelope.prefixBytes))) {
-      throw new Error('checkpoint parsed events do not match the authoritative ledger prefix');
+    // Issue #351 lane 2: the wholesale equivalence proof is gone. It re-serialized EVERY cached
+    // event (one JSON.stringify per row, an O(ledger) join, and a second ledger-sized copy) on
+    // the startup path — at 144 263 rows that was the resident's multi-second JSON-stringifier
+    // burn. The equivalence it proved is carried now by what the restore and the replay already
+    // hold: the digest and shape checks above (authority, prefix bytes, projection bytes, seq
+    // counts, idempotency-map span), the bounded tail anchor below — the LAST cached row must
+    // re-serialize to the ledger prefix's final line, where any append-time divergence (the
+    // #229 deferred-write hazard) shows — and the replay itself, which re-applies every cached
+    // row under seq, schema, and idempotency-key validation and the current fold cards. v8's
+    // deserialize round-trip is value-faithful for the rows the anchor does not touch.
+    if (envelope.throughSeq > 0) {
+      const lastLineStart = raw.lastIndexOf(0x0a, envelope.prefixBytes - 2) + 1;
+      const lastLine = raw.subarray(lastLineStart, envelope.prefixBytes - 1);
+      const lastEvent = parsedPrefix.at(-1);
+      if (lastEvent === undefined
+        || !Buffer.from(JSON.stringify(lastEvent), 'utf8').equals(lastLine)) {
+        throw new Error('checkpoint parsed events do not match the authoritative ledger prefix');
+      }
     }
     // A checkpoint is only a parsed-event cache. Every event is still applied below under the
     // current cards, policies, CAS readers, and receipt/poll reverifiers.

@@ -2323,6 +2323,13 @@ class BatonDeployment {
   // idempotency token that keeps a repeated stop from minting a second set.
   #stopRecords = null;
   #stopToken = null;
+  // Issue #351 lane 2: the instant the SIGNAL HANDLER (not the drain) recorded the stop request —
+  // the one-stop-one-request fact both the handler and the shutdown path read, so a stop that
+  // begins in a signal handler owns exactly one `host.stop_requested` row whichever path runs.
+  #stopRequestedAt = null;
+  // Issue #351 lane 2: the startup truth the publication contract renders — the open's elapsed
+  // milliseconds and the coordination startup status, composed once at the flip.
+  #startupElapsedMs = null;
   #residentAuthority = null;
   #residentSession = null;
   #ordinaryHostPromise = null;
@@ -2347,6 +2354,10 @@ class BatonDeployment {
     this.#routeRefusals = deployment.refusals ?? null;
     this.#adapters = deployment.adapters ?? {};
     this.#routes = deployment.routes ?? [];
+    // Issue #351 lane 2: the open's own elapsed milliseconds, stamped by openBatonDeployment
+    // when the driver (replay included) is in hand — the publication row's `elapsedMs`.
+    this.#startupElapsedMs = Number.isSafeInteger(deployment.startupElapsedMs)
+      ? deployment.startupElapsedMs : null;
     this.#card = Object.freeze({ ...application.card(), readiness });
     const runs = this.#baton.runs;
     this.runs = Object.freeze({
@@ -2520,6 +2531,14 @@ class BatonDeployment {
       ...(served ? { served } : {}),
     };
     Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
+    // Issue #351 lane 2: the startup truth the publication contract renders — the coordination
+    // replay's final state (state/rows/checkpoint) beside the open's elapsed milliseconds, read
+    // fresh on every doctor. Attached NON-enumerable by the same DP5 pattern as `briefing`:
+    // property-access readers (the flip line, the wave driver, tests) see it; the serialized
+    // doctor row shape stays byte-stable.
+    Object.defineProperty(base, 'coordination', {
+      value: this.startupReport(), enumerable: false,
+    });
     return Object.freeze(base);
   }
 
@@ -2859,6 +2878,16 @@ class BatonDeployment {
           code: 'application_host_self_check_failed',
         });
       }
+      // Issue #351 lane 2: the publication exists only when the loop is free to answer the first
+      // request — the self-check above WAS that request, and the coordination startup is done.
+      // A resident that somehow reached this point mid-replay refuses to publish rather than
+      // leaving a "served" selector pointed at a process that cannot answer.
+      const startup = this.#driver?.coordination?.startupStatus?.() ?? null;
+      if (startup !== null && startup.state !== 'ready') {
+        throw Object.assign(deploymentError('resident startup replay is not finished'), {
+          code: 'application_host_startup_unfinished',
+        });
+      }
       return authority.publish({
         token: issued.token,
         registryDigest: doctor.application.agentExperience.registryDigest,
@@ -2973,14 +3002,48 @@ class BatonDeployment {
     return Object.freeze({ workerId, processGroupId: group, signal, confirmed });
   }
 
+  /** Issue #351 lane 2: the signal handler's FIRST act. Appends `host.stop_requested {trigger, at}`
+   * SYNCHRONOUSLY through the store's own writer path (`recordDriver` — lease-checked, one
+   * bounded row) before any narration read, drain, or event-loop yield, and is idempotent per
+   * stop: whichever path calls first — the signal handler or the shutdown drain — records the
+   * one row, and the other narrates nothing. A ledger that cannot take the row (the writer lease
+   * is lost, the store is poisoned) returns null and the stop narrates without it, never wedges.
+   * Returns the narration line when THIS call did the recording. */
+  recordStopRequested(trigger) {
+    if (this.#stopRequestedAt !== null) return null;
+    const kind = typeof trigger === 'string' && trigger.length > 0 ? trigger : 'signal';
+    const at = this.#clock();
+    const recorded = this.#stopRecord('host.stop_requested', { trigger: kind, at }, 'requested');
+    if (recorded === null) return null;
+    this.#stopRequestedAt = at;
+    return `baton serve: host.stop_requested trigger ${kind} at ${at}`;
+  }
+
+  /** Issue #351 lane 2: the startup truth the publication contract renders — the coordination
+   * startup status beside the open's own elapsed milliseconds, composed once and frozen. This is
+   * the fact `baton serve` names at the flip and the doctor renders: a resident is only
+   * "published" when its loop is free, and the row says how long the replay took. */
+  startupReport() {
+    if (this.#startupElapsedMs === null) return null;
+    const status = this.#driver?.coordination?.startupStatus?.() ?? null;
+    return Object.freeze({
+      schemaVersion: 1,
+      openElapsedMs: this.#startupElapsedMs,
+      ...(status === null ? {} : {
+        state: status.state, source: status.source, rows: status.totalEvents,
+        replayedEvents: status.replayedEvents, checkpointEvents: status.checkpointEvents,
+        checkpoint: status.checkpoint,
+      }),
+    });
+  }
+
   /** The stop-records seam a host narrates and records through. Built once per deployment, handed
    * to every host it builds. */
   #stopRecordsFor() {
     this.#stopRecords ??= Object.freeze({
       requested: ({ trigger }) => {
-        const at = this.#clock();
-        this.#stopRecord('host.stop_requested', { trigger, at }, 'requested');
-        return { line: `baton serve: host.stop_requested trigger ${trigger} at ${at}` };
+        const line = this.recordStopRequested(trigger);
+        return { line, recorded: line !== null };
       },
       waiting: async ({ wait }) => {
         const at = this.#clock();
@@ -3174,6 +3237,9 @@ function restrictingReadAuthorize() {
 }
 
 export async function openBatonDeployment(rawOptions, createDriver) {
+  // Issue #351 lane 2: the open's wall-clock start — `startupElapsedMs` (the publication row's
+  // elapsedMs) derives from it.
+  const openStartedAtMs = Date.now();
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
@@ -3648,6 +3714,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
+      // Issue #351 lane 2: the open's own elapsed milliseconds — the replay-to-assembly cost the
+      // publication contract publishes at the flip. openStartedAtMs is stamped at entry.
+      startupElapsedMs: Date.now() - openStartedAtMs,
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota, refusals: routeRefusals,
       hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,
       liveness: livenessController,

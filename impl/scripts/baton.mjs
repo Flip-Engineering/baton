@@ -76,6 +76,16 @@ async function serveDeployment(rawDeployment) {
   // `runs.list` projection of the participants this process still owns (never a wire call).
   let announced = null;
   const narration = (trigger) => {
+    // Issue #351 lane 2: the durable request is the handler's FIRST act — appended synchronously
+    // through the deployment's own writer path (one bounded row, deduped against the drain)
+    // before the narration read a busy loop could postpone it behind.
+    try {
+      const requestedLine = typeof deployment.recordStopRequested === 'function'
+        ? deployment.recordStopRequested(trigger.kind) : null;
+      if (requestedLine) {
+        process.stderr.write(`${flipAnnounce('draining', requestedLine, { tty: TTY, color: TTY })}\n`);
+      }
+    } catch { /* the stop narrates without the row rather than wedging the handler */ }
     const readRuns = typeof deployment.runs?.list === 'function'
       ? () => deployment.runs.list()
       : () => { throw Object.assign(new Error('this deployment publishes no run list'), { code: 'application_host_narration_unavailable' }); };
@@ -96,6 +106,13 @@ async function serveDeployment(rawDeployment) {
   try {
     outcome = await lifecycle.run(async ({ signal }) => {
       const hosted = await deployment.host();
+      // Issue #351 lane 2: the ONE line at the flip — the publication exists and the loop was
+      // free enough to answer the self-check; the row says how long the startup took (replay
+      // included) and what the ledger held, so "published" is never a guess about readiness.
+      const report = typeof deployment.startupReport === 'function' ? deployment.startupReport() : null;
+      const flip = report === null ? 'answering'
+        : `answering (open ${report.openElapsedMs}ms; ${report.rows ?? 0} rows on the ledger; replayed ${report.replayedEvents ?? 0}; checkpoint ${report.checkpoint ?? 'unknown'})`;
+      process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${flip}`, { tty: TTY, color: TTY })}\n`);
       process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${JSON.stringify(hosted)}`, { tty: TTY, color: TTY })}\n`);
       await new Promise((resolveSignal) => {
         if (signal.aborted) resolveSignal();
