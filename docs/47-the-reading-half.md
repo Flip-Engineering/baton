@@ -1,0 +1,201 @@
+# The reading half: a recruited seat reads its issue, its docs, its peers, and the landed work (issue #441)
+
+A design in the house style of [39-swarm-runtime.md](39-swarm-runtime.md) — rules, not prose.
+Every mechanism below ACTIVATES a primitive Baton already landed; nothing here invents a
+parallel channel. The primitives and their landed state:
+
+| primitive | where it lives | state |
+|---|---|---|
+| ContextPackage (REFLEX-3) | docs/32 §3.3; `coordination-store.mjs` `admitContextPackage` (:9252), `attachContextPackage` (:9337), `resolveContextPackageBranch` (:9171); `application.mjs` direct ports (:10674–10720) | landed |
+| text-artifact admit into the CAS | `context-program.mjs` `StatelessContextBench.admitSource` (:686) → `_writeArtifact` (:739) (`<artifactRoot>/<digest>.json`, mode 0600, wx) | landed |
+| branch read projection | `application.mjs` `projectContextPackageBranch` (:547); MCP `baton_package_read` (`mcp-northbound.mjs` :2760–2766) | landed (MCP only) |
+| KG-3 activation | docs/34 §KG-3 rules 8–9: `recallPreview` (`coordination-store.mjs`), rendered at the `_providerBrief`/spawn seam (`coordinator.mjs` :4512, :4784) | landed |
+| contributions fold + review state | `swarm-state.mjs` `contributions`/`reviews` collections; docs/46 §2 (`reviewState` derivation) | fold landed; projection pending (#433) |
+| peers-now | docs/45 §6 (brief section); docs/46 §6–7 (coverage, cost rule) | peers block landed in `_composeRecruitBrief`; claims pending (#423) |
+| participant bridge verbs | `swarm-contract.mjs` `SWARM_KNOWLEDGE_COMMANDS` (:158); `swarm-runtime.mjs` knowledge dispatch (:243–350); `swarm-native-access.mjs` guidance | landed for the #318 set |
+
+## 1. The objects a recruited seat can read, and how each arrives
+
+1. **The issue and the docs it cites — ONE ContextPackage, admitted by the root.** The root's
+   CLI (the only place a `gh` credential exists, #347) reads the issue at recruit time and
+   admits ONE `baton.context_package` named `issue-<n>` with branches `issue:<n>` and one
+   `doc:<path>@<sha>` per cited or requested doc. Branch content is a `context_source` ref
+   minted by `bench.admitSource` over the JSON value `{number, title, body, labels, url}` (the
+   issue branch) or `{path, sha, text}` (a doc branch) — the store's content-addressed artifact
+   CAS is the only byte store, and `admitContextPackage` resolves every branch exactly once at
+   admission. Provenance derives from the admission ledger event (docs/32 §3.3), never from a
+   self-cited field.
+2. **The package reaches the seat by attachment, not by copy.** The recruit effect attaches the
+   package to the seat's run with scope `worker:<seat>` (`attachContextPackage` — a fenced O(1)
+   pointer binding; it never re-reads branch bytes). The `package.attached` row IS the durable
+   record; the runtime records nothing new.
+3. **Landed work — the contributions projection.** Accepted contributions since the seat's base
+   derive from the durable `swarm.contribution_recorded` + `swarm.contribution_reviewed` rows
+   through the swarm-state fold (docs/46 §2.1: `reviewState ∈ unreviewed | accepted | rejected`,
+   derived, never stored). The derivation is ONE exported function so the #433 view projection
+   and the seat verb read the same rows.
+4. **Peers — peers-now.** Each other seat that can act: participantId, status, route, scope
+   paths, last checkpoint summary and its age, current holder rows — derived from the
+   participants fold the view already composes (docs/45 §6, docs/46 §1). NEVER a workspace live
+   read: docs/46 §7 binds every read path — no process spawn, no per-seat ledger scan.
+5. **Project knowledge — KG-3 activation.** The issue text is the recall query: the existing
+   `recallPreview` briefing projection (docs/34 §KG-3 rule 8 — non-evented, cached to the
+   project-horizon fence, degrade-to-`briefingUnavailable` on any refusal ceiling) runs over the
+   admitted issue text at the brief seam. The reading half names the query source; it does not
+   touch the preview machinery.
+
+## 2. The recruit brief's derived sections, in order
+
+`_composeRecruitBrief` (swarm-runtime.mjs :2281) renders, top to bottom; each section names the
+ONE row or projection it renders from and the registry row that bounds it (never a literal):
+
+| order | section | the ONE source | byte bound |
+|---|---|---|---|
+| 1 | the objective | the recruiter's own words | `run.objective` |
+| 2 | the held work item | the ACTIVE assignment row (#345) | — |
+| 3 | `## Swarm situation` | peers, settled count, contracts, commits-since-base, route usage, parked guidance — the durable folds, as today | the existing rows |
+| 4 | `## Context package` (NEW) | the recruit's `options.contextPackage.digest` resolved against the store's package record: package digest, then per branch its name, digest, byte size and the first `context_package.brief_bytes` of its text (the `issue:<n>` branch first) | `context_package.brief_bytes` per rendered branch slice; `context_package.source_bytes` per admitted branch source |
+| 5 | the read-only mode block | the recruit mode (#373) | — |
+| 6 | the contribution contract example | the validator's own schema (#310/#371/#373) | — |
+| 7 | `## Inheritance from <seat>` | the predecessor's durable rows (#318) | — |
+
+1. Section 4 is absent — not empty — for a recruit without `--issue`: today's hand-typed briefs
+   compose byte-identically.
+2. The section renders digests and a bounded head of each branch; the full text is one
+   `run.package.read` away (§3). The brief never inlines a whole issue body.
+3. Branch content is untrusted input to every reader: it renders through the
+   `boundedAttentionText`/`SECRET_SHAPED_TEXT` discipline with untrusted-prose provenance
+   marking (docs/32 §3.3 Part D / F14).
+
+## 3. The bridge verbs a seat reads with
+
+Three read verbs join the closed seat verb set — one table row each beside the #318 knowledge
+verbs, so the view's `updates`, the bridge's `--help`, and the brief's Swarm section cannot
+disagree. All are read-only, all bounded by a registry row, all refuse typed, all admit through
+contract validation BEFORE any runtime effect (the #318 pattern).
+
+| verb | answers | refuses |
+|---|---|---|
+| `run.package.read {packageDigest, branch?}` | the package's branch list (name, digest, bytes), or ONE branch's text — resolved through `application.contextPackageBranch`, the SAME projection MCP's `baton_package_read` serves (`projectContextPackageBranch`); never a fork | `context_package_not_found`; `context_package_branch_not_found`; `package_not_attached_to_run` when the digest is attached to neither the caller's run nor its swarm (the attach rows are the scope check) |
+| `swarm.contributions.read {since?}` | the accepted-and-unreviewed contributions on the caller's swarm with `seq > since`: `{participantId, contributionId, seq, summary, files, decision}`, in ledger order — the §1.3 derivation over the fold; no ledger scan beyond it (docs/46 §7) | the closed-set argument refusals; an unknown `since` reads as `0` never as an error |
+| `swarm.peers.read` | peers-now for the caller (§1.4), one row per other seat that can act; the caller never appears in its own answer | the closed-set argument refusals |
+
+1. The seat's token binds its identity server-side; a caller-supplied `runId`,
+   `participantId`, or `swarmId` beyond the token's scope refuses as identity-shaped (the #318
+   `identityFields` rule).
+2. An unknown argument key refuses typed before admission — contract admission first, always.
+3. These verbs READ; they wake nobody, write nothing, and appear on no wake class.
+
+## 4. `swarm recruit <swarm> <seat> <objective> --issue N [--doc PATH …]`
+
+1. **Composition rule.** The CLI parses `--issue N` and repeated `--doc PATH` into the recruit
+   spelling (the closed argv of #431 — both flags join the recruit row's admitted vocabulary and
+   its usage/help row). Before the recruit is admitted, the ROOT process: reads the issue with
+   `gh issue view N --json number,title,body,labels,url` through an INJECTED reader
+   (`issueReader`, so tests never shell); extracts every `docs/NN-…md` citation in the issue
+   body through ONE exported citation function; reads each cited and each requested doc from the
+   repo at the served commit; admits ONE ContextPackage (§1.1); and recruits with
+   `options.contextPackage = {digest}`. The runtime attaches (§1.2) and the brief renders (§2).
+2. **What the root still types.** The judgment paragraph — the objective. Composition derives
+   the world; it never authors the decision. (`--files <globs>` — scope derivation from the
+   issue's file mentions plus the #296 landing-table gates — is NOT in this wave; §9.1.)
+3. **Refusals are typed pre-effect** — nothing is admitted, no seat joins:
+   - `gh` missing or unauthenticated → `issue_reader_unavailable {issue, reason}`;
+   - the issue not found → `issue_not_found {issue}`;
+   - a `--doc` path outside the repo or unreadable → `context_doc_unreadable {path}`;
+   - oversize → the registry row's own refusal (`context_package.source_bytes`,
+     `context_package.brief_bytes` — derived, never literal).
+4. The web transport has NO context-package route today (grep: web-northbound.mjs names none);
+   the CLI reaches `application.admitContextPackage`/`attachContextPackage` through a minimal
+   typed route pair that mirrors the MCP handlers (docs/32 §3.5) — the same payload shapes, the
+   same refusal codes, no second semantics.
+
+## 5. Claims instead of handovers
+
+1. A seat that needs a file outside its path scope files a `swarm.claim_updated` path claim
+   (docs/45 §2) naming the paths on its recorded checkout — one durable row, visible on every
+   view and in the holder's next brief — instead of finishing with a `needsFromOthers` handover.
+2. The claim refuses `swarm_claim_conflict` when another seat's ACTIVE claim overlaps on the
+   same checkout, naming the holder, the holding `claimId`, and the overlapping paths; the
+   holder releases or hands off in one row (docs/45 §2.2). The root accepts or refuses the
+   claim; nothing is relayed by prose.
+3. Finishing with a handover remains legal for work the seat cannot start; the claim is the
+   spelling for work it CAN start the moment the hold lands.
+4. This rule ACTIVATES when #423's claims land; until then the handover is the only row and
+   this section is the pin, not the mechanism (the red skeleton, row (e)).
+
+## 6. What stays OUT
+
+- **No worker-side `gh`.** The worker runtime holds no credential (#347); the root reads at
+  recruit time and the package is the only channel. A seat that needs a NEWER issue reading says
+  so (`swarm.guide` to the root), never shells.
+- **No free scripting.** The Bench's closed op set stays the ceiling (docs/32 §5); the reading
+  half adds reads, not evaluation.
+- **No per-view scans or spawns.** docs/46 §7 binds every read path in this doc: the
+  contributions derivation reads the fold, peers-now reads the participants fold, package reads
+  resolve content-addressed bytes. No `git` spawn, no ledger walk per read.
+- **No new event kinds, wake classes, or ledger rows for reading.** The `package.attached` row
+  already exists; a read mints nothing.
+- **No mutable refs in a package.** Branch content is immutable and content-addressed; a doc
+  that changes is a NEW branch name (`doc:<path>@<new-sha>`), never a rewritten branch
+  (docs/32 §3.3 replay rule).
+- **No credentials in packages, briefs, or branch content** (docs/32 §5).
+- **No second contributions derivation.** The #433 view projection and `swarm.contributions.read`
+  share ONE exported function; a second spelling is a bug.
+
+## 7. Migration: today's hand-typed briefs keep working
+
+- A recruit without `--issue` admits no package, attaches nothing, and renders no
+  `## Context package` section — the composed brief is byte-identical to today's.
+- Existing packages and attachments replay unchanged; the replay rule (docs/32 §3.3) is
+  untouched.
+- The three bridge verbs are additive rows in the closed seat verb set; the #318 verb set and
+  the contract example the brief renders (#371) are untouched.
+- The contributions projection derives review state at read time (docs/46 §2.1); no durable
+  row is rewritten.
+
+## 8. Closed-set owners and the seam map
+
+| closed set / seam | owner (file · function) |
+|---|---|
+| package shape, branch mold, admission + attach refusals | `coordination-store.mjs` · `_normalizeContextPackage`, `admitContextPackage`, `attachContextPackage`, `resolveContextPackageBranch` |
+| text-artifact admit into the CAS | `context-program.mjs` · `StatelessContextBench.admitSource` |
+| branch read projection (the ONE shape) | `application.mjs` · `projectContextPackageBranch` |
+| CLI argv vocabulary, usage rows | `application-cli.mjs` · `parseSwarmCli`, `SWARM_PARSER_LEG_FLAGS`; `swarm-surface.mjs` |
+| CLI refusal codes (`issue_reader_unavailable`, `issue_not_found`, `context_doc_unreadable`) | `application-cli.mjs`, the #430/#431 closed refusal shape |
+| registry byte rows (`context_package.brief_bytes`, `context_package.source_bytes`, the read-verb bounds) | `limits.mjs` · `FRAME_LIMITS` |
+| recruit args→attach seam, the `## Context package` brief section | `swarm-runtime.mjs` · `swarm.recruit` effect, `_composeRecruitBrief` |
+| the three read verbs: dispatch table rows | `swarm-runtime.mjs` · the knowledge-dispatch region (:236–350) |
+| the closed seat verb set, brief/help rows | `swarm-native-access.mjs` · guidance derivation; the verbs' admission table (§9.2) |
+| contributions derivation (exported, shared with #433) | `swarm-runtime.mjs` · ONE new exported function over the swarm fold |
+| reviewState closed set | docs/46 §2.1 (`unreviewed \| accepted \| rejected`) — this doc adds nothing |
+| claim refusals | docs/45 §2 (`swarm_claim_conflict`, …) — this doc adds nothing |
+| web admit/attach route pair | `web-northbound.mjs` — mirrors the MCP handlers, no second semantics |
+
+## 9. Open questions
+
+1. **`--files <globs>` scope derivation.** The issue's owed item 4 composes path scope from the
+   issue's file mentions plus the #296 landing-table gates. This wave's implementation lane
+   (lane A) carries only `--issue`/`--doc`; `--files` is deferred because the gate-set
+   derivation has no landed reader today. The lane brief wins for this wave; the gap is
+   recorded here so the root can re-brief.
+2. **Where the three read verbs' admission rows live.** The #318 verbs ride
+   `SWARM_KNOWLEDGE_COMMANDS` in `swarm-contract.mjs` and canonical operation schemas in
+   `application-semantics.mjs` — both OUTSIDE the implementation lane's path scope. The lane
+   must either declare the verbs in a module it owns (a sibling table the contract later
+   absorbs) or hand the contract rows back as `needsFromOthers`. This doc prefers ONE table in
+   `swarm-contract.mjs` (the four-surfaces-one-table rule of docs/39 §The knowledge verbs reach
+   the loop) and names the hunk for the root.
+3. **`package_not_attached_to_run` swarm-scope reading.** "Attached to the caller's run OR its
+   swarm" needs a swarm-scope attach reading the attach rows by run membership; the store's
+   `contextPackageAttachments(runId)` is per-run. A swarm-visible package (scope `run` on the
+   ROOT's run? a `board:` scope?) has no spelling today — the seat-scope attach (`worker:<seat>`)
+   is the only row this wave mints, and the refusal covers everything else.
+4. **KG-3 over the issue text.** `recallPreview` runs at the `_providerBrief`/spawn seam over
+   the objective; whether the admitted issue branch's text should EXTEND that query (two
+   sources, one preview) or stay the objective alone is a coordinator-seam decision outside the
+   reading half's lanes.
+5. **The citation regex surface.** ONE exported citation function (lane A) reads
+   `docs/NN-…md` mentions out of an issue body; whether it belongs in `application-cli.mjs` (the
+   only caller today) or a shared module the docs linter can reuse is unsettled — the lane
+   brief assigns it to the CLI module and this wave follows.
