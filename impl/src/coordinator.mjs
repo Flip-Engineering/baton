@@ -12809,7 +12809,11 @@ export class Coordinator {
         'scratchpad_write_invalid', 'scratchpad_entry_invalid', 'scratchpad_partition_exhausted',
         'scratchpad_write_conflict', 'run_stopping',
       ]);
-      return { ok: false, result: allowed.has(error.code) ? error.code : 'worker_not_active' };
+      // Issue #404: the allowlist translates the codes the wire already knows; a store code
+      // outside it crosses verbatim beside its message — re-labelling it worker_not_active
+      // names the wrong remedy to an active worker.
+      if (allowed.has(error.code)) return { ok: false, result: error.code };
+      return { ok: false, result: error.code, message: error.message };
     }
   }
 

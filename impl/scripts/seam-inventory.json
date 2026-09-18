@@ -3103,7 +3103,7 @@
         {
           "name": "writeScratchpad",
           "ordinal": 0,
-          "size": 51,
+          "size": 55,
           "seam": "observation",
           "evidence": [
             "admission:policy_gate",
