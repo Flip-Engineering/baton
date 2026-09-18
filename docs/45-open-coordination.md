@@ -236,6 +236,9 @@ checkout they cover. When #425 lands enforcement, a commit or capture observed f
 on a covered checkout refuses or flags naming the record and the holder; until then the lease
 informs exactly as today's writer record informs.
 
+
+**Scope rule (#447, 2026-09-18).** The projected wrapper spools an observation only for a commit whose repository is the checkout recorded on the seat's lease (the coordinator records that identity when it confirms the checkout, and again at resume/attach); a commit in any other repository — a test fixture's temporary repository under the checkout, a nested clone, a worktree the seat made by hand — is spooled by nobody and refused by nobody: the wrapper stays transparent to git. A lease with no recorded checkout keeps the #425 attribution. Root-side, the commit-observation drain skips an observation naming a swarm the deployment does not hold. Before this rule a seat running the issue425/issue438 fixtures wrote ~120 bogus `worktree.commit_recorded` rows a minute under its own identity.
+
 ### 4.5. Coupling proposals (arrival is consent)
 
 Any member with `communicate` may `propose` a coupling: the payload names the coupling
