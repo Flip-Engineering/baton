@@ -1029,3 +1029,45 @@ only spelling: #456 consumed an undeclared `--route-probe` token before the clos
 never taught by any usage line, and refused #431-style by the verb's own admitted vocabulary — while
 the refusal offered that token as its remedy. The token is gone; the closed argv refuses it like any
 other invented flag and the remedy names the flag the verb really admits.
+
+## A contribution body that is its own JSON document refuses (issue #481, 2026-09-18)
+
+**One rule, one derivation, at the admission (#481).** A contribution body is the report OBJECT the
+contract owns (`impl/src/contribution-contract.mjs`), and the note the runtime lands a plain-text
+publish as (`swarm.note_recorded`, #310 — not itself submittable) carries the same field. The
+contract's argument admission (`impl/src/swarm-contract.mjs`) refuses a body that is its OWN JSON
+document — the report a seat serialized one time more than the contract expects — for BOTH halves,
+from one table (`SWARM_REPORT_BODY_VERBS`) and one predicate (`swarmEncodedReportBody`), before the
+note translation and before any fold:
+
+`swarm_command_invalid {field: 'payload.body', rule: 'object', admitted: 'the contribution report
+object (subject, commit, items, verification, needsFromOthers)', correction: 'the report was
+JSON-encoded twice; pass the object'}` — and the same refusal, field `payload`, when the whole
+payload is the encoded report. The remedy rides the message as well as the detail, so the lane that
+prints only `{code, message}` still teaches the fix. Observed at fed18071: seat ds-465b's three rows
+(seq 186528/186538/186548) carried `payload.body` as a JSON string, the projection rendered them
+without `items`/`commit`, and the root's landing loop — which reads `body.items` and
+`body.commit.sha` — had nothing to land. The whiteboard's `swarm.context_updated` body is
+deliberately NOT in the table: its schema declares the entry arbitrary JSON and a note there is text
+by design (#427). A body that holds no JSON is the plain-text finding/note the runtime has always
+accepted, and stays admissible.
+
+**The CLI refuses the same body at the parse (#481).** `baton swarm update … --payload` parses the
+payload once (`swarmPayload`) and pre-checks the document member with the SAME predicate and the
+SAME message constants, refusing `{field: '--payload', rule: 'object', admitted, correction}` where
+the operator can still fix the argv. The SDK needs no second check: `Swarm._send` runs the shared
+validator client-side, so `contribute()` refuses before the wire with the contract's own detail.
+The served web transport's pre-dispatch argument arm composes `{code, message, field}` and
+re-derives `field` from the request shape — so a web caller reads the code and the remedy on the
+message, while the contract's own `field`/`detail` is what the direct port, the MCP path and the
+native bridge (the seat's lane, `swarm-native-bridge.mjs`) cross.
+
+**A stored string body projects as the defect, never as text (#481).** A row recorded before the
+rule existed is never refused — a view never refuses recorded history (#304) — but it is projected:
+`storedBodyDefect` (`impl/src/swarm-runtime.mjs`) marks a fold body that is its own JSON document as
+`{invalid: 'string_body', bytes}` on the view's contribution rows and on the `contributions`
+projection `run.contributions.read` answers, where the row's `summary` is then absent rather than
+670 characters of JSON. A reader that folds a string body gets one key per character (the
+incident's rows read as `{"0": "{", "1": "\"", …}`), which is exactly the shape the marker replaces;
+the marker is a few bytes, so the frame budget docs/47 §3 guards is not spent on a second copy, and
+the paged read's own body bound (`bodyBytes`/`bodyTruncated`, #343) is untouched.

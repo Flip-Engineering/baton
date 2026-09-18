@@ -3,7 +3,8 @@ import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PRO
   SWARM_VIEW_PROJECTIONS, projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
   validateSwarmCommand, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
   swarmKnowledgeCommand, swarmKnowledgePermission, readRecruitContextPackageOption,
-  withoutRecruitContextPackageOption, SWARM_GUIDANCE_DEFAULT_PRIORITY } from './swarm-contract.mjs';
+  withoutRecruitContextPackageOption, SWARM_GUIDANCE_DEFAULT_PRIORITY,
+  swarmEncodedReportBody } from './swarm-contract.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
@@ -1278,6 +1279,21 @@ export function swarmContributionReviewState(reviews = []) {
   return accepted >= 0 && accepted > rejected ? 'accepted' : rejected >= 0 ? 'rejected' : 'unreviewed';
 }
 
+/** Issue #481: the typed defect a STORED body that is its own JSON document projects as — the
+ * report a seat serialized once more than the contract expects, the shape the admission now
+ * refuses. Null for every other body: the contract object, the plain-text finding the runtime has
+ * always accepted (#310), an array or scalar body, and absence.
+ *
+ * The marker is what a reader needs and nothing else: a string body handed to a reader that folds
+ * it yields one key per CHARACTER (the incident's rows read as `{"0": "{", "1": "\"", …}`), and
+ * the root's landing loop reads `body.items`/`body.commit.sha` — so the defect is named with the
+ * size it left out, exactly as the paged read names a bounded body (`bodyBytes`, #343). Stored
+ * rows are never refused (a view never refuses recorded history, #304); they are projected. */
+export function storedBodyDefect(body) {
+  return swarmEncodedReportBody(body) === null ? null
+    : Object.freeze({ invalid: 'string_body', bytes: Buffer.byteLength(body) });
+}
+
 /** The swarm's contributions in ledger order — the ONE derivation every reader of a contribution
  * row shares: `run.contributions.read` answers its rows, the `contributions` projection (and the
  * whole record) carries them on its contribution rows, and the recruit brief counts them. A
@@ -1289,7 +1305,11 @@ export function swarmContributionReviewState(reviews = []) {
  * `commit` are the contract projection the view also renders as its `contract` field; `files` are
  * the paths it names (its contract items' `files`) plus its `refs`; `decision` is the latest
  * SETTLING review's decision, or null when nothing settled; `integration` is the landing receipt
- * an integration left, else null (recorded absence, never a guess). */
+ * an integration left, else null (recorded absence, never a guess). Issue #481: a body that is its
+ * own JSON document was never a summary — the row carries `body` as the typed defect instead
+ * (`storedBodyDefect`) and no summary at all, so a reviewer reads the shape and its size. The
+ * marker rides ONLY a defective row: a second copy of a healthy body is what the frame budget
+ * (docs/47 §3) forbids. */
 export function contributionLedgerRows(swarm, { since = 0 } = {}) {
   const rows = [];
   for (const contribution of Object.values(swarm.contributions ?? {})) {
@@ -1298,6 +1318,7 @@ export function contributionLedgerRows(swarm, { since = 0 } = {}) {
     const settling = reviews.filter((review) => review.decision !== 'comment');
     const reviewState = swarmContributionReviewState(reviews);
     const body = contribution.body;
+    const defect = storedBodyDefect(body);
     const contract = body !== null && typeof body === 'object' && !Array.isArray(body)
       && isContributionContractBody(body) ? body : null;
     // ONE projection of the contract body — the SAME `projectContributionContract` the view
@@ -1311,7 +1332,8 @@ export function contributionLedgerRows(swarm, { since = 0 } = {}) {
       participantId: contribution.participantId, contributionId: contribution.contributionId,
       workId: contribution.workId ?? null,
       summary: contract !== null && typeof contract.subject === 'string' ? contract.subject
-        : typeof body === 'string' ? body : null,
+        : defect === null && typeof body === 'string' ? body : null,
+      ...(defect === null ? {} : { body: defect }),
       subject: projected?.subject ?? null,
       items: projected?.items ?? Object.freeze([]),
       commit: projected?.commit ?? null,
@@ -4344,9 +4366,12 @@ export class SwarmRuntime {
         if (event.kind !== 'driver.recorded') continue;
         const note = event.payload;
         if (note?.kind !== CONTRIBUTION_NOTE_KIND || note?.swarmId !== swarm.swarmId) continue;
+        // Issue #481: a note body that is its own JSON document is the same defect one spelling
+        // over — the report the note translation swallowed before the rule existed — so it reads
+        // as the typed marker too. A note's plain text (what a note IS, #310) is untouched.
         noteRows.push({ kind: 'note',
           participantId: typeof note.participantId === 'string' ? note.participantId : null,
-          body: note.body ?? null, seq: event.seq, ts: event.ts });
+          body: storedBodyDefect(note.body) ?? note.body ?? null, seq: event.seq, ts: event.ts });
       }
     }
     const scopedContributionIds = scope ? new Set(contributionEntries
@@ -4399,7 +4424,11 @@ export class SwarmRuntime {
         // and a refusal.
         const derived = derivedContributions.get(row.contributionId) ?? null;
         const landing = integrationByContribution.get(row.contributionId) ?? null;
-        const projected = { ...row, ...(derived === null ? {} : {
+        // Issue #481: the stored body a reader sees — a defective string body projects as the
+        // typed marker, never as text a reader folds into one key per character.
+        const defect = storedBodyDefect(row.body);
+        const projected = { ...row, ...(defect === null ? {} : { body: defect }),
+        ...(derived === null ? {} : {
           files: derived.files, decision: derived.decision, reviewState: derived.reviewState,
         }), ...(contract === null ? {} : { contract }),
         // Issue #459: the landing this contribution has open (its scratch checkout), and the
