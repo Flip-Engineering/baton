@@ -96,7 +96,6 @@ export const MAX_SCRATCHPAD_VIEW_CACHE_KEYS = FRAME_LIMITS['view.scratchpad.cach
 // ledger coordinate wrapping one of them must not count as meaningful Run progress.
 const NOISE_TELEMETRY_OPERATIONAL_KINDS = new Set(['content.tool_call', 'content.message']);
 const MAX_REVIEW_SOURCE_BYTES = FRAME_LIMITS['view.review_source.bytes'].value;
-const MAX_WORKFLOW_PLAN_HISTORY = 16;
 // VR9/RV closed verifier projection bounds. Durable verdicts carry exact captured-byte metadata,
 // closed enums, and at most one sanitized bounded failure tail. A malformed duration or capsule is
 // dropped rather than passed through.
@@ -4335,6 +4334,34 @@ export class BatonApplication {
     };
   }
 
+  // #407 (audit C34): the Plan history ceiling is the workflow policy's own maxRounds —
+  // never a second literal. The bound definition record is read straight from events (never
+  // _workflowDefinition: it re-enters this walk for revision plans), then the deployment's
+  // live policy, then the legacy policy. Every source is policy-owned.
+  _workflowPlanHistoryPolicyBound(current) {
+    try {
+      if (typeof this.driver.coordination.eventsView === 'function') {
+        const records = this.driver.coordination.eventsView().filter((event) => (
+          event.kind === 'driver.recorded'
+          && event.payload?.kind === APPLICATION_WORKFLOW_RECORD_KIND
+          && event.payload?.repoId === this.repoId
+          && event.payload?.runId === current.goal.runId
+          && event.payload?.planDigest === current.plan.digest
+        ));
+        if (records.length === 1) {
+          const bound = workflowDefinitionPolicy(records[0].payload).maxRounds;
+          if (Number.isSafeInteger(bound) && bound >= 2) return bound;
+        }
+      }
+    } catch { /* the live deployment policy below is the fallback */ }
+    try {
+      const live = typeof this.driver.coordination.workflowPolicy === 'function'
+        ? this.driver.coordination.workflowPolicy() : null;
+      if (Number.isSafeInteger(live?.maxRounds) && live.maxRounds >= 2) return live.maxRounds;
+    } catch { /* the legacy policy below is the fallback */ }
+    return LEGACY_WORKFLOW_POLICY.maxRounds;
+  }
+
   _workflowPlanHistory(current) {
     if (!this._isWorkflowRun(current)) return [];
     // #210: the bounded Run Plan history (goalPlanRunPlans) serves this walk; the full-store
@@ -4350,13 +4377,24 @@ export class BatonApplication {
       const snapshot = this.driver.coordination.snapshot();
       plans = snapshot.goalPlan?.plans ?? [];
     }
+    // #407 (audit C34): a proven cycle (a plan id seen twice) and a merely deep chain refuse
+    // apart — the cycle names the repeated planId, the depth names the policy bound it met.
+    const bound = this._workflowPlanHistoryPolicyBound(current);
     const chain = []; const seen = new Set();
     let cursor = current.plan;
     while (cursor) {
       const identity = `${cursor.planId}:${cursor.version}:${cursor.digest}`;
-      if (seen.has(identity) || chain.length >= MAX_WORKFLOW_PLAN_HISTORY) {
-        throw applicationError('Workflow Plan history is cyclic or exceeds its bounded ceiling',
-          'application_workflow_integrity');
+      if (seen.has(identity)) {
+        throw applicationError('Workflow Plan history contains a repeated Plan',
+          'workflow_plan_cycle', {
+            planId: cursor.planId, chain: chain.map((entry) => entry.plan.planId),
+          });
+      }
+      if (chain.length >= bound) {
+        throw applicationError('Workflow Plan history exceeds its workflow policy bound',
+          'workflow_plan_history_exceeds_policy', {
+            bound, observed: chain.length, next: cursor.planId,
+          });
       }
       seen.add(identity); chain.push(this._runAtPlan(current, cursor));
       if (cursor.predecessor === null) break;

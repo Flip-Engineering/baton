@@ -4347,9 +4347,18 @@
           ]
         },
         {
+          "name": "_workflowPlanHistoryPolicyBound",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
           "name": "_workflowPlanHistory",
           "ordinal": 0,
-          "size": 41,
+          "size": 52,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
