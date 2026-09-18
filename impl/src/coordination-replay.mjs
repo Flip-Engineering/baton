@@ -359,43 +359,63 @@ const _loopYield = () => new Promise((resolve) => setImmediate(resolve));
  * chunk generator plainly (every fold error propagates SYNCHRONOUSLY — the constructor either
  * returns fully loaded or throws, never a half-loaded store), and `{ async: true }` awaits a
  * macrotask between chunks instead, so a startup heartbeat and a signal handler keep beating
- * however long the history is. */
+ * however long the history is.
+ *
+ * Issue #285 G-7: ONE progress record (`{ folded, last }`) rides the whole open — the rows the
+ * fold step has processed, and the report last composed from it. Every fold stretch republishes
+ * as the count advances (the archived prefix included), and a failed open reports the counts it
+ * already reached instead of zeros. */
 export function _load(store, opts = {}) {
+  const progress = { folded: 0, last: null };
   if (opts.async === true) {
     return (async () => {
       try {
-        const plan = _loadPlan(store);
-        const run = _loadRun(store, plan);
+        const plan = _loadPlan(store, progress);
+        const run = _loadRun(store, plan, progress);
         for (;;) {
           const step = run.next();
           if (step.done) break;
           await _loopYield();
         }
       } catch (error) {
-        _reportLoadFailure(store, error);
+        _reportLoadFailure(store, error, progress);
         throw error;
       }
     })();
   }
   try {
-    const plan = _loadPlan(store);
+    const plan = _loadPlan(store, progress);
     // Plain `.next()` drain: the fold errors propagate SYNCHRONOUSLY — no microtask can slip
     // into the synchronous open.
-    const run = _loadRun(store, plan);
+    const run = _loadRun(store, plan, progress);
     let step;
     do { step = run.next(); } while (!step.done);
   } catch (error) {
-    _reportLoadFailure(store, error);
+    _reportLoadFailure(store, error, progress);
     throw error;
   }
 }
 
-function _reportLoadFailure(store, error) {
-  _reportStartup(store, {
-    schemaVersion: 1, state: 'failed', source: 'ledger', totalEvents: 0,
-    checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unusable',
-    // Issue #290: a fold refusal names the seq it died on, so the operator can pass exactly
-    // that seq to the quarantine verb — the failure record is the repair's warrant.
+/** Compose one startup report and keep it as the open's live progress record (issue #285 G-7):
+ * every republish and the failure report read the same record. */
+function _reportProgress(store, progress, value) {
+  progress.last = value;
+  _reportStartup(store, value);
+}
+
+/** Issue #285 G-7: the failure report keeps the counts the open already had — the last report's
+ * plan totals, source and checkpoint judgement, and the LIVE fold count, which is ahead of the
+ * last republish by up to one chunk. The row that refused is still named, the one durable fact
+ * an operator repairs from (issue #290). */
+function _reportLoadFailure(store, error, progress = null) {
+  const last = progress?.last ?? null;
+  _reportProgress(store, progress ?? { last: null }, {
+    schemaVersion: 1, state: 'failed',
+    source: last?.source ?? 'ledger',
+    totalEvents: last?.totalEvents ?? 0,
+    checkpointEvents: last?.checkpointEvents ?? 0,
+    replayedEvents: Math.max(last?.replayedEvents ?? 0, progress?.folded ?? 0),
+    checkpoint: last?.checkpoint ?? 'unusable',
     failure: {
       code: error?.code ?? 'coordination_startup_failed',
       seq: error?.coordinationSeq ?? null,
@@ -422,9 +442,9 @@ function _replaySource(checkpointState, { base, tailRows, ledgerBytes }) {
   return ledgerBytes === 0 ? 'empty' : 'ledger';
 }
 
-function _loadPlan(store) {
+function _loadPlan(store, progress) {
   const raw = existsSync(store.file) ? readFileSync(store.file) : Buffer.alloc(0);
-  _reportStartup(store, {
+  _reportProgress(store, progress, {
     schemaVersion: 1, state: 'starting', source: 'ledger', totalEvents: 0,
     checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unchecked', failure: null,
   });
@@ -455,17 +475,16 @@ function _loadPlan(store) {
   // the work.
   const prefixLines = _ledgerLines(raw.subarray(0, checkpoint.prefixBytes));
   const lines = _ledgerLines(raw.subarray(checkpoint.prefixBytes));
-  const segmentEvents = (segments.segments ?? []).reduce((sum, segment) => sum + (segment.throughSeq - segment.fromSeq + 1), 0);
   const totalEvents = checkpoint.coversSeq + lines.length;
   const source = _replaySource(checkpoint.state, { base, tailRows: lines.length, ledgerBytes: raw.byteLength });
-  _reportStartup(store, {
+  _reportProgress(store, progress, {
     schemaVersion: 1, state: 'replaying',
     source,
     totalEvents, checkpointEvents: checkpoint.coversSeq - base, replayedEvents: 0,
     checkpoint: checkpoint.state, failure: null,
   });
   return {
-    raw, base, segments, checkpoint, prefixLines, lines, segmentEvents, totalEvents, source,
+    raw, base, segments, checkpoint, prefixLines, lines, totalEvents, source,
   };
 }
 
@@ -484,8 +503,8 @@ function _ledgerLines(bytes) {
  * error propagates SYNCHRONOUSLY to the constructor (a half-loaded store can never survive a
  * failed open); the `{ async: true }` mode awaits a macrotask between `.next()` calls instead.
  * One fold path, two cadences, no microtask can slip into the synchronous open. */
-function* _loadRun(store, plan) {
-  const { raw, base, segments, checkpoint, prefixLines, lines, segmentEvents, totalEvents, source } = plan;
+function* _loadRun(store, plan, progress) {
+  const { raw, base, segments, checkpoint, prefixLines, lines, totalEvents, source } = plan;
   // The restore state this fold ends on: an adoption that the ledger does not back abandons the
   // checkpoint mid-fold (issue #465(4)), and the report, the source and the rewrite below then name
   // the ledger's own truth rather than the state the plan was composed with.
@@ -516,13 +535,16 @@ function* _loadRun(store, plan) {
     // fold that refused is withheld. Any fold failure names its seq and kind so an operator can pass
     // exactly that seq to the quarantine verb.
     const foldRow = (frozen) => {
-      if (store._quarantine.has(frozen.seq)) return;
+      // Issue #285 G-7: a quarantined row is still a row the fold step processed, and the counter
+      // carries the arithmetic the live-window loop always published — every iterated row.
+      if (store._quarantine.has(frozen.seq)) { progress.folded += 1; return; }
       try { store._apply(frozen); }
       catch (error) {
         error.coordinationSeq = frozen.seq;
         error.coordinationKind = frozen.kind;
         throw error;
       }
+      progress.folded += 1;
     };
     const parsed = (line, label) => {
       try { return JSON.parse(line); }
@@ -532,6 +554,16 @@ function* _loadRun(store, plan) {
     // read and the checkpoint restore outside this counter are the artifact formats' own bounds.
     let sinceYield = 0;
     const breathe = () => { sinceYield += 1; if (sinceYield < REPLAY_CHUNK_EVENTS) return false; sinceYield = 0; return true; };
+    // Issue #285 G-7: every fold stretch republishes as it advances. The report reads `progress`
+    // (the live count) and the state the fold will END on — `restoredState`/`restoredCoversSeq`/
+    // `restoredSource`, all fixed by the adoption decision before the first fold runs — so a
+    // reader of the startup row sees the archived prefix's progress instead of a zero that moves
+    // only once the live window is reached.
+    const reportProgress = () => _reportProgress(store, progress, {
+      schemaVersion: 1, state: 'replaying', source: restoredSource, totalEvents,
+      checkpointEvents: restoredCoversSeq - base, replayedEvents: progress.folded,
+      checkpoint: restoredState, failure: null,
+    });
     // Issue #285 G-14: the archived prefix is read back but NOT folded here. The digest,
     // UTF-8 and truncation proofs above are the integrity boundary and stay unconditioned;
     // every row is still parsed and indexed (`readRow` rebuilds `_events`/`_byKey`, so the
@@ -584,20 +616,13 @@ function* _loadRun(store, plan) {
       // own work (issue #285 G-14: the segment loop above reads but never folds).
       for (let index = 0; index < store._events.length; index += 1) {
         foldRow(store._events[index]);
-        if (breathe()) yield;
+        if (breathe()) { reportProgress(); yield; }
       }
     }
     for (let offset = 0; offset < lines.length; offset += 1) {
       const index = restoredCoversSeq + offset;
       foldRow(readRow(parsed(lines[offset], `coordination line ${index + 1}`), index));
-      if (breathe()) yield;
-      if ((offset + 1) % 256 === 0) _reportStartup(store, {
-        schemaVersion: 1, state: 'replaying',
-        source: restoredSource,
-        totalEvents, checkpointEvents: restoredCoversSeq - base,
-        replayedEvents: (adopted ? 0 : segmentEvents) + offset + 1,
-        checkpoint: restoredState, failure: null,
-      });
+      if (breathe()) { reportProgress(); yield; }
     }
     _validateRecoveryReplayTransactions(store);
     _validateGoalPlanReplayTransactions(store);
@@ -616,10 +641,10 @@ function* _loadRun(store, plan) {
   // reported, so a reader that observes ready observes the cache; a write that cannot land is
   // reported, never raised — the ledger stays authoritative.
   store._checkpointRewrite = yield* store._openCheckpointRefresh(restoredState);
-  _reportStartup(store, {
+  _reportProgress(store, progress, {
     schemaVersion: 1, state: 'ready', source: restoredSource, totalEvents,
     checkpointEvents: restoredCoversSeq - base,
-    replayedEvents: (adopted ? 0 : segmentEvents) + lines.length,
+    replayedEvents: progress.folded,
     checkpoint: restoredState, failure: null,
   });
 }
