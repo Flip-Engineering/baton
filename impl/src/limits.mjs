@@ -109,6 +109,29 @@ const ADMISSION = Object.freeze({
 // and never a literal of its own.
 const MODEL_PROFILE_REFRESH_MS = 86_400_000 / 1000;
 
+// Issue #394/#445: the web transport's wait ceiling, declared ONCE by NAME — the SUBSTRATE row
+// below is its registry face, the default wait derives from it (as it always did), and the
+// owner-socket transport's own idle bound derives from it too (local-web-transport.mjs). A
+// consumer that needs the number reads the row; this name exists so the row and the transport's
+// derivation can never drift.
+const WEB_WAIT_CEILING_MS = 30_000;
+
+/** The web wait DEFAULT: the resident's own choice of how much of the transport deadline to keep
+ * for serializing and delivering the answer — a stated FRACTION of the ceiling (5/6: 25 s of the
+ * 30 s request deadline), so a ceiling change moves the default with it and no second literal
+ * survives in the transport. */
+const WEB_WAIT_DEFAULT_FRACTION = 5 / 6;
+export const WEB_WAIT_DEFAULT_MS = Math.round(WEB_WAIT_CEILING_MS * WEB_WAIT_DEFAULT_FRACTION);
+
+// Issue #445: the owner-socket transport's own idle margin — the headroom its request bound keeps
+// ABOVE the web wait ceiling. The derivation is the resident's own delivery headroom: the
+// difference between the ceiling a caller may ask for and the default wait the resident keeps for
+// serializing and delivering the answer. The transport's bound is ceiling + this margin, so no
+// timer it applies can be shorter than a wait the resident is still allowed to serve — never Node's
+// process-global agent default (5000 ms since v19) and never the ~4000 ms a pooled-reuse path
+// re-arms from the server's advertised keep-alive window.
+const TRANSPORT_IDLE_MARGIN_MS = WEB_WAIT_CEILING_MS - WEB_WAIT_DEFAULT_MS;
+
 const SUBSTRATE = Object.freeze({
   'scanner.window.decision': { lane: 'scanner.window.decision', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
   'scanner.window.scratchpad': { lane: 'scanner.window.scratchpad', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
@@ -135,15 +158,26 @@ const SUBSTRATE = Object.freeze({
   // request deadline: 30 s is what `scripts/baton.mjs` sends as BATON_COMMAND_TIMEOUT_MS and what
   // `application-deployment.mjs` gives the resident's command client (commandTimeoutMs), so an
   // answer that settles past this bound is written to a request the caller has already abandoned.
-  // The resident therefore refuses a longer wait instead of shortening it, and the DEFAULT wait
-  // derives from this row (WEB_WAIT_DEFAULT_MS below) — never a second literal. The row mints no
+  // The resident therefore refuses a longer wait instead of shortening it; the DEFAULT wait and the
+  // owner-socket transport's own idle bound (#445) both derive from this row's named value above —
+  // never a second literal. The row mints no
   // cataloged coaching refusalCode: the ceiling refusal is a request-shape refusal, not a byte
   // lane, so its code rode the ONE `webWaitCeilingRefusalCode` derivation beside this row.
-  'web.wait_ceiling_ms': { lane: 'web.wait_ceiling_ms', class: 'substrate', value: 30_000, unit: 'ms', graceful: null, enforcedAt: 'web-northbound.mjs validateEnvelope (the application run.wait arm and the legacy coordinator wait arm)' },
+  'web.wait_ceiling_ms': { lane: 'web.wait_ceiling_ms', class: 'substrate', value: WEB_WAIT_CEILING_MS, unit: 'ms', graceful: null, enforcedAt: 'web-northbound.mjs validateEnvelope (the application run.wait arm and the legacy coordinator wait arm)' },
   // Issue #429: the measured model-profile catalog's staleness bound — the window a cached
   // Artificial Analysis catalog stays admissible before the reader refetches. The derivation is the
   // PROVIDER'S OWN published request budget, never a preference of ours (its free tier is limited
   // to 1,000 requests per day): see MODEL_PROFILE_REFRESH_MS above. A response that declares its own
+  // freshness (`cache-control: max-age` minus `age`) overrides this fallback with the window the
+  // provider itself stated; this row is what a response that declares nothing is judged against,
+  // and what the read publishes as `boundMs`.
+  'model_profile.catalog_staleness_ms': { lane: 'model_profile.catalog_staleness_ms', class: 'substrate', value: MODEL_PROFILE_REFRESH_MS, unit: 'ms', graceful: null, enforcedAt: 'model-profile.mjs readCachedCatalog (the deployment profile reader)' },
+  // Issue #445: the owner-socket transport's own idle margin (declared above). The transport never
+  // lets an idle timer shorter than the web wait ceiling kill an in-flight request: the bound it
+  // applies to every socket it opens or rides is `web.wait_ceiling_ms` + this margin
+  // (local-web-transport.mjs's LOCAL_TRANSPORT_IDLE_TIMEOUT_MS), so a resident stall inside the
+  // ceiling renders as the command's own pending/wake answer, never as `cli_transport_failed`.
+  'transport.idle_margin_ms': { lane: 'transport.idle_margin_ms', class: 'substrate', value: TRANSPORT_IDLE_MARGIN_MS, unit: 'ms', graceful: null, enforcedAt: 'local-web-transport.mjs (the owner-socket transport\u2019s request bound)' },
   // freshness (`cache-control: max-age` minus `age`) overrides this fallback with the window the
   // provider itself stated; this row is what a response that declares nothing is judged against,
   // and what the read publishes as `boundMs`.
@@ -253,13 +287,6 @@ export const WEB_WAIT_CEILING_ROW = FRAME_LIMITS['web.wait_ceiling_ms'];
  * `boundMs` it publishes), overridden only by a freshness window the provider's own response
  * declares. Never re-declared by a consumer. */
 export const MODEL_PROFILE_STALENESS_ROW = FRAME_LIMITS['model_profile.catalog_staleness_ms'];
-
-/** The web wait DEFAULT: the resident's own choice of how much of the transport deadline to keep
- * for serializing and delivering the answer — a stated FRACTION of the ceiling (5/6: 25 s of the
- * 30 s request deadline), so a ceiling change moves the default with it and no second literal
- * survives in the transport. */
-const WEB_WAIT_DEFAULT_FRACTION = 5 / 6;
-export const WEB_WAIT_DEFAULT_MS = Math.round(WEB_WAIT_CEILING_ROW.value * WEB_WAIT_DEFAULT_FRACTION);
 
 /** Issue #394: the ONE derivation of the web wait-ceiling refusal code, scoped by the arm that
  * draws it — 'application' for the application `run.wait` arm (whose token is pinned
