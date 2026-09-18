@@ -2456,11 +2456,16 @@ export class SwarmRuntime {
     // change, a binding) and the drain itself is the cheap change probe — an empty spool is one
     // skipped read per lease, and the writer files are not rewritten for a view.
     this._drainCommitObservations();
-    // Issue #364: the restart reconciliation reads the same way — a view is a runtime entry, so
-    // the lost seats are folded (and their host leases released) before this view projects them.
-    this._reconcileParticipantRuntimes();
-    // Issue #442: the provider-fault observation reads the same way — a seat whose provider killed
-    // its worker is folded (fault row + the #350 settle) before this view projects it.
+    // Issue #454: the restart reconciliation is NOT a read. `_reconcileParticipantRuntimes`
+    // writes the durable lost-seat fold, so it runs at the runtime entry every command already
+    // passes through (`_dispatch`, where the #364 fold is called) and never here: a projection
+    // that folds is recovery work wearing a view. This projection reads the reconciled state —
+    // the rows that entry wrote are folded by the re-read below.
+    // Issue #442: the provider-fault observation stays ON the read path, and it is observation,
+    // never restart reconciliation: those deaths arrive while the resident is up (a bounded watch
+    // wakes on one), and a frame that could not fold them would project a dead seat as live. The
+    // #364 reconciliation has no such posture — its fleet is captured once at startup, so its one
+    // pass at the runtime entry is sufficient.
     this._observeParticipantFaults();
     swarm = this.store.swarm(swarm.swarmId) ?? swarm;
     const caller = this._permit(swarm, principal, context, 'read');

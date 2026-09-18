@@ -12390,10 +12390,9 @@
           "name": "_mutationResult",
           "ordinal": 0,
           "size": 34,
-          "seam": "recovery",
+          "seam": "observation",
           "evidence": [
             "delegates:observation",
-            "delegates:recovery",
             "delegates:admission"
           ]
         },
@@ -12813,10 +12812,9 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1017,
-          "seam": "recovery",
+          "size": 1022,
+          "seam": "observation",
           "evidence": [
-            "recovery:reconcile_call",
             "observation:swarm_attention_rows"
           ]
         },
