@@ -2145,6 +2145,8 @@ const SWARM_PARSER_LEG_FLAGS = Object.freeze(new Map([
   ['watch', Object.freeze(['--follow', '--wake-class', '--kinds', '--since'])],
   ['check', Object.freeze(['--follow'])],
   ['recruit', Object.freeze(['--follow'])],
+  // Issue #459: the landing's follow leg observes the outcome row from the receipt's own seq.
+  ['integrate', Object.freeze(['--follow'])],
 ]));
 
 /** The ONE admitted `--` vocabulary for a swarm verb: the contract-table flags of its CLI row

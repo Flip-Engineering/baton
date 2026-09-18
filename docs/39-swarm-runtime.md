@@ -841,7 +841,10 @@ ranked by the #429 profile comparison with `billing` read from each route's meas
 subscription route whose window is closed is listed under `excluded` with
 `excluded_window_closed`, never proposed. The swarm-level policy is one caller-submittable row,
 `swarm.policy_updated {rerouteOnProviderFault: 'manual' | 'auto', reroutePreferApi}` (`organize`,
-through `swarm.update`; `swarm.create` does not yet take it — a hand-back). Under `manual` the
+through `swarm.update`, or at the open: `baton swarm create <purpose> --policy
+'{"rerouteOnProviderFault":"auto"}'` writes the same row in the create's own mutation, validated
+against the fold's closed sets before `swarm.created` lands, so a refused policy leaves no swarm
+behind and the row is on the ledger before any recruit — #443 hand-back). Under `manual` the
 proposal is the whole act: the `reroute_proposed` wake class and the `reroute_proposed` /
 `reroute_no_candidate` attention rows page the root or sub-orchestrator with the resume spelling.
 Under `auto` the runtime performs the resume itself onto the first candidate (successor

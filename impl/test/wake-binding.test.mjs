@@ -65,11 +65,11 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   server.batonShutdown = async () => ({ ok: true, result: 'closed' });
   t.after(() => new Promise((resolve) => { try { server.closeAllConnections?.(); server.close(() => resolve()); } catch { resolve(); } }));
   // The host refuses a Unix-socket path past the kernel's 103-byte sun_path bound, so a fixture
-  // under a deep ambient TMPDIR (a deployment runtime dir) would fail configuration, not the
-  // binding contract under test. Fall back to the short system temp root when the ambient one
-  // cannot carry `bt-waking-sock-<mkdtemp>/resident.sock`.
-  const base = Buffer.byteLength(join(tmpdir(), 'bt-waking-sock-x', 'resident.sock')) > 103 ? '/tmp' : tmpdir();
-  const socketDir = mkdtempSync(join(base, 'bt-waking-sock-'));
+  // under a deep ambient TMPDIR (a deployment runtime dir, or the suite root a parallel gate hands
+  // every file) would fail configuration, not the binding contract under test. The socket root is
+  // minted directly under the short system root — the rule the resident fixtures follow (#446: a
+  // measured fall-back with a one-character stand-in for mkdtemp's six missed a 68..72-byte band).
+  const socketDir = mkdtempSync('/tmp/bt-waking-sock-');
   t.after(() => rmSync(socketDir, { recursive: true, force: true }));
 
   const port = await freePort();

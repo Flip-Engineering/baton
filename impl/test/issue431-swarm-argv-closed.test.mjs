@@ -27,6 +27,7 @@ const PARSER_LEG_FLAGS = Object.freeze({
   watch: Object.freeze(['--follow', '--wake-class', '--kinds', '--since']),
   check: Object.freeze(['--follow']),
   recruit: Object.freeze(['--follow']),
+  integrate: Object.freeze(['--follow']),
 });
 
 const admittedFor = (row) => [
