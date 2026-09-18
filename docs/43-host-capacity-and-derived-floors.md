@@ -222,3 +222,14 @@ holds now — a fetch refreshes it; the doctor never touches the network — and
 read answers null instead of throwing, so an unreadable checkout is absence on a doctor,
 never a doctor failure. `swarm.recruit` reads the same row to answer its `baseBehind`
 advisory (docs/39).
+
+## 5. The open contract: replaying → reconstructing → answering (#351)
+
+A resident's open is three phases, each named on the `baton serve` flip lines and in `startupReport()`:
+
+- **replaying** — the coordination store opens deferred and folds its ledger in chunks of `FRAME_LIMITS['view.wake_replay.items']` rows, yielding to the event loop between chunks (`loadCoordinationStoreAsync`). A checkpoint whose bytes and anchors prove under a different authority digest reads `stale_authority` and is reused; only real corruption replays from the first row, and the flip line names the invariant that refused it (#397). The serve log prints `replayed (open Nms; R rows on the ledger; replayed K; checkpoint <state>)` for any ledger at the chunk bound or above.
+- **reconstructing** — the coordinator's projection-derived startup (snapshot clone, task seeding, plan-node settlement, per-worker log replay, absent-process recovery, reconciliation, unattached-task terminalization) runs ONCE, after the replay resolves (#434), as one pass order with two cadences: the synchronous constructor drains it without yielding, the deployment open awaits it with a yield at the same registry bound after each bounded unit. No projection is read and no row is appended before the replay resolves; an early append refuses `coordination_store_loading`. The startup report carries `reconstructionState` and `reconstructionElapsedMs`.
+- **answering** — the publication exists and the self-check answered. The flip line prints `answering (open Nms; …; reconstructed Mms; checkpoint <state>)`.
+
+A signal that arrives during the open is admitted and remembered; the stop row lands through the deployment's own writer once the ledger writer exists, and the usual drain follows.
+
