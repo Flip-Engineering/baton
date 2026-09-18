@@ -462,14 +462,6 @@
       "reason": "#314"
     },
     {
-      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-e1 RED: a bridge session survives reincarnation — rediscovery, ONE typed notification, wake resume (docs/49 §6)",
-      "reason": "#314"
-    },
-    {
-      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-e2 RED: an in-flight call at the incarnation boundary is retried once against the successor under the same idempotency key (docs/49 §6)",
-      "reason": "#314"
-    },
-    {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
       "reason": "#460"
     },

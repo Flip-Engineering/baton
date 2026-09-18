@@ -458,6 +458,25 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     test runner dies — a reincarnation successor inherits the declaration and the predecessor's
     process group, so a fixture's resident and every successor it spawns die with the runner.
 
+15. **The MCP bridge session survives the handoff (#314 lane 3, docs/49 §6 — law (e) landed).** A
+    bridge session was bound to ONE incarnation: the connection (socket + token) is discovered
+    once, the socket is withdrawn at the handoff's end, and every dispatch and the wake attachment
+    then talked to a dead address. The rebind is driven by the facts this document names and never
+    by a timer — a dispatch meeting the transport gone (or the retryable stale-incarnation
+    refusal), the wake attachment ending typed `resident_stopping` (or its socket refusing the
+    reconnect), or the `incarnation_changed` class naming `host.reincarnated`. It re-runs the SAME
+    open path against the publication (`openBatonWebConnection` is the ONE derivation the open and
+    the rebind share), re-attests the successor's session (same `userId`, a superset of the bound
+    capabilities, the same repoId; the resident's `sessionId` is re-minted per incarnation and is
+    the ONE axis the rebind re-binds), swaps the client between dispatches, re-opens the wake
+    plane through the new client with the subscription records and the cursor untouched — the
+    resumed attachment reads the same ledger with a gap of nothing — and emits ONE
+    `notifications/baton/resident_reincarnated {from, to, cursor, at}`. An in-flight call is
+    replayed ONCE under the SAME derived idempotency key and a second failure crosses as itself.
+    Item 7's re-publish arm is respected by construction: a `host.reincarnation_failed` row means
+    the predecessor went on serving, so there is no successor to bind to, no rediscovery and no
+    notification. Pinned by `impl/test/issue314-lane3-reincarnation-rebind.test.mjs`.
+
 Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
 (item 11); docs/39's wake section naming `incarnation_changed` and the reincarnation rows beside
 it (the class now carries the failure row too, item 7); the README docs table row for this
