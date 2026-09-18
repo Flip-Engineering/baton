@@ -335,6 +335,16 @@
           ]
         },
         {
+          "name": "reopenAdmission",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
           "name": "stopRunTargets",
           "ordinal": 0,
           "size": 196,

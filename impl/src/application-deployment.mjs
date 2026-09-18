@@ -4622,10 +4622,17 @@ class BatonDeployment {
     this.#webHost?._say?.(`baton serve: host.stop_waiting on successor_publication at ${this.#clock()}`);
     // 1. The fleet drains while this incarnation still holds the writer authority, so the drain's
     //    rows land where a stop's rows land and no worker of this incarnation is left for the
-    //    successor's startup reconstruction to reconcile.
+    //    successor's startup reconstruction to reconcile. #478: this is the window's FIRST act and
+    //    it is irreversible — a worker it kills is killed — so the outcome carries what it ended
+    //    (`drained`), read from the drain's own custody rows, for the failure row to name. The
+    //    readiness the successor publishes BEFORE its open (`waiting` on its marker) is what
+    //    `reincarnate()` has already awaited by now; its `opened` state cannot be, because that is
+    //    written after the open this window's release unblocks (docs/48 §2 and §11 item 15).
     const drainFailure = await this.#handoffFleetDrain(handoff);
+    const drained = Number.isSafeInteger(handoff.drainSinceSeq)
+      ? this.#drainedSeats(handoff.drainSinceSeq) : Object.freeze([]);
     if (drainFailure !== null) {
-      return Object.freeze({ published: false, stage: 'fleet_drain', cause: drainFailure });
+      return Object.freeze({ published: false, stage: 'fleet_drain', cause: drainFailure, drained });
     }
     // 2. The result export root is a LEASE this incarnation's application holds until its own
     //    shutdown releases it, and the successor's open constructs an application over the same
@@ -4647,7 +4654,7 @@ class BatonDeployment {
     //    its open leaves this incarnation's authority exactly as it was.
     const opened = await this.#awaitSuccessorOutcome(handoff, { want: 'opened', bound });
     if (opened.ok !== true) {
-      return Object.freeze({ published: false, stage: 'writer_authority', cause: opened.cause });
+      return Object.freeze({ published: false, stage: 'writer_authority', cause: opened.cause, drained });
     }
     // 5. …and only now the two leases the successor needs to publish at all. This incarnation keeps
     //    the published BYTES and its own listener either way (#288).
@@ -4665,12 +4672,13 @@ class BatonDeployment {
     if (settled.ok === true && settled.published === true) {
       handoff.published = true;
       handoff.publishedIncarnation = settled.incarnation;
-      return Object.freeze({ published: true, stage: 'published', cause: null });
+      return Object.freeze({ published: true, stage: 'published', cause: null, drained });
     }
     return Object.freeze({
       published: false,
       stage: handoff.authorityReleased === true ? 'authority' : 'writer_authority',
       cause: settled.cause ?? opened.cause ?? null,
+      drained,
     });
   }
 
@@ -4697,12 +4705,19 @@ class BatonDeployment {
       return true;
     } catch { return false; }
   }
-  /** #306r: the fleet drain the handoff runs while it still holds the writer authority. Null when
-   * the fleet drained (or this deployment has no fleet authority to drain); the cause the window
-   * fails with otherwise — a drain that did not converge is never silently skipped into a handover. */
+
+  /** #306r: the fleet drain the handoff runs while it still holds the writer authority. `failure` is
+   * null when the fleet drained (or this deployment has no fleet authority to drain) and the cause
+   * the window fails with otherwise — a drain that did not converge is never silently skipped into
+   * a handover. #478: the SAME read also answers what the drain DESTROYED, because the window
+   * cannot give back a seat's turn once it has killed it, and the failure row is where a root looks
+   * for what is left to resume. */
   async #handoffFleetDrain(handoff) {
     const coordinator = this.#driver?.coordinator ?? null;
     if (typeof coordinator?.drain !== 'function') return null;
+    // The ledger's own high-water mark BEFORE the drain: every custody row the drain writes is
+    // newer than this, so the rows read back below are the ones THIS drain produced.
+    handoff.drainSinceSeq = this.#ledgerSeq();
     const startedAt = Date.now();
     try {
       await coordinator.drain({
@@ -4717,6 +4732,62 @@ class BatonDeployment {
         reason: 'fleet_drain_incomplete', code: typeof error?.code === 'string' ? error.code : null,
       });
     }
+  }
+
+  /** The ledger's own high-water seq, or 0 for a ledger that is empty or unreadable — the marker
+   * the handoff drain's custody rows are read after. */
+  #ledgerSeq() {
+    const coordination = this.#driver?.coordination ?? null;
+    if (typeof coordination?.eventsView !== 'function') return 0;
+    try {
+      const rows = coordination.eventsView();
+      const last = Array.isArray(rows) ? rows.at(-1) : null;
+      return Number.isSafeInteger(last?.seq) ? last.seq : 0;
+    } catch { return 0; }
+  }
+
+  /** Issue #478: the seats one fleet drain ENDED, read from the drain's own custody rows — the
+   * `worktree.removed {reason: 'drain'}` row the removal boundary writes carries the worker that
+   * held the checkout and the snapshot the removal was backed by (#428), and the
+   * `swarm.participant_bound` row carries the seat that worker serves. Both facts already exist
+   * durably; this joins them once, for the failure row, so a root reads the seats a failed handoff
+   * destroyed — and the snapshot each can be resumed from — instead of reconstructing them from the
+   * ledger by hand. Absence is named, never invented: a drain that destroyed nothing answers an
+   * empty list, and a worker no binding names answers `participantId: null`.
+   *
+   * A row rides the ledger in EITHER container — the coordinator's `driver.recorded` envelope or as
+   * its own kind, where a store merges swarm events directly — so the payload is read through the
+   * same two-shape rule the swarm projection's custody fold uses. */
+  #drainedSeats(sinceSeq) {
+    const coordination = this.#driver?.coordination ?? null;
+    if (typeof coordination?.eventsView !== 'function') return Object.freeze([]);
+    let events;
+    try { events = coordination.eventsView(); } catch { return Object.freeze([]); }
+    if (!Array.isArray(events)) return Object.freeze([]);
+    const kindOf = (event) => (event?.kind === 'driver.recorded' ? event.payload?.kind : event?.kind);
+    const payloadOf = (event) => (event?.kind === 'driver.recorded' ? event.payload : event?.payload);
+    const participantByWorker = new Map();
+    for (const event of events) {
+      if (kindOf(event) !== 'swarm.participant_bound') continue;
+      const payload = payloadOf(event) ?? {};
+      if (typeof payload.workerId === 'string' && typeof payload.participantId === 'string') {
+        participantByWorker.set(payload.workerId, payload.participantId);
+      }
+    }
+    const rows = [];
+    for (const event of events) {
+      if (kindOf(event) !== 'worktree.removed') continue;
+      const payload = payloadOf(event) ?? {};
+      if (payload.reason !== 'drain') continue;
+      if (Number.isSafeInteger(sinceSeq) && Number.isSafeInteger(event.seq) && event.seq <= sinceSeq) continue;
+      const workerId = typeof payload.workerId === 'string' ? payload.workerId : null;
+      rows.push(Object.freeze({
+        workerId,
+        participantId: workerId === null ? null : (participantByWorker.get(workerId) ?? null),
+        snapshot: typeof payload.snapshot === 'string' ? payload.snapshot : null,
+      }));
+    }
+    return Object.freeze(rows);
   }
 
   /** #306r: the successor's own state, read from the facts it publishes while it opens: the marker
@@ -4821,8 +4892,10 @@ class BatonDeployment {
 
   /** #306r: re-take the coordination writer authority — the SAME lease path the open uses (the
    * store's own `claimWriterLease`), so the re-published incarnation is fenced exactly as any writer
-   * is. A holder that is still alive refuses typed; the failure row names that rather than pretending
-   * the authority came back. */
+   * is. #478: this answers whether the authority is this incarnation's AGAIN, and it is only ever
+   * asked when the window actually released it — `claimWriterLease()` refuses while the caller's
+   * own store still holds the lease (`coordination_writer_busy`), so a failure BEFORE the release
+   * would read as a refusal here while the truth is that the lease never moved. */
   #reclaimWriterAuthority() {
     const coordination = this.#driver?.coordination ?? null;
     if (typeof coordination?.claimWriterLease !== 'function') return false;
@@ -4832,10 +4905,23 @@ class BatonDeployment {
   /** #306r: a handoff the successor did not finish — the old incarnation RE-PUBLISHES. It ends the
    * successor's process, re-takes the writer authority, records the failure (with what it could and
    * could not take back), reopens admission and goes on serving. Nothing is withdrawn: this
-   * incarnation's publication is left exactly as it published it. */
+   * incarnation's publication is left exactly as it published it.
+   *
+   * #478: "reopens admission" is the WHOLE of what the handoff's stop closed, because a failure row
+   * that says "keeps serving" and a resident that refuses every command is the same process telling
+   * two stories: the served work gate, the fleet authority's own drain gate (a drain that did not
+   * converge leaves the coordinator closed to new work), and every per-stop fact a reader would
+   * otherwise read as a stop still in flight. */
   async #republishAfterHandoffFailure(handoff, outcome) {
     await this.#endSuccessorThatWillNotPublish(handoff);
-    const writerLease = this.#reclaimWriterAuthority();
+    // #478: the authority column derives from what the WINDOW DID, never from a re-claim alone.
+    // The release (step 3) is the act that gives the lease up, and a failure before it — the whole
+    // fleet-drain arm — leaves this incarnation's own lease exactly where it was: `held`, which is
+    // the truth whether or not a re-claim would even be legal. Only a failure PAST the release
+    // moves the column to what the re-take actually answered.
+    const reclaimed = handoff.writerReleased === true ? this.#reclaimWriterAuthority() : null;
+    const writerLease = handoff.writerReleased !== true ? 'held'
+      : (reclaimed === true ? 'reclaimed' : 'unavailable');
     const resultExport = handoff.applicationReleased === true ? this.#retakeResultExportRoot() : null;
     const at = this.#clock();
     this.#reincarnationRecord('host.reincarnation_failed', {
@@ -4846,19 +4932,25 @@ class BatonDeployment {
       }),
       cause: outcome.cause,
       // What the window had already handed over when the successor failed, and what this
-      // incarnation took back: the writer authority and the result export root are re-taken here
-      // (both are leases this incarnation's own open path can claim again); the resident and
-      // publication leases move only after the successor's own open, so a failure before that
-      // point leaves them held. `publication: 'intact'` is the point of the whole arm — nothing
-      // withdrew it.
+      // incarnation took back: the writer authority (per the derivation above) and the result
+      // export root are re-taken here — both are leases this incarnation's own open path can claim
+      // again — while the resident and publication leases move only after the successor's own open,
+      // so a failure before that point leaves them held. `publication: 'intact'` is the point of the
+      // whole arm — nothing withdrew it.
       authority: Object.freeze({
-        writerLease: writerLease === true ? 'reclaimed' : 'unavailable',
+        writerLease,
         resultExport: resultExport === null ? 'held'
           : (resultExport === true ? 'reclaimed' : 'unavailable'),
         residentLease: handoff.authorityReleased === true ? 'released' : 'held',
         publicationLease: handoff.authorityReleased === true ? 'released' : 'held',
         publication: 'intact',
       }),
+      // #478: what the window's FIRST act already destroyed. The drain kills and snapshots before
+      // anything about the successor's open is proven, so a failure at that step — or any step
+      // after it — has to say which seats it ended and which snapshot each can be resumed from,
+      // or a root reads a failure row for a fleet that is quietly gone. Always present, empty when
+      // the drain destroyed nothing.
+      drained: outcome.drained ?? Object.freeze([]),
       at,
     }, 'reincarnation:failed:publication_handoff');
     // The handoff is over: admission reopens with it, and the next stop mints its own request and
@@ -4867,13 +4959,58 @@ class BatonDeployment {
     this.#handoffLeasesReleased = handoff.authorityReleased === true;
     this.#stopToken = null;
     this.#stopRequestedAt = null;
+    // #478: …and the stop state this handoff began goes with it. `#stoppingSince` is what every
+    // served read publishes as `state: 'stopping'` (the incident's card, answered by a resident
+    // that was serving), the wait list and the stage clock are the same stop's facts, and a later
+    // stop must mint its own rather than inherit this one's.
+    this.#stoppingSince = null;
+    this.#stopWaits = [];
+    this.#stopWaitAttempts = null;
+    this.#stopStageCurrent = null;
+    this.#stopStageSinceMs = null;
+    this.#stopStages = [];
+    this.#stopStagesMinted = null;
     try { rmSync(handoff.markerPath, { force: true }); } catch { /* a stale marker is harmless */ }
+    const reopened = await this.#reopenAfterHandoffFailure();
     this.#webHost?._say?.(`baton serve: host.reincarnation_failed publication_handoff `
       + `(${outcome.cause?.exit ?? outcome.cause?.reason ?? 'error'}, waited ${outcome.cause?.waitedMs ?? 0}ms) at ${at}; `
-      + (writerLease === true
+      + (writerLease === 'reclaimed'
         ? 'this incarnation re-took the writer authority and keeps serving'
-        : 'this incarnation keeps serving; the writer authority stayed with the successor'));
+        : writerLease === 'held'
+          ? 'the writer authority never left this incarnation, which keeps serving'
+          : 'this incarnation keeps serving; the writer authority could not be re-taken')
+      + `${this.#drainedSaid(outcome.drained)} (admission reopened: ${reopened})`);
   }
+
+  /** #478: the ONE line a failure says about what its drain destroyed, or '' when it destroyed
+   * nothing. Each seat is named by the worker that ended and the snapshot it left behind, so the
+   * narration and the row carry the same reading. */
+  #drainedSaid(drained) {
+    if (!Array.isArray(drained) || drained.length === 0) return '';
+    const said = drained.map((row) => (row.participantId === null ? row.workerId : row.participantId)
+      + (typeof row.snapshot === 'string' ? `@${row.snapshot.slice(0, 12)}` : '')).join(', ');
+    return `; the drain already ended ${drained.length} seat(s): ${said}`;
+  }
+
+  /** #478: reopen, on the SAME process, everything the handoff's own stop closed — the served work
+   * gate (the inverse of the `batonCloseWorkAdmission` a stop runs) and the fleet authority's drain
+   * gate, whose drain did not converge and would otherwise refuse every new turn with
+   * `coordinator_draining` for the rest of this incarnation's life. Both are idempotent and both
+   * answer what they did, so the failure line says which gates are open rather than assuming.
+   * Nothing here can fail the re-publish: a gate that cannot be reopened is named, never thrown —
+   * the incarnation is serving either way, and the row above is already durable. */
+  async #reopenAfterHandoffFailure() {
+    let workAdmission = 'unavailable';
+    try {
+      const receipt = await this.#webHost?.reopenAdmission?.() ?? null;
+      if (receipt?.ok === true) workAdmission = receipt.result === 'work_admission_unsplit' ? 'unsplit' : 'open';
+      else if (receipt !== null) workAdmission = receipt.code ?? receipt.result ?? 'refused';
+    } catch { workAdmission = 'refused'; }
+    let fleetAdmission = false;
+    try { fleetAdmission = this.#driver?.coordinator?.reopenAdmission?.() === true; } catch { fleetAdmission = false; }
+    return `work ${workAdmission}, fleet ${fleetAdmission === true ? 'open' : 'unchanged'}`;
+  }
+
   /** #306: the successor's own end of the handoff. When the predecessor's process is GONE, the
    * withdrawal the old performed is a fact this incarnation can record on its behalf — the old
    * could not, its writer authority ended with its release (the lane brief's "record it via the
@@ -4992,6 +5129,10 @@ class BatonDeployment {
       released: false,
       published: false,
       markerPath: null,
+      // #478: the ledger's high-water mark when the handoff's fleet drain began — the marker the
+      // drained-seat read is bounded by. Null until the window's step 1 runs (a handoff that never
+      // reaches it destroyed nothing).
+      drainSinceSeq: null,
     };
     this.#reincarnation = handoff;
     this.#reincarnationRecord('host.reincarnation_requested', {
@@ -5255,9 +5396,21 @@ class BatonDeployment {
               + `(${error?.detail?.cause?.code ?? error?.code}); this incarnation's own application legs are released`);
           }
         }
+        // #478: the stop's application leg when the host BOUNDED the stop — its declared attempts
+        // are spent and the workers it stopped waiting on are named on the `stopped_after_deadline`
+        // row it minted, so the drain below is the drain that just spent its deadline. Running it a
+        // third time buys nothing and, when it refuses, throws a raw `coordinator_drain_incomplete`
+        // out of a close() whose `host.stopped` has already landed — the shape the incident's
+        // SIGTERM-after-a-failed-handoff had (the operator got no convergence and killed the
+        // process by hand). The host's own verdict IS the accounting for this leg: the resident's
+        // exit state was decided from the abandoned list it named, and the application's own
+        // summary is not a second reading of it.
+        const boundedStop = hosted?.stop?.state === 'stopped_after_deadline';
         const application = handoffCommitted ? null
           : hosted?.application
-            ?? (shutdownFailure ? null : await this.#application.shutdown(this.#principal));
+            ?? (shutdownFailure ? null
+              : (boundedStop ? Object.freeze({ state: hosted.state })
+                : await this.#application.shutdown(this.#principal)));
         if (shutdownFailure) {
           // Issue #351(2): the second obligation a resident's stop owns — the host-capacity verify
           // lease its lanes reserved. Read from the capacity authority's OWN projection (never

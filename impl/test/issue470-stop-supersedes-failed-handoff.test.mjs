@@ -14,7 +14,10 @@
 //           closed (never 'serving'), the durable failure row precedes the stop's own `host.stopped`,
 //           the socket is withdrawn and no listener handle of the deployment survives;
 //   470-b — the handoff's own scheduled close, with no stop asked for, still ends in the
-//           re-publish (#306r's arm is untouched): admission reopens and the incarnation serves.
+//           re-publish (#306r's arm is untouched): admission reopens and the incarnation serves;
+//   470-c — (#478) a close() asked for AFTER that re-publish is an ORDINARY stop: it converges,
+//           mints its own `host.stopped` behind the handoff's failure row, and withdraws the
+//           incarnation. The incident's SIGTERM was admitted and never reached this row.
 //
 // The fixture is the issue306r one: a real temporary repository and an INJECTED successor stub that
 // becomes ready and then stalls past the (shrunk) bound.
@@ -41,6 +44,18 @@ async function until(probe, { timeoutMs = 10_000, label = 'condition' } = {}) {
     if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
     await sleep(10);
   }
+}
+
+/** docs/42 §8: an await that outlives its declared bound fails the row naming the wait it abandoned
+ * rather than leaving a promise hanging over every row after it. */
+function bounded(promise, ms, label) {
+  return Promise.race([
+    promise,
+    sleep(ms).then(() => {
+      throw Object.assign(new Error(`fixture_wait_unsettled: ${label} never settled within ${ms}ms`),
+        { code: 'fixture_wait_unsettled' });
+    }),
+  ]);
 }
 
 const roots = [];
@@ -207,4 +222,31 @@ test('470-b: the handoff\'s own scheduled close, with no stop asked for, still e
   assert.ok(existsSync(f.writerLeasePath), 'the writer authority was re-taken');
   // …and the ONE close the fixture issues afterwards is an ordinary stop that ends the process's
   // reasons to live (the after-hook below).
+});
+
+// Issue #478: the OTHER stop that arrives after a handoff — not one inside the window, but the
+// operator's own, asked for once the incarnation has already re-published and is serving. The
+// incident's SIGTERM was admitted (`host.stop_requested`) and never converged to `host.stopped` in
+// 240 s: a stop that had already minted its outcome row rejected the caller, and the operator
+// killed the process by hand. After a re-publish this is an ORDINARY stop: it ends the incarnation,
+// mints its own `host.stopped` after the failure row, withdraws the publication and its listener.
+test('470-c: a close() after the re-publish is an ordinary stop that converges', async (t) => {
+  const f = world('c');
+  const { deployment, spawned } = await resident(t, f);
+  await deployment.reincarnate({ target: f.base });
+  await until(() => spawned.length === 1, { label: 'the successor spawn' });
+  const failed = await until(() => hostRow(f.ledgerPath, 'host.reincarnation_failed'), { label: 'the failure row' });
+  assert.equal(failed.payload.step, 'publication_handoff');
+  // The stop the operator asks for AFTER the re-publish — the shape a SIGTERM's shutdown() takes.
+  const closed = await bounded(deployment.close(), 20_000, 'the stop after the re-publish');
+  assert.notEqual(closed?.state, 'serving',
+    `close() means close, even after the re-publish: ${JSON.stringify(closed)}`);
+  assert.ok(closed?.state === 'closed' || closed?.state === 'closed_degraded', JSON.stringify(closed));
+  // …and the stop's own outcome is durable, and it follows the handoff's failure row: this is the
+  // ordinary stop the operator asked for, told in order.
+  const stopped = hostRows(f.ledgerPath).filter((row) => row.payload.kind === 'host.stopped');
+  assert.ok(stopped.length >= 1,
+    `the stop mints its outcome: ${JSON.stringify(hostRows(f.ledgerPath).map((row) => row.payload.kind))}`);
+  assert.ok(stopped.at(-1).seq > failed.seq, 'the stop\'s outcome follows the handoff\'s failure row');
+  assert.equal(deployment.withdrawn(), true, 'the incarnation is withdrawn');
 });

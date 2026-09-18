@@ -3330,6 +3330,28 @@ export class WebNorthbound {
     return Object.freeze({ ok: true, result: 'admission_closed', ...admission });
   }
 
+  /** Issue #478: the INVERSE of `closeWorkAdmission`, and the ONE other act that moves the work
+   * gate of a transport that is still listening. A resident that re-published after a failed
+   * handoff goes on serving over the very socket it never stopped listening on, and the stop its
+   * own handoff window began must not outlive that stop: this reopens the gate the close shut, so
+   * new WORK is admitted again instead of being answered `temporarily_unavailable` for the rest of
+   * the process's life.
+   *
+   * The close is TWO acts and only the FIRST is undone here. The teardown the close also performed
+   * — the audit row, the event stream, the wake attachments, the export delivery — is not
+   * re-created: those are resources a stop really did release, and a caller that reopens the gate
+   * is a resident that never stopped. What IS cleared is the close's own memo, so the next close
+   * performs the whole close again (flags, audit, teardown) instead of answering with the receipt
+   * this call invalidated — a memoized close would leave the gate open through a real stop.
+   * A transport that has already closed for good refuses: the gate it would open is gone. */
+  openWorkAdmission() {
+    if (this._shutdown) return Object.freeze({ ok: false, result: 'transport_closed' });
+    this.admitting = true;
+    this.readOnlyStopping = false;
+    this._admissionClose = null;
+    return Object.freeze({ ok: true, result: 'admission_reopened' });
+  }
+
   /** The admission half, once: new work closed, reads admitted (when `readsOnly`), and the
    * streams/attachments/audit this transport owns settled. */
   _closeAdmission(readsOnly) {
@@ -3421,6 +3443,10 @@ export function createAuthenticatedWebServer(northbound, opts = {}) {
   // Issue #467: the WORK half of the close, on its own — a stop closes admission while the reads
   // this transport still admits keep answering over the listening server.
   server.batonCloseWorkAdmission = () => northbound.closeWorkAdmission();
+  // Issue #478: and its inverse, on its own — a resident that re-published after a failed handoff
+  // is serving again on this same listening server, so the gate its own handoff stop closed is
+  // reopened rather than answered `temporarily_unavailable` until the process ends.
+  server.batonOpenWorkAdmission = () => northbound.openWorkAdmission();
   return server;
 }
 
@@ -3446,6 +3472,10 @@ export function createLocalAuthenticatedWebServer(northbound) {
   // Issue #467: the WORK half of the close, on its own — a stop closes admission while the reads
   // this transport still admits keep answering over the listening server.
   server.batonCloseWorkAdmission = () => northbound.closeWorkAdmission();
+  // Issue #478: and its inverse, on its own — a resident that re-published after a failed handoff
+  // is serving again on this same listening server, so the gate its own handoff stop closed is
+  // reopened rather than answered `temporarily_unavailable` until the process ends.
+  server.batonOpenWorkAdmission = () => northbound.openWorkAdmission();
   return server;
 }
 

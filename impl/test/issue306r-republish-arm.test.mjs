@@ -206,6 +206,10 @@ test('306r-a: a successor that dies between its marker and its publication is na
   assert.ok(existsSync(f.writerLeasePath),
     'the old re-took the coordination writer authority (the same lease path the open uses)');
   assert.equal(deployment.withdrawn(), false, 'the incarnation is not withdrawn');
+  // #478: the row's `drained` list is always present — this incarnation hosts no fleet, so the drain
+  // it ran destroyed nothing and says exactly that, never an absent field a reader has to guess at.
+  assert.deepEqual(failed.payload.drained, [],
+    `a drain that destroyed nothing names an empty list: ${JSON.stringify(failed.payload.drained)}`);
 });
 
 test('306r-b: a successor that stalls past the bound is named with waitedMs, killed, and the old keeps serving', async (t) => {
