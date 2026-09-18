@@ -20,6 +20,9 @@ import {
   computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, isHang,
   loadExpectedRed, planExpectedRedRewrite, reasonClassOf, verdictDocument, writeExpectedRed,
 } from './suite-verdict.mjs';
+import {
+  deriveSuiteCoverage, renderSuiteCoverageNote, renderSuiteVerdictHeadline,
+} from '../src/verification-presentation.mjs';
 import { selectFromRepository } from '../src/verification-selection.mjs';
 
 // 2026-09-14 audit R-1: the prerequisites a run needs from ITS MACHINE are derived from the ONE
@@ -263,14 +266,14 @@ function laneFiles(changedSelection = null) {
   }
   if (explicitFiles.length > 0) {
     const requested = explicitFiles.map(relativeTestPath);
-    return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)) };
+    return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)), canonical: all.length };
   }
   // A selected file keeps its lane discipline: process-heavy files still run one at a time.
   if (changedSelection) {
     const requested = changedSelection.files.map((file) => relativeTestPath(join(fileURLToPath(repositoryRoot), file)));
-    return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)) };
+    return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)), canonical: all.length };
   }
-  return { parallel: all.filter((file) => !serial.has(file)), serial: all.filter((file) => serial.has(file)) };
+  return { parallel: all.filter((file) => !serial.has(file)), serial: all.filter((file) => serial.has(file)), canonical: all.length };
 }
 
 let requestedSignal = null;
@@ -591,9 +594,21 @@ if (legacyPassthrough) {
           const judged = explicitFiles.length > 0 || changedPaths.length > 0
             ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 }
             : verdict;
-          process.stderr.write(`${formatVerdict(judged)}\n`);
+          // Issue #399: ONE coverage value from what the runner already knows — `full`
+          // when the file set is the canonical selection, `subset` when files were named
+          // or --changed narrowed them. The subset headline and the consumer's subset
+          // sentence both read the verdict document, never a second file list.
+          const coverage = deriveSuiteCoverage({
+            subset: explicitFiles.length > 0 || changedPaths.length > 0,
+            files: files.parallel.length + files.serial.length,
+            canonical: files.canonical,
+          });
+          const document = { ...verdictDocument(judged), coverage: { ...coverage } };
+          process.stderr.write(`${renderSuiteVerdictHeadline(formatVerdict(judged), coverage)}\n`);
+          const coverageNote = renderSuiteCoverageNote(document);
+          if (coverageNote !== null) process.stderr.write(`${coverageNote}\n`);
           if (process.env.BATON_SUITE_VERDICT_FILE) {
-            writeFileSync(process.env.BATON_SUITE_VERDICT_FILE, `${JSON.stringify(verdictDocument(judged), null, 2)}\n`);
+            writeFileSync(process.env.BATON_SUITE_VERDICT_FILE, `${JSON.stringify(document, null, 2)}\n`);
           }
           finish(judged.green ? 0 : 1, null, null, true);
         }
