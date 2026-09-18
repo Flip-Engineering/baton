@@ -574,6 +574,10 @@
       "reason": "#261"
     },
     {
+      "key": "test/mcp-web-entry-story.test.mjs :: ES-B (#314 lane 4): MCP.md's inventory is the tool table the server advertises",
+      "reason": "#314"
+    },
+    {
       "key": "test/nested-orchestration-red.test.mjs :: R1 RED (stage: connection-mint-missing): mintChildAuthority mints a FRESH child profile + token",
       "reason": "#12"
     },
