@@ -924,6 +924,12 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
 // however many subscriptions it opens, and each subscription's frames arrive as
 // `notifications/baton/wake` frames for as long as the session lives.
 const WAKE_NOTIFICATION_METHOD = 'notifications/baton/wake';
+// Issue #314 lane 3 (docs/49 §6.5, §10): the session-LIFECYCLE notification the bridge emits
+// exactly once when it re-binds to a successor incarnation (#306). It is not a wake class — the
+// wake table is the deployment's vocabulary and this is the session's own authority event — so the
+// METHOD is spelled here, beside the wake method, and the frame is delivered on the session's one
+// notification channel whatever any subscription's filter admits.
+const RESIDENT_REINCARNATED_NOTIFICATION_METHOD = 'notifications/baton/resident_reincarnated';
 const WAKE_FILTER_TOKEN = Object.freeze({ type: 'string', minLength: 1, maxLength: 256 });
 const WAKE_TOKEN_LIST = Object.freeze({
   oneOf: [
@@ -2784,7 +2790,15 @@ export class McpFleetServer {
     // is THIS server's transport, so a frame reaches the client that opened the subscription.
     else if (name === 'baton_wakes_subscribe') {
       if (typeof this.application?.wakeSubscribe !== 'function') throw wakeStreamUnavailable('subscribe to');
-      value = await this.application.wakeSubscribe(clone(args), (frame) => this.notify(WAKE_NOTIFICATION_METHOD, frame));
+      // The session's one delivery sink carries both vocabularies: a deployment wake row under the
+      // wake method, and the session's own reincarnation fact (#314 lane 3) under its own method —
+      // the frame's kind is the only discriminator, so the session never restates the method.
+      value = await this.application.wakeSubscribe(clone(args), (frame) => this.notify(
+        frame?.kind === 'baton.resident_reincarnated'
+          ? RESIDENT_REINCARNATED_NOTIFICATION_METHOD
+          : WAKE_NOTIFICATION_METHOD,
+        frame,
+      ));
     }
     else if (name === 'baton_wakes_unsubscribe') {
       if (typeof this.application?.wakeUnsubscribe !== 'function') throw wakeStreamUnavailable('stop');

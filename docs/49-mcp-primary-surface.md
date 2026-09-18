@@ -358,6 +358,26 @@ class. The design:
 8. The descriptor (headless) mode has no resident and no reincarnation story: the deployment is
    the process; nothing here applies, and nothing there changes.
 
+> **Landed (2026-09-18, lane 3).** Law (e) is closed, and the design above landed with three
+> recorded deltas. (1) The rebind authority is `openBatonWebConnection(options)` — the SAME
+> exported derivation `connectBatonWebApplication` opens through — and its answer carries a fourth
+> fact, the `incarnation` the connection names, so `from`/`to` are the incarnations themselves and
+> not a digest restated by hand; `createBatonWebMcpServer` supplies it whenever the caller did not
+> hand an explicit connection (an embedder that did has no publication to re-read and keeps
+> today's behavior exactly). (2) Item 2's trigger list is read through ONE classification
+> (`_rebindableFailure` / `_incarnationGone`): the stale-incarnation refusal and the web
+> transport's own refusal from a dispatch, a `resident_stopping` end (or a socket refusing the
+> reconnect) from the plane, and the `incarnation_changed` class — with the #306r reading that a
+> `host.reincarnation_failed` row is NOT a handoff (the predecessor re-took its authority and the
+> publication still names it), and a handoff is never bound twice before the session is back in
+> contact with the incarnation it bound. (3) Item 6's retry is `_onceAfterRebind`: it wraps the
+> dispatches AND the reads a dead transport can meet (`command`, `doctor`, `actionAuthority`,
+> `authorizeReplay`, `wakeSince`), and the idempotency key is derived once, before the retry.
+> Notification method: `notifications/baton/resident_reincarnated` (mcp-northbound.mjs, beside
+> `WAKE_NOTIFICATION_METHOD`). Pinned by `impl/test/issue314-lane3-reincarnation-rebind.test.mjs`
+> (five rows — a staged handoff over a real resident, an applied-once mutation, a surviving
+> subscription resumed from its cursor, the failed-handoff arm, and the method routing).
+
 ## 7. The migration table
 
 **Law (f).** Every tool the current guide documents maps to exactly one core verb, one surface
