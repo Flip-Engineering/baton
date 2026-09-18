@@ -25,7 +25,7 @@ const LEGACY_CARD = () => new CodexAdapter().card();
 
 test('A-G10: the contract names the axes a consumable card carries and the gate each exists for', () => {
   assert.deepEqual(ADAPTER_CARD_AXES.map((entry) => entry.axis),
-    ['governance', 'modelSelection', 'permissions', 'workerPolicy', 'verbs']);
+    ['governance', 'modelSelection', 'permissions', 'workerPolicy', 'verbs', 'providerRefusals']);
   for (const entry of ADAPTER_CARD_AXES) {
     assert.equal(typeof entry.consumes, 'string');
     assert.ok(entry.consumes.length > 0, `${entry.axis} names the gate that reads it`);

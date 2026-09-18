@@ -27,6 +27,9 @@
 // that loses an axis refuses where it is constructed.
 import { FRAME_LIMITS } from './limits.mjs';
 import { normalizeWorkerPolicyCard } from './worker-policy.mjs';
+// #387: the provider-refusal axis is declared beside the vocabulary it checks (adapter.mjs) in the
+// same {axis, consumes, validate} shape; this table admits it by reference, never a second rule.
+import { PROVIDER_REFUSALS_CARD_AXIS, providerRefusalsForHarness } from './adapter.mjs';
 
 const VERB_VERDICTS = Object.freeze(['native', 'emulated', 'unsupported']);
 export const ADAPTER_VERB_KEYS = Object.freeze([
@@ -117,6 +120,7 @@ export const ADAPTER_CARD_AXES = Object.freeze([
       }
     },
   }),
+  PROVIDER_REFUSALS_CARD_AXIS,
 ]);
 
 /** The axes `card` does not carry (or carries unusably), in contract order. */
@@ -186,6 +190,8 @@ export function completeLegacySubprocessCard(card) {
         configuredPreferences: Object.freeze([]), observation: 'unavailable',
       }),
     }),
+    // #387: the ONE derivation of the harness's refusal table — a legacy tier never copies rows.
+    providerRefusals: providerRefusalsForHarness(card.harness),
     legacyAxisDeclaration: LEGACY_AXIS_DECLARATION.reason,
   });
 }
