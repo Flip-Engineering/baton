@@ -20,12 +20,14 @@
 //  (d) the serve log's answering flip line prints the reconstruction elapsed
 //      (`reconstructed Nms`) after the replayed line.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+
 import test from 'node:test';
+
+import { spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 
 import { createDriver, MockAdapter, openBaton } from '../src/index.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
@@ -271,15 +273,16 @@ export const createBatonDeployment = async () => openBaton({ repo: process.cwd()
   seedLedger(ledgerDir, rows);
   seedWorkers(join(deploymentRoot, 'state'), workers, eventsPer);
   const selectorPath = join(repo, '.git', 'baton', 'connection.json');
-  const child = spawn(process.execPath, [SCRIPT, 'serve', modulePath], {
+  // Issue #471: the ONE fixture-resident spawn — the child declares THIS runner and is ended by
+  // process group at the test's after-hook (and by the runner's death, however it dies).
+  const child = spawnFixtureResident(t, {
+    args: [SCRIPT, 'serve', modulePath],
     cwd: repo,
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot },
-    stdio: ['ignore', 'ignore', 'pipe'],
   });
   const state = { stderr: '', exited: null };
   child.stderr.on('data', (chunk) => { state.stderr += chunk.toString('utf8'); });
   child.on('exit', (code, signal) => { state.exited = { code, signal, at: Date.now() }; });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   return { root, repo, child, state, selectorPath, env };
 }
 

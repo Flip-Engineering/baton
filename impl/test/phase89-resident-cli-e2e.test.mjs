@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
@@ -8,6 +8,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { connectBaton } from '../src/index.mjs';
+
+import { spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/baton.mjs', import.meta.url));
 
@@ -48,15 +50,17 @@ test('RLC1: baton serve is zero-assembly, connectable, signal-closeable, and sec
   t.after(() => rmSync(home, { recursive: true, force: true }));
   t.after(() => rmSync(configRoot, { recursive: true, force: true }));
   const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot };
-  const child = spawn(process.execPath, [SCRIPT, 'serve'], {
-    cwd: repo, env, stdio: ['ignore', 'ignore', 'pipe'],
+  // Issue #471: the ONE fixture-resident spawn — the child declares THIS runner and is ended by
+  // process group at the test's after-hook (and by the runner's death, however it dies).
+  const child = spawnFixtureResident(t, {
+    args: [SCRIPT, 'serve'],
+    cwd: repo, env,
   });
   let stderr = '';
   child.stderr.on('data', (chunk) => {
     stderr += chunk.toString('utf8');
     if (stderr.length > 256 * 1024) child.kill('SIGKILL');
   });
-  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   const selectorPath = join(repo, '.git', 'baton', 'connection.json');
   try {
     await until(() => existsSync(selectorPath) && stderr.includes('"state":"published"'),
@@ -101,12 +105,14 @@ test('P92-RLC2: CONFIG_MODULE accepts the same public deployment factory as ordi
     '',
   ].join('\n'));
   const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot };
-  const child = spawn(process.execPath, [SCRIPT, 'serve', modulePath], {
-    cwd: repo, env, stdio: ['ignore', 'ignore', 'pipe'],
+  // Issue #471: the ONE fixture-resident spawn — the child declares THIS runner and is ended by
+  // process group at the test's after-hook (and by the runner's death, however it dies).
+  const child = spawnFixtureResident(t, {
+    args: [SCRIPT, 'serve', modulePath],
+    cwd: repo, env,
   });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
-  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   const selectorPath = join(repo, '.git', 'baton', 'connection.json');
   try {
     await until(() => existsSync(selectorPath) && stderr.includes('"state":"published"'),

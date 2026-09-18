@@ -23,7 +23,7 @@
 // repo is not Baton's own checkout) and an injected crash trigger; no provider process, no network.
 // `git stash` is never used.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -42,6 +42,8 @@ import { OmpRpcCli } from '../src/omp-rpc.mjs';
 import { WakeStream } from '../src/wake-stream.mjs';
 import { WebSessionStore } from '../src/web-auth.mjs';
 import { WebNorthbound } from '../src/web-northbound.mjs';
+
+import { endFixtureResident, spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 
 const SCRIPT = new URL('../scripts/baton.mjs', import.meta.url).pathname;
 const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
@@ -62,7 +64,16 @@ async function until(probe, label, timeoutMs = 60_000) {
 }
 
 const roots = [];
-test.after(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); });
+// Issue #471: residents here are file-level (one per world), so their cleanup is the file's own:
+// each is ended by process group BEFORE the world it served is removed, and the helper's
+// process-level handlers (exit, SIGTERM/SIGINT/SIGHUP) cover a runner killed outright — the shape
+// of the ten leaked 468-c worlds.
+const residents = [];
+test.after(async () => {
+  for (const child of residents) await endFixtureResident(child);
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
+});
+
 function scratch(prefix) {
   const root = mkdtempSync(join(tmpdir(), `${prefix}-`));
   roots.push(root);
@@ -318,8 +329,6 @@ ${extra.body ?? ''}
   return path;
 }
 
-const residents = [];
-test.after(() => { for (const child of residents) if (child.exitCode === null) child.kill('SIGKILL'); });
 
 /** The served resident: a real `baton serve` child over the fixture deployment, waited for by its
  * own publication (the `"state":"published"` line it writes at the flip). */
@@ -331,12 +340,16 @@ function serveResident(label, modulePath) {
     ...process.env, HOME: fixture.home, XDG_CONFIG_HOME: fixture.configRoot,
     [bypassName]: bypassValue,
   };
-  const child = spawn(process.execPath, [SCRIPT, 'serve', path], {
-    cwd: fixture.repo, env, stdio: ['ignore', 'ignore', 'pipe'],
+  // Issue #471: the ONE fixture-resident spawn — the child declares THIS runner and is registered
+  // for this file's own cleanup above (the successor it may spawn shares its group and its
+  // declaration, so it ends with the same hook).
+  const child = spawnFixtureResident(null, {
+    args: [SCRIPT, 'serve', path],
+    cwd: fixture.repo, env,
   });
+  residents.push(child);
   const state = { stderr: '' };
   child.stderr.on('data', (chunk) => { state.stderr += chunk.toString('utf8'); });
-  residents.push(child);
   return Object.freeze({
     ...fixture, child, state, env, modulePath: path,
     async untilReady(timeoutMs = 90_000) {

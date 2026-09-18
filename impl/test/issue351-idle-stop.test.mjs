@@ -24,7 +24,7 @@
 //      DOES refuse, the line names the refusing read and its code and the same refusal is recorded
 //      once as `host.narration_refused {read, code}`.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -32,6 +32,8 @@ import test from 'node:test';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 import { HOST_CAPACITY_BYPASS } from '../src/host-capacity.mjs';
 import { STOP_STAGES, signalIntentLine } from '../src/application-host.mjs';
+
+import { spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 
 const SCRIPT = new URL('../scripts/baton.mjs', import.meta.url).pathname;
 const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
@@ -157,15 +159,16 @@ function stopRows(file) {
 
 function startServe(t, fixture) {
   const [bypassName, bypassValue] = HOST_CAPACITY_BYPASS.split('=');
-  const child = spawn(process.execPath, [SCRIPT, 'serve', fixture.modulePath], {
+  // Issue #471: the ONE fixture-resident spawn — the child declares THIS runner and is ended by
+  // process group at the test's after-hook (and by the runner's death, however it dies).
+  const child = spawnFixtureResident(t, {
+    args: [SCRIPT, 'serve', fixture.modulePath],
     cwd: fixture.repo,
     env: { ...process.env, HOME: fixture.home, XDG_CONFIG_HOME: fixture.configRoot, [bypassName]: bypassValue },
-    stdio: ['ignore', 'ignore', 'pipe'],
   });
   const state = { stderr: '', exited: null };
   child.stderr.on('data', (chunk) => { state.stderr += chunk.toString('utf8'); });
   child.on('exit', (code, signal) => { state.exited = { code, signal, at: Date.now() }; });
-  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   const selectorPath = join(fixture.repo, '.git', 'baton', 'connection.json');
   return {
     child, state,

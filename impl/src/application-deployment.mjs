@@ -2845,8 +2845,10 @@ function turnAdmissionRefusalOf(handoff) {
 }
 
 /** Is the process one this machine still runs? The predecessor-exit observation the successor's
- * `host.reincarnated` watcher makes — never a clock, never a guess: EPERM means alive. */
-function reincarnationProcessAlive(pid) {
+ * `host.reincarnated` watcher makes — never a clock, never a guess: EPERM means alive. Exported
+ * for #471: `baton serve` watches the fixture-declared parent with THIS primitive and never a
+ * second liveness derivation. */
+export function reincarnationProcessAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try { process.kill(pid, 0); return true; }
   catch (error) { return error?.code === 'EPERM' ? true : error?.code === 'ESRCH' ? false : null; }
@@ -4099,13 +4101,17 @@ class BatonDeployment {
    * stream nobody guarded) and where, even when the narration line itself was written into a pipe
    * that had no reader. A stop that was already requested keeps its ONE trigger row; the late
    * facts land on a bounded `host.last_resort` row instead, never lost and never a second
-   * `host.stop_requested` for one stop. */
+   * `host.stop_requested` for one stop.
+   *
+   * Issue #471: a `parent_exited` request carries `parentPid` — the declared parent whose absence
+   * the resident observed — so the trigger is a fact a reader can check, not an inference. */
   recordStopRequested(trigger, facts = null) {
     const kind = typeof trigger === 'string' && trigger.length > 0 ? trigger : 'signal';
     const at = this.#clock();
     const named = facts === null ? {} : {
       code: typeof facts.code === 'string' && facts.code.length > 0 ? facts.code : null,
       stackHead: typeof facts.stackHead === 'string' && facts.stackHead.length > 0 ? facts.stackHead : null,
+      ...(Number.isSafeInteger(facts.parentPid) && facts.parentPid > 0 ? { parentPid: facts.parentPid } : {}),
     };
     if (this.#stopRequestedAt !== null) {
       if (facts === null || (named.code === null && named.stackHead === null)) return null;

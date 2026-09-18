@@ -25,13 +25,15 @@
 // Every test drives a real `baton serve` child against a real deployment — the process is the unit
 // under test — and every row is read back from durable bytes, never from memory.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { FRAME_LIMITS } from '../src/limits.mjs';
 import { HOST_CAPACITY_BYPASS } from '../src/host-capacity.mjs';
+
+import { spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 
 const SCRIPT = new URL('../scripts/baton.mjs', import.meta.url).pathname;
 const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
@@ -191,11 +193,13 @@ function startServe(t, fixture, { readyMarker } = {}) {
   // (application-deployment: suite children run UNWIRED) is spelled here through the authority's
   // documented operator override, HOST_CAPACITY_BYPASS — never a second constant.
   const [bypassName, bypassValue] = HOST_CAPACITY_BYPASS.split('=');
-  const child = spawn(process.execPath, [SCRIPT, 'serve', fixture.modulePath], {
+  // Issue #471: the ONE fixture-resident spawn — the child declares THIS runner and is ended by
+  // process group at the test's after-hook (and by the runner's death, however it dies).
+  const child = spawnFixtureResident(t, {
+    args: [SCRIPT, 'serve', fixture.modulePath],
     cwd: fixture.repo,
     env: { ...process.env, HOME: fixture.home, XDG_CONFIG_HOME: fixture.configRoot,
       [bypassName]: bypassValue },
-    stdio: ['ignore', 'ignore', 'pipe'],
   });
   const state = { stderr: '', exited: null, beats: [] };
   child.stderr.on('data', (chunk) => {
@@ -206,7 +210,6 @@ function startServe(t, fixture, { readyMarker } = {}) {
     }
   });
   child.on('exit', (code, signal) => { state.exited = { code, signal, at: Date.now() }; });
-  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   return {
     child, state, selectorPath,
     async untilReady(timeoutMs = 60_000) {

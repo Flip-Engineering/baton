@@ -38,7 +38,7 @@
 //  (e) SIGTERM DURING the open is admitted before the deployment exists: the row lands,
 //      the stop converges, and no writer lease is left behind.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -47,6 +47,8 @@ import { createDriver, MockAdapter, openBaton } from '../src/index.mjs';
 import { StoryCompiler } from '../src/story.mjs';
 import { Log } from '../src/log.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
+
+import { spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 
 const SCRIPT = new URL('../scripts/baton.mjs', import.meta.url).pathname;
 const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
@@ -207,15 +209,16 @@ export const createBatonDeployment = async () => {
   const ledgerDir = join(deploymentRoot, 'state', 'coordination');
   seedLedger(ledgerDir, rows);
   const selectorPath = join(repo, '.git', 'baton', 'connection.json');
-  const child = spawn(process.execPath, [SCRIPT, 'serve', modulePath], {
+  // Issue #471: the ONE fixture-resident spawn — the child declares THIS runner and is ended by
+  // process group at the test's after-hook (and by the runner's death, however it dies).
+  const child = spawnFixtureResident(t, {
+    args: [SCRIPT, 'serve', modulePath],
     cwd: repo,
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot },
-    stdio: ['ignore', 'ignore', 'pipe'],
   });
   const state = { stderr: '', exited: null };
   child.stderr.on('data', (chunk) => { state.stderr += chunk.toString('utf8'); });
   child.on('exit', (code, signal) => { state.exited = { code, signal, at: Date.now() }; });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   return {
     root, repo, child, state, selectorPath, ledgerPath: join(ledgerDir, 'events.jsonl'),
     leasePath: join(ledgerDir, 'writer.lease'), env,
