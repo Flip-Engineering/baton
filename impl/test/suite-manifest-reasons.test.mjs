@@ -101,7 +101,9 @@ test('R-1: the verdict line and the verdict JSON carry the environment this run 
     child.once('close', (exitCode) => resolveClose(exitCode));
   });
   assert.equal(code, 0, `an explicit-file run over a passing file is green: ${stderr.slice(-2000)}`);
-  assert.match(stderr, /baton suite verdict: (GREEN|GREEN except environment) — /u, 'the verdict line leads with the environment-aware headline');
+  // #399: an explicit-file run is a SUBSET verdict, so its headline carries the subset marker
+  // before the environment-aware verdict word (a canonical-selection run keeps the bare form).
+  assert.match(stderr, /baton suite verdict \(SUBSET \d+ of \d+ files\): (GREEN|GREEN except environment) — /u, 'the verdict line leads with the subset marker and the environment-aware headline');
   assert.match(stderr, /baton suite environment: .+present|baton suite environment: .+ABSENT|baton suite environment: .+declared/u,
     'the verdict names the machine-local prerequisites present, absent or declared');
   // A partial run judges only the rows it executed, so the by-class line appears when at least one
