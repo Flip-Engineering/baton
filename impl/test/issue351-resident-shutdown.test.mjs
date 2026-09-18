@@ -31,6 +31,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { FRAME_LIMITS } from '../src/limits.mjs';
+import { HOST_CAPACITY_BYPASS } from '../src/host-capacity.mjs';
 
 const SCRIPT = new URL('../scripts/baton.mjs', import.meta.url).pathname;
 const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
@@ -184,9 +185,16 @@ function fileStamp(file) {
 
 function startServe(t, fixture, { readyMarker } = {}) {
   const selectorPath = join(fixture.repo, '.git', 'baton', 'connection.json');
+  // The fixture is a TEST-SHAPE host, and its wedged-worker recruit (RS3) must not queue behind
+  // the host's own load observation — under load that queue outlives every readiness window and
+  // the resident dies in admission, never in the drain the row is about. The runner's own rule
+  // (application-deployment: suite children run UNWIRED) is spelled here through the authority's
+  // documented operator override, HOST_CAPACITY_BYPASS — never a second constant.
+  const [bypassName, bypassValue] = HOST_CAPACITY_BYPASS.split('=');
   const child = spawn(process.execPath, [SCRIPT, 'serve', fixture.modulePath], {
     cwd: fixture.repo,
-    env: { ...process.env, HOME: fixture.home, XDG_CONFIG_HOME: fixture.configRoot },
+    env: { ...process.env, HOME: fixture.home, XDG_CONFIG_HOME: fixture.configRoot,
+      [bypassName]: bypassValue },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   const state = { stderr: '', exited: null, beats: [] };
