@@ -13520,7 +13520,7 @@
         {
           "name": "startupStatus",
           "ordinal": 0,
-          "size": 15,
+          "size": 29,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -13601,7 +13601,7 @@
         {
           "name": "_loadPlan",
           "ordinal": 0,
-          "size": 47,
+          "size": 49,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -13966,7 +13966,7 @@
         {
           "name": "_restoreProjectionCheckpoint",
           "ordinal": 0,
-          "size": 77,
+          "size": 176,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

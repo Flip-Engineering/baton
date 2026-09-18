@@ -137,12 +137,26 @@ export function startupStatus(store) {
   // Issue #290: a live projection poison and the quarantine ledger are startup truth — both are
   // composed here at read time so a poisoned store's readers see the poison alongside the
   // startup state instead of served projections that quietly contradict eventCursor().
-  return clone({
+  const report = clone({
     ...state,
     poison: store._projectionPoison ?? null,
     quarantined: store._quarantine instanceof Map
       ? [...store._quarantine.keys()].sort((left, right) => left - right) : [],
   });
+  // Issue #397: 'checkpoint corrupt' never reports without the invariant that failed and the
+  // compared values. They attach as NON-ENUMERABLE own properties: the startup report's
+  // enumerable shape is the exact contract deepEqual-pinned by the phase92 and
+  // coordination-internals suites, and JSON/spread surfaces compose from those pinned fields —
+  // a reader that wants the diagnosis takes the properties directly (the flip line and the
+  // doctor's coordination row must read them explicitly, never via spread/JSON).
+  if (state.checkpoint === 'corrupt' || state.checkpoint === 'stale_authority') {
+    const restore = store._checkpointRestoreReport ?? null;
+    if (restore !== null) {
+      Object.defineProperty(report, 'checkpointReason', { value: restore.reason, enumerable: false });
+      Object.defineProperty(report, 'checkpointDetail', { value: clone(restore.detail), enumerable: false });
+    }
+  }
+  return report;
 }
 
 /** Moved from `CoordinationStore._reloadProjection` (issue #259 slice 1). State: the store, passed explicitly. */
@@ -405,9 +419,11 @@ function _loadPlan(store) {
   const segmentEvents = (segments.segments ?? []).reduce((sum, segment) => sum + (segment.throughSeq - segment.fromSeq + 1), 0);
   const totalEvents = base + checkpoint.throughSeq + lines.length;
   const replaySource = (checkpointState) => (base > 0
-    ? (checkpointState === 'valid' ? (lines.length > 0 ? 'segments_checkpoint_tail' : 'segments_checkpoint')
+    ? (checkpointState === 'valid' || checkpointState === 'stale_authority'
+      ? (lines.length > 0 ? 'segments_checkpoint_tail' : 'segments_checkpoint')
       : checkpointState === 'corrupt' ? 'segments_ledger_fallback' : 'segments_ledger')
-    : checkpointState === 'valid' ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
+    : checkpointState === 'valid' || checkpointState === 'stale_authority'
+      ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
       : checkpointState === 'corrupt' ? 'ledger_fallback'
         : raw.byteLength === 0 ? 'empty' : 'ledger');
   _reportStartup(store, {
@@ -1427,83 +1443,192 @@ export function orphans(store, { liveWorkers = [] } = {}) {
 
 // ── the pinned recovery validators (issue #259 slice 2) ───────────────────────────────────────────
 
-/** Moved from `CoordinationStore._restoreProjectionCheckpoint` (issue #259 slice 2). State: the store, passed explicitly. */
+/** Moved from `CoordinationStore._restoreProjectionCheckpoint` (issue #259 slice 2). State: the store, passed explicitly.
+ * Issue #397 (audit C18, with GitHub #361's root diagnosis): a refused restore names the
+ * invariant that failed — `{ state: 'corrupt', reason, detail }` with `reason` from the closed
+ * set `path_invalid | envelope_shape | authority_digest | prefix_digest | projection_digest |
+ * projection_shape | tail_anchor` and `detail` carrying the compared values (digests
+ * abbreviated) — instead of one bare 'corrupt' with the evidence discarded. A checkpoint whose
+ * bytes are fully proven under a DIFFERENT authority digest is `stale_authority`, never
+ * 'corrupt', and is REUSED: its cached events are returned for replay under the current
+ * cards/policies exactly as a valid checkpoint's are (`reused: true`); only a real corruption
+ * falls back to the full ledger. Every refusal also lands the {reason, detail} on the store as
+ * `_checkpointRestoreReport` for `startupStatus()` to compose. */
 export function _restoreProjectionCheckpoint(store, raw, base = 0) {
-  if (!existsSync(store._checkpointFile)) return { state: 'absent', throughSeq: 0, prefixBytes: 0 };
-  try {
-    const stat = lstatSync(store._checkpointFile);
-    // Issue #290: no size heuristic. A checkpoint is accepted only when its own recorded
-    // shape proves it — the envelope's prefixBytes/prefixDigest must re-derive from the
-    // authoritative ledger prefix, the projectionDigest must re-derive from the projection
-    // bytes it carries, and the parsed events must re-serialize to those exact bytes. The
-    // old ceiling (size vs. a number derived from the ledger window) rejected compact()'s
-    // own valid checkpoint whenever the archived window shrank below the full-history
-    // idempotency map — a false 'corrupt' indistinguishable from real corruption.
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error('checkpoint path is invalid');
-    }
-    const envelope = deserialize(readFileSync(store._checkpointFile));
-    const keys = ['authorityDigest', 'prefixBytes', 'prefixDigest', 'projectionBytes',
-      'projectionDigest', 'schemaVersion', 'throughSeq'];
-    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
-      || Object.keys(envelope).sort().join(',') !== keys.sort().join(',')
-      || envelope.schemaVersion !== 1
-      || envelope.authorityDigest !== store._checkpointAuthorityDigest
-      || !Number.isSafeInteger(envelope.throughSeq) || envelope.throughSeq < 0
-      || !Number.isSafeInteger(envelope.prefixBytes) || envelope.prefixBytes < 0
-      || envelope.prefixBytes > raw.byteLength
-      || !/^[a-f0-9]{64}$/u.test(envelope.prefixDigest ?? '')
-      || !/^[a-f0-9]{64}$/u.test(envelope.projectionDigest ?? '')
-      || !Buffer.isBuffer(envelope.projectionBytes)
-      || sha256Bytes(raw.subarray(0, envelope.prefixBytes)) !== envelope.prefixDigest
-      || sha256Bytes(envelope.projectionBytes) !== envelope.projectionDigest
-      || (envelope.prefixBytes > 0 && raw.at(envelope.prefixBytes - 1) !== 0x0a)) {
-      throw new Error('checkpoint envelope is invalid');
-    }
-    const projection = deserialize(envelope.projectionBytes);
-    if (!projection || typeof projection !== 'object' || Array.isArray(projection)
-      || Object.keys(projection).sort().join(',')
-        !== [...PROJECTION_CHECKPOINT_FIELDS].sort().join(',')
-      || !Array.isArray(projection._events)
-      || projection._events.length !== envelope.throughSeq
-      || !(projection._byKey instanceof Map)
-      // #223: a compacted checkpoint caches the window only; the idempotency map and the
-      // final absolute seq still span the FULL history (archived base + window).
-      || projection._byKey.size !== base + envelope.throughSeq
-      || (envelope.throughSeq > 0
-        && projection._events.at(-1)?.seq !== base + envelope.throughSeq)) {
-      throw new Error('checkpoint projection is invalid');
-    }
-    const parsedPrefix = projection._events.map((event) => freeze(event));
-    // Issue #351 lane 2: the wholesale equivalence proof is gone. It re-serialized EVERY cached
-    // event (one JSON.stringify per row, an O(ledger) join, and a second ledger-sized copy) on
-    // the startup path — at 144 263 rows that was the resident's multi-second JSON-stringifier
-    // burn. The equivalence it proved is carried now by what the restore and the replay already
-    // hold: the digest and shape checks above (authority, prefix bytes, projection bytes, seq
-    // counts, idempotency-map span), the bounded tail anchor below — the LAST cached row must
-    // re-serialize to the ledger prefix's final line, where any append-time divergence (the
-    // #229 deferred-write hazard) shows — and the replay itself, which re-applies every cached
-    // row under seq, schema, and idempotency-key validation and the current fold cards. v8's
-    // deserialize round-trip is value-faithful for the rows the anchor does not touch.
-    if (envelope.throughSeq > 0) {
-      const lastLineStart = raw.lastIndexOf(0x0a, envelope.prefixBytes - 2) + 1;
-      const lastLine = raw.subarray(lastLineStart, envelope.prefixBytes - 1);
-      const lastEvent = parsedPrefix.at(-1);
-      if (lastEvent === undefined
-        || !Buffer.from(JSON.stringify(lastEvent), 'utf8').equals(lastLine)) {
-        throw new Error('checkpoint parsed events do not match the authoritative ledger prefix');
-      }
-    }
-    // A checkpoint is only a parsed-event cache. Every event is still applied below under the
-    // current cards, policies, CAS readers, and receipt/poll reverifiers.
-    return {
-      state: 'valid', throughSeq: envelope.throughSeq, prefixBytes: envelope.prefixBytes,
-      events: parsedPrefix,
-    };
-  } catch {
-    store._resetProjection();
-    return { state: 'corrupt', throughSeq: 0, prefixBytes: 0 };
+  if (!existsSync(store._checkpointFile)) {
+    store._checkpointRestoreReport = null;
+    return { state: 'absent', throughSeq: 0, prefixBytes: 0 };
   }
+  const abbrev = (value) => (typeof value === 'string' ? `${value.slice(0, 12)}…` : String(value ?? null));
+  const refuse = (reason, detail) => {
+    store._checkpointRestoreReport = freeze({ reason, detail: clone(detail) });
+    store._resetProjection();
+    return { state: 'corrupt', throughSeq: 0, prefixBytes: 0, reason, detail: clone(detail) };
+  };
+  let stat;
+  try {
+    stat = lstatSync(store._checkpointFile);
+  } catch (error) {
+    return refuse('path_invalid', { field: 'path', error: String(error?.code ?? error).slice(0, 64) });
+  }
+  // Issue #290: no size heuristic. A checkpoint is accepted only when its own recorded
+  // shape proves it — the envelope's prefixBytes/prefixDigest must re-derive from the
+  // authoritative ledger prefix, the projectionDigest must re-derive from the projection
+  // bytes it carries, and the parsed events must re-serialize to those exact bytes. The
+  // old ceiling (size vs. a number derived from the ledger window) rejected compact()'s
+  // own valid checkpoint whenever the archived window shrank below the full-history
+  // idempotency map — a false 'corrupt' indistinguishable from real corruption. #397: each
+  // invariant below refuses under its own name, so the report says what failed.
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    return refuse('path_invalid', { field: 'path', isFile: stat.isFile(), symbolicLink: stat.isSymbolicLink() });
+  }
+  let envelope;
+  try {
+    envelope = deserialize(readFileSync(store._checkpointFile));
+  } catch (error) {
+    return refuse('envelope_shape', { field: 'deserialize', error: String(error?.message ?? error).slice(0, 120) });
+  }
+  const keys = ['authorityDigest', 'prefixBytes', 'prefixDigest', 'projectionBytes',
+    'projectionDigest', 'schemaVersion', 'throughSeq'];
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
+    return refuse('envelope_shape', {
+      field: 'envelope',
+      actual: abbrev(envelope === null ? 'null' : Array.isArray(envelope) ? 'array' : typeof envelope),
+    });
+  }
+  const envelopeKeys = Object.keys(envelope).sort();
+  if (envelopeKeys.join(',') !== keys.sort().join(',')) {
+    return refuse('envelope_shape', { field: 'keys', actual: abbrev(envelopeKeys.join(',')) });
+  }
+  if (envelope.schemaVersion !== 1) {
+    return refuse('envelope_shape', { field: 'schemaVersion', actual: abbrev(envelope.schemaVersion) });
+  }
+  if (!Number.isSafeInteger(envelope.throughSeq) || envelope.throughSeq < 0) {
+    return refuse('envelope_shape', { field: 'throughSeq', actual: abbrev(envelope.throughSeq) });
+  }
+  if (!Number.isSafeInteger(envelope.prefixBytes) || envelope.prefixBytes < 0) {
+    return refuse('envelope_shape', { field: 'prefixBytes', actual: abbrev(envelope.prefixBytes) });
+  }
+  if (envelope.prefixBytes > raw.byteLength) {
+    return refuse('envelope_shape', {
+      field: 'prefixBytes_window', actual: envelope.prefixBytes, ledgerBytes: raw.byteLength,
+    });
+  }
+  if (!/^[a-f0-9]{64}$/u.test(envelope.prefixDigest)) {
+    return refuse('envelope_shape', { field: 'prefixDigest', actual: abbrev(envelope.prefixDigest) });
+  }
+  if (!/^[a-f0-9]{64}$/u.test(envelope.projectionDigest)) {
+    return refuse('envelope_shape', { field: 'projectionDigest', actual: abbrev(envelope.projectionDigest) });
+  }
+  if (!Buffer.isBuffer(envelope.projectionBytes)) {
+    return refuse('envelope_shape', { field: 'projectionBytes', actual: typeof envelope.projectionBytes });
+  }
+  // GitHub #361: the authority digest derives from the repoId, the advisory feed cards and the
+  // provider-attempt / canonical-order / route / representation / goal-plan policies — any of
+  // those changing on a landing mismatches every existing checkpoint. That alone is NOT
+  // corruption: the mismatch is recorded, and the invariants below must still prove the bytes
+  // before the checkpoint is admitted as `stale_authority`.
+  const authorityStale = envelope.authorityDigest !== store._checkpointAuthorityDigest;
+  const prefixDigest = sha256Bytes(raw.subarray(0, envelope.prefixBytes));
+  if (prefixDigest !== envelope.prefixDigest) {
+    return refuse('prefix_digest', {
+      recorded: abbrev(envelope.prefixDigest), derived: abbrev(prefixDigest),
+      prefixBytes: envelope.prefixBytes,
+    });
+  }
+  if (sha256Bytes(envelope.projectionBytes) !== envelope.projectionDigest) {
+    return refuse('projection_digest', {
+      recorded: abbrev(envelope.projectionDigest),
+      derived: abbrev(sha256Bytes(envelope.projectionBytes)),
+      projectionBytes: envelope.projectionBytes.byteLength,
+    });
+  }
+  if (envelope.prefixBytes > 0 && raw.at(envelope.prefixBytes - 1) !== 0x0a) {
+    return refuse('tail_anchor', {
+      field: 'newline_anchor', prefixBytes: envelope.prefixBytes, lastByte: raw.at(envelope.prefixBytes - 1),
+    });
+  }
+  let projection;
+  try {
+    projection = deserialize(envelope.projectionBytes);
+  } catch (error) {
+    return refuse('projection_shape', { field: 'deserialize', error: String(error?.message ?? error).slice(0, 120) });
+  }
+  if (!projection || typeof projection !== 'object' || Array.isArray(projection)) {
+    return refuse('projection_shape', {
+      field: 'keys',
+      actual: abbrev(projection === null ? 'null' : Array.isArray(projection) ? 'array' : typeof projection),
+    });
+  }
+  const projectionKeys = Object.keys(projection).sort().join(',');
+  if (projectionKeys !== [...PROJECTION_CHECKPOINT_FIELDS].sort().join(',')) {
+    return refuse('projection_shape', { field: 'keys', actual: abbrev(projectionKeys) });
+  }
+  if (!Array.isArray(projection._events)) {
+    return refuse('projection_shape', { field: '_events', actual: typeof projection._events });
+  }
+  if (projection._events.length !== envelope.throughSeq) {
+    return refuse('projection_shape', {
+      field: '_events.length', expected: envelope.throughSeq, actual: projection._events.length,
+    });
+  }
+  if (!(projection._byKey instanceof Map)) {
+    return refuse('projection_shape', { field: '_byKey', actual: typeof projection._byKey });
+  }
+  if (projection._byKey.size !== base + envelope.throughSeq) {
+    // #223: a compacted checkpoint caches the window only; the idempotency map and the
+    // final absolute seq still span the FULL history (archived base + window).
+    return refuse('projection_shape', {
+      field: '_byKey.size', expected: base + envelope.throughSeq, actual: projection._byKey.size,
+    });
+  }
+  if (envelope.throughSeq > 0 && projection._events.at(-1)?.seq !== base + envelope.throughSeq) {
+    return refuse('projection_shape', {
+      field: 'last_seq', expected: base + envelope.throughSeq, actual: projection._events.at(-1)?.seq ?? null,
+    });
+  }
+  const parsedPrefix = projection._events.map((event) => freeze(event));
+  // Issue #351 lane 2: the wholesale equivalence proof is gone. It re-serialized EVERY cached
+  // event (one JSON.stringify per row, an O(ledger) join, and a second ledger-sized copy) on
+  // the startup path — at 144 263 rows that was the resident's multi-second JSON-stringifier
+  // burn. The equivalence it proved is carried now by what the restore and the replay already
+  // hold: the digest and shape checks above (authority, prefix bytes, projection bytes, seq
+  // counts, idempotency-map span), the bounded tail anchor below — the LAST cached row must
+  // re-serialize to the ledger prefix's final line, where any append-time divergence (the
+  // #229 deferred-write hazard) shows — and the replay itself, which re-applies every cached
+  // row under seq, schema, and idempotency-key validation and the current fold cards. v8's
+  // deserialize round-trip is value-faithful for the rows the anchor does not touch.
+  if (envelope.throughSeq > 0) {
+    const lastLineStart = raw.lastIndexOf(0x0a, envelope.prefixBytes - 2) + 1;
+    const lastLine = raw.subarray(lastLineStart, envelope.prefixBytes - 1);
+    const lastEvent = parsedPrefix.at(-1);
+    const cachedLine = lastEvent === undefined ? null : Buffer.from(JSON.stringify(lastEvent), 'utf8');
+    if (cachedLine === null || !cachedLine.equals(lastLine)) {
+      return refuse('tail_anchor', {
+        field: 'last_line', prefixBytes: envelope.prefixBytes,
+        lastEventSeq: lastEvent?.seq ?? null,
+        ledgerLine: `${lastLine.subarray(0, 16).toString('hex')}…`,
+        cachedEvent: cachedLine === null ? null : `${cachedLine.subarray(0, 16).toString('hex')}…`,
+      });
+    }
+  }
+  // A checkpoint is only a parsed-event cache. Every event is still applied below under the
+  // current cards, policies, CAS readers, and receipt/poll reverifiers — the stale-authority
+  // checkpoint's events exactly like a valid checkpoint's, so a changed policy costs no
+  // replayed ledger, and only proven bytes are ever reused.
+  if (authorityStale) {
+    const detail = { expected: abbrev(store._checkpointAuthorityDigest), actual: abbrev(envelope.authorityDigest) };
+    store._checkpointRestoreReport = freeze({ reason: 'authority_digest', detail: clone(detail) });
+    return {
+      state: 'stale_authority', throughSeq: envelope.throughSeq, prefixBytes: envelope.prefixBytes,
+      events: parsedPrefix, reused: true, reason: 'authority_digest', detail: clone(detail),
+    };
+  }
+  store._checkpointRestoreReport = null;
+  return {
+    state: 'valid', throughSeq: envelope.throughSeq, prefixBytes: envelope.prefixBytes,
+    events: parsedPrefix,
+  };
 }
 
 /** Moved from `CoordinationStore._validPreservedResumeAttestation` (issue #259 slice 2). State: the store, passed explicitly. */
