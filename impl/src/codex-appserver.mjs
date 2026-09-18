@@ -14,7 +14,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { renderBrief } from './adapter.mjs';
 import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
-import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+import { guardChildPipes, normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
@@ -394,6 +394,9 @@ export class CodexAppServerCli {
     session.child.stdout.setEncoding('utf8');
     session.child.stdout.on('data', (chunk) => this._onWireData(session, chunk));
     session.child.stderr.on('data', () => {}); // discard; nothing on this wire is diagnosed from stderr
+    // Issue #383 (child half): a JSON-RPC write racing the app-server's exit fails as 'error' on
+    // the stdin Socket; own it here so it is a failed delivery, never a process-global crash.
+    session.pipeErrors = guardChildPipes(session.child);
     session.child.on('close', (code, signal) => this._onClose(session, code, signal));
     session.child.on('error', (error) => this._onProcessError(session, error));
   }

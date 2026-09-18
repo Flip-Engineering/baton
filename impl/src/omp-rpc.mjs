@@ -27,7 +27,7 @@ import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 import { OmpTurnUsageAccumulator, OMP_TOKEN_METRIC } from './omp-usage.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
-import { KILL_ESCALATION_GRACE_MS, ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
+import { guardChildPipes, KILL_ESCALATION_GRACE_MS, ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeOmpTaskFrame, normalizeOmpSubagentFrame } from './native-subagent-observations.mjs';
 import { classifyProviderFault } from './provider-faults.mjs';
@@ -214,6 +214,15 @@ export class OmpRpcProcess {
     // The tail is evidence for the crash row, never fate: it decides nothing.
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk) => appendStderrTail(this, String(chunk)));
+    // Issue #383 (child half): own the pipes' asynchronous errors — an omp that exited while a
+    // frame was in flight raises EPIPE on stdin later, outside every try/catch; the guard keeps
+    // it off `process` and the next write refuses typed through the stdin.destroyed check.
+    this.pipeErrors = guardChildPipes(child, (stream, error) => {
+      try {
+        this.onTransportStall?.({ phase: 'pipe_error', stream, code: error?.code ?? 'error',
+          note: `${stream} pipe raised ${error?.code ?? 'an error'} (child exited or closed the pipe); no frame is re-sent` });
+      } catch { /* an observer defect never re-raises the pipe error */ }
+    });
     child.on('error', (error) => { this.failure = error; this._onExit(null, null); });
     child.on('exit', (code, signal) => this._onExit(code, signal));
     return this;

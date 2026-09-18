@@ -435,3 +435,25 @@ export function validProcessReadyPayload(payload) {
  * on it. (That pin's absolute windows are themselves brittle — see the lane's report.)
  */
 export const KILL_ESCALATION_GRACE_MS = 5000;
+
+/** Issue #383 (child half): a child's stdio pipes are Sockets, and a write to a child that has
+ * already exited fails ASYNCHRONOUSLY as 'error' on the stdin Socket — try/catch around
+ * `write()` never sees it, and with no listener it is an uncaught exception that takes the
+ * resident (and every other worker) down. The fifth EPIPE of 2026-09-18 03:38 came from a
+ * worker's stdin, not from any http server. Every adapter that spawns a child owns the three
+ * pipes' 'error' events through this ONE guard; `onError(stream, error)` records the fact
+ * (the adapter's session keeps it as its stdin/stdout/stderr error and the next write refuses
+ * typed) and nothing reaches `process`. Returns the guard's own record so a caller can read
+ * the first error per pipe without a callback. */
+export function guardChildPipes(child, onError = null) {
+  const record = { stdin: null, stdout: null, stderr: null };
+  for (const name of ['stdin', 'stdout', 'stderr']) {
+    const stream = child?.[name];
+    if (!stream || typeof stream.on !== 'function') continue;
+    stream.on('error', (error) => {
+      if (record[name] === null) record[name] = error ?? new Error(`${name} pipe error`);
+      try { onError?.(name, error); } catch { /* an observer defect never re-raises the pipe error */ }
+    });
+  }
+  return record;
+}

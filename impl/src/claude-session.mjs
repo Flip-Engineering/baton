@@ -11,7 +11,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { renderPrompt } from './cli-adapters.mjs';
-import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+import { guardChildPipes, normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
@@ -1377,6 +1377,9 @@ export class ClaudeSessionCli {
     child.stderr.on('data', (chunk) => {
       if (session.child === child) this._onStderr(session, chunk);
     });
+    // Issue #383 (child half): every generation's pipes own their asynchronous errors — a
+    // control frame written as the process exits raises EPIPE on stdin after `write()` returned.
+    session.pipeErrors = guardChildPipes(child);
     child.on('close', (code, signal) => {
       if (session.child === child) void this._onClose(session, code, signal);
     });

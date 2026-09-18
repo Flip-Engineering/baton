@@ -14,7 +14,7 @@
 // tests never invoke a real CLI.
 
 import { execFileSync, spawn } from 'node:child_process';
-import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+import { guardChildPipes, normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { usdToNanos } from './usd.mjs';
@@ -405,6 +405,9 @@ class CliAdapter {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk) => appendStderrTail(session, String(chunk)));
 
+    // Issue #383 (child half): the prompt write at spawn and any later write race the child's
+    // exit; the failure lands as 'error' on the stdin Socket, never in the try/catch.
+    session.pipeErrors = guardChildPipes(child);
     child.on('close', (code, signal) => this._onClose(session, code, signal));
     child.on('error', (err) => {
       session.spawnError = err;
