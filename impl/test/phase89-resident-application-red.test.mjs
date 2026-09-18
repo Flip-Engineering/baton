@@ -868,32 +868,11 @@ test('RA11 RED: BatonWebClient refuses redirect/URL ambiguity and bounds declare
     }
   });
 
-  await t.test('declared oversize JSON is rejected before reading its body', async () => {
-    let bodyRead = false;
-    const client = new BatonWebClient(options(async () => ({
-      ok: true,
-      headers: { get: (name) => name === 'content-length' ? String((2 * 1024 * 1024) + 1) : null },
-      async text() { bodyRead = true; return '{}'; },
-    })));
-    await assert.rejects(
-      client.doctor(),
-      (error) => error?.code === 'cli_protocol_failed',
-    );
-    assert.equal(bodyRead, false);
-  });
-
-  await t.test('actual oversize JSON is rejected when content length is absent', async () => {
-    const oversized = JSON.stringify({ padding: 'x'.repeat(2 * 1024 * 1024) });
-    const client = new BatonWebClient(options(async () => ({
-      ok: true,
-      headers: { get: () => null },
-      async text() { return oversized; },
-    })));
-    await assert.rejects(
-      client.doctor(),
-      (error) => error?.code === 'cli_protocol_failed',
-    );
-  });
+  // The two "oversize JSON is rejected" subtests that stood here pinned a 2 MiB client-side
+  // response ceiling. 9ef491d5 (operator ruling, #356) removed every response ceiling from the
+  // CLI client and the local socket transport — a resident's answer is bounded by the resident's
+  // own frame registry, never re-judged by the client — so the pins were deleted deliberately
+  // rather than kept red.
 });
 
 test('RA12: unauthorized Runs never consume a response page — the 65th visible Run stays readable', async (t) => {
