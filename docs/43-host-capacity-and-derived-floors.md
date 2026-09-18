@@ -24,15 +24,20 @@ constant of its own (`deriveHostCapacity`):
 | `usableCores` | `cores − hubCores` |
 | `suiteCores` | `cores − hubCores` — a full suite uses every core but the hub's (the #269 measurement) |
 | `verdictLanes` | `floor(usableCores / suiteCores)` — the #269 lane formula, generalized host-wide |
-| `coreShareBytes` | `floor(totalBytes / cores)` — one core's equal share of memory |
+| `coreShareBytes` | `floor(totalBytes / cores)` — one core's equal share of memory, the unit the suite's cost is measured in |
 | `suiteBytes` | `coreShareBytes × suiteCores` |
 | `usableBytes` | `totalBytes − coreShareBytes` |
-| `workerSlots` | `usableCores` |
 | `saturated` | `load1m ≥ cores` — the operator's `uptime` read, derived |
-| `memoryTight` | `freeBytes < suiteBytes` |
+| `memoryTight` | `availableBytes < suiteBytes` |
 
 Admission weights: a `verify` lease (a full-suite verdict) charges `suiteCores` cores and
-`suiteBytes` bytes; a `worker` lease (a recruited participant) charges one core share.
+`suiteBytes` bytes — the one cost the host has measured (#269). A `worker` lease (a
+recruited participant) charges nothing: a seat is not a thread, its footprint is not known
+before it runs, and a derived slot count per core was a hardware analogy rather than a
+measurement (operator ruling, 2026-09-18, retiring #329's one-share-per-worker rule and the
+`workerSlots` / `workerMemoryTight` rows). A worker waits only while the host is
+`saturated`; the host's own load reading is the throttle, and a worker can never wait on
+`memory` or `budget`.
 Admission never refuses for being busy — a request that does not fit waits IN ORDER as a
 visible queue entry (FIFO by enqueued timestamp, same-instant ties broken by a random
 nonce), reporting `{position, ahead}` once. Only the caller's own bounded wait

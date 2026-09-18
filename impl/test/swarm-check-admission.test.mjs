@@ -99,7 +99,7 @@ test('#269 item 2: a check that waits on the host authority reads queued on the 
   const gate = new Promise((resolve) => { releaseCheck = resolve; });
   const hostCapacity = {
     observeNow: () => ({
-      capacity: { saturated: true, cores: 4, load1m: 9, memoryTight: false, workerMemoryTight: false,
+      capacity: { saturated: true, cores: 4, load1m: 9, memoryTight: false,
         suiteCores: 3, suiteBytes: 100, coreShareBytes: 10, usableCores: 3, usableBytes: 1000, availableBytes: 500 },
       used: { cores: 0, bytes: 0, leases: { verify: 0, worker: 0 } },
       queue: [{ position: 1, ahead: 0, kind: 'verify', holder: 'check:c1:k1', residentId: 'r', enqueuedAt: 't' }],

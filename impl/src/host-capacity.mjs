@@ -209,17 +209,18 @@ export function hostCapacityObservation({
  *                 measurement of what ONE verification run costs).
  *   verdictLanes  floor(usableCores / suiteCores) — how many full-suite verdicts fit at once
  *                 (the #269 defaultVerificationConcurrency formula, generalized host-wide).
- *   coreShare     floor(totalBytes / cores) — one core's equal share of memory; a worker is
- *                 entitled to one share, a suite to suiteCores shares.
+ *   coreShare     floor(totalBytes / cores) — one core's equal share of memory; a suite is
+ *                 entitled to suiteCores shares (the #269 measurement of what one run costs).
  *   usableBytes   totalBytes − coreShare — memory after the hub's share.
- *   workerSlots   usableCores — concurrent recruited participants, one core share each.
  *   saturated     load1m ≥ cores — the operator's `uptime` read, derived: at or above a
  *                 one-minute load equal to the core count the host is already oversubscribed,
- *                 and new heavy work queues regardless of free slots.
+ *                 and new heavy work queues.
  *   memoryTight   availableBytes < suiteBytes — available memory cannot fund one more verdict.
- *   workerMemoryTight
- *                 availableBytes < coreShareBytes — it cannot fund one more worker's one share
- *                 (#329: a worker is entitled to ONE share, so it is never gated on the suite's).
+ *
+ * A worker (a recruited participant) has NO derived slot (operator ruling, 2026-09-18, retiring
+ * the #329 "one core share per worker" rule): a worker is not a thread, its footprint is not
+ * known before it runs, and mapping seats onto cores was a hardware analogy, not a measurement.
+ * Worker admission is gated only by `saturated` — the host's own load reading is the throttle.
  */
 export function deriveHostCapacity(observation) {
   const { cores, totalBytes, freeBytes, availableBytes, load1m } = hostCapacityObservation(observation);
@@ -230,35 +231,48 @@ export function deriveHostCapacity(observation) {
   const coreShareBytes = Math.floor(totalBytes / cores);
   const suiteBytes = coreShareBytes * suiteCores;
   const usableBytes = totalBytes - coreShareBytes;
-  const workerSlots = usableCores;
   return Object.freeze({
     cores, totalBytes, freeBytes, availableBytes, load1m,
     hubCores, usableCores, suiteCores, verdictLanes, coreShareBytes, suiteBytes, usableBytes,
-    workerSlots,
     saturated: load1m >= cores,
     memoryTight: availableBytes < suiteBytes,
-    workerMemoryTight: availableBytes < coreShareBytes,
   });
 }
 
-/** The weight ONE admitted lease charges the derived budget. */
+/** The weight ONE admitted lease charges the derived budget: a verify charges the measured
+ * suite cost; a worker charges nothing — it holds no slot (see deriveHostCapacity). */
 function leaseWeight(kind, capacity) {
   return kind === 'verify'
     ? Object.freeze({ cores: capacity.suiteCores, bytes: capacity.suiteBytes })
-    : Object.freeze({ cores: 1, bytes: capacity.coreShareBytes });
+    : Object.freeze({ cores: 0, bytes: 0 });
 }
 
 /** Whether the host's own measurement is too tight for ONE lease of this kind (the budget of
- * already-admitted leases is judged separately by `fits`). */
+ * already-admitted leases is judged separately by `fits`). Only a verify has a measured
+ * memory cost to be tight against; a worker is gated by load alone. */
 function memoryTightFor(kind, capacity) {
-  return kind === 'verify' ? capacity.memoryTight : capacity.workerMemoryTight;
+  return kind === 'verify' && capacity.memoryTight;
+}
+
+/** Whether the derived budget has room for ONE more lease of this kind beside `used`. */
+function budgetFits(kind, capacity, used) {
+  const weight = leaseWeight(kind, capacity);
+  return used.cores + weight.cores <= capacity.usableCores
+    && used.bytes + weight.bytes <= capacity.usableBytes;
+}
+
+/** Whether ONE more lease of this kind is admissible right now: not saturated, not tight for
+ * this kind, and within the budget the admitted leases leave. */
+function roomFor(kind, capacity, used) {
+  return !capacity.saturated && !memoryTightFor(kind, capacity) && budgetFits(kind, capacity, used);
 }
 
 /** #329: WHY a request of this kind does not fit right now — the ONE dimension an operator can
  * act on, with the observed and required numbers, so a queued or timed-out request names what
  * it waits for instead of "temporarily unavailable". `load` (the host is saturated), `memory`
  * (available memory below this kind's share), or `budget` (admitted leases hold the cores or
- * bytes this kind needs). Null when the request fits. */
+ * bytes this kind needs). Null when the request fits. A worker weighs nothing, so it can only
+ * ever wait on `load`. */
 export function hostCapacityShortfall(kind, capacity, used) {
   const weight = leaseWeight(kind, capacity);
   if (capacity.saturated) {
@@ -267,10 +281,10 @@ export function hostCapacityShortfall(kind, capacity, used) {
   if (memoryTightFor(kind, capacity)) {
     return Object.freeze({ dimension: 'memory', observed: capacity.availableBytes, required: weight.bytes, unit: 'bytes' });
   }
-  if (used.cores + weight.cores > capacity.usableCores) {
+  if (weight.cores > 0 && used.cores + weight.cores > capacity.usableCores) {
     return Object.freeze({ dimension: 'budget', observed: capacity.usableCores - used.cores, required: weight.cores, unit: 'cores' });
   }
-  if (used.bytes + weight.bytes > capacity.usableBytes) {
+  if (weight.bytes > 0 && used.bytes + weight.bytes > capacity.usableBytes) {
     return Object.freeze({ dimension: 'budget', observed: capacity.usableBytes - used.bytes, required: weight.bytes, unit: 'bytes' });
   }
   return null;
@@ -600,12 +614,8 @@ export class HostCapacityAuthority {
       const queue = this.#queueRows(listRecords(this.queueDir, 'host capacity queue', QUEUE_FIELDS));
       return Object.freeze({
         capacity, used, queue,
-        roomForVerify: !capacity.saturated && !capacity.memoryTight
-          && used.cores + capacity.suiteCores <= capacity.usableCores
-          && used.bytes + capacity.suiteBytes <= capacity.usableBytes,
-        roomForWorker: !capacity.saturated && !capacity.workerMemoryTight
-          && used.cores + 1 <= capacity.usableCores
-          && used.bytes + capacity.coreShareBytes <= capacity.usableBytes,
+        roomForVerify: roomFor('verify', capacity, used),
+        roomForWorker: roomFor('worker', capacity, used),
       });
     });
   }
@@ -627,14 +637,11 @@ export class HostCapacityAuthority {
       leases[record.kind] += 1;
     }
     const queue = this.#queueRows(listRecords(this.queueDir, 'host capacity queue', QUEUE_FIELDS));
+    const used = Object.freeze({ cores, bytes, leases: Object.freeze(leases) });
     return Object.freeze({
-      capacity, used: Object.freeze({ cores, bytes, leases: Object.freeze(leases) }), queue,
-      roomForVerify: !capacity.saturated && !capacity.memoryTight
-        && cores + capacity.suiteCores <= capacity.usableCores
-        && bytes + capacity.suiteBytes <= capacity.usableBytes,
-      roomForWorker: !capacity.saturated && !capacity.workerMemoryTight
-        && cores + 1 <= capacity.usableCores
-        && bytes + capacity.coreShareBytes <= capacity.usableBytes,
+      capacity, used, queue,
+      roomForVerify: roomFor('verify', capacity, used),
+      roomForWorker: roomFor('worker', capacity, used),
     });
   }
 
@@ -677,13 +684,10 @@ export class HostCapacityAuthority {
         const entries = listRecords(this.queueDir, 'host capacity queue', QUEUE_FIELDS);
         const mine = entries.find((record) => record.nonce === nonce) ?? null;
         const ahead = mine ? entries.indexOf(mine) : entries.length;
-        const weight = leaseWeight(kind, capacity);
         const head = mine === null || ahead === 0;
-        const fits = used.cores + weight.cores <= capacity.usableCores
-          && used.bytes + weight.bytes <= capacity.usableBytes;
-        // #329: a worker is judged against ITS share (workerMemoryTight), a verify against the
-        // suite's (memoryTight) — never a worker against the suite's.
-        if (head && !capacity.saturated && !memoryTightFor(kind, capacity) && fits) {
+        // A verify is judged against the suite's measured cost; a worker holds no slot and is
+        // judged by load alone (see deriveHostCapacity).
+        if (head && roomFor(kind, capacity, used)) {
           const lease = {
             schemaVersion: 1, kind, holder, nonce, pid: process.pid,
             residentId: this.residentId, acquiredAt: new Date(this.now()).toISOString(),
