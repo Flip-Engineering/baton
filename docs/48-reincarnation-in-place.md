@@ -563,6 +563,14 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     the predecessor went on serving, so there is no successor to bind to, no rediscovery and no
     notification. Pinned by `impl/test/issue314-lane3-reincarnation-rebind.test.mjs`.
 
+16. **The session ledger is shared by both incarnations during the handoff window (#487).**
+    `resident/sessions/sessions.jsonl` belongs to the DEPLOYMENT, not to an incarnation, and #461's
+    order has the successor issue its own session before the old incarnation revokes its own — so a
+    store numbers every append from the ROWS ON DISK (the same line reader `_load` uses, applied to
+    whatever the other writer appended since the last read) rather than from its own memory, and a
+    `sequence_gap` refusal names the line, the seq, and both rows' `actor` and `ts`. Pinned by
+    `impl/test/issue487-session-ledger-dual-writer.test.mjs`.
+
 Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
 (item 11); docs/39's wake section naming `incarnation_changed` and the reincarnation rows beside
 it (the class now carries the failure row too, item 7); the README docs table row for this
