@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 498,
+          "size": 503,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -294,6 +294,17 @@
           ]
         },
         {
+          "name": "attachCapacitySettlement",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "effect:action_name",
+            "observation:projection_name"
+          ]
+        },
+        {
           "name": "drain",
           "ordinal": 0,
           "size": 104,
@@ -317,7 +328,7 @@
         {
           "name": "stopRunTargets",
           "ordinal": 0,
-          "size": 193,
+          "size": 196,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -361,13 +372,24 @@
           ]
         },
         {
-          "name": "_stopWaitingOn",
+          "name": "_stopWaitRows",
           "ordinal": 0,
-          "size": 32,
+          "size": 67,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
-            "observation:log_append"
+            "observation:log_append",
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_stopWaitingOn",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
           ]
         },
         {
@@ -674,7 +696,7 @@
         {
           "name": "_performDrain",
           "ordinal": 0,
-          "size": 151,
+          "size": 162,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -716,12 +738,76 @@
           ]
         },
         {
+          "name": "_capacityOwnerIds",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_capacityOwnerHeld",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_capacityWorkerGone",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "orphanedCapacityReservations",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:worktree_authority"
+          ]
+        },
+        {
+          "name": "releaseGoneWorkerReservations",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "effect",
+          "evidence": [
+            "effect:worktree_authority"
+          ]
+        },
+        {
+          "name": "_capacityReservationHeld",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "effect",
+          "evidence": [
+            "effect:worktree_authority"
+          ]
+        },
+        {
           "name": "_recordDrainReleases",
           "ordinal": 0,
           "size": 17,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
+          ]
+        },
+        {
+          "name": "releasedResources",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -764,10 +850,19 @@
         {
           "name": "_drainWaitingOn",
           "ordinal": 0,
-          "size": 52,
-          "seam": "observation",
+          "size": 3,
+          "seam": "effect",
           "evidence": [
-            "observation:log_append"
+            "delegates:effect"
+          ]
+        },
+        {
+          "name": "_orphanCapacityWaits",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
           ]
         },
         {
@@ -1045,7 +1140,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 292,
+          "size": 299,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -2297,11 +2392,12 @@
         {
           "name": "_cleanupClosedTransport",
           "ordinal": 0,
-          "size": 25,
-          "seam": "recovery",
+          "size": 28,
+          "seam": "effect",
           "evidence": [
             "delegates:recovery",
-            "delegates:observation"
+            "delegates:observation",
+            "delegates:effect"
           ]
         },
         {
@@ -2325,7 +2421,7 @@
         {
           "name": "_ensureRuntimeScope",
           "ordinal": 0,
-          "size": 20,
+          "size": 21,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -2792,7 +2888,7 @@
         {
           "name": "_finalizeStop",
           "ordinal": 0,
-          "size": 172,
+          "size": 182,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -6061,6 +6157,16 @@
           ]
         },
         {
+          "name": "reincarnate",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "surface",
+          "evidence": [
+            "admission:authority_check",
+            "surface:transport_dispatch"
+          ]
+        },
+        {
           "name": "card",
           "ordinal": 0,
           "size": 44,
@@ -6081,7 +6187,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 219,
+          "size": 223,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
@@ -6376,12 +6482,13 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 189,
+          "size": 202,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
             "effect:filesystem_mutation",
-            "admission:typed_refusal"
+            "admission:typed_refusal",
+            "observation:story_ingest"
           ]
         },
         {
@@ -6547,7 +6654,7 @@
         {
           "name": "_writeProjectionCheckpoint",
           "ordinal": 0,
-          "size": 58,
+          "size": 67,
           "seam": "effect",
           "evidence": [
             "effect:filesystem_mutation",
@@ -6569,9 +6676,28 @@
         {
           "name": "_boundedCheckpointWrite",
           "ordinal": 0,
-          "size": 14,
+          "size": 22,
           "seam": "observation",
           "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_rewriteProjectionCheckpoint",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_sweepProjectionCheckpointTemps",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
             "observation:ledger_name"
           ]
         },
@@ -6589,7 +6715,7 @@
         {
           "name": "armHostStopOutcome",
           "ordinal": 0,
-          "size": 12,
+          "size": 17,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -6598,7 +6724,7 @@
         {
           "name": "_mintHostStopOutcome",
           "ordinal": 0,
-          "size": 20,
+          "size": 25,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
@@ -12034,7 +12160,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 28,
+          "size": 32,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12072,11 +12198,38 @@
         {
           "name": "_observeParticipantFaults",
           "ordinal": 0,
-          "size": 35,
+          "size": 47,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
             "observation:record_name"
+          ]
+        },
+        {
+          "name": "_rerouteProposal",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_performAutoReroutes",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect"
+          ]
+        },
+        {
+          "name": "_autoRerouteOne",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect"
           ]
         },
         {
@@ -12302,7 +12455,7 @@
         {
           "name": "_baseBehind",
           "ordinal": 0,
-          "size": 13,
+          "size": 27,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12382,9 +12535,55 @@
           ]
         },
         {
+          "name": "_compareRouteRows",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_routeBilling",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeWindowClosed",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_rerouteCandidates",
+          "ordinal": 0,
+          "size": 37,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_policyOf",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_routeSelection",
           "ordinal": 0,
-          "size": 111,
+          "size": 100,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -12586,7 +12785,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 966,
+          "size": 1009,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12767,7 +12966,7 @@
         {
           "name": "_inheritancePredecessor",
           "ordinal": 0,
-          "size": 41,
+          "size": 47,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -12839,7 +13038,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 172,
+          "size": 223,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
@@ -12895,7 +13094,7 @@
         {
           "name": "_refuseLanding",
           "ordinal": 0,
-          "size": 39,
+          "size": 45,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -12913,7 +13112,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 104,
+          "size": 108,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -12923,7 +13122,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 807,
+          "size": 819,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -14092,7 +14291,7 @@
         {
           "name": "startupStatus",
           "ordinal": 0,
-          "size": 29,
+          "size": 44,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -14173,7 +14372,7 @@
         {
           "name": "_loadPlan",
           "ordinal": 0,
-          "size": 49,
+          "size": 54,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -14538,12 +14737,13 @@
         {
           "name": "_restoreProjectionCheckpoint",
           "ordinal": 0,
-          "size": 176,
+          "size": 217,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "recovery:reconcile_call",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "observation:story_ingest"
           ]
         },
         {
