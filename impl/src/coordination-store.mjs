@@ -725,6 +725,28 @@ function coachingRefusal(row, actual, cap = row?.value) {
   );
 }
 
+/** Issue #366 — the ONE bound a run-stop ADMISSION is judged against, read from the ONE registry
+ * row (`target_set.per_ledger_event`). The bound is DERIVED, never invented: the run-stop target
+ * set is a projection of the ledger — every target is a task/worker the ledger already holds, and
+ * each such row costs the ledger at least one event — so the physical bound is the ledger's own
+ * event count, exactly the #286 G-41 law stated for `_artifacts`. A second literal ceiling on top
+ * of the ledger refused operations the ledger had already accepted, including on replay, where it
+ * re-judged a recorded row and made a self-written ledger unloadable; this helper is therefore
+ * called at ADMISSION only — the fold (`integrity`) judges no target-set size at all. The refusal
+ * names the field, the observed count and the bound. A fleet drain's target set is not a projection
+ * of this ledger (see `_validateFleetDrainAdmission`), so that admission derives no bound here. */
+function assertTargetSetAdmissible(field, actual, ledgerEvents) {
+  const row = FRAME_LIMITS['target_set.per_ledger_event'];
+  const bound = row.value * ledgerEvents;
+  if (actual <= bound) return;
+  throw Object.assign(new CoordinationRefusal(
+    `${field} is ${actual} targets (bound ${bound} = ${row.value} × ${ledgerEvents} ledger events,`
+    + ` ${row.unit}); a target set is a projection of the ledger — every target is a task or`
+    + ' worker the ledger already holds',
+    row.refusalCode,
+  ), { field, actual, bound, detail: { lane: row.lane, field, actual, bound } });
+}
+
 export class CoordinationStore {
   constructor(root, opts = {}) {
     this.root = root;
@@ -3564,7 +3586,14 @@ export class CoordinationStore {
     if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
       || !validRunId(p.repoId) || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')
       || p.drainId !== `fleet-drain:${p.requestDigest}` || !Array.isArray(p.targetWorkerIds)
-      || p.targetWorkerIds.length > 100_000 || p.targetWorkerIds.some((id) => !validRunId(id))) fail('fleet drain admission is invalid');
+      || p.targetWorkerIds.some((id) => !validRunId(id))) fail('fleet drain admission is invalid');
+    // #366 (with #286 G-41): NO target-set ceiling. The literal ceiling that stood here was judged
+    // again on every replay and refused a drain the ledger had already accepted. Unlike a run
+    // stop's target set, a drain's target set is NOT a projection of this ledger — it is the local
+    // controller's live fleet, and phase56's DC6 admits two targets onto an empty store — so no
+    // bound can be derived from the ledger here. The bound this admission used to carry belongs to
+    // the deployment that owns the fleet (coordinator.mjs `_drainPolicy.maxWorkers`), exactly as
+    // #286 G-41 left the scratchpad partition bound to the deployment's own policy.
     const sorted = [...p.targetWorkerIds].sort();
     if (new Set(p.targetWorkerIds).size !== p.targetWorkerIds.length || JSON.stringify(sorted) !== JSON.stringify(p.targetWorkerIds)
       || p.targetDigest !== canonicalDigest(p.targetWorkerIds)) fail('fleet drain targets are invalid');
@@ -3654,14 +3683,11 @@ export class CoordinationStore {
       .filter((call) => targetRunSet.has(this._contextCallRunId(call))
         && call.state !== 'stopped')
       .map((call) => call.callId).sort(compareCanonicalStrings);
-    if (targetContextSessionIds.length > 100_000 || targetContextCellIds.length > 100_000
-      || targetContextCallIds.length > 100_000
-      || new Set(targetContextSessionIds).size !== targetContextSessionIds.length
-      || new Set(targetContextCellIds).size !== targetContextCellIds.length
-      || new Set(targetContextCallIds).size !== targetContextCallIds.length) {
-      throw new CoordinationRefusal('run stop Context target set exceeds capacity',
-        'run_stop_capacity');
-    }
+    // #366 (with #286 G-41): no Context target ceiling here — a Context target set is a projection
+    // of the ledger too (each id is a Context session/cell/call the ledger already holds, and the
+    // maps below are keyed by exactly those ids, so the projection cannot even repeat one), and this
+    // function is reached from the FOLD, which must never re-judge a recorded row for size. The one
+    // admission-time bound lives in assertTargetSetAdmissible, called by the run-stop admission only.
     return { targetContextSessionIds, targetContextCellIds, targetContextCallIds };
   }
 
@@ -3671,7 +3697,11 @@ export class CoordinationStore {
       : [runId];
     const targetRunSet = new Set(targetRunIds);
     const tasks = [...this._tasks.values()].filter((task) => targetRunSet.has(task.runId)).sort((a, b) => compareCanonicalStrings(a.id, b.id));
-    if (tasks.length > 100_000) throw new CoordinationRefusal('run stop target set exceeds capacity', 'run_stop_capacity');
+    // #366 (with #286 G-41): no task ceiling here. This set is a projection of the ledger — every
+    // target is a task the ledger already holds, so its size IS the bound — and the FOLD reaches
+    // this function to re-derive a recorded row's targets; a literal ceiling here refused a target
+    // set the ledger had already accepted and made a large recorded run's own ledger unloadable.
+    // The one admission-time bound is assertTargetSetAdmissible, called by the run-stop admission.
     const targetTaskIds = tasks.map((task) => task.id);
     const targetWorkerIds = [...new Set(tasks.map((task) => task.reservedWorkerId ?? task.assignee).filter(Boolean))]
       .sort(compareCanonicalStrings);
@@ -3999,7 +4029,6 @@ export class CoordinationStore {
       || !validRunId(p.repoId) || !validRunId(p.runId) || !/^[a-f0-9]{64}$/.test(p.reasonDigest ?? '')
       || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.targetDigest ?? '')
       || !Array.isArray(p.targetTaskIds) || !Array.isArray(p.targetWorkerIds)
-      || p.targetTaskIds.length > 100_000 || p.targetWorkerIds.length > 100_000
       || p.targetTaskIds.some((id) => !boundedText(id, 4_096)) || p.targetWorkerIds.some((id) => !validRunId(id))
       || (this._runLineagePolicy && (p.scope !== 'run_subtree'
         || !Number.isSafeInteger(p.throughSeq) || p.throughSeq !== event.seq - 1
@@ -4007,13 +4036,23 @@ export class CoordinationStore {
         || p.targetRunIds.some((id) => !validRunId(id))))
       || (version >= 2 && (!Array.isArray(p.targetContextSessionIds)
         || !Array.isArray(p.targetContextCellIds)
-        || p.targetContextSessionIds.length > 100_000 || p.targetContextCellIds.length > 100_000
         || p.targetContextSessionIds.some((id) => !/^context-session:[a-f0-9]{64}$/u.test(id))
         || p.targetContextCellIds.some((id) => !/^cell:[a-f0-9]{64}$/u.test(id))))
       || (version >= 3 && (!Array.isArray(p.targetContextCallIds)
-        || p.targetContextCallIds.length > 100_000
         || p.targetContextCallIds.some((id) => !/^context-call:[a-f0-9]{64}$/u.test(id))))) {
       fail('run stop admission is invalid');
+    }
+    // #366: the ONE target-set ceiling, and it is ADMISSION-only — the fold (integrity) applies
+    // none, because a recorded row is never re-judged for size on replay (see
+    // assertTargetSetAdmissible, which reads the ONE registry row and names field/count/bound).
+    if (!integrity) {
+      assertTargetSetAdmissible('targetTaskIds', p.targetTaskIds.length, this._events.length);
+      assertTargetSetAdmissible('targetWorkerIds', p.targetWorkerIds.length, this._events.length);
+      if (version >= 2) {
+        assertTargetSetAdmissible('targetContextSessionIds', p.targetContextSessionIds.length, this._events.length);
+        assertTargetSetAdmissible('targetContextCellIds', p.targetContextCellIds.length, this._events.length);
+      }
+      if (version >= 3) assertTargetSetAdmissible('targetContextCallIds', p.targetContextCallIds.length, this._events.length);
     }
     const contextCanonical = version === 1 || (
       new Set(p.targetContextSessionIds).size === p.targetContextSessionIds.length
