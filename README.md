@@ -9,7 +9,7 @@
 
 **Repository:** <https://github.com/Flip-Engineering/baton>
 
-**Cross-harness agent orchestration.** An orchestrator (an AI agent in one full coding harness, or a person at a terminal) directs other full coding-harness sessions as subordinate workers, on your own repository. Each worker gets its own git worktree, a written brief, a communication channel back to the orchestrator, live telemetry, mid-flight guidance, and a durable ledger recording what it did. The orchestrator receives event-driven wakes instead of polling for status, typed refusal codes instead of free-text errors, and a validated contribution report instead of an unstructured chat transcript.
+**Cross-harness agent orchestration.** An orchestrator (an AI agent in one full coding harness, or a person at a terminal) directs other full coding-harness sessions as subordinate workers. Each worker gets its own git worktree, a written brief, a communication channel back to the orchestrator, live telemetry, mid-flight guidance, and a durable ledger recording what it did. The orchestrator receives event-driven wakes instead of polling for status, typed refusal codes instead of free-text errors, and a validated contribution report instead of an unstructured chat transcript.
 
 ---
 
