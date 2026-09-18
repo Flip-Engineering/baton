@@ -65,6 +65,69 @@ export const CONTEXT_EFFECT_CALL_LIMITS = Object.freeze({
   maxItems: MAX_ITEMS, maxTextBytes: MAX_TEXT_BYTES,
 });
 
+// Issue #390: the contextCall view's state set is CLOSED and declared here — the one home the
+// projection reads from, never a second table. `stopping` is the distinct state between a Run
+// stop ADMISSION and the completed-stop receipt; `stopped` means the receipt was observed.
+export const CONTEXT_CALL_STATES = Object.freeze([
+  'plan_pending', 'awaiting_plan_approval', 'denied', 'approved', 'running',
+  'settlement_ready', 'stopping', 'stopped', 'completed', 'failed',
+]);
+
+// The ONE completed-stop receipt the coordination store folds into the stop row is
+// `run.stop_completed` (completeRunStop appends it and the fold stamps the stop row's receipt).
+// The worker's process_closed / kill.confirmed rows ride the worker's own operational ledger
+// and are never folded into the stop row, so the projection waits on exactly this receipt.
+export const CONTEXT_CALL_STOP_RECEIPT_KIND = 'run.stop_completed';
+
+/** The stop half of the contextCall state (#390): `stopping` from stop admission until the
+ * folded receipt is observed, `stopped` only after it. While stopping, the row names what it
+ * waits on with the #10 waiting vocabulary — `waitingOn: {kind, since}` where `since` is the
+ * stop ADMISSION's event seq. Reads no store state. */
+export function projectContextCallStopState(stop) {
+  if (!stop) return null;
+  if (stop.status === 'stopping' && stop.receipt === null) {
+    return Object.freeze({
+      state: 'stopping',
+      waitingOn: Object.freeze({
+        kind: CONTEXT_CALL_STOP_RECEIPT_KIND, since: stop.admittedEvent,
+      }),
+    });
+  }
+  if (stop.status === 'stopped' && stop.receipt !== null) {
+    return Object.freeze({ state: 'stopped', waitingOn: null });
+  }
+  return null;
+}
+
+/** The contextCall view's whole state derivation (#390) — pure, declared ONCE. Precedence:
+ * durably settled generations (completed/failed) stay terminal under a stop; then the stop
+ * projection (stopping/stopped by receipt); then the durable stopped rows (an admission-folded
+ * call, or its session/cell, with no resolvable stop row); then the plan ladder. */
+export function projectContextCallState({
+  admittedState, stop, hasPlan, approvalDisposition,
+  hasChildren, childrenSettled, sessionStopped, cellStopped,
+}) {
+  if (admittedState === 'completed' || admittedState === 'failed') {
+    return Object.freeze({ state: admittedState, waitingOn: null });
+  }
+  const stopState = projectContextCallStopState(stop);
+  if (stopState) return stopState;
+  if (admittedState === 'stopped' || sessionStopped || cellStopped) {
+    return Object.freeze({ state: 'stopped', waitingOn: null });
+  }
+  if (!hasPlan) return Object.freeze({ state: 'plan_pending', waitingOn: null });
+  if (!approvalDisposition) {
+    return Object.freeze({ state: 'awaiting_plan_approval', waitingOn: null });
+  }
+  if (approvalDisposition === 'rejected') {
+    return Object.freeze({ state: 'denied', waitingOn: null });
+  }
+  if (!hasChildren) return Object.freeze({ state: 'approved', waitingOn: null });
+  return Object.freeze({
+    state: childrenSettled ? 'settlement_ready' : 'running', waitingOn: null,
+  });
+}
+
 function callError(message, code = 'context_call_invalid') {
   return Object.assign(new TypeError(message), { code });
 }
