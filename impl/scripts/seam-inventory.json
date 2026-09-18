@@ -3047,7 +3047,7 @@
         {
           "name": "contextRead",
           "ordinal": 0,
-          "size": 59,
+          "size": 66,
           "seam": "observation",
           "evidence": [
             "observation:coordination_authority",
@@ -3196,7 +3196,25 @@
         {
           "name": "_orientationRecordCitation",
           "ordinal": 0,
-          "size": 4,
+          "size": 11,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_orientationDetailUnavailable",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_orientationDetailLines",
+          "ordinal": 0,
+          "size": 48,
           "seam": "effect",
           "evidence": [
             "effect:action_verb"
@@ -3223,7 +3241,7 @@
         {
           "name": "_codeOrientationMap",
           "ordinal": 0,
-          "size": 30,
+          "size": 32,
           "seam": "effect",
           "evidence": [
             "delegates:effect",
@@ -3233,7 +3251,7 @@
         {
           "name": "_codeOrientationRegion",
           "ordinal": 0,
-          "size": 35,
+          "size": 39,
           "seam": "effect",
           "evidence": [
             "delegates:effect",
@@ -3243,9 +3261,10 @@
         {
           "name": "_codeOrientationDetail",
           "ordinal": 0,
-          "size": 22,
-          "seam": "observation",
+          "size": 30,
+          "seam": "effect",
           "evidence": [
+            "delegates:effect",
             "delegates:observation"
           ]
         },
