@@ -1,13 +1,16 @@
 # Reincarnation in place: one deployment, a succession of incarnations (issue #306)
 
-Design direction: 2026-09-18, sub-orchestrator seat kimi-306. Stage: `design-not-landed` — the
-implementation lanes are ds-306a (the reincarnate verb: successor process over the same
-deployment, publication handoff, in-flight turns drained) and ds-306b (the doctor's
-served/behind rows, the recruit `base_behind` advisory, the `incarnation_changed` wake class).
-This document is pinned red-before by `impl/test/issue306-reincarnation-red.test.mjs`; every row
-in that file asserts behaviour this document specifies against the CURRENT runtime and fails
-until an implementation lane lands it (docs/44). The lane suites
-(`impl/test/issue306a-*.test.mjs`, `impl/test/issue306b-*.test.mjs`) pin the mechanics.
+Design direction: 2026-09-18, sub-orchestrator seat kimi-306. Stage: `landed` — the
+implementation lanes landed on master the same day: ds-306a (the verb, master `809341b3`,
+contribution-06f99c82f8a14b50eaee4b1e395fb6a8) and ds-306b (the advisories and wake class,
+master `6bc66bcb`, contribution-3308797739faa1c7f08c6dc5aa1a4d66), with the web-admission
+wiring lane ds-306w landing behind them. Where the landing diverges from the design below, §11
+is the authoritative record. The pin file
+`impl/test/issue306-reincarnation-red.test.mjs` was observed 14/14 red at HEAD 1a830bfe as a
+red-before skeleton and then moved to the landed truth (the 374aa9d8 precedent): it now pins
+this document's sections against the landed implementation and is 15/15 green on master
+`34c557d4`. The lane suites (`impl/test/issue306a-*.test.mjs`, `impl/test/issue306b-*.test.mjs`)
+pin the mechanics.
 
 Evidence this design answers (the root's, 2026-09-18):
 
@@ -314,11 +317,11 @@ registry's style:
 
 ## 10. Landing order and the manifest
 
-- The red-before skeleton (`impl/test/issue306-reincarnation-red.test.mjs`) is observed red at
-  HEAD by the design lane. Its rows list in `impl/scripts/expected-red-tests.json` with reason
-  `#306` BEFORE the next full-suite run (docs/44 rule 5); `impl/scripts` is outside every #306
-  lane's path scope, so the listing is the integrating lane's first act — the same pattern
-  docs/46 §11 and the #441 landing used.
+- The red-before skeleton (`impl/test/issue306-reincarnation-red.test.mjs`) was observed red at
+  HEAD 1a830bfe by the design lane (14/14). The implementation lanes landed BEFORE the design
+  package integrated, so the pins moved to the landed truth (the 374aa9d8 precedent) and the
+  file is GREEN on master — no expected-red manifest rows are needed for it. Its filename keeps
+  the red-before record for archaeology; the header comment carries the history.
 - Lane order: ds-306a (the verb) and ds-306b (the advisories and wake class) touch
   `application-deployment.mjs` and `limits.mjs` in DISJOINT regions (A: host/publication/
   reincarnation + the wait/poll bound rows; B: the `served`/`behind` derivation + the
@@ -328,3 +331,68 @@ registry's style:
   `advanced.reincarnation.spawn`); if the landed seam's spelling diverges, the skeleton's
   induction moves to it in the same integration — the row TITLES (the manifest keys) do not
   change.
+
+## 11. Landed truth: where the implementation diverged from the design above
+
+Landed on master 2026-09-18 (`809341b3` lane A, `6bc66bcb` lane B, wiring lane ds-306w behind
+them). The divergences, reviewed and accepted by the sub-orchestrator:
+
+1. **The verb is an application DIRECT PORT** (dispatched in application.mjs beside
+   `deployment.doctor`), never an `APPLICATION_COMMAND_DEFINITIONS` key — the byte-stable
+   command table and its canonical-operation construction check stay untouched. The authority
+   check lives in `application.reincarnate` (owner or a lifecycle capability — `emergency_stop`
+   or `control`; a seat holding neither draws `application_unauthorized`), and an unhosted
+   deployment draws `reincarnation_unavailable`.
+2. **The receipt** reads `{schemaVersion: 1, state: 'reincarnating', at, target, from,
+   successor: {pid, incarnation}, next}` — not the `{reincarnation: {state: 'draining'}}`
+   envelope §2 sketched. The verb still answers before the drain completes; the old's own
+   `close()` is the handoff's continuation.
+3. **New-turn admission during the handoff refuses `reincarnation_in_flight` {since,
+   successorPid, phase}** through the ONE `turnAdmissionRefusal()` read (the route gate and the
+   start-family methods share it) — not the #351 `coordinator_draining` code §2 step 2 assumed.
+   One refusal object, one vocabulary; the code is the handoff's own.
+4. **The old incarnation mints the successor's identity** (`BATON_INCARNATION`), so
+   `host.successor_started {pid, incarnation}` names the incarnation the successor adopts and
+   publishes — one identity, named before the successor exists. The handoff env also carries
+   `BATON_PREDECESSOR_PID` / `BATON_PREDECESSOR_COMMIT` / `BATON_REINCARNATION_TARGET`, and the
+   successor writes a readiness MARKER (`resident/handoff.<incarnation>.json`) before its open
+   blocks on the leases — readiness evidence stronger than "the child is alive".
+5. **The spawn seam is `advanced.resident.spawnSuccessor(spec)`** (a resident option; the spec
+   carries command/args/cwd/env plus the marker, selector, profile, token and lease paths) —
+   not the `advanced.reincarnation.spawn` spelling §2 step 4 proposed. Same contract, one spec
+   object.
+6. **The release mints the old's `host.stopped` with the ordinary `stopped` state** — the
+   `reincarnating` state §2 step 5 proposed rides the receipt and the marker instead; the row
+   vocabulary stays #351's.
+7. **The crash table's re-publish arm did not land.** A successor that dies before its readiness
+   marker fails the verb with `reincarnation_failed {step: 'successor_start', cause: {exit,
+   signal, stderrTail}}` and the durable row, admission reopened — as designed. But a successor
+   that dies AFTER the marker and BEFORE publishing: the old's bounded publication wait expires,
+   it withdraws and exits with `residentState: 'reconciliation_required'` narrated — no
+   `reincarnation_failed {step: 'publication_handoff'}` row and no re-publish of the old
+   authority. The operator (or a restarted successor) reconciles. A follow-up lane could close
+   this window with the re-publish arm §2 described; part 1 accepted the narrower behavior.
+8. **`host.reincarnated` carries `predecessorExited`** beside `from`/`to` — the successor's
+   observation of the predecessor's process (pid liveness, EPERM means alive), never a clock.
+9. **The wake class carries `next: null`** — the WAKE_CLASS_TABLE's one invariant admits a `next`
+   command only on a terminal class, so the re-read guidance rides the summary. §5's sketch
+   named a command; the invariant wins.
+10. **The bounds landed as two registry rows**, not §9's six: `host.reincarnation.wait_ms`
+    (300 s = the deployment's own 90 s drain window + a 210 s successor-startup allowance derived
+    from the measured 65 s reopen of the operator's 161 931-row ledger), enforced at all three
+    waits, and `view.served_behind.commits` for the behind-commit page; both stderr tails ride
+    the existing `MAX_STDERR_TAIL_BYTES` (#326).
+11. **Lane B's new doctor spellings publish NON-ENUMERABLY** (the DP5 pattern): `served.behind
+    {count, commits}`, `served.upToDate` and `served.target.sha` ride the row beside the landed
+    enumerable `{commit, branch, target: {ref, commit, behind}}`, which
+    `impl/test/served-commit-306.test.mjs` deep-pins (outside lane B's scope). One hunk there
+    makes the new spelling the serialized one — carried forward below.
+12. **§2 step 2's "wait for in-flight turns"** reads the coordinator's live handles
+    (`turnInFlight`), and §6's `reincarnation_checkout_held {holders}` reads live workers whose
+    worktree IS the serving checkout — both from the coordinator's own list, never a second
+    custody scan.
+
+Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
+(item 11); the §2 crash-table re-publish arm (item 7); docs/39's wake section naming
+`incarnation_changed` and the reincarnation rows beside it; the README docs table row for this
+document.

@@ -1,407 +1,229 @@
-// Issue #306 red-before skeleton (stage: design-not-landed) — the resident reincarnates in
-// place: one deployment, a succession of incarnations, as specified by
-// docs/48-reincarnation-in-place.md §2 (the handoff protocol), §5 (the wake class) and §6 (the
-// refusals).
+// Issue #306 — reincarnation in place: the docs/48-reincarnation-in-place.md design pins, moved to
+// the LANDED truth (the 374aa9d8 precedent: the design-lane pins follow the landing).
 //
-// Every row asserts the behaviour docs/48 specifies against the CURRENT runtime and is expected
-// RED: today there is no `deployment.reincarnate` verb, no `advanced.reincarnation.spawn`
-// injection seam (the open refuses the unknown advanced field and the fixture falls back so the
-// row can say precisely what is missing), no host.reincarnation_* rows, and no
-// `incarnation_changed` wake class. Each row's message names what the implementing lanes
-// (ds-306a: the verb; ds-306b: the wake class) must land. When a row goes green its expected-red
-// manifest entry is stale and retires with the landing (docs/44).
+// History: written red-before against the design (docs/48 §2 protocol rows, §5 wake class, §6
+// refusals) and observed 14/14 red at HEAD 1a830bfe. The implementation lanes then landed FIRST —
+// ds-306a (the verb, 809341b3) and ds-306b (the advisories and wake class, 6bc66bcb) — so this
+// file now pins the design's contract against the landed implementation, with the landed
+// divergences named in docs/48 §11:
+//   - the verb is an application DIRECT PORT (like deployment.doctor), never an
+//     APPLICATION_COMMAND_DEFINITIONS key — the byte-stable command table is unchanged;
+//   - the receipt reads {state: 'reincarnating', target, from, successor: {pid, incarnation}};
+//   - a new turn during the handoff is refused reincarnation_in_flight {since, successorPid,
+//     phase} through the ONE turnAdmissionRefusal read (not coordinator_draining);
+//   - the spawn seam is advanced.resident.spawnSuccessor(spec) and the OLD incarnation mints the
+//     successor's identity (BATON_INCARNATION), so host.successor_started names it;
+//   - a successor that dies after its readiness marker but before publishing leaves the stop
+//     narrated and residentState reconciliation_required (no re-publish — §11's open follow-up);
+//   - the wake class carries next: null — the table's one invariant lets only a terminal class
+//     name a command, so the re-read guidance rides the summary.
 //
-// Manifest plan (docs/44 rule 5): these rows list with reason #306. The manifest
-// (impl/scripts/expected-red-tests.json) is outside every #306 lane's path scope; listing the
-// rows is the integrating lane's first act, named in docs/48 §10.
-//
-// Fixture: the in-process served-deployment idiom of issue384 / phase89-resident-local-host /
-// served-commit-306 — a real temporary repository with two commits, a real hosted resident
-// (openBaton + host()), and a STUB successor provided through the injected spawner docs/48 §2
-// step 4 names (never a real second resident). The stub is a real trivial child process (a real
-// pid the old incarnation can observe) whose "successor milestones" — the writer-lease claim,
-// the atomic selector move, the settlement rows — are driven from the test through the store the
-// successor would own.
+// Fixture: the in-process hosted-resident idiom (openBatonDeployment + host()) with the successor
+// INJECTED through resident.spawnSuccessor as a child-shaped stub the test drives (never a real
+// second resident) — the same idiom impl/test/issue306a-reincarnate.test.mjs pins the mechanics
+// with; this file pins the docs/48 DESIGN sections against the landing.
 
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
-import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync,
-} from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import test from 'node:test';
 
-import { MockAdapter, openBaton } from '../src/index.mjs';
-import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import { MockAdapter, createDriver } from '../src/index.mjs';
+import {
+  REINCARNATION_REFUSALS, openBatonDeployment,
+} from '../src/application-deployment.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 import { WAKE_CLASSES, wakeClassRow } from '../src/wake-stream.mjs';
-import { allocatePhysicalWorkspaceOwner } from '../src/worktree.mjs';
 
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
+const WAIT_MS = 4_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// The resident protocol bounds a socket path to sun_path (103 bytes); fixture roots are short.
-function fixtureRoot(t, label) {
-  const root = mkdtempSync(`/tmp/bt306-${label}-`);
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  return root;
+async function until(probe, { timeoutMs = WAIT_MS, label = 'condition' } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await probe();
+    if (value) return value;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+    await sleep(10);
+  }
 }
 
-/** A two-commit repository: the resident serves shaB (HEAD); shaA is the reincarnation target. */
-function repository(root) {
+const roots = [];
+function world(label) {
+  const root = mkdtempSync(join(tmpdir(), `bt306-${label}-`));
+  roots.push(root);
   const repo = join(root, 'repo');
-  mkdirSync(repo, { recursive: true });
-  const git = (args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
-  const gitOut = (args) => git(args).stdout.trim();
-  git(['init', '-q', '-b', 'main']);
-  git(['config', 'user.email', 'bt306@example.invalid']);
-  git(['config', 'user.name', 'BT306']);
+  const home = join(root, 'home');
+  const configRoot = join(root, 'config');
+  const deploymentRoot = join(root, 'deployment');
+  for (const directory of [repo, home, configRoot, deploymentRoot]) mkdirSync(directory, { recursive: true });
+  const git = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  git(['init', '-q']);
+  git(['config', 'user.email', 'issue306@example.invalid']);
+  git(['config', 'user.name', 'Issue306']);
   writeFileSync(join(repo, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));
   mkdirSync(join(repo, 'test'), { recursive: true });
   writeFileSync(join(repo, 'test', 'smoke.test.mjs'),
     "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('smoke', () => assert.equal(1, 1));\n");
   git(['add', '.']);
   git(['commit', '-qm', 'base']);
-  const shaA = gitOut(['rev-parse', 'HEAD']);
-  writeFileSync(join(repo, 'landing.txt'), 'landing\n');
+  const base = git(['rev-parse', 'HEAD']);
+  writeFileSync(join(repo, 'landing.txt'), 'second commit\n');
   git(['add', '.']);
   git(['commit', '-qm', 'landing']);
-  const shaB = gitOut(['rev-parse', 'HEAD']);
-  return { repo, shaA, shaB };
+  const landing = git(['rev-parse', 'HEAD']);
+  return {
+    root, repo, home, configRoot, deploymentRoot, base, landing, git,
+    selectorPath: join(repo, '.git', 'baton', 'connection.json'),
+    ledgerPath: join(deploymentRoot, 'state', 'coordination', 'events.jsonl'),
+    coordinationDir: join(deploymentRoot, 'state', 'coordination'),
+  };
 }
+test.after(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); });
 
-/** The exact adapter card the ordinary resident self-check requires (phase89-resident-local-host). */
-function adapter(delayMs = 1) {
-  const value = new MockAdapter({ harness: ROUTE.harness, scenario: { outcome: 'completed', delayMs, summary: 'issue306 fixture' } });
-  const card = value.card.bind(value);
-  value.card = () => ({
-    ...card(),
+/** The exact adapter card the ordinary resident self-check requires (the issue351 fixture card). */
+function adapter() {
+  const value = new MockAdapter({ harness: 'codex', scenario: { outcome: 'completed', delayMs: 1, summary: 'issue306 fixture' } });
+  const rawCard = value.card.bind(value);
+  value.card = () => ({ ...rawCard(),
     authPosture: 'subscription',
     providerCompatibility: { credentialState: 'available' },
-    workerPolicy: {
-      schemaVersion: 1,
+    workerPolicy: { schemaVersion: 1,
       autonomy: { supported: ['unattended'], default: 'unattended', perTask: false, observation: 'unavailable', mechanisms: ['fixture-unattended'] },
       access: { supported: ['full'], default: 'full', perTask: false, observation: 'unavailable', mechanisms: ['fixture-full'] },
-      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'], observation: 'unavailable', configuredPreferences: [] },
-    },
-    modelSelection: {
-      mode: 'exact', configuredDefault: ROUTE.model, available: [ROUTE.model], family: ROUTE.harness,
-      acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: [ROUTE.effort], serviceTier: null,
-      provenance: 'issue306-reincarnation-red', refreshedAt: null,
-    },
-    permissions: { mode: 'unattended-full', boundary: 'fixture same-UID host access' },
-  });
+      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'], observation: 'unavailable', configuredPreferences: [] } },
+    modelSelection: { mode: 'exact', configuredDefault: 'gpt-5.6-sol', available: ['gpt-5.6-sol'], family: 'codex',
+      acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: ['high'], serviceTier: null,
+      provenance: 'issue306-reincarnation-red', refreshedAt: null },
+    permissions: { mode: 'unattended-full', boundary: 'fixture same-UID host access' } });
   return value;
 }
 
-const ledgerRows = (path) => (!existsSync(path) ? [] : readFileSync(path, 'utf8').split('\n')
-  .filter((line) => line !== '').map((line) => JSON.parse(line)));
-const hostRows = (fixture) => ledgerRows(fixture.ledgerPath)
-  .filter((row) => row.kind === 'driver.recorded' && typeof row.payload?.kind === 'string' && row.payload.kind.startsWith('host.'))
-  .map((row) => row.payload);
-const kindOrder = (rows) => rows.map((row) => row.kind);
-
-/** A bounded read that answers the value or null — never throws on timeout; the assertion names
- * the missing fact. */
-async function until(fn, { timeoutMs = 20_000, pollMs = 25 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = await fn();
-    if (value) return value;
-    if (Date.now() > deadline) return null;
-    await sleep(pollMs);
-  }
+function ledgerRows(file) {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, 'utf8').split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line));
 }
-
-function deferred() {
-  let resolve; let reject;
-  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
-
-/** A real trivial child process: a real pid the old incarnation can observe, killable, exitable. */
-function stubChild({ crash = false } = {}) {
-  const child = crash
-    ? spawn(process.execPath, ['-e', 'process.stderr.write("stub successor exploded\\n"); process.exit(2)'], { stdio: ['ignore', 'ignore', 'pipe'] })
-    : spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], { stdio: ['ignore', 'ignore', 'pipe'] });
-  let tail = '';
-  child.stderr.on('data', (chunk) => { tail = `${tail}${chunk}`.slice(-4096); });
-  const exit = new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
-  return { child, exit, stderrTail: () => tail };
-}
+const hostRows = (file) => ledgerRows(file).filter((row) => row.kind === 'driver.recorded'
+  && typeof row.payload?.kind === 'string' && row.payload.kind.startsWith('host.'));
+const hostRow = (file, kind) => hostRows(file).find((row) => row.payload.kind === kind) ?? null;
+const hostOrder = (file) => hostRows(file).map((row) => row.payload.kind);
 
 /**
- * The stub successor's milestones, driven exactly as docs/48 §2 orders them: claim the writer
- * lease on the deployment's coordination directory (bounded poll — the old incarnation's release
- * is what makes it succeed), move the publication selector atomically to the successor's own
- * incarnation, record `host.successor_published`, and — after the old incarnation is gone —
- * record `host.publication_withdrawn` and `host.reincarnated {from, to}`.
+ * The successor the injected spawner hands back: a child-shaped handle (EventEmitter with pid and
+ * stderr) the test drives through the successor's own milestones — write the readiness marker,
+ * take the released writer lease, publish the selector/profile/token, and (as the successor would
+ * once it saw the predecessor's process gone) record the settlement rows.
  */
-function successorMilestones(fixture, probe, { sha, predecessorIncarnation, pid }) {
-  return (async () => {
-    const store = new CoordinationStore(fixture.coordinationDir);
-    const deadline = Date.now() + 10_000;
-    for (;;) {
-      try {
-        store.claimWriterLease();
-        probe.leaseClaimed = true;
-        break;
-      } catch (error) {
-        if (error?.code === 'coordination_writer_busy') probe.sawLeaseBusy = true;
-        if (error?.code !== 'coordination_writer_busy' || Date.now() > deadline) {
-          probe.leaseError = error?.code ?? String(error);
-          return;
-        }
-        await sleep(25);
-      }
-    }
-    const selector = JSON.parse(readFileSync(fixture.selectorPath, 'utf8'));
-    const next = { ...selector, incarnation: probe.successorIncarnation, startedAt: new Date().toISOString() };
-    writeFileSync(`${fixture.selectorPath}.tmp`, `${JSON.stringify(next)}\n`);
-    renameSync(`${fixture.selectorPath}.tmp`, fixture.selectorPath);
-    probe.published = true;
+class StubSuccessor extends EventEmitter {
+  static nextPid = 40_000;
+  constructor(spec) {
+    super();
+    this.spec = spec;
+    this.pid = StubSuccessor.nextPid += 1;
+    this.stderr = new EventEmitter();
+    this.exitCode = null;
+    this.signalCode = null;
+    this.journal = { spawnedAt: Date.now() };
+  }
+  writeMarker(state) {
+    writeFileSync(this.spec.markerPath, `${JSON.stringify({
+      schemaVersion: 1, incarnation: this.spec.env.BATON_INCARNATION, pid: this.pid,
+      predecessor: { incarnation: this.spec.env.BATON_PREDECESSOR_INCARNATION, commit: this.spec.env.BATON_PREDECESSOR_COMMIT },
+      target: { sha: this.spec.env.BATON_REINCARNATION_TARGET, ref: null },
+      state, at: new Date().toISOString(),
+    })}\n`);
+  }
+  becomeReady() { this.writeMarker('waiting'); }
+  /** The successor's own open+publish, in production's order: lease free → take → publish. */
+  async openAndPublish(selector) {
+    await until(() => !existsSync(this.spec.leasePath), { label: 'the writer lease release' });
+    this.journal.leaseFreeAt = Date.now();
+    this.writeMarker('opened');
+    writeFileSync(this.spec.selectorPath, `${JSON.stringify(selector)}\n`);
+    writeFileSync(this.spec.profilePath, `${JSON.stringify({
+      schemaVersion: 2, transport: 'local', socketPath: join(this.spec.deploymentRoot, 'successor.sock'),
+      url: 'https://baton.local', origin: 'https://baton.local', tokenFile: this.spec.tokenPath.split('/').at(-1),
+      deploymentId: selector.deploymentId, incarnation: selector.incarnation,
+      registryDigest: selector.registryDigest, startedAt: selector.startedAt,
+      ownerPid: process.pid, ownerPidStart: 'successor',
+    })}\n`);
+    writeFileSync(this.spec.tokenPath, `${'a'.repeat(48)}\n`);
+    this.journal.publishedAt = Date.now();
+  }
+  /** The settlement rows the REAL successor records once its predecessor's process is gone
+   * (docs/48 §2 step 8 — the old holds no writer lease to write them). */
+  async settle(worldFixture, { predecessorIncarnation }) {
+    const store = new CoordinationStore(worldFixture.coordinationDir);
+    store.claimWriterLease();
+    const at = new Date().toISOString();
     store.recordDriver('host.successor_published', {
-      incarnation: probe.successorIncarnation, pid, commit: sha, at: new Date().toISOString(),
-    }, { actor: 'issue306-fixture-successor', key: `issue306:${fixture.label}:successor_published` });
-    await fixture.oldExited.promise;
-    store.recordDriver('host.publication_withdrawn', {
-      incarnation: predecessorIncarnation, at: new Date().toISOString(),
-    }, { actor: 'issue306-fixture-successor', key: `issue306:${fixture.label}:publication_withdrawn` });
+      pid: this.pid, incarnation: this.spec.env.BATON_INCARNATION,
+      from: Object.freeze({ incarnation: predecessorIncarnation, commit: worldFixture.landing }),
+      target: Object.freeze({ sha: worldFixture.base, ref: null }), at,
+    }, { actor: 'issue306-fixture-successor', key: `issue306:${worldFixture.root}:successor_published` });
+    store.recordDriver('host.publication_withdrawn', { incarnation: predecessorIncarnation, at },
+      { actor: 'issue306-fixture-successor', key: `issue306:${worldFixture.root}:publication_withdrawn` });
     store.recordDriver('host.reincarnated', {
-      from: { incarnation: predecessorIncarnation, commit: fixture.shaB },
-      to: { incarnation: probe.successorIncarnation, commit: sha },
-      at: new Date().toISOString(),
-    }, { actor: 'issue306-fixture-successor', key: `issue306:${fixture.label}:reincarnated` });
-    probe.settled = true;
-  })().catch((error) => { probe.milestoneError = error?.message ?? String(error); });
+      from: Object.freeze({ incarnation: predecessorIncarnation, commit: worldFixture.landing }),
+      to: Object.freeze({ incarnation: this.spec.env.BATON_INCARNATION, commit: worldFixture.base }),
+      predecessorExited: true, at,
+    }, { actor: 'issue306-fixture-successor', key: `issue306:${worldFixture.root}:reincarnated` });
+    store.releaseWriterLease();
+  }
+  crash({ code = 7, tail = 'boom: the successor refused to start\n' } = {}) {
+    this.stderr.emit('data', Buffer.from(tail));
+    this.exitCode = code;
+    this.emit('exit', code, null);
+  }
 }
+
+/** One hosted resident over the fixture world, successor spawner injected, handoff bound shrunk. */
+async function resident(t, f, { onSpawn } = {}) {
+  let driver = null;
+  const deployment = await openBatonDeployment({
+    repo: f.repo,
+    advanced: {
+      deploymentRoot: f.deploymentRoot,
+      adapters: { codex: adapter() },
+      routes: [ROUTE],
+      verification: { command: 'node', arguments: ['--test'] },
+      resident: {
+        env: { XDG_CONFIG_HOME: f.configRoot, HOME: f.home },
+        home: f.home,
+        webDrainMs: 500,
+        sessionTtlMs: 60_000,
+        reincarnationWaitMs: WAIT_MS,
+        ...(onSpawn ? { spawnSuccessor: onSpawn } : {}),
+      },
+    },
+  }, (options) => { driver = createDriver(options); return driver; });
+  t.after(async () => { try { await deployment.close(); } catch { /* the handoff already closed it */ } });
+  return { deployment, driver };
+}
+
+const selectorOf = (f) => JSON.parse(readFileSync(f.selectorPath, 'utf8'));
 
 /**
- * A hosted resident on the two-commit repository, with the docs/48 §2 step 4 injection seam
- * (`advanced.reincarnation.spawn`) wired to a stub. At HEAD the open refuses the unknown
- * advanced field; the fixture then opens WITHOUT the seam so each row fails on the precise
- * missing surface instead of the config refusal.
+ * Drive a whole handoff to settlement (docs/48 §2): the request, the readiness marker, the old
+ * incarnation's own close (the verb arms it), the stub's lease-then-publish, and — after the
+ * close resolves (the in-process stand-in for the predecessor's process exit) — the settlement
+ * rows.
  */
-async function hostedFixture(t, label, { makeSpawn = null, delayMs = 1 } = {}) {
-  const root = fixtureRoot(t, label);
-  const { repo, shaA, shaB } = repository(root);
-  const home = join(root, 'home');
-  const configRoot = join(root, 'config');
-  const deploymentRoot = join(root, 'deployment');
-  for (const directory of [home, configRoot, deploymentRoot]) mkdirSync(directory, { recursive: true });
-  const fixture = {
-    label, root, repo, shaA, shaB, deploymentRoot, configRoot, home,
-    coordinationDir: join(deploymentRoot, 'state', 'coordination'),
-    ledgerPath: join(deploymentRoot, 'state', 'coordination', 'events.jsonl'),
-    selectorPath: join(repo, '.git', 'baton', 'connection.json'),
-    oldExited: deferred(),
-    probe: { successorIncarnation: `instance-stub-successor-${label}`, spawnCalls: [], leaseClaimed: false, sawLeaseBusy: false, published: false, settled: false },
-    seamAdmitted: true,
-    deployment: null,
-    published: null,
-  };
-  const spawn = makeSpawn === null ? null : makeSpawn(fixture, fixture.probe);
-  const advanced = {
-    deploymentRoot,
-    adapters: { codex: adapter(delayMs) },
-    routes: [ROUTE],
-    verification: { command: 'node', arguments: ['--test'] },
-    resident: { env: { XDG_CONFIG_HOME: configRoot, HOME: home }, home, webDrainMs: 250, sessionTtlMs: 60_000 },
-    capacity: {
-      estimate: () => ({ bytes: 1, inodes: 1 }),
-      observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
-    },
-  };
-  try {
-    fixture.deployment = await openBaton({
-      repo, advanced: { ...advanced, reincarnation: { spawn: spawn ?? (async () => { throw new Error('no spawn wired'); }) } },
-    });
-  } catch (error) {
-    if (error?.code !== 'deployment_config_invalid' || !/reincarnation/u.test(error?.message ?? '')) throw error;
-    fixture.seamAdmitted = false;
-    fixture.deployment = await openBaton({ repo, advanced });
-  }
-  t.after(async () => {
-    try { fixture.oldExited.resolve(); } catch { /* already settled */ }
-    try { fixture.probe.child?.kill('SIGKILL'); } catch { /* stub already gone */ }
-    try { await fixture.deployment.close(); } catch { /* fixture tree removed by fixtureRoot */ }
+async function driveHandoff(t, f) {
+  const stubs = [];
+  const { deployment } = await resident(t, f, {
+    onSpawn: (spec) => { const stub = new StubSuccessor(spec); stub.becomeReady(); stubs.push(stub); return stub; },
   });
-  fixture.published = await fixture.deployment.host();
-  return fixture;
-}
-
-function assertSeam(fixture) {
-  assert.ok(fixture.seamAdmitted,
-    'land the advanced.reincarnation.spawn injection seam (docs/48 §2 step 4): the deployment open must admit it');
-  assert.equal(typeof fixture.deployment.reincarnate, 'function',
-    'land deployment.reincarnate {target} on the opened resident (docs/48 §2)');
-}
-
-/** Drive a whole happy-path handoff: the request, the stub successor's milestones, the old
- * incarnation's close (its own, through the handoff — the test's close() joins the same
- * promise), then the settlement rows. */
-async function driveHandoff(fixture, { target } = {}) {
-  const receipt = await fixture.deployment.reincarnate({ target: target ?? fixture.shaA });
-  await fixture.deployment.close();
-  fixture.oldExited.resolve();
-  await fixture.probe.milestones;
-  try { fixture.probe.child?.kill('SIGKILL'); } catch { /* already gone */ }
-  return { receipt, rows: hostRows(fixture) };
-}
-
-test('#306 RED (stage: design-not-landed): the reincarnate verb is ONE registered application command (docs/48 §2)', () => {
-  const definition = APPLICATION_COMMAND_DEFINITIONS['deployment.reincarnate'];
-  assert.ok(definition,
-    "land 'deployment.reincarnate' in APPLICATION_COMMAND_DEFINITIONS (application.mjs) — one canonical command, CLI and deployment port spellings beside it (docs/48 §2)");
-  assert.ok(definition.args.includes('target'), 'the command takes the target commit-ish');
-});
-
-test('#306 RED (stage: design-not-landed): §2.1 the request records host.reincarnation_requested {target:{sha,ref}, from:{incarnation, commit}} and answers a draining receipt', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r1', {
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild();
-      probe.child = handle.child;
-      probe.milestones = successorMilestones(fixture, probe, { ...args, pid: handle.child.pid });
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
-  });
-  assertSeam(f);
-  const { receipt, rows } = await driveHandoff(f);
-  assert.equal(receipt?.reincarnation?.state, 'draining',
-    'the verb answers after the request row — it never blocks the caller on the drain (docs/48 §2)');
-  const requested = rows.find((row) => row.kind === 'host.reincarnation_requested');
-  assert.ok(requested, 'land host.reincarnation_requested — the FIRST durable row of the handoff (docs/48 §2 step 1)');
-  assert.equal(requested.target?.sha, f.shaA, 'the row names the resolved target sha');
-  assert.equal(typeof requested.target?.ref, 'string', 'and the ref it resolved through');
-  assert.equal(requested.from?.incarnation, f.published.incarnation, 'the row names the incarnation that served');
-  assert.equal(requested.from?.commit, f.shaB, 'and the commit that incarnation served');
-  assert.equal(kindOrder(rows).indexOf('host.reincarnation_requested'), 0,
-    'the request row precedes every other handoff row');
-});
-
-test('#306 RED (stage: design-not-landed): §2.2 admission closes to new turns with the ONE drain refusal while the handoff drains', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r2', {
-    delayMs: 400,
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild();
-      probe.child = handle.child;
-      probe.milestones = successorMilestones(fixture, probe, { ...args, pid: handle.child.pid });
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
-  });
-  assertSeam(f);
-  const turn = await f.deployment.run('hold the drain open');
-  assert.ok(turn, 'the in-flight turn started before the request');
-  const request = await f.deployment.reincarnate({ target: f.shaA });
-  assert.equal(request?.reincarnation?.state, 'draining');
-  const refused = await f.deployment.run('a new turn during the drain').then(
-    () => null, (caught) => caught);
-  assert.equal(refused?.code, 'coordinator_draining',
-    'a new turn during the reincarnation drain meets the ONE #351 drain refusal — never a new vocabulary (docs/48 §2 step 2)');
-  await f.deployment.close();
-  f.oldExited.resolve();
-  await f.probe.milestones;
-});
-
-test('#306 RED (stage: design-not-landed): §2.3 an in-flight turn drains first — a host.stop_waiting row precedes host.successor_started', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r3', {
-    delayMs: 400,
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild();
-      probe.child = handle.child;
-      probe.milestones = successorMilestones(fixture, probe, { ...args, pid: handle.child.pid });
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
-  });
-  assertSeam(f);
-  await f.deployment.run('hold the drain open');
-  const request = await f.deployment.reincarnate({ target: f.shaA });
-  assert.equal(request?.reincarnation?.state, 'draining');
-  await sleep(100); // the turn (400 ms) is still in flight
-  assert.ok(!hostRows(f).some((row) => row.kind === 'host.successor_started'),
-    'the successor is not spawned while a one-shot turn is in flight — it completes on the old incarnation (docs/48 §2 step 3)');
-  await f.deployment.close();
-  f.oldExited.resolve();
-  await f.probe.milestones;
-  const order = kindOrder(hostRows(f));
-  const waiting = order.indexOf('host.stop_waiting');
-  assert.ok(waiting > order.indexOf('host.reincarnation_requested'),
-    'the turn wait is a host.stop_waiting row in the #351 shape, after the request (docs/48 §2 step 3)');
-  assert.ok(waiting < order.indexOf('host.successor_started'),
-    'the wait settles before the successor starts');
-});
-
-test('#306 RED (stage: design-not-landed): §2.4 the successor spawns at the target with BATON_PREDECESSOR_INCARNATION, and host.successor_started is the old incarnation\'s last lease-held row', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r4', {
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild();
-      probe.child = handle.child;
-      probe.milestones = successorMilestones(fixture, probe, { ...args, pid: handle.child.pid });
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
-  });
-  assertSeam(f);
-  const { rows } = await driveHandoff(f);
-  const args = f.probe.spawnCalls[0];
-  assert.ok(args, 'the successor spawn rode the injected seam');
-  assert.equal(args.sha, f.shaA, 'the successor serves the target sha');
-  assert.equal(args.env?.BATON_PREDECESSOR_INCARNATION, f.published.incarnation,
-    'BATON_PREDECESSOR_INCARNATION names the old incarnation (docs/48 §2 step 4)');
-  const started = rows.find((row) => row.kind === 'host.successor_started');
-  assert.ok(started, 'land host.successor_started (docs/48 §2 step 4)');
-  assert.equal(started.pid, f.probe.child.pid, 'the row names the successor pid');
-  assert.equal(typeof started.incarnation, 'string', 'the row names the successor incarnation');
-  const after = kindOrder(rows).slice(kindOrder(rows).indexOf('host.successor_started') + 1);
-  assert.ok(after.every((kind) => ['host.stopped', 'host.successor_published', 'host.publication_withdrawn', 'host.reincarnated'].includes(kind)),
-    `no old-incarnation handoff row follows host.successor_started — the release-minted host.stopped and the successor's own rows only (saw ${after.join(', ') || 'none'})`);
-});
-
-test('#306 RED (stage: design-not-landed): §2.5 the successor takes the writer lease only after the old incarnation\'s release, and the release mints host.stopped state reincarnating', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r5', {
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild();
-      probe.child = handle.child;
-      probe.milestones = successorMilestones(fixture, probe, { ...args, pid: handle.child.pid });
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
-  });
-  assertSeam(f);
-  const { rows } = await driveHandoff(f);
-  assert.equal(f.probe.leaseClaimed, true,
-    `the stub successor's bounded lease claim completed — a premature claim would still see coordination_writer_busy (saw busy: ${f.probe.sawLeaseBusy}, error: ${f.probe.leaseError ?? 'none'})`);
-  assert.equal(f.probe.sawLeaseBusy, true,
-    'the successor observed the held lease first (coordination_writer_busy) — it waited, it never refused at once (docs/48 §2 step 5)');
-  const stopped = rows.find((row) => row.kind === 'host.stopped');
-  assert.equal(stopped?.state, 'reincarnating',
-    'the release mints the old incarnation\'s host.stopped through the #351 arming seam with state reincarnating (docs/48 §2 step 5)');
-  const order = kindOrder(rows);
-  assert.ok(order.indexOf('host.stopped') > order.indexOf('host.successor_started'),
-    'host.successor_started is the old incarnation\'s last lease-held row — the release (host.stopped) follows it');
-  assert.ok(order.indexOf('host.successor_published') > order.indexOf('host.stopped'),
-    'the successor writes only after the release');
-});
-
-test('#306 RED (stage: design-not-landed): §2.6-2.7 the publication moves atomically — every read names exactly one incarnation and the selector survives the old incarnation\'s exit', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r6', {
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild();
-      probe.child = handle.child;
-      probe.milestones = successorMilestones(fixture, probe, { ...args, pid: handle.child.pid });
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
-  });
-  assertSeam(f);
+  const published = await deployment.host();
+  const oldIncarnation = published.incarnation;
   const seen = new Set();
   let absentReads = 0;
   let watching = true;
-  const receipt = await f.deployment.reincarnate({ target: f.shaA });
-  assert.equal(receipt?.reincarnation?.state, 'draining');
   const watcher = (async () => {
     while (watching) {
       if (!existsSync(f.selectorPath)) absentReads += 1;
@@ -411,142 +233,277 @@ test('#306 RED (stage: design-not-landed): §2.6-2.7 the publication moves atomi
           if (typeof selector.incarnation === 'string') seen.add(selector.incarnation);
         } catch { absentReads += 1; }
       }
-      await sleep(10);
+      await sleep(5);
     }
   })();
-  await f.deployment.close();
+  const receipt = await deployment.reincarnate({ target: f.base });
+  const stub = stubs[0];
+  // The successor's open waits for the lease release INSIDE the old's close; the old's close waits
+  // for the successor's publish — run both, each meeting the other (docs/48 §2 steps 5-7).
+  const publishing = stub.openAndPublish({
+    ...selectorOf(f), incarnation: stub.spec.env.BATON_INCARNATION, startedAt: new Date().toISOString(),
+  });
+  const close = deployment.close().catch((error) => error);
+  await Promise.all([close, publishing]);
   watching = false;
   await watcher;
-  f.oldExited.resolve();
-  await f.probe.milestones;
-  try { f.probe.child?.kill('SIGKILL'); } catch { /* already gone */ }
-  assert.equal(absentReads, 0, 'the publication is never absent mid-handoff (#288: never none)');
-  for (const incarnation of seen) {
-    assert.ok([f.published.incarnation, f.probe.successorIncarnation].includes(incarnation),
-      `every read resolved exactly one known incarnation (saw ${incarnation}) — never two publications, never none`);
-  }
-  assert.ok(existsSync(f.selectorPath), 'the selector survives the old incarnation\'s exit — it names the successor now');
-  const final = JSON.parse(readFileSync(f.selectorPath, 'utf8'));
-  assert.equal(final.incarnation, f.probe.successorIncarnation, 'the served publication is the successor\'s');
+  await stub.settle(f, { predecessorIncarnation: oldIncarnation });
+  return { deployment, receipt, stub, oldIncarnation, seen, absentReads };
+}
+
+test('#306 §6: the four request refusals are ONE exported closed set', () => {
+  assert.deepEqual({ ...REINCARNATION_REFUSALS }, {
+    targetUnreachable: 'reincarnation_target_unreachable',
+    inFlight: 'reincarnation_in_flight',
+    checkoutHeld: 'reincarnation_checkout_held',
+    sameCommit: 'reincarnation_same_commit',
+  }, 'the closed refusal set docs/48 §6 names — exported, never minted ad hoc at the call sites');
 });
 
-test('#306 RED (stage: design-not-landed): §2.8 the successor records host.publication_withdrawn and host.reincarnated {from, to} as observations of the old incarnation', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r7', {
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild();
-      probe.child = handle.child;
-      probe.milestones = successorMilestones(fixture, probe, { ...args, pid: handle.child.pid });
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
+test('#306 §9: every handoff bound derives from the limits registry', () => {
+  const wait = FRAME_LIMITS['host.reincarnation.wait_ms'];
+  assert.ok(wait, 'land the ONE handoff bound in the registry (docs/48 §9)');
+  assert.equal(wait.unit, 'ms');
+  assert.ok(Number.isSafeInteger(wait.value) && wait.value > 0);
+  const commits = FRAME_LIMITS['view.served_behind.commits'];
+  assert.ok(commits, 'the behind-commit page bound (docs/48 §4/§9)');
+  assert.equal(commits.unit, 'items');
+});
+
+test('#306 §5: host.reincarnated wakes the incarnation_changed class in the ONE wake table', () => {
+  assert.ok(WAKE_CLASSES.includes('incarnation_changed'),
+    "the class is in the closed WAKE_CLASS_TABLE — never a side list (docs/48 §5)");
+  const row = wakeClassRow('incarnation_changed');
+  assert.equal(row?.scope, 'deployment', 'a deployment-scope wake: every bounded swarm watch sees it');
+  assert.equal(row?.terminal, false,
+    'a reincarnation settles nothing — terminal false, a sibling of dead in scope only (docs/48 §5)');
+  assert.equal(row?.next, null,
+    'next is null: the table invariant lets only a terminal class name a command; the re-read guidance rides the summary (docs/48 §11)');
+  assert.ok(row?.rows?.some((matcher) => matcher.payloadKind === 'host.reincarnated'),
+    "the class derives from the ledger's host.reincarnated row through the table's operationalKind matcher");
+});
+
+test('#306 §2.1: the request records host.reincarnation_requested {target, from} and answers the reincarnating receipt', async (t) => {
+  const f = world('r1');
+  const { receipt, oldIncarnation } = await driveHandoff(t, f);
+  assert.equal(receipt.state, 'reincarnating',
+    'the verb answers with the handoff in motion — the caller is never held hostage to the drain (docs/48 §2)');
+  assert.equal(receipt.target.sha, f.base, 'the receipt names the resolved target');
+  assert.deepEqual(receipt.from, { incarnation: oldIncarnation, commit: f.landing },
+    'the receipt names the incarnation and commit that served');
+  const requested = hostRow(f.ledgerPath, 'host.reincarnation_requested');
+  assert.ok(requested, 'the request row is durable (docs/48 §2 step 1)');
+  assert.equal(requested.payload.target.sha, f.base, 'the row names the resolved target sha');
+  assert.deepEqual(requested.payload.from, { incarnation: oldIncarnation, commit: f.landing });
+  assert.equal(hostOrder(f.ledgerPath).indexOf('host.reincarnation_requested'), 0,
+    'the request row precedes every other handoff row');
+});
+
+test('#306 §2.2: admission closes to new turns with the ONE typed refusal for the whole handoff', async (t) => {
+  const f = world('r2');
+  const stubs = [];
+  const { deployment } = await resident(t, f, {
+    onSpawn: (spec) => { const stub = new StubSuccessor(spec); stub.becomeReady(); stubs.push(stub); return stub; },
   });
-  assertSeam(f);
-  const { rows } = await driveHandoff(f);
-  const withdrawn = rows.find((row) => row.kind === 'host.publication_withdrawn');
-  assert.ok(withdrawn, 'land host.publication_withdrawn — successor-recorded, the old incarnation holds no lease to write it (docs/48 §2 step 8)');
-  assert.equal(withdrawn.incarnation, f.published.incarnation, 'the withdrawal names the OLD incarnation');
-  const reincarnated = rows.find((row) => row.kind === 'host.reincarnated');
-  assert.ok(reincarnated, 'land host.reincarnated {from, to} (docs/48 §2 step 8)');
-  assert.deepEqual(reincarnated.from, { incarnation: f.published.incarnation, commit: f.shaB });
-  assert.deepEqual(reincarnated.to, { incarnation: f.probe.successorIncarnation, commit: f.shaA });
-  const order = kindOrder(rows);
+  await deployment.host();
+  const pending = deployment.reincarnate({ target: f.base });
+  const refusal = await until(() => deployment.turnAdmissionRefusal(), { label: 'the closed admission' });
+  assert.equal(refusal.code, 'reincarnation_in_flight',
+    'a new turn during the handoff draws the ONE refusal (docs/48 §2 step 2, §11)');
+  assert.equal(typeof refusal.detail.since, 'string', 'the refusal names when the handoff began');
+  assert.equal(refusal.detail.phase, 'waiting');
+  assert.equal(deployment.turnAdmissionRefusal()?.code, 'reincarnation_in_flight',
+    'the same object answers for the whole handoff — never two vocabularies');
+  const receipt = await pending;
+  assert.equal(receipt.state, 'reincarnating');
+  stubs[0].crash(); // let the old's close finish the row without a publish wait
+});
+
+test('#306 §2.3: an in-flight turn drains on the old incarnation — host.stop_waiting {on: worker} before host.successor_started', async (t) => {
+  const f = world('r3');
+  const stubs = [];
+  const { deployment, driver } = await resident(t, f, {
+    onSpawn: (spec) => { const stub = new StubSuccessor(spec); stub.becomeReady(); stubs.push(stub); return stub; },
+  });
+  await deployment.host();
+  // ONE in-flight turn: a live worker the coordinator reports as mid-turn (the lane-A idiom —
+  // the fixture's own handle set is empty, so the projection under test is the whole truth).
+  const handle = { id: 'w-inflight', status: 'working', turnInFlight: true, worktree: '/elsewhere', taskId: 'task-inflight' };
+  const realList = driver.coordinator.list.bind(driver.coordinator);
+  let inFlight = true;
+  driver.coordinator.list = () => (inFlight ? [...realList(), handle] : realList());
+  const pending = deployment.reincarnate({ target: f.base });
+  const waiting = await until(() => hostRow(f.ledgerPath, 'host.stop_waiting'), { label: 'the drain wait row' });
+  assert.equal(waiting.payload.on, 'worker', 'the wait rides the #351 stop_waiting shape (docs/48 §2 step 3)');
+  assert.deepEqual(waiting.payload.ids, ['w-inflight'], 'the wait names the in-flight turn');
+  assert.equal(stubs.length, 0, 'the successor is never spawned while a turn is in flight');
+  inFlight = false; // the one-shot turn completes on the old incarnation
+  const receipt = await pending;
+  assert.equal(receipt.state, 'reincarnating');
+  assert.equal(stubs.length, 1, 'the successor spawns once the turn settled');
+  const order = hostOrder(f.ledgerPath);
+  assert.ok(order.indexOf('host.stop_waiting') > order.indexOf('host.reincarnation_requested'));
+  assert.ok(order.indexOf('host.successor_started') > order.indexOf('host.stop_waiting'),
+    'requested → stop_waiting → successor_started (docs/48 §2 steps 1-4)');
+  stubs[0].crash();
+});
+
+test('#306 §2.4: the successor spawns at the target with BATON_PREDECESSOR_INCARNATION and the old-minted BATON_INCARNATION; host.successor_started names both', async (t) => {
+  const f = world('r4');
+  const { receipt, stub, oldIncarnation } = await driveHandoff(t, f);
+  const { spec } = stub;
+  assert.equal(spec.env.BATON_PREDECESSOR_INCARNATION, oldIncarnation,
+    'the successor knows the incarnation it succeeds (docs/48 §2 step 4)');
+  assert.equal(spec.env.BATON_REINCARNATION_TARGET, f.base, 'and the commit it serves');
+  assert.equal(typeof spec.env.BATON_INCARNATION, 'string',
+    'the old mints the successor identity, so host.successor_started can name it (docs/48 §11)');
+  assert.equal(spec.cwd, f.repo, 'the successor serves the same checkout, moved to the target');
+  assert.equal(receipt.successor.pid, stub.pid);
+  const started = hostRow(f.ledgerPath, 'host.successor_started');
+  assert.ok(started, 'host.successor_started is durable');
+  assert.equal(started.payload.pid, stub.pid);
+  assert.equal(started.payload.incarnation, spec.env.BATON_INCARNATION,
+    'the row and the successor\'s own publication name ONE incarnation');
+});
+
+test('#306 §2.5: the successor takes the writer lease only after the old incarnation\'s release — host.stopped lies between successor_started and successor_published', async (t) => {
+  const f = world('r5');
+  const { stub } = await driveHandoff(t, f);
+  assert.ok(stub.journal.leaseFreeAt, 'the successor observed the lease release, never an instant coordination_writer_busy');
+  const order = hostOrder(f.ledgerPath);
+  const stoppedAt = order.indexOf('host.stopped');
+  assert.ok(stoppedAt > order.indexOf('host.successor_started'),
+    'host.successor_started is the old incarnation\'s last lease-held row — the release (host.stopped) follows it');
+  assert.ok(stoppedAt < order.indexOf('host.successor_published'),
+    'the successor writes only after the release');
+});
+
+test('#306 §2.6-2.7 × §1: the publication moves atomically — every read names exactly one incarnation, the deployment id is stable, and the selector survives the old incarnation\'s exit', async (t) => {
+  const f = world('r6');
+  const { seen, absentReads, oldIncarnation, stub } = await driveHandoff(t, f);
+  assert.equal(absentReads, 0, 'the publication is never absent mid-handoff (#288: never none)');
+  for (const incarnation of seen) {
+    assert.ok([oldIncarnation, stub.spec.env.BATON_INCARNATION].includes(incarnation),
+      `every read resolved exactly one known incarnation (saw ${incarnation}) — never two publications`);
+  }
+  assert.ok(existsSync(f.selectorPath), 'the selector survives the old incarnation\'s exit — it names the successor now');
+  const final = selectorOf(f);
+  assert.equal(final.incarnation, stub.spec.env.BATON_INCARNATION, 'the served publication is the successor\'s');
+  assert.equal(final.deploymentId, JSON.parse(readFileSync(f.selectorPath, 'utf8')).deploymentId,
+    '§1: the deployment id is stable across the incarnation boundary');
+});
+
+test('#306 §2.8: the settlement rows are the successor\'s observations of the old incarnation', async (t) => {
+  const f = world('r7');
+  const { stub, oldIncarnation } = await driveHandoff(t, f);
+  const withdrawn = hostRow(f.ledgerPath, 'host.publication_withdrawn');
+  assert.ok(withdrawn, 'host.publication_withdrawn is durable (docs/48 §2 step 8)');
+  assert.equal(withdrawn.payload.incarnation, oldIncarnation, 'the withdrawal names the OLD incarnation');
+  const reincarnated = hostRow(f.ledgerPath, 'host.reincarnated');
+  assert.ok(reincarnated, 'host.reincarnated {from, to} is durable (docs/48 §2 step 8)');
+  assert.deepEqual(reincarnated.payload.from, { incarnation: oldIncarnation, commit: f.landing });
+  assert.deepEqual(reincarnated.payload.to, { incarnation: stub.spec.env.BATON_INCARNATION, commit: f.base });
+  assert.equal(reincarnated.payload.predecessorExited, true,
+    'the successor records the observed predecessor exit — the fact, never a clock (docs/48 §11)');
+  const order = hostOrder(f.ledgerPath);
   assert.ok(order.indexOf('host.reincarnated') > order.indexOf('host.successor_published'),
     'settlement follows the successor\'s publication');
 });
 
-test('#306 RED (stage: design-not-landed): §2 crash — a successor that dies before publishing records host.reincarnation_failed {step, cause:{exit, stderrTail}} and reopens admission', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r8', {
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild({ crash: true });
-      probe.child = handle.child;
-      probe.milestones = Promise.resolve();
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
+test('#306 §2 crash table: a successor that dies before readiness fails the verb with the durable row, admission reopens, the publication is untouched', async (t) => {
+  const f = world('r8');
+  let stub = null;
+  const { deployment } = await resident(t, f, {
+    onSpawn: (spec) => { stub = new StubSuccessor(spec); return stub; }, // never becomes ready
   });
-  assertSeam(f);
-  const receipt = await f.deployment.reincarnate({ target: f.shaA });
-  assert.equal(receipt?.reincarnation?.state, 'draining');
-  const failed = await until(() => hostRows(f).find((row) => row.kind === 'host.reincarnation_failed'));
-  assert.ok(failed, 'land host.reincarnation_failed — the old incarnation is the successor\'s parent and observes the exit (docs/48 §2 crash table)');
-  assert.equal(failed.step, 'successor_publish', 'the failure names the step that never completed');
-  assert.equal(failed.cause?.exit, 2, 'the cause carries the exit');
-  assert.match(failed.cause?.stderrTail ?? '', /stub successor exploded/u, 'and the bounded stderr tail (#326)');
-  const admitted = await f.deployment.run('after the failed reincarnation').then(
-    () => true, () => false);
-  assert.equal(admitted, true, 'admission reopens — the old incarnation keeps serving (docs/48 §2 crash table)');
-  const selector = JSON.parse(readFileSync(f.selectorPath, 'utf8'));
-  assert.equal(selector.incarnation, f.published.incarnation, 'the publication never moved');
+  const published = await deployment.host();
+  const pending = deployment.reincarnate({ target: f.base });
+  await until(() => stub !== null, { label: 'the successor spawn' });
+  stub.crash({ code: 7, tail: 'boom: the successor refused to start\n' });
+  const failure = await pending.then(() => null, (caught) => caught);
+  assert.equal(failure?.code, 'reincarnation_failed',
+    'the verb rejects: the caller learns the handoff failed, immediately and typed (docs/48 §2 crash table, §11)');
+  assert.equal(failure.detail?.step, 'successor_start');
+  assert.equal(failure.detail?.cause?.exit, 7);
+  assert.match(failure.detail?.cause?.stderrTail ?? '', /the successor refused to start/u,
+    'the cause carries the bounded stderr tail (#326)');
+  const row = await until(() => hostRow(f.ledgerPath, 'host.reincarnation_failed'), { label: 'the durable failure row' });
+  assert.equal(row.payload.step, 'successor_start');
+  assert.equal(row.payload.cause.exit, 7);
+  assert.equal(deployment.turnAdmissionRefusal(), null, 'admission reopens — the old incarnation keeps serving');
+  assert.equal(selectorOf(f).incarnation, published.incarnation, 'the publication never moved');
+  assert.equal(hostRow(f.ledgerPath, 'host.stopped'), null, 'no stop ran: the old incarnation is still serving');
 });
 
-test('#306 RED (stage: design-not-landed): §6 reincarnation_target_unreachable is typed and pre-effect', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r9', { makeSpawn: (fixture, probe) => async (args) => { probe.spawnCalls.push(args); throw new Error('must never spawn'); } });
-  assertSeam(f);
-  const target = 'f'.repeat(40);
-  const refused = await f.deployment.reincarnate({ target }).then(() => null, (caught) => caught);
+test('#306 §6: reincarnation_target_unreachable is typed and pre-effect', async (t) => {
+  const f = world('r9');
+  let spawns = 0;
+  const { deployment } = await resident(t, f, { onSpawn: () => { spawns += 1; throw new Error('must never spawn'); } });
+  await deployment.host();
+  const refused = await deployment.reincarnate({ target: 'refs/heads/does-not-exist' }).then(() => null, (caught) => caught);
   assert.equal(refused?.code, 'reincarnation_target_unreachable',
-    'an unresolvable commit-ish (the verb\'s fetch found no remote here) refuses typed (docs/48 §6)');
-  assert.equal(refused?.detail?.target ?? refused?.target, target, 'the refusal names the target');
-  assert.ok(!hostRows(f).some((row) => row.kind === 'host.reincarnation_requested'), 'pre-effect: nothing recorded');
-  assert.equal(f.probe.spawnCalls.length, 0, 'pre-effect: nothing spawned');
+    'an unresolvable commit-ish (no ref, no remote to fetch from) refuses typed (docs/48 §6)');
+  assert.equal(refused.detail?.target, 'refs/heads/does-not-exist', 'the refusal names the target');
+  assert.equal(refused.detail?.fetched, false, 'and whether the verb\'s fetch ran');
+  assert.equal(hostRow(f.ledgerPath, 'host.reincarnation_requested'), null, 'pre-effect: nothing recorded');
+  assert.equal(spawns, 0, 'pre-effect: nothing spawned');
 });
 
-test('#306 RED (stage: design-not-landed): §6 reincarnation_same_commit is typed and pre-effect', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r10', { makeSpawn: (fixture, probe) => async (args) => { probe.spawnCalls.push(args); throw new Error('must never spawn'); } });
-  assertSeam(f);
-  const refused = await f.deployment.reincarnate({ target: f.shaB }).then(() => null, (caught) => caught);
+test('#306 §6: reincarnation_same_commit is typed and pre-effect', async (t) => {
+  const f = world('r10');
+  let spawns = 0;
+  const { deployment } = await resident(t, f, { onSpawn: () => { spawns += 1; throw new Error('must never spawn'); } });
+  await deployment.host();
+  const refused = await deployment.reincarnate({ target: f.landing }).then(() => null, (caught) => caught);
   assert.equal(refused?.code, 'reincarnation_same_commit',
     'reincarnating to the commit the resident already serves refuses typed (docs/48 §6)');
-  assert.ok(!hostRows(f).some((row) => row.kind === 'host.reincarnation_requested'), 'pre-effect: nothing recorded');
-  assert.equal(f.probe.spawnCalls.length, 0, 'pre-effect: nothing spawned');
+  assert.equal(refused.detail?.served?.commit, f.landing, 'the refusal names the served commit');
+  assert.equal(hostRow(f.ledgerPath, 'host.reincarnation_requested'), null, 'pre-effect: nothing recorded');
+  assert.equal(spawns, 0, 'pre-effect: nothing spawned');
 });
 
-test('#306 RED (stage: design-not-landed): §6 reincarnation_in_flight is typed and pre-effect', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r11', {
-    makeSpawn: (fixture, probe) => async (args) => {
-      probe.spawnCalls.push(args);
-      const handle = stubChild(); // never publishes: the first attempt stays in flight
-      probe.child = handle.child;
-      probe.milestones = Promise.resolve();
-      return { pid: handle.child.pid, exit: handle.exit, stderrTail: handle.stderrTail };
-    },
+test('#306 §6: reincarnation_in_flight is typed and pre-effect, naming the successor it waits on', async (t) => {
+  const f = world('r11');
+  const stubs = [];
+  const { deployment, driver } = await resident(t, f, {
+    onSpawn: (spec) => { const stub = new StubSuccessor(spec); stub.becomeReady(); stubs.push(stub); return stub; },
   });
-  assertSeam(f);
-  const first = await f.deployment.reincarnate({ target: f.shaA });
-  assert.equal(first?.reincarnation?.state, 'draining');
-  const refused = await f.deployment.reincarnate({ target: f.shaA }).then(() => null, (caught) => caught);
+  await deployment.host();
+  // Hold the first handoff in its drain with one in-flight turn, so the second request meets it.
+  const handle = { id: 'w-inflight', status: 'working', turnInFlight: true, worktree: '/elsewhere', taskId: 'task-inflight' };
+  const realList = driver.coordinator.list.bind(driver.coordinator);
+  let inFlight = true;
+  driver.coordinator.list = () => (inFlight ? [...realList(), handle] : realList());
+  const first = deployment.reincarnate({ target: f.base });
+  const waiting = await until(() => hostRow(f.ledgerPath, 'host.stop_waiting'), { label: 'the first handoff\'s drain' });
+  assert.ok(waiting);
+  const refused = await deployment.reincarnate({ target: f.base }).then(() => null, (caught) => caught);
   assert.equal(refused?.code, 'reincarnation_in_flight',
     'a second request while the first is unresolved refuses typed (docs/48 §6)');
-  assert.equal(typeof (refused?.detail?.since ?? refused?.since), 'string', 'the refusal names when the in-flight attempt began');
-  assert.equal(refused?.detail?.successorPid ?? refused?.successorPid, f.probe.child.pid, 'and the successor it already started');
-  assert.equal(f.probe.spawnCalls.length, 1, 'the second request spawned nothing');
+  assert.equal(typeof refused.detail?.since, 'string', 'the refusal names when the in-flight attempt began');
+  assert.equal(refused.detail?.phase, 'waiting', 'and the phase it is in');
+  assert.equal(stubs.length, 0, 'the second request spawned nothing');
+  inFlight = false;
+  const receipt = await first;
+  assert.equal(receipt.state, 'reincarnating', 'the first handoff completes once the turn settles');
+  stubs[0].crash();
 });
 
-test('#306 RED (stage: design-not-landed): §6 reincarnation_checkout_held is typed and pre-effect', { timeout: 60_000 }, async (t) => {
-  const f = await hostedFixture(t, 'r12', { makeSpawn: (fixture, probe) => async (args) => { probe.spawnCalls.push(args); throw new Error('must never spawn'); } });
-  assertSeam(f);
-  allocatePhysicalWorkspaceOwner(f.repo, {
-    runId: 'issue306-run', attemptId: 'issue306-attempt', logicalTaskId: 'issue306-logical',
-    processGeneration: 1, baseSha: f.shaB,
-  }, {
-    deploymentId: 'issue306-holder-deployment', controllerId: 'issue306-holder-controller',
-    pid: process.pid, pidStart: 'issue306-live-holder',
-  });
-  const refused = await f.deployment.reincarnate({ target: f.shaA }).then(() => null, (caught) => caught);
+test('#306 §6: reincarnation_checkout_held is typed and pre-effect, naming the live holders', async (t) => {
+  const f = world('r12');
+  let spawns = 0;
+  const { deployment, driver } = await resident(t, f, { onSpawn: () => { spawns += 1; throw new Error('must never spawn'); } });
+  await deployment.host();
+  // A live worker whose worktree IS the serving checkout: the checkout move would stomp it
+  // (docs/48 §6, #428 custody — read from the coordinator's own live handles).
+  const handle = { id: 'w-holder', status: 'working', turnInFlight: false, worktree: f.repo, taskId: 'task-holder' };
+  const realList = driver.coordinator.list.bind(driver.coordinator);
+  driver.coordinator.list = () => [...realList(), handle];
+  const refused = await deployment.reincarnate({ target: f.base }).then(() => null, (caught) => caught);
+  driver.coordinator.list = realList;
   assert.equal(refused?.code, 'reincarnation_checkout_held',
-    'a live holder of the serving checkout (#428 custody) refuses the checkout move, typed (docs/48 §6)');
-  assert.ok(Array.isArray(refused?.detail?.holders ?? refused?.holders), 'the refusal names the holders');
-  assert.ok(!hostRows(f).some((row) => row.kind === 'host.reincarnation_requested'), 'pre-effect: nothing recorded');
-  assert.equal(f.probe.spawnCalls.length, 0, 'pre-effect: nothing spawned');
-});
-
-test('#306 RED (stage: design-not-landed): §5 host.reincarnated wakes the incarnation_changed class in the ONE wake table', () => {
-  assert.ok(WAKE_CLASSES.includes('incarnation_changed'),
-    "land 'incarnation_changed' in the closed WAKE_CLASS_TABLE (wake-stream.mjs) — never a side list (docs/48 §5)");
-  const row = wakeClassRow('incarnation_changed');
-  assert.equal(row?.terminal, false,
-    'a reincarnation settles nothing: terminal false, a sibling of dead in scope only (docs/48 §5)');
-  assert.ok(row?.rows?.some((matcher) => matcher.payloadKind === 'host.reincarnated'),
-    "the class derives from the ledger's host.reincarnated row through the ONE table's operationalKind matcher");
-  assert.equal(row?.scope, 'deployment', 'a deployment-scope wake: every bounded swarm watch sees it');
+    'a live holder of the serving checkout refuses the checkout move, typed (docs/48 §6)');
+  assert.deepEqual(refused.detail?.holders, ['w-holder'], 'the refusal names the holders');
+  assert.equal(hostRow(f.ledgerPath, 'host.reincarnation_requested'), null, 'pre-effect: nothing recorded');
+  assert.equal(spawns, 0, 'pre-effect: nothing spawned');
 });
