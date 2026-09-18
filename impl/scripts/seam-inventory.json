@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 489,
+          "size": 493,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -66,9 +66,19 @@
           ]
         },
         {
+          "name": "startupWorkerFleet",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb"
+          ]
+        },
+        {
           "name": "_startupReconstructionPasses",
           "ordinal": 0,
-          "size": 259,
+          "size": 289,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -164,7 +174,17 @@
         {
           "name": "_startupCleanupIncomplete",
           "ordinal": 0,
-          "size": 20,
+          "size": 34,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_startupReconcilerObservation",
+          "ordinal": 0,
+          "size": 40,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -3083,7 +3103,7 @@
         {
           "name": "writeScratchpad",
           "ordinal": 0,
-          "size": 51,
+          "size": 55,
           "seam": "observation",
           "evidence": [
             "admission:policy_gate",
@@ -4366,9 +4386,18 @@
           ]
         },
         {
+          "name": "_workflowPlanHistoryPolicyBound",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
           "name": "_workflowPlanHistory",
           "ordinal": 0,
-          "size": 41,
+          "size": 52,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -5069,9 +5098,10 @@
         {
           "name": "wait",
           "ordinal": 0,
-          "size": 30,
+          "size": 55,
           "seam": "surface",
           "evidence": [
+            "observation:durable_read",
             "surface:transport_dispatch"
           ]
         },
@@ -11920,7 +11950,7 @@
         {
           "name": "_activeWorkerHolders",
           "ordinal": 0,
-          "size": 15,
+          "size": 18,
           "seam": "observation",
           "evidence": [
             "observation:read_name"
@@ -11930,6 +11960,16 @@
           "name": "_reconcileHostCapacity",
           "ordinal": 0,
           "size": 5,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
+          "name": "_reconcileParticipantRuntimes",
+          "ordinal": 0,
+          "size": 30,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -12039,9 +12079,10 @@
           "name": "_mutationResult",
           "ordinal": 0,
           "size": 34,
-          "seam": "observation",
+          "seam": "recovery",
           "evidence": [
             "delegates:observation",
+            "delegates:recovery",
             "delegates:admission"
           ]
         },
@@ -12177,7 +12218,7 @@
         {
           "name": "_routeSelection",
           "ordinal": 0,
-          "size": 66,
+          "size": 71,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -12193,9 +12234,18 @@
           ]
         },
         {
+          "name": "_runtimeLostCurrent",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_canAct",
           "ordinal": 0,
-          "size": 4,
+          "size": 7,
           "seam": "admission",
           "evidence": [
             "admission:predicate_name"
@@ -12278,9 +12328,10 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 706,
-          "seam": "observation",
+          "size": 724,
+          "seam": "recovery",
           "evidence": [
+            "recovery:reconcile_call",
             "observation:swarm_attention_rows"
           ]
         },
@@ -12477,7 +12528,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 658,
+          "size": 663,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -14030,7 +14081,7 @@
         {
           "name": "reapExpiredContextPacks",
           "ordinal": 0,
-          "size": 9,
+          "size": 15,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name"
