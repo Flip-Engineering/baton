@@ -73,6 +73,17 @@ export function attachmentClosedFrame(reason, { at = new Date().toISOString(), r
   });
 }
 
+/** The typed final frame a CONSUMER received on the wire, or null when the body is not one (#316 b).
+ * The SSE leg writes it on its `event: ended` marker exactly as the loopback binding writes it on a
+ * WebSocket, and a consumer that was told why its attachment ended carries THAT frame onward — the
+ * resident computed `at` and `resumeFrom`, so nobody re-derives what it was just told. A body whose
+ * reason is outside the ONE closed set is not one, and the transport's own end is derived instead. */
+function attachmentClosedReceived(body) {
+  if (body?.kind !== 'baton.wake_attachment_closed') return null;
+  if (!ATTACHMENT_CLOSED_REASONS.includes(body.reason)) return null;
+  return attachmentClosedFrame(body.reason, { at: body.at, resumeFrom: body.resumeFrom });
+}
+
 function typed(message, code, detail = undefined) {
   return Object.assign(new Error(message), { code, ...(detail === undefined ? {} : { detail }) });
 }
@@ -813,10 +824,13 @@ export function openWakeStream({
     const finish = (outcome) => {
       signal?.removeEventListener?.('abort', abort);
       // The typed final frame: an attachment that REFUSED never attached, so it says nothing here
-      // (its refusal is already typed); every attachment that opened and then ended does.
+      // (its refusal is already typed); every attachment that opened and then ended does. A frame
+      // the resident itself wrote (#316 b) rides verbatim — it already carries the instant and the
+      // cursor — and every other end is derived through the ONE mapping.
       const settled = outcome.status === 'refused' ? outcome : Object.freeze({
         ...outcome,
-        attachmentClosed: attachmentClosedFrame(attachmentClosedReason(outcome), { resumeFrom: reached }),
+        attachmentClosed: outcome.attachmentClosed
+          ?? attachmentClosedFrame(attachmentClosedReason(outcome), { resumeFrom: reached }),
       });
       resolve(settled);
       settleOpened(settled);
@@ -873,6 +887,19 @@ export function openWakeStream({
           // Issue #356: the resident's own end marker — `event: ended` carrying a
           // baton.wake_stream_ended body whose reason names the close from the ONE closed set.
           // It ENDS the attachment with that reason; it is never delivered as a wake frame.
+          // Issue #316 (b): the SSE leg writes the SAME `event: ended` carrying the typed final
+          // frame, which is the resident naming itself — carried verbatim, with its reason read
+          // back into the outcome vocabulary this client speaks (a `restart` IS the resident
+          // stopping) so one end is never reported two ways downstream.
+          const closed = attachmentClosedReceived(frame);
+          if (closed !== null) {
+            finish({
+              status: closed.reason === 'error' ? 'error' : 'ended',
+              reason: closed.reason === 'restart' ? 'resident_stopping' : closed.reason,
+              attachmentClosed: closed,
+            });
+            return;
+          }
           finish({
             status: 'ended',
             reason: WAKE_STREAM_END_REASONS.includes(frame?.reason) ? frame.reason : undefined,
