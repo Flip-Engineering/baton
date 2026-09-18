@@ -102,6 +102,26 @@ async function serveDeployment(rawDeployment) {
     shutdown: async () => { await announced; return deployment.close(); },
     announce: narration,
   });
+  // Issue #383: a resident never dies silently. An exception nobody caught (the EPIPE that took
+  // two residents down on 2026-09-18 before the per-connection handler existed) is narrated with
+  // its code and stack head, recorded as the stop request's trigger through the deployment's own
+  // writer path, and routed through the SAME stop path a signal takes — workers reaped, leases
+  // released, the ledger told — instead of Node's bare exit.
+  let crashing = false;
+  const lastResort = (label) => (error) => {
+    if (crashing) return;
+    crashing = true;
+    const code = error?.code ?? error?.name ?? 'error';
+    const head = String(error?.stack ?? error?.message ?? error).split('\n').slice(0, 3).join(' | ');
+    process.stderr.write(`${flipAnnounce('failed', `baton serve: ${label} (${code}): ${head} — stopping through the drain`, { tty: TTY, color: TTY })}\n`);
+    try { deployment.recordStopRequested?.(`${label}:${code}`); } catch { /* the stop narrates without the row */ }
+    process.exitCode = 1;
+    process.emit('SIGTERM');
+  };
+  const onUncaught = lastResort('uncaught_exception');
+  const onUnhandled = lastResort('unhandled_rejection');
+  process.on('uncaughtException', onUncaught);
+  process.on('unhandledRejection', onUnhandled);
   let outcome;
   try {
     outcome = await lifecycle.run(async ({ signal }) => {
