@@ -1,21 +1,22 @@
-// Issue #268 (remainder) / #364 (view half) red-before skeleton (stage: design-not-landed):
-// activity and usage on the participant row, the ONE liveness derivation's closed state set,
-// the root as a participant row, attention coverage, and the view's no-process-spawn cost rule —
-// as specified by docs/46-swarm-visibility.md §1, §5, §6 and §7.
+// Issue #268 (remainder) / #364 (view half) red-first skeleton: activity and usage on the
+// participant row, the ONE liveness derivation's closed state set, the root as a participant row,
+// attention coverage, and the view's no-process-spawn cost rule — as specified by
+// docs/46-swarm-visibility.md §1, §5, §6 and §7.
 //
-// Every row asserts the behaviour docs/46 specifies against the CURRENT runtime and is expected
-// RED: today a participant row carries no activity/usage (#268), a seat whose worker died across
-// a resident restart reads runtime {state: idle, live: true, turn: paused} with no 'lost' value
-// in any exported closed set (#364 view half — the runtime half, swarm.participant_runtime_lost,
-// is another lane's), the root's reviews land with reviewerId: null and no actor row (root
-// standing gap b), attention is a bare array with no coverage (gap c), and inspect() shells out
-// to git per seat per view (gap d, #438). Each row's message names what the implementer must
-// land. When a row goes green the expected-red manifest entry for it is stale and is retired
-// with the landing (docs/44).
-//
-// Manifest plan (docs/44 rule 5): these rows list with reason #268. The manifest
-// (impl/scripts/expected-red-tests.json) is outside this design lane's path scope; listing the
-// rows is the implementing lane's first act, named in docs/46 §11.
+// LANDED (lane ds-268b, 2026-09-18): the activity/usage row — a participant row carries
+// `activity {lastEventKind, lastEventAt, turnsCompleted, contributions}` and
+// `usage {tokens|'unavailable', providerCalls|'unavailable'}` from the ONE derivation
+// (swarm-runtime.mjs `_seatActivity`, the same rows `run.peers.read` projects), and its manifest
+// row is retired. The no-spawn cost rule (gap d, #438) landed before it. The rows below still pin
+// stages that have NOT landed; each row's name says which:
+//   • #364 view half — `SWARM_PARTICIPANT_RUNTIME_STATES` is not exported, the ONE liveness
+//     derivation has no runtime-lost input, and the brief's Peers block still lists a seat whose
+//     worker is dead (the stored row carries no runtime reading, so `_canAct` passes it);
+//   • root standing gap b — no synthesized `root` participant row, so the root's reviews land with
+//     `reviewerId: null` and no actor row renders them;
+//   • root standing gap c — `attention` is a bare array with no `{rows, coverage}` envelope.
+// Each row's message names what the implementer must land. When a row goes green the expected-red
+// manifest entry for it is stale and is retired with the landing (docs/44).
 //
 // Fixture: the light SwarmRuntime harness (swarm-runtime.test.mjs) — no adapter. The no-spawn row
 // shims `git` on PATH: any spawn lands in the spy log, and exit 1 reads as absence.
@@ -65,7 +66,7 @@ function fixture(t) {
   return { store, runtime, workers, starts, call, recruit, participantRow, directory };
 }
 
-test('#268 RED (stage: design-not-landed): the participant row carries activity and usage from folded rows', async (t) => {
+test('#268: the participant row carries activity and usage from folded rows', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Activity and usage visibility (#268)' });
   await f.recruit('builder');
@@ -86,7 +87,7 @@ test('#268 RED (stage: design-not-landed): the participant row carries activity 
     'land usage {tokens|unavailable, providerCalls|unavailable}: absence is labelled per field, never zero-filled (docs/46 §1.2 rule 2)');
 });
 
-test('#364 RED (stage: design-not-landed): the closed runtime state set is exported and every surface reads the ONE derivation', async (t) => {
+test('#364 RED (stage: SWARM_PARTICIPANT_RUNTIME_STATES not exported): the closed runtime state set is exported and every surface reads the ONE derivation', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'One liveness (#364 view half)' });
   await f.recruit('alpha');
@@ -109,7 +110,7 @@ test('#364 RED (stage: design-not-landed): the closed runtime state set is expor
     'land the brief fix: a seat _canAct rejects is never listed as a working peer (docs/46 §4.2 rule 1)');
 });
 
-test('#268 RED (stage: design-not-landed): the root is a participant row and its acts render attributed', async (t) => {
+test('#268 RED (stage: the root participant row not landed): the root is a participant row and its acts render attributed', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'The root has an actor row (root standing gap b)' });
   await f.recruit('builder');
@@ -138,7 +139,7 @@ test('#268 RED (stage: design-not-landed): the root is a participant row and its
     'root is a reserved participant name: it is derived, never recruited (docs/46 §5.1)');
 });
 
-test('#268 RED (stage: design-not-landed): attention carries its coverage — examined seats are named', async (t) => {
+test('#268 RED (stage: the attention coverage envelope not landed): attention carries its coverage — examined seats are named', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Attention coverage (root standing gap c)' });
   await f.recruit('builder');
@@ -151,7 +152,7 @@ test('#268 RED (stage: design-not-landed): attention carries its coverage — ex
     'coverage.examined names every participant the attention derivation evaluated this read (docs/46 §6.2)');
 });
 
-test('#268 RED (stage: design-not-landed): swarm.view --projection participants spawns no process (#438)', async (t) => {
+test('#268: swarm.view --projection participants spawns no process (#438)', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'A read never spawns (#438, docs/46 §7)' });
   await f.recruit('builder');

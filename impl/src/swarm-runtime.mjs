@@ -995,6 +995,14 @@ export const SWARM_BRIEF_EXPOSURE_CLASSES = Object.freeze([
   'self', 'subtree', 'checkout', 'group', 'swarm', 'repository',
 ]);
 
+/** docs/46 §1.2 (#268) rule 3: what a seat with nothing recorded reads — absence labelled as
+ * absence, never invented. Minted in ONE place (`_seatActivity`), so every surface that carries
+ * the fields renders the same empty shape. */
+const SEAT_FACTS_UNRECORDED = Object.freeze({
+  activity: Object.freeze({ lastEventKind: null, lastEventAt: null, turnsCompleted: 0, contributions: 0 }),
+  usage: Object.freeze({ tokens: 'unavailable', providerCalls: 'unavailable' }),
+});
+
 export class SwarmRuntime {
   /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
    * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
@@ -2893,6 +2901,11 @@ export class SwarmRuntime {
       }));
       commitsByParticipant.set(payload.participantId, rows);
     }
+    // docs/46 §1.2 (#268): the ONE activity/usage derivation — folded ONCE per view from the
+    // ledger this projection already holds, for every seat at once. It is TOTAL over the swarm's
+    // participants (every one reads the recorded shape or the empty one), which is why the row
+    // below carries its half without a fallback: absence is a value here, not a missing key.
+    const seatActivity = this._seatActivity(swarm, ledger, workers);
     // Issue #438: the change set's cold fill, taken BEFORE the participant rows are built so a
     // seat's row reads the same `source` in every view of one unchanged state — the fill IS the
     // observation the row then shows. Only a projection that carries the attention rows pays it
@@ -2913,6 +2926,8 @@ export class SwarmRuntime {
     const exposureFacts = this._briefExposureFacts(swarm, caller);
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
+      // docs/46 §1.2 (#268): this seat's half of the ONE derivation above.
+      const seatFacts = seatActivity.get(participant.participantId);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
       // The ONE liveness derivation (swarmParticipantLiveness): state, turn and "is this seat
       // alive at all" come from it, so the view, the wake feed and the bridge agree by
@@ -3021,6 +3036,11 @@ export class SwarmRuntime {
         // null: like a dead worker, a completed one has no paused turn left to guide.
         runtime: { workerId: worker?.id ?? null, state: completed ? 'completed' : liveness.state,
           turn: liveness.turn, live: liveness.live },
+        // docs/46 §1.2 (#268): the seat's activity and usage, from the ONE derivation above —
+        // the same objects `run.peers.read` projects, so "is it alive, is it doing anything, what
+        // has it cost" reads off the view instead of a raw worker log.
+        activity: seatFacts.activity,
+        usage: seatFacts.usage,
         // Issue #337: delivered guidance (the nudge lane) beside the guidance parked for a seat
         // whose harness takes no mid-turn delivery, with its delivery state.
         guidance: [...guidance, ...(parkedGuidanceByParticipant.get(participant.participantId) ?? [])],
@@ -4200,7 +4220,7 @@ export class SwarmRuntime {
     }
     if (command === 'run.package.read') return this._packageRead(swarm, args, caller);
     if (command === 'run.contributions.read') return this._contributionsRead(swarm, args);
-    return this._peersRead(swarm, caller);
+    return this._peersRead(swarm, caller, this.store.eventsView());
   }
 
   /** `run.package.read` (#441 item 1): the package's branch list, or ONE branch's text.
@@ -4287,6 +4307,102 @@ export class SwarmRuntime {
     return { swarmId: swarm.swarmId, since, rows, cursor, truncated };
   }
 
+  /** docs/46 §1.2 (#268): the ONE participant activity/usage derivation, over the ledger the
+   * caller ALREADY holds — one fold for the whole roster, never a second pass per seat (#438),
+   * and never a read of the worker's own log.
+   *
+   * A row belongs to a seat when it names the seat directly, or names its run, one of its binding
+   * workers, or one of their tasks — the SAME attribution the wake stream builds (wake-stream.mjs
+   * `_attribution`), never a second map with its own rules. The operational kind of a container
+   * row IS its payload kind: `driver.recorded` carries the runtime's own rows (guidance, refusals,
+   * operation receipts) and `evidence.mapped` the coordinator's ordering coordinate for a worker
+   * event, so a seat's `lifecycle.turn_completed` / `resource.tokens` / `resource.provider_call`
+   * rows are already in the ledger this runtime folds. `contributions` counts the fold's own
+   * `swarm.contributions` rows — the durable half of the activity that outlives the worker.
+   *
+   * `usage` reads the coordinator's ONE usage fold for the token VALUE (a mapped row is a
+   * coordinate; the value lives in the worker's log), and per field answers the string
+   * `'unavailable'` — never a zero pretending to be a measurement — when the adapter reported no
+   * such row or the host wires no fold. The fold is asked only for a seat whose adapter reported
+   * token rows at all, so a quiet seat costs nothing.
+   *
+   * The map is TOTAL over `swarm.participants` — every seat reads a value, never a missing key:
+   * a seat the ledger never named and that published nothing reads `SEAT_FACTS_UNRECORDED`. */
+  _seatActivity(swarm, ledger, workers) {
+    const attribution = new Map();
+    for (const participant of Object.values(swarm.participants)) {
+      if (typeof participant.runId === 'string' && participant.runId.length > 0) {
+        attribution.set(participant.runId, participant.participantId);
+      }
+      for (const binding of participant.bindings ?? []) {
+        if (typeof binding.taskId === 'string') attribution.set(binding.taskId, participant.participantId);
+        if (typeof binding.workerId === 'string') attribution.set(binding.workerId, participant.participantId);
+      }
+    }
+    const observed = new Map();
+    const observedOf = (participantId) => {
+      let row = observed.get(participantId);
+      if (row === undefined) {
+        row = { lastEventKind: null, lastEventAt: null, turnsCompleted: 0, tokensReported: false, providerCalls: 0 };
+        observed.set(participantId, row);
+      }
+      return row;
+    };
+    for (const event of ledger) {
+      const payload = event.payload ?? null;
+      if (payload === null || typeof payload !== 'object') continue;
+      // Two swarms can each hold a seat spelling the same id: the payload's own swarmId decides,
+      // and a row that names none is attributed by its ids alone (they are globally unique).
+      if (typeof payload.swarmId === 'string' && payload.swarmId !== swarm.swarmId) continue;
+      const kind = event.kind === 'driver.recorded' || event.kind === 'evidence.mapped'
+        ? payload.kind ?? event.kind : event.kind;
+      const participantId = typeof payload.participantId === 'string'
+        && Object.hasOwn(swarm.participants, payload.participantId) ? payload.participantId
+        : attribution.get(payload.runId) ?? attribution.get(payload.worker)
+          ?? attribution.get(payload.taskId) ?? null;
+      if (participantId === null) continue;
+      const row = observedOf(participantId);
+      // The ledger is in seq order: the last attributed row is the seat's latest known event.
+      row.lastEventKind = kind;
+      row.lastEventAt = typeof event.ts === 'string' ? event.ts : null;
+      if (kind === 'lifecycle.turn_completed') row.turnsCompleted += 1;
+      else if (kind === 'resource.tokens') row.tokensReported = true;
+      else if (kind === 'resource.provider_call') row.providerCalls += 1;
+    }
+    const contributions = new Map();
+    for (const contribution of Object.values(swarm.contributions ?? {})) {
+      const author = contribution?.participantId;
+      if (typeof author !== 'string') continue;
+      contributions.set(author, (contributions.get(author) ?? 0) + 1);
+    }
+    const facts = new Map();
+    for (const participant of Object.values(swarm.participants)) {
+      const row = observed.get(participant.participantId) ?? null;
+      const count = contributions.get(participant.participantId) ?? 0;
+      if (row === null && count === 0) {
+        facts.set(participant.participantId, SEAT_FACTS_UNRECORDED);
+        continue;
+      }
+      const worker = this._workerFor(participant, workers);
+      const fold = row !== null && row.tokensReported && worker !== null
+        && typeof this.coordinator.workerActivity === 'function'
+        ? this.coordinator.workerActivity(worker.id) : null;
+      facts.set(participant.participantId, Object.freeze({
+        activity: Object.freeze({
+          lastEventKind: row?.lastEventKind ?? null,
+          lastEventAt: row?.lastEventAt ?? null,
+          turnsCompleted: row?.turnsCompleted ?? 0,
+          contributions: count,
+        }),
+        usage: Object.freeze({
+          tokens: fold !== null && Number.isSafeInteger(fold.usage?.tokens) ? fold.usage.tokens : 'unavailable',
+          providerCalls: row !== null && row.providerCalls > 0 ? row.providerCalls : 'unavailable',
+        }),
+      }));
+    }
+    return facts;
+  }
+
   /** `run.peers.read` (#441 item 3, docs/45 §6 peers-now): for every OTHER seat that can act, what
    * it was recruited as, what it holds, and where its last checkpoint is.
    *
@@ -4297,8 +4413,12 @@ export class SwarmRuntime {
    * they cost a process spawn per seat per view, and what a peer HOLDS is durable. `at.seq` names
    * the ledger head this read observed, so a checkpoint's age is an honest ledger distance
    * (`age.seqs`) rather than a clock. */
-  _peersRead(swarm, caller) {
+  _peersRead(swarm, caller, ledger = null) {
     const workers = this.coordinator.list();
+    // The peers-now rows carry the participant row's OWN activity/usage — the ONE derivation —
+    // when the caller holds a ledger to derive it from; `null` (a caller composing without one)
+    // omits the fields rather than inventing them.
+    const seatActivity = ledger === null ? null : this._seatActivity(swarm, ledger, workers);
     const headSeq = this.store.ledgerHeadSeq();
     const pageItems = FRAME_LIMITS['view.seat_read.items'].value;
     // The last checkpoint a seat pinned, from the fold's own contribution rows: the newest
@@ -4375,6 +4495,7 @@ export class SwarmRuntime {
       const runtime = { workerId: worker?.id ?? null, state: liveness.state, turn: liveness.turn, live: liveness.live };
       if (!this._canAct({ ...participant, runtime })) continue;
       if (peers.length >= pageItems) { omitted += 1; continue; }
+      const facts = seatActivity === null ? null : seatActivity.get(participant.participantId);
       peers.push(Object.freeze({
         participantId: participant.participantId, role: participant.role ?? null,
         status: participant.status, route: participant.route ?? null, scope: participant.scope ?? null,
@@ -4384,6 +4505,7 @@ export class SwarmRuntime {
         lastContribution: latestContribution.has(participant.participantId)
           ? Object.freeze(latestContribution.get(participant.participantId)) : null,
         holds: holdsOf(participant.participantId),
+        ...(facts === null ? {} : { activity: facts.activity, usage: facts.usage }),
       }));
     }
     return { swarmId: swarm.swarmId, caller: { participantId: caller.participantId },
@@ -4863,8 +4985,10 @@ export class SwarmRuntime {
    * resident that serves a commit behind its target, the ONE `## Base` line saying so (#306 lane B),
    * and, for a `resumeFrom` successor, the predecessor's inheritance. The composition is written
    * ONCE onto the join as `brief`, so the swarm's own record of what a seat was told is the brief
-   * every surface renders. */
-  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null, baseAdvisory = null, recruitedScope = null) {
+   * every surface renders. `ledger` is the CALLER's own coordination read: the peers-now block's
+   * rows carry the activity and usage `run.peers.read` serves (docs/46 §1.2, #268) — and a caller
+   * without one (the compose-only call) omits those fields rather than scanning one itself. */
+  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null, baseAdvisory = null, recruitedScope = null, ledger = null) {
     const blocks = [args.objective];
     // Issue #345: the seat's own assignment — the work item the swarm knows it holds — rides the
     // brief first, so "your work item is work-N" is read from the assignment, never retyped.
@@ -4889,7 +5013,7 @@ export class SwarmRuntime {
     // seat being recruited — never a second peers computation, and never a live repository read
     // (the section is durable rows only, #438). `omitted` is said out loud: a bounded list is
     // never a silently short one.
-    const peersNow = this._peersRead(swarm, { participantId: args.participantId });
+    const peersNow = this._peersRead(swarm, { participantId: args.participantId }, ledger);
     if (peersNow.peers.length > 0) {
       situation.push('Peers now:');
       for (const peer of peersNow.peers) situation.push(renderPeerNowLine(peer));
@@ -6130,10 +6254,14 @@ export class SwarmRuntime {
         const currentSwarm = this._swarm(args.swarmId);
         const parkedDeliveries = this._undeliveredParkedGuidance(
           [args.participantId, args.resumeFrom ?? null]);
+        // docs/46 §1.2 (#268): the recruit path's own ledger read, handed to the composer so the
+        // brief's peers-now rows carry the seat activity `run.peers.read` answers — the composer
+        // itself never scans (441c-b).
+        const briefLedger = this.store.eventsView();
         // #306 lane B: the stale-base facts, read ONCE here so the line the brief is composed with
         // and the advisory the receipt carries are the same read of the deployment's own row.
         const baseFacts = this._baseBehind();
-        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope);
+        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
         // whose work would be starved is not started: while the derived host budget has no room,
         // the request waits IN ORDER as a visible queue entry and its typed queued row is

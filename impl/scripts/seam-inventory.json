@@ -12946,7 +12946,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1066,
+          "size": 1078,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13096,9 +13096,18 @@
           ]
         },
         {
+          "name": "_seatActivity",
+          "ordinal": 0,
+          "size": 74,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
           "name": "_peersRead",
           "ordinal": 0,
-          "size": 93,
+          "size": 99,
           "seam": "admission",
           "evidence": [
             "delegates:observation",
@@ -13382,7 +13391,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 935,
+          "size": 939,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
