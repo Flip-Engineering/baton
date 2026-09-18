@@ -765,3 +765,7 @@ Swarm situation lists only seats that can act and adds one line counting the sea
 or stopped since the base, so a successor knows the history without being told the dead are
 working. The stop receipt's event is the `participant_left` row and its `changed` names the
 participant; a stopped checkout source refuses `source_left` before its liveness is consulted.
+A stop of a seat with no live runtime (worker dead, exited, orphaned, or never bound) skips the
+run drain entirely and settles the membership row at once (issue #353); a stop that does wait on a
+live worker answers a pending receipt whose observation names the seat's own row (`baton swarm view
+<swarm> --participant-id <seat>`), never `doctor --check`.
