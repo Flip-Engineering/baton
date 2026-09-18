@@ -484,3 +484,21 @@ test('issue389-b-receipt-eof: the beyond-EOF refusal receipt carries the actual 
     `the receipt carries the file's actual line count (${expectedCount}): ${body.slice(0, 400)}`);
   assert.match(body, /next|retry|narrow|action/i, 'the receipt names the next action');
 });
+
+test('issue389-a-frame: the served lines reach the provider-bound frame the worker reads', async () => {
+  const lane = orientedLane({ 'src/alpha.js': ALPHA_TEXT }, 'a-frame');
+  const { handle, citation } = await mapCitation(lane, 'issue389-af');
+  emitCodeRead(lane.adapter, handle,
+    { kind: 'code', op: 'code.orient.detail', citation, path: 'src/alpha.js', range: { start: { line: 4 }, end: { line: 5 } } },
+    'issue389-af-detail');
+  await flush(40);
+  const payload = readResults(lane.coordinator, handle).at(-1)?.payload ?? {};
+  assert.equal(payload.ok ?? null, true, 'the detail answers');
+  assert.deepEqual(payload.detail?.lines ?? null, expectedLines(4, 5), 'the served lines are the file lines 4..5');
+  const text = (call) => (typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''));
+  const served = expectedLines(4, 5).map((row) => row.text);
+  const framed = lane.adapter.calls.prompt.filter((call) => text(call).includes('UNTRUSTED'));
+  assert.ok(framed.length >= 1, 'the detail answer is delivered to the provider through the read port (not receipt-only)');
+  assert.ok(framed.some((call) => served.every((line) => text(call).includes(line))),
+    'the delivered frame carries the served lines themselves, never zero bytes with ok:true');
+});
