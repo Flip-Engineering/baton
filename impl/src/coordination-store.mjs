@@ -1114,6 +1114,17 @@ export class CoordinationStore {
 
   _projectionCheckpointPayload({ durable = false } = {}) {
     const payload = Object.fromEntries(PROJECTION_CHECKPOINT_FIELDS.map((field) => [field, this[field]]));
+    // Issue #465(2): the body's LARGEST rendering family. The checkpoint serializes a projection
+    // of the ledger, and the swarm snapshot's per-seat rows are where its text collects: measured
+    // on the clone's checkpoint (288 671 406 B), `_swarms.participants` is 17 422 263 B and 99.3%
+    // of that is the composed recruit brief — the very text the seat's `swarm.participant_joined`
+    // row holds, so the projection stored it twice (measured: all 114 rows byte-identical to their
+    // join rows, 8 693 521 B of text, median 86 035 B and max 159 624 B per seat). The body
+    // carries the reference instead (the fold's own `briefBytes` + `briefRef`, the #464 derivation
+    // the view already bounds a row's text with), which measures 126 805 B for the same family: it
+    // is bounded by the registry rows that bound a row's carried text, never by how long a
+    // recruiter's brief happens to be.
+    payload._swarms = this._boundedSwarmProjection(payload._swarms);
     // #223: the checkpoint is a parsed-event cache for the LIVE WINDOW. When the ledger has
     // been compacted (archived events live in segments, not in events.jsonl), the cache holds
     // only the window events — they are the exact bytes of the current ledger, so the
@@ -1131,6 +1142,38 @@ export class CoordinationStore {
         : event);
     }
     return payload;
+  }
+
+  /** Issue #465(2): the swarm family AS THE PROJECTION CARRIES IT — a participant row's composed
+   * brief is referenced instead of copied. The reference is the fold's OWN (`briefBytes` +
+   * `briefRef {kind, seq}`, the `participantBriefReach` derivation minted at the join (#464 third half) and carried
+   * through every later re-mint): the body renders `brief: null` where the row names the row that
+   * holds the text, and derives nothing of its own — ONE derivation, so the checkpoint and the
+   * view cannot disagree about where a brief lives.
+   *
+   * The store's own fold rows are untouched — the live view still renders the whole text — and
+   * this is the checkpoint body's rendering: no reader of the body consumes these families (the
+   * restore reads the parsed window and its idempotency index; `coordination-replay.mjs`
+   * `_loadRun` re-applies every ledger row under the current policies), so a reference here
+   * cannot change the state a checkpoint restores. A swarm whose rows carry no brief is passed
+   * through untouched (the identity the write's own measurement then reports). */
+  _boundedSwarmProjection(swarms) {
+    if (!(swarms instanceof Map) || swarms.size === 0) return swarms;
+    const bounded = new Map();
+    for (const [swarmId, swarm] of swarms) {
+      const participants = swarm?.participants ?? null;
+      if (participants === null || typeof participants !== 'object') { bounded.set(swarmId, swarm); continue; }
+      const rows = Object.create(null);
+      let referenced = false;
+      for (const [participantId, row] of Object.entries(participants)) {
+        if (typeof row?.brief === 'string' && row.brief.length > 0 && row.briefRef != null) {
+          rows[participantId] = Object.freeze({ ...row, brief: null });
+          referenced = true;
+        } else { rows[participantId] = row; }
+      }
+      bounded.set(swarmId, referenced ? Object.freeze({ ...swarm, participants: Object.freeze(rows) }) : swarm);
+    }
+    return bounded;
   }
 
   /** Issue #449: the ONE writer of the projection checkpoint. It returns the bytes it MEASURED
@@ -1189,7 +1232,13 @@ export class CoordinationStore {
     }
     // The ledger is proven at the prefix the load folded; the encode that follows is its own step.
     yield;
-    const projectionBytes = serialize(this._projectionCheckpointPayload({ durable: true }));
+    const payload = this._projectionCheckpointPayload({ durable: true });
+    const projectionBytes = serialize(payload);
+    // Issue #465(1): the byte breakdown is a READING of this one measurement — the same payload
+    // object, put through the same `serialize` — never a second accounting that could disagree
+    // with the ceiling above. Measured cost of the reading, on the clone's 288.87 MB projection
+    // with 101 families: 0.26 s beside the 0.35 s the serialize itself costs.
+    this._checkpointByteBreakdown = this._projectionByteBreakdown(payload, projectionBytes.byteLength);
     if (costBound !== null && projectionBytes.byteLength > costBound) {
       return { written: false, bytes: projectionBytes.byteLength, measured: true };
     }
@@ -1246,6 +1295,65 @@ export class CoordinationStore {
     }
   }
 
+  /** Issue #465(1): WHICH family the measured projection's bytes belong to. The write above judges
+   * the checkpoint on ONE number — the serialized projection — and a reader of that number could
+   * not see where it came from (the issue's own guess-list ran from briefs to tool rows while the
+   * measured answer was the parsed window). This reads the SAME payload through the SAME
+   * serializer, once per family, in the payload's own key order (never a hand-typed list of
+   * families: it iterates the object it was handed), and reports three measured numbers:
+   *
+   *   `bytesByFamily[f]`       f's OWN serialization — what the family costs when it is the thing
+   *                            being encoded (measured on the clone: `_events` 180.16 MB of the
+   *                            288.87 MB projection, `_webCommands` 39.21 MB, `_swarms`
+   *                            18.04 MB, `_byKey` 181.83 MB — the last one a TRAP the breakdown
+   *                            exists to expose, see below);
+   *   `projectionBaselineBytes` the framing the whole body pays for its own key set (the payload
+   *                            with every family emptied — hundreds of bytes, not a share);
+   *   `sharedBytes`            what the families' own serializations count MORE THAN ONCE. `v8`
+   *                            encodes a repeated OBJECT as a back-reference, so a family that
+   *                            re-references an earlier family's objects is nearly free in the
+   *                            stream while its own serialization is not: `_byKey` indexes the
+   *                            events `_events` already wrote (measured: 179.76 MB of the 204.03 MB
+   *                            total sharing on the clone), and `_planHeads`/`_goalHeads` alias the
+   *                            plans and goals. The breakdown reports it rather than hiding it, and
+   *                            the identity it closes on is exact:
+   *
+   *       Σ bytesByFamily + projectionBaselineBytes − sharedBytes === bytes
+   *
+   * A reader who compares `bytesByFamily` entries without `sharedBytes` would bound the wrong
+   * family (on the clone, `_byKey` reads 63% and owns 0.7%); with it, the same reader sees the
+   * events family for what it is. */
+  _projectionByteBreakdown(payload, projectionBytes) {
+    const bytesByFamily = {};
+    let summed = 0;
+    for (const family of Object.keys(payload)) {
+      const bytes = serialize(payload[family]).byteLength;
+      bytesByFamily[family] = bytes;
+      summed += bytes;
+    }
+    const baseline = serialize(this._emptyProjectionShape(payload)).byteLength;
+    return freeze({
+      bytesByFamily: freeze(bytesByFamily),
+      projectionBaselineBytes: baseline,
+      sharedBytes: summed + baseline - projectionBytes,
+      projectionBytes,
+    });
+  }
+
+  /** Issue #465(1): the payload's own shape with every family EMPTIED — the key set and its
+   * container headers, nothing else. Derived from the object it is handed (each family keeps its
+   * own container kind), so the baseline moves with the projection's shape instead of a literal. */
+  _emptyProjectionShape(payload) {
+    const shape = {};
+    for (const family of Object.keys(payload)) {
+      const value = payload[family];
+      shape[family] = value instanceof Map ? new Map()
+        : Array.isArray(value) ? []
+          : (value !== null && typeof value === 'object' ? {} : null);
+    }
+    return shape;
+  }
+
   /** Issue #351/#449: a clean release writes the projection checkpoint while the checkpoint is
    * still a BOUNDED record. The checkpoint is housekeeping (#229: crash-recovery acceleration; the
    * ledger stays authoritative), but `_writeProjectionCheckpoint` pays `readFileSync` of the whole
@@ -1298,7 +1406,7 @@ export class CoordinationStore {
     if (phase === 'deferred' && verdict !== null && verdict.rows <= declared.rows && verdict.bytes > cost.value) {
       return freeze({
         state: 'skipped', reason: `${phase}_checkpoint_unbounded`, bytes: verdict.bytes,
-        ...declared, measuredAtRows: verdict.rows,
+        ...declared, measuredAtRows: verdict.rows, ...this._checkpointByteFields(),
       });
     }
     try {
@@ -1307,12 +1415,13 @@ export class CoordinationStore {
         return freeze({ state: 'skipped', reason: 'projection_poisoned', bytes: null, ...declared });
       }
       this._checkpointCostVerdict = freeze({ bytes: written.bytes, rows: declared.rows });
+      const measured = this._checkpointByteFields();
       return written.written
-        ? freeze({ state: 'written', reason: null, bytes: written.bytes, ...declared })
-        : freeze({ state: 'skipped', reason: `${phase}_checkpoint_unbounded`, bytes: written.bytes, ...declared });
+        ? freeze({ state: 'written', reason: null, bytes: written.bytes, ...declared, ...measured })
+        : freeze({ state: 'skipped', reason: `${phase}_checkpoint_unbounded`, bytes: written.bytes, ...declared, ...measured });
     } catch {
       // The ledger stays authoritative; cache telemetry cannot block the path that reached here.
-      return freeze({ state: 'failed', reason: 'checkpoint_write_failed', bytes: null, ...declared });
+      return freeze({ state: 'failed', reason: 'checkpoint_write_failed', bytes: null, ...declared, ...this._checkpointByteFields() });
     }
   }
 
@@ -1325,6 +1434,22 @@ export class CoordinationStore {
       ledgerBytes: this._loadedLedgerIdentity?.bytes ?? 0,
       bound: FRAME_LIMITS['view.wake_replay.items'].value,
       costBound: FRAME_LIMITS['checkpoint.projection_bytes'].value,
+    };
+  }
+
+  /** Issue #465(1): the measured breakdown a checkpoint row carries — the three numbers
+   * `_projectionByteBreakdown` read from the SAME serialize the cost ceiling judged. Reported on
+   * every outcome that reached a measurement (a write, a skip past the ceiling, or the deferred
+   * path's reused verdict, whose row already names the row count it was taken at). Empty before
+   * the first measurement of a projection, and empty on a poisoned projection's row: nothing was
+   * encoded, so there is nothing to break down. */
+  _checkpointByteFields() {
+    const breakdown = this._checkpointByteBreakdown;
+    if (breakdown === null || breakdown === undefined) return {};
+    return {
+      bytesByFamily: breakdown.bytesByFamily,
+      projectionBaselineBytes: breakdown.projectionBaselineBytes,
+      sharedBytes: breakdown.sharedBytes,
     };
   }
 
@@ -1358,13 +1483,13 @@ export class CoordinationStore {
     try {
       let written;
       try { written = yield* this._projectionCheckpointWriteSteps(); } catch {
-        return freeze({ state: 'failed', reason: 'checkpoint_write_failed', refreshed: false, bytes: null, ...declared });
+        return freeze({ state: 'failed', reason: 'checkpoint_write_failed', refreshed: false, bytes: null, ...declared, ...this._checkpointByteFields() });
       }
       if (!written.measured) {
         return freeze({ state: 'skipped', reason: 'projection_poisoned', refreshed: false, bytes: null, ...declared });
       }
       this._checkpointCostVerdict = freeze({ bytes: written.bytes, rows: declared.rows });
-      return freeze({ state: 'written', reason, refreshed: true, bytes: written.bytes, ...declared });
+      return freeze({ state: 'written', reason, refreshed: true, bytes: written.bytes, ...declared, ...this._checkpointByteFields() });
     } finally {
       if (borrowed) this._dropBorrowedWriterLease();
     }
@@ -1472,6 +1597,7 @@ export class CoordinationStore {
     // Issue #449: the measurement a housewriting write reached is a fact about the projection that
     // this call is dropping — the next write measures the projection it then has.
     this._checkpointCostVerdict = null;
+    this._checkpointByteBreakdown = null;
     this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map(); this._steeringRuns = new Set();
     this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
     this._routeObservations = new Map();
