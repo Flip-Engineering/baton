@@ -7,6 +7,12 @@
 // contract says is unchanged (kimi tombstone exactness, per-vendor remedy text, the static
 // readiness substrate, the existing wave_driver_route_unready preflight code).
 //
+// STATUS (2026-09-18, #460): the #47 bounded actual-inference tier, the #83 fleet_roster surface
+// and the #84 credential controllers are LANDED — all 26 rows now assert and pass. The manifest
+// declares this file `converged` (#47) with no expected-red row; RT-3b's timeout classification is
+// re-pointed to the landed #375 verdict, and every fixture await carries a declared bound. Before
+// the #460 repair this file was cancelled end to end: 26 rows, zero assertions.
+//
 // Harness architecture mirrors test/bidirectional-v3-red.test.mjs (ScriptableAdapter pattern,
 // here opened through a full openBatonDeployment like phase85-context-effect-admission-red) and
 // test/claude-credential-projection-red.test.mjs (#11 cache fixture + scanTree + source scans).
@@ -71,6 +77,7 @@ import {
 import * as deploymentModule from '../src/application-deployment.mjs';
 import { createDriver, createWaveDriver, routeTupleKey } from '../src/index.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 
 const deploymentSource = readFileSync(new URL('../src/application-deployment.mjs', import.meta.url), 'utf8');
 const semanticsSource = readFileSync(new URL('../src/application-semantics.mjs', import.meta.url), 'utf8');
@@ -100,6 +107,47 @@ async function settle(ms = 15) {
   await flush(40);
 }
 
+// ── The bounded await (#460, docs/42 §8) ───────────────────────────────────────────────────
+// Every await this file takes on a deployment chain is BOUNDED and NAMED. The bound is the
+// deployment's own probe deadline — the registry's substrate row, the same row route-liveness.mjs
+// takes its default from — so the longest a legitimate wait in this fixture can take (the gate's
+// probe is what a spawn waits on) and no new magic number enters the file. An await that outlives
+// its bound fails the row naming the wait it abandoned; it never leaves a pending promise.
+//
+// The failure mode this closes is #460: `await deployment.run(...)` settles only when the liveness
+// controller observes the probe's terminal wire, so when that observation is lost the promise is
+// pending forever, the event loop drains, and node cancels this row AND every row after it in the
+// file ("Promise resolution is still pending but the event loop has already resolved"). A
+// cancelled row asserts nothing — all 26 rows of this file were cancelled, so none of them could
+// tell a broken harness from a pinned gap.
+const WAIT_BOUND_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
+// The typed marker a bound miss carries: a wait that never settled is a broken FIXTURE, never a
+// deployment refusal, so the helpers below rethrow it instead of letting a row read it as one.
+const WAIT_UNSETTLED = 'fixture_wait_unsettled';
+
+function isWaitBoundFailure(error) { return error?.code === WAIT_UNSETTLED; }
+
+async function bounded(label, work, boundMs = WAIT_BOUND_MS) {
+  let timer = null;
+  const deadline = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new assert.AssertionError({
+      message: `${label}: never settled within ${boundMs}ms`,
+    }), { code: WAIT_UNSETTLED })), boundMs);
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } catch (error) {
+    if (isWaitBoundFailure(error)) {
+      // The abandoned work stays pending (nothing can cancel it): swallow a late settlement so it
+      // is never an unhandled rejection on top of the failure the row is already reporting.
+      Promise.resolve(work).catch(() => {});
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── The scriptable fixture adapter ──────────────────────────────────────────────────────────
 // A bidirectional-v3-style ScriptableAdapter whose card satisfies the deployment's exact-route
 // gates (phase85 shape). Probe turns (the bounded liveness probe riding the real spawn path)
@@ -111,6 +159,7 @@ class ProbeAdapter {
     this._route = route;
     this.mode = mode;
     this.calls = { spawn: [], prompt: [] };
+    this._listeners = [];
     this._onEvent = null;
     this._cardCanary = cardCanary;
     this._credentialState = credentialState;
@@ -155,8 +204,23 @@ class ProbeAdapter {
     };
   }
 
-  onEvent(cb) { this._onEvent = cb; }
-  emit(event) { if (this._onEvent) this._onEvent(event); }
+  // The deployment installs TWO observers on this ONE adapter object: the liveness controller
+  // wraps it while the deployment opens (route-liveness.mjs `_wrapAdapters`, which captures
+  // whatever listener exists at that moment), and the coordinator registers its own when its
+  // deferred startup reconstruction completes. The open path is async (application-deployment
+  // `coordinationAsyncOpen: true`), so the coordinator's registration lands AFTER the controller
+  // wrapped. A single-slot spelling let the later registration orphan the earlier observer: the
+  // probe's terminal wire then reached nobody, the gate's `ensure()` never settled, the event loop
+  // drained, and node cancelled all 26 rows of this file (#460). The fixture therefore delivers
+  // every event to EVERY registered observer, in registration order. `_onEvent` still names the
+  // last registration, the field the controller's `prior` capture reads.
+  onEvent(cb) {
+    if (typeof cb !== 'function' || this._listeners.includes(cb)) return;
+    this._listeners.push(cb);
+    this._onEvent = cb;
+  }
+
+  emit(event) { for (const listener of [...this._listeners]) listener(event); }
 
   _emitFor(worker, kind, payload, turnEpoch = 1) {
     this.emit({
@@ -291,7 +355,7 @@ async function openFixture({ routes = [ROUTE_LOW], adapters, extraAdvanced = {} 
   let wiringError = null;
   let deployment = null;
   try {
-    deployment = await openBatonDeployment({
+    deployment = await bounded('openFixture: openBatonDeployment', openBatonDeployment({
       repo,
       advanced: {
         deploymentRoot,
@@ -304,21 +368,24 @@ async function openFixture({ routes = [ROUTE_LOW], adapters, extraAdvanced = {} 
         },
         ...extraAdvanced,
       },
-    }, (driverOptions) => { driver = createDriver(driverOptions); return driver; });
+    }, (driverOptions) => { driver = createDriver(driverOptions); return driver; }));
   } catch (error) {
+    // A bound miss is a broken fixture, never a wiring verdict: it must fail the row naming the
+    // wait, not hide behind `fixture.wiringError`.
+    if (isWaitBoundFailure(error)) throw error;
     wiringError = error;
   }
   return {
     repo, deploymentRoot, driver, deployment, wiringError,
-    async close() { try { await deployment?.close(); } catch { /* teardown is best-effort */ } },
+    async close() { try { await bounded('fixture.close: deployment.close', deployment?.close()); } catch { /* teardown is best-effort, and still bounded */ } },
   };
 }
 
 let objectiveSeq = 0;
 async function spawnWorker(deployment, route, tag = 'worker') {
   objectiveSeq += 1;
-  const run = await deployment.run(`${tag} objective ${objectiveSeq}`, { exact: route });
-  await run.approve();
+  const run = await bounded(`spawnWorker(${tag}): deployment.run`, deployment.run(`${tag} objective ${objectiveSeq}`, { exact: route }));
+  await bounded(`spawnWorker(${tag}): run.approve`, run.approve());
   await settle();
   return run;
 }
@@ -326,11 +393,14 @@ async function spawnWorker(deployment, route, tag = 'worker') {
 async function gateOutcome(deployment, route, tag = 'gated') {
   objectiveSeq += 1;
   try {
-    const run = await deployment.run(`${tag} objective ${objectiveSeq}`, { exact: route });
-    await run.approve();
+    const run = await bounded(`gateOutcome(${tag}): deployment.run`, deployment.run(`${tag} objective ${objectiveSeq}`, { exact: route }));
+    await bounded(`gateOutcome(${tag}): run.approve`, run.approve());
     await settle();
     return { refused: null, run };
   } catch (error) {
+    // A bound miss is a broken fixture, never a typed refusal: a row must not read "the wait never
+    // settled" as "the deployment refused".
+    if (isWaitBoundFailure(error)) throw error;
     return { refused: error, run: null };
   }
 }
@@ -372,9 +442,12 @@ async function runWavePreflight(deployment, route, members = 64) {
       role: `member-${index}`, objective: `fixture wave member ${index}`, exact: route,
     })),
   };
-  return wave.run(request).then(
+  return bounded('runWavePreflight: wave.run', wave.run(request)).then(
     () => 'resolved',
-    (error) => error?.code ?? String(error?.message ?? error),
+    (error) => {
+      if (isWaitBoundFailure(error)) throw error;
+      return error?.code ?? String(error?.message ?? error);
+    },
   );
 }
 
@@ -622,11 +695,19 @@ test('RT-3 (stage: #47 probe bounds missing): one probe is one bounded provider 
   }
 });
 
-test('RT-3b (stage: #47 probe bounds missing): the ≤120s probe timeout is ENFORCED — a hanging probe is killed and classified provider_unreachable, never awaited forever (§4.1.2)', async () => {
+test('RT-3b (pin): the probe deadline is ENFORCED at the gate — a hanging probe is settled by the tier\'s own kill timer as UNKNOWN (probe_timed_out), never awaited forever and never blocked (§4.1.2 enforcement, the #375 verdict)', async () => {
   // RT-3 checks a REPORTED latencyMs on a fast fixture; this row is the enforcement oracle.
   // The hanging fixture turn never completes, so only the tier's own kill timer (bounded by
   // advanced.liveness.probeTimeoutMs, header seam) can produce the verdict. The 5s race
   // deadline is a resource bound on the row itself, never a work control (header control law).
+  //
+  // #375 superseded the §4.1.1 classification this row used to assert for a timed-out probe: a
+  // probe that outlives its deadline adjudicates nothing about the provider, so the route reads
+  // UNKNOWN (`probe_timed_out`, observed/required) and admission proceeds — never blocked, never a
+  // fabricated provider_unreachable. The row was green on the older spelling until #375 landed
+  // (see the #260 audit, docs/audits/2026-09-13-runtime-policy/dangling-awaits.md, which records
+  // this row passing at HEAD). It is re-pointed to the landed truth, NOT weakened: enforcement, the
+  // one-call bound, the typed receipt and the ≤120s wall bound all stay asserted.
   const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'hang' });
   const fixture = await openFixture({
     routes: [ROUTE_LOW],
@@ -647,8 +728,17 @@ test('RT-3b (stage: #47 probe bounds missing): the ≤120s probe timeout is ENFO
     const outcome = await Promise.race([gateOutcome(fixture.deployment, ROUTE_LOW, 'rt3b'), deadline]);
     assert.notEqual(outcome, 'probe-watchdog-absent',
       '§4.1.2: a hanging probe was awaited past 5s with probeTimeoutMs 250 — no kill timer enforces the ≤120s bound (a reported latencyMs is not enforcement)');
-    assert.equal(outcome.refused?.code ?? null, 'provider_unreachable',
-      'a probe killed on timeout classifies network/timeout → provider_unreachable (§4.1.1)');
+    assert.equal(outcome.refused, null,
+      'a timed-out probe asserts nothing about the provider — the spawn is admitted, never blocked (#375)');
+    const timedOutRow = routeRow(await fixture.deployment.doctor(), ROUTE_LOW);
+    assert.equal(timedOutRow?.liveness?.state ?? null, 'unknown',
+      '§4.1.2 enforcement: the kill timer settles the route UNKNOWN, never a stale verified');
+    assert.equal(timedOutRow?.liveness?.code ?? null, 'probe_timed_out',
+      'the verdict names what ended the probe — a deadline, not a provider failure');
+    assert.equal(timedOutRow?.liveness?.required ?? null, 250,
+      'the row names the deadline the probe outlived (advanced.liveness.probeTimeoutMs)');
+    assert.ok(Number.isFinite(timedOutRow?.liveness?.observed),
+      'the row names how long the probe was observed to take');
     assert.equal(probeInvocations(adapter).length, 1,
       'a timed-out probe is exactly one provider call — no retry loop (§4.1.2)');
     const timedOut = probeRecords(fixture.driver, adapter, 'readiness.probe_failed');
@@ -875,8 +965,8 @@ test('RT-14b (stage: credentialKey join missing): a worker-turn invalid_grant ve
 
     // A real worker turn on route A surfaces refresh-token death (wire-shape assumption, header).
     objectiveSeq += 1;
-    const run = await fixture.deployment.run(`rt14b (auth-refusal) objective ${objectiveSeq}`, { exact: ROUTE_LOW });
-    await run.approve();
+    const run = await bounded('RT-14b: deployment.run (auth-refusal)', fixture.deployment.run(`rt14b (auth-refusal) objective ${objectiveSeq}`, { exact: ROUTE_LOW }));
+    await bounded('RT-14b: run.approve (auth-refusal)', run.approve());
     await settle(25);
 
     const doctor = await fixture.deployment.doctor();
