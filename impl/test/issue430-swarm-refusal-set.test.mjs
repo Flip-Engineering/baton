@@ -159,9 +159,15 @@ function swarmFixture() {
 /** The second argument of every `refuse(`/`integrity(` call in one module source: the argument
  * list is split at paren-depth-0 commas with string and template literals skipped whole, and the
  * code must be a plain quoted literal (a non-literal is reported, never silently skipped). */
-export function raisedRefusalCodes(source) {
+export function raisedRefusalCodes(rawSource) {
   const raised = new Map();
   const nonLiteral = [];
+  // Comments are prose, not call sites: a `//` line or a `/* … */` block that mentions
+  // `integrity(...)` (swarm-state.mjs documents its own audit rule that way, #395) is blanked
+  // to spaces so offsets stay stable and the scan reads code only.
+  const source = rawSource
+    .replace(/\/\*[\s\S]*?\*\//gu, (match) => ' '.repeat(match.length))
+    .replace(/^[ \t]*\/\/.*$/gmu, (match) => ' '.repeat(match.length));
   for (const open of source.matchAll(/\b(?:refuse|integrity)\(/gu)) {
     // A helper DEFINITION (`function refuse(message, code) {`) is not a call site: its second
     // argument would read as the parameter name, so definitions are skipped, not reported.
