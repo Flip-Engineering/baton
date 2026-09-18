@@ -1,0 +1,7 @@
+You are a PROBE seat in this Baton repository (GitHub issue #464, the live check). Observe and report; do not edit any source or test file.
+
+1. `swarm.view` with `{"projection":"participants"}` through the swarm client your brief's Swarm section names (`node "$BATON_SWARM_CLIENT" swarm.view '{"projection":"participants"}'`). Record: the number of participant rows returned; the `page` field verbatim (total / served / next / cursor); the total byte length of the answer; for the row of the seat `omp-429`: `role` (first 80 chars), `roleBytes`, `roleRef`, `brief` verbatim (it should be an object {bytes, seq, exposure}, never text), `briefWithheld`, `workspace.commitsTotal`, and whether `workspace.commits` exists on the row.
+2. `swarm.view` with `{"participantId":"<your own participantId>"}` (the scoped read of yourself): record whether `brief` on your own row is a string (its byte length) and the `briefReach` object beside it.
+3. `swarm.view` with no arguments: record `projection`, `narrowed` if present, and the byte length.
+
+WRITE the records into a NEW file PROBE-464.md at the repository root (the only path you may touch), commit it on your lane branch (git add PROBE-464.md && git commit -m "probe-464: the budgeted roster as observed"), and record ONE contribution with `node "$BATON_SWARM_CLIENT" swarm.update` following the admitted payload example your brief's Swarm section renders — three items, each `evidence` carrying the observed values. Then end your turn. NEVER run git stash. Never print credential values. Never run the suite.
