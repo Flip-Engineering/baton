@@ -22,6 +22,17 @@ function cookieTokens(header) {
   return header.split(';').map((part) => part.trim()).filter((part) => part.startsWith(`${COOKIE_NAME}=`)).map((part) => part.slice(COOKIE_NAME.length + 1));
 }
 
+// #487: a duplicate seq is only diagnosable if the refusal names the two writers. The row at the
+// line and the row that already holds that seq are each named by actor and ts — a deployment writes
+// ONE actor spelling from both incarnations, so in the field the ts is what separates them.
+function sequenceGapMessage(line, event, holder) {
+  const writer = (row) => `actor ${JSON.stringify(row.actor)} at ${row.ts}`;
+  return `session sequence gap at line ${line}: seq ${event.seq} written by ${writer(event)}`
+    + (holder === null
+      ? ', and no earlier row holds that seq'
+      : `, which the row at line ${holder.seq} already holds (${writer(holder)})`);
+}
+
 export class WebSessionIntegrityError extends Error {
   constructor(message, code = 'session_integrity') { super(message); this.name = 'WebSessionIntegrityError'; this.code = code; }
 }
@@ -48,16 +59,31 @@ export class WebSessionStore {
     this._load();
   }
 
-  _load() {
+  _load() { this._consume(this._lines()); }
+
+  // Issue #487: one deployment's session ledger outlives its incarnations. The successor publishes
+  // and issues its own resident session BEFORE the old incarnation closes and revokes its own, so
+  // the file has two writers inside the handoff window and a store may never treat its in-memory
+  // length as the file's. This ONE line reader is what `_load`, `_append`, `revoke` and `rotate`
+  // all consume through; a stream that does not end in a newline is a write still in flight and is
+  // refused rather than half-applied.
+  _lines() {
     const raw = readFileSync(this.file, 'utf8');
-    if (raw.length === 0) return;
+    if (raw.length === 0) return [];
     if (!raw.endsWith('\n')) throw new WebSessionIntegrityError('session stream has a truncated tail', 'truncated_tail');
-    const lines = raw.slice(0, -1).split('\n');
+    return raw.slice(0, -1).split('\n');
+  }
+
+  // Every line is judged against the same integrity rule (its seq is its line index), so a row
+  // another writer numbered from its own memory refuses where it lands. Lines an earlier read
+  // already applied are skipped; the ones past it carry the other writer's state forward.
+  _consume(lines) {
     for (let i = 0; i < lines.length; i += 1) {
       let event;
       try { event = JSON.parse(lines[i]); } catch { throw new WebSessionIntegrityError(`invalid session JSON at line ${i + 1}`, 'invalid_json'); }
       if (event.schemaVersion !== 1) throw new WebSessionIntegrityError(`unsupported session schema at line ${i + 1}`, 'schema_version');
-      if (event.seq !== i + 1) throw new WebSessionIntegrityError(`session sequence gap at line ${i + 1}`, 'sequence_gap');
+      if (event.seq !== i + 1) throw new WebSessionIntegrityError(sequenceGapMessage(i + 1, event, this._events[event.seq - 1] ?? null), 'sequence_gap');
+      if (i < this._events.length) continue;
       this._apply(freeze(event));
       this._events.push(freeze(event));
     }
@@ -65,6 +91,11 @@ export class WebSessionStore {
 
   _append(kind, actor, payload) {
     if (!validId(actor)) throw new TypeError('session audit actor required');
+    // #487: the row is numbered from the ledger ON DISK, never from this store's memory alone; the
+    // rows the other incarnation appended since the last read are consumed here, so the state this
+    // append judges is the file's. No lock exists: the numbering rule below is what makes a row
+    // numbered from a stale memory refuse at its own line rather than silently renumber a peer.
+    this._consume(this._lines());
     const event = freeze({ schemaVersion: 1, seq: this._events.length + 1, ts: new Date(this.now()).toISOString(), kind, actor, payload: freeze(clone(payload)) });
     this._appendFile(this.file, `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
     this._syncPath(this.file);
@@ -149,6 +180,9 @@ export class WebSessionStore {
   }
 
   revoke(sessionId, auth = {}) {
+    // #487: judge the state the file holds — a revoke the other incarnation already wrote is not
+    // owed again (a second one would be refused by `_apply` after it had already been appended).
+    this._consume(this._lines());
     const session = this._sessions.get(sessionId);
     if (!session || session.revoked) return freeze({ ok: true, result: 'not_active' });
     const event = this._append('session.revoked', auth.actor, { sessionId, reason: auth.reason ?? null });
@@ -156,6 +190,8 @@ export class WebSessionStore {
   }
 
   rotate(sessionId, auth = {}) {
+    this._consume(this._lines());
+    // #487: a rotation is owed only if the predecessor is still active ON DISK.
     const old = this._sessions.get(sessionId);
     if (!old || old.revoked || Date.parse(old.expiresAt) <= this.now()) return null;
     const rawToken = token();
