@@ -4508,7 +4508,7 @@
         {
           "name": "_performRunStop",
           "ordinal": 0,
-          "size": 87,
+          "size": 89,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
