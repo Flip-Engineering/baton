@@ -472,7 +472,7 @@ the MCP tool table, and the web bus gate on.
 | Verb | Arguments | Capabilities | Transports | Durability |
 |---|---|---|---|---|
 | `swarm.list` | — | `observe` | web + mcp | identity-keyed |
-| `swarm.create` | `purpose`, `swarmId`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.create` | `purpose`, `swarmId`, `policy`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.view` | `swarmId`, `participantId`, `projection`, `cursor` | `observe` | web + mcp | identity-keyed |
 | `swarm.watch` | `swarmId`, `afterSeq`, `timeoutMs`, `projection` | `observe` | web + mcp | identity-keyed |
 | `swarm.update` | `swarmId`, `event`, `payload`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |

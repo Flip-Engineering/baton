@@ -195,6 +195,17 @@ fact — `workspaceCapacityPressure(workspace)` (exported from
 is the ONE predicate; the wake stream lane imports it to derive a `capacity_pressure`
 wake. This document does not build the wake.
 
+`swarm.view` also carries the swarm's own `policy` (#443) — the RESOLVED re-route policy,
+`{rerouteOnProviderFault: 'manual' | 'auto', reroutePreferApi}`, with `manual` and no
+billing preference filled in for a swarm that never declared one, so a view of a fresh
+swarm already says what a provider-fault death would do. It is declared when the swarm is
+OPENED — `baton swarm create <purpose> --policy '{"rerouteOnProviderFault":"auto"}'` — or
+later by one caller-submittable `swarm.policy_updated` row through `swarm.update`: both
+spellings write the same row and read the same fold (the create validates its policy
+against the fold's closed sets BEFORE the `swarm.created` row lands, so a refused policy
+leaves no swarm behind). A swarm whose provider killed a seat reads its candidates from the
+same deployment route rows the `routeUsage` rows below describe.
+
 Both the doctor and the view's `deployment` summary carry `routeUsage` (#341):
 an array of per-served-route usage rows derived from the deployment's own operational
 log and adapter cards. Each row has the shape

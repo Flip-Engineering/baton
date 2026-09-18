@@ -10,7 +10,8 @@ import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
   isContributionContractBody, projectContributionContract, validateContributionContract,
   validateContributionContractMode } from './contribution-contract.mjs';
-import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES } from './swarm-state.mjs';
+import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES,
+  SWARM_POLICY_FIELDS } from './swarm-state.mjs';
 // Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
 // minting a code outside it is a construction-time error.
 import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
@@ -190,6 +191,48 @@ const routeText = (route) => `${route.harness}/${route.model}${route.effort ? `@
 const routeEquals = (left, right) => left != null && right != null
   && left.harness === right.harness && left.model === right.model
   && (left.effort ?? null) === (right.effort ?? null);
+
+/** Issue #443 hand-back: the policy a `swarm.create` may OPEN with — validated against the SAME
+ * closed vocabulary the `swarm.policy_updated` fold reads (swarm-state.mjs owns both tables), so
+ * the two spellings of "declare a policy" can never disagree about what a policy is. The check runs
+ * BEFORE the swarm row lands: a refused policy leaves no swarm behind to clean up. */
+function swarmCreatePolicy(policy) {
+  if (policy === null || typeof policy !== 'object' || Array.isArray(policy)) {
+    refuse('swarm.create policy must be a JSON object naming the policy fields to declare',
+      'swarm_command_invalid', {
+        field: 'policy', rule: 'field-predicate',
+        expectation: `an object drawn from: ${SWARM_POLICY_FIELDS.join(', ')}`,
+      });
+  }
+  for (const field of Object.keys(policy)) {
+    if (!SWARM_POLICY_FIELDS.includes(field)) {
+      refuse(`swarm.create policy names no policy field this family holds: ${field}`
+        + ` (one of: ${SWARM_POLICY_FIELDS.join(', ')})`, 'swarm_command_invalid', {
+        field: 'policy', rule: 'closed-set', admitted: [...SWARM_POLICY_FIELDS], offending: field,
+      });
+    }
+  }
+  if (policy.rerouteOnProviderFault !== undefined && !SWARM_REROUTE_MODES.includes(policy.rerouteOnProviderFault)) {
+    refuse(`rerouteOnProviderFault must be one of: ${SWARM_REROUTE_MODES.join(', ')}`, 'swarm_command_invalid', {
+      field: 'policy.rerouteOnProviderFault', rule: 'closed-set', admitted: [...SWARM_REROUTE_MODES],
+    });
+  }
+  if (policy.reroutePreferApi !== undefined && typeof policy.reroutePreferApi !== 'boolean') {
+    refuse('reroutePreferApi must be a boolean', 'swarm_command_invalid', {
+      field: 'policy.reroutePreferApi', rule: 'field-predicate', expectation: 'a boolean',
+    });
+  }
+  if (policy.rerouteOnProviderFault === undefined && policy.reroutePreferApi === undefined) {
+    refuse('swarm.create policy names no policy field to declare', 'swarm_command_invalid', {
+      field: 'policy', rule: 'required-field',
+      expectation: `at least one of: ${SWARM_POLICY_FIELDS.join(', ')}`,
+    });
+  }
+  return Object.freeze({
+    ...(policy.rerouteOnProviderFault === undefined ? {} : { rerouteOnProviderFault: policy.rerouteOnProviderFault }),
+    ...(policy.reroutePreferApi === undefined ? {} : { reroutePreferApi: policy.reroutePreferApi }),
+  });
+}
 
 // ── #456: the route probe — the ONE recruit a degraded route admits after its clear ─────────────
 //
@@ -5323,15 +5366,27 @@ export class SwarmRuntime {
       if (principal.principalId?.startsWith('worker:') || context?.runId) {
         refuse('Recruit and organize within your granted swarm', 'swarm_membership_required');
       }
+      // Issue #443 hand-back: a swarm may be OPENED with its re-route policy declared. The policy
+      // is validated BEFORE anything lands (a refused policy leaves no swarm behind), and the row
+      // the create writes is the fold's own `swarm.policy_updated` kind — the same shape
+      // `swarm.update {event: 'swarm.policy_updated'}` carries, so the view reads ONE derivation.
+      const policy = args.policy === undefined ? null : swarmCreatePolicy(args.policy);
       const swarmId = args.swarmId ?? `swarm-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
       // The commit this swarm starts from (#318): the base the situation projection derives
       // "commits landed on the target since the base" FROM — a reference, never a count.
       const baseCommit = typeof this.situationGit?.head === 'function' ? this.situationGit.head() : null;
-      const recorded = this._write('swarm.created', { swarmId, purpose: args.purpose,
+      const writes = [this._write('swarm.created', { swarmId, purpose: args.purpose,
         ...(typeof baseCommit === 'string' && baseCommit.length > 0 ? { baseCommit } : {}) }, principal,
-        this._operationKey(command, { ...args, swarmId }, principal));
+        this._operationKey(command, { ...args, swarmId }, principal))];
+      if (policy !== null) {
+        // A key of its OWN: the operation key already names the create request, and a second row
+        // under it would be a different request wearing one identity. The content-derived key makes
+        // a retry of the same create land on the row the first attempt wrote.
+        writes.push(this._write('swarm.policy_updated', { swarmId, ...policy }, principal,
+          `swarm-policy:${hash([swarmId, policy])}`));
+      }
       this._recordOperationCompleted(command, args, principal, context);
-      return this._mutationResult(command, { ...args, swarmId }, [recorded], principal, context, { swarmId });
+      return this._mutationResult(command, { ...args, swarmId }, writes, principal, context, { swarmId });
     }
     let swarm = this._swarm(args.swarmId);
     if (command === 'swarm.view') {

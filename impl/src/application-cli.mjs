@@ -2417,7 +2417,12 @@ async function admitRecruitContextPackage(parsed, client, options) {
   if (!record(admitted) || !/^[a-f0-9]{64}$/u.test(admitted.packageDigest ?? '')) {
     throw cliError('Baton Web returned an invalid context package admission', 'cli_protocol_failed');
   }
-  return Object.freeze({ digest: admitted.packageDigest, branches: admitted.branches ?? [] });
+  // Issue #455 hand-back: the port answers whether this admission was fresh or the reuse of a
+  // digest the deployment already holds; the recruit's receipt carries that half through.
+  return Object.freeze({
+    digest: admitted.packageDigest, reused: admitted.reused === true,
+    admittedEvent: admitted.admittedEvent ?? null, branches: admitted.branches ?? [],
+  });
 }
 function parseSwarmCli(args, idempotencyKey) {
   if (args[0] !== 'swarm') return null;
@@ -2491,7 +2496,7 @@ function parseSwarmCli(args, idempotencyKey) {
       const value = Number(token);
       if (!Number.isSafeInteger(value)) throw cliError(`${entry.flag} must be an integer`);
       values[entry.field] = value;
-    } else if (entry.field === 'options' || entry.field === 'permissions') {
+    } else if (entry.field === 'options' || entry.field === 'permissions' || entry.field === 'policy') {
       try { values[entry.field] = JSON.parse(token); }
       catch { throw cliError(`${entry.flag} must be JSON`); }
     } else if (entry.field === 'payload') {
@@ -4938,13 +4943,21 @@ export async function runBatonCli(parsed, client, options = {}) {
     if (parsed.name === 'swarm.recruit') {
       const admitted = await admitRecruitContextPackage(parsed, client, options ?? {});
       if (admitted !== null) {
-        return client.command(parsed.name, {
+        const answer = await client.command(parsed.name, {
           ...parsed.args,
           options: {
             ...(record(parsed.args.options) ? parsed.args.options : {}),
             contextPackage: { digest: admitted.digest },
           },
         }, parsed.idempotencyKey);
+        // Issue #455 hand-back: the receipt says what the admit did — `reused: true` when the
+        // deployment already held this exact package (a second lane on one issue, a --resume-from
+        // successor), false when this recruit's read admitted it. The digest stays the ONE name of
+        // the package either way; the admission event is the row a reader walks to.
+        const receipt = Object.freeze({
+          digest: admitted.digest, reused: admitted.reused, admittedEvent: admitted.admittedEvent,
+        });
+        return record(answer) ? Object.freeze({ ...answer, contextPackage: receipt }) : answer;
       }
     }
     // Issue #451: the landing verb's refusal carries its cause, so the CLI renders it under the

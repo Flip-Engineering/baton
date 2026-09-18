@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 507,
+          "size": 503,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -286,20 +286,11 @@
         {
           "name": "closeAuthority",
           "ordinal": 0,
-          "size": 27,
+          "size": 20,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
             "admission:policy_gate"
-          ]
-        },
-        {
-          "name": "supervisedProcesses",
-          "ordinal": 0,
-          "size": 3,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
           ]
         },
         {
@@ -2312,11 +2303,10 @@
         {
           "name": "_preserveProgressBeforeReap",
           "ordinal": 0,
-          "size": 133,
+          "size": 122,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "effect:worktree_authority",
             "effect:action_name",
             "observation:log_append"
           ]
@@ -12170,7 +12160,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 43,
+          "size": 37,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12183,24 +12173,6 @@
           "seam": "observation",
           "evidence": [
             "observation:read_name"
-          ]
-        },
-        {
-          "name": "_supervisedPool",
-          "ordinal": 0,
-          "size": 9,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
-          "name": "_sweepIntegrationCheckouts",
-          "ordinal": 0,
-          "size": 15,
-          "seam": "observation",
-          "evidence": [
-            "delegates:observation"
           ]
         },
         {
@@ -12417,9 +12389,10 @@
           "name": "_mutationResult",
           "ordinal": 0,
           "size": 34,
-          "seam": "observation",
+          "seam": "recovery",
           "evidence": [
             "delegates:observation",
+            "delegates:recovery",
             "delegates:admission"
           ]
         },
@@ -12839,16 +12812,17 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1045,
-          "seam": "observation",
+          "size": 1017,
+          "seam": "recovery",
           "evidence": [
+            "recovery:reconcile_call",
             "observation:swarm_attention_rows"
           ]
         },
         {
           "name": "close",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13019,64 +12993,19 @@
         {
           "name": "_inheritancePredecessor",
           "ordinal": 0,
-          "size": 80,
+          "size": 47,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
           ]
         },
         {
-          "name": "_repositoryRoot",
-          "ordinal": 0,
-          "size": 6,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
-          "name": "_snapshotChangedPaths",
-          "ordinal": 0,
-          "size": 9,
-          "seam": "observation",
-          "evidence": [
-            "observation:read_name"
-          ]
-        },
-        {
-          "name": "_workspaceCarryPlan",
-          "ordinal": 0,
-          "size": 20,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
           "name": "_predecessorWorkspace",
           "ordinal": 0,
-          "size": 56,
-          "seam": "observation",
+          "size": 38,
+          "seam": "surface",
           "evidence": [
-            "delegates:observation"
-          ]
-        },
-        {
-          "name": "_applyWorkspaceCarry",
-          "ordinal": 0,
-          "size": 20,
-          "seam": "observation",
-          "evidence": [
-            "observation:record_name"
-          ]
-        },
-        {
-          "name": "_withdrawRefusedRecruit",
-          "ordinal": 0,
-          "size": 9,
-          "seam": "observation",
-          "evidence": [
-            "delegates:observation"
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -13145,21 +13074,12 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 219,
+          "size": 228,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
             "delegates:effect",
             "delegates:observation"
-          ]
-        },
-        {
-          "name": "_carryBriefLines",
-          "ordinal": 0,
-          "size": 14,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
           ]
         },
         {
@@ -13208,18 +13128,9 @@
           ]
         },
         {
-          "name": "_landingFailureDetail",
-          "ordinal": 0,
-          "size": 30,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
           "name": "_refuseLanding",
           "ordinal": 0,
-          "size": 30,
+          "size": 45,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -13237,7 +13148,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 152,
+          "size": 108,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -13245,28 +13156,9 @@
           ]
         },
         {
-          "name": "_recordIntegrationFailure",
-          "ordinal": 0,
-          "size": 10,
-          "seam": "admission",
-          "evidence": [
-            "admission:refusal_name",
-            "observation:record_name"
-          ]
-        },
-        {
-          "name": "_recordIntegrationRow",
-          "ordinal": 0,
-          "size": 4,
-          "seam": "observation",
-          "evidence": [
-            "observation:record_name"
-          ]
-        },
-        {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 923,
+          "size": 912,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

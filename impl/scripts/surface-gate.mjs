@@ -374,6 +374,14 @@ const SWARM_FOLD_ADMISSION_PINS = Object.freeze({
   swarm_permission_required: 'a claim move names the seat the replayed claim holds; the runtime admitted the row for its holder or an organizer, and an organizer names the holder',
   swarm_proposal_not_found: 'a consent or withdrawal names a proposal the replayed projection holds at that seq',
   swarm_proposal_released: 'a consent to a withdrawn proposal re-derives identically; the withdrawal is recorded before it',
+  // Issue #443 hand-back: the re-route family (docs/39's provider section). The performed resume
+  // answers the proposal its own seat carries, and the answer re-derives from the SAME projection
+  // the ledger reconstructed — the proposal row is written first, in the SAME observation that
+  // folds the fault — so a `swarm.rerouted` row whose proposal the replayed seat does not carry is
+  // a ledger no same-vintage store wrote, never admissible history. Named here so the decision is
+  // explicit in the closed table rather than living only in the site's `admission &&` guard: a
+  // later lane that makes the check unconditional keeps reading it as this pin.
+  reroute_proposal_mismatch: 'the performed re-route answers the proposal the replayed seat carries; both rows are written in ONE observation, so a mismatch at replay names corruption',
   // The fold tail: fires only when a kind joins SWARM_EVENT_KINDS without a fold branch —
   // the new kind never reached history, so nothing recorded can refuse here.
   unsupported_event_kind: 'a kind added to SWARM_EVENT_KINDS without a fold branch never reached history',

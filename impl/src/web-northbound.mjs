@@ -2315,6 +2315,13 @@ export class WebNorthbound {
       branches: branches.map((branch, index) => Object.freeze({
         name: branch.name, digest: branch.source.digest, bytes: request.branches[index].bytes,
       })),
+      // Issue #455 hand-back: a ContextPackage is content-addressed, so a second admission of an
+      // already-admitted digest is the SAME package and the store answers `result: 'reused'` with
+      // the record it already holds. The receipt forwards that half — the caller's recruit receipt
+      // says whether its issue was freshly admitted or already read by an earlier lane, and names
+      // the admission event a reader can walk to (null on an answer that never carried one).
+      reused: admitted.reused === true,
+      admittedEvent: admitted.package?.admittedEvent ?? null,
     };
   }
 
