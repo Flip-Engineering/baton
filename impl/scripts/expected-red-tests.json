@@ -462,26 +462,6 @@
       "reason": "#268"
     },
     {
-      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (a) recruit --issue N parses, admits ONE package with an issue branch, and attaches it to the seat",
-      "reason": "#441"
-    },
-    {
-      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (b) the recruit brief renders the package branches with digests and the issue title",
-      "reason": "#441"
-    },
-    {
-      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (c) a seat reads the package back through the bridge by digest",
-      "reason": "#441"
-    },
-    {
-      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (d) contributions read serves the fold — accepted rows since a seq, no ledger scan on the read path",
-      "reason": "#441"
-    },
-    {
-      "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (f) the root's reader refusing (no credential) refuses the recruit naming the issue, and no seat joins",
-      "reason": "#441"
-    },
-    {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
       "reason": "#460"
     },
@@ -2125,6 +2105,14 @@
     {
       "file": "test/issue28-wire-degrade-red.test.mjs",
       "reason": "#28"
+    },
+    {
+      "file": "test/issue306-reincarnation-red.test.mjs",
+      "reason": "#306"
+    },
+    {
+      "file": "test/issue441-reading-half-red.test.mjs",
+      "reason": "#441"
     },
     {
       "file": "test/issue45-startup-reconcile-red.test.mjs",

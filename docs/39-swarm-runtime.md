@@ -798,9 +798,13 @@ refusal within one second of the provider's 429.
 **A successor carries its predecessor's workspace (#385).** `--resume-from <seat>` whose worker
 is dead binds the predecessor's retained checkout (#428 custody) when no other live worker holds
 it, else carries the change set of the predecessor's last snapshot into a fresh checkout, and
-records `workspace.carried_from {participantId, workspaceId, predecessor, paths, snapshotSha |
-null}`; the brief's `## Inheritance from <seat>` names the carried paths. A predecessor whose
-snapshot holds no changed path carries nothing: fresh workspace, no row. A predecessor that is
+records `workspace.carried_from {participantId, workspaceId, predecessor, how, paths, snapshotSha |
+null, reason}`; the brief's `## Inheritance from <seat>` names the carried paths and the `how`.
+`how` is a closed set (#453): `bound` (the retained checkout itself), `applied` (the snapshot's
+change set applied into a fresh checkout), `skipped` (nothing carried, `reason` names why — a
+snapshot with no changed path, or paths missing from the snapshot). A carry is a fact or a
+refusal, never a silent no-op: a snapshot that cannot apply refuses pre-effect
+`swarm_workspace_carry_failed` and the successor is not admitted. A predecessor that is
 still working keeps its checkout — the successor starts fresh and inherits guidance only (#318);
 a checkout held by a foreign live worker refuses `swarm_workspace_unavailable`.
 
