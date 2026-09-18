@@ -105,6 +105,7 @@ import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import * as mcpNorthbound from '../src/mcp-northbound.mjs';
+import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { renderMcpToolInventory } from '../scripts/render-surface-docs.mjs';
 import { combinedMcpToolNames, mockApplicationCard, ordinaryMcpToolNames } from '../scripts/surface-truth.mjs';
 
@@ -559,7 +560,9 @@ test('RG-P1 PIN: surface-conformance.mjs executable main is green (stage: confor
 
 test('RG-P2 PIN: committed artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)', () => {
   const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  assert.equal(artifact.counts.mcpApplicationTools, mcpNorthbound.mcpApplicationToolNames().length,
+  // Issue #314 (docs/49 §2): the live application surface is the SHIPPED core table the production
+  // wrapper advertises — the seven verb-tools — never the raw flat list the northbound keeps for dispatch.
+  assert.equal(artifact.counts.mcpApplicationTools, CORE_TOOL_NAMES.length,
     'artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)');
 });
 

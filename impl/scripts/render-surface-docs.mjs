@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { CLI_TOP_LEVEL_VERBS, CLI_WEB_COMMANDS, HOST_CLI_VERBS } from '../src/application-cli.mjs';
-import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
+import { CORE_TOOL_VERBS, coreToolDefinitions } from '../src/mcp-core-tools.mjs';
 import {
   formatSurfaceResolutionFinding,
   resolveOperationSurfaces,
@@ -148,23 +148,16 @@ export function renderCliVerbInventory() {
  * construction (ORDINARY_APPLICATION_TOOL_DEFINITIONS), never deriveSurfaceNames alone.
  */
 export function renderMcpToolInventory() {
-  const tools = mcpApplicationToolNames();
-  const rows = tools.map((tool) => {
-    // Resolve a registry operation when the tool is a known alias or derived name.
-    const alias = APPLICATION_SEMANTIC_REGISTRY.surfaceAliases
-      .find((row) => row.surface === 'mcp.baton' && row.name === tool);
-    const byDerived = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-      .find((operation) => operation.names.mcp === tool);
-    const operation = alias
-      ? APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-        .find((entry) => entry.key === alias.canonical)
-      : byDerived;
-    const key = operation?.key ?? tool;
-    const profile = operation?.profile ?? 'ordinary';
-    const effect = operation
-      ? (operation.destructive ? 'destructive' : operation.idempotent ? 'idempotent' : 'effectful')
-      : 'idempotent';
-    return `| \`${key}\` | \`${profile}\` | \`${tool}\` | ${effect} |`;
+  // Issue #314 (docs/49 §2): the inventory IS the shipped core table — one row per core tool,
+  // its verbs in the Operation column, the bare advertised name in the MCP tool column (the
+  // surface-conformance reader takes that column), the annotation derived from the tool's own
+  // hints (never a hand-kept list).
+  const definitions = new Map(coreToolDefinitions().map((tool) => [tool.name, tool]));
+  const rows = Object.entries(CORE_TOOL_VERBS).map(([tool, verbs]) => {
+    const hints = definitions.get(tool)?.annotations ?? {};
+    const effect = hints.destructiveHint === true ? 'destructive'
+      : hints.readOnlyHint === true ? 'idempotent' : 'effectful';
+    return `| \`${tool} {verb: ${verbs.join('|')}}\` | \`ordinary\` | \`${tool}\` | ${effect} |`;
   });
   return [
     '| Operation | Profile | MCP tool | Annotation |',

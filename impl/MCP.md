@@ -315,58 +315,13 @@ that owns the runs, never over a borrowed bridge session.
 
 | Operation | Profile | MCP tool | Annotation |
 |---|---|---|---|
-| `application.help` | `ordinary` | `baton_application_help` | idempotent |
-| `run.answer` | `ordinary` | `baton_decision_answer` | idempotent |
-| `deployment.doctor` | `ordinary` | `baton_deployment_doctor` | idempotent |
-| `evidence.search` | `ordinary` | `baton_evidence_search` | idempotent |
-| `application.help` | `ordinary` | `baton_help` | idempotent |
-| `knowledge.promote` | `kernel` | `baton_knowledge_promote` | idempotent |
-| `knowledge.settlement_lease` | `kernel` | `baton_knowledge_settlement_lease` | idempotent |
-| `run.do` | `ordinary` | `baton_run_act` | destructive |
-| `run.attention.watch` | `ordinary` | `baton_run_attention_watch` | idempotent |
-| `run.do` | `ordinary` | `baton_run_do` | destructive |
-| `run.view` | `ordinary` | `baton_run_episode` | idempotent |
-| `run.view` | `ordinary` | `baton_run_inspect` | idempotent |
-| `run.knowledge.seed` | `ordinary` | `baton_run_knowledge_seed` | idempotent |
-| `run.member.send` | `ordinary` | `baton_run_member_send` | idempotent |
-| `run.member.stop` | `ordinary` | `baton_run_member_stop` | destructive |
-| `run.member.view` | `ordinary` | `baton_run_member_view` | idempotent |
-| `run.message.receipt` | `ordinary` | `baton_run_message_receipt` | idempotent |
-| `run.message.send` | `ordinary` | `baton_run_message_send` | effectful |
-| `run.scratchpad.append` | `ordinary` | `baton_run_scratchpad_append` | idempotent |
-| `run.scratchpad.elevate` | `ordinary` | `baton_run_scratchpad_elevate` | idempotent |
-| `run.scratchpad.read` | `ordinary` | `baton_run_scratchpad_read` | idempotent |
-| `run.start` | `ordinary` | `baton_run_start` | idempotent |
-| `run.stop` | `ordinary` | `baton_run_stop` | destructive |
-| `run.view` | `ordinary` | `baton_run_view` | idempotent |
-| `run.member.view` | `ordinary` | `baton_run_workstreams` | idempotent |
-| `run.list` | `ordinary` | `baton_runs` | idempotent |
-| `scratchpad.elevate` | `kernel` | `baton_scratchpad_elevate` | idempotent |
-| `scratchpad.settle` | `kernel` | `baton_scratchpad_settle` | idempotent |
-| `swarm.capture` | `ordinary` | `baton_swarm_capture` | idempotent |
-| `swarm.check` | `ordinary` | `baton_swarm_check` | idempotent |
-| `swarm.create` | `ordinary` | `baton_swarm_create` | idempotent |
-| `swarm.guide` | `ordinary` | `baton_swarm_guide` | idempotent |
-| `swarm.integrate` | `ordinary` | `baton_swarm_integrate` | destructive |
-| `swarm.list` | `ordinary` | `baton_swarm_list` | idempotent |
-| `swarm.recruit` | `ordinary` | `baton_swarm_recruit` | idempotent |
-| `swarm.stop` | `ordinary` | `baton_swarm_stop` | destructive |
-| `swarm.update` | `ordinary` | `baton_swarm_update` | idempotent |
-| `swarm.view` | `ordinary` | `baton_swarm_view` | idempotent |
-| `swarm.watch` | `ordinary` | `baton_swarm_watch` | idempotent |
-| `wakes.since` | `ordinary` | `baton_wakes_since` | idempotent |
-| `wakes.subscribe` | `ordinary` | `baton_wakes_subscribe` | effectful |
-| `wakes.unsubscribe` | `ordinary` | `baton_wakes_unsubscribe` | effectful |
-| `waves.attach` | `ordinary` | `baton_waves_attach` | idempotent |
-| `waves.compile` | `ordinary` | `baton_waves_compile` | idempotent |
-| `waves.list` | `ordinary` | `baton_waves_list` | idempotent |
-| `waves.progress` | `ordinary` | `baton_waves_progress` | idempotent |
-| `waves.run` | `ordinary` | `baton_waves_run` | idempotent |
-| `waves.send` | `ordinary` | `baton_waves_send` | idempotent |
-| `waves.start` | `ordinary` | `baton_waves_start` | idempotent |
-| `waves.stop` | `ordinary` | `baton_waves_stop` | destructive |
-| `run.member.send` | `ordinary` | `baton_workstream_notify` | idempotent |
-| `run.member.stop` | `ordinary` | `baton_workstream_stop` | destructive |
+| `baton_deployment {verb: doctor}` | `ordinary` | `baton_deployment` | idempotent |
+| `baton_run {verb: start|view|list|send|stop|answer|do}` | `ordinary` | `baton_run` | destructive |
+| `baton_swarm {verb: create|list|view|update|recruit|guide|capture|check}` | `ordinary` | `baton_swarm` | effectful |
+| `baton_waves {verb: start|list|progress|send|stop}` | `ordinary` | `baton_waves` | destructive |
+| `baton_knowledge {verb: search|seed}` | `ordinary` | `baton_knowledge` | effectful |
+| `baton_wakes {verb: subscribe|since|unsubscribe}` | `ordinary` | `baton_wakes` | effectful |
+| `baton_surface {verb: catalog|describe|invoke|snapshot|watch|visualize}` | `ordinary` | `baton_surface` | destructive |
 
 <!-- END GENERATED: mcp-tool-inventory -->
 
