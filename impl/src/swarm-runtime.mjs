@@ -1425,6 +1425,28 @@ const contributionContractRows = (swarm) => Object.values(swarm.contributions ??
       ...(contract !== null ? { contract } : {}), ...(carriedForward !== null ? { carriedForward } : {}) };
   }).filter(Boolean);
 
+/** The last checkpoint each seat pinned, from the fold's own contribution rows: the newest
+ * contribution carrying a revision (the captured sha + its retained ref, with the revision
+ * row's seq/ts). A seat that never captured one has no row — recorded absence, never a guess.
+ * ONE derivation (issue #311): `run.peers.read`/`_peersRead` renders it per peer, and the
+ * situation projection reads the viewer's predecessor from it. */
+const seatCheckpointRows = (swarm, headSeq) => {
+  const checkpoints = new Map();
+  for (const contribution of Object.values(swarm.contributions ?? {})) {
+    const revision = contribution?.revision ?? null;
+    if (revision === null || !Number.isSafeInteger(revision.seq)) continue;
+    const prior = checkpoints.get(contribution.participantId) ?? null;
+    if (prior !== null && prior.seq >= revision.seq) continue;
+    const body = contribution.body;
+    const subject = body !== null && typeof body === 'object' && !Array.isArray(body)
+      && isContributionContractBody(body) && typeof body.subject === 'string' ? body.subject : null;
+    checkpoints.set(contribution.participantId, { contributionId: contribution.contributionId,
+      sha: revision.sha, ref: revision.ref, seq: revision.seq, ts: revision.ts,
+      summary: subject, age: { seqs: Math.max(0, headSeq - revision.seq) } });
+  }
+  return checkpoints;
+};
+
 /** Issue #489: take whole rendered BLOCKS under one byte budget — the ONE rule the situation
  * section's age-scaling lists (the published contracts, the commits since the base) are bounded
  * by. A block is kept whole or not at all (a hand-off is cited verbatim, #310 — never clipped
@@ -3603,6 +3625,10 @@ export class SwarmRuntime {
     const projectionShape = SWARM_VIEW_PROJECTIONS[projection] ?? SWARM_VIEW_PROJECTIONS[SWARM_VIEW_DEFAULT_PROJECTION];
     const wholeRecord = projectionShape.rows === null;
     const carriesAttention = wholeRecord || projectionShape.rows.includes('attention');
+    // Issue #311: the situation's derivations (the cross-swarm scan and the commits-since-base
+    // git read) are paid by the whole record and the situation's own slice — the two projections
+    // that promise it. Every other slice neither pays them nor carries the field.
+    const carriesSituation = wholeRecord || projectionShape.rows.includes('situation');
     // The turn seam (trigger b) rides the worker row's fence epoch, compared inside the
     // observation cache — never a fold of #305 rows, which this ledger does not carry.
     // One repository memo per view: the deployment target facts every live base read needs.
@@ -4605,6 +4631,11 @@ export class SwarmRuntime {
       // channel a participant reads without the root copying anything — so a scoped view carries
       // them whole, like the swarm-wide context above (#318).
       knowledge,
+      // The deployment-level situation (#311): the peers beside the caller, the seats at work in
+      // the repository's other swarms with their scopes, what those swarms published, the commits
+      // landed since the base, and the caller's predecessor when it is a successor — the SAME
+      // derivation the recruit brief's situation blocks render, served as data.
+      ...(carriesSituation ? { situation: this._situation(swarm, caller, undefined, scopeSubtree) } : {}),
       // The caller's own standing refusal rides the FRAME, so it is answered whatever projection
       // was asked for — and so the entry can tell that a successful read just retired one.
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions],
@@ -5307,19 +5338,9 @@ export class SwarmRuntime {
     // The last checkpoint a seat pinned, from the fold's own contribution rows: the newest
     // contribution carrying a revision (the captured sha + its retained ref, with the revision
     // row's seq/ts). A seat that never captured one reads null — recorded absence, never a guess.
-    const checkpoints = new Map();
-    for (const contribution of Object.values(swarm.contributions ?? {})) {
-      const revision = contribution?.revision ?? null;
-      if (revision === null || !Number.isSafeInteger(revision.seq)) continue;
-      const prior = checkpoints.get(contribution.participantId) ?? null;
-      if (prior !== null && prior.seq >= revision.seq) continue;
-      const body = contribution.body;
-      const subject = body !== null && typeof body === 'object' && !Array.isArray(body)
-        && isContributionContractBody(body) && typeof body.subject === 'string' ? body.subject : null;
-      checkpoints.set(contribution.participantId, { contributionId: contribution.contributionId,
-        sha: revision.sha, ref: revision.ref, seq: revision.seq, ts: revision.ts,
-        summary: subject, age: { seqs: Math.max(0, headSeq - revision.seq) } });
-    }
+    // ONE derivation (`seatCheckpointRows`, #311): the situation projection's predecessor block
+    // reads the same rows.
+    const checkpoints = seatCheckpointRows(swarm, headSeq);
     // The seat's LATEST contribution (by ledger seq), revision or not: the peers-now section
     // (docs/45 §6) reads a seat that captured a revision through that, a seat that only
     // published through this, and a seat with no rows at all as recorded absence.
@@ -5410,6 +5431,100 @@ export class SwarmRuntime {
     if (!swarm.baseCommit) return null;
     if (typeof this.situationGit?.commitsSince !== 'function') return { baseCommit: swarm.baseCommit, commits: null };
     return { baseCommit: swarm.baseCommit, commits: this.situationGit.commitsSince(swarm.baseCommit) };
+  }
+
+  /** The deployment-level situation (issue #311): the ONE derivation the view's `situation`
+   * projection serves and the recruit brief's situation blocks render. `caller` is the viewing
+   * seat's participant row (null for a caller with no seat): the peers list excludes it, the
+   * peer sibling flag is relative to its parent, and the predecessor block derives only when it
+   * joined as a `resumeFrom` successor. Fold-only over every swarm of the deployment
+   * (`store.swarms()`), plus the ONE git read `_commitsSinceBase` already is — the brief
+   * composer hands that answer in so a recruit pays the read once. Every list is bounded by the
+   * ONE seat-read page ceiling (`view.seat_read.items`) with the remainder COUNTED in its
+   * omitted field — never a silently short list. Read-time and never refusing (#304): a fact
+   * the ledger does not hold reads as recorded absence. A scoped view (`scopeSubtree`) withholds
+   * the role line of every seat outside the subtree — the same rule the participants
+   * collection applies (2026-09-14 audit S-F3), so one answer never shows in `situation` what it
+   * withholds in `participants`. */
+  _situation(swarm, caller = null, commitsSince = undefined, scopeSubtree = null) {
+    const cap = FRAME_LIMITS['view.seat_read.items'].value;
+    const capped = (rows) => ({ rows: rows.slice(0, cap), omitted: Math.max(0, rows.length - cap) });
+    const viewerId = caller?.participantId ?? null;
+    const viewer = viewerId !== null && Object.hasOwn(swarm.participants, viewerId)
+      ? swarm.participants[viewerId] : null;
+    // Peers: this swarm's can-act seats minus the viewer — the brief's Peers block's own rows,
+    // canonically ordered for a data reader (the brief's text keeps its join order).
+    const peersAll = Object.values(swarm.participants)
+      .filter((row) => this._canAct(row) && row.participantId !== viewerId)
+      .sort((left, right) => compareCanonicalStrings(left.participantId, right.participantId))
+      .map((row) => ({ participantId: row.participantId,
+        role: scopeSubtree !== null && !scopeSubtree.includes(row.participantId) ? null : (row.role ?? null),
+        scope: row.scope ?? null,
+        sibling: Boolean(caller && row.parentId && caller.parentId === row.parentId && row.parentId !== null) }));
+    const peers = capped(peersAll);
+    // Contracts: this swarm's published contract rows (the #310/#318 derivation the brief cites
+    // verbatim), newest first.
+    const contracts = capped([...contributionContractRows(swarm)].reverse());
+    // Siblings and published: every OTHER swarm of this repository. The sibling row is the #301
+    // overlap row widened — the seat, its swarm, and its whole declared scope (not only the
+    // overlapping paths): what siblings OWN, so knowledge can travel before scopes collide. A
+    // published row is subject + a reference (contributionId + seq), never the body.
+    const siblingsAll = [];
+    const publishedAll = [];
+    for (const other of this.store.swarms()) {
+      if (other.swarmId === swarm.swarmId) continue;
+      for (const participant of Object.values(other.participants ?? {})) {
+        if (!this._canAct(participant)) continue;
+        siblingsAll.push({ swarmId: other.swarmId, participantId: participant.participantId,
+          scope: participant.scope ?? null });
+      }
+      for (const contribution of Object.values(other.contributions ?? {})) {
+        if (typeof contribution?.contributionId !== 'string' || !Number.isSafeInteger(contribution?.seq)) continue;
+        const body = contribution.body ?? null;
+        const isObject = body !== null && typeof body === 'object' && !Array.isArray(body);
+        const isContract = isObject && (isContributionContractBody(body)
+          || (body.contract !== undefined && body.contract !== null) || Array.isArray(body.carriedForward));
+        publishedAll.push({ swarmId: other.swarmId, contributionId: contribution.contributionId,
+          participantId: contribution.participantId ?? null, seq: contribution.seq,
+          subject: isObject && typeof body.subject === 'string' ? body.subject : null,
+          contract: isContract });
+      }
+    }
+    siblingsAll.sort((left, right) => compareCanonicalStrings(left.swarmId, right.swarmId)
+      || compareCanonicalStrings(left.participantId, right.participantId));
+    // Newest first — the same order the brief's contract list renders.
+    publishedAll.sort((left, right) => right.seq - left.seq);
+    const siblings = capped(siblingsAll);
+    const published = capped(publishedAll);
+    // Commits since the base: the ONE git derivation (#318 deliverable 4) — a stored reference,
+    // never a stored count; no base and no authority are both recorded absence.
+    const commits = commitsSince === undefined ? this._commitsSinceBase(swarm) : commitsSince;
+    const commitRows = commits?.commits ?? null;
+    const commitsCapped = commitRows === null ? { rows: null, omitted: 0 } : capped(commitRows);
+    // The predecessor block: only a viewing seat that joined as a successor has one. The
+    // checkpoint is the ONE per-seat derivation `run.peers.read` renders (`seatCheckpointRows`),
+    // the contracts the same rows the recruit brief's inheritance cites.
+    let predecessor = null;
+    const resumeFrom = viewer?.resumeFrom ?? null;
+    if (typeof resumeFrom === 'string' && resumeFrom.length > 0) {
+      const row = Object.hasOwn(swarm.participants, resumeFrom) ? swarm.participants[resumeFrom] : null;
+      predecessor = {
+        participantId: resumeFrom,
+        status: row?.status ?? null,
+        leftReason: row?.leftReason ?? null,
+        lastCheckpoint: seatCheckpointRows(swarm, this.store.ledgerHeadSeq()).get(resumeFrom) ?? null,
+        contracts: contributionContractRows(swarm).filter((contract) => contract.participantId === resumeFrom),
+      };
+    }
+    return {
+      baseCommit: swarm.baseCommit ?? null,
+      commits: commitsCapped.rows, commitsOmitted: commitsCapped.omitted,
+      peers: peers.rows, peersOmitted: peers.omitted,
+      contracts: contracts.rows, contractsOmitted: contracts.omitted,
+      siblings: siblings.rows, siblingsOmitted: siblings.omitted,
+      published: published.rows, publishedOmitted: published.omitted,
+      predecessor,
+    };
   }
 
   /** The predecessor a `resumeFrom` recruit inherits from (#318 deliverable 3): its last
@@ -6020,6 +6135,25 @@ export class SwarmRuntime {
           + ` (this section is bounded by ${FRAME_LIMITS['view.seat_read.items'].lane} = ${FRAME_LIMITS['view.seat_read.items'].value}; read the rest with run.peers.read)`);
       }
     }
+    // Issue #311: the situation is DEPLOYMENT-level. The seats at work in this repository's
+    // OTHER swarms ride the SAME derivation the view's `situation` projection serves
+    // (`_situation`) — fold-only over the deployment's swarms plus the ONE commits-since-base
+    // read, which the commits block below reuses so a recruit pays it once. Rendered only when
+    // there is something to say, so a one-swarm deployment's brief composes byte-identically;
+    // bounded by the ONE seat-read ceiling with the remainder counted — a seat's bridge is bound
+    // to its own swarm, so the count names the bound, never a read the seat cannot make.
+    const commitsSinceBase = this._commitsSinceBase(swarm);
+    const situationWide = this._situation(swarm, null, commitsSinceBase);
+    if (situationWide.siblings.length > 0) {
+      situation.push('Sibling seats at work in this repository\'s other swarms:');
+      for (const sibling of situationWide.siblings) {
+        situation.push(`- ${sibling.participantId} @ ${sibling.swarmId}${sibling.scope ? ` — scope: ${sibling.scope.join(', ')}` : ''}`);
+      }
+      if (situationWide.siblingsOmitted > 0) {
+        situation.push(`- ${situationWide.siblingsOmitted} further seat${situationWide.siblingsOmitted === 1 ? '' : 's'} not shown`
+          + ` (this block is bounded by ${FRAME_LIMITS['view.seat_read.items'].lane} = ${FRAME_LIMITS['view.seat_read.items'].value})`);
+      }
+    }
     // docs/45 §8 (#422): the couplings that touch this seat — its groups' declared and proposed
     // records, and the records that name the seat itself (a lease whose roster names it, a
     // proposal whose consent set does) — so a seat reads "who holds the write turn / which point
@@ -6094,7 +6228,7 @@ export class SwarmRuntime {
           + ' read them with run.contributions.read)');
       }
     }
-    const commits = this._commitsSinceBase(swarm);
+    const commits = commitsSinceBase;
     if (commits !== null) {
       if (Array.isArray(commits.commits) && commits.commits.length > 0) {
         // Issue #489: the commits since the base are a DEPLOYMENT-scale fact, never the seat's —
@@ -6111,6 +6245,19 @@ export class SwarmRuntime {
         }
       } else if (commits.commits === null) {
         situation.push(`Commits since the base (${commits.baseCommit}): unavailable — this deployment exposes no git authority to the swarm.`);
+      }
+    }
+    // Issue #311: what the repository's OTHER swarms published — subject + a reference, never
+    // the body, so a seat learns a sibling's contract exists without the root copying it (the
+    // row it would read is named). Same `_situation` derivation as the siblings block above.
+    if (situationWide.published.length > 0) {
+      situation.push('Published in this repository\'s other swarms (subject + a reference, never the body; newest first):');
+      for (const row of situationWide.published) {
+        situation.push(`- ${row.contributionId} by ${row.participantId} @ ${row.swarmId}${row.subject === null ? '' : `: ${JSON.stringify(row.subject)}`}`);
+      }
+      if (situationWide.publishedOmitted > 0) {
+        situation.push(`- ${situationWide.publishedOmitted} further publication${situationWide.publishedOmitted === 1 ? '' : 's'} not shown`
+          + ` (this block is bounded by ${FRAME_LIMITS['view.seat_read.items'].lane} = ${FRAME_LIMITS['view.seat_read.items'].value})`);
       }
     }
     // #341 part 3: what this seat may recruit on. A seat composing sub-lanes chooses across

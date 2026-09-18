@@ -13253,7 +13253,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1084,
+          "size": 1093,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13423,7 +13423,7 @@
         {
           "name": "_peersRead",
           "ordinal": 0,
-          "size": 99,
+          "size": 89,
           "seam": "admission",
           "evidence": [
             "delegates:observation",
@@ -13446,6 +13446,15 @@
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_situation",
+          "ordinal": 0,
+          "size": 80,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
           ]
         },
         {
@@ -13623,7 +13632,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 251,
+          "size": 283,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
