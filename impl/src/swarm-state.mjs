@@ -24,6 +24,10 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   // Issue #425: the runtime-recorded bypass of a live exclusive writer coupling — observed
   // at the seat's projected git wrapper, composed by the runtime, never caller-submittable.
   'swarm.coupling_writer_bypassed',
+  // Issue #364: the runtime-recorded restart reconciliation — a seat whose worker is absent
+  // from the fleet THIS incarnation recovered. Composed by the swarm runtime from the
+  // coordinator's own fleet capture, never caller-submittable.
+  'swarm.participant_runtime_lost',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
@@ -369,6 +373,19 @@ export function validateSwarmEvent(kind, payload) {
     if (!isNonEmptyString(p.at)) refuse('swarm.coupling_writer_bypassed requires at — when the commit was observed', 'invalid_payload');
     return;
   }
+
+  if (kind === 'swarm.participant_runtime_lost') {
+    if (!isNonEmptyString(p.participantId)) refuse('swarm.participant_runtime_lost requires participantId', 'invalid_payload');
+    if (!isNonEmptyString(p.workerId)) refuse('swarm.participant_runtime_lost requires workerId', 'invalid_payload');
+    // The worker process generation the restart lost. 0 is the honest reading for a handle
+    // whose ledger recorded no generation at all — never a fabricated one.
+    if (!Number.isSafeInteger(p.incarnation) || p.incarnation < 0) {
+      refuse('swarm.participant_runtime_lost requires incarnation — the lost worker process generation', 'invalid_payload');
+    }
+    if (!isNonEmptyString(p.at)) refuse('swarm.participant_runtime_lost requires at — when the loss was reconciled', 'invalid_payload');
+    return;
+  }
+
   if (kind === 'swarm.assignment_updated') {
     if (!isNonEmptyString(p.assignmentId)) refuse('swarm.assignment_updated requires assignmentId', 'invalid_payload');
     if (!isNonEmptyString(p.participantId)) refuse('swarm.assignment_updated requires participantId', 'invalid_payload');
@@ -811,6 +828,25 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     }));
     swarms.set(p.swarmId, replaceField(swarm, 'couplings', couplings));
+    return;
+  }
+  if (kind === 'swarm.participant_runtime_lost') {
+    // Issue #364: the resident restarted and this seat's worker is absent from the fleet it
+    // recovered. The row is HISTORY on the participant (the newest fact about its runtime), never
+    // a membership settle: the seat's status is untouched, and a LATER `swarm.participant_bound`
+    // (a resume) supersedes it — the projection reads the newest of the two.
+    const participant = ownGet(swarm.participants, p.participantId);
+    if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    const updatedParticipant = Object.freeze({
+      ...participant,
+      runtimeLost: Object.freeze({
+        workerId: p.workerId, incarnation: p.incarnation, at: p.at, seq: meta.seq, ts: meta.ts,
+      }),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    });
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
     return;
   }
 

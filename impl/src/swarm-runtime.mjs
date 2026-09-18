@@ -401,6 +401,9 @@ export class SwarmRuntime {
         if (participant.status !== 'active') continue;
         const workerId = participant.bindings?.at(-1)?.workerId ?? null;
         const worker = workerId ? workers.find((row) => row.id === workerId) : null;
+        // Issue #364: a seat the restart reconciliation found lost holds no lease — its process is
+        // gone, so the resident must not keep reserving host capacity for it (#360).
+        if (this._runtimeLostCurrent(participant) !== null) continue;
         if (swarmParticipantLiveness(worker).live) {
           holders.push(`participant:${swarm.swarmId}:${participant.participantId}`);
         }
@@ -415,6 +418,48 @@ export class SwarmRuntime {
     if (!this.hostCapacity || typeof this.hostCapacity.releaseWorkersExcept !== 'function') return;
     this.hostCapacity.releaseWorkersExcept(this._activeWorkerHolders())
       .catch(() => { /* a busy host lock is retried by the next reconciliation */ });
+  }
+
+  /** Issue #364: the restart reconciliation. The coordinator captured the workers THIS incarnation
+   * actually controls (`startupWorkerFleet()`, taken by its startup reconstruction after the replay
+   * and reconstruction resolved — the #434/#351 lane 4 contract); every ACTIVE seat bound to a
+   * worker outside that fleet died with an earlier incarnation, and its row is folded ONCE
+   * (`swarm.participant_runtime_lost`) so the participant reads live:false / state:dead and pages
+   * `worker_lost_on_restart` instead of riding into every new recruit brief as a live peer.
+   *
+   * Idempotent by construction: the durable row is keyed per (swarm, seat, worker, incarnation) and
+   * a seat already carrying that reading is skipped without touching the ledger, so this may run at
+   * every runtime entry. A runtime whose coordinator offers no fleet (a bare fixture host) or whose
+   * fleet is not captured yet simply reconciles nothing — absence is never a claim of death. */
+  _reconcileParticipantRuntimes() {
+    const fleet = typeof this.coordinator.startupWorkerFleet === 'function'
+      ? this.coordinator.startupWorkerFleet() : null;
+    if (!fleet || !Array.isArray(fleet.lost) || fleet.lost.length === 0) return;
+    const lostByWorker = new Map(fleet.lost.map((row) => [row.workerId, row.incarnation]));
+    let changed = false;
+    for (const swarm of this.store.swarms()) {
+      for (const participant of Object.values(swarm.participants ?? {})) {
+        if (participant.status !== 'active') continue;
+        // An unbound seat (between its join and its first binding) has no worker to lose: absence
+        // of a binding is not evidence of death, exactly as the liveness derivation reads it.
+        const binding = participant.bindings?.at(-1) ?? null;
+        if (!binding) continue;
+        if (!lostByWorker.has(binding.workerId)) continue;
+        const incarnation = lostByWorker.get(binding.workerId);
+        // The idempotency key IS the durable memory of this exact loss: a seat already carrying the
+        // row is skipped without touching the ledger, and so is one whose reading a LATER binding
+        // has since superseded — the history row is never re-minted (a second write under the same
+        // key with a fresh `at` would be a replay conflict, and would make the view fail).
+        const key = `swarm-runtime-lost:${swarm.swarmId}:${participant.participantId}:${binding.workerId}:${incarnation}`;
+        if (this.store.priorCoordinationEvent(key)) continue;
+        this.store.recordSwarm('swarm.participant_runtime_lost', {
+          swarmId: swarm.swarmId, participantId: participant.participantId,
+          workerId: binding.workerId, incarnation, at: new Date().toISOString(),
+        }, { actor: 'baton-runtime', key });
+        changed = true;
+      }
+    }
+    if (changed) this._reconcileHostCapacity();
   }
 
   _swarm(id) {
@@ -870,6 +915,19 @@ export class SwarmRuntime {
       && (!participant.bindings.length || row.id === participant.bindings.at(-1)?.workerId)) ?? null;
   }
 
+  /** Issue #364: the restart-lost reading of a seat's CURRENT binding, or null. The row
+   * `swarm.participant_runtime_lost` is written once per (seat, worker, incarnation) at the first
+   * runtime entry after the resident reconciled its participant rows against the fleet it actually
+   * recovered; a LATER binding (a resume) supersedes it, so the reading is current only while the
+   * loss is the newest fact about the seat's runtime. Stored rows carry it (so every
+   * can-still-act predicate reads the same settled liveness) and projected rows carry it through. */
+  _runtimeLostCurrent(participant) {
+    const lost = participant?.runtimeLost ?? null;
+    if (!lost) return null;
+    const newestBindingSeq = participant.bindings?.at(-1)?.seq ?? 0;
+    return (lost.seq ?? 0) > newestBindingSeq ? lost : null;
+  }
+
   /** Issue #350: the ONE "this seat can still act" predicate every surface reads — peers
    * in the brief, scope overlap, roster intersection, closed-with-live-participants, holder
    * checks, and the completion derivation. A seat acts while its membership is active AND
@@ -879,6 +937,9 @@ export class SwarmRuntime {
    * alone; `gone` keeps its meaning. */
   _canAct(row) {
     if (!row || row.status !== 'active') return false;
+    // A stored row carries no runtime reading, but it may carry the durable #364 reconciliation:
+    // a seat whose worker died with an earlier incarnation cannot act until it is re-bound.
+    if (this._runtimeLostCurrent(row) !== null) return false;
     return row.runtime === undefined || row.runtime.live === true;
   }
 
@@ -1069,6 +1130,9 @@ export class SwarmRuntime {
     // Issue #425: drain before the projection reads the fold — the rows this settle writes
     // must be folded into THIS view, so the swarm row is re-read after the settle.
     this._settleCheckoutWriterState();
+    // Issue #364: the restart reconciliation reads the same way — a view is a runtime entry, so
+    // the lost seats are folded (and their host leases released) before this view projects them.
+    this._reconcileParticipantRuntimes();
     swarm = this.store.swarm(swarm.swarmId) ?? swarm;
     const caller = this._permit(swarm, principal, context, 'read');
     // An optional participantId scopes the read to that participant's delegation (issue #263
@@ -1228,7 +1292,12 @@ export class SwarmRuntime {
       // The ONE liveness derivation (swarmParticipantLiveness): state, turn and "is this seat
       // alive at all" come from it, so the view, the wake feed and the bridge agree by
       // construction rather than by three copies of a status list.
-      const liveness = swarmParticipantLiveness(worker, paused.length);
+      // Issue #364: the restart reconciliation supersedes the replayed handle. A worker the
+      // resident does not own reads `idle`/`working` out of the ledger — a status, not a process —
+      // so the seat's runtime reading is the settled loss: dead, not live, no turn to guide.
+      const liveness = this._runtimeLostCurrent(participant) !== null
+        ? { state: 'dead', live: false, turn: null }
+        : swarmParticipantLiveness(worker, paused.length);
       const alive = liveness.live;
       const guidance = worker ? (guidanceByWorker.get(worker.id) ?? []) : [];
       // Issue #332 (settled by #350): a seat whose worker exited after its recorded final
@@ -1338,7 +1407,17 @@ export class SwarmRuntime {
       // absence nor death — its final contribution landed and its turn ended terminally — so it
       // never raises this row either; only a runtime that died without a terminal row (no clean
       // exit evidence) or mid-turn (a crash, a failure cause, unanswered guidance) pages here.
-      if (row.status === 'active' && !row.runtime.live && row.runtime.workerId !== null
+      // Issue #364: the seat's worker is absent from the fleet this incarnation recovered. The
+      // durable reconciliation is the cause, so the specific row REPLACES the generic
+      // participant_runtime_dead one: it names the lost incarnation and both commands that settle
+      // the seat (resume it, or stop it) — #350's rule, only seats that can act are peers.
+      const lost = row.status === 'active' && row.runtime.workerId !== null
+        ? this._runtimeLostCurrent(row) : null;
+      if (lost !== null) {
+        organization.push({ kind: 'worker_lost_on_restart', participantId: row.participantId, workerId: row.runtime.workerId,
+          incarnation: lost.incarnation, at: lost.at,
+          next: { resume: 'swarm.recruit --resume-from', stop: 'swarm.stop' } });
+      } else if (row.status === 'active' && !row.runtime.live && row.runtime.workerId !== null
         && row.runtime.state !== 'completed') {
         organization.push({ kind: 'participant_runtime_dead', participantId: row.participantId, state: row.runtime.state });
       }
@@ -2399,6 +2478,10 @@ export class SwarmRuntime {
     // and the mutating arms below (a coupling declare/release, a recruit binding) settle
     // again after their writes, before the answer ever returns to the seat.
     this._settleCheckoutWriterState();
+    // Issue #364: the same entry reconciles the participant runtime rows against the workers this
+    // incarnation recovered — idempotent, so the first operation after a restart folds the lost
+    // seats and every later entry is a no-op.
+    this._reconcileParticipantRuntimes();
     // The native bridge's refusal report (issue #283). It reaches the runtime through `dispatch`
     // because that is the bridge's ONLY channel, and it is admitted only from a bridge report: the
     // verb is not a swarm command (swarm-contract asserts it never becomes one), so no surface can

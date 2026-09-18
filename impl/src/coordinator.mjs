@@ -28,6 +28,7 @@ import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import {
+  KILL_ESCALATION_GRACE_MS,
   processAuthorityPayload, processAuthorityState, processGroupAlive, processReadyPayload,
   reapRecoveredProcessGroup, recoveryProcessAbsentPayload, recoveryProcessReapedPayload,
   validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload,
@@ -964,6 +965,38 @@ function defaultAccept(verdict, acceptOpts) {
   return !!(verdict && verdict.reverified === true && verdict.observedExit === acceptOpts.expectExit);
 }
 
+/** Issue #384: the record a reconciler's failure names — the retained workspace owner, the worker
+ * process or the lease the reconciler could not settle. A failure that names none has no record;
+ * null is honest, a guess is not. */
+function startupReconcilerRecord(caught) {
+  if (!caught || typeof caught !== 'object') return null;
+  for (const candidate of [caught.record, caught.physicalOwnerId, caught.workspaceId, caught.workerId, caught.leaseId]) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate;
+  }
+  return null;
+}
+
+/** Issue #384: the next action a startup refusal names. A TRANSIENT observation — a process still
+ * alive, or a lease younger than the grace its own reconciler waits out — says "retry after N ms"
+ * with the fact waited on, N being the ONE reap grace the reconcilers already use
+ * (process-lifecycle KILL_ESCALATION_GRACE_MS), never a fresh literal. A non-transient failure
+ * carries the repair the refusal already composed, or none when it knows of none. */
+function startupReconcilerNext(caught, observed, record, repair) {
+  const named = typeof caught?.next === 'string' && caught.next.length > 0 ? caught.next : null;
+  if (observed?.alive === true) {
+    const target = record === null ? 'the named record' : record;
+    return `retry after ${KILL_ESCALATION_GRACE_MS} ms — the process that still owns ${target}`
+      + ` (pid ${observed.pid ?? 'unknown'}) is alive`;
+  }
+  const age = observed?.leaseAgeMs ?? null;
+  if (Number.isSafeInteger(age)) {
+    const grace = Number.isSafeInteger(observed.leaseGraceMs) ? observed.leaseGraceMs : KILL_ESCALATION_GRACE_MS;
+    const target = record === null ? 'the named record' : record;
+    return `retry after ${grace} ms — the lease on ${target} is ${age} ms old, inside its ${grace} ms grace`;
+  }
+  return named ?? repair;
+}
+
 export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
@@ -1445,6 +1478,10 @@ export class Coordinator {
     this._startupReconstructionPhase = 'pending';
     this._startupReconstructionStartedAt = null;
     this._startupReconstructionElapsedMs = null;
+    // Issue #364: the workers THIS incarnation actually controls, captured once by the
+    // reconstruction below (null until it has run) — the fact the swarm runtime reconciles its
+    // participant runtime rows against after a restart.
+    this._startupWorkerFleet = null;
     if (this._coordination?._deferredLoad === true) {
       this._startupReconstructionPending = true;
     } else {
@@ -1513,6 +1550,17 @@ export class Coordinator {
         ? (this._startupReconstructionElapsedMs ?? null)
         : (startedAt === null ? null : Date.now() - startedAt),
     });
+  }
+
+  /** Issue #364: the workers this incarnation actually controls, as the startup reconstruction
+   * captured them — `owned` (spawned here), `recovered` (a kernel-start-bound process the replay
+   * proved still alive) and `lost` (every other replayed handle: a worker that died with an earlier
+   * incarnation, with the process generation that was lost). Null until the reconstruction has run.
+   *
+   * A pure read of a frozen record: it asserts nothing about admission, so a caller may ask before
+   * the first command (the swarm runtime asks at every entry) and gets `null` rather than a throw. */
+  startupWorkerFleet() {
+    return this._startupWorkerFleet ?? null;
   }
 
   *_startupReconstructionPasses() {
@@ -1601,6 +1649,34 @@ export class Coordinator {
       this._coordMapEvent(absent);
       handle.processRef = { ...handle.processRef, state: 'closed', closedSeq: absent.seq };
       handle.recoveredProcessAuthority = false;
+    }
+    // Issue #364: the fleet THIS incarnation actually controls, captured here — the one point where
+    // both facts are settled: a handle this incarnation spawned (`currentIncarnation`, set at spawn
+    // and never cleared) or a kernel-start-bound process the replay proved still alive
+    // (`recoveredProcessAuthority`, the absent ones just cleared above). Every OTHER handle the
+    // ledger replayed is a worker that died with an earlier incarnation: its process status is a
+    // historical record, not a process. `startupWorkerFleet()` publishes exactly this split, and
+    // the swarm runtime reconciles its participant runtime rows against it (#364) — never against a
+    // hand-kept list of its own.
+    {
+      const owned = [];
+      const recovered = [];
+      const lost = [];
+      for (const handle of this._workers.values()) {
+        if (handle.currentIncarnation === true) { owned.push(handle.id); continue; }
+        if (handle.recoveredProcessAuthority === true) { recovered.push(handle.id); continue; }
+        // `processGeneration` is the worker's own incarnation number; 0 is the honest reading for a
+        // ledger that recorded none, never a fabricated generation.
+        lost.push(Object.freeze({
+          workerId: handle.id,
+          incarnation: Number.isSafeInteger(handle.processGeneration) ? handle.processGeneration : 0,
+          taskId: handle.taskId ?? null,
+          runId: handle.runId ?? null,
+        }));
+      }
+      this._startupWorkerFleet = Object.freeze({
+        owned: Object.freeze(owned), recovered: Object.freeze(recovered), lost: Object.freeze(lost),
+      });
     }
     // A controller-local transport does not survive restart, but a kernel-start-bound process
     // generation can. Keep every checkout/runtime/capacity lease that generation still owns;
@@ -1703,11 +1779,13 @@ export class Coordinator {
               ? Promise.resolve(result).then(applyOwnerAuthority)
               : applyOwnerAuthority(result);
           },
+          'workspace_owners',
         ));
       }
       if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
         reconciliations.push(this._trackStartupCleanup(
           () => this._runtimeScopes.reconcile(expectedWorkers),
+          'worker_processes',
         ));
       }
       if (absentRecoveredProcessHandles.length > 0) {
@@ -1729,7 +1807,7 @@ export class Coordinator {
             handle.cleanupError = null;
             handle.localAuthority = false;
           }
-        }));
+        }), 'worker_process_cleanup');
       }
     };
     if (!this._startupRecoveryAuthority) {
@@ -1877,15 +1955,20 @@ export class Coordinator {
     return Promise.resolve(result).finally(release);
   }
 
-  // Compose the swallowed startup error: attach the reconciler's failure as cause (closing the
-  // #10 AX finding) and, when it carries a worktree reconciliation report, name exactly the
-  // refusal-set records — every retained diagnostic plus any physicalOwnerId a mid-removal
-  // failure recorded in report.errors (those have no diagnostic row) — with the remedy.
-  _startupCleanupIncomplete(caught) {
-    let message = 'startup owned-resource reconciliation failed';
+  // Compose the swallowed startup error. Issue #384: the refusal must TEACH. It carries
+  // {reconciler, record, observed, next} — which reconciler failed, which record it names, what was
+  // observed (a process still alive? a lease younger than its grace?) and the next action — both as
+  // fields (the deployment's `host.startup_refused` row and every programmatic reader) and in the
+  // message (`baton: <code>: <message>` IS the wire refusal), with the same facts on `detail` so the
+  // control-surface envelope carries them. The reconciler's own failure stays attached as `cause`
+  // (closing the #10 AX finding) and a worktree reconciliation report still names exactly the
+  // refusal-set records — every retained diagnostic plus any physicalOwnerId a mid-removal failure
+  // recorded in report.errors (those have no diagnostic row) — with the remedy.
+  _startupCleanupIncomplete(caught, reconciler = null) {
+    let base = 'startup owned-resource reconciliation failed';
     const report = caught?.report;
+    const named = new Set();
     if (report && (Array.isArray(report.diagnostics) || Array.isArray(report.errors))) {
-      const named = new Set();
       for (const row of (report.diagnostics ?? [])) {
         if (row?.retained === true && typeof row.physicalOwnerId === 'string') named.add(row.physicalOwnerId);
       }
@@ -1894,19 +1977,79 @@ export class Coordinator {
         if (isPhysicalWorkspaceId(candidate)) named.add(candidate);
       }
       if (named.size > 0) {
-        message = `startup owned-resource reconciliation refused: ${[...named].sort().join(', ')}`
+        base = `startup owned-resource reconciliation refused: ${[...named].sort().join(', ')}`
           + ' — delete the named records under .git/baton/workspace-owners/ after proving their'
           + ' controllers dead, or restore their worktrees';
       }
     }
-    return Object.assign(new Error(message), { code: 'coordinator_cleanup_incomplete', cause: caught });
+    const records = Object.freeze([...named].sort());
+    const record = records[0] ?? startupReconcilerRecord(caught);
+    const observed = this._startupReconcilerObservation(caught, records, record);
+    const next = startupReconcilerNext(caught, observed, record, /refused/u.test(base)
+      ? 'delete the named records under .git/baton/workspace-owners/ after proving their controllers'
+        + ' dead, or restore their worktrees'
+      : null);
+    const detail = Object.freeze({ reconciler, record, observed, next });
+    const chain = reconciler === null ? '' : ` (reconciler ${reconciler}`
+      + `${record === null ? '' : `; record ${record}`}`
+      + `${observed === null ? '' : `; observed ${JSON.stringify(observed)}`}`
+      + `${next === null ? '' : `; next: ${next}`})`;
+    return Object.assign(new Error(`${base}${chain}`), {
+      code: 'coordinator_cleanup_incomplete', cause: caught, reconciler, record, observed, next, detail,
+    });
   }
 
-  _trackStartupCleanup(operation) {
+  /** Issue #384: what the reconcilers observed about the record they name — the reconciler's OWN
+   * report when it carried one (an injected or a richer reconciler may), and otherwise this
+   * incarnation's reading of the handles that bind the named records. Never a fabricated row: an
+   * observation this coordinator cannot make is simply absent, and the refusal then says no more
+   * than it knows. */
+  _startupReconcilerObservation(caught, records, record) {
+    const reported = caught?.observed;
+    const own = [];
+    const candidates = records.length > 0 ? records : (record === null ? [] : [record]);
+    for (const identity of candidates) {
+      for (const handle of this._workers.values()) {
+        const bound = handle.id === identity
+          || handle.taskId === identity
+          || handle.sessionContext?.ownerTaskId === identity;
+        if (!bound) continue;
+        const processRef = handle.processRef ?? null;
+        const state = processRef === null
+          ? 'unavailable' : processAuthorityState(processRef, handle.processAuthority);
+        own.push(Object.freeze({
+          record: identity, workerId: handle.id,
+          pid: processRef?.pid ?? null, generation: processRef?.generation ?? null,
+          state, alive: state === 'active',
+        }));
+      }
+    }
+    const report = reported && typeof reported === 'object' && !Array.isArray(reported) ? reported : null;
+    if (report === null && own.length === 0) {
+      return typeof caught?.code === 'string' ? Object.freeze({ code: caught.code }) : null;
+    }
+    const alive = (report?.alive === true || report?.state === 'active') ? report
+      : own.find((row) => row.alive === true) ?? null;
+    const lease = Number.isSafeInteger(report?.leaseAgeMs) ? report
+      : own.find((row) => Number.isSafeInteger(row.leaseAgeMs)) ?? null;
+    return Object.freeze({
+      // The reconciler's own report first (it saw the failure), then this incarnation's reading and
+      // the derived judgment — so `observed.alive` is the coordinator's conclusion, never a
+      // contradiction of the facts beside it.
+      ...(report ?? {}),
+      ...(typeof caught?.code === 'string' ? { code: caught.code } : {}),
+      ...(own.length === 0 ? {} : { workers: Object.freeze(own) }),
+      ...(alive === null ? {} : { alive: true, pid: alive.pid ?? null }),
+      ...(lease === null ? {} : { leaseAgeMs: lease.leaseAgeMs,
+        leaseGraceMs: Number.isSafeInteger(lease.leaseGraceMs) ? lease.leaseGraceMs : KILL_ESCALATION_GRACE_MS }),
+    });
+  }
+
+  _trackStartupCleanup(operation, reconciler = null) {
     let source;
     try { source = operation(); }
     catch (error) {
-      if (!this._startupCleanupError) this._startupCleanupError = this._startupCleanupIncomplete(error);
+      if (!this._startupCleanupError) this._startupCleanupError = this._startupCleanupIncomplete(error, reconciler);
       return Promise.resolve();
     }
     // The production reconcilers are deliberately synchronous: construction must finish their
@@ -1915,7 +2058,7 @@ export class Coordinator {
     if (!source || typeof source.then !== 'function') return Promise.resolve(source);
     this._startupCleanupPending += 1;
     const tracked = Promise.resolve(source).catch((error) => {
-      if (!this._startupCleanupError) this._startupCleanupError = this._startupCleanupIncomplete(error);
+      if (!this._startupCleanupError) this._startupCleanupError = this._startupCleanupIncomplete(error, reconciler);
     }).finally(() => { this._startupCleanupPending -= 1; });
     this._startupCleanupPromises.push(tracked);
     return tracked;

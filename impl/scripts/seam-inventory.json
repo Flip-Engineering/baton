@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 485,
+          "size": 489,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -66,9 +66,19 @@
           ]
         },
         {
+          "name": "startupWorkerFleet",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb"
+          ]
+        },
+        {
           "name": "_startupReconstructionPasses",
           "ordinal": 0,
-          "size": 259,
+          "size": 289,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -164,7 +174,17 @@
         {
           "name": "_startupCleanupIncomplete",
           "ordinal": 0,
-          "size": 20,
+          "size": 34,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_startupReconcilerObservation",
+          "ordinal": 0,
+          "size": 40,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -11911,7 +11931,7 @@
         {
           "name": "_activeWorkerHolders",
           "ordinal": 0,
-          "size": 15,
+          "size": 18,
           "seam": "observation",
           "evidence": [
             "observation:read_name"
@@ -11921,6 +11941,16 @@
           "name": "_reconcileHostCapacity",
           "ordinal": 0,
           "size": 5,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
+          "name": "_reconcileParticipantRuntimes",
+          "ordinal": 0,
+          "size": 30,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -12030,9 +12060,10 @@
           "name": "_mutationResult",
           "ordinal": 0,
           "size": 34,
-          "seam": "observation",
+          "seam": "recovery",
           "evidence": [
             "delegates:observation",
+            "delegates:recovery",
             "delegates:admission"
           ]
         },
@@ -12166,9 +12197,18 @@
           ]
         },
         {
+          "name": "_runtimeLostCurrent",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_canAct",
           "ordinal": 0,
-          "size": 4,
+          "size": 7,
           "seam": "admission",
           "evidence": [
             "admission:predicate_name"
@@ -12251,9 +12291,10 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 706,
-          "seam": "observation",
+          "size": 724,
+          "seam": "recovery",
           "evidence": [
+            "recovery:reconcile_call",
             "observation:swarm_attention_rows"
           ]
         },
@@ -12450,7 +12491,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 635,
+          "size": 639,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
