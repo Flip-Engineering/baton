@@ -57,6 +57,11 @@ export const STOP_STAGES = Object.freeze({
   publicationWithdrawal: 'publication_withdrawal',
 });
 
+/** Issue #450: the first second of a stop. Every wait this host takes past it is named durably
+ * (the #276/#351 promise the 222 s of silence between `host.stop_requested` and the web shutdown
+ * broke); anything shorter is ordinary work and stays off the ledger. */
+const FIRST_WAIT_MS = 1_000;
+
 /** Issue #276(1)/#437: the ONE line a host writes at signal receipt, naming what it will do before
  * any wait. The count comes from a NAMED read the caller supplies — the projection the resident
  * already holds (the deployment's live coordinator rows) or, for a caller whose only authority is
@@ -109,18 +114,46 @@ export function describeDrainWait(detail) {
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
-/** Issue #351: the #265 rule applied to the resident — a stop that did not converge names the CLASS
- * of thing it is still waiting on, plus their ids. The vocabulary is closed to the three
- * obligations a resident's stop owns: the fleet's workers, the host-capacity verify lease its
- * lanes hold, and its own published coordinates. Derived from the refusal the stop already
+/** Issue #351/#450: the #265 rule applied to the resident — a stop that did not converge names the
+ * CLASS of thing it is still waiting on, plus their ids, and the entries themselves. The vocabulary
+ * is closed to the obligations a resident's stop owns: the fleet's workers, the capacity
+ * reservations a worker that is already gone left behind (the wait #450 adds — a zero-target drain
+ * still has to say what it is waiting on), the host-capacity verify lease its lanes hold, and its
+ * own published coordinates. Every entry rides the ONE #360 shape {resource, reaper, since}, and
+ * the rows' own `released` rows travel with them, so the host's durable wait row and the drain's
+ * `control.stop_waiting_on` row are the same fact. Derived from the refusal the stop already
  * carries — never a second guess — and `null` when that refusal names none of them, so a caller
  * composes its own honest fallback instead of inventing a wait. */
 export function describeStopWait(detail) {
   if (!record(detail)) return null;
   const ids = (value) => [...new Set((Array.isArray(value) ? value : [])
     .filter((id) => typeof id === 'string' && id.length > 0))];
-  const workers = ids((Array.isArray(detail.waitingOn) ? detail.waitingOn : []).map((row) => row?.workerId));
-  if (workers.length > 0) return Object.freeze({ on: 'worker', ids: Object.freeze(workers) });
+  const rows = (Array.isArray(detail.waitingOn) ? detail.waitingOn : []).filter(record);
+  const entries = rows.flatMap((row) => (Array.isArray(row.waiting) ? row.waiting : []))
+    .filter((entry) => record(entry) && typeof entry.resource === 'string')
+    .map((entry) => Object.freeze({
+      resource: entry.resource, reaper: entry.reaper ?? null, since: entry.since ?? null,
+    }));
+  const released = rows.flatMap((row) => (Array.isArray(row.released) ? row.released : []))
+    .filter(record).map((row) => Object.freeze({ ...row }));
+  const holds = (row) => (Array.isArray(row.waiting) ? row.waiting : [])
+    .some((entry) => !String(entry?.resource ?? '').startsWith('capacity:'));
+  // A row whose only wait is a capacity reservation is NOT a worker wait: its worker is already
+  // gone (that is why the reservation is a leak), so naming it as a kill target would end nothing.
+  const workers = ids(rows.filter(holds).map((row) => row.workerId));
+  if (workers.length > 0) {
+    return Object.freeze({
+      on: 'worker', ids: Object.freeze(workers), entries: Object.freeze(entries), released: Object.freeze(released),
+    });
+  }
+  const capacity = entries.filter((entry) => entry.resource.startsWith('capacity:'));
+  if (capacity.length > 0) {
+    return Object.freeze({
+      on: 'capacity',
+      ids: Object.freeze(ids(capacity.map((entry) => entry.resource.slice('capacity:'.length)))),
+      entries: Object.freeze(entries), released: Object.freeze(released),
+    });
+  }
   // The host-capacity verify lease a lane still holds, and the resident's own publication: the two
   // remaining obligations, named by the reason the stop refused with.
   if (['verify_lease', 'capacity'].includes(detail.reason)) {
@@ -456,6 +489,38 @@ export class BatonWebHost {
     } catch { /* the narration goes on */ }
   }
 
+  /** Issue #450: the narration read is a wait, and this host NAMES every wait it takes past its
+   * first second and bounds it by the grace it declares for its own leg (`webDrainMs` — the same
+   * declared row the fleet-drain progress line reads). The read is a log line about what the stop
+   * will drain; a read that refuses or never answers must not hold the stop, and it must not be a
+   * silent 222 s either: past the first second the wait is one durable `host.stop_waiting` row
+   * naming {resource, reaper, since}, and past the grace the stop goes on and says so. The
+   * narration itself is still said whenever the read answers — `_announceIntent` says it. */
+  async _narrateIntent() {
+    const answered = () => this._announced.then(() => true, () => true);
+    const grace = (ms) => new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms);
+      if (typeof timer.unref === 'function') timer.unref();
+    });
+    if (await Promise.race([answered(), grace(FIRST_WAIT_MS)])) return;
+    const since = new Date().toISOString();
+    try {
+      const recorded = await this._recordStop('waiting', {
+        wait: Object.freeze({
+          on: 'participants',
+          ids: Object.freeze(['participants']),
+          entries: Object.freeze([Object.freeze({
+            resource: 'participants', reaper: 'narration-read', since,
+          })]),
+        }),
+      });
+      if (recorded?.line) this._say(recorded.line);
+    } catch { /* the stop this wait describes goes on */ }
+    if (await Promise.race([answered(), grace(this.webDrainMs)])) return;
+    this._say(`signal received; the participant count is still unread after ${this.webDrainMs}ms `
+      + `(${this._trigger?.kind ?? 'signal'}); the stop goes on without it`);
+  }
+
   /** Issue #351: enter one stage of this stop through the deployment's own clock. A bare host
    * fixture has no clock to mark and simply records no stage rows. */
   _stopStage(name) {
@@ -510,8 +575,11 @@ export class BatonWebHost {
     if (this._shutdown) return this._shutdown;
     const shuttingDown = (async () => {
       // The receipt line is the first line of a drain: a shutdown that follows a signal waits for
-      // it (a local, in-process read), so the operator's log reads in the order the facts happened.
-      if (this._announced) await this._announced;
+      // it (a local, in-process read). Issue #450: that wait is a wait like every other one this
+      // stop takes — named durably once it outlives the first second, and BOUNDED by the grace the
+      // host declares for its own leg, so a read that refuses (or never answers) can never become
+      // the 222 s of silence between `host.stop_requested` and the web shutdown.
+      if (this._announced) await this._narrateIntent();
       // Issue #351: the FIRST durable fact of a stop — written before any drain work, so a resident
       // about to spend its time stopping has already said so on its own ledger.
       const requested = await this._recordStop('requested', {

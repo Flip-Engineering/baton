@@ -2046,18 +2046,34 @@ test('#265: a Run stop that cannot converge names the wait on the error and in t
   await assert.rejects(coordinator.stopRunTargets([handle.id], 'operator:stop'), (error) => {
     assert.equal(error.code, 'coordinator_run_stop_incomplete');
     assert.equal(error.detail.timeoutMs, 400);
-    assert.deepEqual(error.detail.waitingOn, [{
+    // Issue #450: the Run-stop leg names its waits with the SAME #360 entry objects the fleet
+    // drain uses — {resource, reaper, since} — so a stop and a drain never spell one wait two ways.
+    assert.deepEqual(error.detail.waitingOn.map((row) => ({
+      ...row,
+      waiting: row.waiting.map((entry) => entry.resource),
+    })), [{
       workerId: handle.id, status: 'dead', disposition: null, processState: null,
       waiting: ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending'],
+      released: [],
     }], 'the wait is named from the same predicates the convergence loop reads');
+    for (const entry of error.detail.waitingOn[0].waiting) {
+      assert.deepEqual(Object.keys(entry).sort(), ['reaper', 'resource', 'since'],
+        `every entry is the ONE #360 shape {resource, reaper, since}: ${JSON.stringify(entry)}`);
+      assert.ok(!Number.isNaN(Date.parse(entry.since)), `the entry names since: ${JSON.stringify(entry)}`);
+    }
     return true;
   });
   const named = log.read(handle.id).filter((event) => event.kind === 'control.stop_waiting_on');
   assert.ok(named.length >= 1, 'the named wait is durable in the worker log');
-  assert.deepEqual(named.at(-1).payload, {
-    waiting: ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending'],
-    disposition: null, status: 'dead', processState: null,
-  });
+  assert.deepEqual(named.at(-1).payload.waiting.map((entry) => entry.resource),
+    ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending']);
+  assert.deepEqual({
+    disposition: named.at(-1).payload.disposition,
+    status: named.at(-1).payload.status,
+    processState: named.at(-1).payload.processState,
+    released: named.at(-1).payload.released,
+  }, { disposition: null, status: 'dead', processState: null, released: [] },
+  'the durable row carries the same wait, its disposition and the released rows');
   assert.equal(named.at(-1).actor, 'operator:stop');
 });
 
