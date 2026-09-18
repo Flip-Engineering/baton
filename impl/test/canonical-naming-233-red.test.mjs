@@ -53,6 +53,10 @@ const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate',
   'run.board.post', 'run.board.read', 'run.knowledge.seed',
+  // Issue #306 (the wiring half): the in-place reincarnation verb — the row lane A landed in
+  // application.mjs, admitted here so the CLI's two spellings reach the RUNNING resident
+  // (web-northbound.mjs DEPLOYMENT_WEB_ROWS, one row per verb, both spellings derived).
+  'deployment.reincarnate',
 ]);
 
 // The retained legacy MCP spellings for mcp:true definitions (hand baton_* ordinary tools).

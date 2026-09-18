@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "generatedBy": "impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact",
   "counts": {
-    "canonicalOperations": 89,
+    "canonicalOperations": 90,
     "cliWebCommands": 52,
     "parserLifecycleActions": 29,
     "mcpApplicationTools": 52,
