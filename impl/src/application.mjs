@@ -7,8 +7,8 @@ import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
 import { wrapProse } from './messages.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
-  normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState, planRouteMatches,
-  planSingleExactRoute,
+  goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
+  planRouteMatches, planSingleExactRoute,
 } from './goal-plan.mjs';
 import {
   contextEffectCallIdentity, contextEffectNodeBinding, contextEffectRetryCallIdentity,
@@ -2425,40 +2425,39 @@ export function validateApplicationCommandArgs(name, args) {
 /** Issue #391 (C12): the goal-plan read family answers PAGES, not refusals — `limit` is a page
  * size: the answer carries the first `limit` rows past `cursor` plus {truncated, nextCursor}, the
  * cursor vocabulary evidence.search (#312) serves, and nothing refuses for having more rows. The
- * bounded store reads underneath answer the whole bounded set (their ceiling is a bound, not a
- * page), so the page is cut HERE — one derivation every application goal-plan read shares. The
- * family is module-level on purpose: goal-plan reads ride hand-built harnesses and the run
- * scheduler alike, so they never depend on a full instance. */
-export function goalPlanPage(rows, limit, cursor = 0) {
+ * store accessors cut that page themselves through the ONE derivation in goal-plan.mjs
+ * (goalPlanPage, re-exported below); the helpers here only reach them. The family is module-level
+ * on purpose: goal-plan reads ride hand-built harnesses and the run scheduler alike, so they never
+ * depend on a full instance. */
+export { goalPlanPage };
+
+/** ONE paged store read (#391). A modern store answers the page contract itself; a coordination
+ * object that predates it — a hand-built harness, a foreign store — answers the bare array the
+ * accessors returned before this change, which the ONE page derivation cuts here; a store without
+ * the accessor at all answers the empty page. */
+const goalPlanStorePage = (coordination, accessor, args, limit, cursor) => {
+  // The page size is the CALLER's contract, so it is refused before the store is asked for
+  // anything (a store's own argument bound is a different refusal). The shared derivation below
+  // cuts the page and refuses the same way, so the two boundaries can never disagree.
   if (!Number.isSafeInteger(limit) || limit <= 0) {
     throw applicationError('goal/plan page size is invalid', 'application_goal_plan_page_invalid');
   }
-  const start = Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0;
-  const page = rows.slice(start, start + limit);
-  const nextCursor = start + page.length < rows.length ? start + page.length : null;
-  return Object.freeze({
-    rows: Object.freeze(page), truncated: nextCursor !== null, nextCursor,
-  });
-}
-
-const goalPlanStoreRows = (coordination, accessor, ...args) => {
   const read = coordination?.[accessor];
-  return typeof read === 'function' ? read.call(coordination, ...args) : [];
+  if (typeof read !== 'function') return goalPlanPage([], limit, cursor);
+  const answer = read.call(coordination, ...args, limit, cursor);
+  return Array.isArray(answer) ? goalPlanPage(answer, limit, cursor) : answer;
 };
 
-/** One paged read per store accessor (#391): the store bound rides internally as the whole-set
- * read; the caller's `limit` is a page size and the cursor resumes past the page's last row. */
+/** One paged read per store accessor (#391): the caller's `limit` is the page size and `cursor`
+ * resumes past the page's last row. */
 export const goalPlanRunPlansPage = (coordination, repoId, runId, limit, cursor = 0) => (
-  goalPlanPage(goalPlanStoreRows(coordination, 'goalPlanRunPlans', repoId, runId, MAX_RUN_RECORDS),
-    limit, cursor));
+  goalPlanStorePage(coordination, 'goalPlanRunPlans', [repoId, runId], limit, cursor));
 
 export const goalPlanDispatchesPage = (coordination, repoId, runId, limit, cursor = 0) => (
-  goalPlanPage(goalPlanStoreRows(coordination, 'goalPlanDispatches', repoId, runId, MAX_RUN_RECORDS),
-    limit, cursor));
+  goalPlanStorePage(coordination, 'goalPlanDispatches', [repoId, runId], limit, cursor));
 
 export const goalPlanRunIdsPage = (coordination, repoId, limit, cursor = 0) => (
-  goalPlanPage(goalPlanStoreRows(coordination, 'goalPlanRunIds', repoId, MAX_RUN_RECORDS),
-    limit, cursor));
+  goalPlanStorePage(coordination, 'goalPlanRunIds', [repoId], limit, cursor));
 
 /** Walk pages to the whole bounded set — what the bounded readsites need, answered page by page
  * so no application goal-plan read ever rides a refusal threshold (#391). */
@@ -2472,6 +2471,20 @@ export function goalPlanReadAll(readPage) {
     cursor = page.nextCursor;
   }
 }
+
+/** Walk every page of the bounded head summary (#391) — the two parallel arrays accumulate in
+ * page order, so runs.list sees the same whole set the pre-#391 bounded read answered in one go,
+ * without any read refusing for having more rows. */
+const goalPlanSummaryAll = (coordination, repoId, limit) => {
+  const goals = []; const plans = [];
+  let cursor = 0;
+  for (;;) {
+    const page = coordination.goalPlanSummary(repoId, limit, cursor);
+    goals.push(...page.goals); plans.push(...page.plans);
+    if (!page.truncated) return { goals, plans };
+    cursor = page.nextCursor;
+  }
+};
 
 function authority(principal, repoId, runId, power, idempotencyKey) {
   return {
@@ -4228,15 +4241,16 @@ export class BatonApplication {
     let relevantPlans = [];
     if (resultIdentity.resultIntent === 'read_only_evidence') {
       if (typeof this.driver.coordination.goalPlanRunPlans === 'function') {
+        // #391: no read here refuses for having more rows — the walk resumes through the page
+        // cursor to the whole bounded set, so only an unreadable store reads as unavailable.
         try {
           relevantPlans = goalPlanReadAll(
             (cursor) => goalPlanRunPlansPage(this.driver.coordination, this.repoId, runId,
               MAX_RUN_RECORDS, cursor),
           );
-        } catch (error) {
+        } catch {
           throw applicationError('read-only Run Plan history is unavailable',
-            error?.code === 'goal_plan_status_oversize'
-              ? 'application_run_lookup_oversize' : 'application_run_history_unavailable');
+            'application_run_history_unavailable');
         }
       } else if (typeof this.driver.coordination.snapshot === 'function') {
         let goalPlan;
@@ -4328,18 +4342,10 @@ export class BatonApplication {
     // accessor keep the snapshot fallback), and #391 pages the walk instead of refusing.
     let plans = [];
     if (typeof this.driver.coordination.goalPlanRunPlans === 'function') {
-      try {
-        plans = goalPlanReadAll(
-          (cursor) => goalPlanRunPlansPage(this.driver.coordination, this.repoId,
-            current.goal.runId, MAX_RUN_RECORDS, cursor),
-        );
-      } catch (error) {
-        if (error?.code === 'goal_plan_status_oversize') {
-          throw applicationError('Workflow Plan history is cyclic or exceeds its bounded ceiling',
-            'application_workflow_integrity');
-        }
-        throw error;
-      }
+      plans = goalPlanReadAll(
+        (cursor) => goalPlanRunPlansPage(this.driver.coordination, this.repoId,
+          current.goal.runId, MAX_RUN_RECORDS, cursor),
+      );
     } else if (typeof this.driver.coordination.snapshot === 'function') {
       const snapshot = this.driver.coordination.snapshot();
       plans = snapshot.goalPlan?.plans ?? [];
@@ -13163,18 +13169,12 @@ export class BatonApplication {
     await this._authorize('runs.list', principal, null, { operation: 'runs.list' });
     // #210: the bounded head-only summary (goalPlanSummary) serves runs.list — every member
     // read used to deep-clone the ENTIRE store through the snapshot goalPlan projection. The
-    // legacy arm below fires only for stores without the narrow accessor.
+    // legacy arm below fires only for stores without the narrow accessor. #391: the summary
+    // answers PAGES, so the walk reaches the whole bounded head set instead of any read
+    // refusing to serve it for its row count.
     let goalPlan;
     if (typeof this.driver.coordination.goalPlanSummary === 'function') {
-      try {
-        goalPlan = this.driver.coordination.goalPlanSummary(this.repoId, MAX_RUN_RECORDS);
-      } catch (error) {
-        if (error?.code === 'goal_plan_status_oversize') {
-          throw applicationError('Run list exceeds its bounded lookup ceiling',
-            'application_run_list_oversize');
-        }
-        throw error;
-      }
+      goalPlan = goalPlanSummaryAll(this.driver.coordination, this.repoId, MAX_RUN_RECORDS);
     } else {
       const snapshot = this.driver.coordination.snapshot();
       goalPlan = snapshot.goalPlan;

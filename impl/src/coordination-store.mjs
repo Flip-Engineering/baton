@@ -9,7 +9,7 @@ import { basename, join } from 'node:path';
 import { deserialize, serialize } from 'node:v8';
 import {
   GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical,
-  goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest,
+  goalPlanDigest, goalPlanPage, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest,
   planBriefMatches, planRouteAuthorityState, planRouteMatches,
 } from './goal-plan.mjs';
 import {
@@ -10926,58 +10926,61 @@ export class CoordinationStore {
     });
   }
 
-  /** Bounded Plan history for the current durable Goal of one Run. */
-  goalPlanRunPlans(repoId, runId, limit = 100_000) {
+  /** Issue #391 (C12): the Plan history of one Run's current durable Goal, as a PAGE — the first
+   * `limit` generations past `cursor` plus {truncated, nextCursor}. `limit` is a page size: a Run
+   * holding more generations than the caller asked for is a truncated page, never the
+   * `goal_plan_status_oversize` refusal this accessor used to raise for the row count, so the
+   * caller walks the cursor to the whole bounded set instead of being told it asked for too much. */
+  goalPlanRunPlans(repoId, runId, limit = 100_000, cursor = 0) {
     if (!boundedText(repoId, 256) || !validRunId(runId)
-      || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000
+      || !Number.isSafeInteger(cursor) || cursor < 0) {
       throw new TypeError('goal/plan Run history request is invalid');
     }
     const goal = this._goalHeads.get(this._goalScopeKey(repoId, runId)) ?? null;
-    if (!goal) return freeze([]);
     const plans = [];
-    for (const plan of this._plans.values()) {
-      if (plan.repoId !== repoId || plan.runId !== runId
-        || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
-        || plan.goal.digest !== goal.digest) continue;
-      plans.push(plan);
-      if (plans.length > limit) throw new CoordinationRefusal(
-        'goal/plan Run history exceeds its bounded ceiling', 'goal_plan_status_oversize',
-      );
+    if (goal) {
+      for (const plan of this._plans.values()) {
+        if (plan.repoId !== repoId || plan.runId !== runId
+          || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
+          || plan.goal.digest !== goal.digest) continue;
+        plans.push(plan);
+      }
     }
-    return freeze(plans.sort((left, right) => left.version - right.version
-      || compareCanonicalStrings(left.planId, right.planId)).map(clone));
+    return freeze(goalPlanPage(plans.sort((left, right) => left.version - right.version
+      || compareCanonicalStrings(left.planId, right.planId)).map(clone), limit, cursor));
   }
-  goalPlanRunIds(repoId, limit = 100_000) {
-    return coordinationInternals.goalPlanRunIds(this._goalHeads, repoId, limit);
+  goalPlanRunIds(repoId, limit = 100_000, cursor = 0) {
+    return coordinationInternals.goalPlanRunIds(this._goalHeads, repoId, limit, cursor);
   }
 
-  /** Bounded dispatches across every Plan generation of one Run's current Goal — the narrow
-   * read behind semantic control-target resolution (workflow interrupt recipients), which
-   * previously cloned the entire store through snapshot().goalPlan.dispatches. */
-  goalPlanDispatches(repoId, runId, limit = 100_000) {
+  /** Issue #391 (C12): the dispatches across every Plan generation of one Run's current Goal, as
+   * a PAGE (`limit` is a page size, `cursor` resumes past the last row served) — the narrow read
+   * behind semantic control-target resolution (workflow interrupt recipients), which previously
+   * cloned the entire store through snapshot().goalPlan.dispatches and refused a bounded request
+   * for the row count. */
+  goalPlanDispatches(repoId, runId, limit = 100_000, cursor = 0) {
     if (!boundedText(repoId, 256) || !validRunId(runId)
-      || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000
+      || !Number.isSafeInteger(cursor) || cursor < 0) {
       throw new TypeError('goal/plan Run dispatch request is invalid');
     }
     const goal = this._goalHeads.get(this._goalScopeKey(repoId, runId)) ?? null;
-    if (!goal) return freeze([]);
     const dispatches = [];
-    for (const plan of this._plans.values()) {
-      if (plan.repoId !== repoId || plan.runId !== runId
-        || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
-        || plan.goal.digest !== goal.digest) continue;
-      for (const node of plan.nodes) {
-        const dispatch = this._planDispatches.get(this._planNodeKey(
-          plan.planId, plan.version, node.key,
-        ));
-        if (!dispatch) continue;
-        dispatches.push(dispatch);
-        if (dispatches.length > limit) throw new CoordinationRefusal(
-          'goal/plan Run dispatches exceed their bounded ceiling', 'goal_plan_status_oversize',
-        );
+    if (goal) {
+      for (const plan of this._plans.values()) {
+        if (plan.repoId !== repoId || plan.runId !== runId
+          || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
+          || plan.goal.digest !== goal.digest) continue;
+        for (const node of plan.nodes) {
+          const dispatch = this._planDispatches.get(this._planNodeKey(
+            plan.planId, plan.version, node.key,
+          ));
+          if (dispatch) dispatches.push(dispatch);
+        }
       }
     }
-    return freeze(dispatches.map(clone));
+    return freeze(goalPlanPage(dispatches.map(clone), limit, cursor));
   }
 
   /** Approval + dispatches for ONE Plan generation of one Run's current Goal — the narrow read
@@ -11005,25 +11008,28 @@ export class CoordinationStore {
     });
   }
 
-  /** Bounded current Goal/Plan heads for one repo — the projection behind runs.list, which
-   * previously cloned the entire store through snapshot().goalPlan (all goal/plan bodies of
-   * every repo). Heads only: no historical versions, no dispatch bodies. */
-  goalPlanSummary(repoId, limit = 100_000) {
-    if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+  /** Issue #391 (C12): the current Goal/Plan heads for one repo, as a PAGE of head rows — the
+   * first `limit` heads past `cursor`, each carrying the plan head it owns, plus
+   * {truncated, nextCursor}. The projection behind runs.list, which previously cloned the entire
+   * store through snapshot().goalPlan and refused a bounded request for the row count; runs.list
+   * walks these pages to the whole bounded head set, so a deployment that outgrew one page is
+   * paged rather than told to ask for fewer rows. Heads only: no historical versions, no
+   * dispatch bodies. */
+  goalPlanSummary(repoId, limit = 100_000, cursor = 0) {
+    if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000
+      || !Number.isSafeInteger(cursor) || cursor < 0) {
       throw new TypeError('goal/plan summary request is invalid');
     }
-    const goals = []; const plans = [];
+    const heads = [];
     for (const goal of this._goalHeads.values()) {
       if (goal.repoId !== repoId || goal.runId === null) continue;
-      goals.push(goal);
-      if (goals.length > limit) throw new CoordinationRefusal(
-        'goal/plan summary exceeds its bounded ceiling', 'goal_plan_status_oversize',
-      );
-      const plan = this._planHeads.get(this._planHeadKey(goal));
-      if (plan) plans.push(plan);
+      heads.push({ goal, plan: this._planHeads.get(this._planHeadKey(goal)) ?? null });
     }
+    const page = goalPlanPage(heads, limit, cursor);
     return freeze({
-      goals: freeze(goals.map(clone)), plans: freeze(plans.map(clone)),
+      goals: page.rows.map((row) => clone(row.goal)),
+      plans: page.rows.filter((row) => row.plan).map((row) => clone(row.plan)),
+      truncated: page.truncated, nextCursor: page.nextCursor,
     });
   }
   healthCheck() {

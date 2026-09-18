@@ -15,6 +15,7 @@
 // this module is a seam-map target: a moved member stays mapped, by name, in its new home.
 
 import { compareCanonicalStrings } from './canonical-order.mjs';
+import { goalPlanPage } from './goal-plan.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { planObjectSnapshot, readPlanObject, waveRoleRunKey } from './orchestrator-plan.mjs';
 import { readSwarm, swarmSnapshot } from './swarm-state.mjs';
@@ -532,20 +533,21 @@ export function reverifyRepresentationProduction(store, identityDigest, expected
   return freeze({ ok: true, projection: clone(representation), grounding: 'derived' });
 }
 
-/** Moved from `CoordinationStore.goalPlanRunIds` (issue #259 slice 1). State: `this._goalHeads`, passed explicitly. */
-export function goalPlanRunIds(state, repoId, limit = 100_000) {
-  if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+/** Moved from `CoordinationStore.goalPlanRunIds` (issue #259 slice 1). State: `this._goalHeads`, passed explicitly.
+ * Issue #391 (C12): the answer is a PAGE of the Run index — the first `limit` ids past `cursor`
+ * plus {truncated, nextCursor}, never the `goal_plan_status_oversize` refusal the row count used
+ * to raise, so a caller walks the cursor to the whole index instead of asking for fewer rows. */
+export function goalPlanRunIds(state, repoId, limit = 100_000, cursor = 0) {
+  if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000
+    || !Number.isSafeInteger(cursor) || cursor < 0) {
     throw new TypeError('goal/plan Run index request is invalid');
   }
   const ids = [];
   for (const goal of state.values()) {
     if (goal.repoId !== repoId || goal.runId === null) continue;
     ids.push(goal.runId);
-    if (ids.length > limit) throw new CoordinationRefusal(
-      'goal/plan Run index exceeds its bounded ceiling', 'goal_plan_status_oversize',
-    );
   }
-  return freeze([...new Set(ids)].sort(compareCanonicalStrings));
+  return freeze(goalPlanPage([...new Set(ids)].sort(compareCanonicalStrings), limit, cursor));
 }
 
 /** Moved from `CoordinationStore.healthCheck` (issue #259 slice 1). State: the store, passed explicitly. */

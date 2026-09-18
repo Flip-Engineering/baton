@@ -42,6 +42,26 @@ function fail(message, code, detail = null) {
   throw error;
 }
 
+/** Issue #391 (C12): the goal-plan read family serves PAGES, not refusals — `limit` is a page
+ * size: the answer carries the first `limit` rows past `cursor` plus {truncated, nextCursor},
+ * the cursor vocabulary evidence.search (#312) serves, and nothing refuses for having more rows.
+ * This is the ONE page derivation the family shares: the store accessors
+ * (coordination-store.mjs, coordination-internals.mjs) cut their answer here, and
+ * application.mjs reads and re-exports it rather than carrying a second cut that could drift.
+ * The caller validates its own `limit`, each at its own boundary (the store refuses a malformed
+ * request with a TypeError; the application names the page-size refusal a caller can act on). */
+export function goalPlanPage(rows, limit, cursor = 0) {
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new GoalPlanValidationError('goal/plan page size is invalid', 'application_goal_plan_page_invalid');
+  }
+  const start = Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0;
+  const page = rows.slice(start, start + limit);
+  const nextCursor = start + page.length < rows.length ? start + page.length : null;
+  return Object.freeze({
+    rows: Object.freeze(page), truncated: nextCursor !== null, nextCursor,
+  });
+}
+
 /** #362: the goal/plan substrate's own byte ceilings — what ONE goal, plan or status record may
  * hold — declared once here and read by the policy validator below AND by the deployment's
  * policy (application-deployment.mjs goalPlanPolicy), so no deployment literal can sit below
