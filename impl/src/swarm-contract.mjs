@@ -112,6 +112,16 @@ export const SWARM_VIEW_PROJECTION_NAMES = Object.freeze(Object.keys(SWARM_VIEW_
  * refusals, the MCP schema and the CLI flag all read this one table. */
 export const SWARM_RECRUIT_MODES = Object.freeze(['change', 'read_only']);
 
+/** The guidance delivery priorities (#273), declared ONCE — the argument validator, the
+ * closed-set refusal's admitted list, the MCP schema and the CLI usage line all read this one
+ * table (#372), so a new priority cannot land in one of them without the others. `next_boundary`
+ * (the default) is delivered at the seat's next turn boundary — durable and, for a harness that
+ * takes no mid-turn delivery, composed into its next exec / successor brief (#337); `now` rides
+ * the coordinator's immediate steer lane, pre-empting an in-flight tool call the way the run-send
+ * idiom's `now` already does. */
+export const SWARM_GUIDANCE_PRIORITIES = Object.freeze(['next_boundary', 'now']);
+export const SWARM_GUIDANCE_DEFAULT_PRIORITY = 'next_boundary';
+
 /** The admitted values one closed-set field accepts, read from the SAME table the
  * validator judges against — the one composition site every refusal, help surface and
  * brief renders from, so a new value cannot land in one without the others (#372). */
@@ -119,6 +129,7 @@ export function swarmClosedSetAdmitted(field) {
   if (field === 'event') return Object.freeze([...SWARM_EVENT_KINDS]);
   if (field === 'projection') return Object.freeze([...SWARM_VIEW_PROJECTION_NAMES]);
   if (field === 'mode') return Object.freeze([...SWARM_RECRUIT_MODES]);
+  if (field === 'priority') return Object.freeze([...SWARM_GUIDANCE_PRIORITIES]);
   return null;
 }
 
@@ -281,9 +292,12 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
   // Guidance reaches the participant whether its session is active or paused: the pause/turn
-  // distinction belongs to the runtime, never to the caller or the transport.
+  // distinction belongs to the runtime, never to the caller or the transport. Issue #273: the
+  // runtime's own two axes ride here — `priority` (the closed SWARM_GUIDANCE_PRIORITIES set) and
+  // `inReplyTo` (the row this guidance answers) — so the argument validator, the MCP schema, the
+  // CLI usage line and the parser's closed argv all teach them from this ONE row.
   'swarm.guide': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey', 'view']),
+    args: Object.freeze(['swarmId', 'participantId', 'message', 'priority', 'inReplyTo', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -403,6 +417,9 @@ export function swarmChangedRow(kind, payload = {}) {
       return row('contributions', payload.contributionId ?? null);
     // Issue #337: a parked or delivered guide changes the named seat — its participant row
     // carries the guidance rows — so the receipt names it instead of answering changed [].
+    // Issue #273: a delivered guide writes its own durable row (swarm.guidance_sent) and changes
+    // the same seat row, so all three guidance kinds name the recipient.
+    case 'swarm.guidance_sent':
     case 'swarm.guidance_parked':
     case 'swarm.guidance_delivered':
       return row('participants', payload.participantId ?? null);
@@ -414,16 +431,29 @@ export function swarmChangedRow(kind, payload = {}) {
 /** The step that follows one mutation (issue #302): the same `next` terminal attention rows name.
  * A receipt tells the caller what happened AND what to do next, with the identity arguments the
  * command already carried — the caller supplies only the free text (a guide's message) or the
- * check identity the next act needs. */
-export function swarmReceiptNext(command, args = {}) {
+ * check identity the next act needs.
+ *
+ * Issue #273: a guide's next NAMES THE OBSERVATION the sender waits for, because a guide that
+ * landed and a guide that parked are watched for different rows. `outcome.delivery.state` picks
+ * it: a delivered guide is watched at the seat's next turn boundary (`paused`), a parked one at
+ * the delivery that clears the park (`guidance_delivered`). The observation rides beside `args`
+ * — the watch takes no participantId, so naming the seat inside args would teach an argument the
+ * verb refuses (#431). */
+export function swarmReceiptNext(command, args = {}, outcome = null) {
   const swarmId = typeof args.swarmId === 'string' ? args.swarmId : null;
   switch (command) {
     case 'swarm.create':
       return { command: 'swarm.recruit', args: { swarmId } };
     case 'swarm.recruit':
       return { command: 'swarm.guide', args: { swarmId, participantId: args.participantId ?? null } };
-    case 'swarm.guide':
-      return { command: 'swarm.watch', args: { swarmId } };
+    case 'swarm.guide': {
+      // The seat's next turn boundary is the `paused` class (a turn paused and staying paused IS
+      // the boundary a queued guide lands on); a park is cleared by the delivery that composes it.
+      const parked = outcome?.delivery?.state === 'parked';
+      return { command: 'swarm.watch', args: { swarmId },
+        observation: { wakeClass: parked ? 'guidance_delivered' : 'paused',
+          participantId: args.participantId ?? null } };
+    }
     case 'swarm.capture':
       return { command: 'swarm.check', args: { swarmId, participantId: args.participantId ?? null,
         contributionId: args.contributionId ?? null } };
@@ -496,6 +526,16 @@ const SWARM_FIELD_RULES = Object.freeze({
     check: (value) => SWARM_RECRUIT_MODES.includes(value),
     expectation: `one of ${SWARM_RECRUIT_MODES.join(', ')}`,
   }),
+  // Issue #273: the priority a guide asks for — the closed set above, never a free string. The
+  // validator's closed-set refusal names SWARM_GUIDANCE_PRIORITIES as the admitted list.
+  priority: Object.freeze({
+    check: (value) => SWARM_GUIDANCE_PRIORITIES.includes(value),
+    expectation: `one of ${SWARM_GUIDANCE_PRIORITIES.join(', ')}`,
+  }),
+  // Issue #273: the row a guide answers — the seq of a guidance row, a seat's message, or a
+  // contribution this swarm holds. Only the SHAPE is checked here (a ledger seq); the runtime
+  // resolves it against the ledger and refuses a seq the swarm does not hold, naming the target.
+  inReplyTo: Object.freeze({ check: (value) => isSequence(value) && value > 0, expectation: 'a ledger seq this swarm holds' }),
   event: Object.freeze({
     check: (value) => SWARM_EVENT_KINDS.includes(value),
     expectation: `one of ${SWARM_EVENT_KINDS.join(', ')}`,
@@ -555,7 +595,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
-    optional: Object.freeze(['view']),
+    optional: Object.freeze(['priority', 'inReplyTo', 'view']),
   }),
   'swarm.capture': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'contributionId']),
@@ -768,6 +808,14 @@ const CURSOR_SCHEMA = Object.freeze({ type: 'string', minLength: 1, maxLength: 2
 const JSON_OBJECT_SCHEMA = Object.freeze({ type: 'object' });
 const EVENT_SCHEMA = Object.freeze({ type: 'string', enum: SWARM_EVENT_KINDS });
 const SEQUENCE_SCHEMA = Object.freeze({ type: 'integer', minimum: 0 });
+// Issue #273: guidance's delivery priority — the closed set above, on the wire as an enum so an
+// MCP caller reads the admitted values from the tool schema itself.
+const PRIORITY_SCHEMA = Object.freeze({ type: 'string', enum: SWARM_GUIDANCE_PRIORITIES, description:
+  `when the guidance should reach the seat: now pre-empts an in-flight tool call, ${SWARM_GUIDANCE_DEFAULT_PRIORITY} waits for its next turn boundary (the default)` });
+// The row a guide answers (#273): a ledger seq, so the minimum is 1 — the same lower bound the
+// validator's field rule enforces.
+const REPLY_TARGET_SCHEMA = Object.freeze({ type: 'integer', minimum: 1, description:
+  'the ledger seq this guidance answers — a prior guidance row, a seat\'s message, or a contribution the swarm holds' });
 const WAIT_SCHEMA = Object.freeze({ type: 'integer', minimum: 1 });
 const PROJECTION_SCHEMA = Object.freeze({ type: 'string', enum: SWARM_VIEW_PROJECTION_NAMES });
 // `view` opts a mutation into carrying the whole refreshed view beside its receipt (issue #302).
@@ -827,9 +875,10 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.guide',
-    description: 'Send guidance to one swarm participant, whether its session is active or paused. The receipt names the lane receipt row the guide wrote (kind message.sent with its seq and ts) so the sender can watch for the next turn; when the seat’s harness takes no mid-turn delivery the message parks durably instead (kind swarm.guidance_parked with delivery parked, composed into the seat’s next exec / resume-from successor brief); view: true adds the whole refreshed view.',
+    description: `Send guidance to one swarm participant, whether its session is active or paused. The receipt carries the guide's OWN durable row (guide: {seq, kind, participantId, from, sentAt, priority, inReplyTo, messageId, delivery}) — never null — so the sender reads who it is from ({kind: root|lead|peer, participantId}), what it asked for and how it landed: delivery.state delivered rides the lane row the guide wrote (delivery.lane), parked names the swarm.guidance_parked row a harness that takes no mid-turn delivery waits on (composed into the seat's next exec / resume-from successor brief), and refused names a lane that took nothing. priority (${SWARM_GUIDANCE_PRIORITIES.join(', ')}, default ${SWARM_GUIDANCE_DEFAULT_PRIORITY}) asks for the delivery: now rides the immediate steer lane and pre-empts an in-flight tool call, next_boundary waits for the seat's next turn boundary. inReplyTo names the ledger seq this guidance answers (a prior guidance row, a seat's message, or a contribution) and the view threads it; next names the observation to watch: the seat's next turn boundary, or the delivery that clears a park. view: true adds the whole refreshed view.`,
     readOnlyHint: false, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA, view: VIEW_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA,
+      priority: PRIORITY_SCHEMA, inReplyTo: REPLY_TARGET_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['swarmId', 'participantId', 'message']),
   }),
   Object.freeze({

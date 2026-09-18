@@ -330,11 +330,12 @@ test('native coverage labels absence as absence, and passes a real observation t
   assert.equal(observed.participants[0].native.agents[0].nativeId, 'child-of-w-1');
 });
 
-// Issue #337: guidance to a one-shot harness seat is silently dropped — swarm.guide answers
-// operation_completed with result {ok:false}, guide null, changed [], and nothing reaches the
-// seat. The message must park durably instead, naming the seat, the messageId and the
-// harness_one_shot reason, and answer a parked guide receipt.
-test('a guide to a one-shot seat parks durably instead of answering ok:false', async (t) => {
+// Issue #337 with issue #273's receipt: guidance to a one-shot harness seat used to be silently
+// dropped — swarm.guide answered operation_completed with `guide: null` and nothing reached the
+// seat. The message parks durably instead, and the receipt now carries the guide's OWN row —
+// never null, whatever lane answered — naming the seat, the messageId, the sender relationship,
+// the priority and the delivery state.
+test('a guide to a one-shot seat parks durably and answers with its own row', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Parked guidance' });
   await f.recruit('builder');
@@ -346,12 +347,18 @@ test('a guide to a one-shot seat parks durably instead of answering ok:false', a
   assert.equal(guided.receipt.event.kind, 'swarm.guidance_parked');
   assert.deepEqual(guided.receipt.changed, [{ collection: 'participants', id: 'builder',
     seq: guided.receipt.event.seq, ts: guided.receipt.event.ts }]);
-  assert.equal(guided.guide.delivery, 'parked');
-  assert.equal(guided.guide.seq, guided.receipt.event.seq);
-  assert.equal(guided.guide.ts, guided.receipt.event.ts);
+  assert.deepEqual(guided.guide, {
+    seq: guided.receipt.event.seq, kind: 'swarm.guidance_parked', participantId: 'builder',
+    from: { kind: 'root', participantId: null }, sentAt: guided.receipt.event.ts,
+    priority: 'next_boundary', inReplyTo: null, messageId: guided.guide.messageId,
+    delivery: { state: 'parked', lane: null, reason: 'harness_one_shot' },
+  }, 'the parked receipt IS the row the guide wrote, with the whole provenance on it');
   assert.match(guided.guide.messageId, /^message:[a-f0-9]{64}$/);
   assert.deepEqual(guided.result, { ok: true, result: 'parked',
     reason: 'harness_one_shot', messageId: guided.guide.messageId });
+  assert.deepEqual(guided.next, { command: 'swarm.watch', args: { swarmId: 'baton' },
+    observation: { wakeClass: 'guidance_delivered', participantId: 'builder' } },
+  'next names the delivery that clears the park');
 
   const parked = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
     && event.payload?.kind === 'swarm.guidance_parked');
@@ -359,19 +366,26 @@ test('a guide to a one-shot seat parks durably instead of answering ok:false', a
   assert.equal(parked[0].payload.participantId, 'builder');
   assert.equal(parked[0].payload.messageId, guided.guide.messageId);
   assert.equal(parked[0].payload.message, 'Hold the API shape.');
-  assert.equal(parked[0].payload.reason, 'harness_one_shot');
+  assert.equal(parked[0].payload.actor, 'owner', 'the raw actor rides the row the relationship was read from');
+  assert.deepEqual(parked[0].payload.from, { kind: 'root', participantId: null });
+  assert.deepEqual(parked[0].payload.delivery,
+    { state: 'parked', lane: null, reason: 'harness_one_shot' });
   assert.equal(f.store.eventsView().some((event) => event.kind === 'message.delivered'), false,
     'the park itself wakes no guidance_delivered');
 
   const view = await f.call('view');
   const row = view.participants.find((participant) => participant.participantId === 'builder');
-  assert.deepEqual(row.guidance, [{ seq: parked[0].seq, ts: parked[0].ts,
-    from: parked[0].payload.from, messageId: guided.guide.messageId, delivery: 'parked' }]);
+  assert.deepEqual(row.guidance, [{
+    seq: parked[0].seq, ts: parked[0].ts, kind: 'swarm.guidance_parked',
+    messageId: guided.guide.messageId, from: { kind: 'root', participantId: null },
+    priority: 'next_boundary', thread: { root: parked[0].seq, parent: null },
+    delivery: { state: 'parked', lane: null, reason: 'harness_one_shot', deliveredTo: null, at: null },
+  }]);
 });
 
-// Issue #337: a harness that CAN deliver mid-turn keeps today's path — even when the delivery
-// itself refuses for another reason, nothing parks.
-test('a refused delivery on a deliverable harness never parks', async (t) => {
+// Issue #337 × #273: a harness that CAN deliver mid-turn keeps the delivery path — a refusal there
+// never parks, and the receipt still names the guide's own row, this time a REFUSED delivery.
+test('a refused delivery on a deliverable harness never parks, and still answers with its row', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Live guidance path' });
   await f.recruit('builder');
@@ -379,7 +393,12 @@ test('a refused delivery on a deliverable harness never parks', async (t) => {
 
   const guided = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
   assert.deepEqual(guided.result, { ok: false, result: 'worker_not_active' });
-  assert.equal(guided.guide, null);
+  assert.equal(guided.guide.kind, 'swarm.guidance_sent', 'the guide still leaves its own row');
+  assert.deepEqual(guided.guide.delivery,
+    { state: 'refused', lane: null, reason: 'worker_not_active' },
+    'the row says the lane took nothing — a dropped message is never silent');
+  assert.deepEqual(guided.next, { command: 'swarm.watch', args: { swarmId: 'baton' },
+    observation: { wakeClass: 'paused', participantId: 'builder' } });
   assert.equal(f.store.eventsView().some((event) => event.kind === 'driver.recorded'
     && event.payload?.kind === 'swarm.guidance_parked'), false);
 });
@@ -394,13 +413,15 @@ test('one-shot detection reads card verbs, never the harness name', async (t) =>
   f.workers[0].vendor = 'muse';
   f.ports.coordinator.guideParticipant = async () => ({ ok: false, result: 'worker_not_active' });
   const live = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
-  assert.equal(live.guide, null, 'a muse-named seat with a deliverable card keeps the live path');
+  assert.equal(live.guide.delivery.state, 'refused',
+    'a muse-named seat with a deliverable card keeps the delivery path — nothing parks');
 
   f.workers[0].vendor = 'shiny-new-harness';
   f.cards.set('shiny-new-harness', { prompt: 'unsupported', steer: 'unsupported' });
   f.ports.coordinator.guideParticipant = async () => ({ ok: false, reason: 'nudge unsupported on one-shot shiny' });
   const parked = await f.call('guide', { participantId: 'builder', message: 'Hold the shape.' });
-  assert.equal(parked.guide.delivery, 'parked', 'an unknown-named seat with unsupported verbs parks');
+  assert.equal(parked.guide.delivery.state, 'parked',
+    'an unknown-named seat with unsupported verbs parks');
 });
 
 // Issue #337: parked guidance composes into the --resume-from successor's brief in the Swarm
@@ -436,7 +457,10 @@ test('a resume-from successor brief carries parked guidance and marks it deliver
 
   const view = await f.call('view');
   const elder = view.participants.find((participant) => participant.participantId === 'otelder');
-  assert.deepEqual(elder.guidance.map((row) => row.delivery), ['parked', 'parked', 'delivered', 'delivered']);
+  assert.deepEqual(elder.guidance.map((row) => row.delivery.state), ['delivered', 'delivered'],
+    'each park is ONE row whose state becomes delivered when the composition names its messageId');
+  assert.ok(elder.guidance.every((row) => row.delivery.deliveredTo === 'successor'),
+    'the delivery names the seat whose brief carried the message');
 
   await f.call('recruit', { participantId: 'third', objective: 'Continue as third', resumeFrom: 'otelder' });
   const thirdBrief = f.store.swarm('baton').participants.third.brief;

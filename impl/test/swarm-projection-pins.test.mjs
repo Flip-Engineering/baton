@@ -109,25 +109,39 @@ async function builders(t, options = {}) {
 test('the view pins what a participant was told, and the guide receipt that wrote each row', async (t) => {
   const { swarm, delegated, leadWorker } = await builders(t, { turnDelayMs: 250 });
   const leadActor = `worker:${leadWorker.id}`;
-  // The first guide resumes the paused turn: no lane receipt, so the projection honestly shows none.
-  await delegated.guide('alpha', 'Resume on the interface');
+  // Issue #273: the first guide resumes the paused turn — the lane writes no message.sent receipt,
+  // and the guide's OWN row is what the projection carries (the delivery says so with lane: null).
+  const resumed = await delegated.guide('alpha', 'Resume on the interface');
+  assert.equal(resumed.guide.kind, 'swarm.guidance_sent');
+  assert.deepEqual(resumed.guide.delivery, { state: 'delivered', lane: null });
   let view = await swarm.view();
-  assert.deepEqual(view.participants.find((row) => row.participantId === 'alpha').guidance, []);
+  assert.deepEqual(view.participants.find((row) => row.participantId === 'alpha').guidance.map((row) => row.seq),
+    [resumed.guide.seq], 'the paused-lane guide is pinned on the seat it was sent to');
 
   // Receipted guides return the row they wrote, and the projection carries exactly those rows for
-  // the addressee — in log order, each naming its writer, its seq, and its ts.
+  // the addressee — in log order, each naming the sender relationship, its priority and its thread.
   const first = await delegated.guide('alpha', 'First receipted guidance');
   const second = await delegated.guide('alpha', 'Second receipted guidance');
   assert.ok(Number.isSafeInteger(first.guide.seq) && first.guide.seq > 0);
-  assert.ok(typeof first.guide.ts === 'string' && first.guide.ts.length > 0);
+  assert.ok(typeof first.guide.sentAt === 'string' && first.guide.sentAt.length > 0);
   assert.match(first.guide.messageId, /^message:[a-f0-9]{64}$/u);
+  assert.equal(first.guide.priority, 'next_boundary');
+  assert.ok(Number.isSafeInteger(first.guide.delivery.lane.seq), 'the lane receipt it rode is named');
   assert.ok(second.guide.seq > first.guide.seq, 'each receipted guide writes a later row');
   view = await swarm.view();
   const alpha = view.participants.find((row) => row.participantId === 'alpha');
-  assert.deepEqual(alpha.guidance, [
-    { seq: first.guide.seq, ts: first.guide.ts, from: leadActor, messageId: first.guide.messageId },
-    { seq: second.guide.seq, ts: second.guide.ts, from: leadActor, messageId: second.guide.messageId },
-  ], 'the guidance rows are the receipts addressed to this participant, in log order');
+  assert.deepEqual(alpha.guidance.map((row) => ({ seq: row.seq, ts: row.ts, from: row.from,
+    messageId: row.messageId, priority: row.priority, thread: row.thread, state: row.delivery.state })), [
+    { seq: resumed.guide.seq, ts: resumed.guide.sentAt, from: { kind: 'root', participantId: null },
+      messageId: resumed.guide.messageId, priority: 'next_boundary',
+      thread: { root: resumed.guide.seq, parent: null }, state: 'delivered' },
+    { seq: first.guide.seq, ts: first.guide.sentAt, from: { kind: 'root', participantId: null },
+      messageId: first.guide.messageId, priority: 'next_boundary',
+      thread: { root: first.guide.seq, parent: null }, state: 'delivered' },
+    { seq: second.guide.seq, ts: second.guide.sentAt, from: { kind: 'root', participantId: null },
+      messageId: second.guide.messageId, priority: 'next_boundary',
+      thread: { root: second.guide.seq, parent: null }, state: 'delivered' },
+  ], `the guidance rows are the guides' own rows addressed to this participant, in log order (lead ${leadActor})`);
   assert.deepEqual(view.participants.find((row) => row.participantId === 'beta').guidance, [],
     'guidance follows the addressee, never the whole swarm');
 });

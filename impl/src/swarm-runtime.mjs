@@ -3,7 +3,7 @@ import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PRO
   SWARM_VIEW_PROJECTIONS, projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
   validateSwarmCommand, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
   swarmKnowledgeCommand, swarmKnowledgePermission, readRecruitContextPackageOption,
-  withoutRecruitContextPackageOption } from './swarm-contract.mjs';
+  withoutRecruitContextPackageOption, SWARM_GUIDANCE_DEFAULT_PRIORITY } from './swarm-contract.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
@@ -26,6 +26,9 @@ import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs
 // run takes the host verify lease through the suite runner's seam.
 import {
   SupervisedProcesses, gateRunnerFile, gateRunnerLayout, runSupervisedGateRun, supervisedGateTimeoutMs,
+  // Issue #273: WHO a guide is from is read by the coordinator's ONE namespace derivation — this
+  // module adds the seat's standing in the swarm, never a second reading of the actor spelling.
+  guidanceSender,
 } from './coordinator.mjs';
 // #341 part 3: the ONE rendering of the deployment's route-usage rows, shared with the
 // provider-facing brief (adapter.mjs renderBrief) so the seat's brief and the rendered subsection
@@ -211,6 +214,86 @@ const childrenByParent = (swarm) => {
   }
   return childrenOf;
 };
+
+// ── issue #273: guidance rows, the fold, and who a guide is from ────────────────────────────────
+/** The guidance rows the swarm writes for one seat (#273): the delivered half a guide writes for
+ * every message a lane took, the #337 park a harness without mid-turn delivery waits on, and the
+ * composition that clears a park exactly once. The participant row's `guidance` field folds
+ * exactly these — the lane receipt a delivery rode is NAMED by `delivery.lane`, never copied in
+ * beside it — so the row a guide's receipt names and the rows a reader opens cannot disagree. */
+const GUIDANCE_ROW_KINDS = Object.freeze(['swarm.guidance_sent', 'swarm.guidance_parked', 'swarm.guidance_delivered']);
+/** The ledger kinds a guide may answer with `inReplyTo` (#273): a guidance row, a seat's message
+ * (both halves of the lane), or a contribution. A seq outside this set — or one the ledger does
+ * not hold — refuses `swarm_guidance_reply_target_not_found`. */
+const GUIDANCE_REPLY_TARGET_KINDS = Object.freeze([...GUIDANCE_ROW_KINDS, 'message.sent', 'message.delivered',
+  'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_integrated']);
+
+/** WHO one guidance is from, for the swarm's own record (#273): the sender's identity is read by
+ * the coordinator's ONE namespace derivation (`guidanceSender`), and this adds the sender's
+ * standing in THIS swarm — a seat some other seat names as its parent LEADS that delegation, any
+ * other seat is a peer, and a sender that is not a seat of the swarm (the owner sessions, the bare
+ * orchestrator, any other principal driving it) is the root orchestrator. */
+function guidanceFromRelationship(swarm, actor) {
+  const sender = guidanceSender(actor);
+  if (sender.kind !== 'seat') return Object.freeze({ kind: 'root', participantId: null });
+  return Object.freeze({ kind: childrenByParent(swarm).has(sender.participantId) ? 'lead' : 'peer',
+    participantId: sender.participantId });
+}
+
+/** The guidance fold (#273): every guidance row the ledger holds, grouped by the seat it is
+ * addressed to and rendered in THREAD order — a thread's rows together, threads in the order
+ * their root was written. Each row carries the priority the sender asked for, the thread link
+ * `{root, parent}` (parent is the seq the guide answered; root is the row that started the thread,
+ * which for a message or contribution target is that row itself), and the delivery state a reader
+ * needs: a park reads `delivered` once a composition names its messageId — the composition IS
+ * that state, never a second row beside it. */
+function foldGuidanceRows(events) {
+  const composed = new Map();
+  for (const event of events) {
+    if (event.kind === 'driver.recorded' && event.payload?.kind === 'swarm.guidance_delivered'
+      && typeof event.payload.messageId === 'string') composed.set(event.payload.messageId, event);
+  }
+  const bySeq = new Map();
+  const roots = new Map();
+  for (const event of events) {
+    if (event.kind !== 'driver.recorded') continue;
+    const payload = event.payload ?? {};
+    if (!GUIDANCE_ROW_KINDS.includes(payload.kind) || typeof payload.participantId !== 'string') continue;
+    const inReplyTo = Number.isSafeInteger(payload.inReplyTo) ? payload.inReplyTo : null;
+    roots.set(event.seq, inReplyTo === null ? event.seq : roots.get(inReplyTo) ?? inReplyTo);
+    if (payload.kind === 'swarm.guidance_delivered') continue;
+    const cleared = payload.kind === 'swarm.guidance_parked' ? composed.get(payload.messageId) ?? null : null;
+    bySeq.set(event.seq, {
+      seq: event.seq, ts: event.ts, kind: payload.kind, messageId: payload.messageId ?? null,
+      from: payload.from ?? null, priority: payload.priority ?? SWARM_GUIDANCE_DEFAULT_PRIORITY,
+      thread: { root: roots.get(event.seq), parent: inReplyTo },
+      delivery: {
+        state: payload.kind === 'swarm.guidance_parked'
+          ? (cleared === null ? 'parked' : 'delivered')
+          : payload.delivery?.state ?? 'delivered',
+        lane: payload.delivery?.lane ?? null,
+        reason: payload.delivery?.reason ?? payload.reason ?? null,
+        deliveredTo: cleared?.payload?.deliveredTo ?? null,
+        at: cleared?.ts ?? null,
+      },
+    });
+  }
+  const byParticipant = new Map();
+  for (const event of events) {
+    const row = bySeq.get(event.seq);
+    if (row === undefined) continue;
+    const participantId = event.payload.participantId;
+    if (!byParticipant.has(participantId)) byParticipant.set(participantId, []);
+    byParticipant.get(participantId).push(row);
+  }
+  // Threads in order: a thread's rows together (its root first), threads in the order their roots
+  // were written — so a reply never floats away from the row it answers.
+  for (const rows of byParticipant.values()) {
+    rows.sort((left, right) => left.thread.root - right.thread.root || left.seq - right.seq);
+  }
+  return byParticipant;
+}
+
 /** One harness/model/effort route, or null when the value does not name one. Used to record the
  * route a seat was recruited under: an incomplete selector is not a route, and is never padded
  * into one. */
@@ -2004,7 +2087,9 @@ export class SwarmRuntime {
         changed: [...changed.values()].sort((a, b) => compareCanonicalStrings(a.collection, b.collection)
           || compareCanonicalStrings(String(a.id), String(b.id))),
       },
-      next: swarmReceiptNext(command, args),
+      // Issue #273: the guide's own row rides `extra`, and the step that follows depends on how it
+      // landed — so the ONE `next` derivation reads the outcome, never a second switch here.
+      next: swarmReceiptNext(command, args, extra.guide ?? null),
       ...extra,
     };
     if (_mutationView(args)) envelope.view = this.inspect(this._swarm(args.swarmId), principal, context);
@@ -3393,8 +3478,16 @@ export class SwarmRuntime {
     const workspaceIdByWorker = new Map();
     const delegations = this._delegations(swarm);
     const evidenceFor = this._workEvidence(swarm);
+    // Guidance projection (#273): the swarm's own guidance rows for each seat — the delivered half
+    // a guide writes, the #337 park a harness without mid-turn delivery waits on, and the
+    // composition that clears it — folded by the ONE derivation (foldGuidanceRows), which also
+    // links every row to the thread it belongs to. The lane receipt a delivery rode is named by
+    // the row's `delivery.lane`; the view mints nothing of its own.
+    const guidanceByParticipant = foldGuidanceRows(ledger);
     // Guidance projection: the nudges addressed to each worker, read from the message.sent
-    // lane receipts the delivery path already records. The view mints nothing of its own.
+    // lane receipts the delivery path already records. This is the completion derivation's
+    // evidence (a paused turn with guidance still waiting for it defeats a clean exit, #332) —
+    // the participant row's own `guidance` field is the fold above.
     const guidanceByWorker = new Map();
     for (const event of ledger) {
       if (event.kind !== 'message.sent' || event.payload?.kind !== 'nudge') continue;
@@ -3403,24 +3496,6 @@ export class SwarmRuntime {
       if (!guidanceByWorker.has(workerId)) guidanceByWorker.set(workerId, []);
       guidanceByWorker.get(workerId).push({
         seq: event.seq, ts: event.ts, from: event.payload.from ?? null, messageId: event.payload.messageId ?? null,
-      });
-    }
-    // Issue #337: parked and delivered guidance rides the participant row's guidance beside the
-    // live nudges — the swarm.guidance_parked row a one-shot seat's guide wrote, then the
-    // swarm.guidance_delivered row the successor brief that composed it wrote. Keyed by seat
-    // (the park names a participant, never a worker incarnation), in ledger order, with the
-    // delivery state on each row. The view mints nothing of its own here either.
-    const parkedGuidanceByParticipant = new Map();
-    for (const event of ledger) {
-      if (event.kind !== 'driver.recorded') continue;
-      const delivery = event.payload?.kind === 'swarm.guidance_parked' ? 'parked'
-        : event.payload?.kind === 'swarm.guidance_delivered' ? 'delivered' : null;
-      if (delivery === null || typeof event.payload?.participantId !== 'string') continue;
-      const participantId = event.payload.participantId;
-      if (!parkedGuidanceByParticipant.has(participantId)) parkedGuidanceByParticipant.set(participantId, []);
-      parkedGuidanceByParticipant.get(participantId).push({
-        seq: event.seq, ts: event.ts, from: event.payload.from ?? null,
-        messageId: event.payload.messageId ?? null, delivery,
       });
     }
     // The knowledge rows (#318): the facts the swarm's participants seeded through the bridge
@@ -3669,9 +3744,11 @@ export class SwarmRuntime {
         // has it cost" reads off the view instead of a raw worker log.
         activity: seatFacts.activity,
         usage: seatFacts.usage,
-        // Issue #337: delivered guidance (the nudge lane) beside the guidance parked for a seat
-        // whose harness takes no mid-turn delivery, with its delivery state.
-        guidance: [...guidance, ...(parkedGuidanceByParticipant.get(participant.participantId) ?? [])],
+        // Issue #273: the seat's guidance is the swarm's own guidance fold — every row a guide
+        // wrote for it (delivered, parked, refused), with its priority and the thread it belongs
+        // to. The #337 parked rows ride the same fold: a park is one row whose delivery state
+        // becomes `delivered` when the composition that carries it writes the marker.
+        guidance: guidanceByParticipant.get(participant.participantId) ?? [],
         // Drift before capture (issue #301): the base this seat's checkout shows against the
         // deployment's target. The WHOLE record and the seat the caller named read the
         // repository now; a slice serves the seat's own last observation (its cached head, and
@@ -5417,18 +5494,6 @@ export class SwarmRuntime {
     return error;
   }
 
-  /** Who parked guidance is from, for the brief line that delivers it (#337): the same
-   * namespaces as the coordinator's guidanceSenderLabel — the web/MCP owner sessions and the
-   * bare orchestrator actor are the root, a swarm-native actor names its seat, anything else
-   * is spelled as it arrived. The coordinator owns that sibling derivation (its file is outside
-   * this lane's scope); this mapper keeps the namespaces identical, never a second rule. */
-  _guidanceParkedFromLabel(actor) {
-    const parts = typeof actor === 'string' ? actor.split(':') : [];
-    if (parts[0] === 'swarm-native' && parts.length >= 3) return `participant "${parts.slice(2).join(':')}" of swarm "${parts[1]}"`;
-    if (parts[0] === 'web' || parts[0] === 'mcp' || actor === 'orchestrator') return 'the root orchestrator';
-    return typeof actor === 'string' && actor.length > 0 ? actor : 'an unnamed sender';
-  }
-
   /** Whether the seat's harness takes no mid-turn delivery (#337): the seat's adapter card
    * verbs decide — a one-shot exec harness names prompt AND steer unsupported — never the
    * harness name. Unknown (no card inventory, no verbs on the card) fails OPEN toward today's
@@ -5442,6 +5507,51 @@ export class SwarmRuntime {
       if (!verbs || typeof verbs !== 'object') return false;
       return verbs.prompt === 'unsupported' && verbs.steer === 'unsupported';
     } catch { return false; }
+  }
+  /** One guidance row's payload (#273): the provenance every guidance row carries — the raw
+   * sender actor beside the relationship it was read into, the priority the sender asked for, the
+   * row it answers, and how the delivery landed. ONE composition, so the park, the delivered row
+   * and the receipt a caller reads cannot spell the same facts differently. */
+  _guidancePayload(swarmId, participantId, messageId, principal, guidance, delivery) {
+    return {
+      swarmId, participantId, messageId, actor: principal.actor,
+      from: clone(guidance.from), priority: guidance.priority,
+      inReplyTo: guidance.inReplyTo, delivery: clone(delivery),
+    };
+  }
+
+  /** The guide's own durable row as its receipt reads it (#273): the seq it was written at, its
+   * kind, the seat it was addressed to, who it is from, when it was sent (the row's own instant —
+   * the row IS the send), what the sender asked for, what it answers, its messageId, and how the
+   * delivery landed. Never null: a guide always leaves this row, whatever the lane answered. */
+  _guideReceipt(event, payload) {
+    return {
+      seq: event.seq, kind: event.payload?.kind ?? event.kind, participantId: payload.participantId,
+      from: clone(payload.from), sentAt: event.ts, priority: payload.priority,
+      inReplyTo: payload.inReplyTo ?? null, messageId: payload.messageId,
+      delivery: clone(payload.delivery),
+    };
+  }
+
+  /** The row one guide answers (#273): `inReplyTo` names a ledger seq the swarm holds — a prior
+   * guidance row, a seat's message, or a contribution. A seq the ledger does not hold, a row that
+   * names another swarm, or a kind no guide may answer refuses typed, naming the target and the
+   * admitted kinds, so a thread never points at nothing. */
+  _guidanceReplyTarget(args) {
+    if (args.inReplyTo === undefined) return null;
+    const target = this.store.eventsView().find((event) => event.seq === args.inReplyTo) ?? null;
+    const kind = target === null ? null
+      : target.kind === 'driver.recorded' ? target.payload?.kind ?? null : target.kind;
+    const swarmId = target?.payload?.swarmId ?? null;
+    if (kind === null || !GUIDANCE_REPLY_TARGET_KINDS.includes(kind)
+      || (typeof swarmId === 'string' && swarmId !== args.swarmId)) {
+      refuse(`swarm.guide inReplyTo ${args.inReplyTo} names no row this swarm holds`,
+        'swarm_guidance_reply_target_not_found', {
+          field: 'inReplyTo', seq: args.inReplyTo, rule: 'unknown-target', kind,
+          admitted: [...GUIDANCE_REPLY_TARGET_KINDS],
+        });
+    }
+    return args.inReplyTo;
   }
 
   /** The parked guidance still awaiting a seat (#337): every swarm.guidance_parked row naming
@@ -5461,30 +5571,58 @@ export class SwarmRuntime {
         && wanted.has(event.payload?.participantId)) {
         parked.push({ seq: event.seq, ts: event.ts, participantId: event.payload.participantId,
           messageId: event.payload.messageId, message: event.payload.message,
-          from: event.payload.from ?? null });
+          actor: event.payload.actor ?? null });
       }
     }
     return parked.filter((row) => !delivered.has(row.messageId));
   }
 
-  /** Park one guide message durably (#337): the swarm.guidance_parked row names the seat, the
-   * minted messageId and the harness_one_shot reason. The answer carries guide
-   * {seq, ts, messageId, delivery:'parked'} — a parked receipt, never a success envelope
-   * around the one-shot refusal. The messageId derives from the whole attempt (a NEW attempt
-   * mints a NEW id), and the driver key makes the row replay-safe. */
-  _parkGuidance(swarmId, participant, message, principal, args) {
+  /** Park one guide message durably (#337, #273): the swarm.guidance_parked row names the seat,
+   * the minted messageId, the harness_one_shot reason and the whole provenance — who sent it, the
+   * priority asked for and the row it answers — so the seat's next exec / successor brief and the
+   * participant row's guidance read one row. The answer carries that row: a parked receipt, never
+   * a success envelope around the one-shot refusal and never `guide: null`. The messageId derives
+   * from the whole attempt (a NEW attempt mints a NEW id), and the driver key makes the row
+   * replay-safe. */
+  _parkGuidance(swarmId, participant, message, principal, args, guidance) {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
-    const recorded = this.store.recordDriver('swarm.guidance_parked', {
-      swarmId, participantId: participant.participantId, messageId, message,
-      from: principal.actor, reason: 'harness_one_shot',
-    }, { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
+    const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
+      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot' }), message };
+    const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
+      { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;
     return {
       participantId: participant.participantId,
       result: { ok: true, result: 'parked', reason: 'harness_one_shot', messageId },
-      guide: { seq: event.seq, ts: event.ts, messageId, delivery: 'parked' },
+      guide: this._guideReceipt(event, event.payload),
       writes: [{ kind: 'swarm.guidance_parked', payload: event.payload,
+        seq: event.seq, ts: event.ts, actor: event.actor }],
+    };
+  }
+
+  /** Record the delivered half of one guide (#273): the swarm.guidance_sent row is the row the
+   * receipt names. A lane that took the message writes `delivered` and NAMES the lane receipt it
+   * rode (the paused-turn lane writes none — the turn itself carries the guidance, and the row
+   * says so with lane: null); a lane that took nothing on a harness that CAN deliver writes
+   * `refused`, so the guidance is never silently dropped. */
+  _recordGuidanceSent(swarmId, participant, principal, args, guidance, lane, guided) {
+    const messageId = lane?.payload?.messageId
+      ?? `message:${hash(['swarm.guidance_sent', swarmId, participant.participantId, args.message,
+        args.idempotencyKey])}`;
+    const payload = this._guidancePayload(swarmId, participant.participantId, messageId, principal, guidance,
+      guided?.ok === true
+        ? { state: 'delivered', lane: lane === null ? null : {
+          seq: lane.seq, kind: lane.payload?.kind ?? null, ts: lane.ts, messageId } }
+        : { state: 'refused', lane: null, reason: guided?.result ?? guided?.reason ?? 'delivery_refused' });
+    const recorded = this.store.recordDriver('swarm.guidance_sent', payload,
+      { actor: principal.actor, key: `swarm-guidance-sent:${messageId}` });
+    const event = recorded.event;
+    return {
+      participantId: participant.participantId,
+      result: guided,
+      guide: this._guideReceipt(event, event.payload),
+      writes: [{ kind: 'swarm.guidance_sent', payload: event.payload,
         seq: event.seq, ts: event.ts, actor: event.actor }],
     };
   }
@@ -5755,7 +5893,9 @@ export class SwarmRuntime {
       for (const [seat, rows] of bySeat) {
         situation.push(`Parked guidance for ${seat} (its harness takes no mid-turn delivery — composed here instead):`);
         for (const row of rows) {
-          situation.push(`- [from ${this._guidanceParkedFromLabel(row.from)} · seq ${row.seq} · ts ${row.ts} · ${row.messageId}]: ${row.message}`);
+          // The sender label is the coordinator's ONE namespace derivation (#273), read through
+          // the shared `guidanceSender` — never a second mapper with the same namespaces.
+          situation.push(`- [from ${guidanceSender(row.actor).label} · seq ${row.seq} · ts ${row.ts} · ${row.messageId}]: ${row.message}`);
         }
       }
     }
@@ -7144,7 +7284,7 @@ export class SwarmRuntime {
         for (const row of parkedDeliveries) {
           const deliveredWrite = this.store.recordDriver('swarm.guidance_delivered', {
             swarmId: args.swarmId, participantId: row.participantId, messageId: row.messageId,
-            deliveredTo: args.participantId, from: row.from,
+            deliveredTo: args.participantId, actor: row.actor, from: row.from,
           }, { actor: principal.actor,
             key: `swarm-guidance-delivered:${row.messageId}:${args.participantId}` });
           const deliveredEvent = deliveredWrite.event;
@@ -7345,27 +7485,33 @@ export class SwarmRuntime {
     }
     if (command === 'swarm.guide') {
       const result = await this._once(command, args, principal, async () => {
+        // Issue #273: the provenance is resolved BEFORE anything is sent — the relationship the
+        // sender has in THIS swarm (the coordinator's ONE namespace derivation plus the seat's
+        // standing here) and the row this guidance answers (a seq the swarm must hold). A guide
+        // that answers a row this swarm does not hold refuses here, having sent nothing.
+        const guidance = {
+          from: guidanceFromRelationship(this._swarm(args.swarmId), principal.actor),
+          priority: args.priority ?? SWARM_GUIDANCE_DEFAULT_PRIORITY,
+          inReplyTo: this._guidanceReplyTarget(args),
+        };
         const cursor = this.store.ledgerHeadSeq();
-        const guided = await this.coordinator.guideParticipant(worker.id, args.message, { actor: principal.actor });
+        const guided = await this.coordinator.guideParticipant(worker.id, args.message,
+          { actor: principal.actor, priority: guidance.priority });
         // Issue #337: a one-shot harness answers every mid-turn delivery with its unsupported
-        // refusal — and the old path wrapped that ok:false in a success envelope with guide
-        // null and changed [], dropping the message silently. When the seat's card verbs say
-        // mid-turn delivery is unsupported, the message parks durably instead: the seat's
-        // next exec / resume-from successor brief composes it, and the receipt names the park
-        // row. A harness whose card CAN deliver keeps today's path below, whatever the
-        // delivery itself answers.
+        // refusal. When the seat's card verbs say mid-turn delivery is unsupported, the message
+        // parks durably instead: the seat's next exec / resume-from successor brief composes it.
+        // A harness whose card CAN deliver keeps the delivery path below, whatever the delivery
+        // itself answers.
         if (guided?.ok !== true && this._midTurnGuidanceUnsupported(worker)) {
-          return this._parkGuidance(args.swarmId, participant, args.message, principal, args);
+          return this._parkGuidance(args.swarmId, participant, args.message, principal, args, guidance);
         }
         // The lane receipt is durable coordination log, not process state: deliveries are
-        // serialized per worker, so the newest nudge row for this binding past the pre-call
-        // cursor is the row THIS guide wrote — read back and returned as its receipt.
+        // serialized per worker, so the newest nudge/steer row for this binding past the pre-call
+        // cursor is the row THIS guide wrote — named by the guide's own row, never copied in.
         const sent = this.store.eventsView().filter((event) => event.kind === 'message.sent'
-          && event.payload?.kind === 'nudge' && event.payload?.to?.workerId === worker.id
-          && event.seq > cursor).at(-1);
-        return { participantId: participant.participantId, result: guided,
-          guide: sent ? { seq: sent.seq, ts: sent.ts, messageId: sent.payload.messageId ?? null } : null,
-          writes: sent ? [{ kind: sent.kind, payload: sent.payload, seq: sent.seq, ts: sent.ts, actor: sent.actor }] : [] };
+          && ['nudge', 'steer'].includes(event.payload?.kind) && event.payload?.to?.workerId === worker.id
+          && event.seq > cursor).at(-1) ?? null;
+        return this._recordGuidanceSent(args.swarmId, participant, principal, args, guidance, sent, guided);
       }, { context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, result: result.result, guide: result.guide });

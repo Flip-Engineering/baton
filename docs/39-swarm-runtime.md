@@ -793,19 +793,60 @@ envelope with `guide` null and `changed` [] — the message was silently dropped
 reached the seat.
 
 The message now parks durably instead. The guide writes a `swarm.guidance_parked` row naming the
-seat, the minted messageId and the `harness_one_shot` reason, and answers `guide {seq, ts,
-messageId, delivery: 'parked'}` — a parked receipt, never a success envelope around the refusal.
-Whether a seat is one-shot is read from its adapter card's steer/prompt verbs, never from the
-harness name; a harness whose card CAN deliver mid-turn keeps the live path whatever the delivery
-itself answers.
+seat, the minted messageId and the `harness_one_shot` reason, and answers with that row: a parked
+receipt, never a success envelope around the refusal. Whether a seat is one-shot is read from its
+adapter card's steer/prompt verbs, never from the harness name; a harness whose card CAN deliver
+mid-turn keeps the live path whatever the delivery itself answers.
 
 Parked guidance composes into the seat's next exec / `--resume-from` successor brief, in the
 Swarm situation section, attributed to its sender with the parked row's seq, ts and messageId.
 The composition marks each composed message delivered (`swarm.guidance_delivered`, plus the
 `message.delivered` lane row that wakes `guidance_delivered`), so a later successor never
-receives it twice — and the park itself wakes no delivery. Both rows show on the participant
-row's `guidance` beside the live nudges, as `{seq, ts, from, messageId, delivery}` with delivery
-`parked` or `delivered`.
+receives it twice — and the park itself wakes no delivery.
+
+## Guidance delivery semantics (issue #273, runtime side)
+
+A guide is a durable, addressable act with a delivery contract, not a best-effort interjection. The
+runtime side (`swarm.guide`, `impl/src/swarm-runtime.mjs`) states four rules; the coordinator half
+(`f2ea904c`) already frames the message the seat reads as `[baton swarm guidance from <sender> ·
+<sentAt>]` and rides that provenance on the durable `control.nudge` record.
+
+**One. A guide always answers with its own durable row.** The receipt carries
+`guide: {seq, kind, participantId, from, sentAt, priority, inReplyTo, messageId, delivery}` — never
+`guide: null`, whatever the lane answered. The row kind says which half of the contract it is:
+`swarm.guidance_sent` for the delivered (or refused) half, `swarm.guidance_parked` for a park. The
+old shape answered `null` for the most common case — a guide to a paused seat rides `nudgeTurn`,
+which writes no `message.sent` lane row — so the sender could not tell a delivered guide from a
+dropped one. `sentAt` IS the row's own instant (the row is the send). The receipt's `next` NAMES
+THE OBSERVATION: the seat's next turn boundary (`wake class paused`), or, for a park, the
+`guidance_delivered` row that clears it. The line an operator reads from the CLI renders the seat,
+the priority and where it landed (`impl/src/application-cli.mjs`, `swarmGuideRendering`).
+
+**Two. Priority is a closed set, `next_boundary | now`, defaulting to `next_boundary`.** `now`
+rides the coordinator's immediate steer lane and pre-empts an in-flight tool call the way the
+run-send idiom's `now` already does; `next_boundary` is delivered at the seat's next turn boundary
+— which for a harness that takes no mid-turn delivery is the #337 park. Both are durable on the row
+and visible on the participant row's `guidance` field. The set is declared once
+(`SWARM_GUIDANCE_PRIORITIES`, `impl/src/swarm-contract.mjs`) and an unknown value refuses typed with
+the #431 shape: `detail {field, rule: 'closed-set', admitted, expectation, correction}`.
+
+**Three. `inReplyTo` threads guidance to what it answers.** A guide may name a prior guidance row, a
+seat's message, or a contribution by ledger seq; the runtime refuses a seq the swarm does not hold
+(`swarm_guidance_reply_target_not_found`, naming the target and the admitted kinds) before anything
+is sent. The guidance fold links every row to its thread as `thread: {root, parent}` — `parent` is
+the seq the guide answered, `root` is the row that started the thread (for a message or
+contribution target, that row itself) — and the `guidance` projection renders threads in order: a
+thread's rows together, threads in the order their roots were written.
+
+**Four. `from` is relationship-named.** The sender identity is read from the actor namespace by the
+ONE shared derivation the coordinator half owns (`guidanceSender`, `impl/src/coordinator.mjs`): the
+web/MCP owner sessions and the bare orchestrator actor are `root`; the bridge's
+`swarm-native:<swarm>:<seat>` names a seat. The runtime adds the seat's standing in the swarm —
+a seat some other seat names as its parent LEADS that delegation (`{kind: 'lead', participantId}`),
+any other seat is `{kind: 'peer', participantId}`, and a sender that is not a seat of the swarm is
+`{kind: 'root', participantId: null}`. The brief's parked-guidance line reads the same derivation
+for its attribution, so the label a seat reads and the relationship the swarm records cannot drift.
+
 ## A stop settles membership (issue #350, 2026-09-17)
 
 Forty stops on one swarm had written no membership row: every stopped seat still read

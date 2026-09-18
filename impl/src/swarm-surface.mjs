@@ -34,7 +34,7 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.update': 'Apply one domain update: group, work (including declared dependencies), assignment, coupling record, holder release, context, contribution, review, participant leave, or close. The answer is a mutation receipt; pass --view true to also carry the refreshed view.',
   'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection. The answer is a mutation receipt plus scopeOverlap — advisory rows naming every ACTIVE participant across the repository\'s swarms whose scope shares paths with the requested scope (never a refusal); pass --view true to also carry the refreshed view. A recruit whose run admission refuses rolls its join back (swarm.participant_left reason recruit_refused), and a repeated recruit of the same id resumes it. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318). With --follow, the CLI admits the recruit and then observes the swarm\'s own feed until this seat\'s admitted / queued / refused row appears, printing that row.',
     'swarm.recruit': ['swarmId', 'participantId', 'objective'],
-  'swarm.guide': 'Send guidance to one participant, active or paused; the receipt names the lane receipt row the guide wrote — or, when the seat’s harness takes no mid-turn delivery, the swarm.guidance_parked row with delivery parked, composed into the seat’s next exec / resume-from successor brief.',
+  'swarm.guide': 'Send guidance to one participant, active or paused; the receipt carries the guide\'s own durable row — the seat, who it is from, the priority, and how it landed (delivered, parked for the seat\'s next exec / resume-from successor brief, or refused) — and names the observation to watch (the seat\'s next turn boundary, or the delivery that clears a park).',
   'swarm.capture': 'Capture the immutable code for one contribution at its turn boundary. The capture row records the merge-base of the captured revision with the deployment target; a revision whose base cannot reach the target is refused typed (swarm_capture_base_unreachable).',
   'swarm.check': 'Record one independent check of a captured contribution.',
   'swarm.integrate': 'Land one accepted contribution on a target branch as ONE squashed commit: the base is the merge-base of the target with the contribution commit, the squash is prepared in a scratch checkout the deployment owns, the gate set derived from the changed paths runs there, and the target fast-forwards only after every gate is green. The receipt carries the landing itself — base, targetHeadBefore, targetHeadAfter, squashSha, changedPaths, gates, regenerated, conflicts, issue and landingComment (the text `gh issue close --body-file` takes verbatim) — and --dry-run performs everything but the fast-forward, leaving the target exactly where it was.',
@@ -63,13 +63,18 @@ const SWARM_RECEIPT_DETAILS = ['Every mutation answers with a RECEIPT, not the w
   'recorded the mutation and the rows it changed — plus next {command, args}, the step that',
   'follows. The whole refreshed view rides the answer only when the caller asks: `view: true` on',
   'the command, or `--view true` on the CLI.'].join(' ');
-const SWARM_GUIDE_DETAILS = ['The receipt names the lane receipt row this guide wrote as',
-  'guide: {seq, ts, messageId} (null when the guide did not reach the receipted delivery lane),',
-  'so the sender can watch for the participant\'s next turn instead of guessing it landed.',
-  'When the seat’s harness takes no mid-turn delivery the message parks durably instead:',
-  'guide carries delivery parked over the swarm.guidance_parked row, and the seat’s next exec /',
-  'resume-from successor brief composes the parked message in its Swarm section and marks it',
-  'delivered — the park itself wakes no guidance_delivered.'].join(' ');
+const SWARM_GUIDE_DETAILS = ['The receipt carries the guide\'s OWN durable row as',
+  'guide: {seq, kind, participantId, from, sentAt, priority, inReplyTo, messageId, delivery} — never',
+  'null, whatever the lane answered — where `from` names the sender\'s relationship',
+  '({kind: root|lead|peer, participantId}), `priority` is the delivery the sender asked for',
+  '(`next_boundary`, the default, waits for the seat\'s next turn boundary; `now` rides the',
+  'immediate steer lane and pre-empts an in-flight tool call), and `inReplyTo` names the ledger seq',
+  'this guidance answers (a prior guidance row, a seat\'s message, or a contribution; the view',
+  'threads them). `delivery.state` says where it landed: `delivered` beside the lane receipt it rode',
+  '(delivery.lane), `parked` when the seat\'s harness takes no mid-turn delivery — the park composes',
+  'into the seat\'s next exec / resume-from successor brief, which marks it delivered — or `refused`',
+  'when the lane took nothing. `next` names the observation: the seat\'s next turn boundary',
+  '(wake class paused) or, for a park, the guidance_delivered row that clears it.'].join(' ');
 
 function flagName(field) { return `--${kebabCase(field)}`; }
 // The two spellings the landing verb's usage fixes (issue #296), declared where every other flag

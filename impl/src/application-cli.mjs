@@ -2506,6 +2506,16 @@ function parseSwarmCli(args, idempotencyKey) {
       const value = Number(token);
       if (!Number.isSafeInteger(value)) throw cliError(`${entry.flag} must be an integer`);
       values[entry.field] = value;
+    } else if (entry.field === 'inReplyTo') {
+      // Issue #273: the row a guide answers is a ledger seq, so the flag parses to the integer the
+      // wire schema declares instead of crossing as text the contract would refuse. The refusal is
+      // the #431 shape: the flag, the rule, and the admitted form.
+      const value = Number(token);
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        throw swarmFlagRefusal(entry.flag, 'positive-integer', 'a ledger seq the swarm holds',
+          `${entry.flag} must be the positive ledger seq this guidance answers`);
+      }
+      values[entry.field] = value;
     } else if (entry.field === 'options' || entry.field === 'permissions' || entry.field === 'policy') {
       // Issue #474: the parse's own refusal is typed like #431's argv refusals (the flag, the rule
       // and the admitted form), and the shape the wire schema requires — an object for `options`
@@ -2926,6 +2936,33 @@ async function runSwarmStopCli(parsed, client) {
     throw error;
   }
   return swarmStopRendering(answer);
+}
+
+// ── issue #273: the guide receipt renders the seat, the priority and where it landed ────────────
+
+/** `baton swarm guide`'s rendering (#273). The receipt already carries the guide's own durable
+ * row; what an operator must not have to assemble from it is WHERE the guidance went (the seat's
+ * next turn boundary, a durable park waiting for the seat's next exec / successor brief, or a
+ * lane that refused and delivered nothing) and what to watch for next. ONE line names them beside
+ * the row, which prints exactly as the runtime answered — never a second spelling of the fields. */
+export function swarmGuideRendering(answer) {
+  if (!record(answer) || !record(answer.guide)) return answer;
+  const guide = answer.guide;
+  const seat = nonempty(guide.participantId) ? guide.participantId : 'the seat';
+  const state = record(guide.delivery) ? guide.delivery.state : null;
+  const where = state === 'parked'
+    ? 'parked until the seat\'s next exec / resume-from successor brief composes it'
+    : state === 'refused' ? 'refused — the seat received nothing' : 'delivered to the seat';
+  const priority = nonempty(guide.priority) ? guide.priority : 'next_boundary';
+  const observation = answer.next?.observation?.wakeClass ?? null;
+  const row = `guidance for ${seat}: priority ${priority}, ${where}`
+    + `${observation === null ? '' : `; watch for the ${observation} row`}`;
+  return Object.freeze({ ...answer, guide: Object.freeze({ ...guide, rendering: row }) });
+}
+
+/** `swarm.guide`'s own leg: the receipt renders its guide row through the ONE line above. */
+async function runSwarmGuideCli(parsed, client) {
+  return swarmGuideRendering(await client.command(parsed.name, parsed.args, parsed.idempotencyKey));
 }
 
 function swarmHasLiveParticipant(view) {
@@ -5073,6 +5110,9 @@ export async function runBatonCli(parsed, client, options = {}) {
     // printed answer shows the line the reference names rather than a second copy of the text.
     // Issue #473: a stop the run-stop leg refused prints the seat, the run and the wait it holds.
     if (parsed.name === 'swarm.stop') return runSwarmStopCli(parsed, client);
+    // Issue #273: a guide's receipt prints the seat, the priority and where the guidance landed —
+    // the line an operator acts on — beside the durable row the runtime named.
+    if (parsed.name === 'swarm.guide') return runSwarmGuideCli(parsed, client);
     return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   }
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});

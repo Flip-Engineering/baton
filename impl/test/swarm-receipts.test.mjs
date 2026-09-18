@@ -144,12 +144,16 @@ test('#302 every swarm mutation answers with a receipt, and only view:true carri
   assert.deepEqual(updated.receipt.changed, [{ collection: 'groups', id: 'g', seq: updated.receipt.event.seq, ts: updated.receipt.event.ts }]);
   assert.deepEqual(updated.next, { command: 'swarm.view', args: { swarmId: 'baton' } });
 
-  // guide — the receipt's event is the message lane row the guide wrote
+  // guide — the receipt's event is the guide's OWN durable row (#273), which names the lane
+  // receipt it rode; the next step names the observation the sender waits for.
   const guided = await f.call('guide', { participantId: 'builder', message: 'Focus' });
   isReceipt(guided.receipt, 'swarm.guide');
-  assert.equal(guided.receipt.event.kind, 'message.sent');
-  assert.equal(guided.guide.seq, guided.receipt.event.seq, 'the receipt event IS the lane row');
-  assert.deepEqual(guided.next, { command: 'swarm.watch', args: { swarmId: 'baton' } });
+  assert.equal(guided.receipt.event.kind, 'swarm.guidance_sent');
+  assert.equal(guided.guide.seq, guided.receipt.event.seq, 'the receipt event IS the guide\'s row');
+  assert.equal(guided.guide.delivery.state, 'delivered');
+  assert.deepEqual(guided.next, { command: 'swarm.watch', args: { swarmId: 'baton' },
+    observation: { wakeClass: 'paused', participantId: 'builder' } },
+  'next names the seat\'s next turn boundary');
 
   // capture
   const captured = await f.call('capture', { participantId: 'builder', contributionId: 'c1' });

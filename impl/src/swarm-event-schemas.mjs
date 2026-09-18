@@ -289,6 +289,72 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       repoRoot: '/repo', swept: ['integrate-contribution-ada-1'],
     }),
   }),
+  // ── issue #273: guidance's own durable rows ───────────────────────────────────────────────────
+  // The three rows one guide leaves behind, all carrying the same provenance — who sent it, when,
+  // the priority it asked for, and the row it answers — so a receipt, the participant row's
+  // `guidance` field and the successor brief read ONE set of facts. `swarm.guidance_sent` is the
+  // delivered half and names the lane row it rode (delivery.lane); `swarm.guidance_parked` is the
+  // durable park a harness that takes no mid-turn delivery waits on (#337), the only guidance row
+  // that carries the message text (the lane row holds it for a delivered guide); and
+  // `swarm.guidance_delivered` is the composition that clears a park, once.
+  'swarm.guidance_sent': Object.freeze({
+    summary: Object.freeze('one guidance message the runtime delivered to a seat — the row its receipt names'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the guidance was sent in'),
+      participantId: STRING('the seat the guidance is addressed to'),
+      messageId: STRING('the guidance identity, shared with the lane row it rode'),
+      actor: STRING('the raw actor of the sender — the namespace the relationship was read from'),
+      from: JSON_VALUE('the sender\'s relationship to the swarm: {kind: root|lead|peer, participantId}'),
+      sentAt: STRING('the instant the guidance was sent, ISO 8601'),
+      priority: STRING('the delivery the sender asked for: next_boundary (the default) or now'),
+      inReplyTo: JSON_VALUE('the ledger seq this guidance answers, or null when it answers nothing'),
+      delivery: JSON_VALUE('how the guidance landed: {state: delivered|parked|refused, lane: {seq, kind, ts, messageId}|null, reason?}'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'builder', messageId: `message:${'a'.repeat(64)}`,
+      actor: 'web:local-owner:31a271a5', from: Object.freeze({ kind: 'root', participantId: null }),
+      sentAt: '2026-09-18T10:00:00.000Z', priority: 'next_boundary', inReplyTo: null,
+      delivery: Object.freeze({ state: 'delivered', lane: Object.freeze({ seq: 42, kind: 'nudge', ts: '2026-09-18T10:00:00.000Z', messageId: `message:${'a'.repeat(64)}` }) }),
+    }),
+  }),
+  'swarm.guidance_parked': Object.freeze({
+    summary: Object.freeze('one guidance message parked durably because the seat\'s harness takes no mid-turn delivery'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the guidance was sent in'),
+      participantId: STRING('the seat the parked guidance is addressed to'),
+      messageId: STRING('the guidance identity the successor brief composes and marks delivered'),
+      actor: STRING('the raw actor of the sender — the namespace the relationship was read from'),
+      from: JSON_VALUE('the sender\'s relationship to the swarm: {kind: root|lead|peer, participantId}'),
+      sentAt: STRING('the instant the guidance was sent, ISO 8601'),
+      priority: STRING('the delivery the sender asked for: next_boundary (the default) or now'),
+      inReplyTo: JSON_VALUE('the ledger seq this guidance answers, or null when it answers nothing'),
+      message: STRING('the guidance text, composed into the seat\'s next exec / successor brief'),
+      reason: STRING('why the guidance could not be delivered mid-turn (harness_one_shot)'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'builder', messageId: `message:${'b'.repeat(64)}`,
+      actor: 'orchestrator', from: Object.freeze({ kind: 'root', participantId: null }),
+      sentAt: '2026-09-18T10:00:00.000Z', priority: 'next_boundary', inReplyTo: null,
+      message: 'Hold the API shape.', reason: 'harness_one_shot',
+    }),
+  }),
+  'swarm.guidance_delivered': Object.freeze({
+    summary: Object.freeze('a parked guidance message composed into a seat\'s brief — the park is cleared exactly once'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the guidance was sent in'),
+      participantId: STRING('the seat the parked guidance was addressed to'),
+      messageId: STRING('the parked guidance identity this composition delivers'),
+      deliveredTo: STRING('the seat whose brief carried the message (the successor of a resume-from recruit)'),
+      actor: STRING('the raw actor of the sender the park recorded'),
+      from: JSON_VALUE('the sender\'s relationship to the swarm: {kind: root|lead|peer, participantId}'),
+      sentAt: STRING('the instant the composition delivered the parked message, ISO 8601'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'builder', messageId: `message:${'b'.repeat(64)}`,
+      deliveredTo: 'successor', actor: 'orchestrator',
+      from: Object.freeze({ kind: 'root', participantId: null }), sentAt: '2026-09-18T10:05:00.000Z',
+    }),
+  }),
 });
 
 /** One-paragraph description of a refusal row for agent-facing surfaces: what the runtime records
