@@ -111,6 +111,15 @@ const DEPARTED_SEAT_REMEDY_NOTE = 'resend exactly these members — the current 
 const CLAIM_MOVE_COORDINATES = Object.freeze({ field: 'participantId', rule: 'claim-holder-or-organize' });
 const CLAIM_PATHS_COORDINATES = Object.freeze({ field: 'paths', rule: 'claimed-paths' });
 
+// docs/47 §5 (#441 item 3): the claim id a seat's DECLARED recruit scope is recorded under, at
+// bind, by the runtime's recruit effect. ONE derivation — the runtime writes `scopeClaimId(seat)`
+// and the fold reads the same spelling to know which rows are scope claims — so the two halves of
+// the rule cannot drift. The `scope:` namespace is reserved to that row; the shape half below
+// refuses a hand-written claim id wearing it.
+const SCOPE_CLAIM_PREFIX = 'scope:';
+export const scopeClaimId = (participantId) => `${SCOPE_CLAIM_PREFIX}${participantId}`;
+const isScopeClaimId = (claimId) => typeof claimId === 'string' && claimId.startsWith(SCOPE_CLAIM_PREFIX);
+
 // One physical workspace identity (`ws-…`): the checkout a participant works in, as recorded at
 // recruitment and at binding. The writer coupling's exclusivity is exactly this identity, so the
 // shape is named once here rather than re-spelled at each site that carries it.
@@ -611,6 +620,14 @@ export function validateSwarmEvent(kind, payload) {
     if (!isNonEmptyString(p.participantId)) {
       refuse('swarm.claim_updated requires participantId — the seat that holds the claim', 'invalid_payload');
     }
+    // docs/47 §5 (#441): the `scope:` namespace belongs to the claim one seat's declared recruit
+    // scope is recorded under — spelled `scope:<the seat that holds it>`, written by the recruit
+    // effect when the seat binds, never by hand. An id in the namespace naming anybody else could
+    // never be admitted: the fold reads the namespace to know the scope claim, the one row the
+    // conflict rule exempts, so a hand-written hold must not wear the exemption.
+    if (isScopeClaimId(p.claimId) && p.claimId !== scopeClaimId(p.participantId)) {
+      refuse(`claim id '${p.claimId}' is in the reserved scope-claim namespace: a scope claim is spelled ${scopeClaimId(p.participantId)}, held by the seat it names — written by the recruit effect, never by hand`, 'invalid_payload');
+    }
     if (p.workId !== undefined && p.paths !== undefined) {
       refuse('a claim names exactly one target: workId or paths', 'invalid_payload');
     }
@@ -950,11 +967,21 @@ function claimPathsOverlap(left, right) {
  * A claim on another checkout never conflicts (the lane model is per-worktree by construction)
  * and a null workspace conflicts with nothing; one seat's own holds never conflict with each
  * other (docs/45 §2). `rows` is the claim rows to judge — the swarm's own, or those plus the
- * rows one admission is minting. */
+ * rows one admission is minting.
+ *
+ * docs/47 §5 (#441 item 3): a SCOPE claim — the claim one seat's declared recruit scope is
+ * recorded under — is the ground the root recruited that seat onto, not a hold the seat took to
+ * fence a peer out. Scopes overlap LEGALLY (docs/45 §2), so a scope claim is neither judged by
+ * this rule nor a conflict source for another seat's hold: a recruit whose scope meets an active
+ * claim is admitted and its brief names the overlap instead (the `## Claims` block), and a peer's
+ * claim inside the scope is admitted the same way. The refusal stays for the holds two seats
+ * actually take. */
 function claimConflictFor(rows, { claimId, participantId, workspaceId, paths }) {
   if (workspaceId === null || !Array.isArray(paths) || paths.length === 0) return null;
+  if (claimId === scopeClaimId(participantId)) return null;
   for (const row of rows) {
     if (row.status !== 'active' || row.claimId === claimId || row.participantId === participantId) continue;
+    if (row.claimId === scopeClaimId(row.participantId)) continue;
     if (row.workspaceId !== workspaceId || !Array.isArray(row.paths)) continue;
     const overlapping = paths.filter((path) => row.paths.some((held) => claimPathsOverlap(path, held)));
     if (overlapping.length > 0) return { holder: row.participantId, claimId: row.claimId, paths: overlapping };
