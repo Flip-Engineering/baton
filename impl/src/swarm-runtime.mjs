@@ -35,7 +35,12 @@ import { renderRouteUsageLines } from './adapter.mjs';
 // paths into the tests that cover them, and `landContribution` is the #301 git authority's own
 // landing mechanism — this module never spawns git for a landing, exactly as it never spawns git
 // for a capture.
-import { gateSetForPaths } from './landing-table.mjs';
+// Issue #466: the second half of that gate derivation is the RUNNER's own selector
+// (`selectFromRepository`, the function `node impl/scripts/run-suite.mjs --changed` calls). The
+// landing composes the two — never a second table — so a lane that ships a test with its change
+// runs that test, which is the rule the landing's region table alone could not carry.
+import { gateSetForPaths, issueNumberOf } from './landing-table.mjs';
+import { selectFromRepository } from './verification-selection.mjs';
 import { landContribution } from './worktree.mjs';
 // Issue #451: the ONE stderr-tail derivation the adapters keep since #326 (the bound and the #299
 // redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
@@ -5169,14 +5174,28 @@ export class SwarmRuntime {
       && isContributionContractBody(body) ? body : null;
   }
 
-  /** The issue a landing serves (#296 item 6): the swarm's purpose or the contribution's own words
-   * naming `#<n>`. Posting the landing comment stays root-side — the worker runtime holds no gh —
-   * so the receipt carries the number and the composed text instead. */
-  _integrationIssue(swarm, contract, contribution) {
-    for (const value of [swarm.purpose, contract?.subject, contribution?.body]) {
-      if (typeof value !== 'string') continue;
-      const named = value.match(/#(\d{1,6})\b/u);
-      if (named) return Number(named[1]);
+  /** The issue a landing serves (#466): the CONTRIBUTION's own attribution — the `issue:<n>` branch
+   * (the spelling the root's `--issue` admission writes, `application-cli.mjs`) of the context
+   * package attached to the SEAT's run. Nothing else is consulted. The swarm's purpose describes
+   * the run's frame and a region's label describes the code, and the 2026-09-18 live landing read
+   * both: a seat recruited without a package landed under the purpose's `#443`, so the target's
+   * history and the receipt kept a close-guidance line for an issue the contribution never carried.
+   * A seat that carried no package — or a participant row no run ever bound — answers null, and a
+   * null issue renders no close guidance at all. Posting the landing comment stays root-side (the
+   * worker runtime holds no gh), so the receipt carries the number and the composed text instead. */
+  _integrationIssue(swarm, contribution) {
+    const participantId = contribution?.participantId;
+    const seat = typeof participantId === 'string'
+      && Object.hasOwn(swarm?.participants ?? {}, participantId)
+      ? swarm.participants[participantId] : null;
+    const runId = typeof seat?.runId === 'string' && seat.runId.length > 0 ? seat.runId : null;
+    if (runId === null) return null;
+    for (const attachment of this.store.contextPackageAttachments(runId)) {
+      const record = this.store.contextPackage(attachment.packageDigest);
+      for (const branch of record?.branches ?? []) {
+        const number = issueNumberOf(branch?.name);
+        if (number !== null) return number;
+      }
     }
     return null;
   }
@@ -5307,6 +5326,14 @@ export class SwarmRuntime {
         : `- gates: skipped — ${receipt.gates.skipped}`,
     ];
     if (receipt.regenerated.length > 0) lines.push(`- regenerated: ${receipt.regenerated.join(', ')}`);
+    // Issue #466: the close guidance is composed ONLY for an issue the landing can attribute to the
+    // contribution itself — the number is on the receipt and this is the text the root posts with
+    // it. A contribution whose seat carried no package has no issue, and a comment that guessed one
+    // (the swarm's purpose, a region's label) is exactly the mis-attribution the live landing made:
+    // the target's history kept `gh issue close` guidance for an issue the change never carried.
+    if (Number.isSafeInteger(receipt.issue) && receipt.issue > 0) {
+      lines.push(`- closes: #${receipt.issue} (\`gh issue close ${receipt.issue} --body-file <this comment>\`)`);
+    }
     if (receipt.conflicts.length > 0) {
       lines.push(`- paths the target also moved (merged without a conflict): ${receipt.conflicts.join(', ')}`);
     }
@@ -5362,7 +5389,7 @@ export class SwarmRuntime {
       ...(items.length === 0 ? [] : ['', ...items.map((item) => `- ${typeof item.change === 'string'
         && item.change.length > 0 ? item.change : item.id}`)]),
     ].join('\n');
-    const issue = this._integrationIssue(swarm, contract, contribution);
+    const issue = this._integrationIssue(swarm, contribution);
     const mailbox = (value) => `${`${value}`.replace(/[^A-Za-z0-9._-]/gu, '-')}@baton.invalid`;
     // Issue #459: the operation key every row of THIS attempt is recorded under, the supervised
     // pool the landing's out-of-process steps run through, and the lease holder the gate run takes
@@ -5427,14 +5454,26 @@ export class SwarmRuntime {
           return regenerate(dir, regenerateContext);
         },
         runGates: async (dir, changed, gateContext) => {
-          // The gate set is DERIVED from what the squash actually changed — the changed paths, the
-          // issues the contribution names, and the seam inventory behind both.
+          // The gate set is DERIVED from what the squash actually changed, by the TWO derivations
+          // the rest of the system already reads — never a second table (#466). The runner's own
+          // selector (`selectFromRepository`, the function `node impl/scripts/run-suite.mjs
+          // --changed` calls) runs over the CHECKOUT the squash produced, which is what carries a
+          // lane's OWN new test: the file exists there the moment the squash is staged, while the
+          // landing table's directory listing (read beside the resident's own module) can never
+          // see it. The table's region, seam and issue gates are ADDED to that selection, so the
+          // regions an import graph cannot see keep running exactly as they did.
           const gate = gateSetForPaths(changed, { issues: issue === null ? [] : [issue] });
+          const runner = selectFromRepository({ root: dir, changedPaths: changed });
           // Issue #463: the derived selection reaches the runner in the RUNNER'S shape and at the
           // runner's root — `<tests>/<file>` relative to the suite root the runner runs from — and
-          // never as a bare basename resolved against the checkout root.
-          const files = gate.files.map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file));
-          gateSelection = this._gateSelection(changed, gate, files, issue);
+          // never as a bare basename resolved against the checkout root. Both halves arrive in
+          // that one shape, so the union is a set of names the runner takes, not of paths it must
+          // re-derive.
+          const files = [...new Set([
+            ...runner.files.map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file)),
+            ...gate.files.map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file)),
+          ])].sort();
+          gateSelection = this._gateSelection(changed, gate, files, issue, runner);
           gateRegenerated = changedBeforeRegeneration === null ? null
             : changed.filter((path) => !changedBeforeRegeneration.includes(path));
           // Issue #463: an empty derivation is a DECISION — the change touches no tested path —
@@ -5543,15 +5582,21 @@ export class SwarmRuntime {
    *
    * `files` are the gate files in the runner's own shape (`<tests>/<file>`, relative to the suite
    * root the runner runs from); `reason` is the one-line account of the derivation — how many
-   * changed paths selected how many files, through which regions, seams and issue rows the landing
-   * table answered; `provenance` names, per file, the cause that put it in the set.
+   * changed paths selected how many files, through which causes; `provenance` names, per file, the
+   * cause that put it in the set.
    *
-   * The causes are derived by asking the SAME table one changed path at a time (and once for the
-   * issue rows the contribution names), never by re-reading its region table here: a second copy of
-   * the rule is exactly what would drift from the set that ran. The table is the landing's one
-   * selection authority, and a landing's change set is its squash — the calls are proportional to
-   * the files the squash carries. */
-  _gateSelection(changed, gate, files, issue) {
+   * Issue #466: the causes are the two derivations' OWN words, never a third re-reading. A file the
+   * runner selected carries the runner's reason verbatim — `changed` (a changed test file selects
+   * itself), `imports` (it imports a changed module), `fixture-path` (it names an otherwise
+   * unimported file) — with the runner's own `via`, so a reader can hold this receipt beside the
+   * selection `run-suite.mjs --changed` prints and see the same spellings for the same causes. A
+   * file only the landing table selected reads `region` — the table's one word for its region, seam
+   * and issue rows — with `via` naming the changed path that put it there, or `#<n>` when the
+   * contribution's own issue rows did. Those table causes are read by asking the SAME table one
+   * changed path at a time (and once for the issue rows), never by re-reading its region table
+   * here: a second copy of the rule is exactly what would drift from the set that ran. A landing's
+   * change set is its squash, so the calls are proportional to the files the squash carries. */
+  _gateSelection(changed, gate, files, issue, runner = null) {
     const issues = issue === null || issue === undefined ? [] : [issue];
     // The rows the contribution's own issue selects, read from the table with no changed paths at
     // all — the one basis a per-path reading below cannot see.
@@ -5559,17 +5604,30 @@ export class SwarmRuntime {
     const byPath = changed.map((path) => ({
       path, files: new Set(gateSetForPaths([path], { issues: [] }).files),
     }));
+    // The runner's per-file causes, keyed by the name the runner takes, so both halves of the union
+    // are compared in ONE shape.
+    const byRunner = new Map((runner?.provenance ?? [])
+      .map((row) => [gateRunnerFile(GATE_RUNNER_LAYOUT, row.path), row]));
     const provenance = files.map((file) => {
-      const name = basename(file);
-      if (issueRows.has(name)) {
-        return Object.freeze({ path: file, reason: 'issue', via: `#${issues.join(', #')}` });
+      const ran = byRunner.get(file);
+      if (ran !== undefined) {
+        return Object.freeze({ path: file, reason: ran.reason, via: ran.via ?? null });
       }
+      const name = basename(file);
       const cause = byPath.find((entry) => entry.files.has(name));
-      return Object.freeze(cause === undefined
-        ? { path: file, reason: 'gate-set', via: null }
-        : { path: file, reason: 'region', via: cause.path });
+      if (cause !== undefined) return Object.freeze({ path: file, reason: 'region', via: cause.path });
+      return Object.freeze(issueRows.has(name)
+        ? { path: file, reason: 'region', via: `#${issues.join(', #')}` }
+        : { path: file, reason: 'region', via: null });
     });
+    const count = (reason) => provenance.filter((row) => row.reason === reason).length;
     const account = [`${changed.length} changed path(s) select ${files.length} gate file(s)`];
+    if (count('imports') > 0) account.push(`${count('imports')} importing changed module(s)`);
+    if (count('changed') > 0) account.push(`${count('changed')} changed test file(s)`);
+    if (count('fixture-path') > 0) {
+      account.push(`${count('fixture-path')} naming an otherwise-unimported file in a fixture path`);
+    }
+    if (count('region') > 0) account.push(`${count('region')} region gate(s)`);
     if (gate.regions.length > 0) account.push(`regions ${gate.regions.join(', ')}`);
     if (gate.inventoried.length > 0) account.push(`${gate.inventoried.length} inventoried seam path(s)`);
     if (issues.length > 0) account.push(`issue #${issues.join(', #')}`);

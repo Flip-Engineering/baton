@@ -13259,7 +13259,7 @@
         {
           "name": "_integrationIssue",
           "ordinal": 0,
-          "size": 8,
+          "size": 16,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13295,7 +13295,7 @@
         {
           "name": "_landingComment",
           "ordinal": 0,
-          "size": 25,
+          "size": 33,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13304,7 +13304,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 206,
+          "size": 218,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -13324,7 +13324,7 @@
         {
           "name": "_gateSelection",
           "ordinal": 0,
-          "size": 27,
+          "size": 40,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
