@@ -2849,6 +2849,64 @@ export function swarmStopRendering(answer) {
   });
 }
 
+// ── issue #473: the run-stop leg's refusal prints the seat, the run and the wait it holds ───────
+
+/** The run-stop leg's own refusal detail, whichever envelope carried it: the wire's error object
+ * (the resident answered the command — the leg's detail rides `error.detail.detail`) or the
+ * runtime's own error (an embedded client — the detail IS `error.detail`). The `runId` is the mark
+ * of the shape: it is the one field the seat's stop adds (#473) to the coordinator's own
+ * `{timeoutMs, waitingOn}` detail. Null for every other refusal, which prints untouched. */
+function runStopIncompleteDetail(error) {
+  if (error?.code !== 'coordinator_run_stop_incomplete') return null;
+  const outer = record(error.detail) ? error.detail : null;
+  const nested = outer !== null && record(outer.detail) ? outer.detail : null;
+  if (nested !== null && nonempty(nested.runId)) return nested;
+  return outer !== null && nonempty(outer.runId) ? outer : null;
+}
+
+/** Issue #473 item (c): the block the CLI prints UNDER the refusal line, composed from the
+ * refusal's own facts — the seat and the run the stop named, and the waits the coordinator's
+ * `_stopWaitRows` is holding (each row: the worker, its state, and the `{resource, reaper, since}`
+ * entries it is waiting on) — plus the ONE step that converges the seat. Null when this is not the
+ * run-stop leg's refusal: nothing is invented for a shape we do not own. */
+export function swarmStopRefusalBlock(error, { swarmId = null, participantId = null } = {}) {
+  const detail = runStopIncompleteDetail(error);
+  if (detail === null) return null;
+  const seat = nonempty(participantId) ? participantId : 'the seat';
+  const deadline = Number.isSafeInteger(detail.timeoutMs) ? `${detail.timeoutMs}ms` : 'its deadline';
+  const lines = [`swarm stop for seat ${seat} named run ${detail.runId}: the run stop did not converge inside ${deadline}, so the workers it is reaping are still held`];
+  for (const row of Array.isArray(detail.waitingOn) ? detail.waitingOn.filter(record) : []) {
+    const state = [row.status, row.disposition].filter(nonempty).join('/');
+    const holds = (Array.isArray(row.waiting) ? row.waiting : []).filter(record)
+      .map((entry) => (nonempty(entry.since) ? `${entry.resource} since ${entry.since}` : String(entry.resource)))
+      .join('; ');
+    lines.push(`  waiting on ${nonempty(row.workerId) ? row.workerId : 'a worker'}`
+      + `${state === '' ? '' : ` (${state})`}${holds === '' ? '' : `: ${holds}`}`);
+  }
+  const again = nonempty(swarmId) && nonempty(participantId)
+    ? `run \`baton swarm stop ${swarmId} ${participantId} <REASON>\` again after it`
+    : 'run the same `swarm stop` again after it';
+  lines.push(`next: wait for the deadline — the stop keeps reaping the workers it names — or ${again}; a second stop re-enters the same bounded convergence`);
+  return lines.join('\n');
+}
+
+/** `swarm.stop`'s own leg: the receipt renders through #469's objective reference, and a refusal
+ * whose facts this leg owns renders its block under the refusal line. Every other answer passes
+ * through untouched. */
+async function runSwarmStopCli(parsed, client) {
+  let answer;
+  try {
+    answer = await client.command(parsed.name, parsed.args, parsed.idempotencyKey);
+  } catch (error) {
+    const block = swarmStopRefusalBlock(error, {
+      swarmId: parsed.args?.swarmId ?? null, participantId: parsed.args?.participantId ?? null,
+    });
+    if (block !== null) error.message = `${error.message}\n${block}`;
+    throw error;
+  }
+  return swarmStopRendering(answer);
+}
+
 function swarmHasLiveParticipant(view) {
   return (view.participants ?? []).some((row) => LIVE_RUNTIME_STATES.has(row.runtime?.state));
 }
@@ -4992,9 +5050,8 @@ export async function runBatonCli(parsed, client, options = {}) {
     if (parsed.name === 'swarm.integrate') return runSwarmIntegrateCli(parsed, client);
     // Issue #469: a stop's receipt resolves its objective through the reference it carries, so the
     // printed answer shows the line the reference names rather than a second copy of the text.
-    if (parsed.name === 'swarm.stop') {
-      return swarmStopRendering(await client.command(parsed.name, parsed.args, parsed.idempotencyKey));
-    }
+    // Issue #473: a stop the run-stop leg refused prints the seat, the run and the wait it holds.
+    if (parsed.name === 'swarm.stop') return runSwarmStopCli(parsed, client);
     return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   }
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});

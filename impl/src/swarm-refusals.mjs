@@ -14,7 +14,11 @@
 //              400 request shape, 403 permission, 503 only for genuinely transient (a shut-down
 //              runtime a resident restart repairs).
 //   raisedBy — which seam raises the code: 'fold' (the durable event fold), 'runtime' (the
-//              command runtime), or both for a spelling the family shares.
+//              command runtime), 'coordinator' (a physical-convergence leg of the coordinator —
+//              the run stop, the kill, the drain — whose code a swarm verb surfaces through its
+//              own ports: `swarm.stop` drives the run stop, so the leg's vocabulary crosses this
+//              family's HTTP classes, not the web layer's transient fallthrough), or a
+//              combination for a spelling the family shares.
 //   rule     — the one-line rule the code refuses on.
 //
 // Codes are NOT renamed (the fold's `participant_not_found` and the runtime's
@@ -110,6 +114,13 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // landing never blocked on it (the resident answers throughout) and never half-ran a gate set:
   // it refuses typed, naming the holder the request waited behind, and the scratch checkout goes.
   integrate_gates_busy: row(409, ['runtime'], 'the host verify lease could not be taken within its bound, so the gate run never started'),
+  // Issue #473: the coordinator's own run-stop leg. `swarm.stop` drives it through the injected
+  // `stopRun` port, so a run whose stop does not converge inside its bound reached the operator as
+  // 503 `temporarily_unavailable` "retry once" — the #430 narration named this exact gap. Both
+  // codes are a state the caller must OBSERVE (409), never a transport fault: waiting for the
+  // deadline, or stopping again after it, is what converges the seat.
+  coordinator_run_stop_incomplete: row(409, ['coordinator'], 'the run stop did not converge before its deadline: the named workers are still being reaped, so the seat has not settled'),
+  coordinator_run_stop_invalid: row(409, ['coordinator'], 'the admitted run stop names a target authority this deployment cannot act on, so no retry of the same stop converges'),
 
   // ── 400 request shape: the request itself fails the closed grammar ──
   invalid_payload: row(400, ['fold'], 'the event payload fails the closed shape its kind requires'),
