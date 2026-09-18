@@ -460,3 +460,34 @@ test('459f: a gate run that cannot take the host verify lease refuses integrate_
   assert.equal(failures[0].code, 'integrate_gates_busy');
   assert.equal(failures[0].detail.holder, HOLDER_AHEAD);
 });
+
+// ── (g) a gate run killed at its deadline leaves a failure row and no scratch ────────────────────
+
+test('459g: a gate run the resident kills at its deadline lands the failure row and removes the scratch', needsGit, async (t) => {
+  // A runner that never finishes: the resident's own backstop (the SAME knob the suite runner
+  // honours for a hung file) kills it, and the landing must settle instead of hanging on it.
+  const w = await world(t, { gate: { sleepMs: 30_000, green: true } });
+  const restore = process.env.BATON_SUITE_IDLE_MS;
+  process.env.BATON_SUITE_IDLE_MS = '400';
+  t.after(() => {
+    if (restore === undefined) delete process.env.BATON_SUITE_IDLE_MS;
+    else process.env.BATON_SUITE_IDLE_MS = restore;
+  });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integration().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing settles when its gate run is killed');
+  assert.equal(error.code, 'integrate_gates_red');
+  assert.equal(existsSync(w.markerPath), false, 'the run was killed before it could finish');
+  const failures = w.failureRows();
+  assert.equal(failures.length, 1, 'the killed run leaves its outcome in the record');
+  assert.equal(failures[0].code, 'integrate_gates_red');
+  assert.equal(failures[0].detail.unexpected[0].row, 'suite-timed-out',
+    'the row names the timeout, never a red gate the runner never judged');
+  assert.equal(failures[0].detail.unexpected[0].timedOut, true);
+  assert.deepEqual(w.leftoverCheckouts(), [], 'the scratch checkout is gone');
+  assert.equal(existsSync(join(w.wtRoot, 'integrate-contribution-1.projection.exclude')), false,
+    'and so is the projection-exclude file');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
+});
