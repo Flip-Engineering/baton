@@ -2508,6 +2508,10 @@ class BatonDeployment {
   #workspaceProbe = null;
   #hostCapacity = null;
   #hostCapacityProbe = null;
+  // #441 lane A: the deployment-owned context-CAS writer the web transport mints package branch
+  // documents through (`package.admit`); null for a deployment that serves no context runtime,
+  // and the port then refuses `context_source_unavailable` instead of inventing a store.
+  #contextSourceAdmit = null;
   // #306 (2): the revision this deployment serves, frozen at open.
   #served = null;
   #claudeCredentialProbe = null;
@@ -2560,6 +2564,7 @@ class BatonDeployment {
     this.#credentialLifetime = deployment.claudeCredentialLifetime ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
     this.#hostCapacityProbe = deployment.hostCapacityProbe ?? null;
+    this.#contextSourceAdmit = typeof deployment.contextSourceAdmit === "function" ? deployment.contextSourceAdmit : null;
     this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
@@ -3122,6 +3127,9 @@ class BatonDeployment {
       // The stream reads it once at publish and refreshes it on its observation cadence, so the
       // drift is visible where the deaths appear without a git read per frame.
       served: () => this.wakeServedFact(),
+      // #441 lane A: the ONE context-CAS writer (`bench.admitSource`) the package.admit port mints
+      // branch documents through — the resident wiring the lane handed back in needsFromOthers.
+      ...(this.#contextSourceAdmit === null ? {} : { contextSourceAdmit: this.#contextSourceAdmit }),
     });
     const server = createLocalAuthenticatedWebServer(web);
     const webHost = new BatonWebHost({
@@ -4109,6 +4117,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // #429: the measured-profile reader the route tables are served from (null for a deployment
       // that maps no route to an Artificial Analysis model).
       modelProfiles,
+      // #441 lane A: hand the context runtime's source writer to the resident so `package.admit`
+      // can mint on a served deployment.
+      contextSourceAdmit: (value) => contextRuntime.bench.admitSource(value),
     });
     return opened;
   } catch (error) {
