@@ -15,6 +15,10 @@ import { nativeSubagentView, NATIVE_SETTLEMENT_GAP } from './native-subagent-vie
 import {
   PROVIDER_FAULT_CODES, isTransientProviderFault, normalizeProviderRoute, readProviderFaultDetail,
 } from './provider-faults.mjs';
+/** The expired-projected-credential class (#346, minted in claude-session.mjs as
+ * PROVIDER_AUTH_EXPIRED with the root-side remedy on the crash cert). Owned as a closed
+ * string here — provider-faults.mjs stays the quota/socket/generic taxonomy. */
+const PROVIDER_AUTH_EXPIRED = 'provider_auth_expired';
 import {
   attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse,
@@ -15160,6 +15164,14 @@ export class Coordinator {
 
     const route = detail?.route ?? this._providerRouteOf(handle);
     const quota = cause.code === PROVIDER_FAULT_CODES.quota;
+    // Issue #357 remainder of #346: an auth-class death (the projected credential expired
+    // mid-turn — the class claude-session.mjs mints on the crash cert) is a CREDENTIAL
+    // fact, not a routing fact: the same seat re-driven on another route dies the same
+    // way while the deployment holds a refresh. The next act is credential-level —
+    // re-project the refreshed credential — with the routing vocabulary below as its
+    // second step. `avoidRoute` is deliberately absent: any route dies on a dead
+    // credential, so routing around it is the one act that cannot help.
+    const authExpired = cause.code === PROVIDER_AUTH_EXPIRED;
     const resetAt = quota ? detail?.resetAt ?? null : null;
     const checkpoint = task?.checkpoint?.state === 'pinned'
       ? Object.freeze({ ref: task.checkpoint.ref, sha: task.checkpoint.sha }) : null;
@@ -15174,7 +15186,17 @@ export class Coordinator {
             ? { then: 'recover_retained_worktree', worktreePath: retainedWorktree }
             : {}),
       })
-      : retainedWorktree
+      : authExpired
+        ? Object.freeze({
+          action: 'reproject_credential',
+          ...(route ? { route } : {}),
+          ...(retainedWorktree
+            ? { then: 'recover_retained_worktree', worktreePath: retainedWorktree }
+            : checkpoint
+              ? { then: 'resume_from_checkpoint', checkpointRef: checkpoint.ref }
+              : { then: 're_recruit' }),
+        })
+        : retainedWorktree
         ? Object.freeze({
           action: 'recover_retained_worktree', worktreePath: retainedWorktree,
           ...(route ? { avoidRoute: route } : {}),

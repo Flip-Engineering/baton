@@ -9,6 +9,7 @@ import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
   isContributionContractBody, projectContributionContract, validateContributionContract } from './contribution-contract.mjs';
 import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
+import { pathInScopes } from './path-scope.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
@@ -118,6 +119,45 @@ const captureBase = (worker) => {
   const mergeBase = gitRead(['merge-base', observedHead, targetRef], checkout.repoRoot);
   return { observedHead, target: targetRef === 'HEAD' ? targetCommit : targetRef, mergeBase };
 };
+/** The provider-auth-expired crash class (#346, minted in claude-session.mjs): the projected
+ * credential died mid-turn. A routing next would replay the expiry on any route — the act is
+ * credential-level (re-project / re-recruit), owned here as the closed code string only. */
+const PROVIDER_AUTH_EXPIRED = 'provider_auth_expired';
+/** Parse `git status --porcelain --untracked-files=all` to repo-relative paths, sorted and
+ * de-duplicated. Rename pairs (`R  old -> new`) read as the path that EXISTS (the new one);
+ * quoted paths keep their quoting rather than being unescaped into a guess. */
+const porcelainPaths = (stdout) => {
+  const paths = new Set();
+  for (const line of stdout.split('\n')) {
+    if (line.length < 4) continue;
+    let path = line.slice(3);
+    const arrow = path.indexOf(' -> ');
+    if (arrow !== -1) path = path.slice(arrow + 4);
+    path = path.trim();
+    if (path.length > 0) paths.add(path);
+  }
+  return [...paths].sort();
+};
+/** Issue #357 remainder (#357): the seat worktree's own change set — `git status --porcelain`
+ * in the checkout the binding recorded, the same read-only git authority the #301 base
+ * derivation above already shells out to at read time. Null when the seat has no checkout
+ * or the tree cannot be read: absence, never an empty guess that would silence a gone tree. */
+const worktreeChangedPaths = (worker) => {
+  const checkout = checkoutOf(worker);
+  if (!checkout) return null;
+  const out = gitRead(['status', '--porcelain', '--untracked-files=all'], checkout.worktree);
+  if (out === null) return null;
+  return { worktree: checkout.worktree, paths: porcelainPaths(out) };
+};
+/** A scope entry the matcher cannot read never accuses: an unreadable glob treats every path
+ * as in-scope, so a malformed declared scope pages nobody. Silence over a false foreign row. */
+const inDeclaredScope = (path, scope) => {
+  try {
+    return pathInScopes(path, scope);
+  } catch {
+    return true;
+  }
+};
 const _mutationView = (args) => args.view === true || args.view === 'true';
 export const SWARM_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute', 'review', 'organize', 'recruit', 'stop']);
 const DEFAULT_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute']);
@@ -175,6 +215,16 @@ export function lastCrashOf(events) {
     return Object.freeze({
       error: typeof payload.error === 'string' ? payload.error : null,
       stderrTail: typeof payload.stderrTail === 'string' ? payload.stderrTail : null,
+      // Issue #357 remainder of #346: the typed provider telemetry a crash cert carries
+      // (phase/code/remedy, #346's expiresAt and mechanism) projects when present, so the
+      // auth-expired attention row reads the crash row's OWN remedy instead of minting a
+      // second one. Absent fields stay ABSENT, never null-filled: a remedy-less crash
+      // projects byte-identically to before, and every #326 pin holds.
+      ...(typeof payload.phase === 'string' ? { phase: payload.phase } : {}),
+      ...(typeof payload.code === 'string' ? { code: payload.code } : {}),
+      ...(typeof payload.expiresAt === 'string' ? { expiresAt: payload.expiresAt } : {}),
+      ...(typeof payload.mechanism === 'string' ? { mechanism: payload.mechanism } : {}),
+      ...(typeof payload.remedy === 'string' ? { remedy: payload.remedy } : {}),
     });
   }
   return null;
@@ -815,18 +865,29 @@ export class SwarmRuntime {
     return rows;
   }
 
+  /** Issues #332/#357: the ONE clean-exit reading the completion derivation and the
+   * unpublished-turn row share — no crash row on the seat's own ledger (a CLI worker that
+   * exits without a terminal record always lands as lifecycle.crashed, the #326 invariant)
+   * and no recorded failure cause. A crash row or a failure cause vetoes; an unwired crash
+   * authority is unknown and fails closed, never a clean exit. Either clean signal counts:
+   * the wired crash read finding no row, or the worker row carrying an explicit null cause. */
+  _cleanTurnExit(worker) {
+    if (!worker) return false;
+    const crashWired = typeof this.lastCrash === 'function';
+    const crash = crashWired ? this.lastCrash(worker.id) : null;
+    const cause = worker?.terminalCause;
+    const failed = (cause !== null && cause !== undefined) || (crashWired && crash !== null);
+    return !failed && ((crashWired && crash === null) || cause === null);
+  }
+
   /** Issues #332/#350: the ONE completion derivation the view and the stop path share. A
    * seat whose worker exited after its recorded final contribution with a terminal turn
    * settles instead of reading as a dead runtime. The turn is terminal exactly when the
-   * exit is clean — no crash row on the seat's own ledger (a CLI worker that exits
-   * without a terminal record always lands as lifecycle.crashed, the #326 invariant) and
-   * no recorded failure cause — so a mid-turn death can never read as a completion. A
-   * crash row or a failure cause vetoes; an unwired crash authority is unknown and fails
-   * closed, never a clean exit. A boundary pause with pending guidance defeats the
-   * completion too: the steering was never answered, so the seat died mid-turn however
-   * cleanly the process ended. `evidence` carries the view's precomputed rows; without it
-   * the derivation reads the same facts itself, so the stop path judges what the view
-   * would have shown. */
+   * exit is clean (`_cleanTurnExit` above), so a mid-turn death can never read as a
+   * completion. A boundary pause with pending guidance defeats the completion too: the
+   * steering was never answered, so the seat died mid-turn however cleanly the process
+   * ended. `evidence` carries the view's precomputed rows; without it the derivation reads
+   * the same facts itself, so the stop path judges what the view would have shown. */
   _seatCompleted(swarm, participant, workers, evidence = null) {
     if (!this._canAct(participant)) return false;
     const worker = this._workerFor(participant, workers);
@@ -836,14 +897,7 @@ export class SwarmRuntime {
     const contributed = evidence?.contributed
       ?? Object.values(swarm.contributions ?? {}).some((row) => row?.participantId === participant.participantId);
     if (!contributed) return false;
-    const crashWired = worker !== null && typeof this.lastCrash === 'function';
-    const crash = crashWired ? this.lastCrash(worker.id) : null;
-    const cause = worker?.terminalCause;
-    // Either clean signal counts — the wired crash read finding no row, or the worker row
-    // carrying an explicit null cause — while a recorded failure or a crash row vetoes.
-    const failed = (cause !== null && cause !== undefined) || (crashWired && crash !== null);
-    const cleanExit = !failed && ((crashWired && crash === null) || cause === null);
-    if (!cleanExit) return false;
+    if (!this._cleanTurnExit(worker)) return false;
     const guidance = evidence?.guidance ?? this._nudgeRowsFor(worker.id);
     return !(paused.length > 0 && guidance.length > 0);
   }
@@ -1230,6 +1284,85 @@ export class SwarmRuntime {
       if (row.command !== 'swarm.check' || row.state !== 'queued') continue;
       const prior = queuedCheckByContribution.get(row.contributionId);
       if (!prior || row.seq > prior.seq) queuedCheckByContribution.set(row.contributionId, row);
+    }
+    // Issue #357 remainder (#357/#310/#346): three rows from facts the runtime already
+    // holds, derived here beside the other organization rows — view-derived, never
+    // ledger-written, never a second store. The worktree change set is read ONCE per
+    // worker (one `git status` per seat per view, the same cost the #301 base read pays)
+    // and shared by the foreign-scope and unpublished-turn rows; the crash projection is
+    // the already-wired `lastCrash` authority; contributions come from the fold above.
+    // How many paths a row may name is the attention-push item bound from the ONE limits
+    // registry — never a fresh constant — with the omitted remainder counted, not dropped
+    // silently. Only active membership pages: a settled (left) seat was already acted on.
+    const attentionPathBound = FRAME_LIMITS['view.attention_push.items'].value;
+    const changedByWorker = new Map();
+    const changedOf = (worker) => {
+      if (!worker) return null;
+      if (!changedByWorker.has(worker.id)) changedByWorker.set(worker.id, worktreeChangedPaths(worker));
+      return changedByWorker.get(worker.id);
+    };
+    const boundSeqByParticipant = new Map();
+    const joinedSeqByParticipant = new Map();
+    for (const event of ledger) {
+      if (event.payload?.swarmId !== swarm.swarmId || typeof event.payload?.participantId !== 'string') continue;
+      if (event.kind === 'swarm.participant_bound') {
+        const id = event.payload.participantId;
+        boundSeqByParticipant.set(id, Math.max(boundSeqByParticipant.get(id) ?? -1, event.seq));
+      } else if (event.kind === 'swarm.participant_joined' && !joinedSeqByParticipant.has(event.payload.participantId)) {
+        joinedSeqByParticipant.set(event.payload.participantId, event.seq);
+      }
+    }
+    for (const row of participants) {
+      if (row.status !== 'active') continue;
+      const worker = this._workerFor(row, workers);
+      if (!worker) continue;
+      const changed = changedOf(worker);
+      // #357: paths in the seat's own change set but outside its declared scope — the
+      // shared-stash swap of 2026-09-17 read as silence until a contribution paragraph said
+      // so twenty minutes later. A seat with no declared scope has no outside; an unreadable
+      // tree is absence (changedOf null), never an empty exoneration.
+      if (changed && changed.paths.length > 0 && Array.isArray(row.scope) && row.scope.length > 0) {
+        const foreign = changed.paths.filter((path) => !inDeclaredScope(path, row.scope));
+        if (foreign.length > 0) {
+          const shown = foreign.slice(0, attentionPathBound);
+          organization.push({ kind: 'worktree_foreign_changes', participantId: row.participantId,
+            worktree: changed.worktree, paths: shown, omittedPaths: foreign.length - shown.length,
+            next: { command: 'swarm.view', swarmId: swarm.swarmId, participantId: row.participantId } });
+        }
+      }
+      // #310: a cleanly ended turn (worker gone, `_cleanTurnExit` — the turn_completed with
+      // resultStatus completed the view can see) whose dirt no contribution covers. Covered
+      // means a contribution from this seat recorded since its binding: the turn's publish.
+      // `commits` stays [] — turn commits are worker-ledger evidence this derivation cannot
+      // see, and claiming none beats inventing some. Next captures the work (the root's
+      // capture verb) so finished work is never stranded by a seat that cannot report.
+      if (!swarmParticipantLiveness(worker).live && this._cleanTurnExit(worker)
+        && changed && changed.paths.length > 0) {
+        const since = boundSeqByParticipant.get(row.participantId)
+          ?? joinedSeqByParticipant.get(row.participantId) ?? 0;
+        const covered = Object.values(swarm.contributions ?? {}).some((contribution) => contribution?.participantId === row.participantId
+          && Number.isSafeInteger(contribution?.seq) && contribution.seq >= since);
+        if (!covered) {
+          const shown = changed.paths.slice(0, attentionPathBound);
+          organization.push({ kind: 'turn_ended_without_contribution', participantId: row.participantId,
+            changedPaths: shown, commits: [], omittedPaths: changed.paths.length - shown.length,
+            next: { command: 'swarm.capture', swarmId: swarm.swarmId, participantId: row.participantId } });
+        }
+      }
+      // #346: a provider_auth_expired crash lands as its remedy row. The class is read off
+      // the crash projection (falling back to the worker row's terminal cause, which the
+      // coordinator sets from the same typed cert); the REMEDY is read off the crash row
+      // itself — never minted twice. Next re-recruits the seat: the credential-level act
+      // the swarm can take (re-projection itself is the deployment's act).
+      const crash = typeof this.lastCrash === 'function' ? this.lastCrash(worker.id) : null;
+      const crashCode = crash?.code ?? worker?.terminalCause?.code ?? null;
+      const crashPhase = crash?.phase
+        ?? (worker?.terminalCause?.kind === 'provider_failure' ? 'provider' : null);
+      if (crashCode === PROVIDER_AUTH_EXPIRED && crashPhase === 'provider') {
+        organization.push({ kind: 'provider_auth_expired', participantId: row.participantId,
+          code: PROVIDER_AUTH_EXPIRED, expiresAt: crash?.expiresAt ?? null, remedy: crash?.remedy ?? null,
+          next: { command: 'swarm.recruit', swarmId: swarm.swarmId, participantId: row.participantId } });
+      }
     }
     const operations = ledger.filter((event) => event.kind === 'driver.recorded'
       && event.payload.swarmId === swarm.swarmId && event.payload.kind === 'swarm.operation_requested');
