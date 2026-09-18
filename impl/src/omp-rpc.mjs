@@ -716,6 +716,19 @@ export class OmpRpcCli {
   _startTurn(session, message) {
     session.turnEpoch += 1;
     session.turnSequence += 1;
+    // Issue #426: a new turn starts with a clean batch count — a stale count from a dead
+    // transport generation must never hold guidance forever. Guidance stranded past its own
+    // turn's last batch boundary (the batch never closed) composes into THIS turn's prompt
+    // (the sibling nudgeQueue emulation, grok-acp GA7 / codex-appserver XA7) — it is never
+    // replayed as a provider turn of its own.
+    session.pendingToolCalls = 0;
+    const stranded = (session.guideQueue ??= []).splice(0);
+    if (stranded.length > 0) {
+      this._emitGuideReceipt(session, 'idle', stranded.map((guide) => guide.messageId));
+    }
+    const composed = stranded.length > 0
+      ? [...stranded.map((guide) => guide.text), message].join('\n\n')
+      : message;
     const turn = { turnId: `omp-${session.turnSequence}`, streams: { text: '' },
       usage: new OmpTurnUsageAccumulator(session.worker, session.turnEpoch, session.processGeneration ?? 1) };
     session.activeTurn = turn;
@@ -725,7 +738,7 @@ export class OmpRpcCli {
     // Fire-and-forget; responses/agent events stream back on the frame lane. send() writes the
     // prompt exactly once — a transport stall is observed, never re-sent (a duplicate prompt
     // would start a second agent turn) — so this never kills the turn either way.
-    session.process.send({ type: 'prompt', message, streamingBehavior: 'steer' }).catch(() => {
+    session.process.send({ type: 'prompt', message: composed, streamingBehavior: 'steer' }).catch(() => {
       // The exit handler owns terminal evidence; a live child's pending prompt keeps its
       // correlation until the response arrives.
     });
@@ -749,6 +762,14 @@ export class OmpRpcCli {
     this._flushTurnStreams(session);
     session.terminalTurns.add(turn.turnId);
     session.activeTurn = null;
+    // Issue #426: guides still held at terminality (their batch never closed) are NOT replayed
+    // as a provider turn — they ride the next explicit turn's prompt (_startTurn). Surface the
+    // hold honestly instead of leaving the guidance silently invisible.
+    if ((session.guideQueue ??= []).length > 0) {
+      this._emit(session, 'content.message', {
+        phase: 'notice', note: 'guides_held_past_turn_end', pendingGuides: session.guideQueue.length,
+      });
+    }
     const usage = this._turnUsage(session, turn);
     if (usage.messageEndCount === 0 && Array.isArray(event.messages)) {
       // Missing streaming coverage: preserve each native model observation and call's delta.
@@ -898,6 +919,9 @@ export class OmpRpcCli {
         return;
       }
       case 'tool_execution_start':
+        // Issue #426: the batch's outstanding-call count rises on every start — the adapter
+        // reads the batch phases off the wire so guidance can respect the boundary.
+        session.pendingToolCalls = (session.pendingToolCalls ?? 0) + 1;
         // Issue #299: the row carries what the worker SENT — the frame's arguments, redacted and
         // bounded by the one derivation the referee's evidence path uses — or the typed marker
         // recording that this frame named no arguments at all.
@@ -918,6 +942,12 @@ export class OmpRpcCli {
             ? { resultDigest: toolCallResultDigest({ ok: frame.isError !== true, output: frame.result }) }
             : { resultUnobserved: TOOL_EVIDENCE_UNOBSERVED.result }),
         });
+        // Issue #426: the completed/failed row above is the batch's last observed frame; the
+        // boundary is the instant the outstanding count returns to zero. Guides held during
+        // the batch deliver HERE — one coalesced steer, after the completed frame — never
+        // mid-batch, where a steer interrupts the in-flight calls.
+        session.pendingToolCalls = Math.max(0, (session.pendingToolCalls ?? 0) - 1);
+        if (session.pendingToolCalls === 0) this._flushGuideQueue(session, 'batch_boundary');
         return;
       case 'agent_end':
         this._onAgentEnd(session, frame);
@@ -1035,6 +1065,12 @@ export class OmpRpcCli {
         providerTrafficObserved: false, lastProviderTrafficAt: null,
         turnEpoch: 0, turnSequence: 0, activeTurn: null, terminalTurns: new Set(),
         pendingInterrupt: null,
+        // Issue #426: guides held for the in-flight batch boundary, the batch's outstanding
+        // tool-call count read off tool_execution_start/end, and the per-session guide
+        // identity sequence. Guidance never interrupts a batch; it waits for the boundary.
+        // Every touch seeds lazily (`??=`) — hand-built session objects (fixtures) speak
+        // the same frame lane without riding spawn().
+        guideQueue: [], pendingToolCalls: 0, guideSequence: 0,
         modelRequested: model, effortRequested: effort,
         // #295: the exact route this session speaks on, and the last provider fault the wire
         // carried. The route is what a quota refusal is a fact ABOUT (a successor on this route
@@ -1194,16 +1230,87 @@ export class OmpRpcCli {
     if (session.pendingInterrupt || session.killing) {
       return { ok: false, notSent: true, reason: 'omp control is still settling' };
     }
+    // Issue #426: guidance (nudge mode) never interrupts an in-flight tool batch — docs/10:
+    // guidance rides the data plane and "respects turn boundaries; delivered when the
+    // recipient is ready". Mid-batch the guide is QUEUED and the boundary flush delivers it;
+    // with no batch pending it is delivered at once on the native steer lane.
+    if (mode === 'nudge' && session.activeTurn) {
+      return this._deliverGuide(session, String(content));
+    }
     if (mode === 'steer' || session.activeTurn) {
       if (!session.activeTurn) return { ok: false, notSent: true, reason: 'no active turn to steer' };
-      // omp's native mid-turn lane: the steer command queues into the running turn.
+      // omp's native mid-turn lane: the steer command queues into the running turn. An
+      // explicit `steer` stays immediate BY CHOICE — the caller picked the interrupting
+      // control deliberately; only guidance is held to the batch boundary (#426).
       if (session.process.notify({ type: 'steer', message: String(content) }) !== true) {
         return { ok: false, notSent: true, reason: 'steering could not be written' };
       }
       return { ok: true };
     }
+    if (mode === 'nudge') {
+      // Idle: the guide IS the wake — delivered at once as the next turn's prompt.
+      const messageId = this._mintGuideId(session);
+      this._startTurn(session, String(content));
+      this._emitGuideReceipt(session, 'idle', [messageId]);
+      return { ok: true, messageId, deliveredAt: 'idle', coalesced: 1 };
+    }
     this._startTurn(session, String(content));
     return { ok: true };
+  }
+
+  /**
+   * Issue #426: deliver one guide at a boundary where no tool batch is pending. Mid-batch
+   * (`pendingToolCalls > 0`) the guide is QUEUED — the boundary flush
+   * (`_flushGuideQueue(session, 'batch_boundary')` at the last tool_execution_end) delivers
+   * it coalesced with every other guide held at that boundary. Otherwise the guide rides the
+   * native steer lane at once: `deliveredAt: 'idle'` (no batch was pending). The receipt
+   * event (`control.guide_delivered`) is the delivery truth; the ack carries what is known
+   * at call time — a queued guide has no coalesced count yet, only its own messageId.
+   */
+  _deliverGuide(session, text) {
+    if ((session.pendingToolCalls ?? 0) > 0) {
+      const messageId = this._mintGuideId(session);
+      (session.guideQueue ??= []).push({ messageId, text });
+      return { ok: true, queued: true, messageId };
+    }
+    const messageId = this._mintGuideId(session);
+    if (session.process.notify({ type: 'steer', message: text }) !== true) {
+      return { ok: false, notSent: true, reason: 'steering could not be written' };
+    }
+    this._emitGuideReceipt(session, 'idle', [messageId]);
+    return { ok: true, messageId, deliveredAt: 'idle', coalesced: 1 };
+  }
+
+  /**
+   * Issue #426: the boundary flush — ONE delivery carrying every held guide in order (each
+   * keeps its own messageId on the receipt). At a batch boundary the delivery is a single
+   * steer joined from the guides' texts; after a refused write the guides stay held for the
+   * next trigger and the refusal is surfaced, never silently dropped.
+   */
+  _flushGuideQueue(session, deliveredAt) {
+    const queued = (session.guideQueue ??= []).splice(0);
+    if (queued.length === 0) return;
+    const message = queued.map((guide) => guide.text).join('\n\n');
+    if (session.process.notify({ type: 'steer', message }) !== true) {
+      (session.guideQueue ??= []).unshift(...queued);
+      this._emit(session, 'content.message', {
+        phase: 'notice', note: 'guide_delivery_write_refused', pendingGuides: queued.length,
+      });
+      return;
+    }
+    this._emitGuideReceipt(session, deliveredAt, queued.map((guide) => guide.messageId));
+  }
+
+  _mintGuideId(session) {
+    session.guideSequence = (session.guideSequence ?? 0) + 1;
+    return `${session.worker}:omp:${session.processGeneration}:g:${session.guideSequence}`;
+  }
+
+  /** The delivery receipt: when relative to the batch, and how many were coalesced. */
+  _emitGuideReceipt(session, deliveredAt, messageIds) {
+    this._emit(session, 'control.guide_delivered', {
+      deliveredAt, coalesced: messageIds.length, messageIds: [...messageIds],
+    });
   }
 
   async promptBrief(worker, brief) { return this.prompt(worker, `${renderBrief(brief, 'omp-rpc')}\n\n${WORKER_MESSAGE_GUIDANCE}`, 'turn'); }
