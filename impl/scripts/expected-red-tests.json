@@ -2007,6 +2007,10 @@
       "reason": "#306"
     },
     {
+      "file": "test/issue314-mcp-core-surface-red.test.mjs",
+      "reason": "#314"
+    },
+    {
       "file": "test/issue441-reading-half-red.test.mjs",
       "reason": "#441"
     },
