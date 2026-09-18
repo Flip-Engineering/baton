@@ -208,7 +208,7 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
 - **No new event kinds, wake classes, or ledger rows for reading.** The `package.attached` row
   already exists; a read mints nothing.
 - **No mutable refs in a package.** Branch content is immutable and content-addressed; a doc
-  that changes is a NEW branch name (`doc:<path>@<new-sha>`), never a rewritten branch
+  that changes is a NEW branch name (`doc:<path>:<new-sha>`), never a rewritten branch
   (docs/32 §3.3 replay rule).
 - **No credentials in packages, briefs, or branch content** (docs/32 §5).
 - **No second contributions derivation.** The #433 view projection and `run.contributions.read`

@@ -907,8 +907,9 @@ a checkout held by a foreign live worker refuses `swarm_workspace_unavailable`.
 
 **A seat reads its issue through a context package (#441 lanes A and B; docs/47).** `swarm recruit
 … --issue N [--doc PATH …]` reads the issue through the root's own `gh` credential and admits ONE
-ContextPackage (`package.admitted`, branches `issue:N` and `doc:<path>@<sha>` for every repository
-doc the issue cites), attaches it to the seat's run (`package.attached`), and the brief renders
+ContextPackage (`package.admitted`, branches `issue:N` and `doc:<path with "/" → ".">:<sha>` for every
+repository doc the issue cites — a doc longer than one source string rides ordered chunks named
+`doc:<path>:<sha>:<chunk>-<of>`, docs/47 §1.1/§9.7), attaches it to the seat's run (`package.attached`), and the brief renders
 `## Context package` — digests and a bounded head per branch, the full text one `run.package.read`
 away. A recruit without `--issue` composes byte-identically to before. Seat-side reads
 (`run.package.read`, `run.contributions.read`, `run.peers.read`) refuse typed
