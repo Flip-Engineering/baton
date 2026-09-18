@@ -354,7 +354,11 @@ test('RECRUIT-341-C: the seat brief lists the served routes with usage and marks
   const recruited = await granted.call('recruit', {
     participantId: 'lane-c', objective: 'compose sub-lanes', permissions: GRANTED, view: true,
   });
-  const brief = recruited.view.participants.find((row) => row.participantId === 'lane-c').brief;
+  // #464 (third half): the recruit receipt's view is an unscoped roster and carries the brief's
+  // REACH; the composed text rides the participantId-scoped read.
+  assert.equal(typeof recruited.view.participants.find((row) => row.participantId === 'lane-c').brief, 'object');
+  const scopedC = await granted.call('view', { participantId: 'lane-c' });
+  const brief = scopedC.participants.find((row) => row.participantId === 'lane-c').brief;
   assert.match(brief, /### Route usage/u, 'the seat’s brief carries the route usage subsection');
   assert.match(brief, new RegExp(routeLabel(ROUTE_READY), 'u'));
   assert.match(brief, /recruitable=true/u, 'a seat holding the recruit grant reads the ready route as recruitable');
@@ -365,7 +369,9 @@ test('RECRUIT-341-C: the seat brief lists the served routes with usage and marks
   const plain = await ungranted.call('recruit', {
     participantId: 'lane-c2', objective: 'work', permissions: DEFAULT_PERMISSIONS, view: true,
   });
-  const plainBrief = plain.view.participants.find((row) => row.participantId === 'lane-c2').brief;
+  assert.equal(typeof plain.view.participants.find((row) => row.participantId === 'lane-c2').brief, 'object');
+  const scopedC2 = await ungranted.call('view', { participantId: 'lane-c2' });
+  const plainBrief = scopedC2.participants.find((row) => row.participantId === 'lane-c2').brief;
   assert.match(plainBrief, /### Route usage/u, 'the routes the swarm serves are still named');
   assert.match(plainBrief, /recruitable=false/u, 'without the grant the same rows read recruitable: false');
   assert.doesNotMatch(plainBrief, /recruitable=true/u);

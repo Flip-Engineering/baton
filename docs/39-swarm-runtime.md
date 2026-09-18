@@ -436,8 +436,12 @@ least one kind is: a read-only participant sees `[{ event: 'swarm.participant_le
 'read' }]` — the one update it may send, with the permission that admits it — and nothing else.
 
 **A participant-scoped view (`participantId`) is the swarm as that participant sees it.** Its own
-brief text (`role`) is carried by its own row and by no other: another seat's row says
-`role: null, briefWithheld: true`, because a brief is what a recruiter told ONE seat. Records with
+brief text is carried by its own row and by no other: another seat's row says
+`briefWithheld: true` and carries the brief's REACH — `brief: {bytes, seq, exposure}`, the
+composed text's length, the ledger row that holds it and the docs/46 §4 relationship class that
+decided what this caller may see (#464 third half: every ROSTER row, paged or whole, carries the
+reach; only the participantId-scoped read carries the text) — because a brief is what a
+recruiter told ONE seat. Records with
 ROSTERS follow the intersection rule (the #292 rule): a group or a declared coupling is in scope
 when any member of the roster is in the subtree, and a group with an empty roster is in scope for
 nobody. Shared context is swarm-wide by construction and is the participant's own reading; an entry

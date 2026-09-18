@@ -438,7 +438,11 @@ test('DESIGN-444-D: the doctor profile row carries the arenas and the brief rout
     participantId: 'lane-brief', objective: 'compose design sub-lanes',
     permissions: ['read', 'communicate', 'contribute', 'recruit'], view: true,
   });
-  const brief = recruited.view.participants.find((row) => row.participantId === 'lane-brief').brief;
+  // #464 (third half): the recruit receipt's roster row carries the brief's REACH; the text rides
+  // the participantId-scoped read.
+  assert.equal(typeof recruited.view.participants.find((row) => row.participantId === 'lane-brief').brief, 'object');
+  const scopedBrief = await fixture.call('view', { participantId: 'lane-brief' });
+  const brief = scopedBrief.participants.find((row) => row.participantId === 'lane-brief').brief;
   assert.match(brief, /### Route usage/u);
   assert.match(brief, /design: Website 1341\.2/u, 'the brief route table renders the design axis');
   assert.match(brief, /design: Data Visualization 1402\.5/u);

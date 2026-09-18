@@ -179,7 +179,9 @@ test('457-b: an EXPLICIT over-size projection still refuses, naming the slice th
 
 test('457-c: participants page over the bridge with the #343 page argument, and the walk is complete', async (t) => {
   const f = await linked(t, {
-    maxFrameBytes: PAGE_FRAME, participants: 8, objectiveBytes: 700,
+    // #464 (third half): a roster row carries the brief's reach, not its text, so eight seats no
+    // longer exceed the page frame; twenty-four do (measured 29 929 B against the 24 KiB frame).
+    maxFrameBytes: PAGE_FRAME, participants: 24, objectiveBytes: 700,
     contributionBodies: ['x'.repeat(5 * 1024), 'y'.repeat(5 * 1024), 'z'.repeat(5 * 1024)],
   });
   const whole = await f.call('view', { projection: 'participants' }, principalFor(f, 'alpha'));

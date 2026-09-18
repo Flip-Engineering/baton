@@ -235,7 +235,9 @@ test('a participant-scoped view carries its own brief and no other, by roster in
   // issue #318 deliverable 4); another seat's brief row, by contrast, is withheld whole.
   assert.equal(alphaScope.participants.some((row) => row.participantId === 'lead'), false,
     'the recruiter outside the subtree is not here at all');
-  assert.equal(alphaScope.participants.every((row) => row.participantId === 'alpha' || row.brief === null), true,
+  // #464 (third half): a withheld row carries the brief's REACH {bytes, seq, exposure}, never the text.
+  assert.equal(alphaScope.participants.every((row) => row.participantId === 'alpha'
+    || (typeof row.brief === 'object' && row.brief !== null && row.briefWithheld === true)), true,
     'no carried row keeps another seat\u2019s composed brief');
 
   // Records by roster intersection: the group alpha is on is in scope (with its real roster), the
