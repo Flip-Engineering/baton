@@ -36,7 +36,9 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   work_not_found: row(404, ['fold', 'runtime'], 'the request names a work item this swarm does not hold'),
   group_not_found: row(404, ['fold'], 'the request names a group this swarm does not hold'),
   coupling_not_found: row(404, ['fold'], 'the request names a coupling record this swarm does not hold'),
-  contribution_not_found: row(404, ['fold'], 'the request names a contribution this swarm does not hold'),
+  // #296: the landing verb names a contribution the swarm does not hold the same way the fold does,
+  // so this row carries both raisers.
+  contribution_not_found: row(404, ['fold', 'runtime'], 'the request names a contribution this swarm does not hold'),
   // Issues #422/#423: the claim and proposal families name their rows the way every other family
   // does — the design's §2/§3 tables name the conflict codes; these two are the family's own
   // not-found spelling, minted here so a handoff or an arrival names a row that does not exist.
@@ -80,6 +82,19 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_capture_base_unreachable: row(409, ['runtime'], 'the captured revision and the deployment target share no common ancestor'),
   contribution_commit_unresolved: row(409, ['runtime'], 'the contribution names a commit that does not resolve on its lane branch yet'),
   route_degraded: row(409, ['runtime'], 'the named route\'s provider degraded it (one fault class took several seats inside one window); recruits pause on it until a probe succeeds'),
+  // Issue #296: the landing verb's own refusals. Every one is raised BEFORE the target moves — the
+  // scratch checkout is removed and nothing is recorded — except `integrate_target_moved`, which is
+  // the one race the verb re-bases over once and then refuses.
+  integrate_contribution_not_accepted: row(409, ['runtime'], 'the contribution carries no unrevoked accept review, so it is not landable'),
+  integrate_commit_unreachable: row(409, ['runtime'], 'the contribution names a commit this repository does not hold'),
+  integrate_conflict: row(409, ['runtime'], 'the squashed change overlaps a contribution already landed on the target'),
+  integrate_gates_red: row(409, ['runtime'], 'the derived gate set ran red, naming the unexpected rows'),
+  integrate_target_moved: row(409, ['runtime'], 'the target advanced between the squash and the fast-forward, and the re-base did not settle it'),
+  // The request names something that is not landable at all: a target that is not a local branch,
+  // a range that carries no change, or a changed module that does not parse. Distinct from
+  // `integrate_gates_red` (a real change whose derived tests ran red) and from `integrate_conflict`
+  // (a real change that overlaps a landed one): nothing was ever going to land here.
+  integrate_change_invalid: row(400, ['runtime'], 'the named target or the squashed range is not landable'),
 
   // ── 400 request shape: the request itself fails the closed grammar ──
   invalid_payload: row(400, ['fold'], 'the event payload fails the closed shape its kind requires'),

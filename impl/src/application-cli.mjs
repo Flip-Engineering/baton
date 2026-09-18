@@ -2430,6 +2430,14 @@ function parseSwarmCli(args, idempotencyKey) {
     values[field] = token;
   }
   for (const entry of row.flags) {
+    // Issue #296: a SWITCH — the act it names is the presence of the flag, so there is no value to
+    // take and `--dry-run true` is not a second spelling of the same choice. The row declares which
+    // of its flags are switches (the SAME flag-spelling table the usage line and the closed argv
+    // read), so the parser never guesses from the field name.
+    if (entry.switch) {
+      if (flag(args, entry.flag)) values[entry.field] = true;
+      continue;
+    }
     const token = take(args, entry.flag);
     if (token === null) continue;
     if (entry.field === 'afterSeq' || entry.field === 'timeoutMs') {

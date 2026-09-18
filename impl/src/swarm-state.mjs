@@ -41,6 +41,11 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
   'swarm.contribution_reviewed',
+  // Issue #296: the landing receipt — the runtime's own record of one contribution squashed onto a
+  // target. Composed by `swarm.integrate` from the git it actually ran (the base it resolved, the
+  // commit it made, the gates it ran, the conflicts it resolved), never caller-submittable: a
+  // fabricated landing receipt would be a lie in the durable record.
+  'swarm.contribution_integrated',
   'swarm.closed',
 ]));
 
@@ -80,6 +85,11 @@ const CLAIM_PATHS_COORDINATES = Object.freeze({ field: 'paths', rule: 'claimed-p
 // recruitment and at binding. The writer coupling's exclusivity is exactly this identity, so the
 // shape is named once here rather than re-spelled at each site that carries it.
 const WORKSPACE_ID = /^ws-[a-f0-9]{32}$/u;
+
+// Issue #296: one exact commit id — sha1 or sha256, never abbreviated. The landing receipt's whole
+// value is that the root can re-run `git show <sha>` against it, so an abbreviated or invented id
+// must refuse at admission rather than land as a receipt nobody can verify.
+const SWARM_COMMIT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 
 export class SwarmRefusal extends Error {
   constructor(message, code, detail = null) {
@@ -634,6 +644,53 @@ export function validateSwarmEvent(kind, payload) {
     }
     validOptionalNonEmptyString(p.reviewerId, 'reviewerId', refuse);
     validOptionalNonEmptyString(p.reason, 'review reason', refuse);
+    return;
+  }
+  if (kind === 'swarm.contribution_integrated') {
+    if (!isNonEmptyString(p.contributionId)) refuse('swarm.contribution_integrated requires contributionId', 'invalid_payload');
+    // The seat whose contribution was landed — the contract's own author identity, never the actor
+    // of the landing: the root that ran the verb lands SOMEBODY ELSE's work, and the receipt names
+    // the author so `swarm.view` can hand the row back to the seat it belongs to.
+    if (!isNonEmptyString(p.participantId)) refuse('swarm.contribution_integrated requires participantId', 'invalid_payload');
+    if (!SWARM_COMMIT.test(p.base ?? '') || !SWARM_COMMIT.test(p.targetHeadBefore ?? '')
+      || !SWARM_COMMIT.test(p.squashSha ?? '')) {
+      refuse('swarm.contribution_integrated requires exact commit ids for base, targetHeadBefore and squashSha', 'invalid_payload');
+    }
+    // `targetHeadAfter` is null on a dry run: the target did not move, and absence is the fact —
+    // never a copy of targetHeadBefore, which would read as a landing that happened.
+    if (p.targetHeadAfter !== null && !SWARM_COMMIT.test(p.targetHeadAfter ?? '')) {
+      refuse('swarm.contribution_integrated targetHeadAfter must be an exact commit or null', 'invalid_payload');
+    }
+    if (!isNonEmptyString(p.target)) refuse('swarm.contribution_integrated requires the target branch it landed onto', 'invalid_payload');
+    if (!Array.isArray(p.changedPaths) || p.changedPaths.some((path) => !isNonEmptyString(path))) {
+      refuse('swarm.contribution_integrated requires changedPaths as an array of paths', 'invalid_payload');
+    }
+    if (p.gates !== undefined) {
+      if (p.gates === null || typeof p.gates !== 'object' || Array.isArray(p.gates)) {
+        refuse('swarm.contribution_integrated gates must be one object', 'invalid_payload');
+      }
+      if (p.gates.files !== undefined && (!Array.isArray(p.gates.files) || p.gates.files.some((path) => !isNonEmptyString(path)))) {
+        refuse('swarm.contribution_integrated gates.files must be an array of test paths', 'invalid_payload');
+      }
+      if (p.gates.verdictLine !== undefined && p.gates.verdictLine !== null && !isNonEmptyString(p.gates.verdictLine)) {
+        refuse('swarm.contribution_integrated gates.verdictLine must be text or null', 'invalid_payload');
+      }
+      if (p.gates.unexpected !== undefined && !Array.isArray(p.gates.unexpected)) {
+        refuse('swarm.contribution_integrated gates.unexpected must be an array of rows', 'invalid_payload');
+      }
+    }
+    for (const field of ['regenerated', 'conflicts']) {
+      if (p[field] !== undefined && !Array.isArray(p[field])) {
+        refuse(`swarm.contribution_integrated ${field} must be an array`, 'invalid_payload');
+      }
+    }
+    if (p.issue !== undefined && p.issue !== null
+      && !(Number.isSafeInteger(p.issue) && p.issue > 0)) {
+      refuse('swarm.contribution_integrated issue must be a positive integer or null', 'invalid_payload');
+    }
+    if (p.dryRun !== undefined && typeof p.dryRun !== 'boolean') {
+      refuse('swarm.contribution_integrated dryRun must be a boolean', 'invalid_payload');
+    }
     return;
   }
   if (kind === 'swarm.closed') {
@@ -1668,6 +1725,42 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     const reviews = new Map(Object.entries(swarm.reviews));
     reviews.set(p.contributionId, updatedReviews);
     swarms.set(p.swarmId, replaceField(swarm, 'reviews', reviews));
+    return;
+  }
+  if (kind === 'swarm.contribution_integrated') {
+    const contribution = ownGet(swarm.contributions, p.contributionId);
+    if (!contribution) integrity('contribution not found in swarm', 'contribution_not_found', { contributionId: p.contributionId });
+    // The seat named on the receipt must be the contribution's own author. The landing is the
+    // ROOT's act (its actor rides `meta.actor`), so the author identity can never be inferred from
+    // the event — and a receipt that names somebody else would hand one seat's landing to another.
+    if (contribution.participantId !== p.participantId) {
+      integrity('Landing receipt author differs from contribution author', 'contribution_author_mismatch');
+    }
+    // A contribution lands once. Re-landing is a new contribution (or an explicit revert), never a
+    // silent second receipt that leaves the first one describing a commit the target no longer
+    // descends from.
+    if (contribution.integration) {
+      integrity(`contribution ${p.contributionId} is already integrated`, 'contribution_duplicate');
+    }
+    const integration = Object.freeze({
+      base: p.base, target: p.target,
+      targetHeadBefore: p.targetHeadBefore, targetHeadAfter: p.targetHeadAfter ?? null,
+      squashSha: p.squashSha,
+      changedPaths: Object.freeze([...p.changedPaths]),
+      gates: Object.freeze({
+        files: Object.freeze([...(p.gates?.files ?? [])]),
+        verdictLine: p.gates?.verdictLine ?? null,
+        unexpected: Object.freeze([...(p.gates?.unexpected ?? [])].map((row) => deepFreezeBody(row))),
+      }),
+      regenerated: Object.freeze([...(p.regenerated ?? [])]),
+      conflicts: Object.freeze([...(p.conflicts ?? [])].map((row) => deepFreezeBody(row))),
+      issue: p.issue ?? null,
+      dryRun: p.dryRun === true,
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    });
+    const contributions = new Map(Object.entries(swarm.contributions));
+    contributions.set(p.contributionId, Object.freeze({ ...contribution, integration }));
+    swarms.set(p.swarmId, replaceField(swarm, 'contributions', contributions));
     return;
   }
 

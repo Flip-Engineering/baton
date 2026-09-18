@@ -290,6 +290,16 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
+  // Issue #296: landing. The one verb that changes the REPOSITORY rather than the swarm's own
+  // record: it resolves the contribution's commit against the target, squashes the whole range
+  // into one commit in a scratch checkout the deployment owns, derives and runs the gate set,
+  // fast-forwards the target, and records the receipt. `organize` authority, like every other
+  // root-side act.
+  'swarm.integrate': Object.freeze({
+    args: Object.freeze(['swarmId', 'contributionId', 'target', 'dryRun', 'idempotencyKey', 'view']),
+    capabilities: Object.freeze(['control', 'observe']),
+    web: true, mcp: true, mcpStateful: true, reconcilable: true,
+  }),
   // Closing a swarm is organizational only; stopping every participant is an explicit per-member
   // action (each with its own idempotencyKey) and is never implied by `swarm.closed`.
   'swarm.stop': Object.freeze({
@@ -374,6 +384,10 @@ export function swarmChangedRow(kind, payload = {}) {
       return row('contributions', payload.contributionId ?? null);
     case 'swarm.contribution_reviewed':
       return row('reviews', payload.contributionId ?? null);
+    // Issue #296: a landing receipt changes the contribution row it landed — the row now carries
+    // `integration` — so the receipt names the contribution, the way a revision does.
+    case 'swarm.contribution_integrated':
+      return row('contributions', payload.contributionId ?? null);
     // Issue #337: a parked or delivered guide changes the named seat — its participant row
     // carries the guidance rows — so the receipt names it instead of answering changed [].
     case 'swarm.guidance_parked':
@@ -403,6 +417,10 @@ export function swarmReceiptNext(command, args = {}) {
     case 'swarm.stop':
       return { command: 'swarm.view', args: { swarmId } };
     case 'swarm.check':
+      return { command: 'swarm.view', args: { swarmId } };
+    // Issue #296: a landing ends the contribution's own lane; what follows is reading the receipt
+    // (the squash sha, the gate verdict, the conflicts) — never a second mutation.
+    case 'swarm.integrate':
       return { command: 'swarm.view', args: { swarmId } };
     case 'swarm.update':
       return args.event === 'swarm.closed'
@@ -483,6 +501,13 @@ const SWARM_FIELD_RULES = Object.freeze({
   // owns the payload and refuses a token it did not mint.
   cursor: Object.freeze({ check: isId, expectation: 'a page cursor a previous answer named' }),
   resumeFrom: Object.freeze({ check: isId, expectation: 'a participant identity' }),
+  // Issue #296: the branch a contribution lands onto. A ref NAME, never a sha — the verb resolves
+  // it and the receipt records the exact commits it observed (targetHeadBefore / targetHeadAfter),
+  // so a caller can hand the receipt to `git log` without having resolved anything itself.
+  target: Object.freeze({ check: isText, expectation: 'a branch name' }),
+  // `--dry-run` prepares and verifies the squash and records the receipt, then leaves the target
+  // exactly where it was: every effect of a landing except the fast-forward.
+  dryRun: Object.freeze({ check: (value) => typeof value === 'boolean', expectation: 'true to prepare and verify the landing without moving the target' }),
 });
 
 // Required/optional per command. `payload` stays optional: an event kind that carries no body
@@ -521,6 +546,13 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   'swarm.check': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
     optional: Object.freeze(['view']),
+  }),
+  // Issue #296: the landing verb. `--dry-run` is optional; `target` is required — a landing with no
+  // named branch would have to guess, and guessing which branch a contribution belongs on is the
+  // one decision the verb must not make for its caller.
+  'swarm.integrate': Object.freeze({
+    required: Object.freeze(['swarmId', 'contributionId', 'target', 'idempotencyKey']),
+    optional: Object.freeze(['dryRun', 'view']),
   }),
   'swarm.stop': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey']),
@@ -797,6 +829,16 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
       swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA, checkId: ID_SCHEMA, view: VIEW_SCHEMA,
     }),
     required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
+  }),
+  Object.freeze({
+    command: 'swarm.integrate',
+    description: 'Land one accepted contribution on a target branch as ONE squashed commit. The base is the merge-base of the target with the contribution commit, never the contribution\'s recorded observedHead; the squash is prepared in a scratch checkout the deployment owns, the targeted gate set is derived from the changed paths and run there, and the target fast-forwards only after every gate is green. Answers with a mutation receipt plus the landing receipt (base, targetHeadBefore, targetHeadAfter, squashSha, changedPaths, gates, regenerated, conflicts, issue, landingComment); dryRun prepares and verifies the landing, records the receipt with dryRun true, and leaves the target exactly where it was.',
+    readOnlyHint: false, destructiveHint: true,
+    properties: Object.freeze({
+      swarmId: ID_SCHEMA, contributionId: ID_SCHEMA, target: ID_SCHEMA, dryRun: Object.freeze({ type: 'boolean',
+        description: 'true to prepare and verify the landing without moving the target' }), view: VIEW_SCHEMA,
+    }),
+    required: Object.freeze(['swarmId', 'contributionId', 'target']),
   }),
   Object.freeze({
     command: 'swarm.stop',

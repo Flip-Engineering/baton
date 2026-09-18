@@ -13,7 +13,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync, closeSync, cpSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, renameSync,
-  linkSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
+  linkSync, symlinkSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
@@ -1774,6 +1774,330 @@ export function ensureLaneBranchAtHead(repoRoot, taskId, opts = {}) {
   return { ...state, branchSha: state.headSha, contained: true, repaired: true };
 }
 
+/** The directory token one landing's scratch checkout is named by. A contribution identity is a
+ * swarm-label id — `contribution:1` is the ordinary spelling — and a colon is neither a bounded
+ * path component under the authority root nor a safe ref name, so the token is folded to the ONE
+ * shape the authority accepts. Two identities that fold to the same token collide on purpose: the
+ * second landing finds the first checkout and refuses rather than sharing it. */
+function integrationSlug(contributionId) {
+  const folded = `${contributionId}`.replace(/[^A-Za-z0-9._-]/gu, '-').replace(/^[^A-Za-z0-9]+/u, '');
+  return normalizePhysicalOwnerId(folded.length > 0 ? folded : 'contribution', 'integration contributionId');
+}
+
+// ---------------------------------------------------------------------------
+// Integration scratch checkout (issue #296)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create the scratch checkout one landing prepares its squash in.
+ *
+ * Landing used to mean a root-side human building a throwaway worktree by hand — a `git worktree
+ * add`, then a copy of `node_modules` — and the copy is what made it slow and what made two
+ * landings on one host fight (`swarm.integrate` prepares and verifies inside this checkout, so the
+ * deployment owns it the way it owns every other checkout). The checkout lives under the SAME
+ * `.baton/wt` authority root `ensureLaneBranchAtHead` repairs (never a bare `git worktree add`
+ * against an unconfined path), starts DETACHED at the target's current head, and links the
+ * repository's installed dependencies by symlink — a link is shared, so a gate that needs them
+ * reads the same tree the repository always had, and nothing is copied.
+ *
+ * The caller owns `cleanup()` and MUST await it: a refusal removes the checkout before it escapes,
+ * so a landing that could not finish leaves no directory and no administrative entry behind.
+ *
+ * @param {string} repoRoot
+ * @param {string} contributionId the contribution being landed (names the directory)
+ * @param {{target?: string, dependencyDirs?: string[], log?: object}} [opts]
+ *   `target` is the branch/ref the scratch checkout starts on (default HEAD).
+ * @returns {Promise<{dir: string, target: string, targetHead: string, branch: string,
+ *   dependencyLinks: Array<{name: string, source: string, path: string}>, cleanup: () => Promise<void>}>}
+ * @throws {WorktreeAlreadyExistsError} when a checkout for this contribution already exists
+ */
+export async function createIntegrationCheckout(repoRoot, contributionId, opts = {}) {
+  const target = typeof opts.target === 'string' && opts.target.length > 0 ? opts.target : 'HEAD';
+  let targetHead;
+  try {
+    targetHead = sh('git', ['rev-parse', '--verify', `${target}^{commit}`], repoRoot);
+  } catch {
+    throw new InvalidShaError(`createIntegrationCheckout: target "${target}" does not resolve to a commit in ${repoRoot}`);
+  }
+  // The scratch checkout is a checkout of the SAME repository, so it needs the same exclusion that
+  // keeps `.baton/` out of every other checkout's status — otherwise the first gate that reads
+  // `git status` sees the checkout's own authority directory as foreign content.
+  ensureBatonExcluded(repoRoot);
+  authorityRoot(repoRoot, 'wt', { create: true });
+  const child = `integrate-${integrationSlug(contributionId)}`;
+  const dir = authorityChild(repoRoot, 'wt', child, { kind: 'directory' });
+  if (existsSync(dir)) {
+    throw new WorktreeAlreadyExistsError(`createIntegrationCheckout: "${child}" already exists under .baton/wt`);
+  }
+
+  let registered = false;
+  let cleanupPromise = null;
+  const cleanup = () => {
+    if (!cleanupPromise) cleanupPromise = (async () => {
+      if (!existsSync(repoRoot)) {
+        registered = false;
+        return;
+      }
+      const present = existsSync(dir);
+      const administrativelyRegistered = registered && listWorktrees(repoRoot)
+        .some((entry) => pathResolve(entry.dir) === pathResolve(dir));
+      if (present || administrativelyRegistered) {
+        if (present) authorityChild(repoRoot, 'wt', child, { kind: 'directory', mustExist: true });
+        try {
+          sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
+        } catch (error) {
+          if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+          try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* exact postcheck below */ }
+          if (listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === pathResolve(dir))) {
+            throw new WorktreeCleanupError('integration checkout administration could not be removed', { cause: error });
+          }
+        }
+      }
+      registered = false;
+      try { sh('git', ['worktree', 'prune'], repoRoot); }
+      catch (error) { throw new WorktreeCleanupError('integration checkout administration could not be pruned', { cause: error }); }
+      if (existsSync(dir) || listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === pathResolve(dir))) {
+        throw new WorktreeCleanupError('integration checkout cleanup did not reach an exact absent state');
+      }
+    })();
+    return cleanupPromise;
+  };
+
+  const dependencyLinks = [];
+  try {
+    sh('git', ['worktree', 'add', '--detach', dir, targetHead], repoRoot);
+    registered = true;
+    // Link, never copy: the installed tree is large, and a landing that copied it would both pay
+    // for it and drift from it the moment the repository's own install changed.
+    const repository = realpathSync(repoRoot);
+    for (const name of opts.dependencyDirs ?? ['node_modules']) {
+      const source = join(repository, name);
+      if (!existsSync(source)) continue;
+      const path = join(dir, name);
+      if (existsSync(path)) continue;
+      symlinkSync(source, path, 'dir');
+      dependencyLinks.push({ name, source, path });
+    }
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+
+  logEvent(opts, 'worktree', 'worktree.integration_checkout_created',
+    { dir, target, targetHead, contributionId, dependencyLinks });
+  return { dir, target, targetHead, branch: `integrate/${contributionId}`, dependencyLinks, cleanup };
+}
+
+
+// ---------------------------------------------------------------------------
+// The landing itself (issue #296)
+// ---------------------------------------------------------------------------
+
+/** The environment one commit is authored under. `localGitEnv` blanks the global config so a
+ * landing cannot be signed, templated or hook-steered by whatever the host happens to carry — the
+ * identities are stated here or the commit does not happen. */
+function commitEnv(author, committer) {
+  return {
+    GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email,
+    GIT_COMMITTER_NAME: committer.name, GIT_COMMITTER_EMAIL: committer.email,
+    GIT_AUTHOR_DATE: new Date().toISOString(), GIT_COMMITTER_DATE: new Date().toISOString(),
+  };
+}
+
+/** The lane scaffolding that is never repository content: the brief the seat was handed, and the
+ * deployment's own `.baton/` custody tree. A squash that carried either would land one lane's
+ * private scaffolding into every other lane's checkout. */
+export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.baton/']);
+
+/**
+ * Land one contribution's whole range as ONE squashed commit.
+ *
+ * The range is `merge-base(target, commitSha)..commitSha` — the lane's own work, never
+ * `observedHead`, which is stale the moment a lane rebases. The squash is built in a scratch
+ * checkout at the target's current head, so `git merge --squash` performs the three-way merge
+ * against the target's real state; the regenerated artifacts the caller asks for are folded INTO
+ * that one commit (a landing that committed them separately would put a half-regenerated tree on
+ * the target for one commit), and the gate set runs before anything moves.
+ *
+ * Nothing under `<repoRoot>` changes until the fast-forward: every failure throws with the scratch
+ * checkout removed and the target exactly where it was.
+ *
+ * @param {string} repoRoot
+ * @param {object} request
+ * @param {string} request.contributionId
+ * @param {string} request.target local branch the range lands on
+ * @param {string} request.commitSha the tip of the range (exact commit)
+ * @param {string} request.message the squash commit's message
+ * @param {{name: string, email: string}} request.author the seat's actor (the commit's AUTHOR)
+ * @param {{name: string, email: string}} request.committer the landing authority (the COMMITTER)
+ * @param {(dir: string, paths: {changed: string[], base: string, targetHead: string}) => Promise<{regenerated?: string[]}>} [request.regenerate]
+ * @param {(dir: string, files: string[], context: object) => Promise<{files: string[], verdictLine: string|null, unexpected: any[]}>} [request.runGates]
+ * @param {boolean} [request.dryRun]
+ * @param {object} [request.log]
+ * @returns {Promise<{base: string, target: string, targetHeadBefore: string, targetHeadAfter: string|null,
+ *   squashSha: string, changedPaths: string[], regenerated: string[],
+ *   gates: {files: string[], verdictLine: string|null, unexpected: any[]}, dryRun: boolean}>}
+ */
+export async function landContribution(repoRoot, request) {
+  const { contributionId, target, commitSha, message, author, committer } = request;
+  integrationSlug(contributionId);
+  let tip;
+  try {
+    tip = sh('git', ['rev-parse', '--verify', `${commitSha}^{commit}`], repoRoot);
+  } catch {
+    throw Object.assign(
+      mergeError(`the contribution commit ${commitSha} is not in this repository`, 'integrate_commit_unreachable'),
+      { sha: commitSha },
+    );
+  }
+  const ref = target.startsWith('refs/') ? target : `refs/heads/${target}`;
+  let targetHeadBefore;
+  try {
+    targetHeadBefore = sh('git', ['rev-parse', '--verify', `${ref}^{commit}`], repoRoot);
+  } catch {
+    throw mergeError(`the target ${target} is not a local branch of this repository`, 'integrate_change_invalid');
+  }
+  // The base rule (#296 item 1). Never the contribution's recorded observedHead: once a lane
+  // rebases, that commit is an ancestor of nothing on the target and a squash from it would replay
+  // the lane's ancestors as its own work.
+  let base;
+  try {
+    base = sh('git', ['merge-base', ref, tip], repoRoot);
+  } catch {
+    throw mergeError(`the contribution commit ${commitSha} and ${target} share no common ancestor`, 'integrate_commit_unreachable');
+  }
+  const prepare = async (ontoHead) => {
+    const checkout = await createIntegrationCheckout(repoRoot, contributionId, {
+      target: ontoHead, log: request.log,
+    });
+    try {
+      // `--squash` is the whole point: it takes the lane's range against the common ancestor and
+      // stages it as ONE change, so a lane that pinned two checkpoints lands both deltas.
+      try {
+        sh('git', ['merge', '--squash', tip], checkout.dir);
+      } catch (error) {
+        const conflicted = sh('git', ['diff', '--name-only', '--diff-filter=U'], checkout.dir)
+          .split('\n').filter((line) => line.length > 0).sort();
+        await checkout.cleanup();
+        if (conflicted.length > 0) {
+          throw Object.assign(
+            mergeError(`landing ${contributionId} conflicts with ${target} on ${conflicted.length} path(s)`, 'integrate_conflict'),
+            { paths: conflicted },
+          );
+        }
+        throw error;
+      }
+      // Scaffolding never lands. `git rm --cached` on a path the squash did not carry is a no-op,
+      // so the exclusion is unconditional and needs no inventory of what the lane happened to commit.
+      for (const prefix of INTEGRATION_EXCLUDED_PREFIXES) {
+        try {
+          gitFile(['rm', '-r', '--cached', '--ignore-unmatch', '-q', prefix], checkout.dir, { stdio: 'pipe' });
+        } catch { /* the squash carried no such path */ }
+        rmSync(join(checkout.dir, prefix), { recursive: true, force: true });
+      }
+      const changedBeforeRegeneration = sh('git', ['diff', '--cached', '--name-only'], checkout.dir)
+        .split('\n').filter((line) => line.length > 0).sort();
+      // Every changed module must at least parse before a regenerator reads it — a generator that
+      // consumed a syntactically broken module would write an artifact describing a broken tree.
+      for (const path of changedBeforeRegeneration.filter((entry) => entry.endsWith('.mjs'))) {
+        try {
+          execFileSync(process.execPath, ['--check', join(checkout.dir, path)], {
+            cwd: checkout.dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+            maxBuffer: gitListingMaxBuffer(),
+          });
+        } catch (error) {
+          throw Object.assign(
+            mergeError(`the squashed change does not parse: ${path}`, 'integrate_change_invalid'),
+            { path, cause: error },
+          );
+        }
+      }
+      // The caller's regenerators run INSIDE the squash, so their output is part of the one commit
+      // rather than a second one that would leave the target briefly inconsistent. What they moved
+      // is read back from git, never from what the callback claims: a regenerator that wrote
+      // nothing regenerated nothing, and the receipt says so.
+      if (request.regenerate) {
+        await request.regenerate(checkout.dir, {
+          changed: changedBeforeRegeneration, base, targetHead: ontoHead,
+        });
+      }
+      gitFile(['add', '-A'], checkout.dir, { stdio: 'pipe' });
+      const changed = sh('git', ['diff', '--cached', '--name-only'], checkout.dir)
+        .split('\n').filter((line) => line.length > 0).sort();
+      const regenerated = changed.filter((path) => !changedBeforeRegeneration.includes(path));
+      if (changed.length === 0) {
+        await checkout.cleanup();
+        throw mergeError(`the contribution range ${base}..${tip} carries no change to land`, 'integrate_change_invalid');
+      }
+      gitFile(['commit', '-q', '-m', message], checkout.dir, { stdio: 'pipe' }, commitEnv(author, committer));
+      const squashSha = sh('git', ['rev-parse', 'HEAD'], checkout.dir);
+      // The paths the TARGET also moved since the same base. Git merged these without a conflict —
+      // the "silent" overlap the #296 observation says used to be resolved by hand with no record —
+      // so the receipt names them even though nothing had to be decided.
+      const targetChanged = sh('git', ['diff', '--name-only', base, ontoHead], checkout.dir)
+        .split('\n').filter((line) => line.length > 0).sort();
+      const overlaps = changed.filter((path) => targetChanged.includes(path));
+      return { checkout, squashSha, changed, regenerated, overlaps };
+    } catch (error) {
+      await checkout.cleanup();
+      throw error;
+    }
+  };
+
+  let attempt = await prepare(targetHeadBefore);
+  // The target moving between the squash and the fast-forward is a race, not a refusal: re-base
+  // ONCE onto the new head and only refuse if it moves again. `update-ref` is the CAS that decides.
+  if (sh('git', ['rev-parse', '--verify', ref], repoRoot) !== targetHeadBefore) {
+    await attempt.checkout.cleanup();
+    const moved = sh('git', ['rev-parse', '--verify', ref], repoRoot);
+    attempt = await prepare(moved);
+    if (sh('git', ['rev-parse', '--verify', ref], repoRoot) !== moved) {
+      await attempt.checkout.cleanup();
+      throw mergeError(`${target} advanced again while the landing was prepared`, 'integrate_target_moved');
+    }
+    targetHeadBefore = moved;
+  }
+
+  const { checkout, squashSha, changed, regenerated, overlaps } = attempt;
+  try {
+    const gates = request.runGates
+      ? await request.runGates(checkout.dir, changed, { base, targetHeadBefore, squashSha })
+      : { files: [], verdictLine: null, unexpected: [] };
+    const unexpected = Array.isArray(gates?.unexpected) ? gates.unexpected : [];
+    if (unexpected.length > 0) {
+      throw Object.assign(
+        mergeError(`the derived gate set ran red: ${unexpected.length} unexpected row(s)`, 'integrate_gates_red'),
+        { verdictLine: gates?.verdictLine ?? null, unexpected },
+      );
+    }
+    const dryRun = request.dryRun === true;
+    if (!dryRun) {
+      // One atomic compare-and-swap: if anything moved the target after the gates, this fails
+      // rather than landing a squash computed against a head the branch no longer has.
+      try {
+        gitFile(['update-ref', ref, squashSha, targetHeadBefore], repoRoot, { stdio: 'pipe' });
+      } catch (error) {
+        throw Object.assign(mergeError(`${target} moved before the fast-forward`, 'integrate_target_moved'), { cause: error });
+      }
+    }
+    logEvent(request, 'worktree', 'worktree.contribution_landed', {
+      contributionId, target, base, targetHeadBefore, squashSha, changedPaths: changed, dryRun,
+    });
+    return {
+      base, target, targetHeadBefore,
+      targetHeadAfter: dryRun ? null : squashSha,
+      squashSha, changedPaths: changed, regenerated, overlaps,
+      gates: {
+        files: [...(gates?.files ?? [])],
+        verdictLine: gates?.verdictLine ?? null,
+        unexpected: [],
+      },
+      dryRun,
+    };
+  } finally {
+    await checkout.cleanup();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // reap

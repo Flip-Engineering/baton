@@ -23,6 +23,85 @@ import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs
 // provider-facing brief (adapter.mjs renderBrief) so the seat's brief and the rendered subsection
 // can never spell the same rows differently.
 import { renderRouteUsageLines } from './adapter.mjs';
+// Issue #296: the landing verb's two collaborators. `gateSetForPaths` turns the squash's changed
+// paths into the tests that cover them, and `landContribution` is the #301 git authority's own
+// landing mechanism — this module never spawns git for a landing, exactly as it never spawns git
+// for a capture.
+import { gateSetForPaths } from './landing-table.mjs';
+import { landContribution } from './worktree.mjs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+// The artifacts a landing regenerates before it commits (#296): the seam inventory, the surface
+// gate's outputs and the rendered docs. They run INSIDE the squash so the target never carries a
+// commit whose generated artifacts disagree with its source.
+const INTEGRATION_REGENERATORS = Object.freeze([
+  'impl/scripts/seam-inventory.mjs',
+  'impl/scripts/surface-gate.mjs',
+  'impl/scripts/render-surface-docs.mjs',
+]);
+
+/** Run one node script in a checkout, returning its status and captured streams. A landing runs
+ * the deployment's OWN scripts in the scratch checkout — never a shell, and never a command the
+ * caller named. */
+function runNodeScript(cwd, args, env = {}) {
+  const result = spawnSync(process.execPath, args, {
+    cwd, encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024,
+  });
+  return {
+    status: result.status ?? 1,
+    stdout: `${result.stdout ?? ''}`, stderr: `${result.stderr ?? ''}`,
+  };
+}
+
+/** The default regenerators: the three the repository always runs, each told to WRITE. */
+async function defaultIntegrationRegenerate(dir) {
+  for (const script of INTEGRATION_REGENERATORS) {
+    const result = runNodeScript(dir, [script, '--write']);
+    if (result.status !== 0) {
+      throw Object.assign(new Error(`${script} --write failed in the landing checkout`), {
+        code: 'integrate_change_invalid', stderr: result.stderr.slice(-2000),
+      });
+    }
+  }
+}
+
+/** The default gate runner: the repository's own suite over the derived files, judged by the
+ * deployment's expected-red manifest, read back through the runner's machine-readable verdict. */
+async function defaultIntegrationGates(dir, files, context) {
+  const scratch = mkdtempSync(join(tmpdir(), 'baton-integrate-'));
+  const verdictPath = join(scratch, 'verdict.json');
+  try {
+    const result = runNodeScript(dir, ['impl/scripts/run-suite.mjs', ...files], {
+      BATON_SUITE_VERDICT_FILE: verdictPath,
+    });
+    let document = null;
+    try {
+      document = JSON.parse(readFileSync(verdictPath, 'utf8'));
+    } catch { document = null; }
+    if (document === null) {
+      // A runner that died before it could judge is not a green gate set. Never a bare "failed":
+      // the refusal names the exit status and the tail of what the runner said.
+      return {
+        files,
+        verdictLine: null,
+        unexpected: [{ row: 'suite-did-not-judge', exitStatus: result.status,
+          detail: `${result.stderr || result.stdout}`.trim().split('\n').slice(-4).join(' | ') }],
+      };
+    }
+    const unexpected = Array.isArray(document.unexpected) ? [...document.unexpected] : [];
+    return {
+      files,
+      verdictLine: `${document.green ? 'green' : 'red'} — passed ${document.passed}, `
+        + `unexpected ${unexpected.length}, expected-red ${document.expectedRed}`
+        + (context?.squashSha ? `, squash ${`${context.squashSha}`.slice(0, 12)}` : ''),
+      unexpected,
+    };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
 
 const clone = (value) => structuredClone(value);
 /** JSON-plain content with absent members dropped. An undefined value means "not sent" to the
@@ -248,6 +327,9 @@ const COMMAND_PERMISSIONS = Object.freeze({
   'swarm.view': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
   'swarm.guide': 'communicate', 'swarm.capture': 'contribute',
   'swarm.check': 'review', 'swarm.stop': 'stop',
+  // Issue #296: landing changes the repository itself, so it takes the same authority the other
+  // root-side acts take — `organize` — exactly as the contract row declares.
+  'swarm.integrate': 'organize',
 });
 
 // ── liveness ─────────────────────────────────────────────────────────────────────────────────────
@@ -666,9 +748,14 @@ export class SwarmRuntime {
    * derives the rows landed on the target since that base. Both are optional; a deployment
    * without them refuses the verbs it cannot serve or omits the facts it cannot derive. */
   constructor({ store, coordinator, authorize, prepareRun = (request) => request, startRun, stopRun,
-    hostCapacity = null, deploymentSummary = null, knowledge = null, situationGit = null, lastCrash = null }) {
+    hostCapacity = null, deploymentSummary = null, knowledge = null, situationGit = null, lastCrash = null,
+    // Issue #296: the deployment's landing authority — `{repoRoot, regenerate?, runGates?}`. Null on
+    // a host that holds no git authority to land with, in which case `swarm.integrate` refuses
+    // `swarm_command_unavailable` rather than pretending.
+    integration = null }) {
     Object.assign(this, {
       store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
+      integration,
     });
     // #297: the host-wide capacity authority recruits admit through (null = admission is not
     // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
@@ -3870,6 +3957,231 @@ export class SwarmRuntime {
     return lines.join('\n');
   }
 
+  // ── the landing verb (issue #296) ─────────────────────────────────────────────────────────────
+  //
+  // Landing is the one swarm act that changes the REPOSITORY rather than the swarm's own record.
+  // Everything before the fast-forward happens in a scratch checkout the deployment owns, so every
+  // refusal below leaves the target exactly where it was — and records nothing at all: the refusal
+  // IS the answer, and a receipt nobody earned would be a lie in the durable log.
+
+  /** The commit a contribution's range ends at: the #310 contract's own `commit.sha` when the
+   * contribution published one, else the sha the runtime captured for it (#301). Null when it names
+   * neither — there is no range to land. Deliberately NOT `base.observedHead`: that commit was the
+   * lane's starting point, and a landing squashed from it would replay the lane's ancestors. */
+  _contributionTip(contribution) {
+    const published = this._contributionContract(contribution)?.commit?.sha;
+    if (typeof published === 'string' && published.length > 0) return published;
+    const captured = contribution?.revision?.sha;
+    return typeof captured === 'string' && captured.length > 0 ? captured : null;
+  }
+
+  /** The contract a contribution published under the #310 shape, or null when it published a note or
+   * a plain body — a contribution with no contract has no subject and no items, so the landing
+   * message falls back to its recorded text. */
+  _contributionContract(contribution) {
+    const body = contribution?.body;
+    return body !== null && typeof body === 'object' && !Array.isArray(body)
+      && isContributionContractBody(body) ? body : null;
+  }
+
+  /** The issue a landing serves (#296 item 6): the swarm's purpose or the contribution's own words
+   * naming `#<n>`. Posting the landing comment stays root-side — the worker runtime holds no gh —
+   * so the receipt carries the number and the composed text instead. */
+  _integrationIssue(swarm, contract, contribution) {
+    for (const value of [swarm.purpose, contract?.subject, contribution?.body]) {
+      if (typeof value !== 'string') continue;
+      const named = value.match(/#(\d{1,6})\b/u);
+      if (named) return Number(named[1]);
+    }
+    return null;
+  }
+
+  /** The landed contribution whose own receipt already covers any of `paths`, or null. Two paths
+   * overlap the way the fold's claims do: equal, or one a `/`-boundary prefix of the other — so a
+   * receipt that lists `impl/src/` matches a conflict on `impl/src/x.mjs`. */
+  _landedBy(swarm, paths) {
+    const overlaps = (left, right) => left === right
+      || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+    for (const row of Object.values(swarm.contributions ?? {})) {
+      const landed = row?.integration?.changedPaths;
+      if (!Array.isArray(landed)) continue;
+      if (paths.some((path) => landed.some((other) => overlaps(path, other)))) return row.contributionId;
+    }
+    return null;
+  }
+
+  /** Translate the git authority's typed landing error into the family's refusal, naming what the
+   * caller must act on: the conflicting files AND the landed contribution that touched them, the
+   * verdict's own unexpected rows (never a bare "failed"), or the range that was never landable. */
+  _refuseLanding(error, swarm) {
+    const raised = typeof error?.code === 'string' && error.code.startsWith('integrate_')
+      ? error.code : null;
+    if (raised === null) throw error;
+    const detail = {};
+    if (Array.isArray(error.paths)) {
+      detail.paths = error.paths;
+      // When a landed contribution's own receipt already covers these paths, the refusal names it:
+      // "you are about to re-land work that is on the target" is a different act from "git could
+      // not merge", and only the caller can decide which it meant.
+      detail.otherContributionId = this._landedBy(swarm, error.paths);
+    }
+    if (Array.isArray(error.unexpected)) {
+      detail.unexpected = error.unexpected;
+      detail.verdictLine = error.verdictLine ?? null;
+    }
+    if (typeof error.path === 'string') detail.path = error.path;
+    if (typeof error.sha === 'string') detail.sha = error.sha;
+    const message = `Landing did not complete: ${error.message}`;
+    // The code is spelled at each call site, never passed through: the #430 owner table is audited
+    // by reading the LITERAL second argument of every refuse() in this module, so a variable here
+    // would silence the only check that a landing refusal is in the family's closed set at all.
+    switch (raised) {
+      case 'integrate_contribution_not_accepted':
+        refuse(message, 'integrate_contribution_not_accepted', detail); break;
+      case 'integrate_commit_unreachable':
+        refuse(message, 'integrate_commit_unreachable', detail); break;
+      case 'integrate_conflict':
+        refuse(message, 'integrate_conflict', detail); break;
+      case 'integrate_gates_red':
+        refuse(message, 'integrate_gates_red', detail); break;
+      case 'integrate_target_moved':
+        refuse(message, 'integrate_target_moved', detail); break;
+      case 'integrate_change_invalid':
+        refuse(message, 'integrate_change_invalid', detail); break;
+      default:
+        throw error;
+    }
+  }
+
+  /** The landing comment, composed so `gh issue close <n> --body-file` takes it verbatim (#296 item
+   * 6). Composing it here is the whole of the runtime's part: posting needs a gh credential the
+   * worker runtime does not hold. */
+  _landingComment(receipt, items) {
+    const lines = [
+      `Landed as one squashed commit \`${receipt.squashSha}\` on \`${receipt.target}\`.`,
+      '',
+      `- base (merge-base with the target): \`${receipt.base}\``,
+      `- target head before: \`${receipt.targetHeadBefore}\``,
+      receipt.targetHeadAfter === null
+        ? '- target head after: unchanged (dry run)'
+        : `- target head after: \`${receipt.targetHeadAfter}\``,
+      `- changed paths: ${receipt.changedPaths.length}`,
+      `- gates: ${receipt.gates.files.length} file(s)`
+        + `${receipt.gates.verdictLine === null ? '' : ` — ${receipt.gates.verdictLine}`}`,
+    ];
+    if (receipt.regenerated.length > 0) lines.push(`- regenerated: ${receipt.regenerated.join(', ')}`);
+    if (receipt.conflicts.length > 0) {
+      lines.push(`- paths the target also moved (merged without a conflict): ${receipt.conflicts.join(', ')}`);
+    }
+    if (items.length > 0) lines.push('', `Delivered: ${items.map((item) => item.id).join(', ')}`);
+    return lines.join('\n');
+  }
+
+  async _integrate(args, principal, context, swarm) {
+    const contribution = Object.hasOwn(swarm.contributions ?? {}, args.contributionId)
+      ? swarm.contributions[args.contributionId] : null;
+    if (!contribution) {
+      refuse(`Contribution ${args.contributionId} is not in swarm ${args.swarmId}`, 'contribution_not_found', {
+        contributionId: args.contributionId, rule: 'contribution-exists',
+      });
+    }
+    // The #350/#433 derivation, read from the same review rows `contributionLedgerRows` reads:
+    // accepted when an accept exists and no LATER reject revokes it.
+    if (!this._acceptedContribution(swarm, args.contributionId)) {
+      const settling = (swarm.reviews?.[args.contributionId] ?? [])
+        .filter((review) => review.decision !== 'comment');
+      const reviewState = settling.length === 0 ? 'unreviewed'
+        : settling[settling.length - 1].decision === 'accept' ? 'accepted' : 'rejected';
+      refuse(`Contribution ${args.contributionId} is ${reviewState}: land only work that carries an`
+        + ' unrevoked accept review', 'integrate_contribution_not_accepted', {
+        contributionId: args.contributionId, reviewState, rule: 'unrevoked-accept',
+      });
+    }
+    const tip = this._contributionTip(contribution);
+    if (tip === null) {
+      refuse(`Contribution ${args.contributionId} names no commit: publish the lane's commit in its`
+        + ' contract, or capture the revision first', 'contribution_commit_unresolved', {
+        contributionId: args.contributionId, rule: 'commit-named',
+      });
+    }
+    const authority = this.integration;
+    if (!authority || typeof authority.repoRoot !== 'string' || authority.repoRoot.length === 0) {
+      refuse('This deployment holds no git authority to land with', 'swarm_command_unavailable', {
+        command: 'swarm.integrate', rule: 'integration-authority',
+      });
+    }
+    const contract = this._contributionContract(contribution);
+    const subject = typeof contract?.subject === 'string' && contract.subject.length > 0
+      ? contract.subject
+      : typeof contribution.body === 'string' && contribution.body.length > 0
+        ? contribution.body.split('\n')[0]
+        : `contribution ${args.contributionId}`;
+    // One line per DELIVERED item: a partial item is not a thing the target received, so it never
+    // appears in the message the target's history keeps.
+    const items = (Array.isArray(contract?.items) ? contract.items : [])
+      .filter((item) => item?.status === 'delivered');
+    const message = [
+      subject,
+      ...(items.length === 0 ? [] : ['', ...items.map((item) => `- ${typeof item.change === 'string'
+        && item.change.length > 0 ? item.change : item.id}`)]),
+    ].join('\n');
+    const issue = this._integrationIssue(swarm, contract, contribution);
+    const mailbox = (value) => `${`${value}`.replace(/[^A-Za-z0-9._-]/gu, '-')}@baton.invalid`;
+    const runGates = typeof authority.runGates === 'function' ? authority.runGates : defaultIntegrationGates;
+    let landed;
+    try {
+      landed = await landContribution(authority.repoRoot, {
+        contributionId: args.contributionId,
+        target: args.target,
+        commitSha: tip,
+        message,
+        // Authored by the SEAT and committed by the landing authority: the change is the lane's
+        // work, the act that put it on the target is the root's (#296 item 1).
+        author: { name: contribution.participantId, email: mailbox(contribution.participantId) },
+        committer: { name: principal.actor, email: mailbox(principal.actor) },
+        dryRun: args.dryRun === true,
+        regenerate: typeof authority.regenerate === 'function'
+          ? authority.regenerate : defaultIntegrationRegenerate,
+        runGates: async (dir, changed, gateContext) => {
+          // The gate set is DERIVED from what the squash actually changed — the changed paths, the
+          // issues the contribution names, and the seam inventory behind both.
+          const gate = gateSetForPaths(changed, { issues: issue === null ? [] : [issue] });
+          const verdict = await runGates(dir, gate.files, {
+            ...gateContext, gate, contributionId: args.contributionId,
+          });
+          return {
+            files: gate.files,
+            verdictLine: verdict?.verdictLine ?? null,
+            unexpected: Array.isArray(verdict?.unexpected) ? verdict.unexpected : [],
+          };
+        },
+      });
+    } catch (error) {
+      this._refuseLanding(error, swarm);
+    }
+    const receipt = {
+      contributionId: args.contributionId, participantId: contribution.participantId,
+      base: landed.base, target: landed.target,
+      targetHeadBefore: landed.targetHeadBefore, targetHeadAfter: landed.targetHeadAfter,
+      squashSha: landed.squashSha, changedPaths: landed.changedPaths,
+      gates: landed.gates, regenerated: landed.regenerated,
+      // A hard conflict REFUSES — it never lands. What this list carries is the overlap git merged
+      // WITHOUT a conflict: the silent case the #296 observation says went unrecorded.
+      conflicts: landed.overlaps,
+      issue, dryRun: landed.dryRun,
+    };
+    // A key of its OWN: `_once` already recorded the operation REQUEST under the operation key, and a
+    // second row under that same key would be a different request wearing one identity.
+    const recorded = this._write('swarm.contribution_integrated',
+      { swarmId: args.swarmId, ...receipt }, principal,
+      `swarm-integration:${this._operationKey('swarm.integrate', args, principal)}`);
+    this._recordOperationCompleted('swarm.integrate', args, principal, context);
+    return this._mutationResult('swarm.integrate', args, [recorded], principal, context, {
+      integration: receipt,
+      landingComment: this._landingComment(receipt, items),
+    });
+  }
+
   async _dispatch(command, args, principal, context = null) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
     // Issue #425: every runtime entry drains the commit spools, so a seat's commit is seen at
@@ -3965,6 +4277,14 @@ export class SwarmRuntime {
       permission = 'contribute';
     }
     const caller = this._permit(swarm, principal, context, permission);
+    // Issue #296: the landing verb. Idempotent under its operation key: the first attempt lands and
+    // records its result, a retry under the same key returns that result, and a retry over an
+    // attempt whose outcome was never confirmed refuses (the family's own rule — only swarm.recruit
+    // and swarm.holder_released replay blind).
+    if (command === 'swarm.integrate') {
+      return this._once('swarm.integrate', args, principal,
+        async () => this._integrate(args, principal, context, swarm));
+    }
     if (command === 'swarm.update') {
       if (typeof args.payload === 'string' && args.event !== 'swarm.contribution_recorded') {
         refuse('This update needs its target fields; conversation text belongs in body', 'swarm_payload_invalid');

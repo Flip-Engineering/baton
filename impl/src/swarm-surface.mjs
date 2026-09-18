@@ -37,6 +37,7 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.guide': 'Send guidance to one participant, active or paused; the receipt names the lane receipt row the guide wrote — or, when the seat’s harness takes no mid-turn delivery, the swarm.guidance_parked row with delivery parked, composed into the seat’s next exec / resume-from successor brief.',
   'swarm.capture': 'Capture the immutable code for one contribution at its turn boundary. The capture row records the merge-base of the captured revision with the deployment target; a revision whose base cannot reach the target is refused typed (swarm_capture_base_unreachable).',
   'swarm.check': 'Record one independent check of a captured contribution.',
+  'swarm.integrate': 'Land one accepted contribution on a target branch as ONE squashed commit: the base is the merge-base of the target with the contribution commit, the squash is prepared in a scratch checkout the deployment owns, the gate set derived from the changed paths runs there, and the target fast-forwards only after every gate is green. The receipt carries the landing itself — base, targetHeadBefore, targetHeadAfter, squashSha, changedPaths, gates, regenerated, conflicts, issue and landingComment (the text `gh issue close --body-file` takes verbatim) — and --dry-run performs everything but the fast-forward, leaving the target exactly where it was.',
   'swarm.stop': 'Stop one participant explicitly; the swarm itself stays open. The receipt names the operation row that recorded the stop.',
 });
 
@@ -71,6 +72,12 @@ const SWARM_GUIDE_DETAILS = ['The receipt names the lane receipt row this guide 
   'delivered — the park itself wakes no guidance_delivered.'].join(' ');
 
 function flagName(field) { return `--${kebabCase(field)}`; }
+// The two spellings the landing verb's usage fixes (issue #296), declared where every other flag
+// name is minted so the parser, the closed argv, the usage line and the help read ONE table: the
+// wire field stays `target` (that is the name the receipt carries), the CLI spells it `--onto`,
+// and `dryRun` is a SWITCH rather than a value flag.
+const SWARM_CLI_FLAG_SPELLINGS = Object.freeze({ target: '--onto' });
+const SWARM_CLI_SWITCH_FIELDS = Object.freeze(['dryRun']);
 
 export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) => {
   const verb = name.slice('swarm.'.length);
@@ -83,15 +90,22 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     'swarm.guide': ['swarmId', 'participantId', 'message'],
     'swarm.capture': ['swarmId', 'participantId', 'contributionId'],
     'swarm.check': ['swarmId', 'participantId', 'contributionId', 'checkId'],
+    // Issue #296: the landing coordinates the usage line names positionally.
+    'swarm.integrate': ['swarmId', 'contributionId'],
     'swarm.stop': ['swarmId', 'participantId', 'reason'],
     'swarm.list': [],
   }[name];
   const flags = SWARM_COMMAND_DEFINITIONS[name].args
-    .filter((field) => field !== 'idempotencyKey' && !positional.includes(field));
+    .filter((field) => field !== 'idempotencyKey' && !positional.includes(field))
+    .map((field) => Object.freeze({
+      field,
+      flag: SWARM_CLI_FLAG_SPELLINGS[field] ?? flagName(field),
+      switch: SWARM_CLI_SWITCH_FIELDS.includes(field),
+    }));
   const usage = [
     `baton swarm ${verb}`,
     ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
-    ...flags.map((field) => `[${flagName(field)} VALUE]`),
+    ...flags.map((entry) => entry.switch ? `[${entry.flag}]` : `[${entry.flag} VALUE]`),
     // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch and
     // check verbs both serve it (#313 — the check usage line used to omit what the receipt teaches).
     // The watch leg rides the deployment wake stream, so its usage teaches the stream's own
@@ -107,7 +121,7 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     verb,
     command: name,
     positional: Object.freeze(positional),
-    flags: Object.freeze(flags.map((field) => Object.freeze({ field, flag: flagName(field) }))),
+    flags: Object.freeze(flags),
     usage,
     summary: SWARM_CLI_SUMMARIES[name],
   });

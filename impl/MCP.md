@@ -231,6 +231,7 @@ that owns the runs, never over a borrowed bridge session.
 | `swarm.check` | `ordinary` | `baton_swarm_check` | idempotent |
 | `swarm.create` | `ordinary` | `baton_swarm_create` | idempotent |
 | `swarm.guide` | `ordinary` | `baton_swarm_guide` | idempotent |
+| `swarm.integrate` | `ordinary` | `baton_swarm_integrate` | destructive |
 | `swarm.list` | `ordinary` | `baton_swarm_list` | idempotent |
 | `swarm.recruit` | `ordinary` | `baton_swarm_recruit` | idempotent |
 | `swarm.stop` | `ordinary` | `baton_swarm_stop` | destructive |
