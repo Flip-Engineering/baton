@@ -224,6 +224,10 @@ export function validateContributionContract(body) {
     if (!Array.isArray(body[name])) {
       contractRefusal(`body.${name}`, 'type', fields[name].expectation);
     }
+    const badIndex = body[name].findIndex((entry) => !isNonEmptyString(entry));
+    if (badIndex !== -1) {
+      contractRefusal(`body.${name}[${badIndex}]`, 'type', fields[name].expectation);
+    }
   }
   if (body.notes !== undefined && typeof body.notes !== 'string') {
     contractRefusal('body.notes', 'type', fields.notes.expectation);
