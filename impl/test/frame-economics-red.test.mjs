@@ -358,7 +358,9 @@ const FE_GOAL_PLAN_POLICY = Object.freeze({
   capabilityClasses: ['code', 'test'],
   limits: Object.freeze({
     maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
-    maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
+    // #358: the fixture mirrors production's goal-plan text limit (goalPlanPolicy: 16_384) so the
+    // objective lanes' own bound — the spill ceiling — is what the C rows exercise.
+    maxTextBytes: 16_384, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
     maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024,
     maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
   }),
@@ -465,8 +467,10 @@ async function shutdownQuietly(application) {
 const ADMISSION_LANES = Object.freeze([
   ['message.send.body', 2048, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
   ['message.reply.body', 2048, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
-  ['run.objective', 4096, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
-  ['wave.member.objective', 4096, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
+  // #358 (operator ruling): the objective lanes carry no head cap of their own — they are bounded
+  // by the substrate spill ceiling alone, so a brief reaches the seat whole.
+  ['run.objective', 1_048_576, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
+  ['wave.member.objective', 1_048_576, 'bytes', 'spill-digest-citation', 'spill_body_exceeded'],
   ['decision.question', 2048, 'bytes', null, 'decision_question_exceeded'],
   ['decision.need', 2048, 'bytes', null, 'decision_need_exceeded'],
   ['decision.rationale', 8192, 'bytes', null, 'decision_rationale_exceeded'],
@@ -1093,7 +1097,9 @@ test('C6 (parity + blocker 11): an oversize reply spills like a send; the amende
   assert.equal(served?.body, body, 'the spilled reply resolves byte-identically');
 });
 
-test('C7: an oversize run objective is admitted with spill; run views resolve it transparently', async () => {
+// #358 (operator ruling): the objective lanes carry no head cap — an objective below the ledger's
+// spill ceiling reaches the run WHOLE, mints no spill, and the view carries it verbatim.
+test('C7: a large run objective is admitted whole — no spill, no citation; run views carry it verbatim', async () => {
   const { application, driver } = appFixture('c7');
   const objective = `OBJECTIVE-${'o'.repeat(5000)}`;
   const started = await application.start({
@@ -1104,15 +1110,11 @@ test('C7: an oversize run objective is admitted with spill; run views resolve it
     `stage: spill-lane-missing — today a >4KiB objective is refused with no number anywhere: `
     + `${started?.admissionError?.code ?? started?.admissionError} (the worker-AX receipt)`);
   const minted = driver.coordination.events().find((event) => event.kind === 'spill.minted');
-  assert.ok(minted, 'the admission mints a durable spill artifact for the objective');
-  assert.equal(minted?.payload?.body ?? null, objective, 'the spill carries the byte-identical objective');
-  const served = driver.coordination.materializeSpill(minted.payload?.spillId ?? minted.payload?.spill);
-  assert.equal(served?.body, objective, 'materializeSpill serves the full objective');
+  assert.equal(minted ?? null, null, '#358: no head cap — a 5 KB objective mints NO spill');
   const inspected = await application.inspect({ runId: 'run-fe-c7' }, principal('application-observer'));
   const viewText = JSON.stringify(inspected);
-  assert.ok(viewText.includes(objective),
-    'run views resolve the spill transparently — a routine reader never sees the citation (Decision 4 item 4)');
-  assert.ok(!viewText.includes('spill:sha256:'), 'no citation leaks into the reader projection');
+  assert.ok(viewText.includes(objective), 'the run view carries the whole objective verbatim');
+  assert.ok(!viewText.includes('spill:sha256:'), 'no citation exists to leak into the reader projection');
   await shutdownQuietly(application);
 });
 
@@ -1141,22 +1143,27 @@ test('C8 (OQ5): the wave driver downgrades its precheck to a spill-aware ADVISOR
   assert.ok(driver,
     'stage: wave-driver-advisory-missing — policy.onAdvisory is not a recognized wave-driver field; '
     + 'the 4,096 precheck still walls the spill lane (wave-driver.mjs:321-329)');
+  // #358: a 5 KB member is below the registry lane value (the ledger ceiling) — it passes through
+  // whole with NO advisory; the advisory is reserved for a member above the lane value it reads.
   const objective = 'w'.repeat(5000);
   const receipt = await driver.run({
     members: [{ role: 'alpha', objective, harness: 'mock', model: 'mock-model', effort: 'low', scope: ['**'], report: 'reports/alpha.md' }],
   });
-  assert.equal(started.length, 1,
-    'the oversize member PASSES THROUGH to the machinery — never wave_driver_objective_oversize '
-    + '(the wall in front of a spill lane, blocker 9)');
-  assert.ok(started[0].members[0].objective.includes(objective),
-    'the machinery receives the full oversize objective (salted, unrefused) and spills it like run.objective');
-  const advisory = advisories.find((entry) => entry?.role === 'alpha');
-  assert.ok(advisory, 'the driver emits the early-ergonomics advisory for the oversize member');
-  assert.ok(Number.isSafeInteger(advisory?.bytes) && advisory.bytes >= Buffer.byteLength(objective),
-    'the advisory names the byte count (the precheck\'s error-quality value, preserved)');
-  assert.equal(advisory?.limit ?? null, 4096, 'the advisory names the registry lane value');
-  assert.equal(advisory?.spill ?? null, true, 'the advisory names the coming spill');
+  assert.equal(started.length, 1, 'the member PASSES THROUGH to the machinery — never wave_driver_objective_oversize');
+  assert.ok(started[0].members[0].objective.includes(objective), 'the machinery receives the full objective (salted, unrefused)');
+  assert.equal(advisories.find((entry) => entry?.role === 'alpha') ?? null, null,
+    '#358: no head cap — a 5 KB member draws no early-ergonomics advisory');
   assert.equal(receipt?.basis ?? null, 'completed', 'the wave runs on against the admitted member');
+  const limits = await import('../src/limits.mjs');
+  const laneValue = limits.FRAME_LIMITS['wave.member.objective'].value;
+  const over = 'w'.repeat(laneValue + 1);
+  await driver.run({
+    members: [{ role: 'beta', objective: over, harness: 'mock', model: 'mock-model', effort: 'low', scope: ['**'], report: 'reports/beta.md' }],
+  }).catch(() => null);
+  const advisory = advisories.find((entry) => entry?.role === 'beta');
+  assert.ok(advisory, 'a member above the lane value draws the advisory');
+  assert.equal(advisory?.limit ?? null, laneValue, 'the advisory names the registry lane value it read — never a literal');
+  assert.ok(Number.isSafeInteger(advisory?.bytes) && advisory.bytes >= laneValue + 1, 'the advisory names the byte count');
 });
 
 test('C9 (blocker 3): a body beyond the 1 MiB spill ceiling is NOT admitted and mints NO spill', async () => {
@@ -1177,7 +1184,7 @@ test('C9 (blocker 3): a body beyond the 1 MiB spill ceiling is NOT admitted and 
     'a beyond-ceiling body delivers nothing');
 });
 
-test('C10 (v1.2, blue-team blocker 4): an oversize MULTIBYTE wave member is admitted with byte-measured spill through the REAL wave-start admission — never walled', async () => {
+test('C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 KiB head cap is admitted WHOLE through the REAL wave-start admission — never walled, never spilled (#358)', async () => {
   const { application, driver } = appFixture('c10');
   // 4,100 chars / 8,200 bytes — over 4,096 in BOTH measures, so TODAY both member doors wall it
   // (wave-start walls bytes via validText's 4,096 default at application.mjs:11506; attach walls
@@ -1198,13 +1205,7 @@ test('C10 (v1.2, blue-team blocker 4): an oversize MULTIBYTE wave member is admi
   assert.ok(started.members?.some((entry) => entry?.role === 'alpha' && typeof entry?.runId === 'string'),
     'the oversize member is ADMITTED and produces a Run — never refused (no wave_driver_objective_oversize, no application_wave_start_invalid)');
   const minted = driver.coordination.events().find((event) => event.kind === 'spill.minted');
-  assert.ok(minted, 'the member admission mints a durable spill artifact exactly like run.objective (Decision 4)');
-  assert.equal(minted?.payload?.body ?? null, objective, 'the spill carries the byte-identical objective');
-  const served = driver.coordination.materializeSpill(minted.payload?.spillId ?? minted.payload?.spill);
-  assert.equal(served?.body, objective, 'materializeSpill serves the full objective');
-  assert.equal(served?.bytes ?? null, Buffer.byteLength(objective),
-    'the accounting is BYTE-measured (8,200), never chars (4,100) — the byte law fixes the '
-    + 'wave-member character check (application.mjs:1854-1855, Decision 2)');
+  assert.equal(minted ?? null, null, '#358: no head cap — an 8,200-byte member mints NO spill; it is admitted whole');
   // Second door: the waves.attach member validation must not wall the same oversize member on
   // SIZE either. Transparent run-view resolution (Decision 4 item 4) keeps objective-matching
   // intact; any outcome except the size refusal is honest here — the pin is the absent wall.

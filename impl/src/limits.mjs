@@ -50,6 +50,12 @@ export function frameLimitRefusalPath(row, cap = row?.value) {
 // The declared registry. Rows are frozen; the object is keyed by lane name.
 // ---------------------------------------------------------------------------
 
+// The ledger's ceiling on one durable spilled body — declared ONCE and read by every lane that
+// is bounded by it (the substrate row below, and the objective lanes, which carry no head cap of
+// their own: operator ruling 2026-09-18, #358 — a 4096-byte objective cap silently cut the tail
+// off every lane brief of the day and no seat could read the spill it minted).
+const SPILL_BODY_BYTES = 1048576;
+
 const ADMISSION = Object.freeze({
   'message.send.body': { lane: 'message.send.body', class: 'admission', value: 2048, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'coordinator.sendMessage', refusalCode: 'spill_body_exceeded' },
   'message.reply.body': { lane: 'message.reply.body', class: 'admission', value: 2048, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'coordinator message.send reply admission', refusalCode: 'spill_body_exceeded' },
@@ -60,8 +66,11 @@ const ADMISSION = Object.freeze({
   // durable spill artifact); the by-reference lane renders the full brief into the member objective
   // and does not split, so the cap is the admission bound there. No value change — this row's
   // declared bytes and the FRAME_LIMITS_DIGEST are untouched.
-  'run.objective': { lane: 'run.objective', class: 'admission', value: 4096, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission', refusalCode: 'spill_body_exceeded' },
-  'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: 4096, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission', refusalCode: 'spill_body_exceeded' },
+  // #358: an objective is whatever the recruiter needs to say — bounded by the substrate row
+  // alone (SPILL_BODY_BYTES), never by a head cap that spills the brief's tail into an artifact
+  // the seat cannot read.
+  'run.objective': { lane: 'run.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission', refusalCode: 'spill_body_exceeded' },
+  'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission', refusalCode: 'spill_body_exceeded' },
   'wave.run.spec_path': { lane: 'wave.run.spec_path', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'waves.run admission (the semantic-registry input schema; the interpreter containment re-checks)', refusalCode: 'workflow_spec_invalid' },
   'decision.question': { lane: 'decision.question', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionRequest / coordinator decision seam', refusalCode: 'decision_question_exceeded' },
   'decision.need': { lane: 'decision.need', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.recordReuseDecision', refusalCode: 'decision_need_exceeded' },
@@ -94,7 +103,7 @@ const SUBSTRATE = Object.freeze({
   'context_pack.body': { lane: 'context_pack.body', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
   // spill.body is the ONE substrate row that mints a refusal (blocker 3): a substrate ceiling
   // enforced AT ADMISSION — it is a resource ceiling on a durable write, not a scanner window.
-  'spill.body': { lane: 'spill.body', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mintSpill / admission spill seam', refusalCode: 'spill_body_exceeded' },
+  'spill.body': { lane: 'spill.body', class: 'substrate', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mintSpill / admission spill seam', refusalCode: 'spill_body_exceeded' },
 });
 
 const VIEW = Object.freeze({
