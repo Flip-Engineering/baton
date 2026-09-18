@@ -458,6 +458,46 @@
       "reason": "#364"
     },
     {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-a RED: tools/list on the ordinary agent surface is exactly the seven core verb-tools (docs/49 §2)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-b RED: the core tools/list stays inside the derived byte budget — core count times the largest designed core schema (docs/49 §3)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-c RED: every core tool is ONE verb-discriminated closed schema (docs/49 §2)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-d1 RED: no blocking read rides the agent surface — waits and watches retire to the wake plane (docs/49 §5)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-d2 RED: a mutation answers a receipt plus a wake subscription, never the whole view (docs/49 §5)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-e1 RED: a bridge session survives reincarnation — rediscovery, ONE typed notification, wake resume (docs/49 §6)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-e2 RED: an in-flight call at the incarnation boundary is retried once against the successor under the same idempotency key (docs/49 §6)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-f RED: the migration table covers every tool MCP.md documents and the served surface reflects it (docs/49 §7)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-g RED: a retired flat spelling refuses unknown_tool with a movedTo pointer into the core (docs/49 §8)",
+      "reason": "#314"
+    },
+    {
+      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-h RED: MCP.md leads with the resident bridge and documents the descriptor as the headless mode (docs/49 §4)",
+      "reason": "#314"
+    },
+    {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
       "reason": "#460"
     },
