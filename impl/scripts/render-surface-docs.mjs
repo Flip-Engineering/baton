@@ -36,12 +36,21 @@ import {
 import { swarmEventAgentRequiredFields } from '../src/swarm-event-schemas.mjs';
 import { SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 
+// Issue #314 lane 4 (docs/49 §10): the migration table's ONE owner is docs/49 §7 — "the migration
+// table | docs/49 §7, pinned executable in the red file". MCP.md's copy is therefore RENDERED from
+// that section, never restated by hand: a mapping moved in the design and not here is refused by
+// the byte comparison, and a design whose table loses its shape refuses to render at all (never an
+// empty table that would let the section drift silently).
+const MIGRATION_DOC = new URL('../../docs/49-mcp-primary-surface.md', import.meta.url);
+const MIGRATION_HEADING = '## 7. The migration table';
+
 const CLI_DOC = new URL('../CLI.md', import.meta.url);
 const MCP_DOC = new URL('../MCP.md', import.meta.url);
 const GRAMMAR_DOC = new URL('../../docs/36-unified-control-grammar.md', import.meta.url);
 export const CLI_INVENTORY_MARKER = 'cli-verb-inventory';
 export const CLI_FLEET_ROUTES_MARKER = 'cli-fleet-routes';
 export const MCP_INVENTORY_MARKER = 'mcp-tool-inventory';
+export const MCP_MIGRATION_MARKER = 'mcp-migration-table';
 export const CLI_HOST_VERBS_MARKER = 'cli-host-verb-inventory';
 export const CLI_TOP_LEVEL_VERBS_MARKER = 'cli-top-level-verbs';
 export const SWARM_FAMILY_MARKER = 'swarm-family';
@@ -160,6 +169,45 @@ export function renderMcpToolInventory() {
   return [
     '| Operation | Profile | MCP tool | Annotation |',
     '|---|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+/** The rows of docs/49 §7's migration table, parsed from its ONE owner: `[today's tool, lands as]`
+ * per row. A source whose heading or table shape no longer matches REFUSES (never an empty or
+ * partial table), because an empty render is the one outcome that would let the block drift
+ * silently — the same posture renderSwarmFamily takes on its attention vocabulary. */
+export function mcpMigrationRows(text = readFileSync(MIGRATION_DOC, 'utf8')) {
+  const start = text.indexOf(MIGRATION_HEADING);
+  if (start < 0) throw new Error(`docs/49 §7 heading not found: "${MIGRATION_HEADING}"`);
+  const rows = [];
+  for (const line of text.slice(start).split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) {
+      if (rows.length > 0) break;
+      continue;
+    }
+    // The header row and the `|---|` separator are the table's first two lines.
+    if (rows.length === 0 && /^\|\s*today's tool\s*\|/u.test(trimmed)) continue;
+    if (/^\|[\s:-]+\|[\s:|-]*$/u.test(trimmed)) continue;
+    const cells = trimmed.replace(/^\||\|$/gu, '').split('|').map((cell) => cell.trim());
+    if (cells.length !== 2 || cells.some((cell) => cell.length === 0)) {
+      throw new Error(`docs/49 §7 row is not a two-cell migration row: ${trimmed}`);
+    }
+    rows.push(cells);
+  }
+  if (rows.length === 0) throw new Error('docs/49 §7 carries no migration rows');
+  return rows;
+}
+
+/** MCP.md's migration section: the docs/49 §7 table, rendered from the design that owns it. Every
+ * flat spelling the guide documents maps to exactly one core verb, one surface operation, or a
+ * named retirement; the executable pin of the same table is the red file's MIGRATION (314-f). */
+export function renderMcpMigrationTable() {
+  const rows = mcpMigrationRows().map(([tool, landsAs]) => `| ${tool} | ${landsAs} |`);
+  return [
+    "| today's tool | lands as |",
+    '|---|---|',
     ...rows,
   ].join('\n');
 }
@@ -351,6 +399,7 @@ export const TARGETS = [
   { doc: CLI_DOC, marker: CLI_HOST_VERBS_MARKER, render: renderCliHostVerbInventory },
   { doc: CLI_DOC, marker: CLI_TOP_LEVEL_VERBS_MARKER, render: renderCliTopLevelVerbs },
   { doc: MCP_DOC, marker: MCP_INVENTORY_MARKER, render: renderMcpToolInventory },
+  { doc: MCP_DOC, marker: MCP_MIGRATION_MARKER, render: renderMcpMigrationTable },
   { doc: GRAMMAR_DOC, marker: SWARM_FAMILY_MARKER, render: renderSwarmFamily },
 ];
 

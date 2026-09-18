@@ -1,14 +1,56 @@
-# Baton MCP — external-consumption guide (descriptor-first)
+# Baton MCP — external-consumption guide
 
-Run Baton as a standard MCP subprocess with a declarative deployment descriptor. The
-descriptor is READ ONCE at open and immutable for the server's life; edits require a restart.
-Parse failures name the field and the constraint, never the value.
+MCP is Baton's primary agent-facing surface. There are two entries and ONE story: the **resident
+bridge** is the entry story — a served resident publishes its connection and the bridge discovers
+it — and the **descriptor** is the headless mode for a host without a resident. Both entries serve
+the same ordinary tool table over the same registry (#289), under the same principal contract, so
+this guide leads with the bridge.
 
-## Connect
+## The resident bridge (the entry story)
+
+Run `baton serve` in the checkout the harness should act on, then point the harness's MCP config at
+the bridge with no arguments:
+
+```jsonc
+{
+  "mcpServers": {
+    "baton": {
+      "command": "node",
+      "args": ["/absolute/path/to/baton/impl/scripts/mcp-web.mjs"]
+    }
+  }
+}
+```
+
+- **What it needs: a served resident.** `baton serve` publishes an owner-only connection for its
+  checkout while it runs, and the bridge attaches to that deployment — the one the CLI would reach
+  from the same directory.
+- **The connection selector is discovery.** The bridge resolves the published connection exactly as
+  the CLI does (`discoverBatonConnection`), so nothing machine-local enters the harness config: no
+  socket path, no port, no credential.
+- **The principal is the connection's session identity.** It is not a config field: every call
+  attests against the identity the resident's session carries, and a session that narrows the grant
+  ends the attachment typed rather than silently widening it (docs/49 §6).
+- **The coordinate is derived, not supplied.** The bridge derives each call's `repoId` from the
+  connection, its tool schemas carry no such field, and a supplied one is refused; the greeting
+  states the same value with the server-derived wording (`Served repoId: <repo>`).
+- **The bridge takes no arguments.** A descriptor (or any other argument) is refused with the typed
+  `cli_invalid`, and the refusal names the headless entry below. A descriptor was never the
+  bridge's configuration to read.
+- **The deployment is here.** The resident owns the runs, the swarm's coordination ledger and the
+  wake stream, so this is the entry that carries swarms, wakes and the deployment doctor.
+
+## The headless mode (a host without a resident)
+
+A host with no resident runs the deployment AS the MCP process, from a declarative deployment
+descriptor:
 
 ```sh
 node impl/scripts/mcp-stdio.mjs /absolute/path/to/baton-mcp.json
 ```
+
+The descriptor is READ ONCE at open and immutable for the server's life; edits require a restart.
+Parse failures name the field and the constraint, never the value.
 
 A bounded closed JSON descriptor:
 
@@ -53,15 +95,13 @@ server derives no other spelling, and a call naming anything else is refused. Th
 that value itself: the `initialize` greeting carries `Served repoId: <repo>` ("pass this exact
 value as repoId on every tool call"), so a client learns the coordinate from the server instead of
 guessing it. The wire examples below use the same placeholder as the descriptor above; substitute
-your own absolute repository path. A connection that BINDS the coordinate instead (the resident
-bridge) derives it per call and refuses a supplied `repoId`; its greeting states the same
-`Served repoId:` value with the server-derived wording, and its tool schemas carry no `repoId`.
+your own absolute repository path.
 
 The legacy config FACTORY MODULE path stays for advanced deployments (a `.mjs` path is treated
 as a module exporting `default`/`createMcpServer()`), but the descriptor is the documented
 default and the distribution story is npx-from-git (`private: true`, no registry publication).
 
-## Wire it into your harness
+### Wire it into your harness
 
 Any MCP-capable harness spawns the server as a stdio subprocess pointed at the descriptor:
 
@@ -91,11 +131,83 @@ under the client's server configuration idiom.
 
 On `initialize` the server answers with the Flip greeting and the surface-orientation
 instructions line, and that greeting names the served `repoId` (`Served repoId: <repo>`) — the one
-value every tool call takes, stated by the server so it never has to be guessed.
-`baton_deployment_doctor` is the quota-free route-picking prerequisite — call it before starting
-work, passing the greeted coordinate verbatim. The descriptor's `surface: "application"` (the
-documented default) serves the ordinary inventory below; `combined` adds the
-board/package/REPL/knowledge families for kernel-control deployments.
+value every tool call takes, stated by the server so it never has to be guessed. `baton_deployment`
+`doctor` is the quota-free route-picking prerequisite — call it before starting work, passing the
+greeted coordinate verbatim. The descriptor's `surface: "application"` (the documented default)
+serves the ordinary inventory below; `combined` adds the board/package/REPL/knowledge families for
+kernel-control deployments.
+
+## One tool table, two entries
+
+Both entries construct the same `McpFleetServer` ordinary table over the same registry, and both
+run the same entry-parity assertions before they serve (`assertCliMcpControlParity`,
+`assertUnifiedCapabilityCoverage`, `assertSurfaceCapabilityNameClosure`); the constructor's card
+contract refuses a facade that cannot dispatch what it advertises, so neither entry can serve a
+table the other does not.
+
+The design's ordinary surface is ONE verb-tool per family — seven tools, each a
+`verb`-discriminated closed schema whose per-verb arguments are exactly the fields that verb
+takes (docs/49 §2):
+
+| Core tool | Verbs |
+|---|---|
+| `baton_deployment` | `doctor` |
+| `baton_run` | `start`, `view`, `list`, `send`, `stop`, `answer`, `do` |
+| `baton_swarm` | `create`, `list`, `view`, `update`, `recruit`, `guide`, `capture`, `check` |
+| `baton_waves` | `start`, `list`, `progress`, `send`, `stop` |
+| `baton_knowledge` | `search`, `seed` |
+| `baton_wakes` | `subscribe`, `since`, `unsubscribe` |
+| `baton_surface` | `catalog`, `describe`, `invoke`, `snapshot`, `watch`, `visualize` |
+
+Everything else a deployment can do stays one `baton_surface invoke` away (the progressive
+disclosure below), and the migration table names where each flat spelling went. The inventory at
+the end of this guide is rendered from the server's own table — never a hand list — so the served
+truth and this page cannot drift.
+
+On the descriptor surface a call carries both `repoId` and its `idempotencyKey`; on the bound
+bridge surface both are server-derived, and the schemas carry neither.
+
+## Migration from the flat tool set
+
+Every flat spelling this guide used to document maps to exactly one core verb, one surface
+operation, or a named retirement (docs/49 §7 — the design that owns this table; the table below is
+rendered from it, never retyped here):
+
+<!-- BEGIN GENERATED: mcp-migration-table (impl/scripts/render-surface-docs.mjs) -->
+
+| today's tool | lands as |
+|---|---|
+| `baton_deployment_doctor` | `baton_deployment {verb: "doctor"}` |
+| `baton_run_start` / `baton_run_stop` | `baton_run` `start` / `stop` |
+| `baton_run_view` / `baton_run_inspect` / `baton_run_episode` | `baton_run {verb: "view"}` (the depth/section/role/generation axes fold in) |
+| `baton_runs` | `baton_run {verb: "list"}` |
+| `baton_run_message_send` | `baton_run {verb: "send"}` |
+| `baton_decision_answer` | `baton_run {verb: "answer"}` |
+| `baton_run_act` / `baton_run_do` | `baton_run {verb: "do"}` |
+| `baton_run_knowledge_seed` | `baton_knowledge {verb: "seed"}` |
+| `baton_evidence_search` | `baton_knowledge {verb: "search"}` |
+| `baton_swarm_create` / `list` / `view` / `update` / `recruit` / `guide` / `capture` / `check` | `baton_swarm` with the same verb |
+| `baton_waves_start` / `list` / `progress` / `send` / `stop` | `baton_waves` with the same verb |
+| `baton_wakes_subscribe` / `since` / `unsubscribe` | `baton_wakes` with the same verb |
+| `baton_surface_catalog` / `describe` / `invoke` / `snapshot` / `watch` / `visualize` | `baton_surface` with the same verb |
+| `baton_help` / `baton_application_help` | `baton_surface {verb: "describe"}` |
+| `baton_run_member_view` / `baton_run_workstreams` | surface: `run.member.view` |
+| `baton_run_member_send` / `baton_workstream_notify` | surface: `run.member.send` |
+| `baton_run_member_stop` / `baton_workstream_stop` | surface: `run.member.stop` |
+| `baton_run_message_receipt` | surface: `run.message.receipt` |
+| `baton_run_scratchpad_read` / `append` / `elevate` | surface: `run.scratchpad.*` (seat-side verbs) |
+| `baton_swarm_stop` | surface: `swarm.stop` (the `emergency_stop` class) |
+| `baton_swarm_integrate` | surface: `swarm.integrate` (the root's landing verb) |
+| `baton_waves_attach` / `compile` / `run` | surface: `waves.attach` / `waves.compile` / `waves.run` |
+| `baton_scratchpad_elevate` / `baton_scratchpad_settle` / `baton_knowledge_promote` / `baton_knowledge_settlement_lease` | descriptor kernel profile, never bridged — the landed U-G3 posture, unchanged |
+| `baton_run_attention_watch` | **retired** — `baton_wakes {verb: "subscribe"}` replaces it |
+| `baton_swarm_watch` | **retired from MCP** — `baton_wakes {verb: "subscribe", swarms: [id]}` replaces it; the CLI keeps `baton swarm watch` |
+
+<!-- END GENERATED: mcp-migration-table -->
+
+A retired spelling is not dispatched and is not advertised: a call naming one refuses the landed
+`unknown_tool` code, and its `data.movedTo` names the core tool and verb that replace it — a
+migration a client can act on without a `tools/list` round trip.
 
 ## Read readiness
 
@@ -104,6 +216,10 @@ credential posture as metadata ONLY — source kind and expiry class, never toke
 the route-picking prerequisite: call it before starting work.
 
 ## Orchestrate a wave
+
+The wave tools below are named in the flat spelling the migration table folds into the
+`baton_waves` tool (`verb: start`, `list`, `progress`, `send`, `stop`) and `baton_run` (`verb:
+answer`); the wire arguments are the same fields either spelling takes.
 
 The wave-ergonomics tools are the ordinary agent workflow. Wave members are detached — the start
 response returns `{waveId, members: [{role, runId}]}`; live handles never cross the transport.
@@ -254,35 +370,36 @@ that owns the runs, never over a borrowed bridge session.
 
 <!-- END GENERATED: mcp-tool-inventory -->
 
-## Unified surface tools
+## Progressive disclosure: the surface tools
 
-Six `baton_surface_*` meta tools ship beside the direct inventory on every production-wrapped
-deployment (`application`, `advanced`, and `combined`). They project the unified capability
-catalog — Baton's control, observation, telemetry, communication, task-management, knowledge,
-diagnostics/environment, and notification authorities — over one envelope that carries
-`retryable` and `action` fields in its refusals:
+The six `baton_surface_*` meta tools are the route to everything the default surface does not
+advertise, and they fold into ONE `baton_surface` tool whose verbs are those six names:
+`catalog`, `describe`, `invoke`, `snapshot`, `watch`, `visualize` (docs/49 §3). They project the
+unified capability catalog — Baton's control, observation, telemetry, communication,
+task-management, knowledge, diagnostics/environment, and notification authorities — over one
+envelope that carries `retryable` and `action` fields in its refusals:
 
 - `baton_surface_catalog` — the capabilities available to THIS deployment profile.
-- `baton_surface_describe` — one capability: its live schema and posture.
+- `baton_surface_describe` — one capability: its live schema and posture; it also answers a help topic, so `baton_help` and `baton_application_help` are this verb with a name.
 - `baton_surface_invoke` — invoke a capability by name, routed through the authority it already has.
 - `baton_surface_snapshot` — one composed read: card, readiness, workers, telemetry.
 - `baton_surface_watch` — the composed notification loop (run follow + attention watch + decisions).
 - `baton_surface_visualize` — a bounded visual model (overview/topology/timeline/telemetry) carrying the swarm family rows — residents, swarms and participants with state and last wake, attention with the next action — and no persona field anywhere.
 
-They are additive: the direct tools stay the primary surface. What a deployment can reach is
-decided by its profile — the catalog names it, and `baton_surface_invoke` routes each capability
-to the authority that carries it or refuses with the profile-restricted code. Kernel-control
-(`fleet_*`) tools are advertised on `advanced`/`combined` surfaces only: an ordinary surface's
-`tools/list` never carries a tool its own dispatch guard would refuse, and the meta tools are
-where a non-kernel profile reaches a kernel capability when its principal holds the capability
-class for it.
+What a deployment can reach is decided by its profile — the catalog names it, and
+`baton_surface_invoke` routes each capability to the authority that carries it or refuses with the
+profile-restricted code. Kernel-control (`fleet_*`) tools are advertised on `advanced`/`combined`
+surfaces only: an ordinary surface's `tools/list` never carries a tool its own dispatch guard would
+refuse, and the surface verbs are where a non-kernel profile reaches a kernel capability when its
+principal holds the capability class for it.
 
 ## Declare coupling in a swarm
 
 The `baton_swarm_update` tool carries every domain update, including the declared coupling
 records (docs/39 §Declared coupling). Coupling is a record the swarm keeps honest — it informs
-the `baton_swarm_view` result, the attention rows, and the `baton_swarm_watch` wake; nothing
-stops a worker. Payload examples (each with a caller `idempotencyKey`):
+the `baton_swarm_view` result, the attention rows, and the wake stream (`baton_wakes_subscribe`
+with a `swarms` filter — the retired blocking watch's replacement); nothing stops a worker.
+Payload examples (each with a caller `idempotencyKey`):
 
 ```jsonc
 // A dependency between units of work (swarm.work_updated): W2 waits for W1's accepted
@@ -316,9 +433,9 @@ creator) and the reclaiming operation (`baton_swarm_stop`).
 `baton_swarm_view` projects what each participant was told and where it works, and every projected
 row carries the `seq` and `ts` of the coordination event that wrote it. An optional `projection`
 names the slice to answer with — `full` (the default, the whole record), `outline` (the frame
-alone), `participants`, `contributions`, `attention`, `guidance` or `workspace`; `baton_swarm_watch`
-takes the same field, so a caller reads the part it needs instead of the whole record. `updates`
-sits beside `availableActions` and lists each update kind this caller may send now WITH the
+alone), `participants`, `contributions`, `attention`, `guidance` or `workspace` — so a caller
+reads the part it needs instead of the whole record. `updates` sits beside `availableActions` and
+lists each update kind this caller may send now WITH the
 permission that admits it; the payload shapes ride `full` only. A participant row shows the guidance
 addressed to it, its live checkout custody, the `route` (`{harness, model, effort}`) and `scope` it
 was recruited under, and `lastRefusal` while a refusal of its own stands uncleared:
@@ -341,8 +458,8 @@ sender can watch for the participant's next turn instead of guessing the message
 A refused mutation is durable: the runtime records a `swarm.operation_refused` driver row naming the
 command, the update event, the refusal code, the offending field when the refusal named one, and the
 RULE that refused it — and the refusals the native bridge raises before dispatch land on the same
-lane, with the participant the bridge token names. Swarm state never folds it, and
-`baton_swarm_watch` wakes on it with
+lane, with the participant the bridge token names. Swarm state never folds it, and the wake stream
+delivers it as
 `"event": { "kind": "driver.recorded", "payloadKind": "swarm.operation_refused" }`. A refused read
 records nothing. The participant's own row carries the refusal as
 `lastRefusal: { seq, command, code, field }` until a later operation of the same command succeeds.
