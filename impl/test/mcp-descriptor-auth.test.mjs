@@ -84,7 +84,9 @@ test('U-E1: a descriptor-launched stdio server authenticates and answers baton_d
     'the initialize instructions carry the served repoId (U-G10)');
   await send({ jsonrpc: '2.0', method: 'notifications/initialized' });
 
-  await send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'baton_deployment_doctor', arguments: { repoId: REPO } } });
+  // The shipped ordinary surface advertises the core verb-tools (issue #314): doctor is
+  // baton_deployment {verb: "doctor"}.
+  await send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'baton_deployment', arguments: { repoId: REPO, verb: 'doctor' } } });
   const answer = await waitFor(2, 'doctor call');
   assert.equal(answer.result.isError, false, `the documented quickstart must serve a call (U-E1); got: ${JSON.stringify(answer.result)}`);
   const readiness = answer.result.structuredContent;
@@ -132,6 +134,8 @@ const call = (server, id, name, args) => request(server, id, 'tools/call', { nam
 const errorCode = (response) => response?.result?.structuredContent?.error?.code ?? null;
 
 test('U-E1: the descriptor principal is process-lifetime (expiresAt null), and the guard still refuses broken expiries', async () => {
+  // This row pins the raw server's guard, so it calls the raw server's own (flat) spelling —
+  // the core table is what the production wrapper serves, and U-G10 below drives that seam.
   const serving = serverWithPrincipal();
   assert.equal(serving.server.principal.expiresAt, null, 'the descriptor principal carries the explicit process-lifetime marker, never a fabricated duration');
   assert.equal(serving.server.principal.revoked, false);
@@ -169,6 +173,6 @@ test('U-G10: initialize carries the served repoId, and a client can call with ex
   assert.match(init.result.instructions, /Served repoId: /, 'the greeting names the served repoId');
   assert.match(init.result.instructions, new RegExp(`${REPO.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} — pass this exact value as repoId`));
   await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
-  const served = await call(server, 2, 'baton_deployment_doctor', { repoId: REPO });
+  const served = await call(server, 2, 'baton_deployment', { repoId: REPO, verb: 'doctor' });
   assert.equal(served.result.isError, false, 'the greeted value is the value the server accepts');
 });

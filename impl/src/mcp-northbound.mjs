@@ -1083,7 +1083,7 @@ function withSpellingNote(tool) {
   }
   return tool;
 }
-const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
+export const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.map(withSpellingNote),
   ...SWARM_APPLICATION_TOOL_DEFINITIONS,
   ...EVIDENCE_SEARCH_TOOL_DEFINITIONS,
@@ -1409,7 +1409,7 @@ function damerauLevenshtein(a, b) {
   return dp[a.length][b.length];
 }
 
-function nearestToolName(requested, names) {
+export function nearestToolName(requested, names) {
   let nearest = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
   for (const name of [...names].sort()) {
