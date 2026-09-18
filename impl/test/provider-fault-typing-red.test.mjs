@@ -88,8 +88,12 @@ test('PF-A: a limit answer with a reset instant types as provider_quota_exhauste
   assert.deepEqual(turn.payload.failure.detail.route,
     { harness: 'omp', model: MODEL, effort: 'high' },
     'the fault names the exact route it is a fact about');
-  assert.equal(turn.payload.failure.detail.resetAt, '2026-09-14T20:40:02.000Z',
-    'the reset instant the provider itself named rides the typed fault');
+  // #442 item 4: this answer spelled a wall-clock with NO zone. The typed fault keeps the
+  // provider's own words and derives no instant from them — reading a zone-less wall-clock as UTC
+  // invented the instant that sat hours off the one the provider meant (measured 2026-09-18 on the
+  // zai quota answer). The zone-qualified case is the next row.
+  assert.equal(turn.payload.failure.detail.resetAt, null);
+  assert.equal(turn.payload.failure.detail.resetAtText, '2026-09-14 20:40:02');
   assert.ok(!/omp_error/u.test(turn.payload.failure.code), 'no adapter-local stopReason code leaks');
 });
 
@@ -137,6 +141,7 @@ test('PF-B: the death cert names the typed fault and its detail — a rate-limit
   assert.ok(crashed, 'the process-exit fact is published as a crash cert');
   assert.equal(crashed.payload.code, PROVIDER_FAULT_CODES.quota,
     'the cert carries the class the wire already carried, not a bare phase');
-  assert.equal(crashed.payload.detail.resetAt, '2026-09-14T20:40:02.000Z');
+  assert.equal(crashed.payload.detail.resetAt, null, 'a zone-less answer derives no instant');
+  assert.equal(crashed.payload.detail.resetAtText, '2026-09-14 20:40:02');
   assert.equal(crashed.payload.detail.route.model, MODEL);
 });

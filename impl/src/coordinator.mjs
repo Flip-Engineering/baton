@@ -1486,6 +1486,11 @@ export class Coordinator {
     // reconstruction below (null until it has run) — the fact the swarm runtime reconciles its
     // participant runtime rows against after a restart.
     this._startupWorkerFleet = null;
+    // Issue #442: the provider-fault deaths THIS incarnation recorded, by worker — the ONE place
+    // both the typed fault (#295) and the preservation it left are known, read by the swarm runtime
+    // so a seat's fault row is composed from the coordinator's own death seam rather than a scan of
+    // the worker ledger.
+    this._providerFaultDeaths = new Map();
     if (this._coordination?._deferredLoad === true) {
       this._startupReconstructionPending = true;
     } else {
@@ -1565,6 +1570,20 @@ export class Coordinator {
    * the first command (the swarm runtime asks at every entry) and gets `null` rather than a throw. */
   startupWorkerFleet() {
     return this._startupWorkerFleet ?? null;
+  }
+
+  /** Issue #442: the provider-fault death one worker ended with, or null. Recorded at the ONE seam
+   * that already knows the whole death (`_mintProviderFaultDeath`: the typed fault class, the exact
+   * route, the provider's own reset answer, and the progress checkpoint the stop preserved), so the
+   * swarm runtime composes its seat-level fault row from the coordinator's own observation instead
+   * of re-deriving a `lifecycle.turn_completed` + `kill.requested` pair out of the ledger.
+   *
+   * A pure read of a frozen record: a worker that did not die of a provider fault reads null, and a
+   * caller may ask before the first command. The record is history — it is never cleared — and the
+   * runtime's own idempotency key is what keeps its durable row exactly-once. */
+  providerFaultDeathFor(workerId) {
+    if (typeof workerId !== 'string' || workerId.length === 0) return null;
+    return this._providerFaultDeaths?.get(workerId) ?? null;
   }
 
   *_startupReconstructionPasses() {
@@ -15901,7 +15920,12 @@ export class Coordinator {
       workerId: handle.id,
       taskId: task?.id ?? handle.taskId ?? null,
       route,
-      fault: Object.freeze({ code: cause.code, resetAt }),
+      // #442 item 4: the provider's OWN reset answer rides beside the instant this deployment was
+      // willing to derive from it — a zone-less answer keeps its text and derives no instant.
+      fault: Object.freeze({
+        code: cause.code, resetAt,
+        ...(quota && detail?.resetAtText ? { resetAtText: detail.resetAtText } : {}),
+      }),
       checkpoint,
       retainedWorktree,
       preservation: preservation ?? Object.freeze({ state: 'not_applicable' }),
@@ -15911,6 +15935,24 @@ export class Coordinator {
     };
     handle.providerFaultRowSeq = reason.seq;
     this._attentionReasons.push(reason);
+    // #442: the death — the typed fault, the route, the provider's reset answer and the checkpoint
+    // the stop preserved — recorded ONCE here for the swarm runtime, which folds its seat-level
+    // fault row from this observation. The runtime's own idempotency key keeps that row
+    // exactly-once; this record is the observation, never a second ledger.
+    this._providerFaultDeaths ??= new Map();
+    this._providerFaultDeaths.set(handle.id, Object.freeze({
+      workerId: handle.id,
+      taskId: task?.id ?? handle.taskId ?? null,
+      runId: task?.runId ?? handle.runId ?? null,
+      seq: reason.seq,
+      at: new Date(reason.mintedAt).toISOString(),
+      code: cause.code,
+      route,
+      resetAt,
+      resetAtText: quota ? detail?.resetAtText ?? null : null,
+      snapshotSha: checkpoint?.sha ?? null,
+      retainedWorktree,
+    }));
     // #316 (a): the death is ALSO evidence about the ROUTE. The fold below turns a run of them
     // into one deployment-level row — the same fault class, one route, one window — which is what
     // the root acts on (pause recruits on that route) instead of N anonymous dead runtimes.
@@ -15957,6 +15999,14 @@ export class Coordinator {
       open.row.window = Object.freeze({
         from: open.row.window.from, to: new Date(at).toISOString(),
       });
+      // #442 item 2: the episode carries the provider's own reset answer, so the route row a
+      // recruit is refused on can name when the provider said the route comes back — and the
+      // deployment's derivation can retire the episode at that instant instead of holding a route
+      // off forever on an episode whose provider already said it was over.
+      if (death.fault?.resetAt && death.fault.resetAt !== open.row.resetAt) open.row.resetAt = death.fault.resetAt;
+      if (death.fault?.resetAtText && death.fault.resetAtText !== open.row.resetAtText) {
+        open.row.resetAtText = death.fault.resetAtText;
+      }
       this._recordProviderDegrade(handle, task, open.row);
       return open.row;
     }
@@ -15973,6 +16023,8 @@ export class Coordinator {
       count: 1,
       window: Object.freeze({ from: new Date(at).toISOString(), to: new Date(at).toISOString() }),
       next,
+      resetAt: death.fault?.resetAt ?? null,
+      resetAtText: death.fault?.resetAtText ?? null,
     };
     this._providerDegrades.set(key, { faultClass, from: at, to: at, row });
     this._attentionReasons.push(row);
@@ -15994,6 +16046,9 @@ export class Coordinator {
           route: row.route, faultClass: row.faultClass,
           participants: Object.freeze([...row.participants]),
           window: row.window, count: row.count, next: row.next,
+          // #442 item 2: the provider's own reset answer rides the durable episode — the deployment
+          // derives the route's degraded state (and whether the instant has passed) from THIS row.
+          resetAt: row.resetAt ?? null, resetAtText: row.resetAtText ?? null,
         },
       });
     } catch { /* the fold itself is already authoritative in memory; the ledger read is additive */ }
