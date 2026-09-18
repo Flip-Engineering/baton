@@ -226,6 +226,8 @@ test('a gone holder is released in one durable batch; a live one refuses', async
 
   // ...and the release lands as ONE batch of exactly the individual events a hand-written
   // sequence would record — no extra kind in the durable log, so replay is byte-identical.
+  // Since #395 the stop's own leave fold evicts the seat from its groups, so a group the
+  // leave already pruned needs no group rewrite in the batch — the row is already true.
   const before = driver.coordination.ledgerHeadSeq();
   await swarm.holderRelease('alpha', 'runtime is gone; seats released');
   view = await swarm.view();
@@ -233,7 +235,7 @@ test('a gone holder is released in one durable batch; a live one refuses', async
   assert.deepEqual(view.groups.find((row) => row.groupId === 'impl').members, ['beta']);
   const batch = driver.coordination.eventsView().slice(before);
   assert.deepEqual(batch.filter((event) => event.kind.startsWith('swarm.')).map((event) => event.kind),
-    ['swarm.assignment_updated', 'swarm.group_updated']);
+    ['swarm.assignment_updated']);
   assert.equal(driver.coordination.eventsView().some((event) => event.kind === 'swarm.holder_released'), false,
     'the release event expands; it never lands as its own durable kind');
   const requested = batch.find((event) => event.kind === 'driver.recorded' && event.payload?.kind === 'swarm.operation_requested');
