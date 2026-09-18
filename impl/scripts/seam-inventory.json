@@ -3966,7 +3966,7 @@
         {
           "name": "_semanticControlTargets",
           "ordinal": 0,
-          "size": 35,
+          "size": 39,
           "seam": "observation",
           "evidence": [
             "observation:key_name",
@@ -4251,7 +4251,7 @@
         {
           "name": "_findRun",
           "ordinal": 0,
-          "size": 102,
+          "size": 103,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
@@ -4279,7 +4279,7 @@
         {
           "name": "_workflowPlanHistory",
           "ordinal": 0,
-          "size": 46,
+          "size": 49,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -4504,7 +4504,7 @@
         {
           "name": "_reconcileApprovedRuns",
           "ordinal": 0,
-          "size": 35,
+          "size": 48,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -4515,7 +4515,7 @@
         {
           "name": "_dispatchCurrent",
           "ordinal": 0,
-          "size": 156,
+          "size": 172,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
