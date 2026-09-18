@@ -22,6 +22,9 @@ import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/i
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS } from '../src/swarm-contract.mjs';
+// #425: the guidance may name a kind the runtime records into the swarm fold (never
+// caller-submittable), so the registered vocabulary includes the fold's own set.
+import { SWARM_EVENT_KINDS as SWARM_FOLD_EVENT_KINDS } from '../src/swarm-state.mjs';
 import { SWARM_NATIVE_GUIDANCE } from '../src/swarm-native-access.mjs';
 
 // The view's coupling collection is an ARRAY of rows (issue #302, one collection shape).
@@ -343,7 +346,7 @@ test('a retry under the same idempotencyKey names the remedy: a NEW attempt need
 test('the native guidance names only commands that exist', () => {
   // Every `swarm.…` token the guidance teaches is a registered command or a registered update
   // event: the guidance shipped to every native participant must not name a verb that is not.
-  const known = new Set([...SWARM_COMMAND_NAMES, ...SWARM_EVENT_KINDS]);
+  const known = new Set([...SWARM_COMMAND_NAMES, ...SWARM_EVENT_KINDS, ...SWARM_FOLD_EVENT_KINDS]);
   for (const name of SWARM_NATIVE_GUIDANCE.match(/\bswarm\.[a-z_]+/gu) ?? []) {
     assert.ok(known.has(name), `${name} is a registered command or event kind`);
   }

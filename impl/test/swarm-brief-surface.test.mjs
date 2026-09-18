@@ -18,6 +18,9 @@ import { SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { SWARM_NATIVE_GUIDANCE, SWARM_BRIEF_SECTION, SWARM_BRIDGE_TOOL } from '../src/swarm-native-access.mjs';
 import { SWARM_BRIDGE_ENV_KEYS, SWARM_BRIDGE_GUIDANCE, SWARM_BRIDGE_NOTHING_RECORDED } from '../src/swarm-native-bridge.mjs';
 import { SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS } from '../src/swarm-contract.mjs';
+// #425: the brief may also name a kind the RUNTIME records into the swarm fold (never
+// caller-submittable), so the registered vocabulary the pin checks against is the fold's own set too.
+import { SWARM_EVENT_KINDS as SWARM_FOLD_EVENT_KINDS } from '../src/swarm-state.mjs';
 
 const policy = Object.freeze({
   schemaVersion: 1,
@@ -181,7 +184,7 @@ test('the Swarm section, SWARM_NATIVE_GUIDANCE, and the bridge guidance are one 
     && SWARM_BRIDGE_TOOL.includes('swarm.update'), 'the bridge tool entry names the client and its verbs');
   // Every swarm verb the section names is a registered command or event kind, and the guidance
   // keeps the retry truth it is already pinned to (issue292 pins, now over the whole section).
-  const known = new Set([...SWARM_COMMAND_NAMES, ...SWARM_EVENT_KINDS]);
+  const known = new Set([...SWARM_COMMAND_NAMES, ...SWARM_EVENT_KINDS, ...SWARM_FOLD_EVENT_KINDS]);
   for (const name of SWARM_BRIEF_SECTION.match(/\bswarm\.[a-z_]+/gu) ?? []) {
     assert.ok(known.has(name), `${name} is a registered command or event kind`);
   }
