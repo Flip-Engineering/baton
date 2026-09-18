@@ -70,6 +70,81 @@ const MAX_ATTENTION = 64;
 const ATTENTION_PAGE_BYTES = Math.floor(MAX_RUN_VIEW_BYTES / 4);
 const MAX_ATTENTION_TEXT_BYTES = FRAME_LIMITS['view.attention_text.bytes'].value;
 const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = FRAME_LIMITS['view.blocked_interaction_summary.bytes'].value;
+// Issue #489: the Run view's SHED ladder — the sections a NARROWED read drops, in order, each
+// with the depth read that serves it. `view.run.bytes` is the registry's shed-flagged row, and
+// the incident was that the refusal fired BEFORE any narrowing: every `baton run show --depth
+// outline` refused for the very run the refusal told the operator to narrow, and every
+// `recruit --issue` refused because the participant's own start built a view nobody read. The
+// ladder is judged only for a caller that asked for a narrowing (`narrow: true`): a step whose
+// section is absent, empty or already a reference is skipped, and a step that did not pay is
+// rolled back — a shed section is never a silent loss, it is named with its bytes and the read
+// that answers it (the view's own `narrowed` record).
+const RUN_VIEW_SHED_STEPS = Object.freeze([
+  // The knowledge slice: a projection of the run's seeded facts, re-readable as the outline's
+  // candidates count plus the run's own knowledge rows.
+  { section: 'knowledge', read: '--depth outline (knowledge.candidatesAwaitingAdmission)',
+    shed: (view) => (view.knowledge === null || view.knowledge === undefined ? null
+      : { knowledge: null, knowledgeRef: { digest: view.knowledgeDigest ?? null } }) },
+  // The activity rows: the bounded worker summaries the execution section carries.
+  { section: 'activity', read: '--depth section --section execution',
+    shed: (view) => (view.activity === null || view.activity === undefined ? null : { activity: null }) },
+  // The evidence rows: the artifacts the episode/verification sections carry.
+  { section: 'evidence', read: '--depth section --section verification',
+    shed: (view) => (Array.isArray(view.evidence) && view.evidence.length > 0 ? { evidence: [] } : null) },
+  // The worker's scratchpad: a Context read of its own, never the view's point.
+  { section: 'scratchpad', read: '--depth section --section context',
+    shed: (view) => (view.scratchpad === null || view.scratchpad === undefined ? null : { scratchpad: null }) },
+  // The Plan subjects the preview and the node rows carry (the plan section serves them whole).
+  { section: 'planPreview', read: '--depth section --section plan',
+    shed: (view) => (view.planPreview === null || view.planPreview === undefined ? null
+      : { planPreview: { planDigest: view.planPreview.planDigest ?? null,
+        displayDigest: view.planPreview.displayDigest ?? null } }) },
+  { section: 'nodes', read: '--depth section --section plan',
+    shed: (view) => (Array.isArray(view.nodes) && view.nodes.length > 0
+      ? { nodes: view.nodes.map((node) => ({ key: node.key, state: node.state ?? null,
+        taskId: node.taskId ?? null })) } : null) },
+  // The objective LAST: it is what the view exists to carry, and the outline serves the goal's own
+  // text verbatim — so the text is shed only when carrying it is what makes the view unreadable.
+  { section: 'objective', read: '--depth outline',
+    shed: (view) => (typeof view.objective !== 'string' ? null
+      : { objective: view.objectiveRef ?? { ref: 'goal.objective',
+        bytes: view.objectiveBytes ?? Buffer.byteLength(view.objective, 'utf8') } }) },
+]);
+
+/** The ONE narrowing an oversize Run view prescribes (issue #489): the depth ladder's first rung.
+ * It answers for every run — the outline carries the goal's own text and none of the sections the
+ * shed ladder drops — so the remedy the refusal teaches is one the deployment really serves. */
+function runViewNarrowedRead(runId) {
+  return typeof runId === 'string' && runId.length > 0
+    ? `baton run show ${runId} --depth outline` : '--depth outline';
+}
+
+/** Issue #489: the ONE budgeted line a Run view carries in place of the objective's whole text —
+ * the objective's FIRST LINE, cut by the ONE `view.role.head` row budget #464 derives for the
+ * participant row's `role`. ONE derivation for every Run-view builder, the swarm's participant
+ * row and the #469 operation receipt: three surfaces, one cut, so none can disagree about how
+ * much of an objective a summary line carries. */
+function objectiveFirstLine(text) {
+  const whole = typeof text === 'string' ? text : '';
+  const newline = whole.indexOf('\n');
+  return capBytesToScalar(newline === -1 ? whole : whole.slice(0, newline),
+    FRAME_LIMITS['view.role.head'].value);
+}
+
+/** The reach a summary line carries beside it (issue #489): the pointer that names WHERE the
+ * whole text lives — the view's own `objective`, the goal's objective — and the byte length a
+ * reader did not get. The #464/#469 pair, spelled once for the Run view. */
+function objectiveReach(bytes) {
+  return Object.freeze({ ref: 'goal.objective', bytes });
+}
+
+/** Issue #489: the Plan-node rows a view carries — each with the objective's REACH in place of a
+ * second copy of its text, so a hundred-node run costs a hundred lines, never a hundred briefs. */
+function boundedPlanNodes(nodes, objectiveLine, objectiveBytes) {
+  return (Array.isArray(nodes) ? nodes : []).map((node) => Object.freeze({
+    ...clone(node), objective: objectiveLine, objectiveRef: objectiveReach(objectiveBytes),
+  }));
+}
 const DEFAULT_TURN_NUDGE_MESSAGE = 'Continue the current turn.';
 // Epic #103 (D5a): the UNTRUSTED frame every serve of the campaign body carries — the pack is
 // evidence to verify, never a command channel (G9).
@@ -3876,12 +3951,16 @@ export class BatonApplication {
         // The swarm resolved a live shared checkout for this Run before membership was written;
         // admission here only refuses a shape this deployment cannot honor.
         if (request.workspace) this._admitWorkspaceAttachment(request.runId, request.workspace);
-        await this.start(prepareRunStart(objective, { ...request.options, runId: request.runId }), starter, applicationContext);
+        // Issue #489: the participant's start DISCARDS the view it returns (the seat reads its own
+        // brief and the bridge answers the shell), so a composed view over the deployment ceiling
+        // must never refuse here — the recruit's whole reading leg depends on this admission.
+        await this.start(prepareRunStart(objective, { ...request.options, runId: request.runId }),
+          starter, applicationContext, { view: 'narrow' });
         const current = this._findRun(request.runId);
         if (!current.plan) throw applicationError('Participant planning has not completed', 'application_run_incomplete');
         if (this.driver.coordination.runStop(request.runId)) throw applicationError('Participant was stopped before dispatch', 'swarm_participant_stopped');
         await this._swarmNativeAccess.prepare(request);
-        await this.approve(request.runId, current.plan.digest, this.principals.dispatcher);
+        await this.approve(request.runId, current.plan.digest, this.principals.dispatcher, { view: 'narrow' });
       },
       // The participant knowledge verbs (#318): the runtime's knowledge dispatch routes into the
       // ONE implementation each verb already has — these very methods, with their own admission
@@ -5379,7 +5458,14 @@ export class BatonApplication {
     }
   }
 
-  async start(rawIntent, rawOwner, rawContext = null) {
+  /**
+   * Issue #489: `rawOptions.view === 'narrow'` tells the Run-view composition that this caller
+   * does not read the whole view — the swarm's participant start is the ONE such caller: it
+   * discards the answer, and building (and refusing on) a view nobody reads is what made every
+   * `recruit --issue` fail with `application_run_view_oversize`. The view that comes back is the
+   * SHED one: it says what it shed, what each section cost and the read that serves it.
+   */
+  async start(rawIntent, rawOwner, rawContext = null, rawOptions = null) {
     this._assertOpen();
     await this.ready;
     const context = normalizeCommandContext(rawContext);
@@ -5628,16 +5714,21 @@ export class BatonApplication {
         nodes: nodeFields,
       }, authority(this.principals.planner, this.repoId, intent.runId, 'plan:propose', `application:${intent.runId}:plan:v1`));
     } catch (error) {
-      return this._planningView(this._findRun(intent.runId), error);
+      return this._planningView(this._findRun(intent.runId), error, this.principals.observer,
+        { narrow: rawOptions?.view === 'narrow' });
     }
     if (proposed.plan.digest !== expectedPlanDigest) {
       throw applicationError('proposed Plan differs from its committed Workflow definition',
         'application_workflow_integrity');
     }
-    return this._buildView(this._findRun(intent.runId), this.principals.observer, { expected: { goal, plan: proposed.plan } });
+    return this._buildView(this._findRun(intent.runId), this.principals.observer,
+      { expected: { goal, plan: proposed.plan }, ...(rawOptions?.view === 'narrow' ? { narrow: true } : {}) });
   }
 
-  async approve(runId, planDigest, rawApprover) {
+  /** Issue #489: `rawOptions.view === 'narrow'` (the participant's own admission leg, whose caller
+   * discards the view) narrows the answer instead of refusing on it — the same option `start`
+   * takes, so one participant admission can never refuse on a view neither half reads. */
+  async approve(runId, planDigest, rawApprover, rawOptions = null) {
     this._assertOpen();
     await this.ready;
     if (!validId(runId) || typeof planDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(planDigest)) {
@@ -5669,7 +5760,8 @@ export class BatonApplication {
       throw applicationError('plan was already denied', 'application_plan_denied');
     }
     await this._dispatchCurrent(this._findRun(runId));
-    return this._buildView(this._findRun(runId), this.principals.observer);
+    return this._buildView(this._findRun(runId), this.principals.observer,
+      rawOptions?.view === 'narrow' ? { narrow: true } : undefined);
   }
 
   async _goalPlanStatus(current, observer) {
@@ -6643,7 +6735,71 @@ export class BatonApplication {
     return response;
   }
 
-  _planningView(current, cause = null, principal = this.principals.observer) {
+  /**
+   * Issue #489: judge a composed Run view against the deployment's projection ceiling — AFTER
+   * narrowing. `view.run.bytes` is the registry's `shed-flagged` row, and the incident was that
+   * the refusal fired BEFORE any narrowing ran: `run show <run> --depth outline` refused for the
+   * very run the refusal prescribed narrowing for, and every `recruit --issue` refused because the
+   * participant's own start built a view nobody reads. A caller that asked for a narrowing
+   * (`options.narrow`, set by the `run.inspect` ladder and by the participant's start) gets the
+   * SHED view: the sections the ladder names are replaced by their references, one at a time,
+   * until the view fits — and the view SAYS what it shed, what each cost and the read that serves
+   * it. A caller that asked for the whole view keeps the typed refusal, now naming the section
+   * that dominates the view and the narrowing that actually works.
+   */
+  _finalizeRunView(current, view, options = {}) {
+    const runId = current?.goal?.runId ?? null;
+    const observed = Buffer.byteLength(JSON.stringify(view), 'utf8');
+    if (observed <= MAX_RUN_VIEW_BYTES) return deepFreeze(view);
+    if (options.narrow !== true) throw this._runViewOversizeRefusal(runId, view, observed, []);
+    const shed = [];
+    let narrowed = view;
+    for (const step of RUN_VIEW_SHED_STEPS) {
+      const before = Buffer.byteLength(JSON.stringify(narrowed), 'utf8');
+      if (before <= MAX_RUN_VIEW_BYTES) break;
+      const replacement = step.shed(narrowed);
+      if (replacement === null) continue;
+      const candidate = { ...narrowed, ...replacement };
+      const after = Buffer.byteLength(JSON.stringify(candidate), 'utf8');
+      // A step that did not PAY is rolled back: a reference that costs as much as the value it
+      // replaced is not a narrowing, and the section stays whole.
+      if (after >= before) continue;
+      narrowed = candidate;
+      shed.push(Object.freeze({ section: step.section, bytes: before - after, read: step.read }));
+    }
+    const remaining = Buffer.byteLength(JSON.stringify(narrowed), 'utf8');
+    if (remaining > MAX_RUN_VIEW_BYTES) throw this._runViewOversizeRefusal(runId, narrowed, remaining, shed);
+    return deepFreeze({ ...narrowed, narrowed: Object.freeze({
+      ceiling: MAX_RUN_VIEW_BYTES, sections: Object.freeze(shed), read: runViewNarrowedRead(runId),
+    }) });
+  }
+
+  /** The ONE oversize refusal (issue #489): the byte count, the section that dominates the view,
+   * the sections a narrowed read already shed, and the narrowing that WORKS — never a bare
+   * "exceeds deployment policy" and never a remedy the deployment refuses. */
+  _runViewOversizeRefusal(runId, view, observed, shed) {
+    const measured = Object.entries(view)
+      .map(([section, value]) => Object.freeze({
+        section, bytes: Buffer.byteLength(JSON.stringify(value ?? null), 'utf8'),
+      }))
+      .sort((left, right) => (right.bytes - left.bytes) || (left.section < right.section ? -1 : 1));
+    const largest = measured[0] ?? Object.freeze({ section: 'view', bytes: observed });
+    const error = applicationError(
+      `Run view is ${observed} bytes, over the deployment's ${MAX_RUN_VIEW_BYTES}-byte view ceiling;`
+      + ` the largest section is ${largest.section} (${largest.bytes} bytes)`
+      + (shed.length === 0 ? '' : `, already shed: ${shed.map((row) => row.section).join(', ')}`)
+      + ` — narrow the read (${runViewNarrowedRead(runId)}) or raise the deployment ceiling`,
+      'application_run_view_oversize',
+      { field: 'depth', cap: MAX_RUN_VIEW_BYTES, actual: observed, unit: 'bytes',
+        section: largest.section, sectionBytes: largest.bytes,
+        ...(shed.length === 0 ? {} : { shed: clone(shed) }),
+        gracefulPath: 'depth:outline' },
+    );
+    error.cap = MAX_RUN_VIEW_BYTES; error.actual = observed; error.unit = 'bytes';
+    return error;
+  }
+
+  _planningView(current, cause = null, principal = this.principals.observer, options = {}) {
     const resultIdentity = resultIntentConstraint(current.goal.constraints);
     const resultIntent = resultIdentity.resultIntent;
     const runStop = this.driver.coordination.runStop?.(current.goal.runId) ?? null;
@@ -6661,7 +6817,10 @@ export class BatonApplication {
     const view = {
       schemaVersion: 1,
       runId: current.goal.runId,
+      // Issue #489: the goal's objective rides ONCE, with the byte length a reader can compare
+      // against — the plan preview and the node rows that follow carry only its reach.
       objective: current.goal.objective,
+      objectiveBytes: Buffer.byteLength(current.goal.objective, 'utf8'),
       resultIntent,
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
@@ -6702,10 +6861,7 @@ export class BatonApplication {
     const semanticProgress = this._semanticProgressProjection(current, view, principal);
     view.progressClass = semanticProgress.progressClass;
     if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
-    if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Run view exceeds its deployment byte ceiling', 'application_run_view_oversize');
-    }
-    return deepFreeze(view);
+    return this._finalizeRunView(current, view, options);
   }
 
   async _historicalProfileView(current, observer, options = {}) {
@@ -6775,10 +6931,15 @@ export class BatonApplication {
       reason: 'session_attachment_unproven',
       summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
     }] : [];
+    // Issue #489: the goal's objective rides ONCE (below), and the preview and the node rows carry
+    // only its reach — the bounded first line plus the byte length a reader did not get.
+    const objectiveBytes = Buffer.byteLength(current.goal.objective, 'utf8');
+    const objectiveLine = objectiveFirstLine(current.goal.objective);
     const view = {
       schemaVersion: 1,
       runId,
       objective: current.goal.objective,
+      objectiveBytes,
       resultIntent,
       profile: {
         name: current.profileName, digest: current.profileDigest,
@@ -6799,11 +6960,13 @@ export class BatonApplication {
         } : null,
       } : null,
       planPreview: planNode ? {
-        objective: current.goal.objective,
+        objective: objectiveLine,
+        objectiveRef: objectiveReach(objectiveBytes),
         definitionOfDone: clone(current.goal.definitionOfDone), constraints: clone(current.goal.constraints),
         risk: current.goal.risk, goalBudget: clone(current.goal.budget),
         node: {
-          key: planNode.key, objective: planNode.objective, pathScope: clone(planNode.pathScope),
+          key: planNode.key, objectiveRef: objectiveReach(objectiveBytes),
+          pathScope: clone(planNode.pathScope),
           ...(planNode.contextScope ? { contextScope: clone(planNode.contextScope) } : {}),
           risk: planNode.risk, budget: clone(planNode.budget), verification: clone(planNode.verification),
           route: requested, capabilities: clone(planNode.capabilities), effects: clone(planNode.effects),
@@ -6811,7 +6974,7 @@ export class BatonApplication {
         profileDigest: current.profileDigest, planDigest: current.plan.digest,
         resultIntent,
       } : null,
-      nodes: clone(projection?.nodes ?? []),
+      nodes: boundedPlanNodes(projection?.nodes, objectiveLine, objectiveBytes),
       scratchpad,
       route: route ? {
         ...clone(route),
@@ -6845,10 +7008,7 @@ export class BatonApplication {
     const semanticProgress = this._semanticProgressProjection(current, view, observer);
     view.progressClass = semanticProgress.progressClass;
     if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
-    if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('historical Run view exceeds its deployment byte ceiling', 'application_run_view_oversize');
-    }
-    return deepFreeze(view);
+    return this._finalizeRunView(current, view, options);
   }
 
   _workflowDefinitionAncestors(runId, excludeDigest = null, beforeSeq = Infinity) {
@@ -8272,8 +8432,13 @@ export class BatonApplication {
     ];
     const currentStage = stages.find((stage) => ['active', 'blocked', 'failed'].includes(stage.state))
       ?? stages.find((stage) => stage.state === 'pending') ?? stages.at(-1);
+    // Issue #489: the goal's objective rides ONCE (below), and the preview and the node rows carry
+    // only its reach — the bounded first line plus the byte length a reader did not get.
+    const objectiveBytes = Buffer.byteLength(current.goal.objective, 'utf8');
+    const objectiveLine = objectiveFirstLine(current.goal.objective);
     const planPreviewCore = {
-      objective: current.goal.objective, strategy: definition.strategy,
+      objective: objectiveLine, objectiveRef: objectiveReach(objectiveBytes),
+      strategy: definition.strategy,
       workspace: definition.workspace, join: definition.join,
       attempts: definition.attempts.map((attempt) => ({
         role: attempt.role, nodeKey: attempt.nodeKey,
@@ -8286,7 +8451,7 @@ export class BatonApplication {
     };
     const knowledgeProjection = this._knowledgeProjection(runId);
     const view = {
-      schemaVersion: 1, runId, objective: current.goal.objective,
+      schemaVersion: 1, runId, objective: current.goal.objective, objectiveBytes,
       resultIntent,
       objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
@@ -8337,7 +8502,7 @@ export class BatonApplication {
         revisionEligibility: workflowEligibilityProjection(revisionEligibility),
       },
       planPreview: { ...planPreviewCore, displayDigest: digest(planPreviewCore) },
-      nodes: clone(projection.nodes),
+      nodes: boundedPlanNodes(projection.nodes, objectiveLine, objectiveBytes),
       scratchpad: null,
       attempts: clone(attempts),
       candidates: clone(candidates),
@@ -8427,11 +8592,7 @@ export class BatonApplication {
     const semanticProgress = this._semanticProgressProjection(current, view, observer);
     view.progressClass = semanticProgress.progressClass;
     if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
-    if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Workflow view exceeds its deployment byte ceiling',
-        'application_run_view_oversize');
-    }
-    return deepFreeze(view);
+    return this._finalizeRunView(current, view, options);
   }
 
   async _buildView(current, observer, options = {}) {
@@ -8651,15 +8812,24 @@ export class BatonApplication {
     const attention = attentionPage.page;
     const attentionTruncated = attentionPage.nextOffset !== null;
     const planNode = current.plan.nodes[0];
+    // Issue #489: the Run view carries the goal's objective ONCE — as the view's own `objective`,
+    // with `objectiveBytes` beside it — and the preview and every Plan node carry only its REACH:
+    // the bounded first line plus the pointer that names where the whole text lives. Before this,
+    // the same text was spelled three times over (`objective`, `planPreview.objective`,
+    // `planPreview.node.objective`) plus once per node, which is how a 171 KB brief crossed a
+    // 512 KiB ceiling on a fresh run. The node's own copy is dropped (#469's rule).
+    const objectiveBytes = Buffer.byteLength(current.goal.objective, 'utf8');
+    const objectiveLine = objectiveFirstLine(current.goal.objective);
     const planPreviewCore = {
-      objective: current.goal.objective,
+      objective: objectiveLine,
+      objectiveRef: objectiveReach(objectiveBytes),
       definitionOfDone: clone(current.goal.definitionOfDone),
       constraints: clone(current.goal.constraints),
       risk: current.goal.risk,
       goalBudget: clone(current.goal.budget),
       node: {
         key: planNode.key,
-        objective: planNode.objective,
+        objectiveRef: objectiveReach(objectiveBytes),
         pathScope: clone(planNode.pathScope),
         ...(planNode.contextScope ? { contextScope: clone(planNode.contextScope) } : {}),
         risk: planNode.risk,
@@ -8803,6 +8973,7 @@ export class BatonApplication {
       schemaVersion: 1,
       runId,
       objective: current.goal.objective,
+      objectiveBytes,
       resultIntent,
       objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
@@ -8819,7 +8990,7 @@ export class BatonApplication {
         approval: projection.approval ? { disposition: projection.approval.disposition, digest: projection.approval.digest } : null,
       },
       planPreview: { ...planPreviewCore, displayDigest: digest(planPreviewCore) },
-      nodes: clone(projection.nodes),
+      nodes: boundedPlanNodes(projection.nodes, objectiveLine, objectiveBytes),
       scratchpad,
       route: {
         requested, resolved, observed, launchEnforcement, providerAttestation,
@@ -8889,10 +9060,7 @@ export class BatonApplication {
     const semanticProgress = this._semanticProgressProjection(current, view, observer);
     view.progressClass = semanticProgress.progressClass;
     if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
-    if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Run view exceeds its deployment byte ceiling', 'application_run_view_oversize');
-    }
-    return deepFreeze(view);
+    return this._finalizeRunView(current, view, options);
   }
 
   async wait(runId, rawObserver, options = {}, rawContext = null) {
@@ -11519,21 +11687,31 @@ export class BatonApplication {
     }
     if (sectionId === 'plan') {
       const projected = new Map((view.nodes ?? []).map((node) => [node.key, node]));
-      return (current.plan?.nodes ?? []).map((node) => ({
-        id: `plan-node:${node.key}:v${current.plan.version}`,
-        section: 'plan',
-        state: projected.get(node.key)?.state ?? (view.phase === 'awaiting_plan_approval' ? 'proposed' : 'pending'),
-        summary: node.objective,
-        value: {
-          objective: node.objective,
-          definitionOfDone: node.definitionOfDone,
-          risk: node.risk,
-          route: node.routes ? planSingleExactRoute(node.routes) : null,
-          routeAuthority: node.routes ? projectPlanRouteAuthority(node.routes) : null,
-          ...(view.attempts?.find((attempt) => attempt.nodeKey === node.key)?.role
-            ? { role: view.attempts.find((attempt) => attempt.nodeKey === node.key).role } : {}),
-        },
-      }));
+      return (current.plan?.nodes ?? []).map((node) => {
+        // Issue #489: a Plan node's objective IS the goal's objective — the single-node plan copies
+        // it verbatim — so the item carries the SAME reach the view's node rows carry (the bounded
+        // first line plus the pointer, #464/#469's pair); the outline keeps serving the whole text.
+        // Without this a 360 KB recruit brief made the plan section 891 KB and `--depth section`
+        // refused, which is the narrowing the full view's refusal prescribes.
+        const nodeBytes = Buffer.byteLength(node.objective, 'utf8');
+        const nodeLine = objectiveFirstLine(node.objective);
+        return {
+          id: `plan-node:${node.key}:v${current.plan.version}`,
+          section: 'plan',
+          state: projected.get(node.key)?.state ?? (view.phase === 'awaiting_plan_approval' ? 'proposed' : 'pending'),
+          summary: nodeLine,
+          value: {
+            objective: nodeLine,
+            objectiveRef: objectiveReach(nodeBytes),
+            definitionOfDone: node.definitionOfDone,
+            risk: node.risk,
+            route: node.routes ? planSingleExactRoute(node.routes) : null,
+            routeAuthority: node.routes ? projectPlanRouteAuthority(node.routes) : null,
+            ...(view.attempts?.find((attempt) => attempt.nodeKey === node.key)?.role
+              ? { role: view.attempts.find((attempt) => attempt.nodeKey === node.key).role } : {}),
+          },
+        };
+      });
     }
     if (sectionId === 'attention') {
       return (view.attention ?? []).map((entry, index) => ({
@@ -11923,9 +12101,14 @@ export class BatonApplication {
           key: `wave.driver_detached:${boundWaveId}`,
         });
     }
+    // Issue #489: an inspection IS a narrowed read — the depth ladder (outline → index → section →
+    // item → content) is the narrowing — so the view is composed shed-first and the answer is
+    // finalized against the deployment's own response bound below, never refused before the depth
+    // the caller asked for is reached.
+    const narrowing = { ...(viewOptions ?? {}), narrow: true };
     if (!current.profile) {
       const view = this._withContextProjection(
-        current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
+        current, await this._buildView(current, this.principals.observer, narrowing),
       );
       return this._historicalProfileInspection(current, view, request);
     }
@@ -11941,7 +12124,7 @@ export class BatonApplication {
       ? undefined : (request.waitMs ?? policy.maxWaitMs);
     const bounds = this._semanticBounds(current);
     let view = this._withContextProjection(
-      current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
+      current, await this._buildView(current, this.principals.observer, narrowing),
     );
     if (request.cursor !== undefined && request.cursor > view.cursor) {
       throw applicationError('Run inspection cursor is ahead of durable authority', 'application_inspect_cursor_ahead');
@@ -11977,7 +12160,7 @@ export class BatonApplication {
           }
           this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
           view = this._withContextProjection(
-            current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
+            current, await this._buildView(current, this.principals.observer, narrowing),
           );
           await this._authorize('run.status', principal, request.runId, authorizationSubject);
           if (notification?.advanced === false && !APPLICATION_RUN_TERMINAL_PHASES.has(view.phase)) {

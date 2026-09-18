@@ -777,6 +777,11 @@ export const SWARM_RESUMABLE_PREDECESSOR_STATES = Object.freeze([
   'left:stopped with a carriable workspace (retained checkout or snapshot)',
   'left:completed with a carriable workspace (retained checkout or snapshot)',
 ]);
+// Issue #489: the settled history a brief COUNTS — the #350 states whose contributions remain on
+// the view (a seat the ROOT settled, or one that completed its work). A rolled-back admission
+// (`recruit_refused`) never worked, and a #442 provider fault rides its own fault row and page, so
+// neither is history here. Declared ONCE, beside the situation line that counts it per reason.
+export const SWARM_SETTLED_REASONS = Object.freeze(['completed', 'stopped']);
 // ── repository reads (issue #301) ────────────────────────────────────────────────────────────────
 const GIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 /** The ONE place the runtime spawns git: one read-only query over a checkout the deployment
@@ -1393,6 +1398,25 @@ const contributionContractRows = (swarm) => Object.values(swarm.contributions ??
     return { contributionId: contribution.contributionId, participantId: contribution.participantId,
       ...(contract !== null ? { contract } : {}), ...(carriedForward !== null ? { carriedForward } : {}) };
   }).filter(Boolean);
+
+/** Issue #489: take whole rendered BLOCKS under one byte budget — the ONE rule the situation
+ * section's age-scaling lists (the published contracts, the commits since the base) are bounded
+ * by. A block is kept whole or not at all (a hand-off is cited verbatim, #310 — never clipped
+ * mid-item), the caller COUNTS what did not fit and names the read that answers the rest, and
+ * the budget is a registry row (`brief.situation.bytes`), never a literal here. */
+function takeSituationBlocks(blocks, budget) {
+  const lines = [];
+  let taken = 0;
+  let used = 0;
+  for (const block of blocks) {
+    const bytes = block.reduce((total, line) => total + Buffer.byteLength(line, 'utf8') + 1, 0);
+    if (used + bytes > budget) break;
+    lines.push(...block);
+    used += bytes;
+    taken += 1;
+  }
+  return { lines, taken };
+}
 
 /** docs/45 §6: ONE "peers now" line, rendered from the read's own rows (`_peersRead`) — the
  * work a seat holds (by assignment or by claim), the write turn it holds on a lease, the paths
@@ -5890,12 +5914,19 @@ export class SwarmRuntime {
     // Issue #350: the settled history is named once, as a count — a successor knows seats
     // completed or stopped without being told the dead are still working. Rolled-back
     // admissions (recruit_refused) never worked, so they are not history.
+    // Issue #489: the ONE line carries the count PER STATUS and names the roster that holds the
+    // seats, so a brief knows how much settled history there is and where to read it without a
+    // section that grows with the swarm's age.
     const settled = Object.values(swarm.participants).filter((row) => row.status === 'left'
-      && (row.leftReason === 'stopped' || row.leftReason === 'completed'));
+      && SWARM_SETTLED_REASONS.includes(row.leftReason));
     if (settled.length > 0) {
+      const settledBy = new Map(SWARM_SETTLED_REASONS.map((reason) => [reason, 0]));
+      for (const row of settled) settledBy.set(row.leftReason, (settledBy.get(row.leftReason) ?? 0) + 1);
       situation.push(`${settled.length} seat${settled.length === 1 ? '' : 's'}`
         + ` ha${settled.length === 1 ? 's' : 've'} completed or stopped since the base;`
-        + ' their contributions are on the view');
+        + ' their contributions are on the view —'
+        + ` ${SWARM_SETTLED_REASONS.map((reason) => `${settledBy.get(reason)} ${reason}`).join(', ')};`
+        + ` read the seats with swarm view ${swarm.swarmId} --projection participants`);
     }
     // Issue #441 (lane C): what the swarm holds, counted by the ONE contributions derivation's
     // own review state — the same rows `run.contributions.read` answers and the same rows the
@@ -5914,22 +5945,45 @@ export class SwarmRuntime {
         + ` ${SWARM_REVIEW_STATES.map((state) => `${counts.get(state)} ${state}`).join(', ')}`
         + ' — read the rows with run.contributions.read');
     }
+    // Issue #489: the contract list is the situation's AGE-SCALING block (measured on the primary:
+    // 54 rows, 132 587 B of a 158 233 B section) — newest first under the ONE situation byte
+    // budget, each row kept WHOLE (a hand-off is cited verbatim, #310), and what does not fit is
+    // COUNTED with the read that answers it named. The section's per-seat cost is already bounded
+    // by #464's row budget and its settled history is one line, so the section stops growing with
+    // the swarm's age here.
+    const situationsBudget = FRAME_LIMITS['brief.situation.bytes'];
     const contracts = this._publishedContracts(swarm);
     if (contracts.length > 0) {
-      situation.push('Contracts published so far (keep these true in shared territory):');
-      for (const row of contracts) {
-        situation.push(`- ${row.contributionId} by ${row.participantId}: ${JSON.stringify(row.contract ?? row.subject ?? row.carriedForward)}`);
+      const published = [...contracts].reverse();
+      const { lines, taken } = takeSituationBlocks(published.map((row) => {
+        const block = [`- ${row.contributionId} by ${row.participantId}: ${JSON.stringify(row.contract ?? row.subject ?? row.carriedForward)}`];
         // Issue #310: a successor cites what a sibling hands on verbatim — never paraphrased.
-        for (const item of row.carriedForward ?? []) situation.push(`  carries forward: ${JSON.stringify(item)}`);
-        for (const item of row.needsFromOthers ?? []) situation.push(`  needs from others: ${JSON.stringify(item)}`);
+        for (const item of row.carriedForward ?? []) block.push(`  carries forward: ${JSON.stringify(item)}`);
+        for (const item of row.needsFromOthers ?? []) block.push(`  needs from others: ${JSON.stringify(item)}`);
+        return block;
+      }), situationsBudget.value);
+      situation.push('Contracts published so far (keep these true in shared territory; newest first):');
+      for (const line of lines) situation.push(line);
+      if (taken < published.length) {
+        situation.push(`- ${published.length - taken} further contract${published.length - taken === 1 ? '' : 's'} not shown`
+          + ` (this block is bounded by ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
+          + ' read them with run.contributions.read)');
       }
     }
     const commits = this._commitsSinceBase(swarm);
     if (commits !== null) {
       if (Array.isArray(commits.commits) && commits.commits.length > 0) {
-        situation.push(`Commits landed on the target since the base (${commits.baseCommit}):`);
-        for (const commit of commits.commits) {
-          situation.push(`- ${commit.sha.slice(0, 12)} ${commit.subject}`);
+        // Issue #489: the commits since the base are a DEPLOYMENT-scale fact, never the seat's —
+        // the same ONE situation byte budget, newest first (git log order), the remainder counted
+        // and the read that reaches it named in the seat's own checkout.
+        const commitLines = commits.commits.map((commit) => `- ${commit.sha.slice(0, 12)} ${commit.subject}`);
+        const { lines, taken } = takeSituationBlocks(commitLines.map((line) => [line]), situationsBudget.value);
+        situation.push(`Commits landed on the target since the base (${commits.baseCommit}; newest first):`);
+        for (const line of lines) situation.push(line);
+        if (taken < commitLines.length) {
+          situation.push(`- ${commitLines.length - taken} further commit${commitLines.length - taken === 1 ? '' : 's'} not shown`
+            + ` (this block is bounded by ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
+            + ` read the rest with \`git log ${commits.baseCommit}..HEAD\` in your checkout)`);
         }
       } else if (commits.commits === null) {
         situation.push(`Commits since the base (${commits.baseCommit}): unavailable — this deployment exposes no git authority to the swarm.`);

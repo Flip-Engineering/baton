@@ -4510,7 +4510,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 100,
+          "size": 104,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -4975,7 +4975,7 @@
         {
           "name": "start",
           "ordinal": 0,
-          "size": 257,
+          "size": 259,
           "seam": "surface",
           "evidence": [
             "effect:action_verb",
@@ -4986,7 +4986,7 @@
         {
           "name": "approve",
           "ordinal": 0,
-          "size": 34,
+          "size": 35,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -5165,6 +5165,24 @@
           ]
         },
         {
+          "name": "_finalizeRunView",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "_runViewOversizeRefusal",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
           "name": "_planningView",
           "ordinal": 0,
           "size": 64,
@@ -5177,7 +5195,7 @@
         {
           "name": "_historicalProfileView",
           "ordinal": 0,
-          "size": 142,
+          "size": 146,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -5359,7 +5377,7 @@
         {
           "name": "_buildWorkflowView",
           "ordinal": 0,
-          "size": 414,
+          "size": 415,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -5369,7 +5387,7 @@
         {
           "name": "_buildView",
           "ordinal": 0,
-          "size": 460,
+          "size": 467,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -5864,7 +5882,7 @@
         {
           "name": "_semanticSectionItems",
           "ordinal": 0,
-          "size": 112,
+          "size": 122,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -5909,7 +5927,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 316,
+          "size": 321,
           "seam": "surface",
           "evidence": [
             "observation:durable_read",
@@ -13549,7 +13567,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 221,
+          "size": 251,
           "seam": "admission",
           "evidence": [
             "delegates:admission",

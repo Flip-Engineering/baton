@@ -116,6 +116,10 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    deployment's checkout root at the served commit; admits ONE ContextPackage (§1.1); and recruits
    with `options.contextPackage = {digest, docs}`. The runtime attaches (§1.2) and the brief
    renders (§2).
+   The attach is a fenced O(1) bind through the coordination store that answers its attach
+   receipt — it never reads the Run view, so the recruit’s reading leg is unaffected by the
+   deployment’s projection ceiling (issue #489: the participant’s start composes its view
+   narrowed and never refuses on it).
 2. **The two rules #480 added, in one paragraph.** (a) *Every repository-relative path this leg
    reads resolves against the DEPLOYMENT's checkout root* — the main working tree of the repository
    the served resident belongs to (`repository.root`; the connection selector is published from that
@@ -336,3 +340,10 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    `CONTEXT_PACKAGE_BRANCH_CEILING` (`web-northbound.mjs`'s port ceiling, read rather than
    restated) refuses `context_source_oversize` with `limit: 'branches'` BEFORE any effect, instead
    of handing the port a request it answers as malformed after the root's reading was spent.
+
+8. **The attach never reads the Run view — RESOLVED (#489).** `attachContextPackage` binds the
+   package to the run through the coordination store (`package.admitted`/`package.attached` rows,
+   `context_package_not_found` for a digest the store does not hold) and answers the attach
+   receipt; the participant's own start and `approve` compose the Run view NARROWED
+   (`{view: 'narrow'}`), so a brief whose full view exceeds the deployment ceiling admits and
+   attaches instead of refusing `application_run_view_oversize`.
