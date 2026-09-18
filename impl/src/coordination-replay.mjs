@@ -532,6 +532,14 @@ function* _loadRun(store, plan) {
     // read and the checkpoint restore outside this counter are the artifact formats' own bounds.
     let sinceYield = 0;
     const breathe = () => { sinceYield += 1; if (sinceYield < REPLAY_CHUNK_EVENTS) return false; sinceYield = 0; return true; };
+    // Issue #285 G-14: the archived prefix is read back but NOT folded here. The digest,
+    // UTF-8 and truncation proofs above are the integrity boundary and stay unconditioned;
+    // every row is still parsed and indexed (`readRow` rebuilds `_events`/`_byKey`, so the
+    // event-sourcing law holds). The FOLD is the adoption decision's to skip: when the
+    // checkpoint below adopts, its carried projection already IS the archived prefix's
+    // state, and re-folding it would buy nothing; when nothing adopts, the cold path folds
+    // these same rows in order with the covered window rows (`if (!adopted)` below), exactly
+    // once — the previous shape folded them here AND there.
     for (const segment of segments.segments ?? []) {
       const bytes = readFileSync(store._segmentFilePath(segment.digest));
       if (sha256Bytes(bytes) !== segment.digest) {
@@ -547,7 +555,7 @@ function* _loadRun(store, plan) {
       const segmentLines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
       for (let offset = 0; offset < segmentLines.length; offset += 1) {
         const index = segment.fromSeq - 1 + offset;
-        foldRow(readRow(parsed(segmentLines[offset], `coordination segment ${segment.digest} line ${offset + 1}`), index));
+        readRow(parsed(segmentLines[offset], `coordination segment ${segment.digest} line ${offset + 1}`), index);
         if (breathe()) yield;
       }
     }
@@ -571,7 +579,9 @@ function* _loadRun(store, plan) {
       }
     }
     if (!adopted) {
-      // The covered rows, folded in the order they were read: the cold path's own work.
+      // The covered rows — the archived segment rows read above first, then the covered
+      // window rows, in the order they were read — folded exactly once: the cold path's
+      // own work (issue #285 G-14: the segment loop above reads but never folds).
       for (let index = 0; index < store._events.length; index += 1) {
         foldRow(store._events[index]);
         if (breathe()) yield;
