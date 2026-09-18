@@ -1755,6 +1755,26 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton doctor --check',
     inputSchema: objectSchema({ depth: { type: 'string', enum: ['outline', 'connection', 'profile', 'evidence'] }, check: { type: 'boolean' } }, []),
   }],
+  // Issue #306 (the wiring half): the in-place reincarnation verb — the RUNNING resident starts a
+  // successor over the same deployment, hands the published connection over, and exits 0 through
+  // its own stop path (application.mjs reincarnate()). Published here as a canonical operation
+  // beside deployment.doctor and admitted the same way — a DIRECT PORT, never a key of
+  // APPLICATION_COMMAND_DEFINITIONS, so the byte-stable command table is untouched. `web` is not
+  // claimed (doctor's row does not claim it either: the web lane's admission is the port table in
+  // web-northbound.mjs, not a registry surface), and `mcp` is deliberately absent — no advertised
+  // tool belongs to a verb that ends the process answering the call. The `cli` claim resolves
+  // through the parser's two spellings plus the dispatch authority the web admission derives
+  // (application-cli.mjs cliDispatchTransports reads webAdmittedCommandNames), which is exactly
+  // the wiring this row makes explicit.
+  ['deployment.reincarnate', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'control',
+    capabilities: ['emergency_stop', 'observe'], outputView: 'index', helpTopic: 'connection',
+    idempotent: false,
+    example: 'baton deployment reincarnate COMMIT_ISH',
+    inputSchema: objectSchema({
+      target: { type: 'string', minLength: 1, maxLength: 1024 },
+    }, ['target']),
+  }],
   // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface canonical
   // operations (Decision 11). Boards are embedded+cli only (no ordinary MCP board tools, Decision
   // 10); the six MCP-projected lanes surface embedded+mcp+cli. All verbs are C4-clean.
