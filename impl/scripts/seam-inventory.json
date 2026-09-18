@@ -38,7 +38,7 @@
         {
           "name": "_startupReconstruction",
           "ordinal": 0,
-          "size": 231,
+          "size": 249,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -2056,7 +2056,7 @@
         {
           "name": "_preserveProgressBeforeReap",
           "ordinal": 0,
-          "size": 97,
+          "size": 116,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -2095,10 +2095,11 @@
         {
           "name": "_removeTaskWorktree",
           "ordinal": 0,
-          "size": 7,
+          "size": 24,
           "seam": "effect",
           "evidence": [
-            "effect:worktree_authority"
+            "effect:worktree_authority",
+            "admission:policy_gate"
           ]
         },
         {
@@ -12182,7 +12183,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 608,
+          "size": 669,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"

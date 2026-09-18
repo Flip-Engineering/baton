@@ -22,6 +22,9 @@ import {
 import { createHash, randomBytes } from 'node:crypto';
 import { ToolchainProjectionError } from './toolchain-projection.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
+// Issue #428: the one custody predicate — a second inline opinion about whether cleanup may
+// destroy a shared checkout is exactly the drift the surface gate refuses.
+import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors (W7 — typed, never a bare Error wrapping raw stderr)
@@ -794,10 +797,11 @@ export function physicalWorkspaceOwnerCleanupAbsent(repoRoot, physicalOwnerId) {
     const registered = listWorktrees(repoRoot).some((entry) => (
       canonicalPathIncludingMissingLeaf(entry.dir) === canonicalPathIncludingMissingLeaf(worktree)
     ));
-    let branchPresent = false;
-    try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${physicalOwnerId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
+    // Issue #428: the lane branch is a durable identity that outlives the checkout, so it is
+    // not part of the released resource; only the checkout, its administration and the
+    // receipt must be exactly absent.
     return !existsSync(worktree) && !existsSync(`${worktree}.meta.json`)
-      && !existsSync(`${worktree}.projection.exclude`) && !registered && !branchPresent;
+      && !existsSync(`${worktree}.projection.exclude`) && !registered;
   } catch { return false; }
 }
 
@@ -808,20 +812,22 @@ export function releasePhysicalWorkspaceOwner(repoRoot, physicalOwnerId, opts = 
   if (!receipt) {
     const worktree = pathResolve(repoRoot, '.baton', 'wt', physicalOwnerId);
     const registered = listWorktrees(repoRoot).some((entry) => (
-      canonicalPathIncludingMissingLeaf(entry.dir) === canonicalPathIncludingMissingLeaf(worktree)
+      canonicalPathIncludingMissingLeaf(entry.dir)
+        === canonicalPathIncludingMissingLeaf(worktree)
     ));
-    let branchPresent = false;
-    try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${physicalOwnerId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
-    return !existsSync(worktree) && !registered && !branchPresent;
+    // Issue #428: a surviving lane branch is retained custody, not a retained resource —
+    // the release refuses only while the checkout or its registration still exists.
+    return !existsSync(worktree) && !registered;
   }
   if (opts.requireAllocated === true && receipt.state !== 'allocated') return false;
   const registered = listWorktrees(repoRoot).some((entry) => (
     canonicalPathIncludingMissingLeaf(entry.dir)
       === canonicalPathIncludingMissingLeaf(receipt.worktree)
   ));
-  let branchPresent = false;
-  try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/${receipt.branch}`], repoRoot); branchPresent = true; } catch { /* absent */ }
-  if (existsSync(receipt.worktree) || registered || branchPresent) return false;
+  // Issue #428: the lane branch is a durable identity that outlives the checkout, so a
+  // surviving branch no longer refuses the receipt release — only the checkout and its
+  // Git registration do.
+  if (existsSync(receipt.worktree) || registered) return false;
   cleanupWorkspaceOwnerPublicationTemps(repoRoot, physicalOwnerId, {
     strict: true,
   });
@@ -1705,6 +1711,71 @@ export async function markStopped(repoRoot, taskId) {
 }
 
 // ---------------------------------------------------------------------------
+// Lane-branch custody (issue #428)
+// ---------------------------------------------------------------------------
+
+/** The lane branch of one owned checkout, and whether it already contains the checkout's
+ * HEAD. `branchSha` is null when the branch does not exist; `contained` is false whenever
+ * containment cannot be proven (`merge-base --is-ancestor`). */
+function laneBranchState(repoRoot, taskId, dir) {
+  const branch = `baton/${taskId}`;
+  let branchSha = null;
+  try { branchSha = sh('git', ['rev-parse', '--verify', `refs/heads/${branch}^{commit}`], repoRoot); } catch { branchSha = null; }
+  let headSha = null;
+  try { headSha = sh('git', ['rev-parse', 'HEAD'], dir); } catch { headSha = null; }
+  let contained = false;
+  if (branchSha && headSha) {
+    try { sh('git', ['merge-base', '--is-ancestor', headSha, branchSha], repoRoot); contained = true; } catch { contained = false; }
+  }
+  return { branch, branchSha, headSha, contained };
+}
+
+/** Whether the lane branch is checked out in a worktree OTHER than `dir` — moving such a
+ * branch would corrupt another checkout's view of its own HEAD. */
+function laneBranchHeldElsewhere(repoRoot, branch, dir) {
+  const ref = `refs/heads/${branch}`;
+  return listWorktrees(repoRoot).some((entry) => {
+    if (entry.branch !== branch && entry.branch !== ref) return false;
+    try { return realpathSync(entry.dir) !== realpathSync(dir); }
+    catch { return pathResolve(entry.dir) !== pathResolve(dir); }
+  });
+}
+
+/**
+ * Put a seat's lane branch at its checkout's HEAD before a removal boundary (issue #428).
+ * A branch that is missing — or that does not contain the checkout's HEAD — is created or
+ * moved to HEAD, so the stop can never destroy work the branch alone named; a detached
+ * checkout is reattached to the branch (branch == HEAD, so no file state changes).
+ * @param {string} repoRoot
+ * @param {string} taskId
+ * @param {{worktree: string}} opts `worktree` is the checkout path (validated inside the
+ *   `.baton/wt` authority root).
+ * @returns {{branch: string, branchSha: string|null, headSha: string, contained: boolean, repaired: boolean}}
+ * @throws {WorktreeCleanupError} when HEAD is unreadable or another worktree holds the
+ *   branch — the caller retains the checkout, never guesses.
+ */
+export function ensureLaneBranchAtHead(repoRoot, taskId, opts = {}) {
+  normalizePhysicalOwnerId(taskId, 'taskId');
+  const dir = authorityChild(repoRoot, 'wt', taskId, { kind: 'directory', mustExist: true });
+  const state = laneBranchState(repoRoot, taskId, dir);
+  if (!state.headSha) {
+    throw new WorktreeCleanupError(`lane branch custody: checkout "${taskId}" HEAD is unreadable`);
+  }
+  if (state.contained && sh('git', ['branch', '--show-current'], dir) === state.branch) {
+    return { ...state, repaired: false };
+  }
+  if (laneBranchHeldElsewhere(repoRoot, state.branch, dir)) {
+    throw new WorktreeCleanupError(`lane branch "${state.branch}" is checked out in another worktree`);
+  }
+  gitFile(['update-ref', `refs/heads/${state.branch}`, state.headSha], repoRoot, { stdio: 'pipe' });
+  if (sh('git', ['branch', '--show-current'], dir) !== state.branch) {
+    sh('git', ['checkout', '-q', state.branch], dir);
+  }
+  return { ...state, branchSha: state.headSha, contained: true, repaired: true };
+}
+
+
+// ---------------------------------------------------------------------------
 // reap
 // ---------------------------------------------------------------------------
 
@@ -1748,10 +1819,27 @@ export async function reap(repoRoot, taskId, opts = {}) {
   // registration; a global prune could destroy another owner's pre-settlement authority.
   try { removeExactWorktreeRegistration(repoRoot, dir); }
   catch (error) { throw Object.assign(new WorktreeCleanupError('owned worktree administration could not be removed'), { cause: error }); }
+  // Issue #428: a physical owner's lane branch is a durable identity. Deletion here holds
+  // only for a branch provably WITHOUT unique work — its tip exactly the recorded base —
+  // so stop/drain can never orphan committed seat work the branch alone named. Legacy
+  // logical owners keep the exact prior behavior.
+  const physicalOwner = isPhysicalWorkspaceId(taskId);
+  let branchRetained = false;
   if (opts.deleteBranch) {
-    try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot); }
-    catch {
-      // A failed existence probe is the idempotent absent case. A surviving ref below is red.
+    let deletable = true;
+    if (physicalOwner) {
+      try {
+        const meta = validatedMetadata(repoRoot, taskId);
+        deletable = sh('git', ['rev-parse', '--verify', `refs/heads/baton/${taskId}^{commit}`], repoRoot) === meta.baseSha;
+      } catch { deletable = false; } // unprovable → the branch is retained custody
+    }
+    if (deletable) {
+      try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot); }
+      catch {
+        // A failed existence probe is the idempotent absent case. A surviving ref below is red.
+      }
+    } else {
+      branchRetained = true;
     }
   }
   if (existsSync(metaFile)) rmSync(authorityChild(repoRoot, 'wt', `${taskId}.meta.json`, { kind: 'file', mustExist: true }), { force: true });
@@ -1764,7 +1852,9 @@ export async function reap(repoRoot, taskId, opts = {}) {
   if (opts.deleteBranch) {
     try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
   }
-  if (existsSync(dir) || existsSync(metaFile) || existsSync(projectionExclude) || registered || branchPresent) {
+  // A branch retained under the custody rule above is an outcome, not residue (issue #428).
+  if (existsSync(dir) || existsSync(metaFile) || existsSync(projectionExclude) || registered
+    || (branchPresent && !branchRetained)) {
     throw new WorktreeCleanupError('owned worktree cleanup did not reach an exact absent state');
   }
   try { if (opts.retainOwnerReceipt !== true) releasePhysicalWorkspaceOwner(repoRoot, taskId); }
@@ -1798,6 +1888,9 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
     removedVerifyDirs: [], validatedExpectedOwners: [], retainedExpectedOwners: [],
     validatedExpectedBindings: [], retainedExpectedBindings: [],
     removedPhysicalOwners: [],
+    // Issue #428: physical-owner checkouts this reconciliation removed, each with the
+    // snapshot (the lane-branch tip that already contained every change) backing the removal.
+    removedWorkspaces: [],
     // Owners retained because their checkout holds content no capture recorded.
     retainedContentOwners: [],
     // Receipt-only-loop records retained as ambiguous residue (rule 2's refusal set): the open
@@ -2038,6 +2131,35 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           continue;
         }
       }
+      // Issue #428: a checkout orphaned by a crash whose lane branch does not already
+      // contain every change is LEFT IN PLACE — a stop or a resume settles the seat later.
+      // Only a checkout whose branch contains its HEAD may be removed here, and the row
+      // says so before the removal happens.
+      let crashSnapshotSha = null;
+      if (isPhysicalWorkspaceId(normalizedTaskId) && existsSync(fullDir)) {
+        const lane = laneBranchState(repoRoot, normalizedTaskId, fullDir);
+        if (!lane.branchSha || !lane.contained) {
+          report.diagnostics.push(Object.freeze({
+            code: 'workspace_owner_head_uncontained_retained', physicalOwnerId: normalizedTaskId,
+            deploymentId: ownerReceipt?.deploymentId ?? null,
+            logicalTaskId: ownerReceipt?.logicalTaskId ?? null,
+            authority: ownerReceipt ? ownerState : 'unproven', retained: true,
+            headSha: lane.headSha, branch: lane.branch,
+          }));
+          logEvent(opts, normalizedTaskId, 'worktree.custody_retained', {
+            workspaceId: normalizedTaskId, participantId: null,
+            code: 'workspace_owner_head_uncontained_retained', reason: 'crash_reconciliation',
+            headSha: lane.headSha, branch: lane.branch,
+          });
+          retainExpected(normalizedTaskId);
+          continue;
+        }
+        crashSnapshotSha = lane.branchSha;
+        logEvent(opts, normalizedTaskId, 'worktree.snapshotted', {
+          workspaceId: normalizedTaskId, participantId: null,
+          sha: lane.branchSha, branch: lane.branch, reason: 'crash_reconciliation',
+        });
+      }
       if (/^ws-[a-f0-9]{32}$/u.test(normalizedTaskId)) {
         if (!ownerReceipt) {
           report.diagnostics.push(Object.freeze({
@@ -2071,16 +2193,46 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           catch { rmSync(fullDir, { recursive: true, force: true }); }
         }
         removeExactWorktreeRegistration(repoRoot, fullDir);
-        if (existsSync(metaFile)) rmSync(authorityChild(repoRoot, 'wt', `${normalizedTaskId}.meta.json`, { kind: 'file', mustExist: true }), { force: true });
-        if (existsSync(projectionExclude)) rmSync(authorityChild(repoRoot, 'wt', `${normalizedTaskId}.projection.exclude`, { kind: 'file', mustExist: true }), { force: true });
+        // Issue #428: decide branch custody BEFORE the owner metadata is removed — the
+        // workless proof reads the recorded base. A physical owner's lane branch that
+        // carries work beyond its base is never deleted by the reconciliation (a surviving
+        // branch is the custody outcome, not residue); a provably workless branch (tip
+        // exactly the base) is cleaned up as before, and legacy owners keep the exact
+        // prior behavior.
         let branchPresent = false;
         try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
         const hadBranch = branchPresent;
-        if (branchPresent) sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot);
+        const physicalOwner = isPhysicalWorkspaceId(normalizedTaskId);
+        let branchWorkless = !physicalOwner;
+        if (physicalOwner && branchPresent) {
+          try {
+            const meta = validatedMetadata(repoRoot, normalizedTaskId);
+            branchWorkless = sh('git', ['rev-parse', '--verify', `refs/heads/baton/${taskId}^{commit}`], repoRoot) === meta.baseSha;
+          } catch { branchWorkless = false; } // unprovable → the branch is retained custody
+        }
+        if (existsSync(metaFile)) rmSync(authorityChild(repoRoot, 'wt', `${normalizedTaskId}.meta.json`, { kind: 'file', mustExist: true }), { force: true });
+        if (existsSync(projectionExclude)) rmSync(authorityChild(repoRoot, 'wt', `${normalizedTaskId}.projection.exclude`, { kind: 'file', mustExist: true }), { force: true });
+        if (branchPresent && branchWorkless) sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot);
         try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { branchPresent = false; }
-        if (existsSync(fullDir) || existsSync(metaFile) || existsSync(projectionExclude) || branchPresent) throw new WorktreeCleanupError('reconciled worker ownership remained after cleanup');
+        if (existsSync(fullDir) || existsSync(metaFile) || existsSync(projectionExclude)
+          || (branchPresent && !branchWorkless)) {
+          throw new WorktreeCleanupError('reconciled worker ownership remained after cleanup');
+        }
         if (hadDir) report.removedZombieDirs.push(fullDir);
         if (hadResidue || hadBranch) logEvent(opts, taskId, 'worktree.reconciled', { dir: fullDir });
+        if (hadDir && physicalOwner) {
+          logEvent(opts, taskId, 'worktree.removed', {
+            workspaceId: normalizedTaskId, participantId: null,
+            reason: 'crash_reconciliation', snapshot: crashSnapshotSha,
+            branch: `baton/${taskId}`,
+          });
+        }
+        if (hadDir && physicalOwner) {
+          report.removedWorkspaces.push(Object.freeze({
+            physicalOwnerId: normalizedTaskId, snapshot: crashSnapshotSha,
+            branch: `baton/${taskId}`,
+          }));
+        }
         if (ownerReceipt) {
           if (!releasePhysicalWorkspaceOwner(repoRoot, normalizedTaskId)) {
             throw new WorktreeCleanupError('reconciled physical owner receipt remained');
@@ -2242,6 +2394,9 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       }
     }
     for (const taskId of localWorkerCandidates) {
+      // Issue #428: a physical owner's lane branch is a durable identity — a surviving
+      // branch after reconciliation is custody, never a zombie. Legacy owners keep the check.
+      if (isPhysicalWorkspaceId(taskId)) continue;
       let branchPresent = false;
       try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
       if (branchPresent && !retainedOwners.has(taskId)

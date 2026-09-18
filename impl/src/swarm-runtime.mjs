@@ -1099,6 +1099,41 @@ export class SwarmRuntime {
       if (event.kind !== 'swarm.participant_joined' || event.payload?.swarmId !== swarm.swarmId) continue;
       if (event.payload.mode !== undefined) recruitModes.set(event.payload.participantId, event.payload.mode);
     }
+    // Issue #428: the worktree custody rows the removal boundaries wrote — snapshotted,
+    // removed — folded once per view, keyed by workspace. The projection derives its
+    // per-seat custody fields FROM these rows; it mints nothing of its own.
+    const custodyByWorkspace = new Map();
+    for (const event of ledger) {
+      // The rows ride the coordination ledger in the driver.recorded container (the
+      // coordinator's recordDriver), or appear as their own kind where a store merges
+      // them directly. Both containers carry the same payload fields.
+      const kind = event.kind === 'driver.recorded' ? event.payload?.kind : event.kind;
+      if (!['worktree.snapshotted', 'worktree.removed'].includes(kind)) continue;
+      const payload = event.payload ?? {};
+      const workspaceId = payload.workspaceId ?? null;
+      if (typeof workspaceId !== 'string' || workspaceId.length === 0) continue;
+      const row = custodyByWorkspace.get(workspaceId) ?? { snapshotSha: null, branch: null, headSha: null, removed: null };
+      if (kind === 'worktree.snapshotted') {
+        if (typeof payload.sha === 'string') row.snapshotSha = payload.sha;
+        if (typeof payload.branch === 'string') row.branch = payload.branch;
+      } else {
+        row.removed = Object.freeze({
+          reason: payload.reason ?? null,
+          at: payload.at ?? event.ts ?? null,
+        });
+        if (typeof payload.branch === 'string') row.branch = payload.branch;
+        if (typeof payload.snapshot === 'string') row.headSha = payload.snapshot;
+      }
+      custodyByWorkspace.set(workspaceId, row);
+    }
+    // The workspace a seat was bound to, from the durable binding rows — a seat whose worker
+    // is gone still has its checkout identity this way.
+    const workspaceIdByParticipant = new Map();
+    for (const event of ledger) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.kind !== 'swarm.participant_bound' || typeof payload.workspaceId !== 'string') continue;
+      if (typeof payload.participantId === 'string') workspaceIdByParticipant.set(payload.participantId, payload.workspaceId);
+    }
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
@@ -1119,10 +1154,32 @@ export class SwarmRuntime {
       const completed = this._seatCompleted(swarm, participant, workers, {
         paused, guidance, contributed: contributors.has(participant.participantId),
       });
-      // The participant's live checkout, projected exactly as capture projects its custody:
-      // the physical owner named by the live worker's session context and the coordinator's
-      // live holder count for it. An unbound or departed worker carries workspace: null.
+      // The seat's workspace custody (issue #428): the live checkout's facts beside the
+      // durable custody rows, so a REMOVED seat still projects what it held and how the
+      // checkout went. The live reads reuse the #301 read-only git authority; a seat with
+      // no checkout and no custody rows carries workspace: null.
       const physicalOwnerId = alive ? worker.sessionContext?.ownerTaskId ?? null : null;
+      const workspaceId = physicalOwnerId
+        ?? workspaceIdByParticipant.get(participant.participantId)
+        ?? (typeof participant.workspaceId === 'string' ? participant.workspaceId : null);
+      const custody = workspaceId !== null ? custodyByWorkspace.get(workspaceId) ?? null : null;
+      const checkout = checkoutOf(worker);
+      const liveBranch = checkout ? gitRead(['branch', '--show-current'], checkout.worktree) : null;
+      const liveHead = checkout ? gitRead(['rev-parse', 'HEAD'], checkout.worktree) : null;
+      const liveDirty = checkout
+        ? (gitRead(['status', '--porcelain'], checkout.worktree) ?? '').length > 0
+        : false;
+      const workspace = workspaceId === null ? null : Object.freeze({
+        ...(physicalOwnerId !== null
+          ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
+          : { physicalOwnerId: workspaceId, shared: false, holderCount: 0 }),
+        workspaceId,
+        branch: liveBranch ?? custody?.branch ?? null,
+        headSha: liveHead ?? custody?.headSha ?? null,
+        snapshotSha: custody?.snapshotSha ?? null,
+        dirty: liveDirty,
+        removed: custody?.removed ?? null,
+      });
       return { ...clone(participant), mode: recruitModes.get(participant.participantId) ?? 'change',
         delegation: delegations.get(participant.participantId) ?? null,
         // Absence is labelled as absence (2026-09-14 audit, swarm-b/lead.md finding 9): an unbound
@@ -1133,6 +1190,7 @@ export class SwarmRuntime {
         native: worker && this.coordinator.observedNativeSubagents
         ? this.coordinator.observedNativeSubagents(worker.id)
         : { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] },
+        workspace,
         // Issue #299: the participant row carries the seat's last tool rows, projected from the
         // run ledger by the coordinator's one derivation — so a refused publish is visible where
         // the work is, not only inside the participant's home directory. A seat with no worker,
@@ -1152,9 +1210,6 @@ export class SwarmRuntime {
         // Issue #337: delivered guidance (the nudge lane) beside the guidance parked for a seat
         // whose harness takes no mid-turn delivery, with its delivery state.
         guidance: [...guidance, ...(parkedGuidanceByParticipant.get(participant.participantId) ?? [])],
-        workspace: physicalOwnerId !== null
-          ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
-          : null,
         // Drift before capture (issue #301): the base this seat's checkout shows against the
         // deployment's target, derived from the repository at read time. A seat with no checkout
         // to observe carries base: null — absence, never a guess.
