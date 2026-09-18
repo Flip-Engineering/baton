@@ -719,7 +719,7 @@ const HELP_FLAGS = new Set(['--help', '-h', 'help']);
 function bridgeHelpText(command = null) {
   if (!command) {
     return [
-      'Usage: node swarm-native-bridge.mjs <swarm.command> [json-args]',
+      'Usage: node swarm-native-bridge.mjs <swarm.command> [json-args | - reads the JSON payload from stdin]',
       '',
       'Commands:',
       ...SWARM_COMMANDS.map((name) => `  ${name.padEnd(14)} ${SWARM_COMMAND_ROWS.find((row) => row.command === name)?.description ?? ''}`),
@@ -811,12 +811,54 @@ function bridgeHelpText(command = null) {
     lines.push('', 'Identity: one record per coordinate; the args above ARE the idempotency key, so an idempotencyKey is refused here.');
   }
   lines.push('', `Usage: node swarm-native-bridge.mjs ${command} '<json-args>'`);
+  lines.push(`   Large payload: cat payload.json | node swarm-native-bridge.mjs ${command} -   ('-' or --stdin reads the JSON payload from stdin)`);
   return lines.join('\n');
 }
 
+const STDIN_ARGS_MARKERS = new Set(['-', '--stdin']);
+
+/** The CLI intake contract (#493): the JSON payload rides argv OR stdin (`-` / `--stdin` as the
+ * args argument), and naming both channels is refused. A payload that does not parse is refused
+ * with the channel it arrived on, the byte count received, and the parse error's own message
+ * (with its position when the engine reports one), so a worker can self-diagnose; the payload
+ * itself is never echoed back into the refusal. */
+function parseCliArgsObject(text, source, command) {
+  const bytes = Buffer.byteLength(text, 'utf8');
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch (cause) {
+    const parse = cause?.message ?? String(cause);
+    const at = /position (\d+)/u.exec(parse);
+    const remedy = source === 'argv' ? '; send a large payload on stdin: node swarm-native-bridge.mjs <command> -' : '';
+    throw bridgeError(`Swarm bridge CLI args are not one JSON object: ${parse} (received ${bytes} bytes from ${source})${remedy}`,
+      'swarm_bridge_request_invalid', { source, bytes, parse, ...(at ? { position: Number(at[1]) } : {}) });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    const received = Array.isArray(parsed) ? 'array' : typeof parsed;
+    throw bridgeError(`Swarm bridge CLI args must be one JSON object (received ${received}, ${bytes} bytes from ${source})`,
+      'swarm_bridge_request_invalid', { command, source, bytes, received });
+  }
+  return parsed;
+}
+
+/** Read the whole stdin payload to EOF. The caller chose the stdin channel explicitly, so waiting
+ * on the stream's end is the documented invocation: pipe a file, a heredoc, or a closed pipe. */
+function readStdinPayload(stdin) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stdin.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    stdin.once('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    stdin.once('error', (cause) => reject(bridgeError('Swarm bridge CLI args could not be read from stdin',
+      'swarm_bridge_request_invalid', { cause: String(cause?.message ?? cause) })));
+  });
+}
+
 /** CLI entry so a native agent can invoke a bridge command directly from its own shell:
- * `node swarm-native-bridge.mjs swarm.view '{"swarmId":"..."}'` with the bridge env set. */
-export async function swarmBridgeMain(argv = process.argv.slice(2), env = process.env, io = { out: process.stdout, err: process.stderr }) {
+ * `node swarm-native-bridge.mjs swarm.view '{"swarmId":"..."}'` with the bridge env set.
+ * A large payload — an audit contribution's findings, whose free text a single-quoted shell
+ * argument mangles — rides stdin instead: `cat report.json | node swarm-native-bridge.mjs swarm.update -`. */
+export async function swarmBridgeMain(argv = process.argv.slice(2), env = process.env,
+  io = { out: process.stdout, err: process.stderr, stdin: process.stdin }) {
   const [command, argsText] = argv;
   let mintedKey = null;
   try {
@@ -834,15 +876,22 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
       return 0;
     }
     if (command === undefined) {
-      throw bridgeError(`Usage: node swarm-native-bridge.mjs <swarm.command> [json-args]; env ${SWARM_BRIDGE_ENV_KEYS.url} and ${SWARM_BRIDGE_ENV_KEYS.token} are required (try --help)`, 'swarm_bridge_request_invalid');
+      throw bridgeError(`Usage: node swarm-native-bridge.mjs <swarm.command> [json-args | - reads the payload from stdin]; env ${SWARM_BRIDGE_ENV_KEYS.url} and ${SWARM_BRIDGE_ENV_KEYS.token} are required (try --help)`, 'swarm_bridge_request_invalid');
+    }
+    const stdinRequested = argv.slice(1).some((argument) => STDIN_ARGS_MARKERS.has(argument));
+    if (stdinRequested && argsText !== undefined && !STDIN_ARGS_MARKERS.has(argsText)) {
+      throw bridgeError('Swarm bridge CLI takes the JSON payload from argv or from stdin (-), not both',
+        'swarm_bridge_request_invalid', { command });
     }
     let args = {};
-    if (argsText !== undefined) {
-      try { args = JSON.parse(argsText); }
-      catch { throw bridgeError('Swarm bridge CLI args must be one JSON object', 'swarm_bridge_request_invalid', { args: argsText }); }
-    }
-    if (!args || typeof args !== 'object' || Array.isArray(args)) {
-      throw bridgeError('Swarm bridge CLI args must be one JSON object', 'swarm_bridge_request_invalid', { command });
+    if (stdinRequested) {
+      if (io.stdin == null) {
+        throw bridgeError('Swarm bridge CLI stdin payload requested (-) but no stdin stream is wired',
+          'swarm_bridge_request_invalid', { command });
+      }
+      args = parseCliArgsObject(await readStdinPayload(io.stdin), 'stdin', command);
+    } else if (argsText !== undefined) {
+      args = parseCliArgsObject(argsText, 'argv', command);
     }
     const definition = SWARM_COMMAND_DEFINITIONS[command];
     // The swarm identity is the environment's for every verb that takes one: the contract commands
