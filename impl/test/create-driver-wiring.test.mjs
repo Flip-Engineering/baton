@@ -16,7 +16,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -76,6 +76,21 @@ const mock = () => new MockAdapter({
   scenario: { outcome: 'completed', edits: [{ path: 'wired.txt', content: 'wired\n' }] },
   card: { harness: 'mock', version: 'wiring-1', model: 'wiring-model' },
 });
+
+/** The provider edge, recorded: the briefs an adapter was actually asked to run. The driver-level
+ * claims below read this, never the coordinator's internals, so "the authority was consulted" and
+ * "the composed value reached the provider" are observed facts about a real dispatch. */
+class RecordingMockAdapter extends MockAdapter {
+  constructor(config = {}) {
+    super(config);
+    this.servedBriefs = [];
+  }
+
+  async spawn(worker, brief, opts = {}) {
+    this.servedBriefs.push(structuredClone(brief));
+    return super.spawn(worker, brief, opts);
+  }
+}
 
 test('CDW1: one real verified run consults the injected route authority, custody provider, and verifier runtime', async (t) => {
   const repository = repo();
@@ -245,5 +260,170 @@ test('CDW2: the injected goal-plan authority is consulted for goal, plan, approv
   const principals = new Set(consultations.map((request) => request.principalId));
   for (const principalId of ['goal-owner', 'planner', 'approver', 'dispatcher']) {
     assert.ok(principals.has(principalId), `the authority must see the real principal ${principalId}`);
+  }
+});
+
+// The brief-time knowledge seam (KG-3 rule 9, docs/34 §3): the coordinator consults a
+// provider-supplied `knowledgeBriefingProvider` and attaches its answer to the provider-facing
+// value only. Nothing about the seam is optional at the composition root: a driver whose
+// composition root does not carry the provider is a driver whose briefings are silently inert,
+// which is the same failure shape as 5bd37fbf one layer out.
+test('CDW4: the injected knowledge-briefing provider is consulted, and its block reaches the provider-facing brief only', async (t) => {
+  const repository = repo();
+  const logDir = root('briefing-log');
+  const adapter = new RecordingMockAdapter({
+    scenario: { outcome: 'completed', edits: [{ path: 'wired.txt', content: 'wired\n' }] },
+    card: { harness: 'mock', version: 'wiring-1', model: 'wiring-model' },
+  });
+  const consultations = [];
+  const briefing = Object.freeze({
+    text: 'finding:alpha (Finding): alpha beta signal', truncated: false,
+    provenance: 'hub-derived', untrusted: true,
+  });
+  const driver = createDriver({
+    repoRoot: repository, repoId: 'repo-wiring-brief', logDir,
+    adapters: { mock: adapter }, verificationRuntime: RUNTIME_POLICY,
+    knowledgeBriefingProvider: (inner) => { consultations.push(structuredClone(inner)); return briefing; },
+  });
+  t.after(async () => {
+    await driver.drainAndClose('wiring-cdw4').catch(() => {});
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+  });
+
+  const admitted = brief();
+  const handle = await driver.coordinator.spawn('mock', admitted, { taskId: 'wiring-brief-run', taskType: 'general' });
+  const outcome = await until(() => driver.coordinator.result(handle.id), (value) => value?.ready, 'the verified terminal of wiring-brief-run');
+  assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
+
+  // 1. The injected provider is consulted. A composition root that drops the option still
+  //    reaches this same `completed` terminal with the seam inert, so the observation itself is
+  //    the check — never the run outcome.
+  assert.ok(consultations.length >= 1, 'the injected briefing provider must be consulted for a dispatched worker');
+  // 2. The briefing never enters the durable task: the admitted brief carries no `briefing` key,
+  //    so `briefDigest = canonicalDigest(task.brief)` cannot move when a briefing changes
+  //    (KG-3 rule 6/6a), and the provider is handed the admitted brief's own fields.
+  const stored = driver.coordination.task('wiring-brief-run').brief;
+  assert.equal(Object.hasOwn(consultations[0], 'briefing'), false, 'the provider must see the brief without its own block');
+  assert.equal(Object.hasOwn(stored, 'briefing'), false, 'the briefing never enters task.brief');
+  assert.equal(consultations[0].goal, stored.goal, 'the provider is handed the admitted brief');
+  // 3. The composed value reaches the provider edge, with the inner fields intact.
+  const served = adapter.servedBriefs.filter((value) => value && value.briefing).at(-1) ?? null;
+  assert.ok(served, `the composed briefing must reach the adapter's spawn brief (served ${adapter.servedBriefs.length})`);
+  assert.deepEqual(served.briefing, briefing, 'the adapter is handed the provider\'s exact answer');
+  assert.equal(served.goal, stored.goal, 'the inner brief fields survive the composition untouched');
+});
+
+// The composition root's option surface is a closed set, and this file must say which options it
+// exercises. A new `opts.<name>` read inside createDriver — an authority that arrives through the
+// factory and is consulted by the runtime it builds — is a wiring the driver-level suite would
+// otherwise never see: the two lists below must together name every option the factory reads,
+// and an `exercised` claim must be backed by a case in THIS file that names the option.
+const EXERCISED_OPTIONS = Object.freeze({
+  adapters: 'CDW1',
+  goalPlanAuthority: 'CDW2',
+  knowledgeBriefingProvider: 'CDW4',
+  verificationRuntime: 'CDW1',
+});
+// Options the factory reads that no case here exercises yet. Each row is a debt a reader can act
+// on, never a claim that the option is inert: the row names the path that would exercise it.
+const UNEXERCISED_OPTIONS = Object.freeze({
+  advisoryFeedSources: 'consulted by advisory feed projections, which need a feed card',
+  approvalTimeoutMs: 'an interaction deadline, reached only by a pending approval',
+  atlas: 'assembled only when the atlas capability is opted in',
+  budgetPolicy: 'a threshold policy, reached only by a budget-crossing run',
+  canonicalOrderPolicy: 'a policy, reached only by a canonical-order transaction',
+  capabilities: 'consulted when a registered capability is invoked by a worker',
+  capabilityContexts: 'consulted when a registered capability is invoked by a worker',
+  capabilityFactories: 'read at assembly; the produced capability must still be invoked',
+  contextProgram: 'reached only by a contextCall brief',
+  coordination: 'a caller-supplied store; every case uses the factory-built one',
+  coordinationAsyncOpen: 'the deployment open path, not this file\'s construction',
+  deploymentBaseSha: 'a pinned worktree base; no case supplies one',
+  drainPolicy: 'reached by drainAndClose, which every case runs without asserting its policy',
+  gitExec: 'the preserved-result resolution spawn seam; no case resolves preserved results',
+  hostCapacity: 'the contribution check is its only consult site',
+  logDir: 'the store root; exercised implicitly by every case\'s construction',
+  maxCapabilityBudgetTokens: 'a ceiling over the capability registry',
+  maxCapabilityEnvelopeBytes: 'a ceiling over the capability registry',
+  now: 'the deployment clock seam; cases use the default',
+  progressNudgeWindowMs: 'the stall window, reached only by a stalled turn',
+  providerGovernance: 'consulted on a provider call under a governance policy',
+  providerPolling: 'a supervisor, started only with a reuse policy and poll cards',
+  providerProcessingSchedule: 'a supervisor, started only with its bounded retry policy',
+  providerQuotaAuthority: 'consulted on a provider quota refusal',
+  providerRead: 'consulted by provider status reads',
+  providerReconciliation: 'consulted by provider reconciliation',
+  publisher: 'reached only by a landing/push effect',
+  recoveryMaxAttempts: 'reached only by a death-cert retry',
+  recoveryTimeoutMs: 'reached only by a recovery attempt',
+  repoId: 'the deployment identity; supplied implicitly by every case',
+  repoRoot: 'the deployment checkout; supplied implicitly by every case',
+  representationProduction: 'assembled only when representation production is configured',
+  requireCoverage: 'an acceptance policy flag, read by the done gate',
+  requireIndependentOracle: 'an acceptance policy flag, read by the done gate',
+  requireMutation: 'an acceptance policy flag, read by the done gate',
+  requireRedGreen: 'an acceptance policy flag, read by the done gate',
+  reuseDecisionPolicy: 'reached only by a reuse decision',
+  routeLearningPolicy: 'a policy; the route seam itself is exercised by CDW1',
+  runLineagePolicy: 'a policy, reached only by a settlement lease',
+  runtimeIsolation: 'construction options for the default scope authority',
+  runtimeScopes: 'the scope authority, consulted on scope-governed dispatch',
+  scratchOraclePolicy: 'reached only by a scratch oracle target',
+  sessionRecoveryPolicy: 'started only with a session recovery policy',
+  standingLaws: 'returned on the driver for the briefing composer',
+  stopDeadlineMs: 'a stop deadline, reached only by a stop',
+  structuredMerge: 'reached only by a structured integration',
+  taskTopologyPolicy: 'a policy, reached only by plan-gated topology admission',
+  toolchainProjection: 'a worktree preparation seam',
+  verificationConcurrency: 'the verification lane width; no case supplies a non-default value',
+  verificationForCapture: 'reached only by a contribution capture',
+  verifyDependencyDirs: 'a worktree preparation seam',
+  verifySparsePaths: 'a worktree preparation seam',
+  watchdog: 'reached only by a stall or loop verdict',
+  workerDependencyDirs: 'a worktree preparation seam',
+  workerSparsePaths: 'a worktree preparation seam',
+  workflowPolicy: 'a policy, reached only by a workflow drive',
+  worktreeCapacity: 'a capacity policy; no case configures one',
+  worktreeCapacityEstimate: 'a capacity observation dependency',
+  worktreeCapacityObserve: 'a capacity observation dependency',
+  worktreeCapacityRuntimeFootprint: 'a capacity observation dependency',
+});
+
+/** Every `opts.<name>` the createDriver body reads, in source order, deduplicated. */
+function createDriverOptionNames() {
+  const source = readFileSync(new URL('../src/index.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('export function createDriver(opts) {');
+  assert.ok(start >= 0, 'the public composition root createDriver must exist');
+  const end = source.indexOf('\n}', start);
+  assert.ok(end > start, 'the createDriver body must close at column 0');
+  const body = source.slice(start, end);
+  return [...new Set([...body.matchAll(/opts\.([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1]))].sort();
+}
+
+/** The body of the case whose title starts with `id`, or null. */
+function caseBody(id) {
+  const source = readFileSync(new URL(import.meta.url), 'utf8');
+  const marker = `test('${id}:`;
+  const start = source.indexOf(marker);
+  if (start < 0) return null;
+  const next = source.indexOf("\ntest('", start + marker.length);
+  return source.slice(start, next < 0 ? source.length : next);
+}
+
+test('CDW5: every option the composition root reads is classified, and every exercised claim names a case in this file', () => {
+  const derived = createDriverOptionNames();
+  const declared = [...Object.keys(EXERCISED_OPTIONS), ...Object.keys(UNEXERCISED_OPTIONS)].sort();
+  const missing = derived.filter((name) => !declared.includes(name));
+  const stale = declared.filter((name) => !derived.includes(name));
+  assert.deepEqual(missing, [],
+    'a new option on the composition root must be classified in EXERCISED_OPTIONS or UNEXERCISED_OPTIONS');
+  assert.deepEqual(stale, [], 'a classified option must still be read by the composition root');
+  assert.equal(new Set(declared).size, declared.length, 'an option is classified once');
+  for (const [option, id] of Object.entries(EXERCISED_OPTIONS)) {
+    const body = caseBody(id);
+    assert.ok(body, `${option} claims case ${id}, which must exist in this file`);
+    assert.ok(body.includes(option),
+      `${option} claims case ${id}, whose body must name the option it exercises`);
   }
 });
