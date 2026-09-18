@@ -67,6 +67,7 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_holder_release_refused: row(409, ['runtime'], 'the holder release batch does not fold against the current projection'),
   swarm_capture_base_unreachable: row(409, ['runtime'], 'the captured revision and the deployment target share no common ancestor'),
   contribution_commit_unresolved: row(409, ['runtime'], 'the contribution names a commit that does not resolve on its lane branch yet'),
+  route_degraded: row(409, ['runtime'], 'the named route\'s provider degraded it (one fault class took several seats inside one window); recruits pause on it until a probe succeeds'),
 
   // ── 400 request shape: the request itself fails the closed grammar ──
   invalid_payload: row(400, ['fold'], 'the event payload fails the closed shape its kind requires'),

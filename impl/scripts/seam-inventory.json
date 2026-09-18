@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 485,
+          "size": 489,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -1751,7 +1751,7 @@
         {
           "name": "_attentionPage",
           "ordinal": 0,
-          "size": 33,
+          "size": 36,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
@@ -3915,9 +3915,28 @@
         {
           "name": "_mintProviderFaultDeath",
           "ordinal": 0,
-          "size": 72,
+          "size": 76,
           "seam": "observation",
           "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_foldProviderDegrade",
+          "ordinal": 0,
+          "size": 44,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_recordProviderDegrade",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
             "observation:record_name"
           ]
         },
@@ -12104,10 +12123,28 @@
         {
           "name": "_routeEligible",
           "ordinal": 0,
-          "size": 3,
+          "size": 4,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeDegradeFor",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_readyRouteLabels",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
           ]
         },
         {
@@ -12440,7 +12477,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 635,
+          "size": 658,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

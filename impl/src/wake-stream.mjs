@@ -37,6 +37,42 @@ export const WAKE_STREAM_END_REASONS = Object.freeze([
   'swarm_closed', 'stream_cursor_behind_archive', 'transport_closed', 'caller_closed', 'resident_stopping',
 ]);
 
+// Issue #316 (b): the ONE closed set of reasons an ATTACHMENT that ends can name — the end-reason
+// vocabulary above answers "why did the STREAM end", this one answers "why did MY ATTACHMENT end",
+// which is the question a watcher that stopped receiving wakes asks. Both the CLI's follow
+// (followWakes) and the loopback WebSocket bridge derive their final frame through the SAME mapping
+// below, so one attachment end cannot be reported two ways depending on the transport it rode:
+//
+//   restart           — the resident went away under the attachment (it stopped serving, restarted
+//                       or reincarnated) and the attachment ended because of THAT;
+//   transport_closed  — the link closed without the resident naming a restart: a clean end, a
+//                       caller's own stop, an archive-behind end, or a socket that simply closed;
+//   error             — the attachment FAILED (a transport fault, or a protocol error on the wire),
+//                       which is the one reason that also carries its cause.
+export const ATTACHMENT_CLOSED_REASONS = Object.freeze(['error', 'restart', 'transport_closed']);
+
+/** The ONE attachment-end → closed-reason mapping (#316 b). `outcome` is an attachment outcome
+ * ({status, reason?}) as the client half resolves it and as the bridge classifies its own closes;
+ * a status this set does not know reads as a transport close, never as silence. */
+export function attachmentClosedReason(outcome) {
+  if (outcome?.status === 'error') return 'error';
+  if (outcome?.status === 'ended' && outcome.reason === 'resident_stopping') return 'restart';
+  return 'transport_closed';
+}
+
+/** The typed final frame an attachment delivers: what ended it, when, and the seq a consumer
+ * resumes from — the cursor their next attachment must name to lose nothing (#316 b). */
+export function attachmentClosedFrame(reason, { at = new Date().toISOString(), resumeFrom = null } = {}) {
+  const bounded = ATTACHMENT_CLOSED_REASONS.includes(reason) ? reason : 'transport_closed';
+  return Object.freeze({
+    schemaVersion: WAKE_SCHEMA_VERSION,
+    kind: 'baton.wake_attachment_closed',
+    reason: bounded,
+    at: typeof at === 'string' && Number.isFinite(Date.parse(at)) ? new Date(Date.parse(at)).toISOString() : null,
+    resumeFrom: Number.isSafeInteger(resumeFrom) ? resumeFrom : null,
+  });
+}
+
 function typed(message, code, detail = undefined) {
   return Object.assign(new Error(message), { code, ...(detail === undefined ? {} : { detail }) });
 }
@@ -399,10 +435,23 @@ function renderNext(row, coordinates) {
 
 function stringField(value) { return typeof value === 'string' && value.length > 0 ? value : null; }
 
+// Issue #316 (c): the served-commit header every frame carries — the commit the resident serves
+// and how many commits the branch it was started from has moved past it — or null when the
+// deployment cannot name one. Normalized once here, so the wire shape is the stream's and never
+// the deployment document's, and so a frame can never carry a half-read fact.
+function servedHeader(value) {
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return null;
+  const commit = stringField(value.commit);
+  if (commit === null) return null;
+  return Object.freeze({ commit, behind: Number.isSafeInteger(value.behind) ? value.behind : null });
+}
+
 /** One wake frame from one coordination ledger row. `attribution` maps a run id, worker id, or
  * task id to the swarm and participant that own it, so a run-scoped row arrives carrying the swarm
- * coordinates a consumer actually acts on. Null when the row is not a wake row. */
-export function deriveWakeFrame(event, attribution = new Map()) {
+ * coordinates a consumer actually acts on. `served` is the deployment's served-commit header (the
+ * drift an operator reads where the deaths appear); it is passed in because it is read on the
+ * deployment's cadence, never per frame. Null when the row is not a wake row. */
+export function deriveWakeFrame(event, attribution = new Map(), served = null) {
   const row = wakeClassFor(event);
   if (row === null) return null;
   const payload = event.payload ?? {};
@@ -432,6 +481,7 @@ export function deriveWakeFrame(event, attribution = new Map()) {
     subject: subjectOf(row, payload),
     next: renderNext(row, coordinates),
     observation: false,
+    served: servedHeader(served),
     // The bounded row identity: what woke the consumer, never a copy of a 60 KiB view (the wake
     // cost the 2026-09-14 audit measured). `workerSeq` is the coordinate an operational row is
     // resolvable at, since a projected row carries only its identity.
@@ -450,8 +500,9 @@ export function deriveWakeFrame(event, attribution = new Map()) {
 
 /** One wake frame from one live deployment observation. Observations have no ledger row to resume
  * from, so the frame names the observation it came from, carries `observation: true`, and takes the
- * ledger head at emission as its cursor. */
-export function deriveObservationFrame(row, observation, seq, ts) {
+ * ledger head at emission as its cursor. The served-commit header rides it exactly as it rides a
+ * ledger-derived frame. */
+export function deriveObservationFrame(row, observation, seq, ts, served = null) {
   const payload = observation?.payload ?? {};
   return Object.freeze({
     schemaVersion: WAKE_SCHEMA_VERSION,
@@ -463,6 +514,7 @@ export function deriveObservationFrame(row, observation, seq, ts) {
     subject: subjectOf(row, payload),
     next: renderNext(row, {}),
     observation: true,
+    served: servedHeader(served),
     row: Object.freeze({
       seq, ts, kind: `observation.${row.observation}`, actor: observation?.actor ?? 'deployment',
       payloadKind: row.observation, worker: null, workerSeq: null, code: stringField(payload.code),
@@ -516,8 +568,15 @@ export class WakeStream {
       && typeof options.observation !== 'function') {
       throw new TypeError('wake stream observation must be a function when supplied');
     }
+    // Issue #316 (c): the served-commit fact, supplied by the deployment that owns the repository.
+    // Read ONCE at publish and refreshed on the deployment-observation cadence below — never per
+    // frame, because the fact is a git read and a frame is not the place to pay for one.
+    if (options.served !== undefined && options.served !== null && typeof options.served !== 'function') {
+      throw new TypeError('wake stream served must be a function when supplied');
+    }
     this.coordination = options.coordination;
     this.observation = options.observation ?? null;
+    this.served = options.served ?? null;
     this.now = options.now ?? Date.now;
     this.pollMs = options.pollMs ?? 250;
     // Deployment observations are a statfs-scale read, not a ledger walk: they are polled far more
@@ -531,7 +590,22 @@ export class WakeStream {
     }
     this._observationState = new Map();
     this._observedAt = 0;
+    this._servedHeader = null;
+    this._servedAt = 0;
     this._closed = false;
+  }
+
+  /** The served-commit header every frame this stream emits carries: the deployment's own fact,
+   * read at publish and refreshed on the same cadence the live deployment observations ride. A
+   * supplier that cannot answer says so with null rather than breaking the stream it feeds. */
+  _servedFor() {
+    if (this.served === null) return null;
+    const now = this.now();
+    if (this._servedAt !== 0 && now - this._servedAt < this.observationMs) return this._servedHeader;
+    this._servedAt = now;
+    try { this._servedHeader = this.served() ?? null; }
+    catch { this._servedHeader = null; }
+    return this._servedHeader;
   }
 
   get closed() { return this._closed; }
@@ -587,7 +661,7 @@ export class WakeStream {
   /** Observation frames: a crossing, and — for a class whose condition is a STANDING fault the
    * consumer must know about — once at attach. A class that reports a change (an incarnation) only
    * establishes its baseline at attach: announcing "nothing changed yet" would be noise. */
-  _observationFrames(seq, ts) {
+  _observationFrames(seq, ts, served) {
     const frames = [];
     const present = new Set();
     for (const { row, observed, key } of this._observations()) {
@@ -597,7 +671,7 @@ export class WakeStream {
       this._observationState.set(key, signature);
       if (previous === signature) continue;
       if (previous === null && row.announceStanding !== true) continue;
-      frames.push(deriveObservationFrame(row, observed, seq, ts));
+      frames.push(deriveObservationFrame(row, observed, seq, ts, served));
     }
     for (const key of [...this._observationState.keys()]) if (!present.has(key)) this._observationState.delete(key);
     return frames;
@@ -621,17 +695,22 @@ export class WakeStream {
       start = startAt;
     }
     const attribution = start > head ? new Map() : this._attribution();
+    // ONE served read for the whole pull (the cadence decides when it refreshes), so N frames carry
+    // the same header and never N separate reads of the checkout.
+    const served = this._servedFor();
     const frames = [];
     let cursor = filter.since === null ? head : filter.since;
     if (start <= head) {
       for (const event of this.coordination.eventsView(start)) {
         if (Number.isSafeInteger(event?.seq) && event.seq > cursor) cursor = event.seq;
-        const frame = deriveWakeFrame(event, attribution);
+        const frame = deriveWakeFrame(event, attribution, served);
         if (frame === null || !wakeMatches(frame, filter)) continue;
         frames.push(frame);
       }
     }
-    if (includeObservations && this._observationDue()) frames.push(...this._observationFrames(cursor, this.now()));
+    if (includeObservations && this._observationDue()) {
+      frames.push(...this._observationFrames(cursor, this.now(), served));
+    }
     return Object.freeze({ frames: Object.freeze(frames), cursor, lagged });
   }
 
@@ -719,11 +798,21 @@ export function openWakeStream({
   // `done` carries. It never rejects: a refusal is an outcome, not an exception.
   let settleOpened;
   const opened = new Promise((resolve) => { settleOpened = resolve; });
+  // Issue #316 (b): the seq this attachment actually reached. It rides the typed final frame as
+  // `resumeFrom`, so a consumer whose attachment ended knows the cursor its next one names — the
+  // difference between "I lost nothing" and "I have to guess".
+  let reached = Number.isSafeInteger(resume) ? resume : null;
   const done = new Promise((resolve) => {
     const finish = (outcome) => {
       signal?.removeEventListener?.('abort', abort);
-      resolve(outcome);
-      settleOpened(outcome);
+      // The typed final frame: an attachment that REFUSED never attached, so it says nothing here
+      // (its refusal is already typed); every attachment that opened and then ended does.
+      const settled = outcome.status === 'refused' ? outcome : Object.freeze({
+        ...outcome,
+        attachmentClosed: attachmentClosedFrame(attachmentClosedReason(outcome), { resumeFrom: reached }),
+      });
+      resolve(settled);
+      settleOpened(settled);
     };
     const request = httpRequest({
       ...(socketPath === null ? { host: base.hostname, port: base.port || 443 } : { socketPath }),
@@ -768,6 +857,11 @@ export function openWakeStream({
         if (data.length === 0) return;
         let frame;
         try { frame = JSON.parse(data); } catch { return; }
+        // The cursor this attachment reached: the frame's own seq when it has one, else the SSE id
+        // the resident stamped. A frame that carries neither advances nothing.
+        const seq = Number.isSafeInteger(frame?.seq) ? frame.seq
+          : (Number.isSafeInteger(Number(id)) && `${id}`.length > 0 ? Number(id) : null);
+        if (seq !== null && (reached === null || seq > reached)) reached = seq;
         if (type === 'ended') {
           // Issue #356: the resident's own end marker — `event: ended` carrying a
           // baton.wake_stream_ended body whose reason names the close from the ONE closed set.
@@ -924,37 +1018,60 @@ export function attachWakeWebSocket({ server, stream, authenticate, path = '/v1/
     }
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ${acceptKey(req.headers['sec-websocket-key'])}\r\n\r\n`);
     if (head?.length) socket.unshift(head);
-    const connection = { socket, closed: false, controller: new AbortController() };
+    const connection = { socket, closed: false, controller: new AbortController(), reached: null };
     upgrades.add(connection);
-    const close = (code) => {
+    // Issue #316 (b): every end of this attachment delivers the SAME typed final frame the CLI's
+    // follow renders — the bridge and the CLI share ONE closed reason set, so a watcher that ends
+    // over the wire cannot be told a different story from one that ends over SSE. Only the reason
+    // differs by cause: the resident going away is a restart, a peer or socket close is a
+    // transport close, a protocol error is an error.
+    const close = (code, reason) => {
       if (connection.closed) return;
       connection.closed = true;
       connection.controller.abort();
       upgrades.delete(connection);
+      try {
+        socket.write(encodeTextFrame(JSON.stringify(
+          attachmentClosedFrame(reason, { resumeFrom: connection.reached }))));
+      } catch { /* the peer is already gone */ }
       try { socket.write(closeFrame(code)); } catch { /* the peer is already gone */ }
-      socket.end();
+      try { socket.end(); } catch { /* the peer is already gone */ }
     };
-    socket.on('error', () => close(1006));
-    socket.on('close', () => close(1006));
+    socket.on('error', () => close(1006, 'transport_closed'));
+    socket.on('close', () => close(1006, 'transport_closed'));
     socket.on('data', createFrameReader({
       // The wake feed is one-way: inbound text is never authored into the stream.
       onText: () => {},
       onControl: (kind, payload) => {
-        if (kind === 'close') return close(1000);
+        if (kind === 'close') return close(1000, 'transport_closed');
         if (kind === 'ping') {
-          try { socket.write(encodeServerFrame(0xa, payload)); } catch { close(1006); }
+          try { socket.write(encodeServerFrame(0xa, payload)); } catch { close(1006, 'transport_closed'); }
         }
       },
-      onProtocolError: (code) => close(code),
+      onProtocolError: (code) => close(code, 'error'),
     }));
     void (async () => {
       try {
         await stream.watch(filter, {
           signal: connection.controller.signal,
-          onFrame: async (frame) => { if (!connection.closed) socket.write(encodeTextFrame(JSON.stringify(frame))); },
-          onLagged: async (lagged) => { if (!connection.closed) socket.write(encodeTextFrame(JSON.stringify(lagged))); },
+          onFrame: async (frame) => {
+            if (connection.closed) return;
+            if (Number.isSafeInteger(frame?.seq)
+              && (connection.reached === null || frame.seq > connection.reached)) {
+              connection.reached = frame.seq;
+            }
+            socket.write(encodeTextFrame(JSON.stringify(frame)));
+          },
+          onLagged: async (lagged) => {
+            if (connection.closed) return;
+            if (Number.isSafeInteger(lagged?.cursor)) connection.reached = lagged.cursor;
+            socket.write(encodeTextFrame(JSON.stringify(lagged)));
+          },
         });
-      } catch { close(1011); }
+        // The stream ended under a live attachment: the resident stopped serving it, which is the
+        // restart a consumer resumes from — announced, never a silent socket.
+        close(1000, 'restart');
+      } catch { close(1011, 'error'); }
     })();
   };
   server.on('upgrade', onUpgrade);
@@ -964,9 +1081,14 @@ export function attachWakeWebSocket({ server, stream, authenticate, path = '/v1/
     close: () => {
       server.off('upgrade', onUpgrade);
       for (const connection of [...upgrades]) {
+        if (connection.closed) { upgrades.delete(connection); continue; }
         connection.closed = true;
         connection.controller.abort();
-        try { connection.socket.destroy(); } catch { /* already gone */ }
+        try {
+          connection.socket.write(encodeTextFrame(JSON.stringify(
+            attachmentClosedFrame('restart', { resumeFrom: connection.reached }))));
+        } catch { /* already gone */ }
+        try { connection.socket.end(); } catch { /* already gone */ }
         upgrades.delete(connection);
       }
     },

@@ -752,12 +752,50 @@ export class SwarmRuntime {
     return Array.isArray(summary?.routeUsage) ? summary.routeUsage : null;
   }
 
-  /** Whether a usage row names a route a recruit could be admitted on right now: ready, and not
-   * exhausted on the quota axis. A blocked row is never chosen — its `code` says who refused it. */
+  /** Whether a usage row names a route a recruit could be admitted on right now: ready, not
+   * exhausted on the quota axis, and not degraded by its provider. A blocked row is never chosen —
+   * its `code` says who refused it — and a degraded one is the route #316 keeps recruits off
+   * until a probe succeeds. */
   _routeEligible(row) {
-    return row?.state !== 'blocked' && row?.quota?.state !== 'exhausted';
+    return row?.state !== 'blocked' && row?.state !== 'degraded'
+      && row?.degraded == null && row?.quota?.state !== 'exhausted';
   }
 
+  /** #316 (a): the degrade episode a recruit's own selection lands on, or null when none of the
+   * routes it names is degraded. A refusal is minted ONLY when the selection has nothing usable
+   * left: while one of the named routes is ready the runtime chooses it (as #341 part 3 always
+   * has), and a caller who named one exact route that is degraded gets the typed refusal instead
+   * of a seat dead within seconds. */
+  _routeDegradeFor(args) {
+    const rows = this._routeUsageRows();
+    if (rows === null || rows.length === 0) return null;
+    const options = args.options ?? {};
+    const named = swarmRouteShape(options.exact);
+    const exact = named !== null && named.effort !== null ? named : null;
+    const selector = exact ?? named ?? options;
+    const axes = ['harness', 'model', 'effort']
+      .filter((axis) => typeof selector[axis] === 'string' && selector[axis].length > 0);
+    if (axes.length === 0) return null;
+    const considered = this._routesForSelection(rows, selector, axes);
+    if (considered.length === 0) return null;
+    const degraded = considered.filter((row) => row?.degraded != null);
+    if (degraded.length === 0 || degraded.length < considered.length) return null;
+    // The ROW is authoritative about which route it is: a published episode that does not name its
+    // own route still refuses under the route the caller's selection landed on.
+    const row = degraded[0];
+    return Object.freeze({
+      ...row.degraded,
+      route: row.degraded.route ?? Object.freeze({ ...row.route }),
+    });
+  }
+
+  /** The served routes a caller can actually use right now (the same eligibility every admission
+   * reads), named the way the refusal and the route table name them. Empty when nothing is usable
+   * — a refusal says so instead of sending the caller hunting. */
+  _readyRouteLabels() {
+    const rows = this._routeUsageRows() ?? [];
+    return rows.filter((row) => this._routeEligible(row)).map((row) => this._routeLabel(row.route));
+  }
   /** The remaining headroom a usage row carries, DERIVED from the row itself and never from a
    * threshold this module would have to invent: free concurrency slots (a route with no declared
    * ceiling has no bound to run out of), then the fewest turns recorded on it. */
@@ -2572,6 +2610,30 @@ export class SwarmRuntime {
       }
       if (caller && permissions.some((permission) => !(caller.permissions ?? DEFAULT_PERMISSIONS).includes(permission))) {
         refuse('Delegation cannot grant authority the caller does not hold', 'swarm_permission_required');
+      }
+      // #316 (a): a route its provider degraded is refused BEFORE any effect — no worktree, no
+      // credential projection, no process, and no seat dead within seconds — and the refusal names
+      // the route, the instant the episode opened and the next act (pause recruits on it until a
+      // probe succeeds). Derived from the SAME usage rows the comparison below reads, so the route
+      // the caller sees degraded is the route it is refused on.
+      const degrade = this._routeDegradeFor(args);
+      if (degrade) {
+        const ready = this._readyRouteLabels();
+        refuse(
+          `route ${this._routeLabel(degrade.route)} is degraded (${degrade.faultClass ?? 'provider_degraded'})`
+          + ` since ${degrade.since ?? 'an unrecorded instant'}: ${degrade.count ?? degrade.participants?.length ?? 0}`
+          + ' seat(s) died on it inside one window — recruits pause on it until a probe succeeds'
+          + ' (the deployment\'s own run path probes a route before it starts one)'
+          + (ready.length > 0
+            ? `; routes ready now: ${ready.join(', ')}`
+            : '; no route is ready — wait for a probe or provision another route'),
+          'route_degraded',
+          {
+            route: degrade.route, since: degrade.since ?? null,
+            faultClass: degrade.faultClass ?? null, participants: degrade.participants ?? [],
+            window: degrade.window ?? null, next: degrade.next ?? null,
+          },
+        );
       }
       // #341 part 3: the routes this recruit compared, and the selection the deployment admits —
       // the ready route with the most remaining headroom when the caller named a prefix, the
