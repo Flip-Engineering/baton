@@ -3444,11 +3444,36 @@ class BatonDeployment {
     if (this.#stopRequestedAt !== null) return null;
     const kind = typeof trigger === 'string' && trigger.length > 0 ? trigger : 'signal';
     const at = this.#clock();
-    const recorded = this.#stopRecord('host.stop_requested', { trigger: kind, at }, 'requested');
+    // Issue #437/#450: the count the operator's one line carries rides the durable request row,
+    // read SYNCHRONOUSLY from the projection this resident already holds. A read that refuses is a
+    // FACT (`{count: null, refusal: {read, code}}`) — a refused count is itself the named wait, so
+    // it can never become a silent deadline the next operator has to reconstruct from a log line.
+    const recorded = this.#stopRecord('host.stop_requested', {
+      trigger: kind, at, participants: this.#stopParticipants(),
+    }, 'requested');
     this.#markStopStage(STOP_STAGES.requested);
     if (recorded === null) return null;
     this.#stopRequestedAt = at;
     return `baton serve: host.stop_requested trigger ${kind} at ${at}`;
+  }
+
+  /** Issue #437/#450: the participant count behind the stop's one line, and the refusal when that
+   * read cannot answer — the SAME projection `ownedParticipantCount` publishes (the coordinator's
+   * live rows judged by the local-resource predicate the fleet drain targets), never a second
+   * derivation, and never an invented count. */
+  #stopParticipants() {
+    try {
+      return Object.freeze({ count: this.ownedParticipantCount(), refusal: null });
+    } catch (error) {
+      return Object.freeze({
+        count: null,
+        refusal: Object.freeze({
+          read: 'coordinator.participants',
+          code: typeof error?.code === 'string' && error.code.length > 0
+            ? error.code : 'application_host_narration_unavailable',
+        }),
+      });
+    }
   }
 
   /** Issue #351 lane 2: the startup truth the publication contract renders — the coordination
@@ -3496,7 +3521,19 @@ class BatonDeployment {
       },
       waiting: async ({ wait }) => {
         const at = this.#clock();
-        this.#stopRecord('host.stop_waiting', { on: wait.on, ids: [...wait.ids], at }, `waiting:${wait.on}`);
+        // Issue #450: every named wait carries the #360 entry objects — {resource, reaper, since} —
+        // so a stop's wait rows and the fleet drain's `control.stop_waiting_on` rows read as ONE
+        // shape however the wait arrived (a worker the drain could not release, a quota row a gone
+        // worker left behind, a narration read that outlives the first second).
+        const entries = Array.isArray(wait.entries) && wait.entries.length > 0
+          ? wait.entries.map((entry) => ({
+            resource: entry.resource, reaper: entry.reaper ?? null, since: entry.since,
+          }))
+          : [...wait.ids].map((id) => ({ resource: `${wait.on}:${id}`, reaper: wait.reaper ?? null, since: at }));
+        const released = Array.isArray(wait.released) ? wait.released.map((row) => ({ ...row })) : [];
+        this.#stopRecord('host.stop_waiting', {
+          on: wait.on, ids: [...wait.ids], entries, released, at,
+        }, `waiting:${wait.on}`);
         const named = wait.ids.length > 0 ? ` ${wait.ids.join(',')}` : '';
         const line = `baton serve: host.stop_waiting on ${wait.on}${named} at ${at}`;
         if (wait.on !== 'worker') return { line, released: false };
@@ -3519,7 +3556,14 @@ class BatonDeployment {
         const at = this.#clock();
         const checkpoint = this.#driver?.coordination?.checkpointReleaseState?.() ?? null;
         const cache = checkpoint === null ? '' : ` (projection checkpoint ${checkpoint.state}${checkpoint.reason ? `: ${checkpoint.reason}` : ''})`;
-        return { line: `baton serve: host.stopped ${state} at ${at}${cache}` };
+        // Issue #450: the resources THIS stop released are said in the same line as its outcome —
+        // the reservation a gone worker left behind is named {resource, how}, never a silent row.
+        // The durable record is the `drain.resource_released` row the coordinator minted at the
+        // seam that observed the death; this is the operator's half of the same fact.
+        const released = this.#driver?.coordinator?.releasedResources?.() ?? [];
+        const said = released.length === 0 ? ''
+          : ` (released ${released.length}: ${released.map((row) => `${row.resource} ${row.how}`).join(', ')})`;
+        return { line: `baton serve: host.stopped ${state} at ${at}${cache}${said}` };
       },
       /** Issue #351: one mark on the stop's own clock, taken by the host that finished the stage.
        * Best-effort by construction — a host with no clock to mark simply has no stage rows. */
@@ -4123,6 +4167,14 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   });
   // The floor probe reads the ledger high-water through the authority the driver just built.
   worktreeCapacityRef = driver.worktreeCapacity;
+  // Issue #450: the coordinator may never fail a stop on a reservation whose worker is gone. The
+  // worktree façade it holds settles a reservation only by reaping its checkout, so the authority's
+  // OWN cleanup settlement — the one #329 uses for an unknown capacity outcome and the startup
+  // reconciliation uses for a retained owner — is handed to the controller here, where the
+  // deployment that owns the authority builds it.
+  driver.coordinator.attachCapacitySettlement(
+    (resource) => driver.worktreeCapacity.settleForCleanup(resource),
+  );
   // #346: the live re-projection. Every adoption by the credential cache rewrites the credential
   // document of every LIVE claude lease through the runtime registry the driver just built — a
   // running seat holds the rollover before its next provider call, with no harness cooperation.
