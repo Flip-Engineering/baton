@@ -1,5 +1,5 @@
 // Issue #333: the suite runner's host-wide verify lease, behind one testable seam.
-//
+// Issue #424: the nested bypass is proven by the PARENT's lease token, never by the suite root.
 // run-suite.mjs holds ONE `verify` lease from the host capacity authority for the whole
 // verdict — a full suite costs every core but the hub's (the #269 measurement), so two
 // residents each running a suite would drive the load the way the 2026-09-14 incident did.
@@ -8,14 +8,19 @@
 // a spent wait refuses BEFORE any lane starts unless the dimension names a standing host
 // limit no wait could cure (suiteQueueTimeoutDecision).
 //
-// BATON_HOST_CAPACITY_DISABLED=1 stays the operator bypass (the run acquires nothing and
-// touches no lease directory); a nested runner — one spawned from a test file, carrying
-// BATON_TEST_SUITE_ROOT — stays unwired the same way deployments do, so the suite's own
-// self-checks never queue behind their parent's lease. Every test-file child stays unwired
-// through the BATON_HOST_CAPACITY_DISABLED=1 run-suite.mjs already pins in the child
-// environment. The runner's own wait defaults short (verify leases are held for minutes, so
-// a longer wait only delays the same decision); BATON_HOST_CAPACITY_WAIT_MS extends it and
-// BATON_HOST_CAPACITY_POLL_MS sets the queue poll.
+// BATON_HOST_CAPACITY_DISABLED=1 stays the operator bypass (the run acquires nothing and touches
+// no lease directory). The `nested` bypass is narrower: a runner spawned BY a test file whose
+// parent HOLDS the lease inherits that parent's token digest in BATON_SUITE_VERIFY_LEASE, and only
+// the digest — never the inherited suite root — leaves it unwired. A deployment that itself runs
+// under a suite root pins BATON_TEST_SUITE_ROOT for every child, and RuntimeIsolation projects the
+// deployment's environment onto its seats with that name intact (only secret- and provider-shaped
+// names are filtered), so reading the root as "nested" left every seat's verdict lease-free — the
+// 2026-09-18 03:15 incident (#424: nine worker leases, no verify lease, three concurrent
+// `run-suite.mjs --changed` runs, load 58). The runner's own wait defaults short (verify leases
+// are held for minutes, so a longer wait only delays the same decision);
+// BATON_HOST_CAPACITY_WAIT_MS extends it and BATON_HOST_CAPACITY_POLL_MS sets the queue poll.
+
+import { createHash } from 'node:crypto';
 
 import { HostCapacityAuthority, HOST_CAPACITY_BYPASS } from '../src/host-capacity.mjs';
 
@@ -24,15 +29,44 @@ export function suiteLeaseDisabled(env = process.env) {
   return env?.BATON_HOST_CAPACITY_DISABLED === '1';
 }
 
-/** A nested runner — spawned from a test file, which inherits the suite root — stays unwired,
- * the same rule deployments follow (a suite host is oversubscribed by design, and a nested
- * verdict queuing behind its parent's lease would deadlock the suite's own self-checks). */
-export function suiteLeaseNested(env = process.env) {
-  return env?.BATON_TEST_SUITE_ROOT !== undefined;
+/** The environment variable a lease-holding runner hands the children it spawns: the digest of
+ * the token it holds (suiteLeaseTokenDigest). */
+export const SUITE_VERIFY_LEASE_ENV = 'BATON_SUITE_VERIFY_LEASE';
+
+/** The digest a lease-holding runner publishes to its children — the ONE lease that nests them
+ * (kind, nonce, resident), so a child proves its parent's admission without reading, or trusting,
+ * the authority. Null for anything that is not a lease token. */
+export function suiteLeaseTokenDigest(token) {
+  if (!token || typeof token !== 'object' || typeof token.nonce !== 'string') return null;
+  return createHash('sha256')
+    .update([token.kind ?? '', token.nonce, token.residentId ?? ''].join(':'))
+    .digest('hex');
 }
 
-/** The lease holder this runner enqueues under — visible on the authority's queue. */
-export function suiteLeaseHolder() {
+/** A nested runner — one spawned BY a test file whose parent holds the lease — stays unwired: a
+ * nested verdict queuing behind its parent's lease would deadlock the suite's own self-checks, and
+ * a suite host is oversubscribed by design. The proof is the parent's token digest in the
+ * environment, never the inherited BATON_TEST_SUITE_ROOT: a seat inherits that root from the
+ * deployment it runs in and is a verdict like any other (#424). */
+export function suiteLeaseNested(env = process.env) {
+  const digest = env?.[SUITE_VERIFY_LEASE_ENV];
+  return typeof digest === 'string' && /^[a-f0-9]{64}$/u.test(digest);
+}
+
+/** The lease holder this runner enqueues under — visible on the authority's queue, and on the
+ * swarm view's participant row as `verify {state, position, ahead}` when it names a seat (#333).
+ * A seat-run verdict is held under the participant holder the runtime projects into the worker
+ * environment (`participant:<swarmId>:<participantId>`), so the participant's own row shows the
+ * suite it is running; a runner outside a swarm keeps the runner's pid holder. */
+export function suiteLeaseHolder(env = process.env) {
+  const swarmId = env?.BATON_SWARM_BRIDGE_SWARM_ID;
+  const participantId = env?.BATON_SWARM_BRIDGE_PARTICIPANT_ID;
+  if (typeof swarmId === 'string' && swarmId.length > 0
+    && typeof participantId === 'string' && participantId.length > 0) {
+    // The authority bounds a holder record at 256 bytes; an over-long identity names no seat.
+    const holder = `participant:${swarmId}:${participantId}`;
+    if (Buffer.byteLength(holder) <= 256) return holder;
+  }
   return `run-suite:${process.pid}`;
 }
 
@@ -99,6 +133,18 @@ export function formatSuiteDegradedWarning(error) {
   return `baton test runner: proceeding WITHOUT a host verify lease (${shortfall}) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend`;
 }
 
+/** The runner's pre-lane plan line (#424): the selection it expanded and the lane width it
+ * resolved — one line printed BEFORE admission and before any lane, so a reader sees what is
+ * about to run even when the host queues this verdict, degrades it, or refuses it. */
+export function formatSuitePlan({
+  expanded = 0, changedPaths = 0, parallel = 0, serial = 0, parallelism = 1, idleMs = 0,
+} = {}) {
+  const selection = changedPaths > 0
+    ? `${expanded} file(s) expanded from ${changedPaths} changed path(s)`
+    : `${expanded} file(s) in the whole suite`;
+  return `baton test runner: plan — ${selection}: ${parallel} in the parallel lane (x${parallelism}), ${serial} in the serial lane; progress deadline ${idleMs} ms per file`;
+}
+
 /** Acquire the runner's verify lease, printing the queued row while it waits. Resolves with
  * `{disabled, nested, token, authority, release}`; a bypassed or nested run resolves
  * `{disabled: true}` without touching the lease directory, and a spent wait rejects with the
@@ -106,7 +152,7 @@ export function formatSuiteDegradedWarning(error) {
  * degrades visibly (suiteQueueTimeoutDecision), never starved silently inside them. */
 export async function acquireSuiteVerifyLease({
   authority = null, createAuthority = createSuiteLeaseAuthority,
-  holder = suiteLeaseHolder(), env = process.env,
+  env = process.env, holder = suiteLeaseHolder(env),
   log = (line) => process.stderr.write(`${line}\n`), onQueued = null,
 } = {}) {
   if (suiteLeaseDisabled(env) || suiteLeaseNested(env)) {

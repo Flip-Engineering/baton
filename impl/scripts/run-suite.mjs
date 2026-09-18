@@ -44,7 +44,13 @@ const { defaultSuiteParallelism } = await import(new URL('../src/host-capacity.m
 // so tests can stage the authority — the runner itself always admits through the shared host
 // directory, prints the #329 queued row while it waits, and stays bypassed under
 // BATON_HOST_CAPACITY_DISABLED=1 with its children unwired.
-const { acquireSuiteVerifyLease, formatSuiteDegradedWarning, suiteQueueTimeoutDecision } = await import(new URL('./suite-host-lease.mjs', import.meta.url).href);
+// Issue #424: a seat's suite subset is a verdict like any other — the seat's participant holder
+// names its lease, and only the parent's own token digest (BATON_SUITE_VERIFY_LEASE, published to
+// this run's children below) nests a runner; the inherited BATON_TEST_SUITE_ROOT never does.
+const {
+  acquireSuiteVerifyLease, formatSuiteDegradedWarning, formatSuitePlan, SUITE_VERIFY_LEASE_ENV,
+  suiteLeaseTokenDigest, suiteQueueTimeoutDecision,
+} = await import(new URL('./suite-host-lease.mjs', import.meta.url).href);
 
 /** The machine-local prerequisites this run observed, named by the readiness declaration. */
 function suiteEnvironment(repoRootPath) {
@@ -246,6 +252,12 @@ const idleMs = Number.parseInt(process.env.BATON_SUITE_IDLE_MS ?? '', 10) > 0
 const parallelism = Number.parseInt(process.env.BATON_SUITE_PARALLELISM ?? '', 10) > 0
   ? Number.parseInt(process.env.BATON_SUITE_PARALLELISM, 10) : defaultSuiteParallelism();
 
+// Issue #424: the token digest this run publishes to the children it spawns — null until the
+// verdict lease is held (and for a run that holds none, so no child inherits a digest this run
+// cannot back). A runner spawned BY one of those children reads it as `nested` and stays unwired;
+// a seat-run suite has no parent token and admits like any other verdict.
+let suiteLeaseDigest = null;
+
 function relativeTestPath(file) {
   const absolute = resolve(process.cwd(), file);
   const rel = relative(implRootPath, absolute);
@@ -404,6 +416,7 @@ function childEnv(summaryFile) {
     BATON_HOST_CAPACITY_DISABLED: '1',
     ...(summaryFile ? { BATON_SUITE_SUMMARY_FILE: summaryFile } : {}),
     TMPDIR: suiteRoot, TMP: suiteRoot, TEMP: suiteRoot,
+    ...(suiteLeaseDigest !== null ? { [SUITE_VERIFY_LEASE_ENV]: suiteLeaseDigest } : {}),
   };
   // Each file runs as its OWN process with its own reporter. A NODE_TEST_CONTEXT inherited from
   // an outer `node --test` (the runner itself driven from a test, as the manifest-guard test does)
@@ -411,6 +424,9 @@ function childEnv(summaryFile) {
   // unwritten — the file then reads as "exited without reporting". The child's context is this
   // run's, never the caller's.
   delete env.NODE_TEST_CONTEXT;
+  // The parent token is this run's own admission, never an inherited one: a run that holds no
+  // lease hands its children no token (they are already unwired by the pin above).
+  if (suiteLeaseDigest === null) delete env[SUITE_VERIFY_LEASE_ENV];
   return env;
 }
 
@@ -534,6 +550,18 @@ if (legacyPassthrough) {
     }
   }
   const files = laneFiles(changedSelection);
+  // Issue #424: the plan — what this run expanded and the lane width it resolved (the derivation
+  // reads the host's load, so a saturated host resolves one lane) — prints BEFORE admission and
+  // before any lane. A reader sees the size of the run even when the host queues the verdict,
+  // degrades it to no lease, or refuses it.
+  process.stderr.write(`${formatSuitePlan({
+    expanded: files.parallel.length + files.serial.length,
+    changedPaths: changedPaths.length,
+    parallel: files.parallel.length,
+    serial: files.serial.length,
+    parallelism,
+    idleMs,
+  })}\n`);
   // Issue #333: the runner holds one host-wide verify lease for the whole verdict — a full
   // suite costs every core but the hub's, so two residents each running a suite would repeat
   // the 2026-09-14 load incident. Admission waits IN ORDER printing the #329 queued row; a
@@ -555,8 +583,8 @@ if (legacyPassthrough) {
     }
   }
   if (suiteLease !== null) {
+    suiteLeaseDigest = suiteLease.token ? suiteLeaseTokenDigest(suiteLease.token) : null;
     try {
-      process.stderr.write(`baton test runner: ${files.parallel.length} files in the parallel lane (x${parallelism}), ${files.serial.length} in the serial lane; progress deadline ${idleMs} ms per file\n`);
       const results = [...await runLane(files.parallel, parallelism), ...await runLane(files.serial, 1)];
       const spawnError = results.find((result) => result.error)?.error ?? null;
       const groupReaped = results.every((result) => result.groupReaped);
