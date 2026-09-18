@@ -518,18 +518,6 @@
       "reason": "#423"
     },
     {
-      "key": "test/issue433-contributions-projection-red.test.mjs :: #433 RED (stage: design-not-landed): an unreviewed_contribution attention row after one recruit-brief cadence",
-      "reason": "#433"
-    },
-    {
-      "key": "test/issue433-contributions-projection-red.test.mjs :: #433 RED (stage: design-not-landed): the bounded watch carries EVERY wake row since afterSeq, or names pendingSince",
-      "reason": "#433"
-    },
-    {
-      "key": "test/issue433-contributions-projection-red.test.mjs :: #433 RED (stage: design-not-landed): the contributions projection carries reviewState from the ONE derivation",
-      "reason": "#433"
-    },
-    {
       "key": "test/issue441-reading-half-red.test.mjs :: #441 RED (stage: design-not-landed): (a) recruit --issue N parses, admits ONE package with an issue branch, and attaches it to the seat",
       "reason": "#441"
     },

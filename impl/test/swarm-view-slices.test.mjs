@@ -342,8 +342,13 @@ test('a participant row carries the route and scope the seat was recruited under
   assert.deepEqual(row.scope, scope, 'and the scope it was admitted over');
   assert.deepEqual(f.store.swarm('baton').participants.builder.route, route, 'the join itself carries it: a projection, not new state');
   assert.deepEqual(f.store.swarm('baton').participants.builder.scope, scope);
+  // Issue #433 (docs/46 §3.1/§3.3): the frame carries EVERY admitted row past afterSeq, so the
+  // recruitment's own row is the frame's FIRST row while `matchedSeq` names the LAST one — the
+  // seq a re-arm resumes from without losing anything.
+  assert.equal(recruitment.watch.event.seq, recruitment.watch.events[0].seq);
+  assert.equal(recruitment.watch.matchedSeq, recruitment.watch.events.at(-1).seq);
   assert.deepEqual(recruitment.watch.event, {
-    seq: recruitment.watch.matchedSeq, kind: 'swarm.participant_joined', payloadKind: null,
+    seq: recruitment.watch.events[0].seq, kind: 'swarm.participant_joined', payloadKind: null,
     participantId: 'builder', route, scope,
   }, 'the wake summary for a recruitment names the route the seat was started under');
 

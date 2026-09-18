@@ -245,7 +245,10 @@ test('watch reports a timeout even when unrelated traffic advanced the deploymen
   await f.runtime.command('swarm.create', { swarmId: 'elsewhere', purpose: 'Unrelated work', idempotencyKey: 'elsewhere' }, owner);
   const view = await f.call('watch', { afterSeq: cursor, timeoutMs: 10 });
   assert.ok(view.cursor > cursor);
-  assert.deepEqual(view.watch, { reason: 'timeout', afterSeq: cursor, matchedSeq: null, event: null });
+  // Issue #433 (docs/46 §3.3): a spent watch names an EMPTY frame — no rows, no pending row —
+  // beside the first-row `event` the CLI compatibility keeps.
+  assert.deepEqual(view.watch, { reason: 'timeout', afterSeq: cursor, matchedSeq: null,
+    pendingSince: null, event: null, events: [] });
 });
 
 test('native watching does not wake itself through tool and token telemetry', async (t) => {

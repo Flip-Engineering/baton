@@ -12394,7 +12394,7 @@
         {
           "name": "_acceptedContribution",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12523,7 +12523,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 808,
+          "size": 841,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12542,7 +12542,7 @@
         {
           "name": "_watch",
           "ordinal": 0,
-          "size": 52,
+          "size": 76,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
