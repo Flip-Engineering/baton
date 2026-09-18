@@ -18,8 +18,12 @@
 //       from the snapshot commit itself;
 //   (bound) a predecessor whose checkout still exists is carried as `how: 'bound'` with the paths
 //       the shared checkout holds;
-//   (b) an apply that cannot run is a TYPED pre-effect refusal naming the reason — no successor is
-//       handed a checkout that lost the work, and no `workspace.carried_from` row claims otherwise;
+//   (b) an apply that cannot run is a TYPED refusal naming the reason (git's own words) — no
+//       successor is left working under a checkout that lost the work, and no
+//       `workspace.carried_from` row claims otherwise;
+//   (e) the incident's own class — an input the carry cannot derive (no repository root anywhere,
+//       or a restart that lost the predecessor's recorded base) — refuses PRE-EFFECT: no successor
+//       joins, no checkout is created, and `reason.missing` names the inputs;
 //   (c) `worktree.snapshotted.paths` names the SNAPSHOT's own changed paths (tracked and untracked
 //       alike), never a pre-snapshot working-tree list that reads 0 for untracked files;
 //   (d) the row's new fields are durable, validated fold state, and a pre-#453 row still folds.
@@ -86,14 +90,17 @@ async function allocateCheckout(repo, { label, baseSha }) {
 
 /**
  * ONE swarm runtime over a real repository and a real CoordinationStore, wired the way
- * application.mjs `_swarmRuntime()` wires the deployment: `integration: {repoRoot}` carries the
- * repository root, and `situationGit` carries only the situation projection (`head`/`commitsSince`)
- * — no `repoRoot`, which is exactly the null #453 hit on the primary.
+ * application.mjs `_swarmRuntime()` wires the deployment: `integration: {repoRoot}` (or the
+ * situation seam) carries the repository root, and `situationGit` carries the situation
+ * projection (`head`/`commitsSince`) only.
  *
  * `successorBase` is the commit a FRESH successor checkout is created at (a function when the test
- * moves the target after the predecessor died).
+ * moves the target after the predecessor died). `repoRoot: false` wires the runtime with no
+ * `integration` at all; `predecessorContext: false` has the coordinator answer for no checkout —
+ * the state a resident restart leaves behind, where the handle carrying the predecessor's session
+ * context is gone.
  */
-function world(t, { successorBase = null, tag = 'w' } = {}) {
+function world(t, { successorBase = null, repoRoot = true, predecessorContext = true, tag = 'w' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), `baton-issue453-${tag}-`));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repo = join(dir, 'repo');
@@ -115,11 +122,12 @@ function world(t, { successorBase = null, tag = 'w' } = {}) {
     list: () => workers,
     pausedTurns: () => [],
     workspaceAttachment: (workerId) => attachments.get(workerId) ?? null,
-    predecessorWorkspaceContext: (workspaceId) => contexts.get(workspaceId) ?? null,
+    predecessorWorkspaceContext: predecessorContext
+      ? (workspaceId) => contexts.get(workspaceId) ?? null : () => null,
   };
   const runtime = new SwarmRuntime({
     store, coordinator, authorize: async () => {},
-    integration: { repoRoot: repo },
+    integration: repoRoot ? { repoRoot: repo } : null,
     situationGit: { head: () => baseSha, commitsSince: () => [] },
     prepareRun: async (request) => ({ ...request, route: request.options?.exact ?? null }),
     stopRun: async (runId, reason) => { stopped.push({ runId, reason }); return { state: 'closed' }; },
@@ -314,6 +322,52 @@ test('453-b: a snapshot that cannot apply refuses typed — no row, no successor
   assert.equal(bravo.leftReason, 'recruit_refused',
     'and its identity may re-join once the root decides how to resume');
   assert.equal(w.stopped.length, 1, 'the run the refusal withdrew is stopped');
+});
+
+// ——————————————————————————————————————————————————————————————————
+// (e) the incident's own class: an input the carry cannot derive from
+// ——————————————————————————————————————————————————————————————————
+
+test('453-e: a carry with no derivable repository root refuses PRE-EFFECT, naming the inputs', async (t) => {
+  // Nothing names a root: no landing authority, no situation seam, and no predecessor handle
+  // (the restart case) — so both the root and the base the diff needs are absent.
+  const w = world(t, { tag: 'e', repoRoot: false, predecessorContext: false });
+  await deadPredecessorWithSnapshot(w, { snapshotPaths: [CARRIED] });
+
+  await assert.rejects(
+    w.call('recruit', {
+      swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
+    }),
+    (error) => {
+      assert.equal(error.code, 'swarm_workspace_carry_failed');
+      assert.deepEqual([...error.detail.reason.missing], ['repoRoot', 'baseSha'],
+        'the reason names exactly the inputs the carry lacked');
+      return true;
+    });
+
+  assert.equal(w.store.swarm(SWARM).participants.bravo, undefined,
+    'no successor joins on a carry that cannot happen');
+  assert.equal(w.workers.length, 1, 'no successor checkout is created either');
+  assert.deepEqual(w.stopped, [], 'and nothing needed withdrawing');
+  assert.deepEqual(rowsOf(w.store, 'workspace.carried_from'), [], 'no row claims a carry');
+});
+
+test('453-e2: a restart that lost the predecessor handle refuses rather than guessing a base', async (t) => {
+  const w = world(t, { tag: 'e2', predecessorContext: false });
+  await deadPredecessorWithSnapshot(w, { snapshotPaths: [CARRIED] });
+
+  await assert.rejects(
+    w.call('recruit', {
+      swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
+    }),
+    (error) => {
+      assert.equal(error.code, 'swarm_workspace_carry_failed');
+      assert.deepEqual([...error.detail.reason.missing], ['baseSha'],
+        'the recorded base is what a snapshot diff must be taken against — never a guessed one');
+      return true;
+    });
+  assert.equal(w.store.swarm(SWARM).participants.bravo, undefined, 'no seat joins');
+  assert.deepEqual(rowsOf(w.store, 'workspace.carried_from'), [], 'no row claims a carry');
 });
 
 // ——————————————————————————————————————————————————————————————————
