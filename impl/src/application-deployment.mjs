@@ -25,7 +25,7 @@ import { GOAL_PLAN_CEILINGS } from './goal-plan.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
-import { aaCredentialPath } from './adapter.mjs';
+import { aaCredentialPath, designArenaCredentialPath } from './adapter.mjs';
 import { createRecipes } from './recipes.mjs';
 import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
@@ -110,22 +110,24 @@ const KIMI_TOKEN_WIRE_FIELDS = Object.freeze([
 const KIMI_CREDENTIAL_FILES = Object.freeze([
   'config.toml', 'device_id', 'credentials/kimi-code.json', 'oauth/kimi-code',
 ]);
-// #429: every fleet family declares its measured-profile mapping ONCE, beside its own route — the
-// Artificial Analysis catalog slug the family's model id maps to, and the billing basis the plan is
-// settled on. `billing: 'api'` is per-token API billing (the provider's own key file pays it), so
-// the profile carries the published prices; `'subscription'` is a flat plan — muse, Kimi and
-// zai/glm on this fleet are subscriptions, NOT per-token API billing — whose profile keeps the
-// measured indices and states `price: null, priceReason: 'subscription'`. `aaSlug: null` is a model
-// Artificial Analysis publishes no row for (this deployment's own contributor model): its routes
-// carry `profile: null` and the table claims nothing. A slug the catalog does not define degrades
-// to `model_unmeasured`, never to a guessed measurement.
+// #429/#444: every fleet family declares its measured-profile mapping ONCE, beside its own route —
+// the Artificial Analysis catalog slug the family's model id maps to, the billing basis the plan is
+// settled on, and the OpenRouter id Design Arena joins its rankings on. `billing: 'api'` is
+// per-token API billing (the provider's own key file pays it), so the profile carries the published
+// prices; `'subscription'` is a flat plan — muse, Kimi and zai/glm on this fleet are subscriptions,
+// NOT per-token API billing — whose profile keeps the measured indices and states `price: null,
+// priceReason: 'subscription'`. `aaSlug: null` is a model Artificial Analysis publishes no row for
+// (this deployment's own contributor model): its routes carry `profile: null` and the table claims
+// nothing; `openRouterId: null` is the same claim about Design Arena's join (a model the design
+// catalog does not rank, or publishes no OpenRouter id for). A slug or an id the provider does not
+// define degrades to `model_unmeasured` / `unavailable`, never to a guessed measurement.
 const GLM_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
   // #228 (operator-ordered migration): deepseek/glm ride omp (OhMyPi) as FIRST-CLASS
   // providers — native provider support, no anthropic-compat translation, no orphaned
   // claude-code member processes. Route ids are provider/model paths.
   harness: 'omp', model: 'zai/glm-5.3-flash', effort,
-  aaSlug: 'glm-5-3-flash', billing: 'subscription',
+  aaSlug: 'glm-5-3-flash', billing: 'subscription', openRouterId: 'z-ai/glm-5.3-flash',
 }));
 // Kimi K3 rides omp's built-in `kimi-code` provider (the Kimi Code API key, provisioned as
 // kimi_key.json at the repository root and in omp's own provider config) — the operator's
@@ -133,7 +135,7 @@ const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
 const KIMI_OMP_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const kimiOmpRoutes = () => KIMI_OMP_EFFORTS.map((effort) => Object.freeze({
   harness: 'omp', model: 'kimi-code/k3', effort,
-  aaSlug: 'kimi-k3', billing: 'subscription',
+  aaSlug: 'kimi-k3', billing: 'subscription', openRouterId: 'moonshotai/kimi-k3',
 }));
 const DEEPSEEK_FLASH_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const DEEPSEEK_PRO_EFFORTS = Object.freeze(['low', 'medium']);
@@ -141,13 +143,13 @@ const deepseekRoutes = () => [
   ...DEEPSEEK_FLASH_EFFORTS.map((effort) => Object.freeze({
     // The provider's canonical API name for V4.1 Flash. The old V4 name is an alias.
     harness: 'omp', model: 'deepseek/deepseek-flash', effort,
-    aaSlug: 'deepseek-flash', billing: 'api',
+    aaSlug: 'deepseek-flash', billing: 'api', openRouterId: 'deepseek/deepseek-flash',
   })),
   // The pro[1m] label precedes its unpublished update: retain it as an explicit pre-update
   // opt-in only. Flash stays first so it is the adapter-configured default model.
   ...DEEPSEEK_PRO_EFFORTS.map((effort) => Object.freeze({
     harness: 'omp', model: 'deepseek/deepseek-v4-pro[1m]', effort,
-    aaSlug: 'deepseek-v4-pro', billing: 'api',
+    aaSlug: 'deepseek-v4-pro', billing: 'api', openRouterId: 'deepseek/deepseek-v4-pro',
   })),
 ];
 
@@ -163,25 +165,26 @@ export function deepseekCredentialProjection(repoRoot) {
 const DEFAULT_ROUTES = Object.freeze([
   ...['minimal', 'low', 'medium', 'high', 'xhigh'].map((effort) => Object.freeze({
     harness: 'codex', model: 'gpt-5.6-sol', effort,
-    aaSlug: 'gpt-5-6-sol', billing: 'subscription',
+    aaSlug: 'gpt-5-6-sol', billing: 'subscription', openRouterId: 'openai/gpt-5.6-sol',
   })),
   ...['low', 'high', 'max'].map((effort) => Object.freeze({
     harness: 'kimi-code', model: 'kimi-code/k3', effort,
-    aaSlug: 'kimi-k3', billing: 'subscription',
+    aaSlug: 'kimi-k3', billing: 'subscription', openRouterId: 'moonshotai/kimi-k3',
   })),
   ...['low', 'medium', 'high'].map((effort) => Object.freeze({
     harness: 'grok', model: 'grok-4.5', effort,
-    aaSlug: 'grok-4-5', billing: 'subscription',
+    aaSlug: 'grok-4-5', billing: 'subscription', openRouterId: 'x-ai/grok-4.5',
   })),
   ...['low', 'medium', 'high', 'xhigh', 'max'].map((effort) => Object.freeze({
     harness: 'claude-code', provider: 'claude', model: 'claude-opus-4-6', effort,
-    aaSlug: 'claude-opus-4-6', billing: 'subscription',
+    aaSlug: 'claude-opus-4-6', billing: 'subscription', openRouterId: 'anthropic/claude-opus-4.6',
   })),
   ...['low', 'medium', 'high', 'xhigh', 'max'].map((effort) => Object.freeze({
     // No Artificial Analysis row exists for this deployment's own contributor model: the family
-    // declares no slug, so its routes carry `profile: null` rather than a borrowed measurement.
+    // declares no slug, so its routes carry `profile: null` rather than a borrowed measurement —
+    // and no Design Arena join either.
     harness: 'muse', model: 'muse-spark-1.3-contributor', effort,
-    aaSlug: null, billing: 'subscription',
+    aaSlug: null, billing: 'subscription', openRouterId: null,
   })),
   ...deepseekRoutes(),
   ...glmRoutes(),
@@ -299,10 +302,11 @@ function servedRow(repoRoot, served) {
 
 const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([
   'glm_key.json', 'deepseek_key.json', 'kimi_key.json',
-  // #429: a stray copy of the Artificial Analysis key at the repository root is credential material
-  // like the provider keys above — never in a deployment snapshot (`aa_key` is the file name
-  // adapter.mjs declares under the operator's config root; `.gitignore` covers the tracked copy).
-  'aa_key',
+  // #429/#444: a stray copy of the Artificial Analysis or Design Arena key at the repository root is
+  // credential material like the provider keys above — never in a deployment snapshot (`aa_key` and
+  // `designarena_key` are the file names adapter.mjs declares under the operator's config root;
+  // `.gitignore` covers the tracked copies).
+  'aa_key', 'designarena_key',
   '.env', '.env.local', '.env.development', '.env.test', '.env.production',
 ]);
 
@@ -362,11 +366,12 @@ function repositorySnapshot(repoRoot, stateRoot) {
  * fleet, and an `advanced.routes` injection alike — so the shape that reaches readiness, the doctor
  * and the recruit comparison is decided here and nowhere else.
  *
- * #429 adds the measured-profile declaration the route carries: `aaSlug` (the Artificial Analysis
- * catalog slug, null when the model has no measured row) and `billing` (the closed basis
- * `subscription | api`). Both are MATERIALIZED, so a reader never has to distinguish "absent" from
- * "null": an undeclared `billing` reads `subscription`, the conservative basis that claims no price
- * — a per-token price is never inferred from the absence of a declaration. */
+ * #429/#444 add the measured-profile declarations the route carries: `aaSlug` (the Artificial
+ * Analysis catalog slug, null when the model has no measured row), `openRouterId` (the OpenRouter
+ * id Design Arena joins its rankings on, null when the route joins none) and `billing` (the closed
+ * basis `subscription | api`). All are MATERIALIZED, so a reader never has to distinguish "absent"
+ * from "null": an undeclared `billing` reads `subscription`, the conservative basis that claims no
+ * price — a per-token price is never inferred from the absence of a declaration. */
 const ROUTE_BILLING_BASES = Object.freeze(['subscription', 'api']);
 
 function normalizeRoutes(value = DEFAULT_ROUTES) {
@@ -375,7 +380,7 @@ function normalizeRoutes(value = DEFAULT_ROUTES) {
   }
   const seen = new Set();
   return value.map((route) => {
-    closed(route, ['aaSlug', 'billing', 'effort', 'harness', 'model', 'provider'], 'advanced route');
+    closed(route, ['aaSlug', 'billing', 'effort', 'harness', 'model', 'openRouterId', 'provider'], 'advanced route');
     for (const field of ['harness', 'model', 'effort']) {
       if (typeof route[field] !== 'string' || route[field].length === 0 || route[field].length > 256) {
         throw deploymentError(`advanced route ${field} is invalid`);
@@ -390,6 +395,11 @@ function normalizeRoutes(value = DEFAULT_ROUTES) {
         || /[\u0000-\u001f\u007f]/u.test(route.aaSlug))) {
       throw deploymentError('advanced route aaSlug is invalid');
     }
+    if (route.openRouterId !== undefined && route.openRouterId !== null
+      && (typeof route.openRouterId !== 'string' || route.openRouterId.length === 0
+        || route.openRouterId.length > 256 || /[\u0000-\u001f\u007f]/u.test(route.openRouterId))) {
+      throw deploymentError('advanced route openRouterId is invalid');
+    }
     if (route.billing !== undefined && !ROUTE_BILLING_BASES.includes(route.billing)) {
       throw deploymentError(`advanced route billing must be one of: ${ROUTE_BILLING_BASES.join(', ')}`);
     }
@@ -399,6 +409,7 @@ function normalizeRoutes(value = DEFAULT_ROUTES) {
     return Object.freeze({
       ...route,
       aaSlug: typeof route.aaSlug === 'string' ? route.aaSlug : null,
+      openRouterId: typeof route.openRouterId === 'string' ? route.openRouterId : null,
       billing: route.billing ?? 'subscription',
     });
   });
@@ -529,9 +540,9 @@ function kimiThroughClaudeCredential() {
 // credential exists, and rendered in the fleet-routes table from this same declaration.
 const KIMI_THROUGH_CLAUDE_ROUTE = Object.freeze({
   harness: 'claude-code', provider: 'kimi', model: 'kimi-k3[1m]', effort: 'max',
-  // #429: the same Kimi K3 subscription the native kimi-code family settles on, reached through
-  // the Claude CLI instead of the native harness.
-  aaSlug: 'kimi-k3', billing: 'subscription',
+  // #429/#444: the same Kimi K3 subscription the native kimi-code family settles on, reached
+  // through the Claude CLI instead of the native harness, joins the same Design Arena model.
+  aaSlug: 'kimi-k3', billing: 'subscription', openRouterId: 'moonshotai/kimi-k3',
 });
 
 function kimiAuthenticationSummary(code) {
@@ -3800,21 +3811,23 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     ? (rawOmpCredentials.catalogRead ?? (usesBuiltInAdapters ? defaultOmpCatalogRead : null))
     : null;
 
-  // #429: the measured-profile reader — the ONE authority the doctor's route table, the recruit's
-  // comparison and the seat brief read. It is wired the way the omp catalog reader above is: for a
+  // #429/#444: the measured-profile reader — the ONE authority the doctor's route table, the
+  // recruit's comparison and the seat brief read, for BOTH live sources (Artificial Analysis quality
+  // and Design Arena rankings). It is wired the way the omp catalog reader above is: for a
   // built-in-adapter deployment (the served fleet) whenever a route declares an Artificial Analysis
-  // slug, or for an explicit advanced.modelProfiles shim — so a fixture deployment never dials the
+  // slug, or for an explicit advanced.modelProfiles shim — so a fixture deployment never dials a
   // provider by accident. Every read is served from the deployment's own state-dir cache; only the
-  // explicit doctor read (and a stale cache any read notices) makes the ONE request, the fetch is
-  // injected, and an absent key or an unreadable catalog is a DEGRADED row, never a refusal.
+  // explicit doctor read (and a stale section any read notices) makes the ONE request per source,
+  // both fetches are injected, and an absent key or an unreadable catalog is a DEGRADED row, never a
+  // refusal.
   const rawModelProfiles = advanced.modelProfiles ?? {};
-  closed(rawModelProfiles, ['env', 'fetchImpl', 'key', 'keyPath', 'now', 'timeoutMs'], 'advanced modelProfiles');
-  for (const field of ['fetchImpl', 'now']) {
+  closed(rawModelProfiles, ['designFetchImpl', 'designKey', 'designKeyPath', 'env', 'fetchImpl', 'key', 'keyPath', 'now', 'timeoutMs'], 'advanced modelProfiles');
+  for (const field of ['fetchImpl', 'now', 'designFetchImpl']) {
     if (rawModelProfiles[field] !== undefined && typeof rawModelProfiles[field] !== 'function') {
       throw deploymentError(`advanced modelProfiles.${field} must be a function`);
     }
   }
-  for (const field of ['key', 'keyPath']) {
+  for (const field of ['key', 'keyPath', 'designKey', 'designKeyPath']) {
     if (rawModelProfiles[field] !== undefined
       && (typeof rawModelProfiles[field] !== 'string' || rawModelProfiles[field].length === 0
         || rawModelProfiles[field].includes('\0'))) {
@@ -3840,6 +3853,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       now: rawModelProfiles.now ?? residentOptions.now,
       fetchImpl: rawModelProfiles.fetchImpl ?? defaultModelProfileFetch,
       timeoutMs: rawModelProfiles.timeoutMs ?? residentOptions.commandTimeoutMs,
+      // #444: the design source's own credential and fetch — the SAME reader, a second section.
+      designKey: typeof rawModelProfiles.designKey === 'string' ? rawModelProfiles.designKey : null,
+      designKeyPath: rawModelProfiles.designKeyPath
+        ?? designArenaCredentialPath({ env: residentOptions.env, home: residentOptions.home }),
+      designFetchImpl: rawModelProfiles.designFetchImpl ?? defaultModelProfileFetch,
     })
     : null;
   // The open starts the reader's ONE refresh (deduped, freshness-gated, never awaited and never

@@ -434,7 +434,10 @@ const DIALECT_PRESENTATION = Object.freeze({
  * route, the shape both the seat's brief and the provider-facing `### Route usage` subsection
  * show. `recruitable` is the GRANT fact (may this seat recruit on the route at all, and is the
  * route in a state a recruit would be admitted on); it is rendered only when a row carries it, so
- * a reader with no grant in hand renders exactly what part 1 rendered. */
+ * a reader with no grant in hand renders exactly what part 1 rendered. #444: `design` is the
+ * route's best Design Arena arena and Elo (the same fact the doctor's profile row carries),
+ * rendered only when the row HAS one — a route whose design axis is absent says why on the doctor
+ * row, never with a fabricated number here. */
 export function renderRouteUsageLines(rows) {
   const lines = [];
   for (const row of rows) {
@@ -444,6 +447,8 @@ export function renderRouteUsageLines(rows) {
     if (row.usage) parts.push(`turns=${row.usage.turns} tokens=${row.usage.tokens}`);
     if (row.quota?.state === 'exhausted') parts.push(`quota=exhausted resetAt=${row.quota.resetAt ?? 'unknown'}`);
     if (row.concurrency) parts.push(`concurrency=${row.concurrency.inUse}/${row.concurrency.ceiling ?? '∞'}`);
+    const design = row.profile?.design?.arenas?.[0] ?? null;
+    if (design !== null) parts.push(`design: ${design.arena} ${design.elo}`);
     if (typeof row.recruitable === 'boolean') parts.push(`recruitable=${row.recruitable}`);
     lines.push(`- ${parts.join(' | ')}`);
   }
@@ -1213,7 +1218,7 @@ export class GlmAdapter extends ClaudeAdapter {
   }
 }
 
-// ── #429: the Artificial Analysis catalog credential ────────────────────────────────────────────
+// ── #429/#444: the live catalog credentials (Artificial Analysis, Design Arena) ─────────────────
 //
 // The measured model profile (#429) is read from the provider's own catalog, and that read needs
 // one credential. WHERE it lives is declared HERE, once, with the other credential facts the
@@ -1230,34 +1235,48 @@ export class GlmAdapter extends ClaudeAdapter {
 // is never printed, logged or echoed in an error, and a stray copy at the repository root is
 // covered by .gitignore and by the deployment snapshot's credential exclusions. An absent
 // credential is a DEGRADED profile row on the doctor, never a refusal.
+//
+// #444 adds the SECOND live source's credential beside it, on the identical contract:
+//
+//   BATON_DESIGNARENA_KEY           the Design Arena key the rankings read sends as a Bearer token
+//   ~/.config/baton/designarena_key else the operator's key file under the SAME config root
 export const AA_CREDENTIAL_ENV = 'BATON_AA_KEY';
 export const AA_CREDENTIAL_FILE = 'aa_key';
+export const DESIGNARENA_CREDENTIAL_ENV = 'BATON_DESIGNARENA_KEY';
+export const DESIGNARENA_CREDENTIAL_FILE = 'designarena_key';
 
 /** The key file's read bound is the registry's own credential-file row (limits.mjs), never a
  * literal here: a key that does not fit the declared credential-file bound is not a key. */
 const CREDENTIAL_FILE_MAX_BYTES = FRAME_LIMITS['credential.file'].value;
 
-/** The path of the key file the readiness reads, resolved from the SAME config root every other
- * Baton-private credential resolves under. */
+/** The path of ONE Baton-private credential file, resolved under the config root
+ * `kimi-credential-setup.mjs` already resolves for Baton's private credentials
+ * ($XDG_CONFIG_HOME/baton/... when XDG_CONFIG_HOME is set). */
+function credentialFilePath(file, { env, home }) {
+  const configured = env.XDG_CONFIG_HOME;
+  const configRoot = typeof configured === 'string' && configured.length > 0 ? configured : join(home, '.config');
+  return join(configRoot, 'baton', file);
+}
+
+/** The path of the Artificial Analysis key file the readiness reads. */
 export function aaCredentialPath({
   env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(),
 } = {}) {
-  const configured = env.XDG_CONFIG_HOME;
-  const configRoot = typeof configured === 'string' && configured.length > 0 ? configured : join(home, '.config');
-  return join(configRoot, 'baton', AA_CREDENTIAL_FILE);
+  return credentialFilePath(AA_CREDENTIAL_FILE, { env, home });
 }
 
-/** The key itself, or null when there is none to read. The file is read bounded by the registry's
- * `credential.file` row through a no-follow descriptor — a link, a directory, an oversized or
- * unreadable file, or an empty value is ABSENCE (the caller degrades its row). Nothing here ever
- * throws or carries the value: an error message names the path, never the key. */
-export function readAaCredential({
-  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(), path = null,
-  maxBytes = CREDENTIAL_FILE_MAX_BYTES,
+/** #444: the path of the Design Arena key file — the same config root, its own file name. */
+export function designArenaCredentialPath({
+  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(),
 } = {}) {
-  const configured = env?.[AA_CREDENTIAL_ENV];
-  if (typeof configured === 'string' && configured.trim().length > 0) return configured.trim();
-  const file = typeof path === 'string' && path.length > 0 ? path : aaCredentialPath({ env, home });
+  return credentialFilePath(DESIGNARENA_CREDENTIAL_FILE, { env, home });
+}
+
+/** ONE credential file, or null when there is none to read. The file is read bounded by the
+ * registry's `credential.file` row through a no-follow descriptor — a link, a directory, an
+ * oversized or unreadable file, or an empty value is ABSENCE (the caller degrades its row). Nothing
+ * here ever throws or carries the value: an error message names the path, never the key. */
+function readCredentialFile(file, maxBytes) {
   let descriptor;
   try {
     descriptor = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
@@ -1270,4 +1289,28 @@ export function readAaCredential({
   } finally {
     if (descriptor !== undefined) { try { closeSync(descriptor); } catch { /* already closed */ } }
   }
+}
+
+/** The Artificial Analysis key itself, or null when there is none to read. The environment wins
+ * over the file. */
+export function readAaCredential({
+  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(), path = null,
+  maxBytes = CREDENTIAL_FILE_MAX_BYTES,
+} = {}) {
+  const configured = env?.[AA_CREDENTIAL_ENV];
+  if (typeof configured === 'string' && configured.trim().length > 0) return configured.trim();
+  const file = typeof path === 'string' && path.length > 0 ? path : aaCredentialPath({ env, home });
+  return readCredentialFile(file, maxBytes);
+}
+
+/** #444: the Design Arena key itself, or null — the same contract as `readAaCredential`, declared
+ * HERE so the reader, the deployment and the tests never spell the location twice. */
+export function readDesignArenaCredential({
+  env = process.env, home = env.HOME ?? process.env.HOME ?? homedir(), path = null,
+  maxBytes = CREDENTIAL_FILE_MAX_BYTES,
+} = {}) {
+  const configured = env?.[DESIGNARENA_CREDENTIAL_ENV];
+  if (typeof configured === 'string' && configured.trim().length > 0) return configured.trim();
+  const file = typeof path === 'string' && path.length > 0 ? path : designArenaCredentialPath({ env, home });
+  return readCredentialFile(file, maxBytes);
 }
