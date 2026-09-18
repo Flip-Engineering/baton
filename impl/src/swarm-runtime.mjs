@@ -668,14 +668,18 @@ export function swarmContributionReviewState(reviews = []) {
   return accepted >= 0 && accepted > rejected ? 'accepted' : rejected >= 0 ? 'rejected' : 'unreviewed';
 }
 
-/** The swarm's contributions in ledger order — the ONE derivation `run.contributions.read` reads
- * and a later `swarm.view --projection contributions` lane reuses. `since` is a ledger seq and the
- * filter is strict (rows recorded at or before it are not in the answer), so walking a page's
- * `cursor` back in as `since` pages the whole list with no gap and no duplicate.
+/** The swarm's contributions in ledger order — the ONE derivation every reader of a contribution
+ * row shares: `run.contributions.read` answers its rows, the `contributions` projection (and the
+ * whole record) carries them on its contribution rows, and the recruit brief counts them. A
+ * second spelling of this row is a bug (docs/47 §3/§6). `since` is a ledger seq and the filter is
+ * strict (rows recorded at or before it are not in the answer), so walking a page's `cursor` back
+ * in as `since` pages the whole list with no gap and no duplicate.
  * A row's fields come from the fold as recorded, never re-worded: `summary` is the contribution's
- * own contract subject, else its recorded string body, else absent; `files` are the paths it names
- * (its contract items' `files`) plus its `refs`; `decision` is the latest SETTLING review's
- * decision, or null when nothing settled. */
+ * own contract subject, else its recorded string body, else absent; `subject`, `items` and
+ * `commit` are the contract projection the view also renders as its `contract` field; `files` are
+ * the paths it names (its contract items' `files`) plus its `refs`; `decision` is the latest
+ * SETTLING review's decision, or null when nothing settled; `integration` is the landing receipt
+ * an integration left, else null (recorded absence, never a guess). */
 export function contributionLedgerRows(swarm, { since = 0 } = {}) {
   const rows = [];
   for (const contribution of Object.values(swarm.contributions ?? {})) {
@@ -686,6 +690,9 @@ export function contributionLedgerRows(swarm, { since = 0 } = {}) {
     const body = contribution.body;
     const contract = body !== null && typeof body === 'object' && !Array.isArray(body)
       && isContributionContractBody(body) ? body : null;
+    // ONE projection of the contract body — the SAME `projectContributionContract` the view
+    // spreads as its `contract`, so the read's `subject`/`items`/`commit` cannot disagree with it.
+    const projected = projectContributionContract(body);
     const contractFiles = contract === null ? [] : (Array.isArray(contract.items) ? contract.items : [])
       .flatMap((item) => (Array.isArray(item?.files) ? item.files : []))
       .filter((path) => typeof path === 'string' && path.length > 0);
@@ -695,9 +702,13 @@ export function contributionLedgerRows(swarm, { since = 0 } = {}) {
       workId: contribution.workId ?? null,
       summary: contract !== null && typeof contract.subject === 'string' ? contract.subject
         : typeof body === 'string' ? body : null,
+      subject: projected?.subject ?? null,
+      items: projected?.items ?? Object.freeze([]),
+      commit: projected?.commit ?? null,
       files: Object.freeze([...new Set([...contractFiles, ...(contribution.refs ?? [])])].sort()),
       decision: settling.length === 0 ? null : settling[settling.length - 1].decision,
       reviewState,
+      integration: contribution.integration ?? null,
     }));
   }
   return rows.sort((left, right) => left.seq - right.seq);
@@ -755,8 +766,10 @@ const contributionContractRows = (swarm) => Object.values(swarm.contributions ??
  * work a seat holds (by assignment or by claim), the write turn it holds on a lease, the paths
  * it claims and the checkout they are held on, and its last checkpoint: the captured revision
  * when it has one, else its latest contribution, else recorded absence. A seat holding nothing
- * says so; nothing here is inferred from prose. */
-const renderPeerNowLine = (peer) => {
+ * says so; nothing here is inferred from prose.
+ * Exported (issue #441 lane C) so the brief's `Peers now:` block and every reader of a peer row
+ * render ONE spelling: the parity pin drives this function over `run.peers.read`'s own rows. */
+export const renderPeerNowLine = (peer) => {
   const held = [
     ...peer.holds.filter((row) => row.kind === 'work').map((row) => `${row.workId} (assigned)`),
     ...peer.holds.filter((row) => row.kind === 'claim' && typeof row.workId === 'string')
@@ -3117,6 +3130,12 @@ export class SwarmRuntime {
       return [couplingId, row];
     });
     const contributionEntries = Object.entries(swarm.contributions ?? {});
+    // Issue #441 (lane C): the ONE contributions derivation, read ONCE per view — the same rows
+    // `run.contributions.read` answers and the recruit brief counts — and rendered on every
+    // contribution row below (see the spread there: the fields the fold row does not already
+    // spell). Fold-only: no ledger scan, no process spawn.
+    const derivedContributions = new Map(contributionLedgerRows(swarm)
+      .map((row) => [row.contributionId, row]));
     // Issue #310: the notes this swarm recorded (bare-body publishes with no contribution
     // identity): they ride the contributions collection with kind 'note' — recorded, not
     // contributions — so a reader finds the text where it looks for published material. A
@@ -3170,11 +3189,19 @@ export class SwarmRuntime {
         // Issue #310: a contract-claiming body projects its contract as rows beside the stored
         // row — subject, commit, item statuses, verification summary, hand-off counts.
         const contract = projectContributionContract(row.body);
-        // Issue #433 (docs/46 §2.1): every contribution row carries the review state its ONE
-        // derivation reads — unreviewed | accepted | rejected, re-derived on every read — so a
-        // root's landing loop is a read of the view, never a grep of the ledger.
-        const reviewState = swarmContributionReviewState(swarm.reviews?.[row.contributionId] ?? []);
-        const projected = { ...row, reviewState, ...(contract === null ? {} : { contract }) };
+        // Issue #433 (docs/46 §2.1) + #441 (lane C): the row's `reviewState` and the read's own
+        // `files`/`decision` come from the ONE derivation (`contributionLedgerRows`) — the same
+        // rows `run.contributions.read` answers — so a root's landing loop and a seat's read can
+        // never disagree. The derivation's OTHER fields are deliberately not copied onto the row:
+        // `summary`, `subject`, `items`, `commit` and `integration` are the SAME facts the fold row
+        // already carries in their fuller spelling (`body`, `refs`, `contract`, the fold's own
+        // `integration`), and a contribution row is priced by the bridge's frame budget
+        // (swarm-bridge-truth), where a second copy of a body is the difference between an answer
+        // and a refusal.
+        const derived = derivedContributions.get(row.contributionId) ?? null;
+        const projected = { ...row, ...(derived === null ? {} : {
+          files: derived.files, decision: derived.decision, reviewState: derived.reviewState,
+        }), ...(contract === null ? {} : { contract }) };
         return queued ? { ...projected, admission: { state: 'queued', authority: queued.authority,
           leaseKind: queued.leaseKind, position: queued.position, ahead: queued.ahead,
           shortfall: queued.shortfall, checkId: queued.checkId, participantId: queued.participantId,
@@ -4167,6 +4194,23 @@ export class SwarmRuntime {
       situation.push(`${settled.length} seat${settled.length === 1 ? '' : 's'}`
         + ` ha${settled.length === 1 ? 's' : 've'} completed or stopped since the base;`
         + ' their contributions are on the view');
+    }
+    // Issue #441 (lane C): what the swarm holds, counted by the ONE contributions derivation's
+    // own review state — the same rows `run.contributions.read` answers and the same rows the
+    // `contributions` projection carries, so a recruited seat reads how much of the swarm's work
+    // is reviewed, landed or still waiting from its own brief. Fold-only: no ledger walk, no
+    // process spawn at compose time (docs/46 §7). A swarm holding no contribution renders NO
+    // line — not a zero — so a pre-#441 brief composes byte-identically (docs/47 §7).
+    const contributions = contributionLedgerRows(swarm);
+    if (contributions.length > 0) {
+      const counts = new Map(SWARM_REVIEW_STATES.map((state) => [state, 0]));
+      for (const row of contributions) {
+        counts.set(row.reviewState, (counts.get(row.reviewState) ?? 0) + 1);
+      }
+      situation.push(`${contributions.length} contribution${contributions.length === 1 ? '' : 's'}`
+        + ' recorded on this swarm:'
+        + ` ${SWARM_REVIEW_STATES.map((state) => `${counts.get(state)} ${state}`).join(', ')}`
+        + ' — read the rows with run.contributions.read');
     }
     const contracts = this._publishedContracts(swarm);
     if (contracts.length > 0) {

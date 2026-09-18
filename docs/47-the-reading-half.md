@@ -94,6 +94,11 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    `identityFields` rule).
 2. An unknown argument key refuses typed before admission — contract admission first, always.
 3. These verbs READ; they wake nobody, write nothing, and appear on no wake class.
+4. The peers-now derivation is ONE function (landed, #441 lane C): `_peersRead` (swarm-runtime.mjs)
+   answers `run.peers.read` AND the brief's `## Swarm situation` `Peers now:` block, which renders
+   each of its rows through the exported `renderPeerNowLine` — so the brief a seat is recruited
+   with and the read it makes can never spell a peer line twice. The contribution counts the same
+   section renders derive from the same ONE derivation §3's `run.contributions.read` row names.
 
 ## 4. `swarm recruit <swarm> <seat> <objective> --issue N [--doc PATH …]`
 
