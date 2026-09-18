@@ -24,6 +24,7 @@ test('GV6: runtime scope strips ambient secrets and creates private vendor homes
     family: 'codex',
     authPosture: 'unknown',
     credential: { mechanism: 'environment', state: 'materialized', count: 1 },
+    git: { mechanism: 'wrapper', refuses: ['stash'] },
     permissions: { directories: '0700', credentialFiles: '0600' },
     sandboxPolicy: 'full-access-private-runtime-only',
     active: true,
@@ -49,6 +50,7 @@ test('GV6: explicit credential files are copied mode 0600 without exposing conte
     family: 'grok',
     authPosture: 'unknown',
     credential: { mechanism: 'file', state: 'materialized', count: 1 },
+    git: { mechanism: 'wrapper', refuses: ['stash'] },
     permissions: { directories: '0700', credentialFiles: '0600' },
     sandboxPolicy: 'full-access-private-runtime-only',
     active: true,
@@ -93,7 +95,7 @@ test('GV6: public posture is a closed path-free credential summary for absent an
   assert.deepEqual(absent.posture.credential, { mechanism: 'none', state: 'absent', count: 0 });
   const mixed = isolation.create('w-mixed', 'glm');
   assert.deepEqual(mixed.posture.credential, { mechanism: 'mixed', state: 'materialized', count: 2 });
-  assert.deepEqual(Object.keys(mixed.posture).sort(), ['active', 'authPosture', 'credential', 'family', 'permissions', 'sandboxPolicy', 'schemaVersion'].sort());
+  assert.deepEqual(Object.keys(mixed.posture).sort(), ['active', 'authPosture', 'credential', 'family', 'git', 'permissions', 'sandboxPolicy', 'schemaVersion'].sort());
   assert.deepEqual(Object.keys(mixed.posture.credential).sort(), ['count', 'mechanism', 'state']);
   const publicJson = JSON.stringify(mixed.posture);
   for (const forbidden of [repoRoot, source, 'credential.fixture', 'ANTHROPIC_AUTH_TOKEN', 'DATABASE_PASSWORD', 'scoped-secret', 'ambient-secret']) {

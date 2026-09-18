@@ -2,8 +2,8 @@
 // a claim of kernel filesystem/network sandboxing; adapter cards describe those separately.
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { projectCredentialTree } from './credential-projection.mjs';
 
 const SECRET_NAME = /(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)/i;
@@ -107,6 +107,92 @@ function privateDir(path) {
   return path;
 }
 
+// Issue #357: the verification guidance the brief carries — the safe baseline comparison
+// in one sentence, plus the lane-worktree stash refusal. It lives here (not in the brief
+// renderer) so the renderer keeps reading the lane-contract text it already reads.
+export const WORKTREE_STASH_BRIEF_SENTENCE = 'Compare a failure against a clean baseline with `git worktree add <scratch-dir> <base>` (or `git show <base>:<path>` for one file) — `git stash` is refused in a lane worktree because the worktrees of one repository share a single `refs/stash` stack.';
+
+// Issue #357: the typed one-line refusal the projected git wrapper prints on stderr with
+// exit 1. It names all three alternatives: a scratch worktree for a clean baseline, git
+// show for one file, a wip commit to set work aside.
+const STASH_REFUSAL = "baton:stash_refused_in_lane_worktree: 'git stash' is refused in a lane worktree (worktrees of one repository share refs/stash); use 'git worktree add <scratch-dir> <base>' for a clean baseline, 'git show <base>:<path>' for one file, or 'git commit -m wip' to set work aside.";
+
+function shSingleQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+// Issue #357: resolve the real git binary at wrapper-write time from the host PATH, never
+// from inside the projected bin dir (which would self-resolve to the wrapper). Returns the
+// canonical absolute path, or null when this machine has no git — the wrapper then falls
+// back to a runtime PATH search that excludes its own directory.
+function resolveRealGit(searchPath, excludeDir) {
+  let excluded = null;
+  try {
+    excluded = realpathSync(excludeDir);
+  } catch {
+    excluded = null;
+  }
+  for (const entry of String(searchPath ?? '').split(':')) {
+    if (!entry) continue;
+    const candidate = join(entry, 'git');
+    try {
+      if (!statSync(candidate).isFile()) continue;
+      accessSync(candidate, fsConstants.X_OK);
+      const canonical = realpathSync(candidate);
+      if (excluded !== null && (dirname(canonical) === excluded || canonical.startsWith(excluded + sep))) continue;
+      return canonical;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+// Issue #357: the projected git wrapper. Refuses 'git stash' in every spelling — bare
+// 'stash' and every subcommand (push/save/pop/apply/drop/list/branch), including behind
+// git's global options ('git -C <dir> stash') — and execs the real git for everything
+// else with argv and env intact.
+function renderGitWrapper(realGit) {
+  return `#!/bin/sh
+# Baton lane-worktree git wrapper (issue #357): the worktrees of one repository share a
+# single refs/stash stack, so a stash round-trip in one seat can move another seat's
+# uncommitted edits. This wrapper refuses stash in every spelling and forwards every
+# other invocation to the real git with argv and env unchanged.
+BATON_REAL_GIT=${shSingleQuote(realGit ?? '')}
+BATON_STASH_REFUSAL=${shSingleQuote(STASH_REFUSAL)}
+real_git() {
+  if [ -n "$BATON_REAL_GIT" ] && [ -x "$BATON_REAL_GIT" ] && [ ! -d "$BATON_REAL_GIT" ]; then
+    printf '%s' "$BATON_REAL_GIT";
+    return 0;
+  fi;
+  _selfdir=$(dirname "$0");
+  _oldifs=$IFS; IFS=:;
+  for _dir in $PATH; do
+    [ -z "$_dir" ] && _dir=.;
+    case "$_dir" in
+      "$_selfdir"|"$_selfdir"/*) ;;
+      *) if [ -x "$_dir/git" ] && [ ! -d "$_dir/git" ]; then printf '%s' "$_dir/git"; IFS=$_oldifs; return 0; fi ;;
+    esac;
+  done;
+  IFS=$_oldifs;
+  return 1;
+}
+_cmd=""; _skip=0;
+for _arg in "$@"; do
+  if [ "$_skip" = "1" ]; then _skip=0; continue; fi;
+  case "$_arg" in
+    -C|-c|--git-dir|--work-tree|--namespace) _skip=1 ;;
+    --) _cmd=""; break ;;
+    -*) ;;
+    *) _cmd="$_arg"; break ;;
+  esac;
+done;
+if [ "$_cmd" = "stash" ]; then printf '%s\\n' "$BATON_STASH_REFUSAL" >&2; exit 1; fi;
+_real=$(real_git) || { echo "baton:git_unavailable_in_lane_runtime: no real git outside the projected bin dir" >&2; exit 127; };
+exec "$_real" "$@"
+`;
+}
+
 export class RuntimeIsolation {
   constructor(opts) {
     this.repoRoot = opts.repoRoot;
@@ -129,6 +215,15 @@ export class RuntimeIsolation {
     const root = privateDir(join(this.root, workerId));
     const home = privateDir(join(root, 'home'));
     const tmp = privateDir(join(root, 'tmp'));
+    // Issue #357: the seat's private runtime PATH leads with a bin dir holding a git
+    // wrapper that refuses `git stash` in every spelling (lane worktrees of one
+    // repository share a single refs/stash stack) and forwards everything else to the
+    // real git — resolved and pinned here, at lease creation, never looked up by the seat.
+    const bin = privateDir(join(root, 'bin'));
+    const wrapperPath = join(bin, 'git');
+    writeFileSync(wrapperPath, renderGitWrapper(
+      resolveRealGit(this.baseEnv.PATH ?? process.env.PATH, bin)), { mode: 0o700 });
+    chmodSync(wrapperPath, 0o700);
     // Grok's native sandbox grants its expected ~/.grok tree, not an arbitrary GROK_HOME outside
     // HOME. Keep HOME private and place the projected config at that vendor-native path.
     const config = privateDir(surface === 'grok' ? join(home, '.grok') : join(root, 'config', family));
@@ -144,6 +239,12 @@ export class RuntimeIsolation {
     }
     env.HOME = home;
     env.TMPDIR = tmp;
+    // Issue #357: the projected wrapper answers `git` for the seat. The coordinator's
+    // runtime.scope_created payload carries the wrapper record on the posture (below),
+    // which stays path-free — the bin path itself rides `paths`, never the posture.
+    env.PATH = typeof env.PATH === 'string' && env.PATH.length > 0
+      ? `${bin}${delimiter}${env.PATH}`
+      : `${bin}${delimiter}/usr/bin${delimiter}/bin`;
     delete env.CLAUDE_CONFIG_DIR;
     delete env.CODEX_HOME;
     delete env.GROK_HOME;
@@ -255,7 +356,7 @@ export class RuntimeIsolation {
       } : {}),
       // Operational paths stay on the private lease. `posture` is logged and returned by public
       // status surfaces, so it must never carry host/runtime paths or credential inventory names.
-      paths: Object.freeze({ root, home, tmp, config }),
+      paths: Object.freeze({ root, home, tmp, config, bin }),
       posture: Object.freeze({
         schemaVersion: 1,
         family,
@@ -265,6 +366,10 @@ export class RuntimeIsolation {
           state: credentialCount > 0 ? 'materialized' : 'absent',
           count: credentialCount,
         }),
+        // Issue #357: the refusing git wrapper, recorded path-free — the mechanism and the
+        // refused subcommand only. The coordinator maps this posture onto
+        // runtime.scope_created, so the record of the wrapper rides that event.
+        git: Object.freeze({ mechanism: 'wrapper', refuses: Object.freeze(['stash']) }),
         permissions: Object.freeze({ directories: '0700', credentialFiles: '0600' }),
         sandboxPolicy: 'full-access-private-runtime-only',
         active: true,
