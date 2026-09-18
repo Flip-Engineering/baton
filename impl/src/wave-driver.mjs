@@ -392,6 +392,33 @@ export function createWaveDriver(baton, rawPolicy = null) {
     const freshState = () => ({ digest: null, nudges: 0, done: false, refusalsNudged: 0, claimed: false });
     const nudgedRequestIds = new Set(); // L4: dedup within a single pause (requestId-stable across polls)
     const failuresByRequestId = new Map(); // consecutive delivery failures per pause; K=3 = unsteerable
+    // #414: the retirement ledger for the unsteerable rule above. lastFailureByRequestId keeps
+    // the last delivery failure per pause so the retirement row can name it; retiredRequestIds
+    // keeps the one-row-per-pause discipline; retiredByRole carries the same retirement onto
+    // the settle outcome's per-member row. The budget name is the policy-field-style name of
+    // the consecutive-delivery-failure budget (NOT unproductiveNudgeBudget — that is the L6
+    // treadmill budget). K itself is a literal today (`>= 3` below); #414 leaves it untouched.
+    const DELIVERY_FAILURE_BUDGET = 'deliveryFailureBudget';
+    const lastFailureByRequestId = new Map();
+    const retiredRequestIds = new Set();
+    const retiredByRole = new Map();
+    // #414: retire a member from nudging with ONE steering row on the nudge evidence shape —
+    // role, runId, requestId, outcome 'nudge_retired', the exhausted budget name and the count
+    // that exhausted it (derived from the observed failures, never re-typed), the last delivery
+    // message, and `next` naming the per-member stall clock (#396) that now judges it.
+    const retireNudge = (role, runId, requestId) => {
+      if (retiredRequestIds.has(requestId)) return;
+      retiredRequestIds.add(requestId);
+      const count = failuresByRequestId.get(requestId) ?? 0;
+      const last = lastFailureByRequestId.get(requestId) ?? null;
+      nudges.push({
+        role, runId, requestId, at: new Date().toISOString(), outcome: 'nudge_retired',
+        budget: DELIVERY_FAILURE_BUDGET, count,
+        ...(typeof last?.message === 'string' ? { message: last.message } : {}),
+        next: `stall-clock:${role}`,
+      });
+      retiredByRole.set(role, { budget: DELIVERY_FAILURE_BUDGET, count });
+    };
     // CP8: claim attempts key per pauseId — a refused claim must not consume the driver's one
     // claim for the NEXT pause record (the CP6 "claimable later" contract at the driver layer).
     const claimedPauseIds = new Set();
@@ -416,12 +443,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
         nudges.push({ role, requestId: checkpoint.requestId, at });
         nudgedRequestIds.add(checkpoint.requestId);
         failuresByRequestId.delete(checkpoint.requestId);
+        lastFailureByRequestId.delete(checkpoint.requestId);
       } catch (error) {
         // D8: a refused corrective delivery arrives as a VALUE and consumes no budget.
         failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
+        const message = String(error?.message ?? error);
+        lastFailureByRequestId.set(checkpoint.requestId, { code: error?.code ?? null, message });
         nudges.push({
           role, requestId: checkpoint.requestId, at,
-          error: { code: error?.code ?? null, message: String(error?.message ?? error) },
+          error: { code: error?.code ?? null, message },
         });
       }
     };
@@ -713,7 +743,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
             // Persistent delivery failure is unsteerable, not infinite retry: after K consecutive
             // failures on the same requestId, stop nudging it and let the stall clock judge (the
             // retry stream itself keeps the marker alive and starves the stall fan-out).
-            if ((failuresByRequestId.get(checkpoint.requestId) ?? 0) >= 3) continue;
+            // #414: the retirement is a steering line, not silence — the first poll that sees
+            // the exhausted budget records ONE nudge_retired row naming the budget, the count,
+            // the last failure message and the stall clock that now judges; later polls stay quiet.
+            if ((failuresByRequestId.get(checkpoint.requestId) ?? 0) >= 3) {
+              retireNudge(role, runHandle.id, checkpoint.requestId);
+              continue;
+            }
             const unchanged = state.digest !== null && state.digest === checkpoint.changedPathsDigest;
             // v2 rule 7: the treadmill (unproductive budget) is for CLAIM-ABSENT checkpoints. An
             // unproductive re-park that carries a completed claim is claimed at THIS poll without
@@ -744,6 +780,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
               nudges.push({ role, requestId: checkpoint.requestId, at });
               nudgedRequestIds.add(checkpoint.requestId);
               failuresByRequestId.delete(checkpoint.requestId);
+              lastFailureByRequestId.delete(checkpoint.requestId);
               if (unchanged) state.nudges += 1;
               else { state.digest = checkpoint.changedPathsDigest ?? null; state.nudges = 1; }
             } catch (error) {
@@ -752,9 +789,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
               // the next poll; a persistently failing nudge is bounded by the K=3 unsteerable rule
               // above, then by stall/cap.
               failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
+              const message = String(error?.message ?? error);
+              lastFailureByRequestId.set(checkpoint.requestId, { code: error?.code ?? null, message });
               nudges.push({
                 role, requestId: checkpoint.requestId, at,
-                error: { code: error?.code ?? null, message: String(error?.message ?? error) },
+                error: { code: error?.code ?? null, message },
               });
             }
             memberState.set(role, state);
@@ -869,6 +908,16 @@ export function createWaveDriver(baton, rawPolicy = null) {
       },
       settlement: { errors: (settlementResult?.errors ?? []).slice(0, 8) },
     };
+    // #414: the wave settle outcome for a retired member carries the same retirement — its
+    // per-member row names `retired: {budget, count}` beside the #396 waitingOn row (which the
+    // spread above preserves), so `waves progress` renders which budget was exhausted and what
+    // judged it next. Copied onto fresh row objects: the handle's stored outcomes stay pristine.
+    if (retiredByRole.size > 0) {
+      receipt.outcomes = receipt.outcomes.map((outcome) => {
+        const retired = retiredByRole.get(outcome?.role);
+        return retired ? { ...outcome, retired: { ...retired } } : outcome;
+      });
+    }
 
     // D9 (epic #103): the campaign-state record + post-close briefing mint. Both run in the
     // driver's guaranteed post-close window — AFTER wave.close() (the finally above) and the
