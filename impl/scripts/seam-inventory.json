@@ -12882,7 +12882,7 @@
         {
           "name": "_recordBridgeRefusal",
           "ordinal": 0,
-          "size": 24,
+          "size": 34,
           "seam": "admission",
           "evidence": [
             "admission:refusal_name",
