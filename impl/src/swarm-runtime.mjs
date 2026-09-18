@@ -850,6 +850,11 @@ export class SwarmRuntime {
       state: row.state ?? null, code: row.code ?? null, resetAt: row.resetAt ?? null,
       usage: row.usage ?? null, quota: row.quota ?? null,
       lastProviderRefusal: row.lastProviderRefusal ?? null,
+      // #429: the route's MEASURED profile (Artificial Analysis intelligence / coding index, output
+      // speed, time-to-first-token, and the price an api-billed route pays) — read from the
+      // deployment's own caught rows, never fetched here: the comparison ranks on the same facts the
+      // doctor publishes, and a route with no mapped slug (or no authority wired) carries null.
+      profile: row.profile ?? null,
       reason: reasonFor(row),
     }));
     const chosenRow = answerRows.find((row) => row.route.harness === chosen?.route?.harness
