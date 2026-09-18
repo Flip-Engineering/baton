@@ -993,14 +993,18 @@ served, a contribution at 15:12:40Z, `participant_left {reason: 'completed'}` at
 route still read `degraded`, so the next recruit was refused against a probe that had already
 answered. The runtime now reads the two facts the PROVIDER produced — the durable admission
 (`route.probe_admitted`) and the seat's own `route.observed` on the route its Run was admitted on,
-recorded after that admission — at the runtime entry (`_observeRouteProbeTurns`, beside the #442
-fault observation), and mints `route.recovered {route, at, episodeAt, probeKey, probeAt, clearsAt,
+recorded after that admission — where route truth is read (`_settleRouteProbes`, called by
+`_routeUsageRows` and by the deployment facts `inspect` publishes; #486 moved it off the command
+entry, where it made every command scan the ledger and broke `run.contributions.read`'s zero-scan
+promise), and mints `route.recovered {route, at, episodeAt, probeKey, probeAt, clearsAt,
 probeAdmissionSeq}` at the instant the turn was OBSERVED, keyed `route.recovered:<probeKey>` so the
 clearing lands once however often it is read. `route.observed` is the earlier of the two durable
 facts a successful turn leaves (it lands while the turn runs; the seat's contribution only at the
 end of it) and the one that speaks about the ROUTE rather than about the seat's output, which is the
-whole question a probe asks. `_settleRouteProbes` stays beside it as the reading aid for a route the
-deployment's OWN derivation already retired, writing the same row under the same key.
+whole question a probe asks. The SAME derivation settles for a route the deployment's OWN
+derivation already retired — the reading aid #456 needed — writing the same row under the same key,
+and it reads the ledger by DELTA from one cursor per incarnation (rebuilt once on open), so a
+command that reads no route reads no ledger row at all.
 
 **Every runtime-side reader sees the closed episode (#475).** `_routeUsageRows` reconciles the
 deployment's route table with the recovery the ledger holds: a route whose CURRENT episode is

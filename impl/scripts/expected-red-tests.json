@@ -458,10 +458,6 @@
       "reason": "#364"
     },
     {
-      "key": "test/issue441-reading-half-red.test.mjs :: #441 (d) contributions read serves the fold — accepted rows since a seq, no ledger scan on the read path",
-      "reason": "#486"
-    },
-    {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
       "reason": "#460"
     },
@@ -2009,6 +2005,10 @@
     {
       "file": "test/issue314-mcp-core-surface-red.test.mjs",
       "reason": "#314"
+    },
+    {
+      "file": "test/issue441-reading-half-red.test.mjs",
+      "reason": "#441"
     },
     {
       "file": "test/issue45-startup-reconcile-red.test.mjs",

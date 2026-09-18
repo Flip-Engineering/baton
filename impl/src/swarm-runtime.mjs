@@ -1496,12 +1496,15 @@ export class SwarmRuntime {
     this._autoRerouting = false;
     // #475: the probe lane's durable half, read from the store this runtime already owns — every
     // admission (`route.probe_admitted`), the seat's turn as its provider ANSWERED it
-    // (`route.observed`), and the episodes already closed (`route.recovered`). Read once per
-    // incarnation at the first entry (so a resident that restarts re-reads the probes it inherits)
-    // and then by DELTA from this cursor, so observing a probe's success costs the rows appended
-    // since the last entry. #456 kept the outstanding probes in an in-memory map alone, which is
-    // exactly why the successful turn of a probe could not close its episode: nothing durable was
-    // ever asked whether the probe had answered.
+    // (`route.observed`), and the episodes already closed (`route.recovered`). #456 kept the
+    // outstanding probes in an in-memory map alone, which is exactly why the successful turn of a
+    // probe could not close its episode: nothing durable was ever asked whether the probe had
+    // answered.
+    // #486: the index belongs to the ROUTE reads that stand on it, never to command arrival. It is
+    // rebuilt once per incarnation from the rows it inherits (so a resident that restarts re-reads
+    // the probes it holds) and then read by DELTA from this cursor — the seq this incarnation has
+    // consumed — so a command that touches no route reads nothing, and one that does pays only the
+    // rows appended since the last route read.
     this._routeProbeLedger = {
       cursor: 0, probes: new Map(), probesByKey: new Map(), observed: new Map(), recovered: new Map(),
     };
@@ -2313,17 +2316,32 @@ export class SwarmRuntime {
    * deployment is wired, or when it publishes no rows at all.
    *
    * #475: the runtime's OWN probe facts are reconciled here — the ONE place, so every reader of
-   * these rows (eligibility, the comparison, the refusal, the brief) sees the same route. A route
-   * whose current episode this runtime has recorded as ANSWERED by its probe reads ready even while
-   * the deployment's own derivation still reports the episode: the probe answered on the route, and
-   * the deployment's reading of a probe turn is exactly what #456 could not rely on (a probe turn's
-   * rows are not attributed to the route's model/effort coordinates). */
+   * these rows (eligibility, the comparison, the refusal, the brief, the #443 re-route ranking)
+   * sees the same route. A route whose current episode this runtime has recorded as ANSWERED by
+   * its probe reads ready even while the deployment's own derivation still reports the episode: the
+   * probe answered on the route, and the deployment's reading of a probe turn is exactly what #456
+   * could not rely on (a probe turn's rows are not attributed to the route's model/effort
+   * coordinates).
+   *
+   * #486: this IS a route read, so it is where the probe observation belongs — never at command
+   * arrival, where it made every command scan the ledger. `_settleRouteProbes` derives the facts
+   * from the delta index ONCE, before the rows below are read against them. */
   _routeUsageRows() {
+    const rows = this._deploymentRouteRows();
+    if (rows === null) return null;
+    this._settleRouteProbes(rows);
+    return rows.map((row) => this._withRouteRecovery(row));
+  }
+
+  /** The deployment's own route-usage rows, exactly as it publishes them — the evidence a route
+   * reading starts from, read from the summary this runtime already holds. Null when no deployment
+   * is wired, when it publishes no rows, or when it cannot answer at all: a summary that throws is
+   * a runtime with nothing to compare, never a refused read. */
+  _deploymentRouteRows() {
     let summary = null;
     try { summary = typeof this.deploymentSummary === 'function' ? this.deploymentSummary() : null; }
     catch { return null; }
-    const rows = summary?.routeUsage;
-    return Array.isArray(rows) ? rows.map((row) => this._withRouteRecovery(row)) : null;
+    return Array.isArray(summary?.routeUsage) ? summary.routeUsage : null;
   }
 
   /** #475: the ONE reading of a route row against the runtime's own probe facts: an episode this
@@ -2369,8 +2387,10 @@ export class SwarmRuntime {
   // the runtime reads THEM, closes the episode when the answering turn lands, and never has to find
   // the route already cleared by someone else.
 
-  /** Index the ledger's probe rows by delta from this incarnation's cursor: the first entry reads
-   * what it inherits, every later one reads only the rows appended since. */
+  /** Index the ledger's probe rows by delta from this incarnation's cursor: the first ROUTE READ of
+   * an incarnation reads what it inherits, every later one reads only the rows appended since — and
+   * only when the cursor is behind the head at all (`eventCursor` is the ledger's length, never a
+   * copy). */
   _readRouteProbeLedger() {
     const ledger = this._routeProbeLedger;
     const head = this.store.eventCursor();
@@ -2383,6 +2403,19 @@ export class SwarmRuntime {
       else if (payload.kind === 'route.observed') this._indexRouteObservation(event, payload);
     }
     ledger.cursor = head;
+  }
+
+  /** #486: a route row THIS runtime wrote is already in the index by the time it lands — the
+   * admission indexes itself (`_admitRouteProbe`) and so does the clearing
+   * (`_recordRouteRecovered`) — so no delta ever has to read it back. The cursor is the seq this
+   * incarnation has consumed: when it was caught up to the row BEFORE this one, this row is
+   * consumed too, and the runtime's own writes never make a later route read scan a delta of its
+   * own rows. A cursor that is behind (rows this runtime did NOT write) is left exactly where it
+   * is: those rows are what the next route read is reading for. */
+  _noteOwnRouteRow(event) {
+    const seq = event?.seq;
+    const ledger = this._routeProbeLedger;
+    if (Number.isSafeInteger(seq) && ledger.cursor === seq - 1) ledger.cursor = seq;
   }
 
   /** One durable admission, indexed under its route with the ATTEMPT it is — the admissions the
@@ -2438,23 +2471,6 @@ export class SwarmRuntime {
     }));
   }
 
-  /** #475: close the episode of every probe whose seat has ANSWERED. Rides the runtime entry beside
-   * the other durable observations (`_observeParticipantFaults`), so the row lands when the turn is
-   * observed — BEFORE the next recruit reads a route, and therefore before any refusal can be
-   * minted against a probe that has already answered. Idempotent by the admission key: the clearing
-   * is written once per probe however many entries observe the same answer. */
-  _observeRouteProbeTurns(actor) {
-    this._readRouteProbeLedger();
-    const ledger = this._routeProbeLedger;
-    if (ledger.probesByKey.size === 0) return;
-    for (const [probeKey, probe] of ledger.probesByKey) {
-      if (ledger.recovered.has(probeKey)) continue;
-      const answer = this._probeAnswer(probe);
-      if (answer === null) continue;
-      this._recordRouteRecovered(probe, answer, actor ?? 'baton-runtime');
-    }
-  }
-
   /** #475: the probe seat's OWN successful turn, as the ledger spells it — the observation the
    * provider's answer produced on the route the seat's run was admitted on, recorded AFTER the
    * admission. This is the EARLIER of the two durable facts a successful turn leaves (the row lands
@@ -2473,21 +2489,24 @@ export class SwarmRuntime {
 
   /** #475: record that one probe's turn ANSWERED — ONCE per admission, keyed by it. `at` is the
    * instant the answering turn was OBSERVED, never the instant this row happened to be written: the
-   * clearing is minted from the fact, not from a later read of it. */
-  _recordRouteRecovered(probe, answer, actor) {
+   * clearing is minted from the fact, not from a later read of it.
+   *
+   * The row is indexed on the spot (`_noteOwnRouteRow`), so the delta never reads it back. */
+  _recordRouteRecovered(probe, answer) {
     let recorded = null;
     try {
       recorded = this.store.recordDriver('route.recovered', {
         route: probe.route, at: answer.at, episodeAt: probe.episodeAt,
         probeKey: probe.key, probeAt: probe.at, clearsAt: probe.clearsAt,
         probeAdmissionSeq: probe.seq,
-      }, { actor, key: routeRecoveredKey(probe.key) });
+      }, { actor: 'baton-runtime', key: routeRecoveredKey(probe.key) });
     } catch { return null; } // the clearing row is evidence; a store that refuses is not this lane's
     const event = recorded?.event ?? null;
     this._routeProbeLedger.recovered.set(probe.key, Object.freeze({
       route: probe.route, episodeAt: probe.episodeAt, at: answer.at,
       seq: Number.isSafeInteger(event?.seq) ? event.seq : null,
     }));
+    this._noteOwnRouteRow(event);
     return answer;
   }
 
@@ -2592,14 +2611,12 @@ export class SwarmRuntime {
    * left: while one of the named routes is ready the runtime chooses it (as #341 part 3 always
    * has), and a caller who named one exact route that is degraded gets the typed refusal instead
    * of a seat dead within seconds. */
-  _routeDegradeFor(args, { actor = null } = {}) {
+  _routeDegradeFor(args) {
     const rows = this._routeUsageRows();
     if (rows === null || rows.length === 0) return null;
     // #456/#475: a probe whose episode the route no longer carries has ANSWERED — the route clears.
-    // The probe's own turn is the authority (`_observeRouteProbeTurns`, at the runtime entry); this
-    // reading aid records the same clearing for a route the DEPLOYMENT's own derivation already
-    // retired, under the same key, so the fact lands once either way.
-    if (actor !== null) this._settleRouteProbes(rows, actor);
+    // `_routeUsageRows` derived that clearing the moment it read these rows (#486: one derivation,
+    // read where route truth is read), so a refusal is never minted against an answered probe.
     const options = args.options ?? {};
     const named = swarmRouteShape(options.exact);
     const exact = named !== null && named.effort !== null ? named : null;
@@ -2677,29 +2694,45 @@ export class SwarmRuntime {
       clearsAt: probe.clearsAt, probeAfter: probe.probeAfter,
       swarmId: args.swarmId ?? null, participantId: args.participantId ?? null,
     });
+    // #486: the admission is in the index, so the delta never reads it back (see `_noteOwnRouteRow`).
+    this._noteOwnRouteRow(event);
     return Object.freeze({
       reason, route: probe.route, clearsAt: probe.clearsAt, probeAfter: probe.probeAfter,
       attempt: probe.attempt, at, seq: Number.isSafeInteger(event?.seq) ? event.seq : null,
     });
   }
 
-  /** #456/#475: the durable clearing of a probe whose episode the deployment's own route table no
-   * longer reports — the READING AID #475 keeps beside the probe's own answer
-   * (`_observeRouteProbeTurns`, which reads the answering turn itself). A deployment row that already
-   * reads the route ready is evidence too (the route's own derivation retired the episode), and this
-   * writes the SAME clearing row under the same key, so a probe is never settled twice however often
-   * either reader runs. */
-  _settleRouteProbes(rows, actor) {
+  /** #456/#475/#486: the ONE derivation of the probe facts a route read stands on — the settlement
+   * of an answered probe and the reading aid for an episode the deployment itself retired are the
+   * same derivation, behind the same delta cursor (`_readRouteProbeLedger`: the seq this
+   * incarnation has consumed), which every other probe reader shares.
+   *
+   * It reads the delta ONCE, then closes every episode the ledger's own rows close, from the FIRST
+   * evidence that says so: the probe seat's own answering turn (`_probeAnswer` — the fact #475 is
+   * about, minted at the instant the provider answered), else the deployment's own route table
+   * already reading the episode retired (`rows` — #456's reading aid, minted now). Both write the
+   * SAME row under the same key, so an episode is never settled twice however often either reader
+   * runs.
+   *
+   * It is called where route truth is READ — `_routeUsageRows`, and the deployment facts `inspect`
+   * publishes — and never at command arrival (#486): a command that touches no route reads nothing
+   * at all, so the reading half's `run.contributions.read`, which derives from the fold and
+   * promises zero ledger scans (docs/47 §3), keeps that promise however often it runs. */
+  _settleRouteProbes(rows = null) {
     this._readRouteProbeLedger();
     const ledger = this._routeProbeLedger;
     if (ledger.probesByKey.size === 0) return;
-    const byRoute = new Map(rows.map((row) => [routeProbeRouteKey(row.route), row]));
+    const retired = rows === null ? null
+      : new Map(rows.map((row) => [routeProbeRouteKey(row.route), row]));
     for (const [probeKey, probe] of ledger.probesByKey) {
       if (ledger.recovered.has(probeKey)) continue;
-      const row = byRoute.get(routeProbeRouteKey(probe.route)) ?? null;
+      const answer = this._probeAnswer(probe);
+      if (answer !== null) { this._recordRouteRecovered(probe, answer); continue; }
+      if (retired === null) continue;
+      const row = retired.get(routeProbeRouteKey(probe.route)) ?? null;
       // Still degraded (or the route table does not answer for it): nothing has been settled.
       if (row === null || row.degraded != null) continue;
-      this._recordRouteRecovered(probe, { at: new Date().toISOString() }, actor);
+      this._recordRouteRecovered(probe, { at: new Date().toISOString() });
     }
   }
 
@@ -3466,6 +3499,13 @@ export class SwarmRuntime {
     // #364 reconciliation has no such posture — its fleet is captured once at startup, so its one
     // pass at the runtime entry is sufficient.
     this._observeParticipantFaults();
+    // Issue #486: the probe observation rides THIS read, and not the command entry every command
+    // used to pay for it. A view publishes the deployment's own route rows, so it observes the same
+    // probe facts a recruit's route comparison does — from the ONE derivation
+    // (`_settleRouteProbes`) and the delta cursor it shares with every other route read. It lands
+    // before this view reads the ledger and before the cursor the answer carries, so the rows and
+    // the cursor agree.
+    this._settleRouteProbes(this._deploymentRouteRows());
     swarm = this.store.swarm(swarm.swarmId) ?? swarm;
     const caller = this._permit(swarm, principal, context, 'read');
     // An optional participantId scopes the read to that participant's delegation (issue #263
@@ -6613,12 +6653,11 @@ export class SwarmRuntime {
     // a seat's provider-fault death folds its fault row and settles its membership, every later
     // entry is a no-op.
     this._observeParticipantFaults();
-    // Issue #475: the same entry closes the episodes of the probes whose seat's turn the provider
-    // has ANSWERED — the "next successful turn" #456 promised would clear a degrade, which is the
-    // probe's OWN turn. It rides here, before the command executes, so the clearing row lands when
-    // the turn is observed and the very next recruit on that route (this command, when it is one)
-    // already reads the route ready.
-    this._observeRouteProbeTurns(principal?.actor ?? null);
+    // Issue #486: the probe observation is NOT here any more. It was: every command entry read the
+    // ledger delta to close an answered probe's episode, which made `run.contributions.read` — a
+    // verb that derives from the fold and promises zero ledger scans (docs/47 §3) — pay a scan per
+    // command. It rides the route reads that stand on it instead (`_routeUsageRows`, and the
+    // deployment facts `inspect` publishes), so a command that reads no route reads no ledger row.
     // Issue #443: the decision that entry recorded is then ANSWERED when the swarm's policy says
     // the runtime performs the resume itself. It runs here, on the async entry, BEFORE this
     // command executes — so the view that observes a fault already carries the successor an `auto`
@@ -6876,7 +6915,7 @@ export class SwarmRuntime {
       // operator's hand on the same mechanism — spelled through the recruit's own `--options` flag,
       // because this verb declares no probe flag of its own: one recruit, on a route that has not
       // reached its clear.
-      const degrade = this._routeDegradeFor(args, { actor: principal.actor });
+      const degrade = this._routeDegradeFor(args);
       const probe = this._routeProbeState(degrade, args.options);
       // The probe this recruit is (when it is one), set inside the effect below so the admission
       // and the receipt are one recorded result — a replay answers with the same facts.
