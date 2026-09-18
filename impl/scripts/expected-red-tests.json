@@ -494,10 +494,6 @@
       "reason": "#314"
     },
     {
-      "key": "test/issue314-mcp-core-surface-red.test.mjs :: 314-h RED: MCP.md leads with the resident bridge and documents the descriptor as the headless mode (docs/49 §4)",
-      "reason": "#314"
-    },
-    {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
       "reason": "#460"
     },

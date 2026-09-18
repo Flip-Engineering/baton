@@ -588,8 +588,12 @@ test('314-f RED: the migration table covers every tool MCP.md documents and the 
   const documented = new Set();
   for (const match of doc.matchAll(/`(baton_[a-z_]+)`/g)) documented.add(match[1]);
   // Guard clauses (green at authoring): completeness of docs/49 §7 against MCP.md, and every
-  // core verb is the target of at least one migration row.
+  // core verb is the target of at least one migration row. §7 maps the LEGACY spellings; a core
+  // tool is its own target (docs/49 §2), so the documented set the guard judges is the union of
+  // the two — MCP.md names the seven core tools because that is the surface it leads with, and
+  // it names a flat spelling only while §7 has a row for it.
   for (const name of documented) {
+    if (CORE_NAMES.includes(name)) continue;
     assert.ok(Object.hasOwn(MIGRATION, name), `docs/49 §7 covers ${name} — MCP.md documents it`);
   }
   const coreVerbs = new Set(CORE.flatMap((row) => Object.keys(row.verbs).map((verb) => `${row.name}:${verb}`)));

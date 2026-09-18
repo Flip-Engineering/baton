@@ -7,6 +7,11 @@ current behavior below cites the file and line it was read at; the byte numbers 
 the red file's own fixture (a stub card over the real `McpFleetServer` and the production
 wrapper — the exact composition both entry scripts serve).
 
+> **Landed (2026-09-18, lane 4 — the entry story).** The laws this lane owns are closed and noted
+> in place: law (c) (§4) in full, and law (f)'s GUIDE half (§7). Lane 1's projection (the core
+> table and the served surface) and lanes 2–3's rules (receipts/wakes, reincarnation survival)
+> stay red-listed under `#314`; 314-f's third clause rides lane 1's landing.
+
 The issue: MCP.md documents 52 flat `baton_*` tools on the ordinary surface (the generated
 inventory, impl/MCP.md §Tool inventory) plus six `baton_surface_*` meta tools the production
 wrapper merges — **58 tools, 64,629 bytes of schema on every `tools/list`** (measured). An
@@ -236,6 +241,13 @@ headless mode for a host without a resident.
   (impl/src/mcp-northbound.mjs:1849-1857) — the core schemas carry them only on the descriptor
   surface, exactly as the flat tools do today.
 
+> **Landed (2026-09-18, lane 4).** `impl/MCP.md` leads with `## The resident bridge (the entry
+> story)` and documents the descriptor as `## The headless mode (a host without a resident)`;
+> `impl/scripts/mcp-web.mjs` refuses any argument with the typed `cli_invalid` (usage line, exit
+> 2) whose message names `mcp-stdio.mjs`, and it no longer builds a descriptor server. Red row
+> 314-h is green; `impl/test/mcp-web-entry-story.test.mjs` pins the entry policy and both entries'
+> shared gate (ES-A/ES-D), and the doc-versus-wire parity beside it (ES-B/ES-C).
+
 ## 5. Receipts and wakes — never a blocking call
 
 **Law (d).** Every mutation verb answers a **receipt**, and every long operation's answer adds a
@@ -366,6 +378,15 @@ it against impl/MCP.md on every run, so a tool added to the inventory without a 
 58 rows, accounting for all 52 inventory tools and all 6 meta tools. Field mappings are verbatim
 from the legacy tool schemas (impl/src/mcp-northbound.mjs:608-909 and the swarm rows' own table)
 — the red file's designed core schemas carry them.
+
+> **Landed (2026-09-18, lane 4) — the guide half.** `impl/MCP.md`'s `## Migration from the flat
+> tool set` is a GENERATED block rendered from this section by
+> `impl/scripts/render-surface-docs.mjs` (`renderMcpMigrationTable`, marker
+> `mcp-migration-table`; `--check` refuses a drifted guide, and a §7 whose table shape cannot be
+> read refuses to render at all). 314-f's guard now reads the documented set as §7's rows ∪ the
+> seven core names — a core tool is its own target, so only a legacy spelling needs a row here —
+> and the served-surface clause beside it is lane 1's projection, red until the core surface
+> lands.
 
 ## 8. The refusal set
 
