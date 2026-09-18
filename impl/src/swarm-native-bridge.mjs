@@ -58,12 +58,13 @@ import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
   validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
 import { EVIDENCE_SEARCH_FILTERS, EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
 import { WAKE_CLASSES } from './wake-stream.mjs';
-// The knowledge verbs' shared shape validator (the ONE authority the runtime dispatch also runs),
-// and the canonical schema accessor its help renders from.
-import { SWARM_PERMISSIONS, validateSwarmKnowledgeCommand } from './swarm-runtime.mjs';
+// The knowledge verbs' and the seat read verbs' shared shape validators (the ONE authority the
+// runtime dispatch also runs), and the canonical schema accessor its help renders from.
+import { SWARM_PERMISSIONS, validateSwarmKnowledgeCommand, validateSwarmSeatReadCommand,
+  swarmSeatReadCommand, SWARM_SEAT_READ_COMMAND_NAMES, SWARM_SEAT_READ_COMMANDS } from './swarm-runtime.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
-export { SWARM_COMMANDS, validateSwarmCommandArgs, SWARM_KNOWLEDGE_COMMAND_NAMES };
+export { SWARM_COMMANDS, validateSwarmCommandArgs, SWARM_KNOWLEDGE_COMMAND_NAMES, SWARM_SEAT_READ_COMMAND_NAMES };
 const isId = (value) => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value);
 
 // ── the bridge ───────────────────────────────────────────────────────────────────────────────────
@@ -344,20 +345,21 @@ export function createSwarmNativeBridge({
       }
       attempt.command = command;
       attempt.args = args;
-      // Contract admission BEFORE any runtime effect. The knowledge verbs (#318) run the SAME
-      // validator the runtime's dispatch runs — closed keys, canonical schemas, and the refusal of
-      // identity-shaped fields (runId/taskId are the participant's own, minted from its token
-      // scope server-side, never caller-chosen). The refusal is the CONTRACT's (one validator, one
-      // vocabulary); the bridge gives it the first line every bridge refusal carries and reports
-      // it to the durable refusal lane below.
+      // Contract admission BEFORE any runtime effect. The knowledge verbs (#318) and the seat read
+      // verbs (#441 lane B) run the SAME validators the runtime's dispatch runs — closed keys,
+      // canonical schemas, and the refusal of identity-shaped fields (runId/taskId are the
+      // participant's own, minted from its token scope server-side, never caller-chosen). The
+      // refusal is the CONTRACT's (one validator, one vocabulary); the bridge gives it the first
+      // line every bridge refusal carries and reports it to the durable refusal lane below.
       try {
-        if (swarmKnowledgeCommand(command)) {
+        if (swarmKnowledgeCommand(command) || swarmSeatReadCommand(command)) {
           // The token scope IS the swarm identity: an omitted swarmId is filled from the token
           // (the same rule the CLI client applies from the environment), a foreign one refuses.
           if (args && typeof args === 'object' && !Array.isArray(args) && args.swarmId === undefined) {
             args = { ...args, swarmId: entry.swarmId };
           }
-          validateSwarmKnowledgeCommand(command, args);
+          if (swarmSeatReadCommand(command)) validateSwarmSeatReadCommand(command, args);
+          else validateSwarmKnowledgeCommand(command, args);
         } else validateSwarmCommandArgs(command, args);
       } catch (error) {
         throw bridgeRefusal(error.message, error.code ?? 'swarm_command_invalid', error.detail ?? {});
@@ -365,7 +367,7 @@ export function createSwarmNativeBridge({
       // The token's single-swarm scope: every command whose schema names swarmId must name THIS one.
       const needsSwarmScope = SWARM_COMMAND_SCHEMAS[command]
         ? SWARM_COMMAND_SCHEMAS[command].required.includes('swarmId')
-        : swarmKnowledgeCommand(command) !== null;
+        : swarmKnowledgeCommand(command) !== null || swarmSeatReadCommand(command) !== null;
       if (needsSwarmScope && args.swarmId !== entry.swarmId) {
         throw bridgeRefusal('This swarm bridge token is bound to another swarm', 'swarm_bridge_swarm_mismatch',
           { requested: typeof args.swarmId === 'string' ? args.swarmId : null, authorized: entry.swarmId, rule: 'bridge-scope' });
@@ -596,6 +598,13 @@ function bridgeHelpText(command = null) {
         return `  ${name.padEnd(24)} [${knowledge.permission}] ${knowledge.situation}`;
       }),
       '',
+      'Seat read verbs (issue #441) — the reads a seated participant makes of the world it works',
+      'in, each naming the ONE situation it is for; read-only, so only a refusal can come back:',
+      ...SWARM_SEAT_READ_COMMAND_NAMES.map((name) => {
+        const verb = SWARM_SEAT_READ_COMMANDS[name];
+        return `  ${name.padEnd(24)} [${verb.permission}] ${verb.situation}`;
+      }),
+      '',
       'Per-command help: node swarm-native-bridge.mjs <swarm.command> --help',
       '',
       'Closed sets (every refusal that names one of these carries the admitted values in',
@@ -624,14 +633,23 @@ function bridgeHelpText(command = null) {
     ].join('\n');
   }
   const knowledge = swarmKnowledgeCommand(command);
+  const seatRead = swarmSeatReadCommand(command);
   const row = SWARM_COMMAND_ROWS.find((entry) => entry.command === command);
   const lines = [
-    `${command} — ${knowledge ? knowledge.situation : row?.description ?? ''}`,
-    knowledge ? `Permission: ${knowledge.permission} (named on swarm.view \`updates\`).` : '',
+    `${command} — ${knowledge ? knowledge.situation : seatRead ? seatRead.situation : row?.description ?? ''}`,
+    knowledge || seatRead ? `Permission: ${(knowledge ?? seatRead).permission} (named on swarm.view \`updates\`).` : '',
     '',
-    "Arguments (one JSON object):",
+    'Arguments (one JSON object):',
   ].filter((line) => line !== '');
-  if (knowledge) {
+  if (seatRead) {
+    // The verb's OWN closed field vocabulary is the argument authority here (the runtime's
+    // dispatch runs the SAME validator); swarmId is filled from the bridge environment like every
+    // other verb's, and the seat's run identity is never caller-supplied.
+    for (const [field, fieldSchema] of Object.entries(seatRead.fields)) {
+      lines.push(`  ${field}${seatRead.required.includes(field) ? '' : ' (optional)'} — ${fieldSchema.description ?? 'a value'}`);
+    }
+    lines.push(`  swarmId (optional) — auto-filled from ${SWARM_BRIDGE_ENV_KEYS.swarmId}; another swarm refuses`);
+  } else if (knowledge) {
     // The canonical schema is the ONE argument authority (application-semantics for the run.*
     // verbs, the deployment evidence search module for `evidence.search` — every surface serves
     // that operation, so its help renders that operation's own fields); the identity
@@ -674,7 +692,8 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
       // Local rendering only: no endpoint lookup, no token read, no network. This is the path a
       // freshly recruited agent takes BEFORE it understands its own environment.
       const target = argv.find((argument) => !HELP_FLAGS.has(argument) && argument !== undefined);
-      if (target !== undefined && !SWARM_COMMANDS.includes(target) && !swarmKnowledgeCommand(target)) {
+      if (target !== undefined && !SWARM_COMMANDS.includes(target) && !swarmKnowledgeCommand(target)
+        && !swarmSeatReadCommand(target)) {
         throw bridgeError(`Unknown swarm command ${target}; run node swarm-native-bridge.mjs --help for the command list`,
           'swarm_command_unavailable', { command: target });
       }
@@ -693,8 +712,11 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
       throw bridgeError('Swarm bridge CLI args must be one JSON object', 'swarm_bridge_request_invalid', { command });
     }
     const definition = SWARM_COMMAND_DEFINITIONS[command];
-    const knowledge = swarmKnowledgeCommand(command);
-    if ((definition?.args.includes('swarmId') || knowledge !== null) && args.swarmId === undefined) {
+    // The swarm identity is the environment's for every verb that takes one: the contract commands
+    // whose schema names it, and the bridge's own participant verbs (knowledge #318, seat reads
+    // #441), whose swarmId the token scope supplies server-side.
+    const seatRead = swarmSeatReadCommand(command);
+    if ((definition?.args.includes('swarmId') || knowledge !== null || seatRead !== null) && args.swarmId === undefined) {
       args.swarmId = env[SWARM_BRIDGE_ENV_KEYS.swarmId];
     }
     if (definition?.mcpStateful && args.idempotencyKey === undefined) {

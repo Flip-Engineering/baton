@@ -352,6 +352,197 @@ const KNOWLEDGE_METHODS = Object.freeze({
   'run.scratchpad.elevate': 'scratchpadElevate',
 });
 
+// ── the seat read verbs (issue #441, lane B) ────────────────────────────────────────────────────
+// A seat reads MORE than its brief carries through the ONE bridge it already has. These three
+// verbs are read-only: they mint nothing, they write nothing, and — exactly like every other read
+// in this runtime — a refusal leaves no durable row (reads are the caller's own business). Contract
+// admission is the SHARED validator below: the bridge runs it before dispatch and the runtime runs
+// it again as the authority, and the run/swarm identity is minted from the caller's token, never
+// chosen by the request.
+//
+// One derivation each, and nothing else:
+//   • `run.package.read` resolves through the coordination store's own package authority and the
+//     ONE branch projection the MCP leg (`baton_package_read`) also serves — never a second
+//     projection of untrusted prose, and never a second reading of the attach rows.
+//   • `run.contributions.read` reads the swarm-state fold through `contributionLedgerRows`, never a
+//     ledger scan of its own; the #433 contributions projection reuses that SAME derivation.
+//   • `run.peers.read` reads the fold-only facts: it never touches the live workspace reads
+//     (issue #438), so a peers read is O(seats) over folded rows and spawns nothing.
+//
+// The three names ride the participant surface (`run.*`, the namespace the #318 knowledge verbs
+// and every other seat-side verb use). The brief they are TAUGHT in is pinned to name only verbs of
+// the swarm-contract registry — impl/test/swarm-brief-surface.test.mjs and issue292 test 8 require
+// every `swarm.<token>` the rendered section names to be a registered command or event kind — so a
+// `swarm.peers.read` / `swarm.contributions.read` spelling could not be advertised to a seat at
+// all; the seat's own verbs live under `run.`, beside `run.package.read`.
+
+/** One seat read verb's admission row, in the knowledge verbs' shape: the permission that admits
+ * it, the fields the runtime binds from the caller's own seat (never caller-supplied), the ONE
+ * situation it serves, and its closed argument vocabulary. The situation text is what the brief's
+ * Swarm section teaches (`swarm-native-access.mjs` derives its usage rows from this ONE table), so
+ * the taught set, the admitted set and the served set cannot drift apart. */
+export const SWARM_SEAT_READ_COMMANDS = Object.freeze({
+  // The context-passing substrate (docs/32 REFLEX-3) is only half a channel until the seat can
+  // read it: the brief renders the branch digests, this verb reads the branches.
+  'run.package.read': Object.freeze({
+    permission: 'read', identityFields: Object.freeze(['runId']),
+    situation: 'read a context package attached to your run or your swarm — its branch list, or one branch\u2019s text by name',
+    fields: Object.freeze({
+      packageDigest: Object.freeze({ type: 'string', pattern: '^[a-f0-9]{64}$',
+        description: 'the package digest your brief named' }),
+      branchName: Object.freeze({ type: 'string', minLength: 1, maxLength: 512, pattern: '^[A-Za-z0-9._:-]+$',
+        description: 'one branch of that package, by name — omit it and the answer is the branch list' }),
+    }),
+    required: Object.freeze(['packageDigest']),
+  }),
+  // The #433 visibility gap: a peer's landed work must be readable without the root copying it
+  // into a brief, and the cursor IS the ledger seq (#312).
+  'run.contributions.read': Object.freeze({
+    permission: 'read', identityFields: Object.freeze(['runId']),
+    situation: 'read what has been contributed on your swarm since a seq — each row with its files and its review state',
+    fields: Object.freeze({
+      since: Object.freeze({ type: 'integer', minimum: 0,
+        description: 'answer with contributions recorded AFTER this ledger seq' }),
+    }),
+    required: Object.freeze([]),
+  }),
+  // Peers-now (docs/45 §6, docs/46 §4): what the other seats that can act hold and where their
+  // last checkpoint is — never a live workspace read per seat.
+  'run.peers.read': Object.freeze({
+    permission: 'read', identityFields: Object.freeze(['runId']),
+    situation: 'read what the other seats that can act are doing now — their scopes, what they hold, and their last checkpoint',
+    fields: Object.freeze({}),
+    required: Object.freeze([]),
+  }),
+});
+export const SWARM_SEAT_READ_COMMAND_NAMES = Object.freeze(Object.keys(SWARM_SEAT_READ_COMMANDS));
+
+/** The seat read row for one command name, or null. */
+export function swarmSeatReadCommand(name) {
+  return Object.hasOwn(SWARM_SEAT_READ_COMMANDS, name) ? SWARM_SEAT_READ_COMMANDS[name] : null;
+}
+
+/** The permission one seat read verb requires of its caller: the read authority every read in
+ * this family needs, named on the view's `updates` rows the same way. */
+export function swarmSeatReadPermission(name) {
+  return SWARM_SEAT_READ_COMMANDS[name]?.permission ?? null;
+}
+
+/** The seat read verbs' ONE shape validator (#441): the same closed-key admission the knowledge
+ * verbs run, over the same canonical-schema predicates. The bridge runs it BEFORE dispatch (so
+ * the cheapest wrong shape never reaches a runtime effect and the refusal is reported to the
+ * durable lane) and the runtime runs it again as the authority — never the transport's word.
+ * The swarm is the token's (`swarmId`, filled by the bridge from the credential's own scope);
+ * `runId` is the seat's own, so supplying it refuses: a seat names its request, its token names
+ * itself. */
+export function validateSwarmSeatReadCommand(name, args) {
+  const verb = swarmSeatReadCommand(name);
+  if (!verb) return;
+  if (args === undefined || args === null || typeof args !== 'object' || Array.isArray(args)) {
+    refuse('Swarm seat read request is invalid: arguments must be one JSON object', 'swarm_command_invalid',
+      { rule: 'arguments-shape' });
+  }
+  // The swarm vocabulary rides ON the verb's own closed field set: every seat read names its
+  // swarm (the bridge fills it from the token scope), spelled with the SAME safe-id predicate the
+  // swarm contract applies to every swarmId.
+  const properties = { swarmId: { type: 'string', pattern: '^[A-Za-z0-9._:-]{1,256}$' }, ...verb.fields };
+  const admitted = Object.keys(properties).sort();
+  for (const field of verb.identityFields) {
+    if (args[field] !== undefined) {
+      refuse(`Swarm seat read request is invalid: ${field} is derived from your swarm token`, 'swarm_command_invalid',
+        { field, rule: 'identity-field', expectation: 'server-derived — remove it' });
+    }
+  }
+  for (const key of Object.keys(args)) {
+    if (!Object.hasOwn(properties, key)) {
+      refuse(`Swarm seat read request is invalid: unknown field ${key}`, 'swarm_command_invalid',
+        { field: key, rule: 'unknown-field', admitted, correction: `remove ${key} — ${name} accepts ${admitted.join(', ')}` });
+    }
+  }
+  for (const field of ['swarmId', ...verb.required]) {
+    if (verb.identityFields.includes(field)) continue;
+    if (args[field] === undefined) {
+      refuse(`Swarm seat read request is invalid: add ${field} (${properties[field]?.description ?? 'a value'})`,
+        'swarm_command_invalid', { field, rule: 'required-field', expectation: properties[field]?.description ?? 'a value' });
+    }
+  }
+  for (const [key, value] of Object.entries(args)) {
+    const problem = knowledgeSchemaProblem(value, properties[key]);
+    if (problem) {
+      refuse(`Swarm seat read request is invalid: ${key} must be ${problem}`, 'swarm_command_invalid',
+        { field: key, rule: 'field-predicate', expectation: problem, admitted });
+    }
+  }
+}
+
+/** The review state a contribution row derives from the fold's append-only reviews (docs/46 §2.1,
+ * issue #433), expressed ONCE here: `accepted` when an accept exists and no LATER reject revokes
+ * it — exactly `_acceptedContribution`'s reading of the same rows — `rejected` when the latest
+ * settling review is a reject, `unreviewed` when no settling review exists (comments never
+ * settle, and neither does an empty list). */
+export const SWARM_REVIEW_STATES = Object.freeze(['unreviewed', 'accepted', 'rejected']);
+
+/** The swarm's contributions in ledger order — the ONE derivation `run.contributions.read` reads
+ * and a later `swarm.view --projection contributions` lane reuses. `since` is a ledger seq and the
+ * filter is strict (rows recorded at or before it are not in the answer), so walking a page's
+ * `cursor` back in as `since` pages the whole list with no gap and no duplicate.
+ * A row's fields come from the fold as recorded, never re-worded: `summary` is the contribution's
+ * own contract subject, else its recorded string body, else absent; `files` are the paths it names
+ * (its contract items' `files`) plus its `refs`; `decision` is the latest SETTLING review's
+ * decision, or null when nothing settled. */
+export function contributionLedgerRows(swarm, { since = 0 } = {}) {
+  const rows = [];
+  for (const contribution of Object.values(swarm.contributions ?? {})) {
+    if (!Number.isSafeInteger(contribution?.seq) || contribution.seq <= since) continue;
+    const settling = (swarm.reviews?.[contribution.contributionId] ?? [])
+      .filter((review) => review.decision !== 'comment');
+    const lastIndex = (value) => settling.map((review) => review.decision).lastIndexOf(value);
+    const accepted = lastIndex('accept');
+    const rejected = lastIndex('reject');
+    const reviewState = accepted >= 0 && accepted > rejected ? 'accepted'
+      : rejected >= 0 ? 'rejected' : 'unreviewed';
+    const body = contribution.body;
+    const contract = body !== null && typeof body === 'object' && !Array.isArray(body)
+      && isContributionContractBody(body) ? body : null;
+    const contractFiles = contract === null ? [] : (Array.isArray(contract.items) ? contract.items : [])
+      .flatMap((item) => (Array.isArray(item?.files) ? item.files : []))
+      .filter((path) => typeof path === 'string' && path.length > 0);
+    rows.push(Object.freeze({
+      seq: contribution.seq, ts: contribution.ts,
+      participantId: contribution.participantId, contributionId: contribution.contributionId,
+      workId: contribution.workId ?? null,
+      summary: contract !== null && typeof contract.subject === 'string' ? contract.subject
+        : typeof body === 'string' ? body : null,
+      files: Object.freeze([...new Set([...contractFiles, ...(contribution.refs ?? [])])].sort()),
+      decision: settling.length === 0 ? null : settling[settling.length - 1].decision,
+      reviewState,
+    }));
+  }
+  return rows.sort((left, right) => left.seq - right.seq);
+}
+
+/** A refusal the seat read verbs raise. Their codes are the context-package family's, not the
+ * swarm command family's: `context_package_not_found` and `context_package_branch_not_found` are
+ * the coordination store's own (raised by `resolveContextPackageBranch`, spelled identically
+ * wherever they are minted) and `package_not_attached_to_run` is the scope refusal this verb
+ * introduces. They are raised directly rather than through `refuse()` because `refuse()` draws
+ * every code from the swarm family's ONE closed set (impl/src/swarm-refusals.mjs), which these
+ * codes are not in — and NOTHING here writes a durable row, so no refusal lane is bypassed. */
+const seatReadRefusal = (message, code, detail = {}) => Object.assign(new Error(message), { code, detail });
+
+/** One branch of a package, as the branch LIST projects it: the ref the branch carries (a package
+ * branch holds exactly one content ref — artifact, source or value_ref), its digest, and the byte
+ * size when the ref has one (a context source counts items, a value ref carries ids: absence is
+ * named, never invented). */
+const packageBranchRef = (branch) => {
+  const artifact = branch.artifact ?? null;
+  const source = branch.source ?? null;
+  const valueRef = branch.valueRef ?? null;
+  const kind = artifact !== null ? 'artifact' : source !== null ? 'source' : valueRef !== null ? 'value_ref' : null;
+  const digest = artifact?.digest ?? source?.digest ?? valueRef?.valueDigest ?? null;
+  return Object.freeze({ kind, digest, bytes: Number.isSafeInteger(artifact?.bytes) ? artifact.bytes : null });
+};
+
 /** The pre-#310 minimal hand-off fields a body may still carry: `contract` — what a
  * successor must keep true — and `carriedForward` — the items it hands on. The contract
  * itself now lives in impl/src/contribution-contract.mjs; these stay readable so rows
@@ -2278,6 +2469,165 @@ export class SwarmRuntime {
       rows, cursor, truncated };
   }
 
+  /** The seat read verbs (#441 lane B). Admission is the SAME closed contract the bridge ran
+   * before dispatch, re-run here as the authority; the caller resolves through the ONE membership
+   * resolution every other command uses, and the run/swarm identity is the token's — never the
+   * request's. All three answer the caller's own swarm; none of them writes anything. */
+  async _seatReadDispatch(command, args, principal, context) {
+    validateSwarmSeatReadCommand(command, args);
+    const swarm = this._swarm(args.swarmId);
+    const caller = this._permit(swarm, principal, context, swarmSeatReadPermission(command));
+    if (!caller) {
+      // A seat verb belongs to a seated participant: an unscoped principal (an external
+      // orchestrator, the CLI) reads the same facts through the root's own surfaces.
+      refuse('Swarm seat read verbs belong to a participant of this swarm', 'swarm_membership_required', { command });
+    }
+    if (command === 'run.package.read') return this._packageRead(swarm, args, caller);
+    if (command === 'run.contributions.read') return this._contributionsRead(swarm, args);
+    return this._peersRead(swarm, caller);
+  }
+
+  /** `run.package.read` (#441 item 1): the package's branch list, or ONE branch's text.
+   *
+   * SCOPE is the attach rows, checked FIRST and before the package is even resolved: a seat sees a
+   * package its OWN run carries, or one any run of its swarm carries (the root attaches the issue
+   * and its cited docs to the seat's run with scope `worker:<seat>`), and nothing else — an
+   * unattached digest refuses `package_not_attached_to_run` without disclosing whether the
+   * deployment holds it at all.
+   *
+   * The branch text is resolved through the store's own resolve-time revalidation and the ONE
+   * projection the MCP leg serves (`projectContextPackageBranch`) — imported from the application
+   * facade that owns it rather than re-spelled here, lazily, so the bridge's client path never
+   * loads that module graph for a read that only runs beside it. The answer is bounded the way the
+   * package itself is: the branch list is the manifest the store admitted (its own
+   * `maxManifestBranches` ceiling), and each projected slice is capped by the
+   * `view.attention_text.bytes` row that projection already imports — no literal is minted here,
+   * and the whole answer still crosses the bridge under its `wire.frame` bound. */
+  async _packageRead(swarm, args, caller) {
+    const packageDigest = args.packageDigest;
+    const runIds = new Set([caller.runId, ...Object.values(swarm.participants).map((row) => row.runId)]
+      .filter((runId) => typeof runId === 'string' && runId.length > 0));
+    const attached = [...runIds].some((runId) => this.store.contextPackageAttachments(runId)
+      .some((row) => row.packageDigest === packageDigest));
+    if (!attached) {
+      throw seatReadRefusal('This context package is not attached to your run or your swarm',
+        'package_not_attached_to_run',
+        { packageDigest, participantId: caller.participantId, runId: caller.runId, rule: 'package-scope',
+          correction: 'read the digest your brief named, or ask the root to attach the package to your run' });
+    }
+    const pkg = this.store.contextPackage(packageDigest);
+    if (!pkg) {
+      throw seatReadRefusal('Context package is unavailable', 'context_package_not_found',
+        { packageDigest, rule: 'package-known',
+          correction: 'check the digest — this deployment holds no admitted package with it' });
+    }
+    if (args.branchName === undefined) {
+      return { swarmId: swarm.swarmId, packageDigest: pkg.packageDigest,
+        branches: Object.freeze(pkg.branches.map((branch) => Object.freeze({ name: branch.name,
+          ...packageBranchRef(branch) }))),
+        provenance: Object.freeze({ runId: pkg.provenance?.runId ?? null,
+          principalId: pkg.provenance?.principalId ?? null,
+          admittedEvent: pkg.admittedEvent ?? null, admittedAt: pkg.admittedAt ?? null }) };
+    }
+    const resolved = this.store.withContextArtifactVerification(
+      () => this.store.resolveContextPackageBranch(packageDigest, args.branchName));
+    const { projectContextPackageBranch } = await import('./application.mjs');
+    return { swarmId: swarm.swarmId, packageDigest: pkg.packageDigest,
+      branch: projectContextPackageBranch(resolved) };
+  }
+
+  /** `run.contributions.read` (#441 item 2): the swarm's contributions since a seq, in ledger
+   * order, each with the review state the fold derives — read through the ONE exported derivation
+   * (`contributionLedgerRows`), so the #433 contributions projection reuses it instead of
+   * re-deriving review state. The page's item ceiling and its byte budget are registry rows
+   * (`view.seat_read.items` and the `wire.frame` the bridge enforces); a cut tail is named by
+   * `truncated` and `cursor` is the seq to continue from — nothing is dropped silently. */
+  _contributionsRead(swarm, args) {
+    const since = args.since === undefined ? 0 : args.since;
+    const pageItems = FRAME_LIMITS['view.seat_read.items'].value;
+    const budget = FRAME_LIMITS['wire.frame'].value;
+    const rows = [];
+    let bytes = 0;
+    let cursor = since;
+    let truncated = false;
+    for (const row of contributionLedgerRows(swarm, { since })) {
+      const size = Buffer.byteLength(JSON.stringify(row), 'utf8');
+      if (rows.length > 0 && (rows.length >= pageItems || bytes + size > budget)) { truncated = true; break; }
+      rows.push(row);
+      bytes += size;
+      cursor = row.seq;
+    }
+    return { swarmId: swarm.swarmId, since, rows, cursor, truncated };
+  }
+
+  /** `run.peers.read` (#441 item 3, docs/45 §6 peers-now): for every OTHER seat that can act, what
+   * it was recruited as, what it holds, and where its last checkpoint is.
+   *
+   * Every fact is FOLD-ONLY. The liveness word comes from the ONE derivation the view, the wake
+   * feed and the bridge share, and "can this seat act" from the ONE predicate (#350) fed with it —
+   * so a seat this read lists is exactly a seat `swarm.view` would call able. The live workspace
+   * reads (`gitRead` per seat: branch, HEAD, status, base) are deliberately NOT touched (#438):
+   * they cost a process spawn per seat per view, and what a peer HOLDS is durable. `at.seq` names
+   * the ledger head this read observed, so a checkpoint's age is an honest ledger distance
+   * (`age.seqs`) rather than a clock. */
+  _peersRead(swarm, caller) {
+    const workers = this.coordinator.list();
+    const headSeq = this.store.ledgerHeadSeq();
+    const pageItems = FRAME_LIMITS['view.seat_read.items'].value;
+    // The last checkpoint a seat pinned, from the fold's own contribution rows: the newest
+    // contribution carrying a revision (the captured sha + its retained ref, with the revision
+    // row's seq/ts). A seat that never captured one reads null — recorded absence, never a guess.
+    const checkpoints = new Map();
+    for (const contribution of Object.values(swarm.contributions ?? {})) {
+      const revision = contribution?.revision ?? null;
+      if (revision === null || !Number.isSafeInteger(revision.seq)) continue;
+      const prior = checkpoints.get(contribution.participantId) ?? null;
+      if (prior !== null && prior.seq >= revision.seq) continue;
+      const body = contribution.body;
+      const subject = body !== null && typeof body === 'object' && !Array.isArray(body)
+        && isContributionContractBody(body) && typeof body.subject === 'string' ? body.subject : null;
+      checkpoints.set(contribution.participantId, { contributionId: contribution.contributionId,
+        sha: revision.sha, ref: revision.ref, seq: revision.seq, ts: revision.ts,
+        summary: subject, age: { seqs: Math.max(0, headSeq - revision.seq) } });
+    }
+    const holdsOf = (participantId) => {
+      const holds = [];
+      for (const assignment of Object.values(swarm.assignments ?? {})) {
+        if (assignment.status !== 'active' || assignment.participantId !== participantId) continue;
+        holds.push({ kind: 'work', assignmentId: assignment.assignmentId, workId: assignment.workId });
+      }
+      for (const coupling of Object.values(swarm.couplings ?? {})) {
+        if (coupling.coupling !== 'writer' || coupling.released || coupling.writer !== participantId) continue;
+        holds.push({ kind: 'writer', couplingId: coupling.couplingId, workspaceId: coupling.workspaceId ?? null });
+      }
+      return Object.freeze(holds);
+    };
+    const peers = [];
+    let omitted = 0;
+    const others = Object.values(swarm.participants)
+      .filter((participant) => participant.participantId !== caller.participantId)
+      .sort((left, right) => compareCanonicalStrings(left.participantId, right.participantId));
+    for (const participant of others) {
+      const worker = this._workerFor(participant, workers);
+      const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }).length : 0;
+      const liveness = swarmParticipantLiveness(worker, paused);
+      const runtime = { workerId: worker?.id ?? null, state: liveness.state, turn: liveness.turn, live: liveness.live };
+      if (!this._canAct({ ...participant, runtime })) continue;
+      if (peers.length >= pageItems) { omitted += 1; continue; }
+      peers.push(Object.freeze({
+        participantId: participant.participantId, role: participant.role ?? null,
+        status: participant.status, route: participant.route ?? null, scope: participant.scope ?? null,
+        runtime: Object.freeze(runtime),
+        lastCheckpoint: checkpoints.has(participant.participantId)
+          ? Object.freeze(checkpoints.get(participant.participantId)) : null,
+        holds: holdsOf(participant.participantId),
+      }));
+    }
+    return { swarmId: swarm.swarmId, caller: { participantId: caller.participantId },
+      at: { seq: headSeq, ts: this.store.observationTime(headSeq) },
+      peers: Object.freeze(peers), omitted };
+  }
+
   /** Contracts published so far (#318 deliverable 4): the contributions whose object body carries
    * the minimal #310 fields — `contract` (what a successor keeps true) or `carriedForward` (the
    * items handed on). Absence of both means the contribution is ordinary evidence, not a contract. */
@@ -2596,6 +2946,13 @@ export class SwarmRuntime {
     // BEFORE the swarm contract's closed command set, which these canonical verbs are not in.
     if (swarmKnowledgeCommand(command)) {
       return this._knowledgeDispatch(command, args, principal, context);
+    }
+    // The seat read verbs (#441 lane B): the reads a recruited seat makes through the ONE bridge it
+    // already has, admitted and permitted inside their own dispatch — ahead of the swarm contract's
+    // closed command set, which these participant-surface names are not in (the same seam the
+    // knowledge verbs above use).
+    if (swarmSeatReadCommand(command)) {
+      return this._seatReadDispatch(command, args, principal, context);
     }
     validateSwarmCommand(command, args);
     await this.authorize(command, args, principal);
