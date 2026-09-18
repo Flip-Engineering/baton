@@ -42,6 +42,11 @@ const ROUTE = '{ harness: \'codex\', model: \'gpt-5.6-sol\', effort: \'high\' }'
 // chunk bound, the loop-freedom cadence and the checkpoint bound all read the same registry row.
 const LIMIT = FRAME_LIMITS['view.wake_replay.items'];
 const HEARTBEAT_MS = LIMIT.value;
+// Issue #432: the bound a slow serve child gets to land its flip line on stderr after it
+// publishes. It reads the same registry row as the replay cadence — no magic number — and
+// its magnitude (seconds) dwarfs the pipe lag it covers (milliseconds once published), so a
+// slow child under suite load is a slow pass, never a red.
+const FLIP_LOG_WAIT_MS = LIMIT.value;
 
 function repository(t, root) {
   const repo = join(root, 'repo');
@@ -161,6 +166,20 @@ function serveFixture(t, label, moduleBody, { rows = 2_000 } = {}) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Issue #432: wait for a needle on a serve child's stderr the way OL-b waits — the
+ * publication (connection.json) can precede the flip line down the stderr pipe under
+ * suite load, so an immediate read races the child. Bounded by the derived
+ * FLIP_LOG_WAIT_MS; a child that exits first keeps whatever it already wrote. */
+async function untilStderr(state, needle, timeoutMs = FLIP_LOG_WAIT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (state.stderr.includes(needle)) return;
+    if (state.exited !== null) break;
+    await sleep(25);
+  }
+  assert.ok(state.stderr.includes(needle), `stderr never named "${needle}":\n${state.stderr.slice(-2_000)}`);
+}
+
 test('SA1: the stop request is the signal handler\u2019s own act \u2014 it lands before a narration read that never resolves', async (t) => {
   // The deployment's runs.list NEVER resolves: the first lane's drain-ordered row died exactly
   // here (the row waited behind the narration read). The handler's own append must not.
@@ -236,11 +255,18 @@ export const createBatonDeployment = () => openBaton({ repo: process.cwd(), adva
 `);
   await fixture.untilReady();
   // The ONE line at the flip: published, and how long the startup took, and what it folded.
+  // Issue #432: untilReady returns when connection.json appears, but the flip line still
+  // rides the stderr pipe behind it — under suite load (parallelism 2) the immediate read
+  // below saw a published child whose flip had not arrived yet. Poll for the whole stream
+  // until the child publishes the line, bounded by the derived FLIP_LOG_WAIT_MS.
+  await untilStderr(fixture.state, 'baton serve: answering (open ');
   const flip = lineIndex(fixture.state.stderr, 'baton serve: answering (open ');
   assert.ok(fixture.state.stderr.split('\n')[flip].includes('rows on the ledger;'),
     `the flip line names the ledger rows:\n${fixture.state.stderr.slice(-2_000)}`);
   assert.ok(fixture.state.stderr.split('\n')[flip].includes('checkpoint '),
     `the flip line names the checkpoint decision:\n${fixture.state.stderr.slice(-2_000)}`);
+  assert.ok(fixture.state.stderr.split('\n')[flip].includes('reconstructed '),
+    `the flip line names the reconstruction elapsed (lane 4):\n${fixture.state.stderr.slice(-2_000)}`);
 
   // The doctor renders the same facts in-process (the non-enumerable DP5 attach: property
   // readers see it, the serialized row shape stays byte-stable).
