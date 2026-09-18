@@ -2263,10 +2263,6 @@
       "reason": "design"
     },
     {
-      "file": "test/phase80-revision-restart-stop-red.test.mjs",
-      "reason": "design"
-    },
-    {
       "file": "test/phase81-context-program-red.test.mjs",
       "reason": "design"
     },
@@ -2419,10 +2415,6 @@
       "reason": "#229"
     },
     {
-      "file": "test/readiness-credentials-red.test.mjs",
-      "reason": "#47"
-    },
-    {
       "file": "test/readiness-honesty-234-red.test.mjs",
       "reason": "#230"
     },
@@ -2553,10 +2545,6 @@
     {
       "file": "test/wave-index-memo-229-red.test.mjs",
       "reason": "#229"
-    },
-    {
-      "file": "test/wave-observability-red.test.mjs",
-      "reason": "#132"
     },
     {
       "file": "test/wave-settle-error-surfacing-red.test.mjs",
