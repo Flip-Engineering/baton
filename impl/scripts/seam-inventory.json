@@ -13003,7 +13003,7 @@
         {
           "name": "_predecessorWorkspace",
           "ordinal": 0,
-          "size": 53,
+          "size": 56,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
