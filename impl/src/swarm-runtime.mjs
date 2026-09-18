@@ -10,7 +10,7 @@ import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
   isContributionContractBody, projectContributionContract, validateContributionContract,
   validateContributionContractMode } from './contribution-contract.mjs';
-import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
+import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError } from './swarm-state.mjs';
 // Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
 // minting a code outside it is a construction-time error.
 import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
@@ -301,6 +301,19 @@ const inDeclaredScope = (path, scope) => {
  * path belongs to a claim the view is about to name, and never refuses anything. */
 const pathsOverlap = (left, right) => left === right
   || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+
+/** docs/47 §5 (#441 item 1): does a claimed path fall in one declared scope entry? The scope half
+ * of the question is the declared-scope MATCHER (globs included — a seat is recruited with
+ * `impl/test/issue441d-*.test.mjs` as readily as with a literal path), the claim half the fold's
+ * own prefix rule (`pathsOverlap`), so a directory claim over a scoped file reads as overlap the
+ * same way a scoped glob reads over a claimed file. An entry the matcher cannot read names no
+ * overlap — the malformed scope silence, never a false hold. */
+const scopePathOverlaps = (path, entry) => {
+  try {
+    if (pathInScopes(path, [entry])) return true;
+  } catch { /* an unreadable scope entry names no overlap */ }
+  return pathsOverlap(path, entry);
+};
 const _mutationView = (args) => args.view === true || args.view === 'true';
 export const SWARM_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute', 'review', 'organize', 'recruit', 'stop']);
 const DEFAULT_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute']);
@@ -738,6 +751,17 @@ const renderPeerNowLine = (peer) => {
       : null;
   clauses.push(checkpoint === null ? 'last checkpoint: none recorded' : `last checkpoint ${checkpoint}`);
   return `- ${peer.participantId} — ${clauses.join('; ')}`;
+};
+
+/** docs/47 §5 (#441 item 1): ONE path-claim example, derived from the VALIDATOR's own schema
+ * (`swarm-event-schemas.mjs`) — the field examples the bridge serves the contract with, never a
+ * hand-typed second copy (the #371 rule the contribution example already follows). The example is
+ * the PATH claim, because that is the row this section exists to teach: a file outside the seat's
+ * declared scope is claimed, not handed over at the end. */
+const pathClaimExample = () => {
+  const fields = SWARM_EVENT_PAYLOAD_SCHEMAS['swarm.claim_updated'].fields;
+  return { event: 'swarm.claim_updated', payload: {
+    claimId: fields.claimId.example, paths: fields.paths.example, status: fields.status.example } };
 };
 
 export class SwarmRuntime {
@@ -2418,8 +2442,16 @@ export class SwarmRuntime {
     // docs/45 §2.1: a claim whose holder is gone is the mirror of assignment_holder_gone — the
     // hold outlives the seat that took it, and death never auto-releases it (no TTL, no expiry:
     // #163). The row names the release that settles it, which any organizer may make.
+    // docs/47 §5 (#441 item 3): a SCOPE claim — the claim one seat's declared recruit scope is
+    // recorded under — is visibility, never a hold. It conflicts with nothing (the fold's ONE
+    // exemption), the recruit seam re-asserts or replaces its row, and the participant row itself
+    // carries the declared scope, so when its holder goes there is no hold for a release to
+    // settle and nothing another seat is blocked on: raising the row would page the root once per
+    // settled seat for a bookkeeping write that changes no other fact. The claim row stays active
+    // and durable on the view, exactly as it does for a live holder — a hold a seat TOOK still
+    // raises the row below, unchanged.
     for (const claim of Object.values(swarm.claims ?? {})) {
-      if (claim.status !== 'active') continue;
+      if (claim.status !== 'active' || claim.claimId === scopeClaimId(claim.participantId)) continue;
       const holder = participantsById.get(claim.participantId);
       if (holder && !gone(holder)) continue;
       organization.push({ kind: 'claim_holder_gone', claimId: claim.claimId,
@@ -3804,12 +3836,90 @@ export class SwarmRuntime {
     return `${head} (failure policy): ${record.policy}`;
   }
 
+  /** docs/47 §5 (#441 item 1): the `## Claims` block one recruited seat's brief carries. It
+   * teaches the ONE spelling for work outside a declared scope — a path claim, docs/45 §2 — with
+   * the example the validator's own schema admits, then lists the claims the SEAT holds (its
+   * recruit scope is its first: `scope:<seat>`, written when it binds) and every OTHER seat's
+   * active path claim that overlaps that scope, each naming its holder and the checkout it is held
+   * on. The negotiation therefore starts in the brief, never in a handover at the end. Fold-only:
+   * durable rows, no live read (#438). A seat with no scope and no claims of its own has no claim
+   * situation, so the block is ABSENT — never empty. */
+  _briefClaimLines(swarm, participantId, scope) {
+    const declared = Array.isArray(scope) ? scope : [];
+    const ownId = scopeClaimId(participantId);
+    const own = [];
+    // The declared scope is the seat's FIRST claim, and the brief composes BEFORE the bind writes
+    // that row: the derivation names the hold the seat is about to take, not one it already has.
+    if (declared.length > 0) own.push({ claimId: ownId, paths: declared, workId: null, scope: true });
+    for (const claim of Object.values(swarm.claims ?? {})) {
+      if (claim.status !== 'active' || claim.participantId !== participantId) continue;
+      if (claim.claimId === ownId && declared.length > 0) continue;
+      own.push({ claimId: claim.claimId, paths: claim.paths ?? null, workId: claim.workId ?? null,
+        scope: claim.claimId === ownId });
+    }
+    // Every PEER's active path claim that overlaps the declared scope — the hold this seat is
+    // about to work beside. "Peer" is the ONE #350 predicate every surface reads (the peers block
+    // above, the scope-overlap advisory, the roster intersections): a settled seat's hold is
+    // history, and a gone holder's claim is the `claim_holder_gone` attention row's business, not
+    // this seat's brief. Overlap is per-checkout in the fold, so each line names the checkout its
+    // hold is on; a claim with no recorded checkout says so instead of guessing.
+    const overlapping = [];
+    if (declared.length > 0) {
+      for (const claim of Object.values(swarm.claims ?? {})) {
+        if (claim.status !== 'active' || claim.participantId === participantId) continue;
+        if (!Array.isArray(claim.paths) || claim.paths.length === 0) continue;
+        const holder = Object.hasOwn(swarm.participants, claim.participantId)
+          ? swarm.participants[claim.participantId] : null;
+        if (holder === null || !this._canAct(holder)) continue;
+        const paths = claim.paths.filter((path) => declared.some((entry) => scopePathOverlaps(path, entry)));
+        if (paths.length > 0) overlapping.push({ claim, paths });
+      }
+    }
+    own.sort((left, right) => compareCanonicalStrings(left.claimId, right.claimId));
+    overlapping.sort((left, right) => compareCanonicalStrings(left.claim.claimId, right.claim.claimId));
+    if (own.length === 0 && overlapping.length === 0) return [];
+    const bound = FRAME_LIMITS['view.seat_read.items'].value;
+    const ownShown = own.slice(0, bound);
+    const overlapShown = overlapping.slice(0, Math.max(0, bound - ownShown.length));
+    const omitted = (own.length - ownShown.length) + (overlapping.length - overlapShown.length);
+    const lines = [
+      'Claim a file outside your path scope with ONE row — swarm.update event swarm.claim_updated,'
+      + ' a path claim that binds your recorded checkout — instead of handing it over at the end:'
+      + ' it refuses swarm_claim_conflict while another seat\'s active claim on that checkout'
+      + ' overlaps it. The example the validator admits as printed:',
+      JSON.stringify(pathClaimExample()),
+    ];
+    if (ownShown.length > 0) {
+      lines.push('Your claims:');
+      for (const claim of ownShown) {
+        lines.push(`- ${claim.claimId} — yours, active:`
+          + ` ${claim.paths === null ? `work ${claim.workId}` : claim.paths.join(', ')}`
+          + `${claim.scope ? ' (your recruit scope, recorded when you bind)' : ''}`);
+      }
+    }
+    if (overlapShown.length > 0) {
+      lines.push('Peer claims overlapping your scope:');
+      for (const { claim, paths } of overlapShown) {
+        lines.push(`- ${claim.claimId} held by ${claim.participantId}`
+          + `${claim.workspaceId === null ? ' (no recorded checkout)' : ` on ${claim.workspaceId}`}`
+          + `: ${claim.paths.join(', ')}`
+          + `${paths.length === claim.paths.length ? '' : ` (overlapping: ${paths.join(', ')})`}`);
+      }
+    }
+    if (omitted > 0) {
+      lines.push(`- ${omitted} further claim${omitted === 1 ? '' : 's'} not shown`
+        + ` (this section is bounded by ${FRAME_LIMITS['view.seat_read.items'].lane}`
+        + ` = ${bound}; read the rest with swarm.view)`);
+    }
+    return lines;
+  }
+
   /** The brief one seat is recruited with (#318 deliverables 3 and 4): the recruiter's objective
    * verbatim, then the swarm situation — the peers and their scopes, the contracts published so
    * far, the commits landed on the target since the base — and, for a `resumeFrom` successor,
    * the predecessor's inheritance. The composition is written ONCE onto the join as `brief`, so
    * the swarm's own record of what a seat was told is the brief every surface renders. */
-  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null) {
+  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null, recruitedScope = null) {
     const blocks = [args.objective];
     // Issue #345: the seat's own assignment — the work item the swarm knows it holds — rides the
     // brief first, so "your work item is work-N" is read from the assignment, never retyped.
@@ -3927,6 +4037,11 @@ export class SwarmRuntime {
     // hand-typed briefs stay byte-identical.
     const contextPackageSection = this._recruitContextPackageBriefSection(args.options);
     if (contextPackageSection !== null) blocks.push(contextPackageSection);
+    // Issue #441 (#423's claims): the seat's OWN claims and the holds its declared scope runs
+    // into. A recruit that declared no scope and holds nothing has no claim situation, so its
+    // brief renders no block — the section is absent, never empty (the Context package rule).
+    const claimLines = this._briefClaimLines(swarm, args.participantId, recruitedScope);
+    if (claimLines.length > 0) blocks.push(['## Claims', ...claimLines].join('\n'));
     // Issue #310 + #371 + #373: the expected contribution shape rides every brief as one
     // worked example the validator admits, with the closed sets derived from the schema the
     // validator reads. A seat recruited read_only — or granted no contribute authority —
@@ -4625,7 +4740,7 @@ export class SwarmRuntime {
         const currentSwarm = this._swarm(args.swarmId);
         const parkedDeliveries = this._undeliveredParkedGuidance(
           [args.participantId, args.resumeFrom ?? null]);
-        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs);
+        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, recruitedScope);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
         // whose work would be starved is not started: while the derived host budget has no room,
         // the request waits IN ORDER as a visible queue entry and its typed queued row is
@@ -4730,6 +4845,20 @@ export class SwarmRuntime {
           swarmId: args.swarmId, participantId: args.participantId, workerId: worker.id, taskId: worker.taskId,
           ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
         }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`));
+        // docs/47 §5 (#441 item 3): the path scope this seat was recruited with IS its first
+        // claim — `scope:<seat>` over exactly the declared paths, bound to the checkout the
+        // binding just recorded — so two seats' overlapping scopes are claims from the first
+        // minute, visible on every view and in every peer's next brief. Scopes overlap legally
+        // (docs/45 §2), so the fold never judges this row by the conflict rule: the row is the
+        // scope's visibility, and the brief names the overlaps it creates. The write is keyed
+        // like the binding it follows (the worker named): a re-join under a new worker re-asserts
+        // the hold instead of replaying the write an earlier incarnation made.
+        if (recruitedScope !== null && recruitedScope.length > 0) {
+          writes.push(this._write('swarm.claim_updated', {
+            swarmId: args.swarmId, claimId: scopeClaimId(args.participantId),
+            participantId: args.participantId, paths: [...recruitedScope], status: 'active',
+          }, principal, `swarm-scope-claim:${hash([args.swarmId, args.participantId, worker.id])}`));
+        }
         // Issue #441: the run is bound, so the recruiter's package binds to it — scope
         // `worker:<seat>`, the ONE scope the seat's brief renders for. The attach row IS the
         // durable fact: the package was admitted before the recruit at the root's own authority,

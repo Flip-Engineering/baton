@@ -12586,7 +12586,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 952,
+          "size": 960,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12837,9 +12837,18 @@
           ]
         },
         {
+          "name": "_briefClaimLines",
+          "ordinal": 0,
+          "size": 69,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 155,
+          "size": 160,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
@@ -12923,7 +12932,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 807,
+          "size": 821,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

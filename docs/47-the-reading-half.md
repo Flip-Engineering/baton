@@ -130,8 +130,32 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    claim; nothing is relayed by prose.
 3. Finishing with a handover remains legal for work the seat cannot start; the claim is the
    spelling for work it CAN start the moment the hold lands.
-4. This rule ACTIVATES when #423's claims land; until then the handover is the only row and
-   this section is the pin, not the mechanism (the red skeleton, row (e)).
+4. ACTIVATED (2026-09-18, lane D) now that #422/#423's claims are landed. The mechanism, ONE
+   derivation per fact: the declared recruit scope IS the seat's first claim —
+   `scopeClaimId(participantId)` (`scope:<participantId>`, swarm-state.mjs), written by the
+   recruit effect at bind over exactly the declared paths and bound to the seat's recorded
+   checkout — so two scopes that meet are claims from the first minute; the `## Claims` block
+   `_composeRecruitBrief` renders (after `## Context package`, absent for a seat with no scope
+   and no claims) teaches the path-claim spelling with the example the validator's own schema
+   admits (`swarm-event-schemas.mjs`, never hand-typed) and lists the seat's own claims and every
+   PEER's ACTIVE path claim whose paths fall in that scope — peers being the seats that can act
+   (the ONE #350 predicate the peers block already reads: a settled seat's hold rides no later
+   brief, while its claim row stays durable) — naming the holder and the checkout;
+   the fold's ONE `claimConflictFor` refuses `swarm_claim_conflict` (holder, holding `claimId`,
+   overlapping paths) for a hold that overlaps another seat's ACTIVE claim on the same recorded
+   checkout. A SCOPE claim is visibility, never a fence: scopes overlap legally (docs/45 §2), so
+   a scope claim is neither judged by the conflict rule nor a conflict source for a peer's hold —
+   a recruit whose scope meets an active claim is admitted and its brief names the overlap; the
+   `scope:` namespace is reserved to that row (a claim id wearing another seat's scope refuses
+   `invalid_payload`), and a hand-written claim cannot exempt itself. The exemption is the
+   conflict rule's ONLY one: a scope claim is a claim row everywhere else — it rides `view.claims`,
+   the peers-now lines and `shared_checkout_overlap` like any other hold. The one further
+   consequence, because a scope claim excludes nothing: a gone holder's scope claim raises NO
+   `claim_holder_gone` row (docs/45 §2.1's row is for a hold a seat TOOK, whose release frees
+   something; the participant row already carries the declared scope and says the seat is gone, so
+   the row would page the root per settled seat for a bookkeeping write) — the claim row stays
+   active and durable on the view. The red skeleton's row (e) is green; the landed lanes' rows are
+   pinned by `impl/test/issue441d-claims-instead-of-handovers.test.mjs`.
 
 ## 6. What stays OUT
 
