@@ -75,6 +75,7 @@ import {
   KNOWLEDGE_CONTRADICTION_POLICY_FIELDS,
   MAX_CONTEXT_PACK_BODY_BYTES,
   PROJECTION_CHECKPOINT_FIELDS,
+  PROJECTION_LEDGER_FIELDS,
   SCRATCHPAD_SCOPE,
   SEGMENT_FILE_SUFFIX,
   SEGMENT_INDEX_FILE,
@@ -144,6 +145,10 @@ const OPEN_CHECKPOINT_REASONS = Object.freeze({
   absent: 'absent_rewrite',
   stale_shape: 'stale_shape_rewrite',
   stale_authority: 'stale_authority_rewrite',
+  // Issue #465(4): the checkpoint's claim did not hold against the ledger (a claim past its last
+  // row, or a reference the ledger cannot back) — the ledger is authoritative, so the open folds it
+  // and rewrites the cache the same way it does for a foreign shape.
+  stale_ledger: 'stale_ledger_rewrite',
 });
 
 /** Issue #465(3): the projection's REFERENCE grammar — the ledger kinds a projection row may point
@@ -162,12 +167,39 @@ const PROJECTION_REFERENCES = Object.freeze({
   // #465(2): a spill's digest-addressed body. The row already carries the body's byte length as
   // its own `bytes`, so the reference's pair is `bodyRef {kind, seq}` beside that number.
   'spill.minted': (payload) => payload?.body ?? null,
+  // #465(2): a participant row's composed brief. The fold mints the reach at the join
+  // (`swarm-state.mjs` `participantBriefReach`: `briefBytes` + `briefRef
+  // {kind: 'swarm.participant_joined', seq}`), and the checkpoint body renders `brief: null` beside
+  // it — so this is the kind's reader, the same pair the row's `roleRef` names for the objective's
+  // first line. Without it the body's rendering of the roster could not be inverted (issue
+  // #465(4)): the pair would name text nothing could read.
+  'swarm.participant_joined': (payload) => payload?.brief ?? null,
   // #465(3): the checkpoint body's second-copy families — a task's brief, a goal's objective and a
   // plan's nodes, each a byte-identical copy of the field the ledger row already holds.
   'task.created': (payload) => payload?.brief ?? null,
   'goal.version_defined': (payload) => payload?.goal?.objective ?? null,
   'plan.version_proposed': (payload) => payload?.plan?.nodes ?? null,
 });
+
+/** Issue #465(4): the swarm family's null-prototype dictionaries, read off the body the write is
+ * about to persist. A row's dictionary is built with an EMPTY prototype (swarm-state.mjs `nullDict`)
+ * so a key named `__proto__` is data and not a prototype write, and `v8`'s round trip flattens every
+ * container to a plain object — so the names are recorded on the envelope and the open restores
+ * them. Derived from the rows themselves (never a second declaration of the fold's shape), in a
+ * stable order, and empty for a body with no such family. */
+function nullPrototypeFields(swarms) {
+  if (!(swarms instanceof Map) || swarms.size === 0) return Object.freeze([]);
+  const names = new Set();
+  for (const swarm of swarms.values()) {
+    if (swarm === null || typeof swarm !== 'object' || Array.isArray(swarm)) continue;
+    for (const [name, value] of Object.entries(swarm)) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)
+        && !(value instanceof Map) && !(value instanceof Set)
+        && Object.getPrototypeOf(value) === null) names.add(name);
+    }
+  }
+  return Object.freeze([...names].sort());
+}
 
 /** Issue #465(3): what a reference stands for, in bytes — the text a reader carries if it resolves
  * the pair: the exact UTF-8 length of a string, or of the JSON text an object-valued field
@@ -1143,8 +1175,14 @@ export class CoordinationStore {
     return coordinationReplay.startupStatus(this);
   }
 
-  _projectionCheckpointPayload({ durable = false } = {}) {
+  _projectionCheckpointPayload() {
     const payload = Object.fromEntries(PROJECTION_CHECKPOINT_FIELDS.map((field) => [field, this[field]]));
+    // Issue #465(4): the two families the body does NOT carry are `_events`/`_byKey` — they are not
+    // on the field list above, because the ledger file is their durable copy and the successor
+    // rebuilds them from it (see PROJECTION_LEDGER_FIELDS). What is left is the projection proper,
+    // and every family below renders its text as a REFERENCE so the body stays a bounded summary of
+    // the ledger rather than a second copy of it.
+    //
     // Issue #465(2): the body's LARGEST rendering family. The checkpoint serializes a projection
     // of the ledger, and the swarm snapshot's per-seat rows are where its text collects: measured
     // on the clone's checkpoint (288 671 406 B), `_swarms.participants` is 17 422 263 B and 99.3%
@@ -1163,24 +1201,10 @@ export class CoordinationStore {
     // readers use (below). The fold keeps these rows whole: their text is read directly by
     // consumers outside this store (`coordination-replay.mjs` `plan.nodes`, the application's
     // goal/plan readers), so the reference is the BODY's rendering, exactly as a participant row's
-    // brief is above.
+    // brief is above. Issue #465(4) makes that rendering REVERSIBLE: the open installs the body's
+    // families as the projection, so `_materializedProjectionCheckpoint` (below) resolves every
+    // pair back through the rows the rebuild just parsed.
     this._referencedSecondCopies(payload);
-    // #223: the checkpoint is a parsed-event cache for the LIVE WINDOW. When the ledger has
-    // been compacted (archived events live in segments, not in events.jsonl), the cache holds
-    // only the window events — they are the exact bytes of the current ledger, so the
-    // parsed-prefix integrity check below still holds. The projection maps and _byKey remain
-    // the FULL state: replay and idempotent retries need every key, archived or not.
-    const base = this._segmentIndex?.archivedThroughSeq ?? 0;
-    if (base > 0) payload._events = this._events.slice(base);
-    // Diagnostic projection inspection must not copy reaped scratchpad prose back into the
-    // projection surface through the parsed-event cache. The durable checkpoint writer opts
-    // into its authoritative parsed-prefix cache; the append-only ledger remains the source.
-    if (!durable) {
-      payload._events = payload._events.map((event) => (event.kind === 'scratchpad.entry_written' || event.kind === 'scratchpad.entry_appended')
-        && !this._scratchpadEntries.has(event.payload.entryId)
-        ? freeze({ ...clone(event), payload: freeze({ ...clone(event.payload), content: '[reaped]' }) })
-        : event);
-    }
     return payload;
   }
 
@@ -1191,12 +1215,12 @@ export class CoordinationStore {
    * holds the text, and derives nothing of its own — ONE derivation, so the checkpoint and the
    * view cannot disagree about where a brief lives.
    *
-   * The store's own fold rows are untouched — the live view still renders the whole text — and
-   * this is the checkpoint body's rendering: no reader of the body consumes these families (the
-   * restore reads the parsed window and its idempotency index; `coordination-replay.mjs`
-   * `_loadRun` re-applies every ledger row under the current policies), so a reference here
-   * cannot change the state a checkpoint restores. A swarm whose rows carry no brief is passed
-   * through untouched (the identity the write's own measurement then reports). */
+   * The store's own fold rows are untouched — the live view still renders the whole text — and this
+   * is the body's rendering of the same row. Issue #465(4) makes the body the STATE the next open
+   * installs, so the rendering is reversible: `_materializedProjectionCheckpoint` puts the whole
+   * `brief` back from the row `briefRef` names (the `briefBytes`/`briefRef` pair is the fold's own
+   * and stays on the row). A swarm whose rows carry no brief is passed through untouched (the
+   * identity the write's own measurement then reports). */
   _boundedSwarmProjection(swarms) {
     if (!(swarms instanceof Map) || swarms.size === 0) return swarms;
     const bounded = new Map();
@@ -1323,6 +1347,130 @@ export class CoordinationStore {
     return read(event.payload) ?? null;
   }
 
+  /** Issue #465(4): the body's rendering, INVERTED — the family-by-family half of the open
+   * (`coordination-replay.mjs` `_adoptProjectionCheckpoint` drives it). The checkpoint carries the
+   * projection, so every reference the body minted (`_boundedSwarmProjection`,
+   * `_referencedSecondCopies`) is resolved back through `_projectionReferenceValue` before the
+   * families are installed as state: the store a checkpoint serves must answer exactly what a cold
+   * replay answers, and a reader that read `task.brief`, a goal's `objective`, a plan's `nodes` or a
+   * web command's `outcome.body` must find the text, not the pair.
+   *
+   * The marker is the pair the WRITE minted, not the pair the FOLD mints: a `_spills` row carries
+   * `bodyRef` from the fold (its reader composes the bytes), so a row whose field is `null` and
+   * whose pair has no `<field>Bytes` beside it is passed through untouched, and a participant row's
+   * `briefBytes`/`briefRef` (the fold's own reach) stays on the row while only `brief` is put back.
+   * Rendering is memoized BY ROW IDENTITY, exactly as the write's rendering is, so the alias a
+   * family and its head map share survives: `_goalHeads` keeps naming the same row as `_goals`.
+   *
+   * A pair that does not resolve names text the ledger does not carry — the body and the ledger
+   * disagree — so the caller abandons the adoption and folds the ledger instead (never a silent
+   * absence, never a guessed value). */
+  _materializedProjectionCheckpoint(payload, dictionaryFields) {
+    const memo = new Map();
+    let unresolved = null;
+    const fail = (field, reference) => { unresolved ??= { field, reference: clone(reference) }; return null; };
+    /** One row, rendered back: `<field>: null` beside the body's `<field>Bytes`/`<field>Ref` pair
+     * becomes the text the pair names. `keepPair` says which family's pair it is: the body mints its
+     * own `<field>Bytes`/`<field>Ref` for the second-copy families (a goal's objective, a plan's
+     * nodes, a task's brief) and those two keys leave with the rendering, while a participant row's
+     * `briefBytes`/`briefRef` is the FOLD's own reach and stays on the row. A row without the marker
+     * is passed through exactly as the body carried it. */
+    const materialized = (row, field, keepPair) => {
+      const reference = row[`${field}Ref`];
+      if (reference === undefined || row[field] !== null || row[`${field}Bytes`] === undefined) return row;
+      const value = this._projectionReferenceValue(reference);
+      if (value === null) { fail(field, reference); return row; }
+      if (keepPair) return freeze({ ...row, [field]: value });
+      const { [`${field}Ref`]: _reference, [`${field}Bytes`]: _bytes, ...rest } = row;
+      return freeze({ ...rest, [field]: value });
+    };
+    const row = (value, field, keepPair = false) => {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+      const prior = memo.get(value);
+      if (prior !== undefined) return prior;
+      const next = materialized(value, field, keepPair);
+      memo.set(value, next);
+      return next;
+    };
+    const family = (rows, field) => {
+      if (!(rows instanceof Map) || rows.size === 0) return rows;
+      let changed = false;
+      const out = new Map();
+      for (const [key, value] of rows) {
+        const next = row(value, field);
+        if (next !== value) changed = true;
+        out.set(key, next);
+      }
+      return changed ? out : rows;
+    };
+    const installed = { ...payload };
+    installed._goals = family(payload._goals, 'objective');
+    installed._goalHeads = family(payload._goalHeads, 'objective');
+    installed._plans = family(payload._plans, 'nodes');
+    installed._planHeads = family(payload._planHeads, 'nodes');
+    installed._tasks = family(payload._tasks, 'brief');
+    installed._swarms = this._materializedSwarmProjection(payload._swarms, row, dictionaryFields);
+    // A web command's pair is nested INSIDE its outcome, so that family renders one level down.
+    if (payload._webCommands instanceof Map && payload._webCommands.size > 0) {
+      const out = new Map();
+      let changed = false;
+      for (const [key, value] of payload._webCommands) {
+        const outcome = value?.outcome;
+        if (outcome === null || typeof outcome !== 'object' || outcome.body !== null
+          || outcome.bodyBytes === undefined || outcome.bodyRef === undefined) { out.set(key, value); continue; }
+        const body = this._projectionReferenceValue(outcome.bodyRef);
+        if (body === null) { fail('outcome.body', outcome.bodyRef); out.set(key, value); continue; }
+        const { bodyRef: _reference, bodyBytes: _bytes, ...head } = outcome;
+        out.set(key, freeze({ ...value, outcome: freeze({ ...head, body }) }));
+        changed = true;
+      }
+      if (changed) installed._webCommands = out;
+    }
+    return { projection: installed, problem: unresolved };
+  }
+
+  /** Issue #465(4): the swarm family's half of the inversion. Two facts the body cannot carry by
+   * itself are put back:
+   *   • a participant row's `brief` — rendered back from `briefRef`, whose `briefBytes`/`briefRef`
+   *     pair is the FOLD's own reach and stays on the row (`keepPair`);
+   *   • the swarm row's null-prototype DICTIONARIES — the fold builds them with an empty prototype so
+   *     a key named `__proto__` is data rather than a prototype write, and `v8`'s round trip flattens
+   *     every container to a plain object. The names are the writer's own reading of the body it
+   *     persisted (`nullPrototypeFields` below, recorded on the envelope), so the restore re-creates
+   *     exactly the dictionaries the fold had — never a hand-typed list of them. */
+  _materializedSwarmProjection(swarms, render, dictionaryFields) {
+    if (!(swarms instanceof Map) || swarms.size === 0) return swarms;
+    const bounded = new Map();
+    let changed = false;
+    for (const [swarmId, swarm] of swarms) {
+      if (swarm === null || typeof swarm !== 'object' || Array.isArray(swarm)) { bounded.set(swarmId, swarm); continue; }
+      let restored = swarm;
+      for (const field of dictionaryFields) {
+        const dictionary = restored[field];
+        if (dictionary === null || typeof dictionary !== 'object' || Array.isArray(dictionary)
+          || dictionary instanceof Map || dictionary instanceof Set
+          || Object.getPrototypeOf(dictionary) === null) continue;
+        restored = { ...restored, [field]: freeze(Object.assign(Object.create(null), dictionary)) };
+      }
+      const participants = restored.participants ?? null;
+      let rendered = restored !== swarm;
+      if (participants !== null && typeof participants === 'object') {
+        const rows = Object.create(null);
+        for (const [participantId, value] of Object.entries(participants)) {
+          const next = value?.brief === null && value?.briefRef !== undefined
+            && typeof value?.briefBytes === 'number' ? render(value, 'brief', true) : value;
+          if (next !== value) rendered = true;
+          rows[participantId] = next;
+        }
+        if (rendered) restored = { ...restored, participants: freeze(rows) };
+      }
+      if (!rendered) { bounded.set(swarmId, swarm); continue; }
+      bounded.set(swarmId, freeze(restored));
+      changed = true;
+    }
+    return changed ? bounded : swarms;
+  }
+
 
   /** Issue #449: the ONE writer of the projection checkpoint. It returns the bytes it MEASURED
    * (`bytes`), whether the checkpoint was written (`written`), and whether those bytes ARE a
@@ -1380,31 +1528,47 @@ export class CoordinationStore {
     }
     // The ledger is proven at the prefix the load folded; the encode that follows is its own step.
     yield;
-    const payload = this._projectionCheckpointPayload({ durable: true });
+    const payload = this._projectionCheckpointPayload();
     const projectionBytes = serialize(payload);
     // Issue #465(1): the byte breakdown is a READING of this one measurement — the same payload
     // object, put through the same `serialize` — never a second accounting that could disagree
     // with the ceiling above. Measured cost of the reading, on the clone's 288.87 MB projection
-    // with 101 families: 0.26 s beside the 0.35 s the serialize itself costs.
-    this._checkpointByteBreakdown = this._projectionByteBreakdown(payload, projectionBytes.byteLength);
+    // with 101 families: 0.26 s beside the 0.35 s the serialize itself costs. Issue #465(4): the two
+    // families the body no longer carries are read off the store in O(1) (`_checkpointRebuiltFields`)
+    // — the rows' own bytes are the ledger's, which is already in hand here.
+    const windowCount = this._events.length - (this._segmentIndex?.archivedThroughSeq ?? 0);
+    this._checkpointByteBreakdown = this._projectionByteBreakdown(payload, projectionBytes.byteLength, {
+      rows: windowCount, bytes: raw.byteLength, keys: this._events.length,
+    });
     if (costBound !== null && projectionBytes.byteLength > costBound) {
       return { written: false, bytes: projectionBytes.byteLength, measured: true };
     }
     yield;
-    // #223: throughSeq is the count of events the parsed cache covers — the LIVE WINDOW.
-    // Archived events live in segments and are NOT part of the ledger bytes or the cache.
-    const base = this._segmentIndex?.archivedThroughSeq ?? 0;
-    const windowCount = this._events.length - base;
+    // Issue #465(4): `coversSeq` is the ABSOLUTE seq this checkpoint's projections cover — every row
+    // on the ledger at write time (the ledger-divergence check above proves the store folded exactly
+    // these), archived rows included. It is the claim the successor reads: rows 1..coversSeq are
+    // rebuilt from the ledger and NOT folded, rows past it are folded. `prefixBytes` is the same
+    // claim in bytes of the ledger file, which holds the window rows (rows past the archival cut).
+    // `coversLineDigest` anchors the claim's LAST line — the #229 append-drift proof the parsed cache
+    // used to carry, now one digest of the line itself instead of a copy of the row.
+    const lastCoveredStart = raw.byteLength === 0 ? 0 : raw.lastIndexOf(0x0a, raw.byteLength - 2) + 1;
     const envelope = {
       schemaVersion: 1,
       authorityDigest: this._checkpointAuthorityDigest,
       // Issue #449(2): the writer's own projection shape and the commit it served. A checkpoint
-      // another build wrote is then STALE (its parsed cache belongs to a different projection),
+      // another build wrote is then STALE (its carried projection belongs to a different field set),
       // which the open answers with a full replay and a rewrite — never with the word 'corrupt',
       // whose remedy is a repair. Recorded here so the distinction is provable, not inferred.
       projectionShapeDigest: this._projectionShapeDigest,
       servedCommit: this._deploymentBaseSha ?? null,
-      throughSeq: windowCount,
+      coversSeq: this._events.length,
+      // The last COMPLETE line of the ledger (its trailing newline is excluded): for an empty ledger
+      // this is the empty digest, and the reader only judges it when the claim covers rows.
+      coversLineDigest: sha256Bytes(raw.subarray(lastCoveredStart, raw.byteLength - 1)),
+      // The swarm family's null-prototype dictionaries, read off the very body this envelope carries
+      // (`nullPrototypeFields`): `v8`'s round trip cannot preserve a prototype, so the open needs the
+      // names to put them back. Sorted, and empty for a body without that family.
+      swarmDictionaryFields: nullPrototypeFields(payload._swarms),
       prefixBytes: raw.byteLength,
       prefixDigest: sha256Bytes(raw),
       projectionDigest: sha256Bytes(projectionBytes),
@@ -1460,18 +1624,21 @@ export class CoordinationStore {
    *   `sharedBytes`            what the families' own serializations count MORE THAN ONCE. `v8`
    *                            encodes a repeated OBJECT as a back-reference, so a family that
    *                            re-references an earlier family's objects is nearly free in the
-   *                            stream while its own serialization is not: `_byKey` indexes the
-   *                            events `_events` already wrote (measured: 179.76 MB of the 204.03 MB
-   *                            total sharing on the clone), and `_planHeads`/`_goalHeads` alias the
-   *                            plans and goals. The breakdown reports it rather than hiding it, and
-   *                            the identity it closes on is exact:
+   *                            stream while its own serialization is not: `_planHeads`/`_goalHeads`
+   *                            alias the plans and goals. The breakdown reports it rather than
+   *                            hiding it, and the identity it closes on is exact:
    *
    *       Σ bytesByFamily + projectionBaselineBytes − sharedBytes === bytes
    *
-   * A reader who compares `bytesByFamily` entries without `sharedBytes` would bound the wrong
-   * family (on the clone, `_byKey` reads 63% and owns 0.7%); with it, the same reader sees the
-   * events family for what it is. */
-  _projectionByteBreakdown(payload, projectionBytes) {
+   * Issue #465(4): the two families the body does NOT carry (`_events`, `_byKey`) are reported
+   * beside that sum, never inside it — the identity above is the BODY's own accounting, and the
+   * ledger it points at is not. `rebuiltFamilies` names what the successor rebuilds them from: the
+   * rows and the durable bytes of the file that holds them (`_events`, read in O(1) — the write
+   * already holds the ledger bytes, so no history is serialized to measure it) and the index's key
+   * count with ZERO bytes of its own (`_byKey` indexes the very rows `_events` owns, so counting it
+   * as bytes is the double count this row exists to refuse). Every row object is therefore
+   * attributed exactly once. */
+  _projectionByteBreakdown(payload, projectionBytes, rebuilt) {
     const bytesByFamily = {};
     let summed = 0;
     for (const family of Object.keys(payload)) {
@@ -1480,11 +1647,18 @@ export class CoordinationStore {
       summed += bytes;
     }
     const baseline = serialize(this._emptyProjectionShape(payload)).byteLength;
+    // The two names are the ONE declaration of the exclusion (`PROJECTION_LEDGER_FIELDS`), in its
+    // order: [_events, _byKey].
+    const [eventsField, byKeyField] = PROJECTION_LEDGER_FIELDS;
     return freeze({
       bytesByFamily: freeze(bytesByFamily),
       projectionBaselineBytes: baseline,
       sharedBytes: summed + baseline - projectionBytes,
       projectionBytes,
+      rebuiltFamilies: freeze({
+        [eventsField]: freeze({ rows: rebuilt.rows, bytes: rebuilt.bytes }),
+        [byKeyField]: freeze({ keys: rebuilt.keys, bytes: 0 }),
+      }),
     });
   }
 
@@ -1539,14 +1713,13 @@ export class CoordinationStore {
    * (`_openCheckpointRefresh`).
    *
    * The deferred path is the one caller on the resident's own loop, so it reuses the last
-   * measurement while the window has only grown since it: the serialized projection is dominated by
-   * the window's own rows (every appended row lands in `_events` and `_byKey`), so a window already
-   * measured past the ceiling is not serialized a second time to re-derive the same verdict. A fold
-   * that shrinks the projection between measurements can only DELAY a housekeeping write — nothing
-   * is ever written on a reused verdict, and the next release (which measures unconditionally)
-   * re-derives it. The verdict is dropped with the projection it judged (`_resetProjection`) and is
-   * ignored whenever the window has fallen under the row count it was taken at (#223's `compact()`
-   * trims the window). */
+   * measurement while the window has only grown since it: a body already measured past the ceiling
+   * is not serialized a second time to re-derive the same verdict (issue #465(4) removed the rows
+   * from the body, so what grows it is the families a fold writes, not the ledger's row count — the
+   * reuse is safe either way because it only ever DECLINES to measure: nothing is written on a
+   * reused verdict, and the next release, which measures unconditionally, re-derives it). The
+   * verdict is dropped with the projection it judged (`_resetProjection`) and is ignored whenever
+   * the window has fallen under the row count it was taken at (#223's `compact()` trims the window). */
   _boundedCheckpointWrite(phase) {
     const cost = FRAME_LIMITS['checkpoint.projection_bytes'];
     const declared = this._checkpointOutcomeFields();
@@ -1573,11 +1746,13 @@ export class CoordinationStore {
     }
   }
 
-  /** Issue #449: the fields every checkpoint outcome names — the window's row count, the ledger's
-   * own bytes (evidence on the row, never the gate), the replay frame's row ceiling and the
-   * checkpoint's own cost ceiling in bytes. */
+  /** Issue #449: the fields every checkpoint outcome names — the seq the carried projections cover
+   * (`coversSeq`, issue #465(4): the absolute ledger seq rows 1..coversSeq the successor does NOT
+   * fold), the WINDOW's row count, the ledger's own bytes (evidence on the row, never the gate), the
+   * replay frame's row ceiling and the checkpoint's own cost ceiling in bytes. */
   _checkpointOutcomeFields() {
     return {
+      coversSeq: this._events.length,
       rows: this._events.length - (this._segmentIndex?.archivedThroughSeq ?? 0),
       ledgerBytes: this._loadedLedgerIdentity?.bytes ?? 0,
       bound: FRAME_LIMITS['view.wake_replay.items'].value,
@@ -1586,11 +1761,11 @@ export class CoordinationStore {
   }
 
   /** Issue #465(1): the measured breakdown a checkpoint row carries — the three numbers
-   * `_projectionByteBreakdown` read from the SAME serialize the cost ceiling judged. Reported on
-   * every outcome that reached a measurement (a write, a skip past the ceiling, or the deferred
-   * path's reused verdict, whose row already names the row count it was taken at). Empty before
-   * the first measurement of a projection, and empty on a poisoned projection's row: nothing was
-   * encoded, so there is nothing to break down. */
+   * `_projectionByteBreakdown` read from the SAME serialize the cost ceiling judged, and the two
+   * ledger families' rebuild facts. Reported on every outcome that reached a measurement (a write,
+   * a skip past the ceiling, or the deferred path's reused verdict, whose row already names the row
+   * count it was taken at). Empty before the first measurement of a projection, and empty on a
+   * poisoned projection's row: nothing was encoded, so there is nothing to break down. */
   _checkpointByteFields() {
     const breakdown = this._checkpointByteBreakdown;
     if (breakdown === null || breakdown === undefined) return {};
@@ -1598,17 +1773,20 @@ export class CoordinationStore {
       bytesByFamily: breakdown.bytesByFamily,
       projectionBaselineBytes: breakdown.projectionBaselineBytes,
       sharedBytes: breakdown.sharedBytes,
+      rebuiltFamilies: breakdown.rebuiltFamilies,
     };
   }
 
   /** Issue #449: WHICH opens write the cache the next open needs — the store's own rule, and the
    * ONE checkpoint write that is NOT judged against the housewriting ceiling. An open reaches here
    * when it could not serve itself from the checkpoint on disk and has just folded the projection by
-   * replaying: `absent` (there is no cache at all) and `stale_shape` (the envelope was written by
-   * another projection shape or commit) replay the ledger, `stale_authority` (another authority
-   * digest) reuses the cached window and lands here so the NEXT open is served by this build's own
-   * authority instead. `valid` needs nothing, `corrupt` keeps its landed remedy (#397: a repair,
-   * never a rewrite over the refused bytes), and an empty ledger has nothing to cache.
+   * replaying: `absent` (there is no cache at all), `stale_shape` (the envelope was written by
+   * another projection shape or commit), `stale_authority` (another authority digest — its carried
+   * projection was folded under other cards and policies) and `stale_ledger` (issue #465(4): the
+   * checkpoint claims rows the ledger does not hold) all replay the ledger and land here, so the NEXT
+   * open is served by a cache that is this build's own. `valid` needs nothing, `corrupt` keeps its
+   * landed remedy (#397: a repair, never a rewrite over the refused bytes), and an empty ledger has
+   * nothing to cache.
    *
    * Its bound is the load that just completed: the open has already parsed and folded exactly these
    * rows, so the write is the same order of work behind a load that holds no stop's deadline — and it

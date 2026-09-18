@@ -17,19 +17,26 @@
 //  (a) the release bounds a HOUSEWRITING checkpoint by the checkpoint's OWN cost — the serialized
 //      projection measured at write time against the registry's ceiling for it — so a store whose
 //      window is past the wake-replay FRAME ceiling still writes one, and the row names the
-//      measured bytes and both declared bounds;
+//      measured bytes, `coversSeq` and both declared bounds;
 //  (b) a checkpoint written under a different projection-shape digest opens as a stale shape —
 //      the state token is `stale_shape`, which the open narration reads where it has always read
 //      the state (`checkpoint stale_shape (projection_shape_digest {...})`, against
 //      `checkpoint corrupt (…)` for a failed invariant) — carrying the writer's shape digest AND
 //      the served commit that wrote it, replays the ledger in full, and the OPEN writes a fresh
-//      checkpoint, so the NEXT open is bounded and replays only the rows past it (a used
-//      checkpoint still reads `valid`: `checkpoint used` in the issue's words);
+//      checkpoint, so the NEXT open is bounded (a used checkpoint still reads `valid`:
+//      `checkpoint used` in the issue's words);
 //  (c) an envelope invariant failure still opens as `corrupt` (#397 unchanged), and a legacy
 //      envelope that predates the shape record is stale, never corrupt;
 //  (d) a leftover `.projection.checkpoint.<uuid>` temp file is swept on open and named;
 //  (e) the resident's own open row carries all of it — the state, the writer's commit, the rewrite
 //      and the swept names — because the flip line renders exactly that row.
+//
+// Issue #465(4) changed what a "used" checkpoint means, and these rows are read that way: the
+// checkpoint carries the projection and `coversSeq`, NOT the event log, so a valid open reads rows
+// 1..coversSeq back from the ledger and folds only the tail. `replayedEvents` therefore counts the
+// rows whose FOLD ran (the tail), while `checkpointEvents` counts the rows the carried projection
+// covers; a fallback replays and folds every row. `throughSeq` became `coversSeq` (the absolute seq
+// the projection covers, archived rows included) because the rows are no longer a window cache.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -87,6 +94,20 @@ function appendRows(store, count) {
   }
 }
 
+/** Issue #465(4): the fixture that puts the checkpoint's OWN cost past the ceiling. The body no
+ * longer carries the event log, so a big ledger row cannot inflate it: what inflates it is a family
+ * the body keeps WHOLE — `evidence.mapped` folds its payload into `_evidence` verbatim (no
+ * reference rendering), so these rows are carried bytes, exactly the way a real campaign's carried
+ * families are. */
+function appendEvidenceRows(store, count, bytes) {
+  const body = 'x'.repeat(bytes);
+  for (let index = 1; index <= count; index += 1) {
+    store._append('evidence.mapped', {
+      worker: 'w-449', workerSeq: index, digest: `issue449:${index}`, body: `${body}#${index}`,
+    }, { actor, key: `issue449:evidence:${index}` });
+  }
+}
+
 /** Append valid rows directly to the ledger beyond a checkpoint's prefix — the tail a USED
  * checkpoint must still replay (a full-replay fallback folds these too, so the startup counters
  * tell the two apart). Rows mirror the issue397 fixture template. */
@@ -128,6 +149,7 @@ test('449-a: a window past the replay frame ceiling still checkpoints on release
   assert.equal(release?.state, 'written',
     'the release bounds the write by the checkpoint\u2019s own cost, not by the row count since archival');
   assert.equal(release.rows, rows);
+  assert.equal(release.coversSeq, rows, 'and the seq its carried projection covers');
   assert.ok(Number.isSafeInteger(release.bytes) && release.bytes > 0,
     'the outcome names the serialized projection the write measured');
   assert.equal(release.ledgerBytes, store._loadedLedgerIdentity.bytes,
@@ -140,23 +162,26 @@ test('449-a: a window past the replay frame ceiling still checkpoints on release
   const path = join(directory, CHECKPOINT);
   assert.ok(existsSync(path), 'the checkpoint is on disk');
   const envelope = readEnvelope(directory);
-  assert.equal(envelope.throughSeq, rows);
+  assert.equal(envelope.coversSeq, rows);
   assert.equal(envelope.projectionShapeDigest, SHAPE,
     'the envelope records the projection shape of the build that wrote it');
   assert.equal(envelope.servedCommit, null, 'no deployment commit on a bare fixture');
   const reopened = new CoordinationStore(directory);
   assert.equal(reopened.startupStatus().checkpoint, 'valid');
-  assert.equal(reopened.startupStatus().replayedEvents, 0, 'the whole window is served from the cache');
+  assert.equal(reopened.startupStatus().checkpointEvents, rows,
+    'the state of every row is served from the cache (the rows themselves are read back from the ledger)');
+  assert.equal(reopened.startupStatus().replayedEvents, 0, 'so no row has to be folded again');
   reopened.releaseWriterLease({ requireOwned: true });
 });
 
 test('449-a2: a projection past the cost ceiling is skipped, naming the bytes it measured', (t) => {
   const directory = root(t, 'oversize');
   const store = new CoordinationStore(directory, { checkpointInterval: 1_024 });
-  // One event that puts the PROJECTION past the declared cost ceiling — the quantity the release
+  // Carried rows that put the PROJECTION past the declared cost ceiling — the quantity the release
   // judges. #449's residual replaced the window's ledger bytes as the gate (they are evidence on the
-  // row now), so the skip is reached by measuring, and the row says what it measured.
-  store.recordDriver('issue449.fixture', { blob: 'x'.repeat(COST.value) }, { actor, key: 'issue449:oversize' });
+  // row now), so the skip is reached by measuring, and the row says what it measured. Issue #465(4):
+  // the body no longer carries the event log, so the fixture grows a CARRIED family instead.
+  appendEvidenceRows(store, 10, 2 * 1024 * 1024);
   store.releaseWriterLease({ requireOwned: true });
 
   const release = store.checkpointReleaseState();
@@ -211,7 +236,7 @@ test('449-b: a checkpoint from another projection shape opens stale_shape, repla
   assert.equal(rewritten.projectionShapeDigest, SHAPE,
     'the rewrite records this build\u2019s own shape');
   assert.equal(rewritten.servedCommit, SERVED_COMMIT, 'and the commit that served the open');
-  assert.equal(rewritten.throughSeq, 35);
+  assert.equal(rewritten.coversSeq, 35);
   reopened.releaseWriterLease({ requireOwned: true });
 
   // Restart again on the same commit: the checkpoint is USED and only the rows past it replay.
@@ -232,10 +257,19 @@ test('449-b2: a legacy envelope that predates the shape record is stale, never c
   appendRows(first, 24);
   first.releaseWriterLease({ requireOwned: true });
 
-  // Exactly the envelope a pre-#449 build wrote: the seven proven fields, no shape record.
-  const envelope = readEnvelope(directory);
-  delete envelope.projectionShapeDigest;
-  delete envelope.servedCommit;
+  // Exactly the envelope a pre-#449 build wrote: the seven proven fields, no shape record, and none
+  // of the #465(4) fields (`coversSeq`, `coversLineDigest`, `swarmDictionaryFields`) — the modern
+  // reader must answer it as another build's shape, never as a corrupt envelope.
+  const modern = readEnvelope(directory);
+  const envelope = {
+    schemaVersion: modern.schemaVersion,
+    authorityDigest: modern.authorityDigest,
+    throughSeq: modern.coversSeq,
+    prefixBytes: modern.prefixBytes,
+    prefixDigest: modern.prefixDigest,
+    projectionBytes: modern.projectionBytes,
+    projectionDigest: modern.projectionDigest,
+  };
   writeEnvelope(directory, envelope);
 
   const reopened = new CoordinationStore(directory);

@@ -1,9 +1,11 @@
 // Phase 92 RED contracts for bounded resident replay and verifier coherence. Fixtures are not
 // live-provider evidence and do not establish PID liveness.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deserialize, serialize } from 'node:v8';
 import test from 'node:test';
 
 import { BatonApplication, CoordinationStore } from '../src/index.mjs';
@@ -49,7 +51,7 @@ test('P92-RP1: a clean close persists a prefix-bound checkpoint and restart fold
   assert.equal(progress.at(-1).state, 'ready');
 });
 
-test('P92-RP1b: a valid checkpoint caches parsing but every prefix event still crosses replay validation', (t) => {
+test('P92-RP1b: a valid checkpoint installs its state, and the rows it covers still cross replay validation', (t) => {
   const directory = root(t, 'checkpoint-reapply');
   const first = new CoordinationStore(directory);
   appendRecords(first, 20);
@@ -59,8 +61,35 @@ test('P92-RP1b: a valid checkpoint caches parsing but every prefix event still c
     _apply(event) { applications += 1; return super._apply(event); }
   }
   const reopened = new ApplyingStore(directory);
-  assert.equal(applications, 20, 'a parsed-event checkpoint never installs an authoritative projection');
+  // Issue #465(4): the checkpoint carries the STATE of the rows it covers (`coversSeq`), so those
+  // rows are not folded again — they are read back from the ledger and indexed, and only the tail
+  // beyond coversSeq crosses the fold.
+  assert.equal(applications, 0, 'a state checkpoint does not re-fold the rows it covers');
+  assert.equal(reopened.snapshot().lastSeq, 20, 'every row is on the store');
+  assert.equal(reopened._events.length, 20);
+  assert.equal(reopened._byKey.size, 20);
   reopened.releaseWriterLease({ requireOwned: true });
+
+  // …and the rows are still judged by the REPLAY's own validation, not trusted because a checkpoint
+  // covered them: a prefix that duplicates an idempotency key — with the envelope's byte proofs
+  // re-stamped, so only the row's own shape can refuse it — is refused exactly as a cold replay
+  // refuses it. The checkpoint's state cannot bless a ledger the fold would reject.
+  const ledgerPath = join(directory, 'events.jsonl');
+  const original = readFileSync(ledgerPath, 'utf8');
+  const tampered = original.replace('"phase92:replay:2"', '"phase92:replay:1"');
+  assert.notEqual(tampered, original);
+  assert.equal(tampered.length, original.length, 'the prefix byte flips without reshaping the line');
+  writeFileSync(ledgerPath, tampered);
+  const envelopePath = join(directory, 'projection.checkpoint');
+  const envelope = deserialize(readFileSync(envelopePath));
+  envelope.projectionBytes = Buffer.from(envelope.projectionBytes);
+  envelope.prefixDigest = createHash('sha256').update(readFileSync(ledgerPath).subarray(0, envelope.prefixBytes)).digest('hex');
+  envelope.coversLineDigest = createHash('sha256').update(readFileSync(ledgerPath)
+    .subarray(readFileSync(ledgerPath).lastIndexOf(0x0a, envelope.prefixBytes - 2) + 1, envelope.prefixBytes - 1)).digest('hex');
+  writeFileSync(envelopePath, serialize(envelope), { mode: 0o600 });
+  assert.throws(() => new CoordinationStore(directory),
+    (error) => error?.code === 'duplicate_key',
+    'the covered rows are read under the replay\'s validation, whatever the checkpoint carries');
 });
 
 test('P92-RP1c: release cannot bless a ledger prefix changed behind the active projection', (t) => {

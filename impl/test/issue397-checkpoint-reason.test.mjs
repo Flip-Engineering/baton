@@ -7,10 +7,12 @@
 // The restore proof now names the failed invariant: reason from the closed set
 //   path_invalid | envelope_shape | authority_digest | prefix_digest | projection_digest
 //   | projection_shape | tail_anchor
-// beside the compared values (digests abbreviated), and a checkpoint whose bytes are PROVEN
-// intact under a different authority digest is its own state — 'stale_authority' — and is
-// REUSED: its cached events replay under the current cards/policies exactly as a valid
-// checkpoint's are, so only a real corruption falls back to the full ledger.
+// beside the compared values (digests abbreviated). A checkpoint whose bytes are PROVEN intact under
+// a different authority digest is its own state — 'stale_authority' — and issue #465(4) reads it the
+// only way it can be read now that the checkpoint carries STATE: the state under another authority
+// was folded under OTHER cards and policies, so the ledger is replayed in full (and the open writes a
+// cache this build's authority owns) rather than adopting a projection this build would never derive.
+// A real corruption still falls back to the full ledger under its own reason.
 //
 // The startup report's ENUMERABLE shape is byte-identical to the contract pinned by
 // phase92-replay-verifier-red (P92-RP1/RP2) and coordination-internals (CI5); the reason and
@@ -65,7 +67,7 @@ function readEnvelope(directory) {
 
 const abbrev = (value) => `${String(value).slice(0, 12)}…`;
 
-test('I397-A: a proven checkpoint under a changed authority digest reads stale_authority and is reused', (t) => {
+test('I397-A: a proven checkpoint under a changed authority digest reads stale_authority and falls back', (t) => {
   const directory = root(t, 'stale-authority');
   const first = new CoordinationStore(directory, { checkpointInterval: 16 });
   appendRecords(first, 16);
@@ -75,7 +77,7 @@ test('I397-A: a proven checkpoint under a changed authority digest reads stale_a
   // GitHub #361: the envelope is otherwise intact — only the authority digest it was written
   // under no longer matches the store's current cards/policies.
   const envelope = readEnvelope(directory);
-  assert.equal(envelope.throughSeq, 16);
+  assert.equal(envelope.coversSeq, 16, 'the checkpoint claims the 16 rows it covers');
   envelope.authorityDigest = 'f'.repeat(64);
   const planted = serialize(envelope);
   writeFileSync(join(directory, CHECKPOINT), planted, { mode: 0o600 });
@@ -84,9 +86,12 @@ test('I397-A: a proven checkpoint under a changed authority digest reads stale_a
   const status = reopened.startupStatus();
   assert.equal(status.checkpoint, 'stale_authority',
     'a proven-intact checkpoint under a different authority digest is its own state, never corrupt');
-  assert.equal(status.source, 'checkpoint_tail', 'the cached window accelerates the replay');
-  assert.equal(status.checkpointEvents, 16);
-  assert.equal(status.replayedEvents, 3, 'REUSE: only the tail beyond throughSeq replays, not the ledger');
+  // Issue #465(4): the state under another authority was folded under OTHER cards and policies, and
+  // the checkpoint now carries STATE rather than a parsed window — so it is refused, not reused, and
+  // the ledger is replayed in full with the reason on the row.
+  assert.equal(status.source, 'ledger_fallback', 'the ledger is authoritative for the full replay');
+  assert.equal(status.checkpointEvents, 0, 'nothing is adopted from another authority\'s fold');
+  assert.equal(status.replayedEvents, 19, 'every row replays and folds');
   assert.equal(status.totalEvents, 19);
   assert.equal(reopened.snapshot().lastSeq, 19);
 
@@ -96,23 +101,22 @@ test('I397-A: a proven checkpoint under a changed authority digest reads stale_a
     actual: abbrev('f'.repeat(64)),
   });
 
-  // Issue #449 (residual): the open that had to fall back to another authority's cache refreshes it
-  // for the next open — recorded on the open's own row, and visible in the bytes on disk.
+  // Issue #449 (residual): the open that could not use another authority's cache refreshes it for
+  // the next open — recorded on the open's own row, and visible in the bytes on disk.
   assert.equal(status.checkpointRewrite?.state, 'written',
-    'the stale-authority open refreshes the cache it reused');
+    'the stale-authority open writes a cache this build\'s authority owns');
   assert.equal(status.checkpointRewrite?.refreshed, true);
   assert.equal(status.checkpointRewrite?.reason, 'stale_authority_rewrite');
 
-  // The restore report itself carries reused: true and the parsed events for the replay. It is
-  // re-derived from the bytes the OTHER authority wrote — planted back for this proof, because the
-  // open that reused them has since refreshed the cache on disk with this build's authority.
+  // The restore report itself names the state and the invariant. It is re-derived from the bytes the
+  // OTHER authority wrote — planted back for this proof, because the open that refused them has
+  // since refreshed the cache on disk with this build's authority.
   writeFileSync(join(directory, CHECKPOINT), planted, { mode: 0o600 });
   const report = coordinationReplay._restoreProjectionCheckpoint(
     reopened, readFileSync(join(directory, 'events.jsonl')), 0);
   assert.equal(report.state, 'stale_authority');
-  assert.equal(report.reused, true);
+  assert.equal(report.reused ?? false, false, 'a state under another authority is never adopted');
   assert.equal(report.reason, 'authority_digest');
-  assert.equal(report.events.length, 16);
   reopened.releaseWriterLease({ requireOwned: true });
 });
 
@@ -221,9 +225,10 @@ test('I397-F: a drifted last ledger line reads tail_anchor with the compared byt
   appendRecords(first, 16);
   first.releaseWriterLease({ requireOwned: true });
 
-  // The #229 deferred-write hazard: the ledger prefix moved under a re-stamped envelope. The
-  // prefix digest is made to match the drifted bytes, so the anchor that fails is the LAST
-  // cached row's re-serialization against the prefix's final line.
+  // The #229 deferred-write hazard: the ledger prefix moved under a re-stamped envelope. The prefix
+  // digest is made to match the drifted bytes, so the anchor that fails is the LAST COVERED LINE —
+  // the digest the writer recorded against the line the ledger now holds (issue #465(4): the same
+  // proof, now one digest of the line rather than a re-serialization of a cached row).
   const ledger = join(directory, 'events.jsonl');
   const original = readFileSync(ledger, 'utf8');
   writeFileSync(ledger, original.replace('"index":16}', '"index":17}'));
@@ -238,7 +243,10 @@ test('I397-F: a drifted last ledger line reads tail_anchor with the compared byt
   assert.equal(status.source, 'ledger_fallback');
   assert.equal(status.checkpointReason, 'tail_anchor');
   assert.equal(status.checkpointDetail.field, 'last_line');
-  assert.equal(status.checkpointDetail.lastEventSeq, 16);
+  assert.equal(status.checkpointDetail.coversSeq, 16,
+    'the claim the drifted line fails is the checkpoint\'s own coversSeq');
+  assert.notEqual(status.checkpointDetail.recorded, status.checkpointDetail.derived,
+    'and the row names both digests: the one recorded and the one the ledger\'s line derives');
   reopened.releaseWriterLease({ requireOwned: true });
 });
 

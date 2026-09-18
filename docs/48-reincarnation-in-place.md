@@ -563,6 +563,41 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     the predecessor went on serving, so there is no successor to bind to, no rediscovery and no
     notification. Pinned by `impl/test/issue314-lane3-reincarnation-rebind.test.mjs`.
 
+16. **The checkpoint carries the projection and the seq it covers — never the event log (#465, the
+    remaining item).** §8 question 2 asked whether the successor should open from the #449
+    checkpoint; the answer is now bounded, because the checkpoint itself changed shape. Live on the
+    clone (2026-09-18, 119 MB ledger) every stop skipped its write as `release_checkpoint_unbounded`
+    against the declared cost ceiling (`checkpoint.projection_bytes`, 16 777 216 B) because the body
+    carried `_events` (193 MB) and `_byKey` (195 MB) — the SAME row objects counted twice — on a
+    207 MB projection whose every other family was under 9 MB. Those two families are not the
+    checkpoint's to carry: the ledger file is their durable copy and a replay reads it anyway. So
+    `PROJECTION_CHECKPOINT_FIELDS` no longer contains them (it gained `_steeringRuns`, fold state the
+    rows cannot hand back), the envelope records `coversSeq` — the ABSOLUTE seq its projection covers,
+    archived rows included — beside `coversLineDigest` (the digest of the last covered ledger line,
+    the #229 append-drift anchor the parsed cache used to be) and `swarmDictionaryFields` (the
+    null-prototype dictionaries `v8`'s round trip cannot preserve), and on the successor's side rows
+    `1..coversSeq` are rebuilt from the ledger by the SAME derivation the cold replay path uses and
+    are NOT folded again: their fold is the state the body carries, which `_adoptProjectionCheckpoint`
+    installs after inverting the body's rendering (every `{kind, seq}` reference — a seat's composed
+    brief, a task's brief, a goal's objective, a plan's nodes, a web command's answer body — resolved
+    back through the ledger rows this open just read). Only the rows PAST `coversSeq` are folded, so
+    the counts stay honest: `coversSeq` (and `checkpointEvents`) name what the cache covers,
+    `replayedEvents` names the rows the fold ran on. Two refusals guard the boundary, both falling
+    back to a full replay with the reason on the open's row and a rewrite of the cache: `stale_ledger`
+    (`covers_beyond_ledger`: the claim does not hold against the ledger — a prefix holding a different
+    number of rows — or `reference_unresolved`: a pair the body minted names text the ledger cannot
+    back) and `stale_authority`, which is no longer REUSED as it was when the checkpoint was a parsed
+    window: state folded under another build's cards and policies is not this build's state. The
+    release on a 150 000-row ledger therefore writes kilobytes inside the ceiling instead of skipping
+    (the stop rows in `impl/test/issue351-resident-shutdown.test.mjs` /
+    `impl/test/issue351-idle-stop.test.mjs`), and the byte breakdown reports the two families beside
+    the body's own sum rather than inside it — `_events` as the rows and the durable bytes of the
+    ledger that holds them, `_byKey` as a key count with no bytes of its own. Pinned by
+    `impl/test/issue465c-checkpoint-without-events.test.mjs`, the rows it extends in
+    `impl/test/issue449-checkpoint-on-stop.test.mjs` / `impl/test/issue449b-checkpoint-bound.test.mjs`
+    / `impl/test/issue397-checkpoint-reason.test.mjs`, and the two rows whose law it changes
+    (`phase92-replay-verifier-red` P92-RP1b, `ledger-compaction-223-red` (c)).
+
 Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
 (item 11); docs/39's wake section naming `incarnation_changed` and the reincarnation rows beside
 it (the class now carries the failure row too, item 7); the README docs table row for this

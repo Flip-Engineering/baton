@@ -42,12 +42,13 @@ const FAKE_GROK = new URL('./fixtures/fake-grok-acp.mjs', import.meta.url).pathn
 const ROUTE = '{ harness: \'codex\', model: \'gpt-5.6-sol\', effort: \'high\' }';
 const GROK_ROUTE = '{ harness: \'grok\', model: \'grok-4.5-fake\', effort: \'high\' }';
 
-// The ONE declared row this file derives from (#258: no new numeric constants). The projection
-// checkpoint is a replay cache, so the registry's own ceiling for how many ledger rows one replay
-// carries bounds BOTH the row count a release may re-encode and the period the resident's loop must
-// keep beating through: a stop whose single stall outlives a whole declared replay is a stall the
-// operator was never told about.
+// The declared rows this file derives from (#258: no new numeric constants). The replay frame's row
+// ceiling bounds the period the resident's loop must keep beating through: a stop whose single stall
+// outlives a whole declared replay is a stall the operator was never told about. The checkpoint's OWN
+// cost ceiling is the second: since issue #465(4) a stop's write re-encodes the PROJECTION (never the
+// event log), so a stop on a 150 000-row ledger writes kilobytes and stays inside both.
 const LIMIT = FRAME_LIMITS['view.wake_replay.items'];
+const COST = FRAME_LIMITS['checkpoint.projection_bytes'];
 const HEARTBEAT_MS = LIMIT.value;
 const BULK_ROWS = 150_000;
 const STOP_BOUND_MS = HEARTBEAT_MS * 2;
@@ -281,18 +282,26 @@ export const createBatonDeployment = () => openBaton({ repo: process.cwd(), adva
   assert.ok(worstGapMs < HEARTBEAT_MS,
     `the loop stalled ${worstGapMs}ms (> ${HEARTBEAT_MS}ms) — a whole-ledger serialization on the stop path`);
 
-  // The release decided NOT to re-encode the projection, and said why.
+  // The release re-encoded the PROJECTION — issue #465(4) removed the event log from the body, so a
+  // 150 000-row ledger's checkpoint is kilobytes and the stop can pay for it — and said so.
   const stopped = stopRows(fixture.ledgerPath).find((row) => row.payload.kind === 'host.stopped');
   assert.ok(stopped, `the stop recorded no host.stopped row: ${stderr.slice(-2_000)}`);
-  assert.equal(stopped.payload.checkpoint?.state, 'skipped',
-    'the release must not write an unbounded checkpoint');
-  assert.equal(stopped.payload.checkpoint?.reason, 'release_checkpoint_unbounded');
+  assert.equal(stopped.payload.checkpoint?.state, 'written',
+    'a stop on a big ledger writes the cache the next open needs (the body carries no event log)');
+  assert.equal(stopped.payload.checkpoint?.reason, null);
   assert.equal(stopped.payload.checkpoint?.bound, LIMIT.value, 'the bound is the declared row, not a new constant');
   assert.ok(stopped.payload.checkpoint?.rows > stopped.payload.checkpoint?.bound,
     `${stopped.payload.checkpoint?.rows} rows must exceed the declared bound ${stopped.payload.checkpoint?.bound}`);
-  // …and the durable bytes agree with the record: the stop did not rewrite the cache.
-  assert.equal(fileStamp(fixture.checkpointPath), checkpointBefore,
-    'the stop path rewrote the projection checkpoint (a whole-ledger serialize on the main thread)');
+  assert.equal(stopped.payload.checkpoint?.coversSeq, stopped.payload.checkpoint?.rows,
+    'and the row names the seq the carried projection covers');
+  assert.ok(stopped.payload.checkpoint?.bytes <= COST.value,
+    `the written body (${stopped.payload.checkpoint?.bytes} B) is inside the declared cost ceiling (${COST.value} B)`);
+  // …and the durable bytes agree with the record: the checkpoint was rewritten, and the file it wrote
+  // is bounded by the projection rather than by the ledger it summarises.
+  assert.notEqual(fileStamp(fixture.checkpointPath), checkpointBefore,
+    'the stop wrote the checkpoint (it is no longer skipped for being unbounded)');
+  assert.ok(statSync(fixture.checkpointPath).size <= COST.value,
+    `the checkpoint on disk (${statSync(fixture.checkpointPath).size} B) is bounded by the projection's cost ceiling`);
 });
 
 test('RS2: the stop writes host.stop_requested and then host.stopped — and nothing between them', async (t) => {

@@ -6736,7 +6736,7 @@
         {
           "name": "_projectionCheckpointPayload",
           "ordinal": 0,
-          "size": 40,
+          "size": 32,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -6775,6 +6775,26 @@
           ]
         },
         {
+          "name": "_materializedProjectionCheckpoint",
+          "ordinal": 0,
+          "size": 63,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_materializedSwarmProjection",
+          "ordinal": 0,
+          "size": 32,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
           "name": "_writeProjectionCheckpoint",
           "ordinal": 0,
           "size": 9,
@@ -6788,7 +6808,7 @@
         {
           "name": "_projectionCheckpointWriteSteps",
           "ordinal": 0,
-          "size": 83,
+          "size": 99,
           "seam": "effect",
           "evidence": [
             "effect:filesystem_mutation",
@@ -6800,7 +6820,7 @@
         {
           "name": "_projectionByteBreakdown",
           "ordinal": 0,
-          "size": 16,
+          "size": 23,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -6839,7 +6859,7 @@
         {
           "name": "_checkpointOutcomeFields",
           "ordinal": 0,
-          "size": 8,
+          "size": 9,
           "seam": "observation",
           "evidence": [
             "admission:validation_vocabulary",
@@ -6849,7 +6869,7 @@
         {
           "name": "_checkpointByteFields",
           "ordinal": 0,
-          "size": 9,
+          "size": 10,
           "seam": "observation",
           "evidence": [
             "admission:validation_vocabulary",
@@ -14917,14 +14937,44 @@
           ]
         },
         {
+          "name": "_replaySource",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
           "name": "_loadPlan",
           "ordinal": 0,
-          "size": 54,
+          "size": 46,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
             "recovery:durable_load",
             "observation:read_name"
+          ]
+        },
+        {
+          "name": "_ledgerLines",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_adoptedRows",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "observation:projection_name",
+            "observation:key_name"
           ]
         },
         {
@@ -15284,7 +15334,7 @@
         {
           "name": "_restoreProjectionCheckpoint",
           "ordinal": 0,
-          "size": 217,
+          "size": 215,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

@@ -123,7 +123,7 @@ test('465-a: a checkpoint row carries the projection\'s bytes by family, closing
 
   // The families are the payload's OWN keys — the same object the cost gate serialized — never a
   // hand-typed list beside it.
-  const payload = store._projectionCheckpointPayload({ durable: true });
+  const payload = store._projectionCheckpointPayload();
   const families = Object.keys(payload);
   assert.deepEqual(Object.keys(release.bytesByFamily).sort(), [...families].sort(),
     'one entry per family of the payload the gate judged');
@@ -162,7 +162,7 @@ test('465-b: a 36-seat fixture serializes its participants family inside its der
     }
   }
 
-  const rows = bodyParticipants(f.store._projectionCheckpointPayload({ durable: true }));
+  const rows = bodyParticipants(f.store._projectionCheckpointPayload());
   assert.equal(rows.length, SEATS, 'every recruited seat is on the projection');
   const measured = rows.reduce((total, row) => total + serialize(row).byteLength, 0);
   assert.ok(measured < FAMILY_BOUND,
@@ -214,7 +214,7 @@ test('465-c: a checkpoint written by the bounded projection reconstructs the rep
   // The bound is the projection's, not the view's: the fold row the live view reads still renders
   // the whole brief, and the projection carries the reference to the row that holds it.
   const seat = served.swarm('baton').participants['seat-0'];
-  const servedRow = bodyParticipants(served._projectionCheckpointPayload({ durable: true }))
+  const servedRow = bodyParticipants(served._projectionCheckpointPayload())
     .find((row) => row.participantId === 'seat-0');
   assert.equal(typeof seat.brief, 'string', 'the live fold row still renders the whole brief');
   assert.equal(servedRow.brief, null, 'while the projection carries the reference');
