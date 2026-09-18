@@ -4,10 +4,12 @@
 // (including the non-converging one). Every test here drives a real `baton serve` child against a
 // real deployment (`openBaton`, the MockAdapter fixture) — the process is the unit under test.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+
+import { spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 
 const SCRIPT = new URL('../scripts/baton.mjs', import.meta.url).pathname;
 const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
@@ -81,15 +83,17 @@ function serveFixture(t, label, body) {
 /** Start `baton serve <module>` as a real child; collect stderr; expose the published coordinates. */
 function startServe(t, fixture, { readyMarker } = {}) {
   const selectorPath = join(fixture.repo, '.git', 'baton', 'connection.json');
-  const child = spawn(process.execPath, [SCRIPT, 'serve', fixture.modulePath], {
+  // Issue #471: the ONE fixture-resident spawn — the child is declared THIS runner's (so a runner
+  // killed without running handlers leaves no resident behind) and is ended by process group at
+  // the test's after-hook.
+  const child = spawnFixtureResident(t, {
+    args: [SCRIPT, 'serve', fixture.modulePath],
     cwd: fixture.repo,
     env: { ...process.env, HOME: fixture.home, XDG_CONFIG_HOME: fixture.configRoot },
-    stdio: ['ignore', 'ignore', 'pipe'],
   });
   const state = { stderr: '', exited: null };
   child.stderr.on('data', (chunk) => { state.stderr += chunk.toString('utf8'); });
   child.on('exit', (code, signal) => { state.exited = { code, signal }; });
-  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   return {
     child, state, selectorPath,
     async untilReady(timeoutMs = 30_000) {

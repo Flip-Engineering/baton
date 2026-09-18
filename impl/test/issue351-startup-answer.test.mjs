@@ -23,7 +23,7 @@
 //      (the profile's JSON-stringifier burn) — a coherent-but-divergent cache is still refused
 //      at the ledger's final line, and the ledger stays authoritative.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -33,6 +33,8 @@ import { createHash } from 'node:crypto';
 import { CoordinationStore, openCoordinationStoreAsync } from '../src/coordination-store.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 import { MockAdapter, openBaton } from '../src/index.mjs';
+
+import { spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 
 const SCRIPT = new URL('../scripts/baton.mjs', import.meta.url).pathname;
 const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
@@ -141,15 +143,16 @@ function serveFixture(t, label, moduleBody, { rows = 2_000 } = {}) {
   const ledgerDir = join(deploymentRoot, 'state', 'coordination');
   seedLedger(ledgerDir, rows);
   const selectorPath = join(repo, '.git', 'baton', 'connection.json');
-  const child = spawn(process.execPath, [SCRIPT, 'serve', modulePath], {
+  // Issue #471: the ONE fixture-resident spawn — the child declares THIS runner and is ended by
+  // process group at the test's after-hook (and by the runner's death, however it dies).
+  const child = spawnFixtureResident(t, {
+    args: [SCRIPT, 'serve', modulePath],
     cwd: repo,
     env: { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot },
-    stdio: ['ignore', 'ignore', 'pipe'],
   });
   const state = { stderr: '', exited: null };
   child.stderr.on('data', (chunk) => { state.stderr += chunk.toString('utf8'); });
   child.on('exit', (code, signal) => { state.exited = { code, signal, at: Date.now() }; });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   return {
     root, repo, child, state, selectorPath, ledgerPath: join(ledgerDir, 'events.jsonl'),
     async untilReady(timeoutMs = 60_000) {

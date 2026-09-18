@@ -28,7 +28,7 @@
 //  (b) the `serve --reincarnate` spelling is the SAME command, byte-identically;
 //  (c) the admission is ONE row per spelling and the argument authority is exactly {target}.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +41,8 @@ import {
 import { cliDispatches, parseBatonCli } from '../src/application-cli.mjs';
 import { validateWebCommandEnvelope, webAdmittedCommandNames } from '../src/web-northbound.mjs';
 
+import { endFixtureResident, spawnFixtureResident } from './fixtures/fixture-resident.mjs';
+
 const SCRIPT = new URL('../scripts/baton.mjs', import.meta.url).pathname;
 const INDEX_URL = new URL('../src/index.mjs', import.meta.url).href;
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
@@ -52,7 +54,14 @@ const SAME_COMMIT_CODE = 'reincarnation_same_commit';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const roots = [];
+// Issue #471: this file serves ONE resident shared by its rows, so its cleanup is the file's own:
+// the residents are ended by process group BEFORE the worlds they served are removed, and the
+// helper's process-level handlers (exit, SIGTERM/SIGINT/SIGHUP) cover a runner killed outright.
 const residents = [];
+test.after(async () => {
+  for (const child of residents) await endFixtureResident(child);
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
+});
 function world(label) {
   const root = mkdtempSync(join(tmpdir(), `bt306w-${label}-`));
   roots.push(root);
@@ -77,10 +86,6 @@ function world(label) {
   const landing = git(['rev-parse', 'HEAD']).stdout.trim();
   return { root, repo, home, configRoot, deploymentRoot, landing };
 }
-test.after(() => {
-  for (const child of residents) if (child.exitCode === null) child.kill('SIGKILL');
-  for (const root of roots) rmSync(root, { recursive: true, force: true });
-});
 
 /** The exact adapter card the ordinary resident self-check requires (the issue351/issue387 recipe):
  * a fixture adapter with an exact route and available credentials, so the resident publishes
@@ -129,13 +134,16 @@ function serveResident(label) {
     ...process.env, HOME: fixture.home, XDG_CONFIG_HOME: fixture.configRoot,
     [bypassName]: bypassValue,
   };
-  const child = spawn(process.execPath, [SCRIPT, 'serve', modulePath], {
-    cwd: fixture.repo, env, stdio: ['ignore', 'ignore', 'pipe'],
+  // Issue #471: the ONE fixture-resident spawn. The child declares THIS runner (so a killed runner
+  // leaves no resident behind) and is registered for this file's own cleanup above.
+  const child = spawnFixtureResident(null, {
+    args: [SCRIPT, 'serve', modulePath],
+    cwd: fixture.repo, env,
   });
+  residents.push(child);
   const state = { stderr: '' };
   child.stderr.on('data', (chunk) => { state.stderr += chunk.toString('utf8'); });
   const selectorPath = join(fixture.repo, '.git', 'baton', 'connection.json');
-  residents.push(child);
   const published = () => (existsSync(selectorPath)
     ? JSON.parse(readFileSync(selectorPath, 'utf8')) : null);
   return Object.freeze({

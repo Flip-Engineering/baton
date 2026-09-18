@@ -10,6 +10,7 @@ import {
   parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
 } from '../src/application-cli.mjs';
 import { BATON_TOP_HELP, runBatonTop } from '../src/baton-top.mjs';
+import { reincarnationProcessAlive } from '../src/application-deployment.mjs';
 import { BatonWebHost, SignalLifecycleOwner, describeDrainWait, signalIntentLine } from '../src/application-host.mjs';
 import { flipAnnounce, flipLine } from '../src/brand.mjs';
 import { callConfiguredMcpTool } from '../src/configured-mcp-client.mjs';
@@ -93,6 +94,43 @@ function admitOpenSignals() {
   };
 }
 
+// Issue #471: a `baton serve` a test spawned is never an orphan. The fixture helper
+// (impl/test/fixtures/fixture-resident.mjs) — and nothing else — sets BATON_SERVE_PARENT_PID to
+// the pid of the process that spawned the resident; when that pid is gone the resident stops
+// through the path a signal takes (the durable request row first, then the same
+// `deployment.close()`), so the ledger names why it ended instead of the resident serving a
+// repository nobody can reach. A resident started without the variable behaves exactly as today.
+
+/** The pid named by BATON_SERVE_PARENT_PID, or null when the variable is absent or malformed (a
+ * resident started by hand keeps today's behavior). */
+function declaredServeParentPid(env = process.env) {
+  const raw = env.BATON_SERVE_PARENT_PID;
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  const pid = Number(raw);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+// The same cadence the successor's own predecessor watch polls at, for the same observation (a
+// process that is gone). `reincarnationProcessAlive` is that watch's primitive: `false` is the
+// only reading that ends this watch — an unanswerable reading (`null`) keeps waiting, never a
+// guess. The timer is unref'd, so a watch nobody ends never holds the loop open by itself.
+const PARENT_EXIT_POLL_MS = 100;
+
+function watchDeclaredParent(pid, onExit) {
+  let ended = false;
+  const poll = () => {
+    if (ended) return true;
+    if (reincarnationProcessAlive(pid) !== false) return false;
+    ended = true;
+    onExit();
+    return true;
+  };
+  if (poll()) return () => {};
+  const timer = setInterval(() => { if (poll()) clearInterval(timer); }, PARENT_EXIT_POLL_MS);
+  if (typeof timer.unref === 'function') timer.unref();
+  return () => { ended = true; clearInterval(timer); };
+}
+
 async function serveDeployment(rawDeployment, admittedTrigger = null) {
   const deployment = rawDeployment?.convergence ? rawDeployment : wrapProductionDeployment(rawDeployment, { repoRoot: process.cwd() });
   if (!deployment || typeof deployment.host !== 'function' || typeof deployment.close !== 'function') {
@@ -148,6 +186,21 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
     );
     return announced;
   };
+  // Issue #471: the declared parent's exit is a stop like a signal's — the durable request row
+  // comes first, the line names the trigger, and the shutdown below is the same ordinary
+  // `deployment.close()`. A resident started without the variable never builds this watch.
+  const parentPid = declaredServeParentPid();
+  let admitParentExit = null;
+  const parentExited = parentPid === null ? null : new Promise((resolve) => { admitParentExit = resolve; });
+  const stopParentWatch = parentPid === null ? null : watchDeclaredParent(parentPid, () => {
+    try {
+      const requested = typeof deployment.recordStopRequested === 'function'
+        ? deployment.recordStopRequested('parent_exited', { parentPid }) : null;
+      if (requested !== null) logLine(flipAnnounce('draining', requested, { tty: TTY, color: TTY }));
+    } catch { /* the stop narrates without the row rather than staying an orphan */ }
+    logLine(flipAnnounce('draining', `baton serve: the declared parent (pid ${parentPid}) is gone; stopping`, { tty: TTY, color: TTY }));
+    admitParentExit();
+  });
   const lifecycle = new SignalLifecycleOwner({
     signalEmitter: process,
     shutdown: async () => { await announced; return deployment.close(); },
@@ -215,6 +268,9 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
       await new Promise((resolveSignal) => {
         if (signal.aborted) resolveSignal();
         else signal.addEventListener('abort', resolveSignal, { once: true });
+        // #471: the declared parent's exit ends this wait the way a signal does; the request row
+        // above already named the trigger, and the shutdown is the same deployment.close().
+        if (parentExited !== null) parentExited.then(() => resolveSignal());
       });
       return hosted;
     });
@@ -227,6 +283,8 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
       : `${error?.code ?? error?.name ?? 'error'} — drain did not converge: ${wait}`;
     logLine(flipAnnounce('failed', `baton serve: exit non-zero; ${summary}`, { tty: TTY, color: TTY }));
     throw error;
+  } finally {
+    stopParentWatch?.();
   }
   logLine(flipAnnounce(outcome.closed?.state, `baton serve: ${JSON.stringify(outcome.closed)}`, { tty: TTY, color: TTY }));
   if (outcome.closed.state !== 'closed') process.exitCode = 1;
