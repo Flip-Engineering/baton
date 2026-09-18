@@ -8,13 +8,17 @@
 // never reaches inspect(), receipts, server entries, or diagnostics. The dispatch double mirrors
 // the root SwarmRuntime participant path (context.runId membership resolution, per-event update
 // grants, author rules) because the live SwarmRuntime is root-owned and absent from this worktree.
+// The CLI entry's own intake is pinned against the real executable (#493): a large, quote-dense
+// contribution payload rides stdin (`-` / `--stdin`), and an intake refusal names the byte count,
+// the channel, and the parse error instead of echoing the payload back.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer as createUnrelatedServer, request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { createSwarmNativeBridge, swarmBridgeCommand, swarmBridgeMain, validateSwarmCommandArgs,
@@ -23,6 +27,21 @@ import { FRAME_LIMITS } from '../src/limits.mjs';
 
 const execFileAsync = promisify(execFile);
 const BRIDGE_MODULE = fileURLToPath(new URL('../src/swarm-native-bridge.mjs', import.meta.url));
+/** Run the real executable with a payload on stdin, asynchronously: the child talks to this
+ * process's bridge server, so a sync spawn would deadlock (the frozen loop cannot serve the
+ * request the child waits for before it can exit). */
+const spawnWithInput = (args, input, env) => new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, args, { env });
+  const out = [];
+  const err = [];
+  child.stdout.on('data', (chunk) => out.push(chunk));
+  child.stderr.on('data', (chunk) => err.push(chunk));
+  child.on('error', reject);
+  child.on('close', (status) => resolve({
+    status, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8'),
+  }));
+  child.stdin.end(input);
+});
 
 const refuse = (message, code, detail = {}) => Object.assign(new Error(message), { code, detail });
 // The double's grant tables mirror the root runtime — the bridge itself keeps neither.
@@ -675,6 +694,115 @@ test('swarmBridgeMain() returns exit codes and writes envelopes without spawning
   const code = await swarmBridgeMain([], {}, { out: sink(), err: sink() });
   assert.equal(code, 1);
   assert.match(JSON.parse(lines.at(-1)).error.message, /Usage:/u);
+});
+
+test('a large quote-dense contribution payload rides stdin through the real CLI (#493)', async () => {
+  await withBridge({}, async ({ bridge, runtime }) => {
+    runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    const env = {
+      ...process.env,
+      [SWARM_BRIDGE_ENV_KEYS.url]: issued.env[SWARM_BRIDGE_ENV_KEYS.url],
+      [SWARM_BRIDGE_ENV_KEYS.token]: issued.token,
+      [SWARM_BRIDGE_ENV_KEYS.swarmId]: 'swarm-1',
+    };
+    // The #493 production shape: an audit lane's contribution report — a `body` carrying dozens
+    // of findings whose free text has apostrophes, double quotes, and newlines, the bytes a
+    // single-quoted shell argument mangles before JSON.parse ever sees them.
+    const findings = Array.from({ length: 40 }, (_, index) => ({
+      file: `impl/scripts/tool-${index}.mjs`,
+      line: 10 + index,
+      literal: `cap(${index} * 1024, "hard ceiling")`,
+      derivation: [
+        `Row ${index} derives its bound from the scanner window declared in the limits registry; the call site owns no literal of its own, so a registry change moves every reader at once.`,
+        `The derivation composes with the family's ONE list page: ${index} × 1024 stays under the window for every page the lane can build, and it isn't approached in any measured pass.`,
+        `It doesn't assume the caller "knows" the ceiling: the finding states where the ceiling is declared, what reads it, and which test pins the composition.`,
+        `The apostrophes in this sentence are the point — a lane reporting this finding through a single-quoted shell argument hit #493 exactly here.`,
+      ].join(' '),
+      fix: [
+        `Read the declared row and assert against it; the assertion names the row so a widened ceiling isn't green.`,
+        `Update the call sites in impl/scripts/tool-${index}.mjs to import the row instead of retyping the number.`,
+        `Keep the message's byte count computed from the buffer, so the reported size can't drift from the bytes sent.`,
+      ].join('\n'),
+      evidence: [
+        `impl/scripts/tool-${index}.mjs:${10 + index}: cap(${index} * 1024, "hard ceiling")`,
+        `Measured: ${index * 1024} bytes over ${index + 3} passes; the ceiling wasn't reached.`,
+        `Note: "it doesn't repeat" — the free text a shell argument has to carry intact.`,
+      ].join('\n'),
+    }));
+    const items = findings.map((finding) => ({
+      id: `finding-${finding.line}`,
+      status: 'delivered',
+      change: `audit ${finding.file}:${finding.line}`,
+      files: [finding.file],
+      test: 'node --test',
+      evidence: [finding.literal, finding.derivation, finding.fix, finding.evidence].join('\n'),
+    }));
+    const report = {
+      subject: `audit impl/scripts: 40 boundaries audited — carries "double quotes", 'apostrophes', newlines`,
+      commit: null,
+      items,
+      verification: { targeted: true, gates: [], fullSuite: false, environmentRed: [] },
+      needsFromOthers: [],
+    };
+    const serialized = JSON.stringify({ event: 'swarm.contribution_recorded', payload: { participantId: 'alpha', body: report } });
+    assert.ok(Buffer.byteLength(serialized) > 49152, 'the payload is several times the report that failed in #493, with the quote density that breaks a single-quoted shell argument at any size');
+    // Both admitted spellings read stdin; the payload travels through the real executable, the
+    // real HTTP bridge, and the runtime's author rule.
+    for (const marker of ['-', '--stdin']) {
+      const run = await spawnWithInput([BRIDGE_MODULE, 'swarm.update', marker], serialized, env);
+      assert.equal(run.status, 0, `${marker}: ${run.stdout}`);
+      assert.equal(run.stderr, '');
+      const answer = JSON.parse(run.stdout);
+      assert.equal(answer.event, 'swarm.contribution_recorded');
+      assert.equal(answer.applied, true);
+    }
+    assert.equal(runtime.applied.length, 2);
+    assert.deepEqual(runtime.applied[0].payload.body.items, items, 'the report items survive the stdin path byte-exact');
+    assert.equal(runtime.applied[1].payload.body.subject.includes("'apostrophes'"), true);
+  });
+});
+
+test('an intake refusal names what arrived: bytes, channel, and the parse error, not the payload (#493)', async () => {
+  await withBridge({}, async ({ bridge, runtime }) => {
+    runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    const env = {
+      ...process.env,
+      [SWARM_BRIDGE_ENV_KEYS.url]: issued.env[SWARM_BRIDGE_ENV_KEYS.url],
+      [SWARM_BRIDGE_ENV_KEYS.token]: issued.token,
+    };
+    // A large argv payload cut mid-string — the shape a mangled shell argument produces.
+    const truncated = JSON.stringify({ event: 'swarm.contribution_recorded', payload: { participantId: 'alpha', derivation: `it doesn't survive the shell's quotes`.repeat(40) } }).slice(0, 700);
+    const broken = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.update', truncated], { env }).catch((error) => error);
+    assert.equal(broken.code, 1);
+    const refusal = JSON.parse(broken.stdout).error;
+    assert.equal(refusal.code, 'swarm_bridge_request_invalid');
+    assert.match(refusal.message, /received 700 bytes from argv/u);
+    assert.equal(refusal.detail.bytes, 700);
+    assert.equal(refusal.detail.source, 'argv');
+    assert.ok(refusal.detail.parse, 'the underlying parse error message is carried');
+    if (refusal.detail.position !== undefined) assert.equal(typeof refusal.detail.position, 'number');
+    assert.equal(refusal.detail.args, undefined, 'the refusal does not echo the payload back');
+    assert.equal(JSON.stringify(refusal).includes("doesn't survive"), false);
+    // Valid JSON that is not one object is refused naming what arrived.
+    const array = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view', '[1,2]'], { env }).catch((error) => error);
+    assert.equal(array.code, 1);
+    const arrayRefusal = JSON.parse(array.stdout).error;
+    assert.match(arrayRefusal.message, /must be one JSON object \(received array/u);
+    assert.equal(arrayRefusal.detail.received, 'array');
+    assert.equal(arrayRefusal.detail.bytes, 5);
+    // Naming both channels is refused, not silently resolved in favor of whichever came first.
+    const both = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view', '{"swarmId":"swarm-1"}', '-'], { env }).catch((error) => error);
+    assert.equal(both.code, 1);
+    assert.equal(JSON.parse(both.stdout).error.code, 'swarm_bridge_request_invalid');
+    // Empty stdin reads as 0 bytes; the wired io carries the stream for in-process callers.
+    const lines = [];
+    const sink = () => ({ write: (text) => { lines.push(text); return true; } });
+    const code = await swarmBridgeMain(['swarm.update', '-'], {}, { out: sink(), err: sink(), stdin: Readable.from(['']) });
+    assert.equal(code, 1);
+    assert.match(JSON.parse(lines.at(-1)).error.message, /received 0 bytes from stdin/u);
+  });
 });
 // ============================================================
 // Local help — the shared contract rendered with no credential at all
