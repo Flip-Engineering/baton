@@ -126,6 +126,29 @@ function writeWriterState(target, state) {
   writeFileSync(target, `workspaceId=${value('workspaceId')}\ncouplingId=${value('couplingId')}\nwriter=${value('writer')}\n`, { mode: 0o600 });
 }
 
+// Issue #447: the checkout a lease's projected wrapper scopes its commit observations to — one
+// KEY=VALUE line in the same flat format the wrapper parses with the shell's own read. Absent
+// value: the lease has no recorded checkout yet, and the wrapper keeps the #425 behavior
+// (every commit attributed to the seat) rather than dropping a real row; the coordinator
+// records the seat's checkout before its process can reach a commit. Rewritten atomically, so
+// a wrapper reading it mid-write sees the old identity or the new one, never a torn path.
+function writeCheckoutIdentity(target, checkout) {
+  const value = normalizedCheckout(checkout);
+  const temporary = join(dirname(target), `.${process.pid}.${randomBytes(8).toString('hex')}.checkout.tmp`);
+  try {
+    writeFileSync(temporary, `checkout=${value ?? ''}\n`, { mode: 0o600, flag: 'wx' });
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, target);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+/** The absolute checkout path a lease can record as its own, or null. */
+function normalizedCheckout(checkout) {
+  return typeof checkout === 'string' && checkout.length > 0 && isAbsolute(checkout) ? checkout : null;
+}
+
 // Issue #357: the typed one-line refusal the projected git wrapper prints on stderr with
 // exit 1. It names all three alternatives: a scratch worktree for a clean baseline, git
 // show for one file, a wip commit to set work aside.
@@ -170,7 +193,13 @@ function resolveRealGit(searchPath, excludeDir) {
 // worktree.commit_recorded and, when another seat holds the live writer coupling,
 // swarm.coupling_writer_bypassed) — observed, never refused; a failed or no-op commit
 // records nothing.
-function renderGitWrapper(realGit, writerFile, commitSpool) {
+//
+// Issue #447: the observation is scoped to the checkout the lease was installed for. The
+// wrapper reads that identity from the lease's own file at commit time and compares the
+// repository's `git rev-parse --show-toplevel` against it — so a temporary repository a test
+// fixture created under the checkout is never attributed to the seat. Another repository is
+// NOT refused: the wrapper stays transparent to git.
+function renderGitWrapper(realGit, writerFile, commitSpool, checkoutFile) {
   return `#!/bin/sh
 # Baton lane-worktree git wrapper (issue #357): the worktrees of one repository share a
 # single refs/stash stack, so a stash round-trip in one seat can move another seat's
@@ -180,11 +209,17 @@ function renderGitWrapper(realGit, writerFile, commitSpool) {
 # Baton writer-coupling honesty (issue #425): every commit through this wrapper is
 # attributed to its seat; a commit made while ANOTHER seat holds the checkout's declared
 # exclusive writer coupling is recorded as a bypass — never refused.
+#
+# Baton checkout scope (issue #447): a commit is attributed only when the repository it was
+# made in IS this lease's checkout — the toplevel of the repository the wrapper runs in must
+# equal the toplevel of the checkout recorded on this lease. A fixture repository under the
+# checkout (or any other repository) spools nothing and is never refused.
 # ${WORKTREE_WRITER_BRIEF_SENTENCE}
 BATON_REAL_GIT=${shSingleQuote(realGit ?? '')}
 BATON_STASH_REFUSAL=${shSingleQuote(STASH_REFUSAL)}
 BATON_WRITER_FILE=${shSingleQuote(writerFile ?? '')}
 BATON_COMMIT_SPOOL=${shSingleQuote(commitSpool ?? '')}
+BATON_CHECKOUT_FILE=${shSingleQuote(checkoutFile ?? '')}
 real_git() {
   if [ -n "$BATON_REAL_GIT" ] && [ -x "$BATON_REAL_GIT" ] && [ ! -d "$BATON_REAL_GIT" ]; then
     printf '%s' "$BATON_REAL_GIT";
@@ -207,6 +242,19 @@ _baton_observe_commit() {
   [ -n "$BATON_COMMIT_SPOOL" ] || return 0;
   [ -n "$BATON_SWARM_BRIDGE_SWARM_ID" ] || return 0;
   [ -n "$BATON_SWARM_BRIDGE_PARTICIPANT_ID" ] || return 0;
+  _own='';
+  if [ -n "$BATON_CHECKOUT_FILE" ] && [ -f "$BATON_CHECKOUT_FILE" ]; then
+    while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+      case "$_k" in
+        checkout) _own=$_v ;;
+      esac;
+    done < "$BATON_CHECKOUT_FILE";
+  fi;
+  if [ -n "$_own" ]; then
+    _here=$("$_rg" rev-parse --show-toplevel 2>/dev/null) || return 0;
+    _there=$(cd "$_own" 2>/dev/null && "$_rg" rev-parse --show-toplevel 2>/dev/null) || return 0;
+    [ -n "$_here" ] && [ "$_here" = "$_there" ] || return 0;
+  fi;
   _sha=$("$_rg" rev-parse HEAD 2>/dev/null) || return 0;
   _ws=''; _cid=''; _w='';
   if [ -f "$BATON_WRITER_FILE" ]; then
@@ -288,19 +336,23 @@ export class RuntimeIsolation {
     // private lease. The wrapper embeds their absolute paths at write time; the runtime (the
     // ONE component that folds coupling events) rewrites the projection on every coupling
     // change and binding, and drains the spool into the durable rows — the seat itself only
-    // ever appends observations to the spool.
+    // ever appends observations to the spool. Issue #447 adds the checkout identity, the ONE
+    // repository the wrapper spools observations for: the deployment records the seat's own
+    // checkout here the moment it confirms it (projectCheckout below).
     const writerFile = join(root, 'writer-coupling.env');
     const commitSpool = join(root, 'worktree-commits.jsonl');
+    const checkoutFile = join(root, 'checkout-identity.env');
     writeFileSync(wrapperPath, renderGitWrapper(
-      resolveRealGit(this.baseEnv.PATH ?? process.env.PATH, bin), writerFile, commitSpool), { mode: 0o700 });
+      resolveRealGit(this.baseEnv.PATH ?? process.env.PATH, bin), writerFile, commitSpool, checkoutFile), { mode: 0o700 });
     chmodSync(wrapperPath, 0o700);
     writeWriterState(writerFile, null);
+    writeCheckoutIdentity(checkoutFile, normalizedCheckout(recordValue(selection) ? selection.checkout : null));
     // Grok's native sandbox grants its expected ~/.grok tree, not an arbitrary GROK_HOME outside
     // HOME. Keep HOME private and place the projected config at that vendor-native path.
     const config = privateDir(surface === 'grok' ? join(home, '.grok') : join(root, 'config', family));
     // #346: the lease is registered BEFORE any credential is written, so a refresh that lands
     // between the two writes re-projects into this lease rather than skipping it.
-    this.leases.set(workerId, Object.freeze({ family, surface, config, writerFile, commitSpool }));
+    this.leases.set(workerId, Object.freeze({ family, surface, config, writerFile, commitSpool, checkoutFile }));
 
     const env = {};
     for (const [key, value] of Object.entries(this.baseEnv)) {
@@ -427,7 +479,7 @@ export class RuntimeIsolation {
       } : {}),
       // Operational paths stay on the private lease. `posture` is logged and returned by public
       // status surfaces, so it must never carry host/runtime paths or credential inventory names.
-      paths: Object.freeze({ root, home, tmp, config, bin, writerFile, commitSpool }),
+      paths: Object.freeze({ root, home, tmp, config, bin, writerFile, commitSpool, checkoutFile }),
       posture: Object.freeze({
         schemaVersion: 1,
         family,
@@ -459,6 +511,22 @@ export class RuntimeIsolation {
     if (!lease) return false;
     try {
       writeWriterState(lease.writerFile, state);
+      return true;
+    } catch { return false; /* the lease's own reconciliation owns a vanished directory */ }
+  }
+
+  /** Issue #447: record the seat's own checkout on the lease — the ONE repository its projected
+   * wrapper spools commit observations for. The coordinator calls this the moment it confirms
+   * the checkout a seat works in (a minted lane worktree, a resumed or attached one), so a
+   * commit made in any other repository — a test fixture's temporary repository under it, a
+   * nested clone, a hand-made worktree — is observed by nobody and refused by nobody. A lease
+   * with no recorded checkout keeps the #425 behavior: its commits are attributed to its seat. */
+  projectCheckout(workerId, checkout) {
+    const lease = this.leases.get(workerId);
+    const value = normalizedCheckout(checkout);
+    if (!lease || value === null) return false;
+    try {
+      writeCheckoutIdentity(lease.checkoutFile, value);
       return true;
     } catch { return false; /* the lease's own reconciliation owns a vanished directory */ }
   }

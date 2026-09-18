@@ -4799,6 +4799,13 @@ export class Coordinator {
         if (res && res.path) {
           task.worktree = res.path;
           handle.worktree = res.path;
+          // Issue #447: the seat's own checkout is recorded on its runtime lease the moment it
+          // is confirmed — the projected git wrapper spools commit observations for no other
+          // repository, so a test fixture's temporary repository under this one (or any other
+          // repository the seat's PATH reaches) is never attributed to the seat, and never
+          // refused. The seat's process is gated on this same readiness, so it cannot commit
+          // before its lease knows the checkout.
+          this._runtimeScopes?.projectCheckout?.(handle.id, res.path);
           // A resumed or attached session merely borrows its durable session checkout. Only a
           // checkout created for this task is independent local authority that must block drain.
           handle.ownedWorktreeAuthority = !borrowedCheckout;
@@ -6931,7 +6938,7 @@ export class Coordinator {
         attempt: planRecovery?.attempt ?? null,
         evidence: recoveryEvidence,
       }, `driver.recovery.requested:${task.id}:${recoveryRequested.seq}`, opts.actor ?? 'orchestrator');
-      runtime = this._ensureRuntimeScope(handle);
+      runtime = this._ensureRuntimeScope(handle, context.worktree);
       handle.currentIncarnation = true;
       handle.localAuthority = true;
     } catch (error) {
@@ -7359,7 +7366,7 @@ export class Coordinator {
       runId: task.runId ?? handle.runId ?? null, preservationOnly: true,
       evidence: this._coordMapEvent(requested),
     }, `driver.recovery.requested:${task.id}:${requested.seq}`, opts.actor ?? 'orchestrator');
-    const runtime = this._ensureRuntimeScope(handle);
+    const runtime = this._ensureRuntimeScope(handle, context.worktree);
     handle.currentIncarnation = true;
     handle.localAuthority = true;
     const processlessPreservedAttach = preservationAuthority.processless === true;
@@ -10585,12 +10592,16 @@ export class Coordinator {
     this._participantRuntimes?.delete(runId);
   }
 
-  _ensureRuntimeScope(handle) {
+  /** Issue #447: the seat's lease. `checkout` is a checkout the caller already knows the seat
+   * works in (a resumed or attached one, never a path the seat's environment supplies); a
+   * checkout the spawn mints is recorded the moment readiness confirms it (below). */
+  _ensureRuntimeScope(handle, checkout = null) {
     if (!this._runtimeScopes || typeof this._runtimeScopes.create !== 'function') return null;
     if (handle.runtimeLease) return handle.runtimeLease;
     const adapterCard = this._adapters[handle.vendor]?.card?.();
     if (!adapterCard) throw Object.assign(new Error('selected adapter card unavailable for runtime isolation'), { code: 'runtime_card_unavailable' });
-    const lease = this._runtimeScopes.create(handle.id, { card: adapterCard });
+    const identity = typeof checkout === 'string' && isAbsolute(checkout) ? checkout : null;
+    const lease = this._runtimeScopes.create(handle.id, { card: adapterCard, ...(identity ? { checkout: identity } : {}) });
     const extension = this._participantRuntimes?.get(handle.runId);
     const runtime = extension ? {
       ...lease, env: { ...lease.env, ...extension.env },

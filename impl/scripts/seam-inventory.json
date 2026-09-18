@@ -1045,7 +1045,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 292,
+          "size": 299,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -2325,7 +2325,7 @@
         {
           "name": "_ensureRuntimeScope",
           "ordinal": 0,
-          "size": 20,
+          "size": 21,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
