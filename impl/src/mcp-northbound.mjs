@@ -280,6 +280,12 @@ const PERMANENT_TOOL_CAUSES = Object.freeze({
     message: 'the Run view exceeds this deployment\'s projection ceiling',
     remedy: 'narrow the read (a smaller `depth`/`section`/`item`) or raise the deployment ceiling; the same read refuses for the same reason',
   }),
+  // Issue #343: the swarm view tool keeps its OWN oversize row — its narrowing axes are the
+  // swarm's (participantId, projection, cursor), never the Run-view selectors.
+  application_swarm_view_oversize: Object.freeze({
+    message: 'the swarm view answer exceeds this deployment\'s wire frame',
+    remedy: 'narrow the read (a `participantId`, a `projection`, or walk the pages with `cursor` — each page names page {cursor, next, total, served, ceiling}); the same read refuses for the same reason',
+  }),
 });
 const TRANSIENT_FALLTHROUGH_ACTION = 'retry once; a refusal that repeats is a resident defect rather than a request fault — inspect the resident (`baton doctor --check`) and report the refusal code';
 // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family —
@@ -2790,6 +2796,17 @@ export class McpFleetServer {
     }
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
     if (APPLICATION_TOOL[name] && Buffer.byteLength(JSON.stringify(toolResult(value))) > this.maxMessageBytes) {
+      // Issue #343: the swarm view tool's oversize refusal names the SWARM tool's own narrowing
+      // — participantId, a projection, a cursor — and the size it observed against the ceiling,
+      // never the Run-view selectors (depth/section/item) the generic row names for run.inspect.
+      if (APPLICATION_TOOL[name] === 'swarm.view') {
+        const observed = Buffer.byteLength(JSON.stringify(toolResult(value)));
+        throw Object.assign(new Error(
+          `baton_swarm_view's answer is ${observed} bytes against this deployment's ${this.maxMessageBytes}-byte ${FRAME_LIMITS['wire.frame'].lane} ceiling; narrow the read (a participantId, a projection, or walk the pages with cursor) — never a truncated blob`,
+        ), { code: 'application_swarm_view_oversize', wireSafe: true, field: null,
+          detail: { actual: observed, ceiling: this.maxMessageBytes, lane: FRAME_LIMITS['wire.frame'].lane,
+            narrowing: ['participantId', 'projection', 'cursor'] } });
+      }
       throw Object.assign(new Error('RunView exceeds the MCP response ceiling'), { code: 'application_run_view_oversize' });
     }
     return normalized(GOAL_PLAN_MUTATIONS.has(name) ? sanitizeGoalPlanProjection(value) : value);

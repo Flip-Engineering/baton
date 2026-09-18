@@ -914,6 +914,16 @@ function validateEnvelope(envelope) {
     const field = safeFieldName(unknownArg);
     return field ? { code: 'unknown_argument_field', field, message: 'unknown_argument_field' } : 'unknown_argument_field';
   }
+  // Issue #343: a paged swarm.view read resumes with the cursor a previous page's `page.next`
+  // named. The resident minted it, so a token it did not mint refuses typed; and a cursor names
+  // the whole-record walk — it pairs neither with a participantId scope nor with a projection.
+  if (APPLICATION_COMMAND[envelope.command] === 'swarm.view' && Object.hasOwn(envelope.args, 'cursor')) {
+    const decoded = readSwarmViewPageCursor(envelope.args.cursor);
+    if (decoded === null || envelope.args.participantId !== undefined
+      || (envelope.args.projection !== undefined && envelope.args.projection !== 'full')) {
+      return { code: 'invalid_swarm_view_cursor', field: 'cursor', message: 'invalid_swarm_view_cursor' };
+    }
+  }
   if (containsForbiddenKey(envelope.args)) return 'credential-bearing command fields are forbidden';
   if (APPLICATION_COMMAND[envelope.command] && !WEB_DIRECT_PORT_COMMANDS.has(envelope.command)) {
     try { validateApplicationCommandArgs(APPLICATION_COMMAND[envelope.command], envelope.args); }
@@ -1158,6 +1168,173 @@ export function narrowSwarmViewForBridge(view, requestedProjection = null, maxBy
     if (swarmViewBridgeFrameBytes(served) <= maxBytes) return served;
   }
   return view;
+}
+
+// ── Issue #343: bounded per-row PAGING ───────────────────────────────────────────────────────────
+// Narrowing serves an oversize swarm.view through the widest per-row projection that fits the
+// declared frame — honest, but the caller then cannot read the requested rows at all, only a
+// narrower slice. When the caller declares a frame and the whole record's rows do not fit, the
+// resident PAGES THE ROWS with a cursor instead: the page size is derived from the declared frame
+// row (fit as many whole rows as the frame admits, measured with the same envelope-mirroring byte
+// count narrowing uses — never a numeric page constant), each page carries
+// `page {cursor, next, total, served, ceiling}`, and walking `page.next` reproduces the whole
+// record row by row. Paging is tried BEFORE projection substitution: narrowing remains the answer
+// only when even one row of the record cannot fit the frame (the #349 fallback, preserved).
+
+// The row families the walk streams, in the fixed order pages serve them: the participant rows
+// first — the surface a root reads — then the remaining sliced families. `updatePayloads` is
+// deliberately absent: the payload SHAPES are fixed discovery data that ride the frame of every
+// page (the same fixed tax the projection table in swarm-contract names), never rows.
+const SWARM_VIEW_PAGE_ROW_FAMILIES = Object.freeze([
+  'participants', 'contributions', 'reviews', 'attention', 'knowledge', 'work', 'assignments', 'groups', 'couplings', 'context',
+]);
+
+// The heavy per-row fields a PAGE leaves out: the per-seat diagnostic records — lastToolRows and
+// the native observation record whose invocations and agents arrays are the bulk a busy seat
+// carries. They ride only a read that names a participantId (#343); whole, narrowed and scoped
+// answers are untouched.
+const SWARM_VIEW_PAGE_HEAVY_PARTICIPANT_FIELDS = Object.freeze(['lastToolRows', 'native']);
+
+// The bounded head a page carries of a contribution body: the declared `context_pack.body`
+// substrate row — no second number. The full body rides the participantId read.
+const SWARM_VIEW_PAGE_BODY_HEAD_BYTES = FRAME_LIMITS['context_pack.body'].value;
+
+// The page cursor: an opaque, self-describing token — readable in a log, decodable only by the
+// arm that minted it, shaped like the id the contract's cursor rule admits.
+const SWARM_VIEW_PAGE_CURSOR_PREFIX = 'swarm-page:';
+
+/** Mint the cursor that resumes a paged swarm.view read at `offset`. */
+export function swarmViewPageCursor(projection, offset) {
+  return `${SWARM_VIEW_PAGE_CURSOR_PREFIX}${projection}:${offset}`;
+}
+
+/** Decode one page cursor, or null when the resident did not mint it. Only whole-record pages
+ * exist — the walk is the record's — so a token naming any other projection is not a token this
+ * arm minted. */
+export function readSwarmViewPageCursor(token) {
+  if (typeof token !== 'string' || !token.startsWith(SWARM_VIEW_PAGE_CURSOR_PREFIX)) return null;
+  const rest = token.slice(SWARM_VIEW_PAGE_CURSOR_PREFIX.length);
+  const separator = rest.lastIndexOf(':');
+  if (separator <= 0) return null;
+  const projection = rest.slice(0, separator);
+  const offset = Number(rest.slice(separator + 1));
+  if (projection !== 'full' || !Number.isSafeInteger(offset) || offset < 0) return null;
+  return { projection, offset };
+}
+
+// One row as the page serves it. A participant row drops the heavy diagnostic records; a
+// contribution row bounds its body to the head (byte-bounded, never a char guess) and names the
+// size it left out. Every other row crosses whole.
+function swarmViewPageRow(family, row) {
+  if (family === 'participants' && row !== null && typeof row === 'object' && !Array.isArray(row)) {
+    const paged = { ...row };
+    for (const field of SWARM_VIEW_PAGE_HEAVY_PARTICIPANT_FIELDS) delete paged[field];
+    return paged;
+  }
+  if (family === 'contributions' && row !== null && typeof row === 'object' && !Array.isArray(row)
+    && typeof row.body === 'string' && Buffer.byteLength(row.body) > SWARM_VIEW_PAGE_BODY_HEAD_BYTES) {
+    return {
+      ...row,
+      body: Buffer.from(row.body, 'utf8').subarray(0, SWARM_VIEW_PAGE_BODY_HEAD_BYTES).toString('utf8'),
+      bodyBytes: Buffer.byteLength(row.body),
+      bodyTruncated: true,
+    };
+  }
+  return row;
+}
+
+// The record's row sequence in the fixed family order above. Map families keep their key with
+// the row (the page rebuilds the map slice); arrays contribute their rows in order.
+function swarmViewPageSequence(view) {
+  const sequence = [];
+  for (const family of SWARM_VIEW_PAGE_ROW_FAMILIES) {
+    if (!Object.hasOwn(view, family)) continue;
+    const rows = view[family];
+    if (Array.isArray(rows)) {
+      for (const row of rows) sequence.push({ family, key: null, row });
+    } else if (rows !== null && typeof rows === 'object') {
+      for (const [key, row] of Object.entries(rows)) sequence.push({ family, key, row });
+    }
+  }
+  return sequence;
+}
+
+/** Serve a declared-frame swarm.view read as a PAGE of the whole record's rows, or null when
+ * paging is not the answer: a fitting whole answer (served whole, unnamed), a read the caller
+ * scoped to one participant (the #349 ladder, heavy fields riding), or a record whose rows
+ * cannot fit even one to a page (the #349 narrowing fallback). The ceiling is the FRAME_LIMITS
+ * row the caller declared on the envelope; the fit is measured on the FINAL page — the frame,
+ * the rows and the page record itself, which also costs bytes. */
+export function pageSwarmViewForBridge(view, requestedProjection = null, maxBytes = SWARM_VIEW_BRIDGE_FRAME_ROW.value, row = SWARM_VIEW_BRIDGE_FRAME_ROW, cursor = null) {
+  const requested = typeof requestedProjection === 'string' && Object.hasOwn(SWARM_VIEW_PROJECTIONS, requestedProjection)
+    ? requestedProjection : 'full';
+  if (requested !== 'full') return null;
+  if (view === null || typeof view !== 'object' || Array.isArray(view)) return null;
+  const decoded = cursor === null || cursor === undefined ? { projection: 'full', offset: 0 } : readSwarmViewPageCursor(cursor);
+  if (decoded === null) return null;
+  if (swarmViewBridgeFrameBytes(view) <= maxBytes) return null;
+  const sequence = swarmViewPageSequence(view);
+  if (sequence.length === 0) return null;
+  // Even one row that cannot fit the frame ALONE — heavy fields already bounded — means no page
+  // can make progress: the #349 narrowing fallback names what fits instead.
+  for (const { family, row: entry } of sequence) {
+    if (swarmViewBridgeFrameBytes(swarmViewPageRow(family, entry)) > maxBytes) return null;
+  }
+  // The frame rides every page — identity, status, caller authority, the payload shapes — plus
+  // the page record, which also costs bytes.
+  const base = {};
+  for (const [key, value] of Object.entries(view)) {
+    if (!SWARM_VIEW_PAGE_ROW_FAMILIES.includes(key)) base[key] = value;
+  }
+  const assemble = (window_, offset) => {
+    const families = {};
+    for (const entry of window_) {
+      if (entry.key === null) (families[entry.family] ??= []).push(entry.row);
+      else (families[entry.family] ??= {})[entry.key] = entry.row;
+    }
+    return {
+      ...base,
+      ...families,
+      projection: 'full',
+      page: {
+        cursor: cursor ?? null,
+        next: offset < sequence.length ? swarmViewPageCursor('full', offset) : null,
+        total: sequence.length,
+        served: window_.length,
+        ceiling: { lane: row.lane, class: row.class, value: maxBytes, unit: row.unit },
+      },
+    };
+  };
+  const window_ = [];
+  let used = swarmViewBridgeFrameBytes(assemble(window_, decoded.offset));
+  let index = decoded.offset;
+  while (index < sequence.length) {
+    const paged = swarmViewPageRow(sequence[index].family, sequence[index].row);
+    // The mirror doubles the JSON (the content text embeds the structured content), plus one
+    // separator — the same accounting swarmViewBridgeFrameBytes enforces, estimated per row so
+    // the greedy fit is O(rows).
+    const cost = 2 * (Buffer.byteLength(JSON.stringify(paged)) + 1);
+    if (used + cost > maxBytes) break;
+    window_.push({ family: sequence[index].family, key: sequence[index].key, row: paged });
+    used += cost;
+    index += 1;
+  }
+  if (window_.length === 0) {
+    // Past the end of the walk (the record shrank under the cursor): the honest empty page.
+    if (decoded.offset >= sequence.length) return assemble(window_, sequence.length);
+    return null;
+  }
+  let answer = assemble(window_, index);
+  // The per-row estimate is an upper bound, but the invariant is exact: what is served is what
+  // fits the frame. Back off one row at a time until it holds (the single-row case was already
+  // checked above, so this terminates with rows to serve or hands back to narrowing).
+  while (swarmViewBridgeFrameBytes(answer) > maxBytes) {
+    if (window_.length <= 1) return null;
+    window_.pop();
+    index -= 1;
+    answer = assemble(window_, index);
+  }
+  return answer;
 }
 
 export class WebNorthbound {
@@ -1853,6 +2030,18 @@ export class WebNorthbound {
     // answer. The scoped and the unscoped read follow this ONE rule.
     if (APPLICATION_COMMAND[envelope.command] === 'swarm.view') {
       const declaredRow = envelope.frame === undefined ? null : FRAME_LIMITS[envelope.frame.lane];
+      // Issue #343: paging is tried BEFORE projection substitution — a declared-frame read of
+      // the whole record pages its rows (`page {cursor, next, total, served, ceiling}`, the page
+      // size derived from the declared row), so the caller walks the whole answer in ≤ frame
+      // pieces instead of receiving a narrower projection. A read scoped to one participant
+      // keeps the #349 rule below: the heavy per-row fields ride the participantId read, and the
+      // narrowing fallback stands whenever even one row cannot fit the frame.
+      if (declaredRow !== null && a?.participantId === undefined) {
+        const paged = pageSwarmViewForBridge(projected, a?.projection, declaredRow.value, declaredRow, a?.cursor);
+        if (paged !== null) {
+          return result(200, { ok: true, commandId: envelope.commandId, result: paged });
+        }
+      }
       return result(200, {
         ok: true, commandId: envelope.commandId,
         result: declaredRow === null

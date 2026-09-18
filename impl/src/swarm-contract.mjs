@@ -204,8 +204,11 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   }),
   // `projection` names the slice of the record to answer with (SWARM_VIEW_PROJECTIONS): a caller
   // reads what it needs instead of the whole record. Absent means `full` — the historical answer.
+  // `cursor` resumes a paged read (#343): the token a previous page's `page.next` named, so a
+  // caller that declared a frame reads the whole record page by page. The token is opaque — the
+  // minting/consuming transport owns its shape; this contract checks only that it is one.
   'swarm.view': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'projection']),
+    args: Object.freeze(['swarmId', 'participantId', 'projection', 'cursor']),
     capabilities: Object.freeze(['observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
@@ -436,6 +439,10 @@ const SWARM_FIELD_RULES = Object.freeze({
     check: (value) => value === true || value === false || value === 'true' || value === 'false',
     expectation: 'true to carry the whole view beside the receipt',
   }),
+  // `cursor` resumes a paged swarm.view read (#343): the opaque token a previous page's
+  // `page.next` named. The shape is an id — the minting transport (the resident's swarm.view arm)
+  // owns the payload and refuses a token it did not mint.
+  cursor: Object.freeze({ check: isId, expectation: 'a page cursor a previous answer named' }),
   resumeFrom: Object.freeze({ check: isId, expectation: 'a participant identity' }),
 });
 
@@ -450,7 +457,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.view': Object.freeze({
     required: Object.freeze(['swarmId']),
-    optional: Object.freeze(['participantId', 'projection']),
+    optional: Object.freeze(['participantId', 'projection', 'cursor']),
   }),
   'swarm.watch': Object.freeze({
     required: Object.freeze(['swarmId']),
@@ -618,6 +625,10 @@ const BODY_SCHEMA = Object.freeze({
     Object.freeze({ type: 'string', minLength: 1 }),
   ]),
 });
+// `cursor` resumes a paged swarm.view read (#343): the opaque token a previous page's `page.next`
+// named. Shape only — the minting transport refuses a token it did not mint.
+const CURSOR_SCHEMA = Object.freeze({ type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9._:-]+$', description:
+  'the page.next token of the previous page — pass it back until next is null to walk the whole record' });
 const JSON_OBJECT_SCHEMA = Object.freeze({ type: 'object' });
 const EVENT_SCHEMA = Object.freeze({ type: 'string', enum: SWARM_EVENT_KINDS });
 const SEQUENCE_SCHEMA = Object.freeze({ type: 'integer', minimum: 0 });
@@ -643,9 +654,9 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.view',
-    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion. An optional projection names the slice to answer with (outline, participants, contributions, attention, guidance, workspace, full; default full), so a caller reads what it needs instead of the whole record. Each participant row carries its guidance rows and live checkout custody, and every projected row carries the seq and ts of the record that wrote it.",
+    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion — and carries the heavy per-row fields (lastToolRows, the native observation record, full contribution bodies) a paged read leaves out. An optional projection names the slice to answer with (outline, participants, contributions, attention, guidance, workspace, full; default full), so a caller reads what it needs instead of the whole record. Each participant row carries its guidance rows and live checkout custody, and every projected row carries the seq and ts of the record that wrote it. A caller that declares a wire frame (the MCP bridge does) receives an answer too large for that frame as PAGES of whole rows instead of a narrower projection: each page carries page {cursor, next, total, served, ceiling}; pass next back as cursor until it is null and the pages reproduce the whole answer, and name a participantId when a row's heavy fields are needed.",
     readOnlyHint: true, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, projection: PROJECTION_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, projection: PROJECTION_SCHEMA, cursor: CURSOR_SCHEMA }),
     required: Object.freeze(['swarmId']),
   }),
   Object.freeze({

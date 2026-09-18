@@ -473,7 +473,7 @@ the MCP tool table, and the web bus gate on.
 |---|---|---|---|---|
 | `swarm.list` | — | `observe` | web + mcp | identity-keyed |
 | `swarm.create` | `purpose`, `swarmId`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
-| `swarm.view` | `swarmId`, `participantId`, `projection` | `observe` | web + mcp | identity-keyed |
+| `swarm.view` | `swarmId`, `participantId`, `projection`, `cursor` | `observe` | web + mcp | identity-keyed |
 | `swarm.watch` | `swarmId`, `afterSeq`, `timeoutMs`, `projection` | `observe` | web + mcp | identity-keyed |
 | `swarm.update` | `swarmId`, `event`, `payload`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.recruit` | `swarmId`, `participantId`, `objective`, `options`, `permissions`, `shareWorkspaceWith`, `resumeFrom`, `workId`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
