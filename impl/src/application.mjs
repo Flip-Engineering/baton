@@ -2446,6 +2446,102 @@ function routeEqual(a, b) {
   return a.harness === b.harness && a.model === b.model && a.effort === b.effort;
 }
 
+// Issue #335: the route grammar the `application_route_not_allowed` teaching names. A model
+// selector is `[provider/]model` per harness — a bare model for most harnesses (muse serves
+// `muse-spark-1.3-contributor`), `provider/model` where the route id is one (omp serves
+// `deepseek/deepseek-flash`) — while the exact tuple is `HARNESS/MODEL@EFFORT`.
+const ROUTE_TEACHING_GRAMMAR = 'select model as [provider/]model with effort'
+  + ' (a bare model for most harnesses, provider/model for omp),'
+  + ' or the exact route as HARNESS/MODEL@EFFORT';
+
+// The requested selector as typed: the exact string form for a full tuple, the raw selector
+// object for a partial one.
+function formatRequestedRoute(requested) {
+  if (requested && typeof requested === 'object' && !Array.isArray(requested)
+    && typeof requested.harness === 'string'
+    && typeof requested.model === 'string'
+    && typeof requested.effort === 'string') {
+    return `${requested.harness}/${requested.model}@${requested.effort}`;
+  }
+  return JSON.stringify(requested ?? null);
+}
+
+// One served row of the teaching detail, projected from a readiness row (the same rows doctor
+// prints) — never a hand-kept list. A raw-application row carries no refusal code; the
+// deployment facade's rows do.
+function projectRouteTeachingRow(row) {
+  return {
+    harness: row.harness, model: row.model, effort: row.effort,
+    state: row.state, code: row.code ?? null,
+  };
+}
+
+function compareRouteTeachingRow(left, right) {
+  if (left.harness !== right.harness) return left.harness < right.harness ? -1 : 1;
+  if (left.model !== right.model) return left.model < right.model ? -1 : 1;
+  if (left.effort !== right.effort) return left.effort < right.effort ? -1 : 1;
+  return 0;
+}
+
+// Issue #335: the ONE teaching every `application_route_not_allowed` site composes — the
+// requested selector as typed, the selector grammar, and the served routes of the requested
+// harness with their readiness state, all read off the deployment's own readiness rows (the
+// same rows doctor prints, passed in by the caller from `doctorReadiness()`). The CLI
+// pre-check teaches before sending, but the swarm_recruit_follow path and every non-CLI
+// caller (MCP bridge, swarm client, web) bypass it, so this refusal is their only teaching.
+// The code stays `application_route_not_allowed`; a full tuple judges `options.exact`, a
+// partial selector judges `route`.
+function routeNotAllowedRefusal(readinessRoutes, requested, { profileName, role = null } = {}) {
+  const rows = Array.isArray(readinessRoutes) ? readinessRoutes : [];
+  const seen = new Set();
+  const served = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const key = `${row.harness}\0${row.model}\0${row.effort}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    served.push(projectRouteTeachingRow(row));
+  }
+  served.sort(compareRouteTeachingRow);
+  const requestedHarness = requested && typeof requested === 'object' && !Array.isArray(requested)
+    ? requested.harness ?? null : null;
+  const field = typeof requestedHarness === 'string' ? 'options.exact' : 'route';
+  const subject = role === null ? 'requested route' : `workflow role ${role} route`;
+  const rendered = formatRequestedRoute(requested);
+  const scope = `the deployment profile '${profileName}'`;
+  let message;
+  let servedHarnesses = null;
+  if (typeof requestedHarness === 'string') {
+    const harnessRows = served.filter((row) => row.harness === requestedHarness);
+    if (harnessRows.length === 0) {
+      servedHarnesses = [...new Set(served.map((row) => row.harness))].sort();
+      message = `${subject} ${rendered} is outside ${scope};`
+        + ` harness '${requestedHarness}' serves no routes.`
+        + ` ${ROUTE_TEACHING_GRAMMAR}.`
+        + ` Served harnesses: ${servedHarnesses.join(', ') || 'none'}`;
+    } else {
+      message = `${subject} ${rendered} is outside ${scope};`
+        + ` ${ROUTE_TEACHING_GRAMMAR}.`
+        + ` Served ${requestedHarness} routes: ${harnessRows
+          .map((row) => `${row.harness}/${row.model}@${row.effort} (${row.state})`).join(', ')}`;
+    }
+    served.length = 0;
+    served.push(...harnessRows);
+  } else {
+    message = `${subject} selector ${rendered} matches no route in ${scope};`
+      + ` ${ROUTE_TEACHING_GRAMMAR}.`
+      + ` Served routes: ${served
+        .map((row) => `${row.harness}/${row.model}@${row.effort} (${row.state})`).join(', ') || 'none'}`;
+  }
+  return applicationError(message, 'application_route_not_allowed', {
+    field,
+    requested: clone(requested ?? null),
+    grammar: ROUTE_TEACHING_GRAMMAR,
+    served,
+    ...(servedHarnesses === null ? {} : { servedHarnesses }),
+  });
+}
+
 function exactPlanRoutes(route) {
   return {
     schemaVersion: 2,
@@ -3619,7 +3715,7 @@ export class BatonApplication {
       const matches = profile.routes.filter((candidate) => Object.entries(selector)
         .every(([axis, value]) => candidate[axis] === value));
       if (matches.length === 0) {
-        throw applicationError('requested route is outside the deployment profile', 'application_route_not_allowed');
+        throw routeNotAllowedRefusal(this.doctorReadiness().routes, selector, { profileName });
       }
       if (matches.length === 1) selectedRoute = matches[0];
       else {
@@ -3630,8 +3726,7 @@ export class BatonApplication {
     if (composition) {
       for (const member of composition.team) {
         if (!profile.routes.some((candidate) => routeEqual(candidate, member.route))) {
-          throw applicationError(`workflow role ${member.role} route is outside the deployment profile`,
-            'application_route_not_allowed');
+          throw routeNotAllowedRefusal(this.doctorReadiness().routes, member.route, { profileName, role: member.role });
         }
       }
       composition = deepFreeze(clone(composition));
@@ -3677,7 +3772,7 @@ export class BatonApplication {
           throw applicationError('Requested scope is outside the deployment profile', 'application_scope_not_allowed');
         }
         if (!profile.routes.some((route) => routeEqual(route, intent.route))) {
-          throw applicationError('Requested route is outside the deployment profile', 'application_route_not_allowed');
+          throw routeNotAllowedRefusal(this.doctorReadiness().routes, intent.route, { profileName: intent.profile });
         }
         return intent;
       },
@@ -5210,7 +5305,7 @@ export class BatonApplication {
       throw applicationError('requested scope is outside the deployment profile', 'application_scope_not_allowed');
     }
     if (!profile.routes.some((route) => routeEqual(route, intent.route))) {
-      throw applicationError('requested route is outside the deployment profile', 'application_route_not_allowed');
+      throw routeNotAllowedRefusal(this.doctorReadiness().routes, intent.route, { profileName: intent.profile });
     }
     this._assertRouteAdmission(intent);
     this._admitRecursiveRun(intent, owner, context);
