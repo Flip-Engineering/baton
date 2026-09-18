@@ -233,3 +233,9 @@ A resident's open is three phases, each named on the `baton serve` flip lines an
 
 A signal that arrives during the open is admitted and remembered; the stop row lands through the deployment's own writer once the ledger writer exists, and the usual drain follows.
 
+
+## 6. Restart truth: lost seats and refused starts (#364, #384)
+
+- A restarted resident reconciles every participant's runtime row against the worker fleet it actually recovered (`coordinator.startupWorkerFleet()`: owned = spawned by this incarnation, recovered = a kernel-start-bound process the replay proved alive; everything else is lost). For each lost seat the swarm runtime folds ONE durable `swarm.participant_runtime_lost {swarmId, participantId, workerId, incarnation, at}` (runtime-recorded, never caller-submittable), so `swarm.view` reads `live: false, state: dead` with a `worker_lost_on_restart` attention row whose `next` names resume (`swarm.recruit --resume-from`) or stop. The brief's Peers section and scopeOverlap read the settled liveness; a lost seat holds no capacity reservation.
+- A start the owned-resource reconciliation refuses names its cause: `coordinator_cleanup_incomplete` carries `{reconciler, record, observed, next}` for the reconciler that failed (workspace owners, worker processes, capacity leases, publication lease), a transient observation says `retry after N ms` with the fact it waits on (N from the reconciler's own grace row), and `baton serve` records `host.startup_refused {code, reconciler, record, observed}` through the deployment's writer before exiting, so the doctor and the wake stream see it.
+
