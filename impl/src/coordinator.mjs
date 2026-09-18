@@ -644,13 +644,29 @@ function providerProcessingFailureCode(error) {
   if (typeof error?.code === 'string' && error.code.startsWith('capability_')) return 'capability_refused';
   return 'provider_processing_failed';
 }
-/** Who a guide is from, for the recipient: derived from the actor's namespace (the swarm-native
- * bridge stamps `swarm-native:<swarm>:<participant>`; the web/MCP owner sessions are the root). */
-function guidanceSenderLabel(actor) {
+/** WHO a guide is from, read from the actor's namespace in ONE place (#273): the swarm-native
+ * bridge stamps `swarm-native:<swarm>:<participant>` (a seat), and every other principal driving
+ * the swarm — the web/MCP owner sessions, the bare orchestrator actor, anything else — is the
+ * root orchestrator. The label the recipient reads in the frame is derived HERE, and the swarm
+ * runtime's relationship (`{kind: 'root'|'lead'|'peer', participantId}`, swarm-runtime.mjs
+ * `guidanceFromRelationship`) reads this same identity instead of parsing the namespace again. */
+export function guidanceSender(actor) {
   const parts = typeof actor === 'string' ? actor.split(':') : [];
-  if (parts[0] === 'swarm-native' && parts.length >= 3) return `participant "${parts.slice(2).join(':')}" of swarm "${parts[1]}"`;
-  if (parts[0] === 'web' || parts[0] === 'mcp' || actor === 'orchestrator') return 'the root orchestrator';
-  return typeof actor === 'string' && actor.length > 0 ? actor : 'an unnamed sender';
+  if (parts[0] === 'swarm-native' && parts.length >= 3) {
+    const participantId = parts.slice(2).join(':');
+    return Object.freeze({ kind: 'seat', swarmId: parts[1], participantId,
+      label: `participant "${participantId}" of swarm "${parts[1]}"` });
+  }
+  const root = parts[0] === 'web' || parts[0] === 'mcp' || actor === 'orchestrator';
+  const named = typeof actor === 'string' && actor.length > 0;
+  return Object.freeze({ kind: 'root', swarmId: null, participantId: null,
+    label: root ? 'the root orchestrator' : named ? actor : 'an unnamed sender' });
+}
+
+/** The phrase a recipient reads for one sender — the frame's `from` text (#273, coordinator
+ * side). A thin reader of `guidanceSender`: the naming rule lives there, once. */
+function guidanceSenderLabel(actor) {
+  return guidanceSender(actor).label;
 }
 
 function typedTerminalCode(value, fallback) {
@@ -9418,19 +9434,25 @@ export class Coordinator {
     this._attentionReasons.push(reason);
   }
 
-  /** Address a continuing participant; pause selection occurs inside its delivery queue. */
   /** Guidance reaches a worker as a typed frame that names its sender and the time it was sent
    * (#273): a participant must be able to tell swarm guidance from a human interjection and the
    * root from a peer. The sender label is derived from the actor's namespace, never guessed
-   * from the text; the same provenance rides the durable control.nudge record. */
-  guideParticipant(workerId, message, { actor = 'orchestrator' } = {}) {
+   * from the text; the same provenance rides the durable delivery record.
+   *
+   * `priority` names the delivery the swarm runtime asked for (#273): `next_boundary` (the
+   * default) rides the ordinary nudge — the seat takes it when it is ready, and a harness that
+   * holds guidance to its batch boundary does so — while `now` rides the immediate steer lane
+   * the run-send idiom's `now` already spells, pre-empting an in-flight tool call. A paused seat
+   * takes either through its turn's own delivery queue (pause selection stays inside it). */
+  guideParticipant(workerId, message, { actor = 'orchestrator', priority = 'next_boundary' } = {}) {
     const guidance = Object.freeze({ from: guidanceSenderLabel(actor), sentAt: new Date(this._now()).toISOString() });
     const framed = `[baton swarm guidance from ${guidance.from} · ${guidance.sentAt}]\n${message}`;
-    return this._withAuthorityOp(() => this._send(workerId, framed, 'nudge', {
+    return this._withAuthorityOp(() => this._send(workerId, framed, priority === 'now' ? 'steer' : 'nudge', {
       actor, continueParticipant: true, guidance,
     }));
   }
 
+  /** Address a continuing participant; pause selection occurs inside its delivery queue. */
   send(workerId, message, mode, opts = {}) {
     const handle = this._workers.get(workerId);
     const task = handle ? this._tasks.get(handle.taskId) : null;

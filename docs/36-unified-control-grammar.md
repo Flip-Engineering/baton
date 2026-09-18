@@ -477,7 +477,7 @@ the MCP tool table, and the web bus gate on.
 | `swarm.watch` | `swarmId`, `afterSeq`, `timeoutMs`, `projection` | `observe` | web + mcp | identity-keyed |
 | `swarm.update` | `swarmId`, `event`, `payload`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.recruit` | `swarmId`, `participantId`, `objective`, `options`, `permissions`, `mode`, `shareWorkspaceWith`, `resumeFrom`, `workId`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
-| `swarm.guide` | `swarmId`, `participantId`, `message`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.guide` | `swarmId`, `participantId`, `message`, `priority`, `inReplyTo`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.capture` | `swarmId`, `participantId`, `contributionId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
 | `swarm.check` | `swarmId`, `participantId`, `contributionId`, `checkId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
 | `swarm.integrate` | `swarmId`, `contributionId`, `target`, `dryRun`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
@@ -503,7 +503,7 @@ fields each kind requires of the caller are read from the payload schemas
 | `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
 
-**Runtime-owned driver kinds (never caller-submittable, 7).** The operation lifecycle and refusal rows the runtime
+**Runtime-owned driver kinds (never caller-submittable, 10).** The operation lifecycle and refusal rows the runtime
 records for itself, disjoint from the caller-submittable set above:
 
 - `swarm.operation_requested`
@@ -513,6 +513,9 @@ records for itself, disjoint from the caller-submittable set above:
 - `swarm.integration_started`
 - `swarm.integration_failed`
 - `swarm.integration_swept`
+- `swarm.guidance_sent`
+- `swarm.guidance_parked`
+- `swarm.guidance_delivered`
 
 **Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
 runtime admission check reads (`impl/src/swarm-runtime.mjs`).

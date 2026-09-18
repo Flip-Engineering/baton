@@ -12600,7 +12600,7 @@
         {
           "name": "_mutationResult",
           "ordinal": 0,
-          "size": 34,
+          "size": 36,
           "seam": "observation",
           "evidence": [
             "delegates:observation",
@@ -13187,7 +13187,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1078,
+          "size": 1070,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13446,21 +13446,40 @@
           ]
         },
         {
-          "name": "_guidanceParkedFromLabel",
-          "ordinal": 0,
-          "size": 6,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
           "name": "_midTurnGuidanceUnsupported",
           "ordinal": 0,
           "size": 10,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_guidancePayload",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_guideReceipt",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_guidanceReplyTarget",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
           ]
         },
         {
@@ -13476,9 +13495,18 @@
           "name": "_parkGuidance",
           "ordinal": 0,
           "size": 16,
-          "seam": "surface",
+          "seam": "observation",
           "evidence": [
-            "surface:no_authority_touched"
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_recordGuidanceSent",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
           ]
         },
         {
@@ -13511,7 +13539,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 219,
+          "size": 221,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
@@ -13641,7 +13669,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1000,
+          "size": 1006,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
