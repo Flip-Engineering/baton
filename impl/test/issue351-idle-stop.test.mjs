@@ -244,9 +244,12 @@ test('351s-a1: an idle stop converges inside its declared bound and the row name
 
   const stopped = stoppedRow(fixture.ledgerPath);
   assert.equal(stopped.state, 'stopped');
-  // The checkpoint decision is unchanged — an unbounded projection is still skipped, and said so.
-  assert.equal(stopped.checkpoint?.state, 'skipped');
-  assert.equal(stopped.checkpoint?.reason, 'release_checkpoint_unbounded');
+  // Issue #465(4): the checkpoint no longer carries the event log, so a 150 000-row ledger's write is
+  // kilobytes and the release takes it — the state this row pinned as `skipped` before that lane.
+  assert.equal(stopped.checkpoint?.state, 'written');
+  assert.equal(stopped.checkpoint?.reason, null);
+  assert.ok(stopped.checkpoint?.bytes > 0 && stopped.checkpoint?.bytes <= stopped.checkpoint?.costBound,
+    `the measured body (${stopped.checkpoint?.bytes} B) fits the declared cost ceiling`);
   // …and the stop now NAMES where its time went: the timeline, in order, each stage carrying its
   // own cost, closed on the stage the release minted from inside (the fleet drain).
   const stages = assertStageTimeline(stopped.stages);

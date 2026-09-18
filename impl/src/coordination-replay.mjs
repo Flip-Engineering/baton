@@ -150,7 +150,7 @@ export function startupStatus(store) {
   // a reader that wants the diagnosis takes the properties directly (the flip line and the
   // doctor's coordination row must read them explicitly, never via spread/JSON).
   if (state.checkpoint === 'corrupt' || state.checkpoint === 'stale_authority'
-    || state.checkpoint === 'stale_shape') {
+    || state.checkpoint === 'stale_shape' || state.checkpoint === 'stale_ledger') {
     const restore = store._checkpointRestoreReport ?? null;
     if (restore !== null) {
       Object.defineProperty(report, 'checkpointReason', { value: restore.reason, enumerable: false });
@@ -403,6 +403,25 @@ function _reportLoadFailure(store, error) {
   });
 }
 
+/** Issue #465(4): the restore states whose checkpoint is not used — the ledger is folded in full and
+ * the open owes the next open a cache (`_openCheckpointRefresh`). `valid` adopts its projections;
+ * `absent`/`unchecked` had no cache to consider. */
+const CHECKPOINT_FALLBACK_STATES = Object.freeze(['corrupt', 'stale_shape', 'stale_authority', 'stale_ledger']);
+
+/** The source token the open reports for one restore state: which artifacts the rows came from. ONE
+ * derivation, read by the plan's own report and by the fold when an adoption is abandoned mid-run. */
+function _replaySource(checkpointState, { base, tailRows, ledgerBytes }) {
+  if (checkpointState === 'valid') {
+    if (base > 0) return tailRows > 0 ? 'segments_checkpoint_tail' : 'segments_checkpoint';
+    return tailRows > 0 ? 'checkpoint_tail' : 'checkpoint';
+  }
+  if (CHECKPOINT_FALLBACK_STATES.includes(checkpointState)) {
+    return base > 0 ? 'segments_ledger_fallback' : 'ledger_fallback';
+  }
+  if (base > 0) return 'segments_ledger';
+  return ledgerBytes === 0 ? 'empty' : 'ledger';
+}
+
 function _loadPlan(store) {
   const raw = existsSync(store.file) ? readFileSync(store.file) : Buffer.alloc(0);
   _reportStartup(store, {
@@ -429,33 +448,35 @@ function _loadPlan(store) {
   const base = segments.archivedThroughSeq;
   store._segmentIndex = base > 0 ? segments : null;
   const checkpoint = store._restoreProjectionCheckpoint(raw, base);
-  const tail = raw.subarray(checkpoint.prefixBytes);
-  const text = tail.toString('utf8');
-  if (!Buffer.from(text, 'utf8').equals(tail)) {
-    throw new CoordinationIntegrityError('coordination stream is not exact UTF-8', 'invalid_utf8');
-  }
-  const lines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
+  // Issue #465(4): the ledger is read in TWO stretches — the rows the checkpoint's projection covers
+  // (`1..coversSeq`, rebuilt and not folded) and the tail past them (rebuilt AND folded). A fallback
+  // covers nothing (`coversSeq` is the archival cut), so the whole ledger is one tail. Both stretches
+  // are parsed here, in the plan: the split is the checkpoint's own claim, and the fold below does
+  // the work.
+  const prefixLines = _ledgerLines(raw.subarray(0, checkpoint.prefixBytes));
+  const lines = _ledgerLines(raw.subarray(checkpoint.prefixBytes));
   const segmentEvents = (segments.segments ?? []).reduce((sum, segment) => sum + (segment.throughSeq - segment.fromSeq + 1), 0);
-  const totalEvents = base + checkpoint.throughSeq + lines.length;
-  const replaySource = (checkpointState) => (base > 0
-    ? (checkpointState === 'valid' || checkpointState === 'stale_authority'
-      ? (lines.length > 0 ? 'segments_checkpoint_tail' : 'segments_checkpoint')
-      : checkpointState === 'corrupt' || checkpointState === 'stale_shape'
-        ? 'segments_ledger_fallback' : 'segments_ledger')
-    : checkpointState === 'valid' || checkpointState === 'stale_authority'
-      ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
-      : checkpointState === 'corrupt' || checkpointState === 'stale_shape' ? 'ledger_fallback'
-        : raw.byteLength === 0 ? 'empty' : 'ledger');
+  const totalEvents = checkpoint.coversSeq + lines.length;
+  const source = _replaySource(checkpoint.state, { base, tailRows: lines.length, ledgerBytes: raw.byteLength });
   _reportStartup(store, {
     schemaVersion: 1, state: 'replaying',
-    source: replaySource(checkpoint.state),
-    totalEvents, checkpointEvents: checkpoint.throughSeq, replayedEvents: 0,
+    source,
+    totalEvents, checkpointEvents: checkpoint.coversSeq - base, replayedEvents: 0,
     checkpoint: checkpoint.state, failure: null,
   });
   return {
-    raw, base, segments, checkpoint, lines, segmentEvents, totalEvents,
-    source: replaySource(checkpoint.state),
+    raw, base, segments, checkpoint, prefixLines, lines, segmentEvents, totalEvents, source,
   };
+}
+
+/** The lines of one ledger stretch, with the exact-UTF-8 law the ledger already obeys (issue #290:
+ * a stretch that is not the exact bytes it claims is refused, never parsed loosely). */
+function _ledgerLines(bytes) {
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes)) {
+    throw new CoordinationIntegrityError('coordination stream is not exact UTF-8', 'invalid_utf8');
+  }
+  return text.length === 0 ? [] : text.slice(0, -1).split('\n');
 }
 
 /** The replay's fold work as a GENERATOR that yields at chunk boundaries — never awaiting on
@@ -464,10 +485,22 @@ function _loadPlan(store) {
  * failed open); the `{ async: true }` mode awaits a macrotask between `.next()` calls instead.
  * One fold path, two cadences, no microtask can slip into the synchronous open. */
 function* _loadRun(store, plan) {
-  const { base, segments, checkpoint, lines, segmentEvents, totalEvents, source } = plan;
+  const { raw, base, segments, checkpoint, prefixLines, lines, segmentEvents, totalEvents, source } = plan;
+  // The restore state this fold ends on: an adoption that the ledger does not back abandons the
+  // checkpoint mid-fold (issue #465(4)), and the report, the source and the rewrite below then name
+  // the ledger's own truth rather than the state the plan was composed with.
+  let restoredState = checkpoint.state;
+  let restoredCoversSeq = checkpoint.coversSeq;
+  let restoredSource = source;
+  let adopted = false;
   store._loading = true;
   try {
-    const applyReplayEvent = (event, index) => {
+    // Issue #465(4): ONE derivation of "the ledger says this row" — shared by the cold replay path
+    // and by the rebuild the checkpoint path performs, so a row is judged identically on both. It
+    // reads the row (schema, sequence contiguity, idempotency key) into the projection's two
+    // ledger-copy families and answers it, frozen; the FOLD is a separate step (`foldRow`), because
+    // the rows a checkpoint's projection already covers are read back but never re-folded.
+    const readRow = (event, index) => {
       if (event.schemaVersion !== 1) throw new CoordinationIntegrityError(`unsupported schema version at seq ${event.seq}`, 'schema_version');
       if (event.seq !== index + 1) throw new CoordinationIntegrityError(`coordination sequence gap at line ${index + 1}`, 'sequence_gap');
       if (typeof event.idempotencyKey !== 'string' || store._byKey.has(event.idempotencyKey)) {
@@ -476,10 +509,13 @@ function* _loadRun(store, plan) {
       const frozen = freeze(event);
       store._events.push(frozen);
       store._byKey.set(frozen.idempotencyKey, frozen);
-      // Issue #290: a quarantined seq keeps its durable bytes parsed in the ledger (sequence
-      // contiguity, idempotent-retry adjudication, and checkpoint byte-equality all hold);
-      // only the fold that refused is withheld. Any fold failure names its seq and kind so an
-      // operator can pass exactly that seq to the quarantine verb.
+      return frozen;
+    };
+    // Issue #290: a quarantined seq keeps its durable bytes parsed in the ledger (sequence
+    // contiguity, idempotent-retry adjudication, and checkpoint byte-equality all hold); only the
+    // fold that refused is withheld. Any fold failure names its seq and kind so an operator can pass
+    // exactly that seq to the quarantine verb.
+    const foldRow = (frozen) => {
       if (store._quarantine.has(frozen.seq)) return;
       try { store._apply(frozen); }
       catch (error) {
@@ -488,9 +524,14 @@ function* _loadRun(store, plan) {
         throw error;
       }
     };
-    // One bounded stretch = at most REPLAY_CHUNK_EVENTS applied events. The segment file read
-    // and the checkpoint restore outside this counter are the artifact formats' own bounds.
+    const parsed = (line, label) => {
+      try { return JSON.parse(line); }
+      catch { throw new CoordinationIntegrityError(`invalid JSON at ${label}`, 'invalid_json'); }
+    };
+    // One bounded stretch = at most REPLAY_CHUNK_EVENTS read (or folded) events. The segment file
+    // read and the checkpoint restore outside this counter are the artifact formats' own bounds.
     let sinceYield = 0;
+    const breathe = () => { sinceYield += 1; if (sinceYield < REPLAY_CHUNK_EVENTS) return false; sinceYield = 0; return true; };
     for (const segment of segments.segments ?? []) {
       const bytes = readFileSync(store._segmentFilePath(segment.digest));
       if (sha256Bytes(bytes) !== segment.digest) {
@@ -505,40 +546,55 @@ function* _loadRun(store, plan) {
       }
       const segmentLines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
       for (let offset = 0; offset < segmentLines.length; offset += 1) {
-        let event;
-        try { event = JSON.parse(segmentLines[offset]); }
-        catch { throw new CoordinationIntegrityError(`invalid JSON at coordination segment ${segment.digest} line ${offset + 1}`, 'invalid_json'); }
-        applyReplayEvent(event, segment.fromSeq - 1 + offset);
-        sinceYield += 1;
-        if (sinceYield >= REPLAY_CHUNK_EVENTS) { sinceYield = 0; yield; }
+        const index = segment.fromSeq - 1 + offset;
+        foldRow(readRow(parsed(segmentLines[offset], `coordination segment ${segment.digest} line ${offset + 1}`), index));
+        if (breathe()) yield;
       }
     }
-    for (let index = 0; index < (checkpoint.events ?? []).length; index += 1) {
-      applyReplayEvent(checkpoint.events[index], base + index);
-      sinceYield += 1;
-      if (sinceYield >= REPLAY_CHUNK_EVENTS) { sinceYield = 0; yield; }
+    // The rows the checkpoint's projection covers: read back from the ledger file the checkpoint's
+    // digest proved, indexed, and NOT folded — the state that fold produced is the body's.
+    for (let offset = 0; offset < prefixLines.length; offset += 1) {
+      readRow(parsed(prefixLines[offset], `coordination line ${base + offset + 1}`), base + offset);
+      if (breathe()) yield;
+    }
+    if (checkpoint.projection !== null) {
+      const problem = yield* _adoptProjectionCheckpoint(store, checkpoint);
+      if (problem === null) {
+        adopted = true;
+      } else {
+        // The body and the ledger disagree (a reference the ledger cannot back): the body is not
+        // adoptable, and the ledger is authoritative — every covered row folds after all.
+        restoredState = 'stale_ledger';
+        restoredCoversSeq = base;
+        restoredSource = _replaySource('stale_ledger', { base, tailRows: lines.length, ledgerBytes: raw.byteLength });
+        store._checkpointRestoreReport = freeze({ reason: 'reference_unresolved', detail: clone(problem) });
+      }
+    }
+    if (!adopted) {
+      // The covered rows, folded in the order they were read: the cold path's own work.
+      for (let index = 0; index < store._events.length; index += 1) {
+        foldRow(store._events[index]);
+        if (breathe()) yield;
+      }
     }
     for (let offset = 0; offset < lines.length; offset += 1) {
-      const index = base + checkpoint.throughSeq + offset;
-      let event;
-      try { event = JSON.parse(lines[offset]); }
-      catch { throw new CoordinationIntegrityError(`invalid JSON at coordination line ${index + 1}`, 'invalid_json'); }
-      applyReplayEvent(event, index);
-      sinceYield += 1;
-      if (sinceYield >= REPLAY_CHUNK_EVENTS) { sinceYield = 0; yield; }
+      const index = restoredCoversSeq + offset;
+      foldRow(readRow(parsed(lines[offset], `coordination line ${index + 1}`), index));
+      if (breathe()) yield;
       if ((offset + 1) % 256 === 0) _reportStartup(store, {
         schemaVersion: 1, state: 'replaying',
-        source,
-        totalEvents, checkpointEvents: checkpoint.throughSeq,
-        replayedEvents: segmentEvents + offset + 1, checkpoint: checkpoint.state, failure: null,
+        source: restoredSource,
+        totalEvents, checkpointEvents: restoredCoversSeq - base,
+        replayedEvents: (adopted ? 0 : segmentEvents) + offset + 1,
+        checkpoint: restoredState, failure: null,
       });
     }
     _validateRecoveryReplayTransactions(store);
     _validateGoalPlanReplayTransactions(store);
   } finally { store._loading = false; }
-  store._loadedLedgerHash = createHash('sha256').update(plan.raw);
+  store._loadedLedgerHash = createHash('sha256').update(raw);
   store._loadedLedgerIdentity = freeze({
-    bytes: plan.raw.byteLength, digest: store._loadedLedgerHash.copy().digest('hex'),
+    bytes: raw.byteLength, digest: store._loadedLedgerHash.copy().digest('hex'),
     events: store._events.length,
   });
   // Issue #449: the open that could not serve itself from the checkpoint on disk has just folded the
@@ -549,12 +605,45 @@ function* _loadRun(store, plan) {
   // chunks (and the synchronous constructor drains them back-to-back). Recorded BEFORE 'ready' is
   // reported, so a reader that observes ready observes the cache; a write that cannot land is
   // reported, never raised — the ledger stays authoritative.
-  store._checkpointRewrite = yield* store._openCheckpointRefresh(plan.checkpoint.state);
+  store._checkpointRewrite = yield* store._openCheckpointRefresh(restoredState);
   _reportStartup(store, {
-    schemaVersion: 1, state: 'ready', source, totalEvents,
-    checkpointEvents: checkpoint.throughSeq, replayedEvents: segmentEvents + lines.length,
-    checkpoint: checkpoint.state, failure: null,
+    schemaVersion: 1, state: 'ready', source: restoredSource, totalEvents,
+    checkpointEvents: restoredCoversSeq - base,
+    replayedEvents: (adopted ? 0 : segmentEvents) + lines.length,
+    checkpoint: restoredState, failure: null,
   });
+}
+
+/** Issue #465(4): install the projection the checkpoint carries — the state rows 1..coversSeq were
+ * folded into by the process that wrote it, which is why this fold does not redo that work. The
+ * store's own rendering is inverted first (`_materializedProjectionCheckpoint`: every reference the
+ * body minted is resolved back through the ledger rows this open just read), so what installs is
+ * the state a cold replay would hold. It yields between families — a real body carries ~100 of them
+ * and the open-liveness law (#351 lane 4) binds every open, not only the fold — and answers the
+ * {field, reference} problem when a pair the body minted names text the ledger does not hold; the
+ * caller then folds the ledger instead of adopting a body that disagrees with it. */
+function* _adoptProjectionCheckpoint(store, checkpoint) {
+  const { projection: materialized, problem } = store._materializedProjectionCheckpoint(
+    checkpoint.projection, checkpoint.dictionaryFields,
+  );
+  if (problem !== null) return problem;
+  for (const field of PROJECTION_CHECKPOINT_FIELDS) {
+    store[field] = _adoptedRows(materialized[field]);
+    yield;
+  }
+  return null;
+}
+
+/** Issue #465(4): freeze the ROWS an adopted family holds, never the container itself. Every row the
+ * fold writes is frozen and every projection CONTAINER is mutable — the fold resolves an append by
+ * `Map.set`/`Array.push` on it — so an adopted family must keep the body's own (deserialized,
+ * extensible) container while its rows take the law the fold's rows already obey. Freezing the
+ * container here would refuse the next append with `Cannot add property…, object is not extensible`. */
+function _adoptedRows(container) {
+  if (container instanceof Map || container instanceof Set || Array.isArray(container)) {
+    for (const row of container.values()) freeze(row);
+  }
+  return container;
 }
 
 /** Moved from `CoordinationStore._recoveryBatchIdentity` (issue #259 slice 1). Reads no store state. */
@@ -1489,22 +1578,50 @@ export function orphans(store, { liveWorkers = [] } = {}) {
  * invariant that failed — `{ state: 'corrupt', reason, detail }` with `reason` from the closed
  * set `path_invalid | envelope_shape | authority_digest | prefix_digest | projection_digest |
  * projection_shape | tail_anchor` and `detail` carrying the compared values (digests
- * abbreviated) — instead of one bare 'corrupt' with the evidence discarded. A checkpoint whose
- * bytes are fully proven under a DIFFERENT authority digest is `stale_authority`, never
- * 'corrupt', and is REUSED: its cached events are returned for replay under the current
- * cards/policies exactly as a valid checkpoint's are (`reused: true`); only a real corruption
- * falls back to the full ledger. Every refusal also lands the {reason, detail} on the store as
- * `_checkpointRestoreReport` for `startupStatus()` to compose. */
+ * abbreviated) — instead of one bare 'corrupt' with the evidence discarded. Every refusal also
+ * lands the {reason, detail} on the store as `_checkpointRestoreReport` for `startupStatus()` to
+ * compose.
+ *
+ * Issue #465(4): the checkpoint CARRIES the projection and the seq it covers, never the event log
+ * (`PROJECTION_LEDGER_FIELDS`), so this reader answers the successor what to rebuild and what to
+ * adopt:
+ *   `valid`           the body is this build's, its claim holds against the ledger (`coversSeq`
+ *                     rows are exactly the rows the covered prefix holds, and the last covered line
+ *                     re-digests to the one the writer anchored), and both the state and the claim
+ *                     are returned for `_loadRun` to rebuild rows 1..coversSeq and adopt.
+ *   `stale_shape`     another projection shape wrote it (its field set, or its field set's digest,
+ *                     is not this build's) — the ledger replays in full and the open rewrites.
+ *   `stale_authority` the bytes are proven under another authority digest: its carried projection
+ *                     was folded under OTHER cards and policies, so it is not this build's state —
+ *                     the ledger replays in full and the open rewrites under this authority. (Before
+ *                     #465(4) this state REUSED the cached rows; the rows are no longer carried, and
+ *                     a foreign fold cannot be adopted.)
+ *   `stale_ledger`    (issue #465(4)) the body's claim does not hold against the ledger — it covers
+ *                     more rows than the ledger's prefix holds, or a reference it minted names a row
+ *                     the ledger cannot back. The ledger is authoritative, so the successor folds it
+ *                     and rewrites the cache.
+ *   `corrupt`         an envelope invariant failed (#397: a repair, never a rewrite).
+ * Nothing about the ADOPTION is decided here (the body's references resolve against the rows, which
+ * are not parsed yet): the reader proves the envelope and the claim, and `_adoptProjectionCheckpoint`
+ * answers whether the state installs. */
 export function _restoreProjectionCheckpoint(store, raw, base = 0) {
   if (!existsSync(store._checkpointFile)) {
     store._checkpointRestoreReport = null;
-    return { state: 'absent', throughSeq: 0, prefixBytes: 0 };
+    return { state: 'absent', coversSeq: base, prefixBytes: 0, projection: null };
   }
   const abbrev = (value) => (typeof value === 'string' ? `${value.slice(0, 12)}…` : String(value ?? null));
   const refuse = (reason, detail) => {
     store._checkpointRestoreReport = freeze({ reason, detail: clone(detail) });
     store._resetProjection();
-    return { state: 'corrupt', throughSeq: 0, prefixBytes: 0, reason, detail: clone(detail) };
+    return {
+      state: 'corrupt', coversSeq: base, prefixBytes: 0, projection: null,
+      reason, detail: clone(detail),
+    };
+  };
+  const stale = (state, reason, detail) => {
+    store._checkpointRestoreReport = freeze({ reason, detail: clone(detail) });
+    store._resetProjection();
+    return { state, coversSeq: base, prefixBytes: 0, projection: null, reason, detail: clone(detail) };
   };
   let stat;
   try {
@@ -1514,12 +1631,9 @@ export function _restoreProjectionCheckpoint(store, raw, base = 0) {
   }
   // Issue #290: no size heuristic. A checkpoint is accepted only when its own recorded
   // shape proves it — the envelope's prefixBytes/prefixDigest must re-derive from the
-  // authoritative ledger prefix, the projectionDigest must re-derive from the projection
-  // bytes it carries, and the parsed events must re-serialize to those exact bytes. The
-  // old ceiling (size vs. a number derived from the ledger window) rejected compact()'s
-  // own valid checkpoint whenever the archived window shrank below the full-history
-  // idempotency map — a false 'corrupt' indistinguishable from real corruption. #397: each
-  // invariant below refuses under its own name, so the report says what failed.
+  // authoritative ledger prefix, the projectionDigest must re-derive from the body it
+  // carries, and the claim (coversSeq + the anchored last covered line) must hold against the
+  // ledger. #397: each invariant below refuses under its own name, so the report says what failed.
   if (!stat.isFile() || stat.isSymbolicLink()) {
     return refuse('path_invalid', { field: 'path', isFile: stat.isFile(), symbolicLink: stat.isSymbolicLink() });
   }
@@ -1529,31 +1643,27 @@ export function _restoreProjectionCheckpoint(store, raw, base = 0) {
   } catch (error) {
     return refuse('envelope_shape', { field: 'deserialize', error: String(error?.message ?? error).slice(0, 120) });
   }
-  // Issue #449(2): TWO envelope shapes are recognized — this build's (which records the writer's
-  // projection shape and the commit it served) and the pre-#449 envelope, which recorded neither
-  // and is the exact shape every resident on disk still carries. The legacy shape is admitted here
-  // so the open can answer it as STALE below (replay + rewrite) instead of as a corrupt envelope
-  // its owner has no remedy for; any other key set is still corruption.
-  const keys = ['authorityDigest', 'prefixBytes', 'prefixDigest', 'projectionBytes',
+  // Issue #449(2): THREE envelope shapes are recognized — this build's (#465(4): `coversSeq` and
+  // the covered tail's digest), the #449 shape (`throughSeq`, shape and commit recorded), and the
+  // pre-#449 shape (neither), which is the exact shape every older resident wrote. The two earlier
+  // shapes are admitted so the open can answer them as STALE (replay + rewrite) instead of as a
+  // corrupt envelope their owner has no remedy for; any other key set is still corruption.
+  const keys = ['authorityDigest', 'coversLineDigest', 'coversSeq', 'prefixBytes', 'prefixDigest',
+    'projectionBytes', 'projectionDigest', 'projectionShapeDigest', 'schemaVersion', 'servedCommit',
+    'swarmDictionaryFields'];
+  const previousKeys = ['authorityDigest', 'prefixBytes', 'prefixDigest', 'projectionBytes',
     'projectionDigest', 'projectionShapeDigest', 'schemaVersion', 'servedCommit', 'throughSeq'];
   const legacyKeys = ['authorityDigest', 'prefixBytes', 'prefixDigest', 'projectionBytes',
     'projectionDigest', 'schemaVersion', 'throughSeq'];
-  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
-    return refuse('envelope_shape', {
-      field: 'envelope',
-      actual: abbrev(envelope === null ? 'null' : Array.isArray(envelope) ? 'array' : typeof envelope),
-    });
-  }
   const envelopeKeys = Object.keys(envelope).sort().join(',');
-  const shapeRecorded = envelopeKeys === [...keys].sort().join(',');
-  if (!shapeRecorded && envelopeKeys !== [...legacyKeys].sort().join(',')) {
+  const sorted = (names) => [...names].sort().join(',');
+  const shapeRecorded = envelopeKeys === sorted(keys);
+  const previousShape = envelopeKeys === sorted(previousKeys);
+  if (!shapeRecorded && !previousShape && envelopeKeys !== sorted(legacyKeys)) {
     return refuse('envelope_shape', { field: 'keys', actual: abbrev(envelopeKeys) });
   }
   if (envelope.schemaVersion !== 1) {
     return refuse('envelope_shape', { field: 'schemaVersion', actual: abbrev(envelope.schemaVersion) });
-  }
-  if (!Number.isSafeInteger(envelope.throughSeq) || envelope.throughSeq < 0) {
-    return refuse('envelope_shape', { field: 'throughSeq', actual: abbrev(envelope.throughSeq) });
   }
   if (!Number.isSafeInteger(envelope.prefixBytes) || envelope.prefixBytes < 0) {
     return refuse('envelope_shape', { field: 'prefixBytes', actual: abbrev(envelope.prefixBytes) });
@@ -1572,15 +1682,49 @@ export function _restoreProjectionCheckpoint(store, raw, base = 0) {
   if (!Buffer.isBuffer(envelope.projectionBytes)) {
     return refuse('envelope_shape', { field: 'projectionBytes', actual: typeof envelope.projectionBytes });
   }
-  if (shapeRecorded) {
-    if (!/^[a-f0-9]{64}$/u.test(envelope.projectionShapeDigest ?? '')) {
-      return refuse('envelope_shape', {
-        field: 'projectionShapeDigest', actual: abbrev(envelope.projectionShapeDigest),
-      });
-    }
-    if (envelope.servedCommit !== null && !/^[a-f0-9]{40,64}$/u.test(envelope.servedCommit ?? '')) {
-      return refuse('envelope_shape', { field: 'servedCommit', actual: abbrev(envelope.servedCommit) });
-    }
+  if (!shapeRecorded && !previousShape) {
+    // The pre-#449 envelope recorded neither a shape nor a commit: no build can prove it belongs
+    // to this one, so it is STALE (the next write records the shape and answers the question).
+    const detail = {
+      field: 'projectionShapeDigest',
+      expected: abbrev(store._projectionShapeDigest),
+      actual: null,
+      servedCommit: null,
+    };
+    return stale('stale_shape', 'projection_shape_digest', detail);
+  }
+  if (!/^[a-f0-9]{64}$/u.test(envelope.projectionShapeDigest ?? '')) {
+    return refuse('envelope_shape', {
+      field: 'projectionShapeDigest', actual: abbrev(envelope.projectionShapeDigest),
+    });
+  }
+  if (envelope.servedCommit !== null && !/^[a-f0-9]{40,64}$/u.test(envelope.servedCommit ?? '')) {
+    return refuse('envelope_shape', { field: 'servedCommit', actual: abbrev(envelope.servedCommit) });
+  }
+  // Another shape wrote the body: either the #449 key set (which carried `_events`/`_byKey` and no
+  // `_steeringRuns`) or THIS key set under another field list. Both are a rewrite, never a repair, so
+  // the open records the shape change and replays the ledger. Checked BEFORE the authority digest:
+  // a body of another shape is refused as such whatever authority wrote it (issue #397's order).
+  if (previousShape || envelope.projectionShapeDigest !== store._projectionShapeDigest) {
+    const detail = {
+      field: 'projectionShapeDigest',
+      expected: abbrev(store._projectionShapeDigest),
+      actual: abbrev(envelope.projectionShapeDigest),
+      servedCommit: envelope.servedCommit ?? null,
+    };
+    return stale('stale_shape', 'projection_shape_digest', detail);
+  }
+  if (!Number.isSafeInteger(envelope.coversSeq) || envelope.coversSeq < base) {
+    return refuse('envelope_shape', { field: 'coversSeq', actual: abbrev(envelope.coversSeq) });
+  }
+  if (!/^[a-f0-9]{64}$/u.test(envelope.coversLineDigest ?? '')) {
+    return refuse('envelope_shape', { field: 'coversLineDigest', actual: abbrev(envelope.coversLineDigest) });
+  }
+  if (!Array.isArray(envelope.swarmDictionaryFields)
+    || envelope.swarmDictionaryFields.some((name) => typeof name !== 'string' || name.length === 0)) {
+    return refuse('envelope_shape', {
+      field: 'swarmDictionaryFields', actual: abbrev(envelope.swarmDictionaryFields),
+    });
   }
   // GitHub #361: the authority digest derives from the repoId, the advisory feed cards and the
   // provider-attempt / canonical-order / route / representation / goal-plan policies — any of
@@ -1588,7 +1732,8 @@ export function _restoreProjectionCheckpoint(store, raw, base = 0) {
   // corruption: the mismatch is recorded, and the invariants below must still prove the bytes
   // before the checkpoint is admitted as `stale_authority`.
   const authorityStale = envelope.authorityDigest !== store._checkpointAuthorityDigest;
-  const prefixDigest = sha256Bytes(raw.subarray(0, envelope.prefixBytes));
+  const prefix = raw.subarray(0, envelope.prefixBytes);
+  const prefixDigest = sha256Bytes(prefix);
   if (prefixDigest !== envelope.prefixDigest) {
     return refuse('prefix_digest', {
       recorded: abbrev(envelope.prefixDigest), derived: abbrev(prefixDigest),
@@ -1602,33 +1747,46 @@ export function _restoreProjectionCheckpoint(store, raw, base = 0) {
       projectionBytes: envelope.projectionBytes.byteLength,
     });
   }
-  // Issue #449(2): the bytes are proven above — the prefix re-derives, the payload re-derives, and
-  // neither shape-specific invariant below has been judged yet — so a checkpoint whose projection
-  // shape is not THIS build's is STALE, never corrupt. Corruption is a repair ('a real
-  // corruption'): a shape change between commits is a rewrite, and the open answers it by
-  // replaying the ledger in full and then rewriting the cache (see `_loadRun`). The cached events
-  // are deliberately NOT reused: a foreign shape's parsed cache proves nothing about this build's
-  // projection, and only the events themselves would be taken from it. A pre-#449 envelope is the
-  // same case — it recorded no shape, so no build can prove it belongs to this one, and the next
-  // write records the shape so the question is answered from then on.
-  if (!shapeRecorded || envelope.projectionShapeDigest !== store._projectionShapeDigest) {
-    const detail = {
-      field: 'projectionShapeDigest',
-      expected: abbrev(store._projectionShapeDigest),
-      actual: shapeRecorded ? abbrev(envelope.projectionShapeDigest) : null,
-      servedCommit: shapeRecorded ? (envelope.servedCommit ?? null) : null,
-    };
-    store._checkpointRestoreReport = freeze({ reason: 'projection_shape_digest', detail: clone(detail) });
-    store._resetProjection();
-    return {
-      state: 'stale_shape', throughSeq: 0, prefixBytes: 0, reused: false,
-      reason: 'projection_shape_digest', detail: clone(detail),
-    };
-  }
   if (envelope.prefixBytes > 0 && raw.at(envelope.prefixBytes - 1) !== 0x0a) {
     return refuse('tail_anchor', {
       field: 'newline_anchor', prefixBytes: envelope.prefixBytes, lastByte: raw.at(envelope.prefixBytes - 1),
     });
+  }
+  // Issue #465(4): the CLAIM. `coversSeq` counts the absolute seqs the body's projection covers, and
+  // the covered window's rows are the ledger lines the prefix holds (rows past the archival cut), so
+  // the two must agree row for row. This replaces the old proof that the cached `_events` matched the
+  // claimed count: the rows are not carried any more, so the claim is judged against the ledger
+  // directly. A prefix holding a different number of rows is a claim past the ledger's last row (a
+  // truncated or rewritten ledger), and the ledger wins.
+  const coveredRows = envelope.coversSeq - base;
+  let prefixRows = 0;
+  if (envelope.prefixBytes > 0) {
+    // Counted without parsing (the parse is the replay's own bounded work, in `_loadRun`).
+    prefixRows = 1;
+    for (let index = 0; index < envelope.prefixBytes - 1; index += 1) {
+      if (raw[index] === 0x0a) prefixRows += 1;
+    }
+  }
+  if (prefixRows !== coveredRows) {
+    return stale('stale_ledger', 'covers_beyond_ledger', {
+      field: 'coversSeq', coversSeq: envelope.coversSeq, base, expectedRows: coveredRows, ledgerRows: prefixRows,
+    });
+  }
+  // The anchored tail: the LAST covered ledger line must re-digest to the one the writer recorded.
+  // It is the #229 append-drift proof the parsed cache used to carry (the last cached row had to
+  // re-serialize to the prefix's final line) — now one digest of the line itself, which the body
+  // does not have to hold. A prefix whose bytes were re-stamped without re-writing the checkpoint
+  // shows here.
+  if (envelope.coversSeq > base) {
+    const lastLineStart = raw.lastIndexOf(0x0a, envelope.prefixBytes - 2) + 1;
+    const lastLine = raw.subarray(lastLineStart, envelope.prefixBytes - 1);
+    if (sha256Bytes(lastLine) !== envelope.coversLineDigest) {
+      return refuse('tail_anchor', {
+        field: 'last_line', prefixBytes: envelope.prefixBytes, coversSeq: envelope.coversSeq,
+        ledgerLine: `${lastLine.subarray(0, 16).toString('hex')}…`,
+        recorded: abbrev(envelope.coversLineDigest), derived: abbrev(sha256Bytes(lastLine)),
+      });
+    }
   }
   let projection;
   try {
@@ -1643,73 +1801,22 @@ export function _restoreProjectionCheckpoint(store, raw, base = 0) {
     });
   }
   const projectionKeys = Object.keys(projection).sort().join(',');
-  if (projectionKeys !== [...PROJECTION_CHECKPOINT_FIELDS].sort().join(',')) {
+  if (projectionKeys !== sorted(PROJECTION_CHECKPOINT_FIELDS)) {
     return refuse('projection_shape', { field: 'keys', actual: abbrev(projectionKeys) });
   }
-  if (!Array.isArray(projection._events)) {
-    return refuse('projection_shape', { field: '_events', actual: typeof projection._events });
-  }
-  if (projection._events.length !== envelope.throughSeq) {
-    return refuse('projection_shape', {
-      field: '_events.length', expected: envelope.throughSeq, actual: projection._events.length,
-    });
-  }
-  if (!(projection._byKey instanceof Map)) {
-    return refuse('projection_shape', { field: '_byKey', actual: typeof projection._byKey });
-  }
-  if (projection._byKey.size !== base + envelope.throughSeq) {
-    // #223: a compacted checkpoint caches the window only; the idempotency map and the
-    // final absolute seq still span the FULL history (archived base + window).
-    return refuse('projection_shape', {
-      field: '_byKey.size', expected: base + envelope.throughSeq, actual: projection._byKey.size,
-    });
-  }
-  if (envelope.throughSeq > 0 && projection._events.at(-1)?.seq !== base + envelope.throughSeq) {
-    return refuse('projection_shape', {
-      field: 'last_seq', expected: base + envelope.throughSeq, actual: projection._events.at(-1)?.seq ?? null,
-    });
-  }
-  const parsedPrefix = projection._events.map((event) => freeze(event));
-  // Issue #351 lane 2: the wholesale equivalence proof is gone. It re-serialized EVERY cached
-  // event (one JSON.stringify per row, an O(ledger) join, and a second ledger-sized copy) on
-  // the startup path — at 144 263 rows that was the resident's multi-second JSON-stringifier
-  // burn. The equivalence it proved is carried now by what the restore and the replay already
-  // hold: the digest and shape checks above (authority, prefix bytes, projection bytes, seq
-  // counts, idempotency-map span), the bounded tail anchor below — the LAST cached row must
-  // re-serialize to the ledger prefix's final line, where any append-time divergence (the
-  // #229 deferred-write hazard) shows — and the replay itself, which re-applies every cached
-  // row under seq, schema, and idempotency-key validation and the current fold cards. v8's
-  // deserialize round-trip is value-faithful for the rows the anchor does not touch.
-  if (envelope.throughSeq > 0) {
-    const lastLineStart = raw.lastIndexOf(0x0a, envelope.prefixBytes - 2) + 1;
-    const lastLine = raw.subarray(lastLineStart, envelope.prefixBytes - 1);
-    const lastEvent = parsedPrefix.at(-1);
-    const cachedLine = lastEvent === undefined ? null : Buffer.from(JSON.stringify(lastEvent), 'utf8');
-    if (cachedLine === null || !cachedLine.equals(lastLine)) {
-      return refuse('tail_anchor', {
-        field: 'last_line', prefixBytes: envelope.prefixBytes,
-        lastEventSeq: lastEvent?.seq ?? null,
-        ledgerLine: `${lastLine.subarray(0, 16).toString('hex')}…`,
-        cachedEvent: cachedLine === null ? null : `${cachedLine.subarray(0, 16).toString('hex')}…`,
-      });
-    }
-  }
-  // A checkpoint is only a parsed-event cache. Every event is still applied below under the
-  // current cards, policies, CAS readers, and receipt/poll reverifiers — the stale-authority
-  // checkpoint's events exactly like a valid checkpoint's, so a changed policy costs no
-  // replayed ledger, and only proven bytes are ever reused.
+  // Issue #465(4): the state is not reusable under another authority digest. Before this lane the
+  // checkpoint was a parsed-event cache and its rows replayed under the current cards exactly as a
+  // valid checkpoint's did; the state it now carries was folded under the OTHER build's policies, so
+  // adopting it would serve a projection this build would never derive. The ledger replays instead,
+  // and `_openCheckpointRefresh` writes a cache this build's authority owns.
   if (authorityStale) {
     const detail = { expected: abbrev(store._checkpointAuthorityDigest), actual: abbrev(envelope.authorityDigest) };
-    store._checkpointRestoreReport = freeze({ reason: 'authority_digest', detail: clone(detail) });
-    return {
-      state: 'stale_authority', throughSeq: envelope.throughSeq, prefixBytes: envelope.prefixBytes,
-      events: parsedPrefix, reused: true, reason: 'authority_digest', detail: clone(detail),
-    };
+    return stale('stale_authority', 'authority_digest', detail);
   }
   store._checkpointRestoreReport = null;
   return {
-    state: 'valid', throughSeq: envelope.throughSeq, prefixBytes: envelope.prefixBytes,
-    events: parsedPrefix,
+    state: 'valid', coversSeq: envelope.coversSeq, prefixBytes: envelope.prefixBytes,
+    projection, dictionaryFields: envelope.swarmDictionaryFields, reused: true,
   };
 }
 

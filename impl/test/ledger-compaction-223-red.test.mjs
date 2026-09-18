@@ -26,9 +26,11 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 //       (segment+window reassembly ≡ full replay; the projection state is identical).
 //   (b) the live events.jsonl contains ONLY the window's events (bounded bytes; the first
 //       live line carries seq === beforeSeq).
-//   (c) the projection checkpoint serializes the window only (throughSeq === window count,
-//       prefixBytes === window bytes, parsed cache `_events` === window events, while the
-//       idempotency map `_byKey` still covers the FULL history).
+//   (c) the projection checkpoint covers the FULL history while the ledger holds the window:
+//       `coversSeq` is the absolute seq its carried projection covers (archived rows included),
+//       `prefixBytes` is the window's own bytes, and the two families the body does NOT carry
+//       (`_events`, `_byKey` — issue #465(4)) are rebuilt from the segments plus the window when
+//       the store opens.
 //
 // Additionally the pin fixes the seam's mechanics: content-addressed segment files under
 // state/coordination/segments/ with the index recording [fromSeq, throughSeq] + digest;
@@ -109,16 +111,16 @@ test('LEDGER COMPACTION (#223): segment+window reassembly replays identically to
   assert.equal(index.segments[0].digest, receipt.segment.digest);
   const segmentBytes = readFileSync(join(dir, 'segments', `${index.segments[0].digest}.jsonl`));
   assert.equal(createHash('sha256').update(segmentBytes).digest('hex'), index.segments[0].digest, 'the segment file is content-addressed');
-  assert.equal(JSON.parse(segmentBytes.toString('utf8').trimEnd().split('\n').at(-1)).seq, TERMINAL_EVENTS, 'the segment covers [1..TERMINAL_EVENTS]');
-
-  // (c) the checkpoint serializes the window only — parsed cache = window; idempotency = full.
+  // (c) the checkpoint covers the whole history while the ledger holds only the window (issue
+  // #465(4): the projection, not the rows — the two ledger families the body does not carry are
+  // rebuilt from the segments plus the window at open).
   const envelope = deserialize(readFileSync(join(dir, 'projection.checkpoint')));
-  assert.equal(envelope.throughSeq, LIVE_EVENTS, 'checkpoint throughSeq is the window count');
+  assert.equal(envelope.coversSeq, TERMINAL_EVENTS + LIVE_EVENTS,
+    'the checkpoint covers every row, archived ones included');
   assert.equal(envelope.prefixBytes, ledgerBytes.byteLength, 'checkpoint prefix is the window bytes');
   const projection = deserialize(envelope.projectionBytes);
-  assert.equal(projection._events.length, LIVE_EVENTS, 'the parsed-event cache holds the window only');
-  assert.equal(projection._events[0].seq, CUT, 'the parsed cache begins at the cut');
-  assert.equal(projection._byKey.size, TERMINAL_EVENTS + LIVE_EVENTS, 'the idempotency map still covers the full history');
+  assert.equal('_events' in projection, false, 'the body carries no parsed-event cache');
+  assert.equal('_byKey' in projection, false, 'and no idempotency map');
 
   // (a) THE INTEGRITY LAW — reopen: segments + window reassemble ≡ full replay.
   const reopened = new CoordinationStore(dir);

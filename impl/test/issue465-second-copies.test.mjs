@@ -40,9 +40,10 @@
 //      goal objective's marker is carried by exactly one ledger row, no family of the checkpoint
 //      body carries it, and `goalVersion`/`planVersion`/`task` still answer the whole row;
 //   d  the parity rows (green at HEAD and after): a store served by the checkpoint and a store
-//      served by the ledger alone answer the SAME rows (the #290 rule), and a checkpoint written by
-//      the pre-change shape — every family carrying its text inline — still loads and answers every
-//      read (the restore reads the parsed window and the idempotency index, never those families).
+//      served by the ledger alone answer the SAME rows (the #290 rule), and a checkpoint whose
+//      families carry their text INLINE — the rendering a build before items 1–3 wrote, which is the
+//      same field set — still loads and answers every read (issue #465(4): the open adopts the body's
+//      families, resolving a reference where one is present and passing an inline row through).
 // Every row here is synchronous: there is no await to bound, and no clock or adapter is involved.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -92,7 +93,7 @@ function storeFor(t, label) {
   return new CoordinationStore(directoryFor(t, label), storeOptions());
 }
 /** The checkpoint BODY this build writes — the object the cost gate serializes and measures. */
-const body = (store) => store._projectionCheckpointPayload({ durable: true });
+const body = (store) => store._projectionCheckpointPayload();
 const familyBytes = (store, family) => serialize(body(store)[family]).byteLength;
 const rowBytes = (store, family, key) => serialize(body(store)[family].get(key)).byteLength;
 const ledgerRow = (store, seq) => store.eventsView()[seq - 1];
@@ -352,9 +353,9 @@ test('465s-d: the checkpoint-served store and the ledger-served store answer the
   }
 });
 
-// ── 465s-e: a checkpoint whose families still carry the text (the shape every resident has on disk) ─
+// ── 465s-e: a checkpoint whose families still carry the text INLINE (no reference pairs) ─────────
 
-test('465s-e: a checkpoint written by the pre-change shape still loads and answers every read', (t) => {
+test('465s-e: a checkpoint whose families carry the text inline still loads and answers every read', (t) => {
   const directory = directoryFor(t, 'legacy-shape');
   const store = new CoordinationStore(directory, storeOptions());
   const web = webCommandFields();
@@ -366,11 +367,11 @@ test('465s-e: a checkpoint written by the pre-change shape still loads and answe
     { actor: 'orchestrator', key: 'spill:465s' });
   const { goal, plan, task } = goalPlanFixture(store);
 
-  // The projection as the PREVIOUS build wrote it: every family carries the text inline, with no
-  // reference pair on the row. The text is read from the ledger row a pair names — the shape's own
-  // inverse, derived here so the file is a real pre-change checkpoint and not an approximation —
-  // and a family whose rows carry no pair is passed through exactly as this build wrote it (which
-  // IS the pre-change shape on a build before this lane).
+  // Issue #465(4): the body's RENDERING is not its shape. A family may carry its text inline (no
+  // pair) or as the reference the write mints, and both are this build's field set — the shape digest
+  // covers the FIELDS, and the open adopts either, resolving a pair when it finds one and passing an
+  // inline row through untouched. This fixture is the inline rendering (the shape a build before
+  // items 1–3 wrote), derived from the ledger rows the pairs name.
   const current = body(store);
   const at = (seq) => store.eventsView()[seq - 1];
   const inline = (row, field, read) => {
@@ -379,7 +380,7 @@ test('465s-e: a checkpoint written by the pre-change shape still loads and answe
     const { [`${field}Ref`]: _reference, [`${field}Bytes`]: _bytes, ...rest } = row;
     return { ...rest, [field]: read(at(reference.seq).payload) };
   };
-  const legacy = {
+  const inlineBody = {
     ...current,
     _webCommands: new Map([...current._webCommands].map(([key, row]) => {
       const reference = row.outcome?.bodyRef;
@@ -394,14 +395,19 @@ test('465s-e: a checkpoint written by the pre-change shape still loads and answe
     _planHeads: new Map([...current._planHeads].map(([key, row]) => [key, inline(row, 'nodes', (payload) => payload.plan?.nodes ?? null)])),
     _tasks: new Map([...current._tasks].map(([key, row]) => [key, inline(row, 'brief', (payload) => payload.brief ?? null)])),
   };
+  assert.equal('_events' in inlineBody, false, 'the body carries no event log');
+  assert.equal('_byKey' in inlineBody, false, 'and no idempotency index');
   const ledgerBytes = readFileSync(join(directory, 'events.jsonl'));
-  const projectionBytes = serialize(legacy);
+  const projectionBytes = serialize(inlineBody);
   writeFileSync(join(directory, CHECKPOINT), serialize({
     schemaVersion: 1,
     authorityDigest: store._checkpointAuthorityDigest,
     projectionShapeDigest: store._projectionShapeDigest,
     servedCommit: null,
-    throughSeq: legacy._events.length,
+    coversSeq: store._events.length,
+    coversLineDigest: sha256(ledgerBytes.subarray(
+      ledgerBytes.lastIndexOf(0x0a, ledgerBytes.byteLength - 2) + 1, ledgerBytes.byteLength - 1)),
+    swarmDictionaryFields: [],
     prefixBytes: ledgerBytes.byteLength,
     prefixDigest: sha256(ledgerBytes),
     projectionDigest: sha256(projectionBytes),
@@ -410,10 +416,10 @@ test('465s-e: a checkpoint written by the pre-change shape still loads and answe
 
   const reopened = new CoordinationStore(directory, storeOptions());
   assert.equal(reopened.startupStatus().checkpoint, 'valid',
-    'a checkpoint whose families carry the text inline is still THIS build\'s shape — the field set is what the digest covers');
+    'a body whose families carry the text inline is still THIS build\'s shape — the field set is what the digest covers');
   assert.equal(reopened.startupStatus().source, 'checkpoint');
   assert.deepEqual(reopened.webCommand('cmd-465s').outcome, { httpStatus: 200, body: answer },
-    'the fold mints the reference over the replayed rows whatever shape the cache carried');
+    'a row the body carried inline is adopted as it stands, and the store\'s own reader answers it');
   assert.equal(reopened.materializeSpill(minted.spill.spillId).body, spilled);
   assert.equal(reopened.goalVersion(goal.goalId, goal.version).objective, GOAL_OBJECTIVE);
   assert.deepEqual(reopened.planVersion(plan.planId, plan.version).nodes,

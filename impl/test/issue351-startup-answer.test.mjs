@@ -360,27 +360,37 @@ test('SA4: the async open yields the loop between chunks \u2014 and the sync ope
   reopened.releaseWriterLease({ requireOwned: true });
 });
 
-test('SA5: the restore refuses a coherent-but-divergent cache at the ledger\u2019s final line \u2014 without re-serializing every row', (t) => {
-  const root = fixtureRoot(t, 'tail-anchor');
+test('SA5: the restore refuses a coherent-but-divergent cache \u2014 without re-serializing every row', (t) => {
+  const root = fixtureRoot(t, 'divergent-body');
   const directory = join(root, 'coordination');
   const store = new CoordinationStore(directory, { checkpointInterval: 16 });
   store.claimWriterLease();
   for (let index = 0; index < 30; index += 1) {
     store.recordMcpAudit({ entry: index }, { actor: 'test:issue351', key: `issue351:tail:${index}` });
   }
+  // One reference-bearing row: a completed web command's answer body is CARRIED BY REFERENCE in the
+  // checkpoint's body (issue #465(3)), which is what the divergence below turns on.
+  store.admitWebCommand({
+    commandId: 'cmd-351', scopeKey: 'scope-351', requestDigest: createHash('sha256').update('cmd-351').digest('hex'),
+    command: 'swarm_view', repoId: 'repo-issue351', runId: null, userId: 'user-1', sessionId: 'session-1',
+    credentialId: 'cred-1', origin: 'cli', expectedFence: null, requestAxes: { request: 'digest' },
+  }, { actor: 'web:user-1', key: 'issue351:web:admit' });
+  store.completeWebCommand('cmd-351', { httpStatus: 200, body: { ok: true, answer: 'the ledger holds this' } },
+    { actor: 'web:user-1', key: 'issue351:web:complete' });
   store.releaseWriterLease({ requireOwned: true });
   assert.ok(existsSync(join(directory, 'projection.checkpoint')), 'the release wrote a bounded checkpoint');
 
-  // Corrupt the cache's LAST event and re-derive every digest the envelope checks — every
-  // digest gate now passes, exactly as a store bug that diverges the cache from the ledger
-  // would leave them. The equivalence proof must still refuse it, at O(1), not O(ledger).
+  // Issue #465(4): the body carries the PROJECTION, so the divergence to refuse is a reference the
+  // ledger cannot back — the body's answer-body pair is re-pointed at a row that is not a
+  // `web.command_completed` row, and every digest the envelope checks is re-derived, so only the
+  // body-versus-ledger proof can refuse it. It must do so without re-serializing history, and the
+  // ledger stays authoritative.
   const checkpointPath = join(directory, 'projection.checkpoint');
   const envelope = deserialize(readFileSync(checkpointPath));
   const projection = deserialize(envelope.projectionBytes);
-  const last = projection._events.at(-1);
-  const divergent = JSON.parse(JSON.stringify(last));
-  divergent.payload.entry = 999_999;
-  projection._events = projection._events.slice(0, -1).concat([divergent]);
+  const row = projection._webCommands.get('cmd-351');
+  assert.deepEqual(row.outcome.bodyRef.kind, 'web.command_completed', 'the body names the row that holds the answer');
+  row.outcome.bodyRef = { kind: 'web.command_completed', seq: 30 };
   const projectionBytes = serialize(projection);
   envelope.projectionBytes = projectionBytes;
   envelope.projectionDigest = createHash('sha256').update(projectionBytes).digest('hex');
@@ -388,8 +398,11 @@ test('SA5: the restore refuses a coherent-but-divergent cache at the ledger\u201
 
   const reopened = new CoordinationStore(directory);
   const status = reopened.startupStatus();
-  assert.equal(status.checkpoint, 'corrupt', 'the divergent cache is refused');
+  assert.equal(status.checkpoint, 'stale_ledger', 'a body that disagrees with the ledger is refused');
+  assert.equal(status.checkpointReason, 'reference_unresolved', 'and the row names the invariant that failed');
   assert.equal(status.source, 'ledger_fallback', 'the ledger stays authoritative');
-  assert.equal(reopened.snapshot().lastSeq, 30, 'and the replay answers from the ledger bytes');
+  assert.equal(reopened.snapshot().lastSeq, 32, 'and the replay answers from the ledger bytes');
+  assert.deepEqual(reopened.webCommand('cmd-351').outcome.body, { ok: true, answer: 'the ledger holds this' },
+    'including the text the divergent body had pointed at the wrong row');
   reopened.releaseWriterLease({ requireOwned: true });
 });

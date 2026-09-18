@@ -53,6 +53,19 @@ function appendRows(store, count, { from = 1, payload = (index) => ({ index }) }
   }
 }
 
+/** Issue #465(4): carried rows — the fixture that puts the checkpoint's OWN cost past the ceiling
+ * now that the body no longer carries the event log. `evidence.mapped` folds its payload into
+ * `_evidence` verbatim (no reference rendering), so these rows are body bytes, the way a real
+ * campaign's carried families are. */
+function appendEvidenceRows(store, count, bytes) {
+  const body = 'x'.repeat(bytes);
+  for (let index = 1; index <= count; index += 1) {
+    store._append('evidence.mapped', {
+      worker: 'w-449b', workerSeq: index, digest: `issue449b:${index}`, body: `${body}#${index}`,
+    }, { actor, key: `issue449b:evidence:${index}` });
+  }
+}
+
 /** Read the checkpoint envelope. v8's deserialize loses Buffer-ness, so the cached projection bytes
  * are re-copied into a Buffer the way the writer stored them. */
 function readEnvelope(directory) {
@@ -104,8 +117,10 @@ test('449b-a: a ledger past the cost ceiling whose projection fits still checkpo
 test('449b-b: a projection past the ceiling skips the release naming its measured bytes, and the next open writes the cache', (t) => {
   const directory = root(t, 'projection-over');
   const store = new CoordinationStore(directory, { checkpointInterval: 100_000 });
-  store.recordDriver('issue449b.fixture', { blob: 'x'.repeat(COST.value + 4_096) },
-    { actor, key: 'issue449b:oversize' });
+  // Issue #465(4): the body no longer carries the event log, so the fixture grows a family the body
+  // KEEPS WHOLE (`evidence.mapped` folds into `_evidence` verbatim) — the cost the ceiling judges is
+  // the body's own, and this is one.
+  appendEvidenceRows(store, 10, 2 * 1024 * 1024);
   store.releaseWriterLease({ requireOwned: true });
 
   const release = store.checkpointReleaseState();
@@ -120,9 +135,8 @@ test('449b-b: a projection past the ceiling skips the release naming its measure
   // stop could not pay costs no stop's deadline, and it is the only thing that bounds the NEXT open.
   const second = new CoordinationStore(directory, { checkpointInterval: 100_000 });
   const secondStatus = second.startupStatus();
-  assert.equal(secondStatus.checkpoint, 'absent', 'there is no cache to serve this open');
+  assert.equal(secondStatus.replayedEvents, 10, 'every carried row the fixture wrote is folded');
   assert.equal(secondStatus.source, 'ledger', 'so the ledger is replayed');
-  assert.equal(secondStatus.replayedEvents, 1);
   assert.equal(secondStatus.checkpointRewrite?.state, 'written',
     'the open owes the next open the cache the release skipped');
   assert.equal(secondStatus.checkpointRewrite?.refreshed, true);
@@ -147,7 +161,9 @@ test('449b-c: an open served by a stale-authority cache refreshes it, and the ne
   assert.ok(existsSync(join(directory, CHECKPOINT)), 'the fixture wrote its checkpoint');
 
   // Another resident wrote it: proven bytes under a different authority digest — the live case, where
-  // the cache was folded under other cards/policies and the resident then served for hours.
+  // the state was folded under other cards/policies and the resident then served for hours. Issue
+  // #465(4): that state is NOT this build's, and a checkpoint now carries STATE rather than a parsed
+  // window, so it is not reused — the ledger replays (and the open rewrites the cache).
   const envelope = readEnvelope(directory);
   envelope.authorityDigest = 'c'.repeat(64);
   writeEnvelope(directory, envelope);
@@ -156,11 +172,11 @@ test('449b-c: an open served by a stale-authority cache refreshes it, and the ne
   const secondStatus = second.startupStatus();
   assert.equal(secondStatus.checkpoint, 'stale_authority',
     'a proven checkpoint under another authority digest is its own state');
-  assert.equal(secondStatus.source, 'checkpoint', 'its cached window is reused');
-  assert.equal(secondStatus.checkpointEvents, 24);
-  assert.equal(secondStatus.replayedEvents, 0);
+  assert.equal(secondStatus.source, 'ledger_fallback', 'its state is not this build\'s: the ledger replays');
+  assert.equal(secondStatus.checkpointEvents, 0, 'nothing is adopted from another authority\'s fold');
+  assert.equal(secondStatus.replayedEvents, 24);
   assert.equal(secondStatus.checkpointRewrite?.state, 'written',
-    'the open that had to fall back to another authority\u2019s cache refreshes it');
+    'the open that had to fall back to the ledger refreshes the cache');
   assert.equal(secondStatus.checkpointRewrite?.refreshed, true);
   assert.equal(secondStatus.checkpointRewrite?.reason, 'stale_authority_rewrite');
   assert.ok(Number.isSafeInteger(secondStatus.checkpointRewrite?.bytes) && secondStatus.checkpointRewrite.bytes > 0,
@@ -186,15 +202,16 @@ test('449b-d: the deferred housekeeping write re-measures only a window it has n
   const measure = store._writeProjectionCheckpoint.bind(store);
   store._writeProjectionCheckpoint = (options) => { measurements += 1; return measure(options); };
 
-  appendRows(store, 16, { payload: (index) => (index === 1
-    ? { blob: 'x'.repeat(COST.value + 4_096) } : { index }) });
+  // 16 carried rows past the ceiling, then 16 more: the window has only GROWN since the measurement.
+  appendEvidenceRows(store, 10, 2 * 1024 * 1024);
+  appendRows(store, 6);
   await settle();
   assert.equal(measurements, 1, 'the first deferred fire measured the projection and refused it');
   assert.equal(existsSync(join(directory, CHECKPOINT)), false, 'the ceiling still refuses that write');
   assert.equal(store._checkpointCostVerdict?.rows, 16, 'the verdict names the window it measured');
   assert.ok(store._checkpointCostVerdict?.bytes > COST.value);
 
-  appendRows(store, 16, { from: 17 });
+  appendRows(store, 10, { from: 17 });
   await settle();
   assert.equal(measurements, 1,
     'a window that has only grown since a measurement past the ceiling is still past it — no second serialize');
@@ -208,7 +225,7 @@ test('449b-e: the deferred housekeeping write still lands while the projection f
   await settle();
   assert.ok(existsSync(join(directory, CHECKPOINT)), 'a bounded projection is still cached on the loop');
   const envelope = readEnvelope(directory);
-  assert.equal(envelope.throughSeq, 16);
+  assert.equal(envelope.coversSeq, 16);
   assert.ok(store._checkpointCostVerdict?.bytes <= COST.value, 'and the verdict is this window\u2019s own measurement');
   store.releaseWriterLease({ requireOwned: true });
 });

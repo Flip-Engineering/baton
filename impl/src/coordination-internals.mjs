@@ -66,8 +66,18 @@ export const MAD_UNIT_CANON = new Map([
 
 export const MAX_CONTEXT_PACK_BODY_BYTES = FRAME_LIMITS['context_pack.body'].value;
 
+/** Issue #465(4): the projection families the checkpoint CARRIES. `_events` (every parsed ledger
+ * row) and `_byKey` (the same row objects indexed by idempotency key) are deliberately NOT among
+ * them: the ledger file is their durable copy, replay reads it anyway, and carrying them made the
+ * body a second copy of the event log — measured live at 193 MB + 195 MB on a 207 MB projection,
+ * which is why every stop on a real ledger skipped its write as `release_checkpoint_unbounded`
+ * (see PROJECTION_LEDGER_FIELDS). The successor rebuilds the two from the ledger at open and folds
+ * only the rows past `coversSeq` (`coordination-replay.mjs` `_loadRun`).
+ *
+ * `_steeringRuns` is carried here because it is fold output the ledger copy cannot hand back: with
+ * the events no longer cached, every family the restore installs must be one the body carries. */
 export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
-  '_events', '_byKey', '_tasks', '_runs', '_artifacts',
+  '_tasks', '_runs', '_artifacts',
   '_reuseDecisions', '_reuseSubjects', '_reuseRiskGuards', '_reusePolicyHeads',
   '_reusePolicyTransitions', '_routeObservations', '_representations',
   '_representationRequests', '_goals', '_goalHeads', '_plans', '_planHeads',
@@ -119,7 +129,19 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_scratchpadElevations', '_scratchpadReaps',
   // KG-1 (Part A rule 5): gains _projectionInputFence, a plain replay-derived counter.
   '_projectionInputFence',
+  // Issue #465(4): the runs a `steering.registered` row folded — read by run/wave admission, and
+  // fold state the ledger copy PROJECTION_LEDGER_FIELDS names cannot hand back.
+  '_steeringRuns',
 ]);
+
+/** Issue #465(4): the projection's two LEDGER-copy families — every parsed ledger row, and those
+ * same row objects indexed by idempotency key. They are projection state, but the durable copy of
+ * them is the ledger file itself: the checkpoint carries NEITHER (they are absent from
+ * PROJECTION_CHECKPOINT_FIELDS) and records the `coversSeq` it is entitled to instead, so a
+ * successor rebuilds both by reading the ledger `_loadRun` shares with the cold replay path and
+ * folds only the rows past that seq. Measured live (2026-09-18): these two were 193 MB and 195 MB
+ * of a 207 MB body, the same rows counted twice. */
+export const PROJECTION_LEDGER_FIELDS = Object.freeze(['_events', '_byKey']);
 
 export const SCRATCHPAD_SCOPE = /^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u;
 
