@@ -914,6 +914,10 @@
       "reason": "#160"
     },
     {
+      "key": "test/phase58-driver-sparse-projection.test.mjs :: Phase 58: createDriver composes worker/verify sparse views with projected node_modules and drain reaps every owned residue",
+      "reason": "#460"
+    },
+    {
       "key": "test/phase62-web-goal-plan.test.mjs :: GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures refuse safely",
       "reason": "design"
     },
@@ -1195,6 +1199,110 @@
     {
       "key": "test/prescriptive-doctor-red.test.mjs :: PT-9 (stage: W5 missing): the result-pin census fires above the configured bound across BOTH namespaces and is quiet below it (§4.1 W5, B7, finding 8b)",
       "reason": "#72"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-10a (stage: GrokCredentialCache missing): the grok cache harvests a schema-valid fresher write-back from the vendor-native target",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-10b (stage: GrokCredentialCache missing): invalid_grant latches without a second flight; the explicit command clears the latch and is the only persist-back path",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-10p (pin): the grok refresh fixture fails closed without the suite sentinel or a tmpdir-confined HOME — a wrong implementation can never clobber the operator credential",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-11 (stage: GrokCredentialCache missing): N concurrent refreshes coalesce single-flight; an auth.json change mid-flight aborts the adoption; the advisory lockfile blocks cross-deployment flights",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-12 (stage: GrokCredentialCache missing): access-token-only projection — no grok worker runtime ever receives the refresh token, on EITHER projection channel",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-13a (stage: #84 deployment wiring missing): refresh-token death surfaces at the doctor with the grok corrective action",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-13b (pin): the kimi revoked-tombstone recognition stays exact — a partial/corrupt record is metadata-invalid, never promoted to revoked",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-13c (pin): every vendor's remedy text is its own and the shared terminal guidance stays vendor-agnostic",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-14a (stage: credentialKey join missing): a probe-sourced invalid_grant invalidates every liveness row sharing the credentialKey — and ONLY those rows (a second credential identity is the negative control)",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-14b (stage: credentialKey join missing): a worker-turn invalid_grant verdict invalidates the sibling rows the same way — and only those rows (§4.3.3)",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-1a (stage: #47 probe tier missing): a content-verified probe marks the route live-verified with the minted receipts",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-1b (stage: #47 probe tier missing): spawned-but-never-content-verified and wrong-content probes are probe_failed, never verified",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-2 (stage: #47 cache missing): never probe per call — fresh-window spawns probe zero, a cold consult probes once, concurrent stale spawns coalesce",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-2b (stage: #47 cache missing): a STALE liveness window re-probes exactly once on the next consult — cache-forever-after-first-probe is a red-first failure (§4.1.3)",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-3 (stage: #47 probe bounds missing): one probe is one bounded provider call — prompt ≤1KiB, capture ≤2KiB, latency ≤120s, no retry loop",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-3b (stage: #47 probe bounds missing): the ≤120s probe timeout is ENFORCED — a hanging probe is killed and classified provider_unreachable, never awaited forever (§4.1.2)",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-4 (stage: #47 gate missing): static-ready and provider-alive are separable; only failed liveness refuses, with the classified typed code",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-4p (pin): the static readiness substrate is unchanged — the tier is additive, never a replacement",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-5 (stage: #47 preflight consumption missing): the wave-driver preflight rides the cache — fresh costs zero probes, a cold wave costs ≤1 per stale route",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-5p (pin): the existing preflight still refuses a static-blocked member with wave_driver_route_unready",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-6 (stage: fleet_roster surface missing): the roster projects the closed document — static + liveness + occupancy + learning-or-null + bounded observations tail",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-6b (stage: fleet_roster surface missing): a POPULATED router bucket projects its learning row — samples/winRate/weight/mode — while bucket-absent routes keep honest-empty null (§4.2.1)",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-7 (stage: roster occupancy missing): projected inFlight is the coordinator's real seat count, never caller-supplied",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-7b (stage: doctor occupancy missing): doctor route rows carry the same coordinator-seat occupancy the roster projects (§4.2.2)",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-8 (stage: roster sanitizer missing): no credential value, executable path, private path, or provider token crosses the roster boundary",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-credentials-red.test.mjs :: RT-9 (stage: fleet_roster registration missing): the roster registers in the ordinary plane's advanced fleet_* family with honest provenance, and doctor/roster rows never drift",
+      "reason": "#460"
     },
     {
       "key": "test/readiness-honesty-red.test.mjs :: A1a (stage: enumerable honest projection): a static-only doctor row reads unverified with probedAt null — never self-relabeled probe-verified — and the fields survive JSON.stringify; a fresh content-verified probe reads probe-verified with probedAt = recorded verifiedAt (D2 cardinal law + wire law)",
