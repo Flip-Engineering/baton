@@ -510,7 +510,7 @@ records for itself, disjoint from the caller-submittable set above:
 **Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
 runtime admission check reads (`impl/src/swarm-runtime.mjs`).
 
-**Attention kinds (closed set, 16).** Each view row is a condition that needs an act, derived by the
+**Attention kinds (closed set, 17).** Each view row is a condition that needs an act, derived by the
 runtime from durable state — never asserted by a caller:
 
 - `participant_runtime_dead`
@@ -519,6 +519,7 @@ runtime from durable state — never asserted by a caller:
 - `assignment_holder_gone`
 - `group_member_gone`
 - `coupling_writer_gone`
+- `coupling_writer_bypassed`
 - `closed_with_live_participants`
 - `check_queued`
 - `check_queue_timeout`

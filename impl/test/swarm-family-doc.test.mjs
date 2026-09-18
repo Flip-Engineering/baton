@@ -73,12 +73,14 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   // adds the two check-admission rows (check_queued, check_queue_timeout), minted first in source.
   // The #357 remainder adds three derived rows (worktree_foreign_changes,
   // turn_ended_without_contribution, provider_auth_expired), minted after the admission fold.
-  assert.equal(kinds.length, 16, 'the runtime mints sixteen attention kinds');
+  // #425 adds the writer-coupling bypass row (coupling_writer_bypassed), minted inside the
+  // writer block, right after coupling_writer_gone — one row paging the writer, one the bypasser.
+  assert.equal(kinds.length, 17, 'the runtime mints seventeen attention kinds');
   assert.deepEqual(kinds, [
     'participant_runtime_dead', 'member_left_session_live', 'delegation_orphaned',
     'assignment_holder_gone', 'group_member_gone', 'coupling_writer_gone',
-    'closed_with_live_participants', 'check_queued', 'check_queue_timeout',
-    'recruit_queued', 'recruit_queue_timeout',
+    'coupling_writer_bypassed', 'closed_with_live_participants', 'check_queued',
+    'check_queue_timeout', 'recruit_queued', 'recruit_queue_timeout',
     'worktree_foreign_changes', 'turn_ended_without_contribution', 'provider_auth_expired',
     'operation_refused', 'operation_unconfirmed',
   ]);

@@ -1006,7 +1006,70 @@ export class SwarmRuntime {
     return delegations;
   }
 
+  /** Issue #425: the checkout's exclusive-writer coupling is kept honest at the seat's own
+   * git seam. The projected writer files (runtime-isolation.mjs) are rewritten here — by the
+   * ONE component that folds coupling events — on every coupling change and binding, so the
+   * file a wrapper reads at commit time cannot go stale: the write happens in the same
+   * synchronous apply path that appended the event, before the mutating answer returns. The
+   * wrappers' own commit observations drain here into the durable rows: attribution always
+   * (`worktree.commit_recorded`), and `swarm.coupling_writer_bypassed` when the observation
+   * saw another seat as the checkout's live writer. A bypass whose named record no longer
+   * matches the fold (a re-declare over another checkout between the act and this drain)
+   * composes no row — a stale sensor line must never refuse the fold nor fabricate a bypass
+   * against a checkout the coupling does not cover. */
+  _settleCheckoutWriterState() {
+    const scopes = this.coordinator?._runtimeScopes ?? null;
+    if (!scopes || typeof scopes.takeCommitObservations !== 'function') return;
+    for (const swarm of this.store.swarms()) {
+      const writers = new Map();
+      for (const record of Object.values(swarm.couplings ?? {})) {
+        if (record.coupling === 'writer' && record.released !== true && typeof record.workspaceId === 'string') {
+          writers.set(record.workspaceId, { couplingId: record.couplingId, writer: record.writer });
+        }
+      }
+      for (const participant of Object.values(swarm.participants)) {
+        if (participant.status !== 'active') continue;
+        const workerId = participant.bindings?.at(-1)?.workerId;
+        if (typeof workerId !== 'string' || workerId.length === 0) continue;
+        const workspaceId = typeof participant.workspaceId === 'string' ? participant.workspaceId : null;
+        const writer = workspaceId !== null ? writers.get(workspaceId) ?? null : null;
+        scopes.projectWriterCoupling(workerId, {
+          workspaceId,
+          couplingId: writer?.couplingId ?? null,
+          writer: writer?.writer ?? null,
+        });
+      }
+    }
+    for (const observation of scopes.takeCommitObservations()) {
+      const swarmId = typeof observation.swarmId === 'string' && observation.swarmId.length > 0 ? observation.swarmId : null;
+      const participantId = typeof observation.participantId === 'string' && observation.participantId.length > 0 ? observation.participantId : null;
+      if (swarmId === null || participantId === null) continue; // an unidentified commit is nobody's row
+      const sha = typeof observation.sha === 'string' && observation.sha.length > 0 ? observation.sha : null;
+      const workspaceId = typeof observation.workspaceId === 'string' && observation.workspaceId.length > 0 ? observation.workspaceId : null;
+      const at = typeof observation.at === 'string' && observation.at.length > 0 ? observation.at : null;
+      const paths = Array.isArray(observation.paths) ? observation.paths.filter((path) => typeof path === 'string') : [];
+      const observationKey = hash(['worktree-commit', swarmId, participantId, workspaceId, sha, at]);
+      this.store.recordDriver('worktree.commit_recorded', {
+        swarmId, participantId, workspaceId, sha, at, paths,
+      }, { actor: 'baton-runtime', key: `worktree-commit:${observationKey}` });
+      const couplingId = typeof observation.couplingId === 'string' && observation.couplingId.length > 0 ? observation.couplingId : null;
+      const writer = typeof observation.writer === 'string' && observation.writer.length > 0 ? observation.writer : null;
+      if (couplingId === null || writer === null || writer === participantId) continue;
+      const swarm = this.store.swarm(swarmId);
+      const record = swarm
+        ? Object.values(swarm.couplings ?? {}).find((row) => row.couplingId === couplingId) ?? null : null;
+      if (!record || record.coupling !== 'writer' || record.workspaceId !== workspaceId) continue;
+      this.store.recordSwarm('swarm.coupling_writer_bypassed', {
+        swarmId, couplingId, workspaceId, writer, by: participantId, sha, at,
+      }, { actor: 'baton-runtime', key: `swarm-writer-bypass:${observationKey}` });
+    }
+  }
+
   inspect(swarm, principal, context, scopeId = null, projection = SWARM_VIEW_DEFAULT_PROJECTION) {
+    // Issue #425: drain before the projection reads the fold — the rows this settle writes
+    // must be folded into THIS view, so the swarm row is re-read after the settle.
+    this._settleCheckoutWriterState();
+    swarm = this.store.swarm(swarm.swarmId) ?? swarm;
     const caller = this._permit(swarm, principal, context, 'read');
     // An optional participantId scopes the read to that participant's delegation (issue #263
     // item 3): its subtree, the work actively assigned within, their contributions and reviews.
@@ -1140,6 +1203,25 @@ export class SwarmRuntime {
       if (payload?.kind !== 'swarm.participant_bound' || typeof payload.workspaceId !== 'string') continue;
       if (typeof payload.participantId === 'string') workspaceIdByParticipant.set(payload.participantId, payload.workspaceId);
     }
+    // Issue #425: the commit-attribution rows the projected git wrapper wrote, per seat in
+    // ledger order — the workspace projection shows who committed what in the checkout. The
+    // view mints nothing of its own here; the wrapper's spool drain is the only writer.
+    const commitsByParticipant = new Map();
+    for (const event of ledger) {
+      const kind = event.kind === 'driver.recorded' ? event.payload?.kind : event.kind;
+      if (kind !== 'worktree.commit_recorded') continue;
+      const payload = event.payload ?? {};
+      if (payload.swarmId !== swarm.swarmId || typeof payload.participantId !== 'string') continue;
+      const rows = commitsByParticipant.get(payload.participantId) ?? [];
+      rows.push(Object.freeze({
+        sha: typeof payload.sha === 'string' ? payload.sha : null,
+        workspaceId: typeof payload.workspaceId === 'string' ? payload.workspaceId : null,
+        paths: Object.freeze(Array.isArray(payload.paths) ? [...payload.paths] : []),
+        at: typeof payload.at === 'string' ? payload.at : event.ts ?? null,
+        seq: event.seq,
+      }));
+      commitsByParticipant.set(payload.participantId, rows);
+    }
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
@@ -1180,6 +1262,9 @@ export class SwarmRuntime {
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
           : { physicalOwnerId: workspaceId, shared: false, holderCount: 0 }),
         workspaceId,
+        // Issue #425: the commits the wrapper attributed to this seat, in ledger order — the
+        // workspace projection's per-seat commit list, derived from the durable rows.
+        commits: Object.freeze([...(commitsByParticipant.get(participant.participantId) ?? [])]),
         branch: liveBranch ?? custody?.branch ?? null,
         headSha: liveHead ?? custody?.headSha ?? null,
         snapshotSha: custody?.snapshotSha ?? null,
@@ -1306,6 +1391,19 @@ export class SwarmRuntime {
           organization.push({ kind: 'coupling_writer_gone', couplingId: record.couplingId, participantId: record.writer,
             workspaceId: record.workspaceId,
             next: { event: 'swarm.coupling_updated', couplingId: record.couplingId, action: 'release' } });
+        }
+        // Issue #425: a peer committed while this coupling was live — the act is recorded,
+        // never refused, so the swarm SEES it: the writer is paged to release the coupling,
+        // the bypasser to take it (docs/39 §Declared coupling, kept honest at the checkout).
+        for (const bypass of record.bypasses ?? []) {
+          organization.push({ kind: 'coupling_writer_bypassed', couplingId: record.couplingId,
+            workspaceId: record.workspaceId, participantId: record.writer, bypassedBy: bypass.by,
+            sha: bypass.sha ?? null, at: bypass.at ?? null,
+            next: { event: 'swarm.coupling_updated', couplingId: record.couplingId, action: 'release' } });
+          organization.push({ kind: 'coupling_writer_bypassed', couplingId: record.couplingId,
+            workspaceId: record.workspaceId, participantId: bypass.by, writer: record.writer,
+            sha: bypass.sha ?? null, at: bypass.at ?? null,
+            next: { event: 'swarm.coupling_updated', couplingId: record.couplingId, action: 'declare', participantId: bypass.by } });
         }
       }
     }
@@ -2296,6 +2394,11 @@ export class SwarmRuntime {
 
   async _dispatch(command, args, principal, context = null) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
+    // Issue #425: every runtime entry refreshes the projected writer files and drains the
+    // commit spools, so a coupling change or a seat's commit is seen at the next operation —
+    // and the mutating arms below (a coupling declare/release, a recruit binding) settle
+    // again after their writes, before the answer ever returns to the seat.
+    this._settleCheckoutWriterState();
     // The native bridge's refusal report (issue #283). It reaches the runtime through `dispatch`
     // because that is the bridge's ONLY channel, and it is admitted only from a bridge report: the
     // verb is not a swarm command (swarm-contract asserts it never becomes one), so no surface can
@@ -2453,6 +2556,7 @@ export class SwarmRuntime {
       const recorded = this._write(args.event, payload, principal, this._operationKey(command, args, principal));
       this._recordOperationCompleted(command, args, principal, context);
       if (args.event === 'swarm.participant_left') this._reconcileHostCapacity();
+      if (args.event === 'swarm.coupling_updated') this._settleCheckoutWriterState();
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
         return this._mutationResult(command, args, [recorded], principal, context,
           { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false });
@@ -2649,6 +2753,8 @@ export class SwarmRuntime {
           swarmId: args.swarmId, participantId: args.participantId, workerId: worker.id, taskId: worker.taskId,
           ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
         }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`));
+        // Issue #425: the new lease learns the checkout's live writer before its seat can act.
+        this._settleCheckoutWriterState();
         // Issue #345: the recruit named its work item, so the runtime assigns the seat on join —
         // the assignment row itself, written after the run admitted the seat so a rolled-back
         // recruit assigns nothing.

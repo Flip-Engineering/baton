@@ -21,6 +21,9 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.work_updated',
   'swarm.assignment_updated',
   'swarm.coupling_updated',
+  // Issue #425: the runtime-recorded bypass of a live exclusive writer coupling — observed
+  // at the seat's projected git wrapper, composed by the runtime, never caller-submittable.
+  'swarm.coupling_writer_bypassed',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
@@ -351,6 +354,19 @@ export function validateSwarmEvent(kind, payload) {
         refuse('a failure policy declares groupId and policy', 'invalid_payload');
       }
     }
+    return;
+  }
+  if (kind === 'swarm.coupling_writer_bypassed') {
+    if (!isNonEmptyString(p.couplingId)) refuse('swarm.coupling_writer_bypassed requires couplingId', 'invalid_payload');
+    // The checkout the bypass happened in: the coupling record's own identity, so the row can
+    // never describe a different resource than the writer record it lands on.
+    if (typeof p.workspaceId !== 'string' || !WORKSPACE_ID.test(p.workspaceId)) {
+      refuse('swarm.coupling_writer_bypassed requires one physical workspace identity', 'invalid_payload');
+    }
+    if (!isNonEmptyString(p.writer)) refuse('swarm.coupling_writer_bypassed requires writer', 'invalid_payload');
+    if (!isNonEmptyString(p.by)) refuse('swarm.coupling_writer_bypassed requires by — the seat that committed', 'invalid_payload');
+    if (p.sha !== null && !isNonEmptyString(p.sha)) refuse('coupling_writer_bypassed sha must be a sha string or null', 'invalid_payload');
+    if (!isNonEmptyString(p.at)) refuse('swarm.coupling_writer_bypassed requires at — when the commit was observed', 'invalid_payload');
     return;
   }
   if (kind === 'swarm.assignment_updated') {
@@ -729,6 +745,10 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
         couplingId: p.couplingId, coupling: p.coupling,
         groupId: p.groupId ?? null, name: p.name ?? null, policy: p.policy ?? null,
         members, writer, workspaceId, arrivals, carriedArrivals,
+        // Issue #425: the bypasses observed against this writer record — appended by the
+        // fold, carried as history, never rewritten by a re-declare (a re-declared writer
+        // record starts clean; the ledger keeps the old rows).
+        ...(p.coupling === 'writer' ? { bypasses: Object.freeze([]) } : {}),
         released: false, releasedBy: null, releaseReason: null,
       };
     } else {
@@ -765,6 +785,30 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     const couplings = new Map(Object.entries(swarm.couplings));
     couplings.set(p.couplingId, Object.freeze({
       ...record, version: currentVersion + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    }));
+    swarms.set(p.swarmId, replaceField(swarm, 'couplings', couplings));
+    return;
+  }
+
+  if (kind === 'swarm.coupling_writer_bypassed') {
+    // Issue #425: a peer committed in the checkout while this writer coupling was live. The
+    // runtime composes the row from the projected wrapper's own observation, so the fold
+    // appends it as history on the record it names — the act is recorded, never refused,
+    // and the view pages both seats from it. The workspace must be the record's own: a row
+    // naming a different checkout would describe a resource the coupling never covered.
+    const coupling = ownGet(swarm.couplings, p.couplingId) ?? null;
+    if (!coupling || coupling.coupling !== 'writer') {
+      integrity(`coupling ${p.couplingId} is not a writer record in swarm ${p.swarmId}`, 'coupling_not_found');
+    }
+    if (p.workspaceId !== coupling.workspaceId) {
+      integrity(`bypass names checkout ${p.workspaceId}, but coupling ${p.couplingId} covers ${coupling.workspaceId}`, 'invalid_payload');
+    }
+    const couplings = new Map(Object.entries(swarm.couplings));
+    couplings.set(p.couplingId, Object.freeze({
+      ...coupling,
+      bypasses: Object.freeze([...(coupling.bypasses ?? []),
+        Object.freeze({ by: p.by, sha: p.sha, at: p.at, seq: meta.seq, ts: meta.ts })]),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     }));
     swarms.set(p.swarmId, replaceField(swarm, 'couplings', couplings));
     return;

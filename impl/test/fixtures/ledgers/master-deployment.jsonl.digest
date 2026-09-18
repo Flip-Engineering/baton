@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "digest": "70750cbf22b92f7d54c0ea6e46f746245085d3d04172bd31929e2c0b370a6ab0",
+  "digest": "c2f3a7978d4489cc71be2bd694fe65fc5c482725540af29d8c83af2e97ff139c",
   "algorithm": "sha256 of JSON.stringify(swarmSnapshot(foldSwarmEvent from empty, replay semantics)) over the fixture rows",
   "source": {
     "path": "/tmp/baton-master-deployment-20260914/state/coordination/events.jsonl",
