@@ -100,6 +100,9 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   // #286 G-45: BD3-A orientation receipt heads — the first read per (workerId, packDigest) and the
   // latest read per workerId. Folded so a rating and a freshness check are lookups.
   '_contextReadHeads', '_contextReadLatest',
+  // #367: the O-2 per-attempt receipt counter ({count, bytes} per attempt key) the ceiling
+  // admission reads — folded beside the heads above, carried by the checkpoint like them.
+  '_contextReadAttemptCounters',
   // #161: replay-derived campaign-plan objects (planId -> plan) and the (waveId, waveRole) ->
   // runId roster index the plan lane resolves pre-decomposed ownedBy.run bindings from (H2.2).
   '_campaignPlans', '_waveRoleRuns', '_swarms',

@@ -150,6 +150,13 @@ function assertWaveStartedRoster(payload) {
   }
 }
 
+/** Epic #81 (O-2, issue #367): the per-attempt receipt identity — the ONE key derivation the
+ * context.read fold and the O-2 ceiling admission share, so the fold's `{count, bytes}` row
+ * and the admission's lookup can never drift apart. */
+function contextReadAttemptKey(payload) {
+  return `${payload?.repoId ?? ''}\0${payload?.runId ?? ''}\0${payload?.taskId ?? ''}\0${payload?.taskVersion ?? ''}`;
+}
+
 /** Issue #290: the default ledger group-commit — one fsync per drain tick regardless of how
  * many events landed inside it, so the authoritative ledger is at least as durable as the
  * fsynced housekeeping (checkpoint, segments, receipts) that accelerates its replay. */
@@ -1278,6 +1285,10 @@ export class CoordinationStore {
     // #286 G-45: orientation receipt heads, folded from `context.read` (first per worker+pack, last
     // per worker). Rebuilt by re-applying the log in _apply.
     this._contextReadHeads = new Map(); this._contextReadLatest = new Map();
+    // #367: the O-2 receipt-ceiling counter — {count, bytes} per attempt key
+    // (contextReadAttemptKey), folded from `context.read` in _apply so the admission reads one
+    // map entry instead of filtering the ledger and re-serializing every prior receipt.
+    this._contextReadAttemptCounters = new Map();
     // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId. Rebuilt by
     // re-applying the log in _apply; the record's own event seq is the epoch anchor.
     this._waveClosures = new Map();
@@ -8311,6 +8322,16 @@ export class CoordinationStore {
           workerId: readWorker, freshnessDigest: p?.freshnessDigest ?? null, eventSeq: event.seq,
         }));
       }
+      // #367: the O-2 receipt-ceiling counter. The SAME rows the heads fold reads, folded into
+      // one `{count, bytes}` row per attempt key so `_assertOrientationReceiptCeiling` judges
+      // the ceiling from a counter (O(1)) instead of filtering the ledger and canonically
+      // re-serializing every prior receipt per admitted read on the resident loop.
+      const counterKey = contextReadAttemptKey(p);
+      const counter = this._contextReadAttemptCounters.get(counterKey);
+      this._contextReadAttemptCounters.set(counterKey, freeze({
+        count: (counter?.count ?? 0) + 1,
+        bytes: (counter?.bytes ?? 0) + canonicalBytes(p),
+      }));
     } else if (event.kind === 'message.sent' || event.kind === 'message.delivered') {
       // Append-only message-lane audit receipts; the delivery state machine lives in the
       // coordinator (delivered/read/actedOn are process-scoped, never store-derived).
@@ -12780,14 +12801,14 @@ export class CoordinationStore {
   _assertOrientationReceiptCeiling(payload) {
     if (!this._orientationReceiptCeilings) return;
     const ceilings = this._orientationReceiptCeilings;
-    const attemptKey = (p) => `${p?.repoId ?? ''}\0${p?.runId ?? ''}\0${p?.taskId ?? ''}\0${p?.taskVersion ?? ''}`;
-    const key = attemptKey(payload);
-    const matching = this._events.filter((event) => event.kind === 'context.read' && attemptKey(event.payload) === key);
-    if (matching.length >= ceilings.maxReceiptsPerAttempt) {
+    // #367: the per-attempt counter fold (built in the context.read arm of _apply) answers the
+    // count and cumulative-byte bounds in O(1) — the one canonicalBytes call below is for the
+    // INCOMING row; prior receipts are never re-scanned or re-serialized here.
+    const counter = this._contextReadAttemptCounters.get(contextReadAttemptKey(payload));
+    if ((counter?.count ?? 0) >= ceilings.maxReceiptsPerAttempt) {
       throw new CoordinationRefusal('orientation receipt count ceiling exceeded', 'orientation_receipt_ceiling');
     }
-    const cumulativeBytes = matching.reduce((sum, event) => sum + canonicalBytes(event.payload), 0) + canonicalBytes(payload);
-    if (cumulativeBytes > ceilings.maxReceiptBytesPerAttempt) {
+    if ((counter?.bytes ?? 0) + canonicalBytes(payload) > ceilings.maxReceiptBytesPerAttempt) {
       throw new CoordinationRefusal('orientation receipt byte ceiling exceeded', 'orientation_receipt_ceiling');
     }
   }
