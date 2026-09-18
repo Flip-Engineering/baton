@@ -12938,7 +12938,7 @@
         {
           "name": "_peersRead",
           "ordinal": 0,
-          "size": 88,
+          "size": 93,
           "seam": "admission",
           "evidence": [
             "delegates:observation",
@@ -12966,7 +12966,7 @@
         {
           "name": "_inheritancePredecessor",
           "ordinal": 0,
-          "size": 47,
+          "size": 80,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
