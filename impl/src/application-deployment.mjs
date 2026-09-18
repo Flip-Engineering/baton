@@ -275,29 +275,88 @@ export function servedRevision(repoRoot) {
   });
 }
 
-/** #306 (2): the target the served revision is measured against, read FRESH: the checkout's own
- * branch when it is on one (the branch landings move), else the remote's default branch
- * (`origin/HEAD`, then `origin/master`), else nothing — a detached checkout with no remote has
- * no target, and says so with nulls. `behind` counts the target commits the served revision
- * lacks, from the refs the repository holds NOW (a fetch refreshes it; the doctor never
- * touches the network). */
-export function servedTarget(repoRoot, served) {
+const EMPTY_COMMITS = Object.freeze([]);
+/** The commits page a served-behind row names, read from the ONE registry row (never a literal). */
+const SERVED_BEHIND_COMMITS = FRAME_LIMITS['view.served_behind.commits'].value;
+
+/** #306 (2) and (lane B): the ONE served-behind derivation the doctor and the recruit advisory
+ * both stand on. The target is read FRESH — the checkout's own branch when it is on one (the
+ * branch landings move), else the remote's default branch (`origin/HEAD`, then `origin/master`),
+ * else nothing: a detached checkout with no remote has no target and says so with nulls.
+ * `behind.count` is `rev-list --count served..target` over the refs the repository holds NOW (a
+ * fetch refreshes it; this read never touches the network), and `behind.commits` is ONE bounded
+ * page of exactly those commits, newest first, each `{sha, subject}` — the count is the whole
+ * truth and the page is what one read answers, so a longer history is COUNTED out loud rather
+ * than silently truncated. `upToDate` is `count === 0`; an unreadable target is `null`, never a
+ * fabricated zero.
+ *
+ * This is a diagnostic read, on demand: a doctor read may spawn once per call (`rev-parse`,
+ * `rev-list --count`, and — only when the resident is behind — one bounded `git log`). The
+ * no-spawn rule #438 keeps is the swarm VIEW read path, which never calls this; the runtime
+ * reads the resulting row off the deployment summary and never reaches for git itself. */
+export function servedBehind(repoRoot, served, { limit = SERVED_BEHIND_COMMITS } = {}) {
+  const unmeasured = (ref) => Object.freeze({
+    target: Object.freeze({ ref, sha: null }),
+    behind: Object.freeze({ count: null, commits: EMPTY_COMMITS }),
+    upToDate: null,
+  });
   const ref = served?.branch
     ?? (gitReadOrNull(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoRoot)
       ?? (gitReadOrNull(['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/master'], repoRoot) ? 'origin/master' : null));
-  if (ref === null) return Object.freeze({ ref: null, commit: null, behind: null });
-  const commit = gitReadOrNull(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], repoRoot);
-  if (commit === null || !GIT_SHA_40.test(commit)) return Object.freeze({ ref, commit: null, behind: null });
-  const behind = served?.commit
-    ? gitReadOrNull(['rev-list', '--count', `${served.commit}..${commit}`], repoRoot) : null;
+  if (ref === null) return unmeasured(null);
+  const sha = gitReadOrNull(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], repoRoot);
+  if (sha === null || !GIT_SHA_40.test(sha)) return unmeasured(ref);
+  const raw = served?.commit ? gitReadOrNull(['rev-list', '--count', `${served.commit}..${sha}`], repoRoot) : null;
+  const count = raw !== null && /^\d+$/u.test(raw) ? Number(raw) : null;
+  const page = Number.isSafeInteger(limit) && limit > 0 ? limit : SERVED_BEHIND_COMMITS;
+  const commits = count !== null && count > 0
+    ? servedBehindCommits(repoRoot, served.commit, sha, page) : EMPTY_COMMITS;
   return Object.freeze({
-    ref, commit, behind: behind !== null && /^\d+$/u.test(behind) ? Number(behind) : null,
+    target: Object.freeze({ ref, sha }),
+    behind: Object.freeze({ count, commits }),
+    upToDate: count === null ? null : count === 0,
   });
 }
 
-/** The doctor / summary row: the served revision beside its target and the behind count. */
+/** One bounded page of the commits the served revision lacks, newest first — the same read shape
+ * the swarm situation's git authority makes (`git log <base>..<target>`), bounded by the registry
+ * row so a page can never grow with the history it describes. */
+function servedBehindCommits(repoRoot, from, to, limit) {
+  const log = gitReadOrNull(['log', `--max-count=${limit}`, '--format=%H%x00%s', `${from}..${to}`], repoRoot);
+  if (log === null) return EMPTY_COMMITS;
+  const rows = [];
+  for (const line of log.split('\n')) {
+    const split = line.indexOf('\0');
+    if (split === -1) continue;
+    const sha = line.slice(0, split);
+    if (!GIT_SHA_40.test(sha)) continue;
+    rows.push(Object.freeze({ sha, subject: line.slice(split + 1) }));
+  }
+  return Object.freeze(rows);
+}
+
+/** The #306 (2) projection of the SAME facts: `{ref, commit, behind}` — the shape the doctor row
+ * and its consumers already read. The lane-B spellings (`target.sha`, `behind`, `upToDate`) ride
+ * the row by property access, so that landed enumerable shape and every serialized consumer of it
+ * stay byte-identical. */
+export function servedTarget(repoRoot, served) {
+  return servedTargetRow(servedBehind(repoRoot, served));
+}
+
+function servedTargetRow(facts) {
+  const target = { ref: facts.target.ref, commit: facts.target.sha, behind: facts.behind.count };
+  Object.defineProperty(target, 'sha', { value: facts.target.sha, enumerable: false });
+  return Object.freeze(target);
+}
+
+/** The doctor / summary row: the served revision beside its target, the behind count, and the
+ * bounded page of commits it is behind by. */
 function servedRow(repoRoot, served) {
-  return Object.freeze({ ...served, target: servedTarget(repoRoot, served) });
+  const facts = servedBehind(repoRoot, served);
+  const row = { ...served, target: servedTargetRow(facts) };
+  Object.defineProperty(row, 'behind', { value: facts.behind, enumerable: false });
+  Object.defineProperty(row, 'upToDate', { value: facts.upToDate, enumerable: false });
+  return Object.freeze(row);
 }
 
 const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([

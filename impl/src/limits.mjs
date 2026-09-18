@@ -184,6 +184,12 @@ const SUBSTRATE = Object.freeze({
   'model_profile.catalog_staleness_ms': { lane: 'model_profile.catalog_staleness_ms', class: 'substrate', value: MODEL_PROFILE_REFRESH_MS, unit: 'ms', graceful: null, enforcedAt: 'model-profile.mjs readCachedCatalog (the deployment profile reader)' },
 });
 
+// Issue #306 (lane B): the ONE list page the family's read rows draw — the item ceiling a page of
+// full-length prose bodies carries inside one wire frame (the seat-read page's own derivation,
+// hoisted so a second page row cannot re-derive it differently). Two rows read it: the seat read
+// verbs' page and the served-behind commit page.
+const LIST_PAGE_ITEMS = Math.floor(SUBSTRATE['wire.frame'].value / ADMISSION['message.send.body'].value);
+
 const VIEW = Object.freeze({
   'view.board.bytes': { lane: 'view.board.bytes', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
   'view.board.items': { lane: 'view.board.items', class: 'view', value: 512, unit: 'items', graceful: 'shed-flagged' },
@@ -223,9 +229,16 @@ const VIEW = Object.freeze({
   // admission (`message.send.body`): a page of full-length bodies is 512 rows, so a page of this
   // size is always representable inside one frame, and a longer list PAGES from the seq it names
   // (`truncated` + `cursor`) rather than shedding rows silently.
-  'view.seat_read.items': { lane: 'view.seat_read.items', class: 'view',
-    value: Math.floor(SUBSTRATE['wire.frame'].value / ADMISSION['message.send.body'].value),
+  'view.seat_read.items': { lane: 'view.seat_read.items', class: 'view', value: LIST_PAGE_ITEMS,
     unit: 'items', graceful: 'shed-flagged' },
+  // Issue #306 (lane B): the commits a served-behind row names — the rows between the revision a
+  // resident serves and the target it is measured against, each `{sha, subject}`. The page is the
+  // family's ONE list page (above): a doctor row is read by the same consumers, and `behind.count`
+  // beside the page is the WHOLE truth — a history longer than the page is COUNTED out loud, never
+  // silently truncated, so a reader always reads how far behind the resident really is.
+  'view.served_behind.commits': { lane: 'view.served_behind.commits', class: 'view',
+    value: LIST_PAGE_ITEMS, unit: 'items', graceful: 'shed-flagged',
+    enforcedAt: 'application-deployment.mjs servedBehind (the commit page the doctor and the recruit advisory name)' },
 });
 
 // Issue #441 (the reading half): the two bounds a recruited ContextPackage draws. A branch

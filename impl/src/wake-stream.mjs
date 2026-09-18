@@ -237,6 +237,20 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'worker', kind: 'worker', fallback: { field: 'workerId', kind: 'worker' } },
   }),
   wakeRow({
+    wakeClass: 'incarnation_changed', scope: 'deployment', terminal: false, next: null,
+    summary: 'the resident reincarnated over this deployment — a successor incarnation serves it now; re-read the view (the rows and the attachment you held came from the predecessor)',
+    // #306 (lane B): the successor records `host.reincarnated {from, to}` when it sees the old
+    // process exit, so the change of incarnation is a DURABLE row and not only the live
+    // `resident_lifecycle` observation beside it. It is `dead`'s sibling — the same deployment
+    // scope, the next row in the table — and it is deliberately NOT terminal: nothing is refused
+    // and no holder must be released, the watcher's act is to re-read the view (the guidance the
+    // summary carries, since the table's one invariant lets only a terminal class name a `next`
+    // command). The subject reads the successor's identity where the successor writes it, with the
+    // deployment as the fallback the resident-lifecycle observation already uses.
+    rows: [operationalKind('host.reincarnated')],
+    subject: { field: 'incarnation', kind: 'resident', fallback: { field: 'deploymentId', kind: 'deployment' } },
+  }),
+  wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,
     next: 'baton swarm guide {swarmId} {participantId}',
     summary: 'a turn paused and stays paused until a caller claims, nudges, or waits on it',
