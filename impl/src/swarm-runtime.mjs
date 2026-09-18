@@ -17,7 +17,8 @@ import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
 import { pathInScopes } from './path-scope.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
-import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
+import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
+import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree } from './worktree.mjs';
 import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
 // #341 part 3: the ONE rendering of the deployment's route-usage rows, shared with the
 // provider-facing brief (adapter.mjs renderBrief) so the seat's brief and the rendered subsection
@@ -3107,6 +3108,45 @@ export class SwarmRuntime {
     return { participantId: predecessor.participantId, lastCheckpoint: checkpoint, contracts };
   }
 
+  /** The predecessor's workspace state for a resume-from recruit (#385): whether the checkout
+   * exists, who holds it, and the changed paths — the facts the workspace carry decision reads.
+   * Returns null when the predecessor has no recorded workspace. */
+  _predecessorWorkspace(swarm, predecessorId) {
+    const predecessor = Object.hasOwn(swarm.participants, predecessorId)
+      ? swarm.participants[predecessorId] : null;
+    if (!predecessor) return null;
+    const workspaceId = predecessor.workspaceId;
+    if (!workspaceId) return null;
+    const repoRoot = typeof this.situationGit?.repoRoot === 'string'
+      ? this.situationGit.repoRoot : null;
+    const exists = repoRoot ? workspaceExists(repoRoot, workspaceId) : false;
+    let changedPaths = [];
+    if (exists && repoRoot) {
+      try { changedPaths = workspaceChangedPaths(repoRoot, workspaceId); }
+      catch { changedPaths = []; }
+    }
+    const ctxResult = typeof this.coordinator.predecessorWorkspaceContext === 'function'
+      ? this.coordinator.predecessorWorkspaceContext(workspaceId) : null;
+    const sessionContext = ctxResult?.sessionContext ?? null;
+    const predecessorWorkerId = predecessor.bindings?.at?.(-1)?.workerId ?? null;
+    const predecessorWorkerDead = predecessorWorkerId !== null
+      && !this.coordinator.list().some((h) => h.id === predecessorWorkerId
+        && ['pending', 'working', 'blocked', 'idle', 'stopping'].includes(h.status));
+    const liveHolders = predecessorWorkerDead
+      ? (ctxResult?.holders ?? []).filter((id) => id !== predecessorWorkerId)
+      : (ctxResult?.holders ?? []);
+    let snapshotSha = null;
+    for (const event of this.store.eventsView()) {
+      const kind = event.kind === 'driver.recorded' ? event.payload?.kind : event.kind;
+      if (kind !== 'worktree.snapshotted') continue;
+      const payload = event.payload ?? {};
+      if (payload.workspaceId !== workspaceId) continue;
+      snapshotSha = typeof payload.sha === 'string' ? payload.sha : null;
+    }
+    const baseSha = sessionContext?.baseSha ?? null;
+    return { workspaceId, exists, changedPaths, sessionContext, liveHolders, snapshotSha, baseSha };
+  }
+
   /** Who parked guidance is from, for the brief line that delivers it (#337): the same
    * namespaces as the coordinator's guidanceSenderLabel — the web/MCP owner sessions and the
    * bare orchestrator actor are the root, a swarm-native actor names its seat, anything else
@@ -3184,7 +3224,7 @@ export class SwarmRuntime {
    * far, the commits landed on the target since the base — and, for a `resumeFrom` successor,
    * the predecessor's inheritance. The composition is written ONCE onto the join as `brief`, so
    * the swarm's own record of what a seat was told is the brief every surface renders. */
-  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = []) {
+  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null) {
     const blocks = [args.objective];
     // Issue #345: the seat's own assignment — the work item the swarm knows it holds — rides the
     // brief first, so "your work item is work-N" is read from the assignment, never retyped.
@@ -3299,6 +3339,12 @@ export class SwarmRuntime {
             ? row.carriedForward.map((item) => `  carries forward: ${JSON.stringify(item)}`) : []),
         ]),
       ];
+      if (predecessorWorkspace?.changedPaths?.length > 0) {
+        inheritance.push(`- Carried workspace ${predecessorWorkspace.workspaceId}: ${predecessorWorkspace.changedPaths.join(', ')}`);
+        if (predecessorWorkspace.snapshotSha) {
+          inheritance.push(`  applied from snapshot ${predecessorWorkspace.snapshotSha}`);
+        }
+      }
       blocks.push(inheritance.join('\n'));
     }
     return blocks.join('\n\n');
@@ -3612,7 +3658,7 @@ export class SwarmRuntime {
         // The deliberate shared checkout is resolved inside the effect, before any membership is
         // written: an absent, departed, or process-less source refuses with nothing recorded, so
         // a refused attachment never leaks a holder into the swarm.
-        const workspace = args.shareWorkspaceWith
+        let workspace = args.shareWorkspaceWith
           ? this._sharedWorkspace(current, args.shareWorkspaceWith, args.participantId)
           : null;
         // Anything that is not a rolled-back residue or a replay and names an existing row is
@@ -3656,6 +3702,35 @@ export class SwarmRuntime {
         const predecessor = args.resumeFrom !== undefined
           ? this._inheritancePredecessor(this._swarm(args.swarmId), args.resumeFrom)
           : null;
+        // Issue #385: a resumeFrom successor inherits the predecessor's workspace when it is
+        // available — same physical checkout (case 1) or changes applied from a snapshot (case 2).
+        // When neither path is possible, the recruit is refused before any membership is written.
+        let predecessorWs = null;
+        if (predecessor && !workspace) {
+          predecessorWs = this._predecessorWorkspace(current, predecessor.participantId);
+          if (predecessorWs) {
+            if (predecessorWs.exists && predecessorWs.liveHolders.length === 0) {
+              workspace = {
+                workspaceId: predecessorWs.workspaceId,
+                sessionContext: predecessorWs.sessionContext,
+                holderCount: 0,
+              };
+            } else if (predecessorWs.liveHolders.length > 0) {
+              refuse('Predecessor workspace is held by a live worker', 'swarm_workspace_unavailable', {
+                reason: 'predecessor_workspace_held',
+                workspaceId: predecessorWs.workspaceId,
+                holders: predecessorWs.liveHolders.map((h) => h.id ?? h),
+              });
+            } else if (!predecessorWs.exists && !predecessorWs.snapshotSha
+              && predecessorWs.changedPaths.length > 0) {
+              refuse('Predecessor workspace is gone and no snapshot exists', 'swarm_workspace_unavailable', {
+                reason: 'predecessor_workspace_uncarriable',
+                workspaceId: predecessorWs.workspaceId,
+                paths: predecessorWs.changedPaths,
+              });
+            }
+          }
+        }
         // The brief is composed for EVERY seat (#318 deliverable 4): the recruiter's objective,
         // then the swarm situation — peers and their scopes, contracts published so far, the
         // commits landed on the target since the base. Written onto the join as `brief`, so the
@@ -3666,7 +3741,7 @@ export class SwarmRuntime {
         const currentSwarm = this._swarm(args.swarmId);
         const parkedDeliveries = this._undeliveredParkedGuidance(
           [args.participantId, args.resumeFrom ?? null]);
-        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries);
+        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
         // whose work would be starved is not started: while the derived host budget has no room,
         // the request waits IN ORDER as a visible queue entry and its typed queued row is
@@ -3785,6 +3860,29 @@ export class SwarmRuntime {
         }
         // Issue #425: the new lease learns the checkout's live writer before its seat can act.
         this._settleCheckoutWriterState();
+        // Issue #385: record the workspace carry after binding. Case 1: the successor is
+        // already bound to the predecessor's checkout. Case 2: a new worktree was created
+        // and the snapshot diff is applied to it now.
+        if (predecessorWs && predecessor) {
+          let carriedPaths = predecessorWs.changedPaths;
+          const carriedWorkspaceId = checkout?.workspaceId ?? predecessorWs.workspaceId;
+          if (!predecessorWs.exists && predecessorWs.snapshotSha) {
+            const repoRoot = typeof this.situationGit?.repoRoot === 'string'
+              ? this.situationGit.repoRoot : null;
+            const targetDir = checkout?.sessionContext?.worktree ?? null;
+            const baseSha = predecessorWs.baseSha ?? checkout?.sessionContext?.baseSha ?? current.baseCommit ?? null;
+            if (repoRoot && targetDir && baseSha) {
+              try {
+                carriedPaths = applySnapshotToWorktree(repoRoot, predecessorWs.snapshotSha, targetDir, baseSha);
+              } catch { carriedPaths = []; }
+            }
+          }
+          writes.push(this._write('workspace.carried_from', {
+            swarmId: args.swarmId, participantId: args.participantId,
+            workspaceId: carriedWorkspaceId, predecessor: predecessor.participantId,
+            paths: carriedPaths, snapshotSha: predecessorWs.snapshotSha,
+          }, principal, `workspace-carried:${hash([args.swarmId, args.participantId, carriedWorkspaceId])}`));
+        }
         // Issue #345: the recruit named its work item, so the runtime assigns the seat on join —
         // the assignment row itself, written after the run admitted the seat so a rolled-back
         // recruit assigns nothing.

@@ -55,12 +55,14 @@ function swarmWithParticipant(swarmId = 'sw1', participantId = 'p1') {
 // ── SWARM_EVENT_KINDS ────────────────────────────────────────────────────────
 
 describe('SWARM_EVENT_KINDS', () => {
-  test('contains all 18 event kinds', () => {
+  test('contains all 19 event kinds', () => {
     const expected = [
       'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound',
       'swarm.participant_left', 'swarm.group_updated', 'swarm.work_updated',
       'swarm.assignment_updated', 'swarm.coupling_updated', 'swarm.coupling_writer_bypassed',
       'swarm.participant_runtime_lost', 'swarm.participant_faulted',
+      // Issue #385: workspace carry on resume-from.
+      'workspace.carried_from',
       // Issues #422/#423: the joint coupling, claim and work-proposal families.
       'swarm.claim_updated', 'swarm.proposal_updated',
       'swarm.context_updated',

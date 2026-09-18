@@ -1774,6 +1774,40 @@ export function ensureLaneBranchAtHead(repoRoot, taskId, opts = {}) {
   return { ...state, branchSha: state.headSha, contained: true, repaired: true };
 }
 
+// ---------------------------------------------------------------------------
+// Workspace carry (issue #385)
+// ---------------------------------------------------------------------------
+
+/** The changed paths in a workspace whose owner may be dead — the files a resume-from
+ * successor inherits. Returns [] when the workspace has no metadata or no changes. */
+export function workspaceChangedPaths(repoRoot, taskId) {
+  normalizePhysicalOwnerId(taskId, 'taskId');
+  const root = authorityRoot(repoRoot, 'wt', { create: false });
+  const dir = join(root ?? join(realpathSync(repoRoot), '.baton', 'wt'), taskId);
+  if (!existsSync(dir)) return [];
+  const meta = readMeta(repoRoot, taskId);
+  if (!meta?.baseSha) return [];
+  return changedPathsFromBase(dir, meta.baseSha);
+}
+
+/** Whether a workspace directory exists on disk. */
+export function workspaceExists(repoRoot, taskId) {
+  normalizePhysicalOwnerId(taskId, 'taskId');
+  const root = authorityRoot(repoRoot, 'wt', { create: false });
+  const dir = join(root ?? join(realpathSync(repoRoot), '.baton', 'wt'), taskId);
+  return existsSync(dir);
+}
+
+/** Apply the diff between baseSha and snapshotSha from the repository into a target worktree.
+ * Used when a predecessor's workspace was removed but its snapshot commit is available. */
+export function applySnapshotToWorktree(repoRoot, snapshotSha, targetDir, baseSha) {
+  const patch = gitFile(['diff', '--binary', baseSha, snapshotSha], repoRoot, { encoding: 'buffer' });
+  if (patch.length > 0) {
+    execFileSync('git', ['apply', '--whitespace=nowarn'], { cwd: targetDir, input: patch });
+  }
+  return changedPathsFromBase(targetDir, baseSha);
+}
+
 
 // ---------------------------------------------------------------------------
 // reap
