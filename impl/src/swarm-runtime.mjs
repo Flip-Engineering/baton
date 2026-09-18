@@ -977,6 +977,19 @@ const pathClaimExample = () => {
     claimId: fields.claimId.example, paths: fields.paths.example, status: fields.status.example } };
 };
 
+/** Issue #464 (the brief's reach) + docs/46 §4.1: the closed set of relationships a CALLER can
+ * stand in to a seat whose brief it is reading — the very names the recruit brief's exposure
+ * ladder draws (docs/46 §10 owns them here, at `_briefExposure`, the ONE derivation), never a
+ * second vocabulary. The class is the reader-side half of a participant row's brief reach: a
+ * roster row carries the reach WITH its class, because the class is the honest answer to "why
+ * does this row point at the text instead of carrying it". `repository` is the cross-swarm
+ * relationship (a seat in another swarm of the same repository): a single swarm's own view
+ * never mints it — it is named here because this is the docs/46 §4.1 set, whole.
+ */
+export const SWARM_BRIEF_EXPOSURE_CLASSES = Object.freeze([
+  'self', 'subtree', 'checkout', 'group', 'swarm', 'repository',
+]);
+
 export class SwarmRuntime {
   /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
    * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
@@ -2261,6 +2274,86 @@ export class SwarmRuntime {
     return row.runtime === undefined || row.runtime.live === true;
   }
 
+  /** Issue #464 (the brief's reach) + docs/46 §4.1: the caller-side facts the relationship
+   * derivation reads, gathered ONCE per view (never per row): the seat this caller IS, the
+   * checkout it was recorded on (#428's binding/custody rows) and the groups it is on. Null for
+   * an organizer — a caller with no seat — which the derivation reads as the swarm's creator. */
+  _briefExposureFacts(swarm, caller) {
+    if (caller === null || caller === undefined) return null;
+    const groups = new Set();
+    for (const group of Object.values(swarm.groups ?? {})) {
+      if ((group.members ?? []).includes(caller.participantId)) groups.add(group.groupId);
+    }
+    return { participantId: caller.participantId,
+      workspaceId: typeof caller.workspaceId === 'string' ? caller.workspaceId : null, groups };
+  }
+
+  /** The ONE derivation of what a caller IS to a seat (docs/46 §4.1, strongest first) — the
+   * class a participant row's brief reach publishes. It is computed per (caller, row) at
+   * projection time because it is a fact of the READER, and the same caller reads the same class
+   * off the roster and off a participantId-scoped read (the parity the #464 test pins for the
+   * root, a peer and the seat itself).
+   *
+   * The organizer (no seat) stands to every seat in the delegation relation: docs/46 §5 makes
+   * the root row every subtree's ancestor, and §4.2 gives that class the fullest non-self
+   * exposure. Sibling seats are NOT `subtree` — only an ancestor/descendant by `parentId` is
+   * (the walk is the delegation depth, never the roster). `repository` is the cross-swarm class
+   * and is never minted for a row of this swarm's own view. */
+  _briefExposure(swarm, caller, participant, facts) {
+    if (caller === null || caller === undefined) return 'subtree';
+    if (caller.participantId === participant.participantId) return 'self';
+    if (this._delegationRelated(swarm, caller.participantId, participant.participantId)) return 'subtree';
+    if (facts !== null && facts.workspaceId !== null
+      && participant.workspaceId === facts.workspaceId) return 'checkout';
+    if (facts !== null) {
+      for (const group of Object.values(swarm.groups ?? {})) {
+        if (facts.groups.has(group.groupId)
+          && (group.members ?? []).includes(participant.participantId)) return 'group';
+      }
+    }
+    return 'swarm';
+  }
+
+  /** Either seat the other's ancestor by `parentId` (docs/46 §4.1 `subtree`). The walk is
+   * bounded by the delegation depth; a cycle (which the fold cannot mint — a parent must exist
+   * at join) would still terminate on the `seen` guard. */
+  _delegationRelated(swarm, leftId, rightId) {
+    const ancestorsOf = (id) => {
+      const seen = new Set();
+      let current = swarm.participants?.[id]?.parentId ?? null;
+      while (typeof current === 'string' && !seen.has(current)) {
+        seen.add(current);
+        current = swarm.participants?.[current]?.parentId ?? null;
+      }
+      return seen;
+    };
+    return ancestorsOf(rightId).has(leftId) || ancestorsOf(leftId).has(rightId);
+  }
+
+  /** Issue #464: the participant row's `brief` projection. The row carries the TEXT where this
+   * caller is entitled to it — today's rule, unchanged: the participantId-scoped read's own
+   * seat, the one brief a recruiter wrote FOR that reading — and the REACH
+   * `{bytes, seq, exposure}` everywhere else: a roster row (any `participants` projection, the
+   * whole record's participants array, a bridge page) never pays a peer's composed brief. The
+   * reach composes the fold's caller-independent half (`briefBytes`/`briefRef`, the join's own
+   * facts) with the class above, so a reader always knows how much text it did not get, which
+   * ledger row holds it, and why. Where the text rides, the reach rides BESIDE it — one reach per
+   * row, and no reader has to guess which of the row's two fields it is holding.
+   *
+   * A row folded by an EARLIER build — the shape digest the checkpoint's staleness rule compares
+   * is the projection's FIELD list, not the fields a fold mints inside a row — carries neither
+   * `briefBytes` nor `briefRef`. Its text is still on the row, so the reach measures what it can
+   * see and names no ledger row: absence said as absence, never a length of zero for a text that
+   * exists. (The scoped read still serves such a row's text whole, and the next replay mints the
+   * pair.) */
+  _participantBrief(participant, exposure, scopedHere) {
+    const bytes = Number.isSafeInteger(participant.briefBytes) ? participant.briefBytes
+      : typeof participant.brief === 'string' ? Buffer.byteLength(participant.brief, 'utf8') : 0;
+    const reach = Object.freeze({ bytes, seq: participant.briefRef?.seq ?? null, exposure });
+    if (!scopedHere || typeof participant.brief !== 'string') return { brief: reach };
+    return { brief: participant.brief, briefReach: reach };
+  }
+
   /** The live nudge rows for one worker, read off the durable lane — the fallback evidence
    * the completion derivation uses when the caller carries no precomputed guidance. */
   _nudgeRowsFor(workerId) {
@@ -2810,6 +2903,9 @@ export class SwarmRuntime {
         this._workspaceChangeSetFor(worker, workspaceId, { live: true });
       }
     }
+    // Issue #464: the caller-side facts the brief reach's exposure class reads — gathered ONCE
+    // per view (above the map), never once per roster row.
+    const exposureFacts = this._briefExposureFacts(swarm, caller);
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
@@ -2885,7 +2981,15 @@ export class SwarmRuntime {
         // timestamp here would make two views of one unchanged state differ by when they ran.
         source: observation?.source ?? 'rows',
       });
-      return { ...clone(participant), mode: recruitModes.get(participant.participantId) ?? 'change',
+      return { ...clone(participant),
+        // Issue #464 (the brief's reach — the third half of the issue): the row carries the
+        // caller's entitlement as a REACH, never a peer's composed brief. `_participantBrief` is
+        // the ONE projection: the text on the participantId-scoped read's own seat (today's rule,
+        // unchanged) and `{bytes, seq, exposure}` everywhere else, so a roster — any
+        // `participants` projection, the whole record, a bridge page — pays a fixed small shape
+        // per seat instead of the text the ledger already holds.
+        ...this._participantBrief(participant, this._briefExposure(swarm, caller, participant, exposureFacts), scopedHere),
+        mode: recruitModes.get(participant.participantId) ?? 'change',
         delegation: delegations.get(participant.participantId) ?? null,
         // Absence is labelled as absence (2026-09-14 audit, swarm-b/lead.md finding 9): an unbound
         // participant, or a coordinator that cannot answer for native observations at all, has
@@ -3520,14 +3624,16 @@ export class SwarmRuntime {
       .map(([contributionId]) => contributionId)) : null;
     const keep = (entries, predicate) => Object.fromEntries(scope ? entries.filter(predicate) : entries);
     const rowsOf = (entries, predicate) => (scope ? entries.filter(predicate) : entries).map(([, row]) => row);
-    // The participant rows a scoped view carries: the scope's subtree, with the brief text of
-    // every seat but the scope's own withheld (2026-09-14 audit S-F3). A brief is what a recruiter
-    // told ONE seat; the scoped view is that seat's own reading of the swarm, so another
-    // participant's instructions are not in it — `briefWithheld` says the text was withheld rather
-    // than never written, and the unscoped organizer view still carries every brief.
+    // The participant rows a scoped view carries: the scope's subtree, with the role line and the
+    // brief TEXT of every seat but the scope's own withheld (2026-09-14 audit S-F3). A brief is
+    // what a recruiter told ONE seat; the scoped view is that seat's own reading of the swarm, so
+    // another participant's instructions are not in it — `briefWithheld` says the text was
+    // withheld rather than never written. The withholding is the TEXT only: the row keeps the
+    // brief REACH the map above minted (`{bytes, seq, exposure}`), so a peer's row still names
+    // what it did not carry and the ledger row that holds it (#464).
     const scopedParticipants = scope
       ? participants.filter((row) => scopeSubtree.includes(row.participantId))
-        .map((row) => (row.participantId === scope.participantId ? row : { ...row, role: null, brief: null, briefWithheld: true }))
+        .map((row) => (row.participantId === scope.participantId ? row : { ...row, role: null, briefWithheld: true }))
       : participants;
     const view = {
       ...clone(swarm),

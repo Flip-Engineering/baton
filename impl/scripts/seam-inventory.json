@@ -12711,6 +12711,42 @@
           ]
         },
         {
+          "name": "_briefExposureFacts",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_briefExposure",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_delegationRelated",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_participantBrief",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_nudgeRowsFor",
           "ordinal": 0,
           "size": 8,
@@ -12870,7 +12906,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1053,
+          "size": 1066,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"

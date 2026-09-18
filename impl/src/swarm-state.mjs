@@ -1173,6 +1173,21 @@ function participantRole(role, seq) {
   };
 }
 
+/** Issue #464 (the THIRD half of the issue — the brief's reach): the caller-INDEPENDENT half of a
+ * participant row's brief reach, minted once at the join that wrote the text. `briefBytes` is the
+ * composed brief's length and `briefRef` names the `swarm.participant_joined` row that holds the
+ * text — the same pair of facts `roleBytes`/`roleRef` carry for the objective's first line above,
+ * in the same spelling, so a projection that carries the reach and not the text NAMES where the
+ * text is. The reach's other half — the CALLER's exposure class — is a fact of the READER, never
+ * of the seat: it is derived at projection time (swarm-runtime.mjs `_briefExposure`) and composed
+ * onto these facts there, so the two make ONE reach and no surface mints a second one. A join that
+ * carried no text reads bytes 0 / ref null — recorded absence, never a pointer at a row that holds
+ * nothing. */
+function participantBriefReach(brief, seq) {
+  if (typeof brief !== 'string' || brief.length === 0) return { briefBytes: 0, briefRef: null };
+  return { briefBytes: Buffer.byteLength(brief, 'utf8'), briefRef: Object.freeze({ kind: 'swarm.participant_joined', seq }) };
+}
+
 /** The largest prefix of `text` that is at most `cap` UTF-8 bytes, cut on a code-point boundary:
  * a role line is never a broken code point (the discipline the bridge's bounded text keeps). */
 function headBytes(text, cap) {
@@ -1236,6 +1251,9 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       scope: p.scope === undefined || p.scope === null ? null : Object.freeze([...p.scope]),
       resumeFrom: p.resumeFrom ?? null,
       brief: p.brief ?? null,
+      // Issue #464: the brief's caller-independent reach (see participantBriefReach above) — the
+      // length and the ledger row, never the text again.
+      ...participantBriefReach(p.brief, meta.seq),
       status: 'active', leftReason: null, bindings: Object.freeze([]),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
