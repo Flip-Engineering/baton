@@ -2422,6 +2422,57 @@ export function validateApplicationCommandArgs(name, args) {
   return true;
 }
 
+/** Issue #391 (C12): the goal-plan read family answers PAGES, not refusals — `limit` is a page
+ * size: the answer carries the first `limit` rows past `cursor` plus {truncated, nextCursor}, the
+ * cursor vocabulary evidence.search (#312) serves, and nothing refuses for having more rows. The
+ * bounded store reads underneath answer the whole bounded set (their ceiling is a bound, not a
+ * page), so the page is cut HERE — one derivation every application goal-plan read shares. The
+ * family is module-level on purpose: goal-plan reads ride hand-built harnesses and the run
+ * scheduler alike, so they never depend on a full instance. */
+export function goalPlanPage(rows, limit, cursor = 0) {
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw applicationError('goal/plan page size is invalid', 'application_goal_plan_page_invalid');
+  }
+  const start = Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0;
+  const page = rows.slice(start, start + limit);
+  const nextCursor = start + page.length < rows.length ? start + page.length : null;
+  return Object.freeze({
+    rows: Object.freeze(page), truncated: nextCursor !== null, nextCursor,
+  });
+}
+
+const goalPlanStoreRows = (coordination, accessor, ...args) => {
+  const read = coordination?.[accessor];
+  return typeof read === 'function' ? read.call(coordination, ...args) : [];
+};
+
+/** One paged read per store accessor (#391): the store bound rides internally as the whole-set
+ * read; the caller's `limit` is a page size and the cursor resumes past the page's last row. */
+export const goalPlanRunPlansPage = (coordination, repoId, runId, limit, cursor = 0) => (
+  goalPlanPage(goalPlanStoreRows(coordination, 'goalPlanRunPlans', repoId, runId, MAX_RUN_RECORDS),
+    limit, cursor));
+
+export const goalPlanDispatchesPage = (coordination, repoId, runId, limit, cursor = 0) => (
+  goalPlanPage(goalPlanStoreRows(coordination, 'goalPlanDispatches', repoId, runId, MAX_RUN_RECORDS),
+    limit, cursor));
+
+export const goalPlanRunIdsPage = (coordination, repoId, limit, cursor = 0) => (
+  goalPlanPage(goalPlanStoreRows(coordination, 'goalPlanRunIds', repoId, MAX_RUN_RECORDS),
+    limit, cursor));
+
+/** Walk pages to the whole bounded set — what the bounded readsites need, answered page by page
+ * so no application goal-plan read ever rides a refusal threshold (#391). */
+export function goalPlanReadAll(readPage) {
+  const rows = [];
+  let cursor = 0;
+  for (;;) {
+    const page = readPage(cursor);
+    rows.push(...page.rows);
+    if (!page.truncated) return rows;
+    cursor = page.nextCursor;
+  }
+}
+
 function authority(principal, repoId, runId, power, idempotencyKey) {
   return {
     actor: principal.actor,
@@ -3149,9 +3200,13 @@ export class BatonApplication {
   _semanticControlTargets(current) {
     const definition = this._isWorkflowRun(current) ? this._workflowDefinition(current) : null;
     // #210: the narrow read serves the run's own dispatches (bounded clones of only those
-    // rows); the full-store snapshot goalPlan deep clone is gone from this path.
+    // rows); the full-store snapshot goalPlan deep clone is gone from this path, and #391 pages
+    // what remains instead of refusing past a count.
     const dispatches = definition
-      ? (this.driver.coordination.goalPlanDispatches?.(this.repoId, current.goal.runId) ?? []) : [];
+      ? goalPlanReadAll(
+        (cursor) => goalPlanDispatchesPage(this.driver.coordination, this.repoId,
+          current.goal.runId, MAX_RUN_RECORDS, cursor),
+      ) : [];
     const rows = this.driver.coordinator.list().filter((worker) => (
       worker.runId === current.goal.runId
       && Number.isSafeInteger(worker.fence)
@@ -4174,8 +4229,9 @@ export class BatonApplication {
     if (resultIdentity.resultIntent === 'read_only_evidence') {
       if (typeof this.driver.coordination.goalPlanRunPlans === 'function') {
         try {
-          relevantPlans = this.driver.coordination.goalPlanRunPlans(
-            this.repoId, runId, MAX_RUN_RECORDS,
+          relevantPlans = goalPlanReadAll(
+            (cursor) => goalPlanRunPlansPage(this.driver.coordination, this.repoId, runId,
+              MAX_RUN_RECORDS, cursor),
           );
         } catch (error) {
           throw applicationError('read-only Run Plan history is unavailable',
@@ -4269,11 +4325,14 @@ export class BatonApplication {
     if (!this._isWorkflowRun(current)) return [];
     // #210: the bounded Run Plan history (goalPlanRunPlans) serves this walk; the full-store
     // snapshot goalPlan deep clone is gone from this path (legacy stores without the narrow
-    // accessor keep the snapshot fallback).
+    // accessor keep the snapshot fallback), and #391 pages the walk instead of refusing.
     let plans = [];
     if (typeof this.driver.coordination.goalPlanRunPlans === 'function') {
       try {
-        plans = this.driver.coordination.goalPlanRunPlans(this.repoId, current.goal.runId);
+        plans = goalPlanReadAll(
+          (cursor) => goalPlanRunPlansPage(this.driver.coordination, this.repoId,
+            current.goal.runId, MAX_RUN_RECORDS, cursor),
+        );
       } catch (error) {
         if (error?.code === 'goal_plan_status_oversize') {
           throw applicationError('Workflow Plan history is cyclic or exceeds its bounded ceiling',
@@ -4975,15 +5034,21 @@ export class BatonApplication {
     // the legacy arm below fires only for stores without goalPlanRunIds.
     let runIds;
     if (typeof this.driver.coordination.goalPlanRunIds === 'function') {
-      runIds = this.driver.coordination.goalPlanRunIds(this.repoId, MAX_RUN_RECORDS);
+      // #391: paged to the whole bounded set — the scheduler never refuses for having more
+      // rows; each page stays bounded, the walk continues past its cursor.
+      runIds = goalPlanReadAll(
+        (cursor) => goalPlanRunIdsPage(this.driver.coordination, this.repoId,
+          MAX_RUN_RECORDS, cursor),
+      );
     } else {
       const snapshot = this.driver.coordination.snapshot();
       runIds = [...new Set((snapshot.goalPlan?.goals ?? [])
         .filter((goal) => goal.repoId === this.repoId && goal.runId !== null)
         .map((goal) => goal.runId))].sort();
-    }
-    if (runIds.length > MAX_RUN_RECORDS) {
-      throw applicationError('application run scheduler exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
+      // The legacy snapshot scan is the memory hazard; its bound stays a refusal there.
+      if (runIds.length > MAX_RUN_RECORDS) {
+        throw applicationError('application run scheduler exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
+      }
     }
     for (const runId of runIds) {
       if (this.driver.coordination.runStop?.(runId)) continue;
@@ -4999,7 +5064,14 @@ export class BatonApplication {
       }
       if (current.plan && current.approval?.disposition === 'approved'
         && current.dispatches.length < current.plan.nodes.length) {
-        await this._dispatchCurrent(current);
+        try {
+          await this._dispatchCurrent(current);
+        } catch (error) {
+          // #388: a kept shared-workspace attachment refusing a multi-node Plan is the
+          // operator's correction, not a deployment fault — the reconciliation leaves the Run
+          // (and its kept admission) to the operator instead of failing readiness on it.
+          if (error?.code !== 'application_workspace_attachment_unsupported') throw error;
+        }
       }
     }
     return deepFreeze({ schemaVersion: 1, state: 'ready', examinedRuns: runIds.length });
@@ -5011,12 +5083,28 @@ export class BatonApplication {
     if (!refreshed.plan || refreshed.approval?.disposition !== 'approved') return refreshed.dispatch;
     // A deliberate shared-checkout attachment names ONE working checkout for ONE work node. A
     // multi-node workflow Plan would silently put every member in one tree, so it refuses here —
-    // before any spawn — with nothing dispatched.
+    // before any spawn — with nothing dispatched. The refusal KEEPS the admission (#388): the
+    // attachment is the swarm's resolved live observation, admitted once per Run through the
+    // recruit request's `workspace` field — not this Plan's preference — so deleting it would
+    // detach the corrected Run with no row saying so. The refusal teaches instead: the field,
+    // the rule, and the next action — re-plan with exactly one work node and the kept attachment
+    // rides that dispatch.
     if (this._workspaceAttachments.has(refreshed.goal.runId)
       && refreshed.plan.nodes.length !== 1) {
-      this._workspaceAttachments.delete(refreshed.goal.runId);
-      throw applicationError('a shared workspace attachment requires a single-work-node Run',
-        'application_workspace_attachment_unsupported');
+      const { workspaceId } = this._workspaceAttachments.get(refreshed.goal.runId);
+      throw applicationError(
+        `shared workspace attachment ${workspaceId} on run ${refreshed.goal.runId} requires a`
+        + ' single-work-node Run — the admission is kept: re-plan this Run with exactly one work'
+        + ' node and the attachment rides that dispatch',
+        'application_workspace_attachment_unsupported',
+        {
+          field: 'workspace',
+          workspaceId,
+          runId: refreshed.goal.runId,
+          rule: 'a shared workspace attachment requires a single-work-node Run',
+          next: 're-plan this Run with exactly one work node; the kept attachment rides that dispatch',
+        },
+      );
     }
     if (refreshed.plan.nodes.length === 1 && refreshed.plan.nodes[0]?.revision) {
       await this._validateWorkflowRevisionPlan(refreshed);
