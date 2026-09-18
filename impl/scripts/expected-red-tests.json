@@ -446,6 +446,26 @@
       "reason": "#10"
     },
     {
+      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: design-not-landed): attention carries its coverage — examined seats are named",
+      "reason": "#268"
+    },
+    {
+      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: design-not-landed): swarm.view --projection participants spawns no process (#438)",
+      "reason": "#268"
+    },
+    {
+      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: design-not-landed): the participant row carries activity and usage from folded rows",
+      "reason": "#268"
+    },
+    {
+      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: design-not-landed): the root is a participant row and its acts render attributed",
+      "reason": "#268"
+    },
+    {
+      "key": "test/issue268-visibility-red.test.mjs :: #364 RED (stage: design-not-landed): the closed runtime state set is exported and every surface reads the ONE derivation",
+      "reason": "#268"
+    },
+    {
       "key": "test/issue422-joint-couplings-red.test.mjs :: #422 RED (stage: design-not-landed): a group member with communicate declares a rotating writer lease over its own group",
       "reason": "#422"
     },
@@ -496,6 +516,18 @@
     {
       "key": "test/issue423-claims-and-peers-red.test.mjs :: #423 RED (stage: design-not-landed): the peers-now brief section renders held work and last checkpoints from the durable rows",
       "reason": "#423"
+    },
+    {
+      "key": "test/issue433-contributions-projection-red.test.mjs :: #433 RED (stage: design-not-landed): an unreviewed_contribution attention row after one recruit-brief cadence",
+      "reason": "#433"
+    },
+    {
+      "key": "test/issue433-contributions-projection-red.test.mjs :: #433 RED (stage: design-not-landed): the bounded watch carries EVERY wake row since afterSeq, or names pendingSince",
+      "reason": "#433"
+    },
+    {
+      "key": "test/issue433-contributions-projection-red.test.mjs :: #433 RED (stage: design-not-landed): the contributions projection carries reviewState from the ONE derivation",
+      "reason": "#433"
     },
     {
       "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
