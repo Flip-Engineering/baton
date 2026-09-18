@@ -81,4 +81,21 @@ export function normalizeContextProgramPolicy(value = DEFAULT_INPUT) {
   return deepFreeze({ ...body, policyDigest });
 }
 
+/** The width ONE context source string is projected at, before the deployment policy's own text
+ * bound has its say: the ceiling every chunk of a document was always cut at. */
+export const CONTEXT_SOURCE_CHUNK_CEILING_BYTES = 12 * 1024;
+
+/** The ONE chunk-size derivation for a context source string — a repository doc, a retained
+ * result, or a document the root's reading leg hands over (#488): never wider than the projection
+ * ceiling above, and never wider than the deployment policy's own `maxTextBytes`, so a chunk is a
+ * string the deployment's source scan admits by construction. `context-runtime.mjs`'s two chunk
+ * loops and `application-cli.mjs`'s reading leg all read THIS function, never a second constant. */
+export function contextSourceChunkBytes(policy = DEFAULT_CONTEXT_PROGRAM_POLICY) {
+  const bound = policy?.maxTextBytes;
+  if (!Number.isSafeInteger(bound) || bound <= 0) {
+    throw policyError('Context Program policy maxTextBytes is invalid');
+  }
+  return Math.min(CONTEXT_SOURCE_CHUNK_CEILING_BYTES, bound);
+}
+
 export const DEFAULT_CONTEXT_PROGRAM_POLICY = normalizeContextProgramPolicy();

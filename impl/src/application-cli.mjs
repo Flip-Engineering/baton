@@ -21,7 +21,11 @@ import {
   swarmCliCommand, SWARM_REPORT_BODY_VERBS, SWARM_REPORT_BODY_RULE, SWARM_REPORT_BODY_ADMITTED,
   swarmEncodedReportBody, swarmReportBodyRefusalMessage,
 } from './swarm-surface.mjs';
-import { webAdmittedCommandNames } from './web-northbound.mjs';
+import {
+  CONTEXT_PACKAGE_BRANCH_CEILING, webAdmittedCommandNames,
+} from './web-northbound.mjs';
+import { contextSourceSecretShape } from './context-program.mjs';
+import { contextSourceChunkBytes } from './context-program-policy.mjs';
 import { ATTACHMENT_CLOSED_REASONS, WAKE_STREAM_END_REASONS, attachmentClosedFrame, attachmentClosedReason, openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeClassRow, wakeQuery } from './wake-stream.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 // TWO derived tiers, one declaration each (2026-09-14 audit, U-N5/U-E6):
@@ -2261,13 +2265,23 @@ const CONTEXT_READ_RULES = Object.freeze({
   context_source_oversize: 'the document exceeds the context package branch ceiling',
 });
 
-/** Issue #441: the ONE branch-name derivation for a doc the root pulled. The hub's branch-name
- * grammar admits `[A-Za-z0-9._:-]` only — a path separator and an `@` are not branch-name
- * characters — so a doc branch spells its path with the separators flattened to `.` and carries
- * the revision (the sha256 of the exact bytes the CLI read) after the final `:`. One derivation,
- * both the writer (the CLI) and any reader that wants to recover the citation. */
-export function contextDocBranchName(path, sha) {
-  return `doc:${`${path}`.replaceAll('/', '.').replace(/[^A-Za-z0-9._-]/gu, '-')}:${sha}`;
+/** Issue #441/#488: the ONE branch-name derivation for a doc the root pulled. The hub's
+ * branch-name grammar admits `[A-Za-z0-9._:-]` only — a path separator, an `@`, a `#` and a `/`
+ * are not branch-name characters — so a doc branch spells its path with the separators flattened
+ * to `.` and carries the revision (the sha256 of the exact bytes the CLI read) after the final
+ * `:`. One derivation, both the writer (the CLI) and any reader that wants to recover the
+ * citation.
+ *
+ * #488: a document longer than one chunk rides as ORDERED CHUNK branches (see
+ * `chunkDocumentText`), and `chunk` names the one this branch carries — `{index, of}`, zero-padded
+ * to four digits — appended as `:<chunk>-<of>`. The sketch's `doc:<path>#<chunk>/<of>` is
+ * inadmissible for the grammar above; this is its legal equivalent, and the padding makes the
+ * store's own canonical name order (plain code-unit order) the chunk order a seat reassembles in.
+ * A document that fits one chunk is named exactly as before — no suffix, no second spelling. */
+export function contextDocBranchName(path, sha, chunk = null) {
+  const base = `doc:${`${path}`.replaceAll('/', '.').replace(/[^A-Za-z0-9._-]/gu, '-')}:${sha}`;
+  if (chunk === null) return base;
+  return `${base}:${`${chunk.index}`.padStart(4, '0')}-${`${chunk.of}`.padStart(4, '0')}`;
 }
 
 /** The ONE composer for every reading-leg refusal: the typed code, the fact judged (the issue
@@ -2422,12 +2436,15 @@ function takeRecruitContextLeg(args) {
   return leg.issue === null ? null : Object.freeze({ issue: leg.issue, docs: Object.freeze([...leg.docs]) });
 }
 
-/** The ONE composition of the recruit's reading leg (#480): the issue document as its own branch,
- * one branch per repository document the issue cites or the operator names, and the NAMED GAPS —
- * every named document the deployment's checkout does not carry, in the closed row shape the
- * seat's brief and the recruit's receipt both render (`{path, state, reason}`). The members are
- * what the package carries; a document that is absent has no bytes to carry, so its branch is the
- * gap row instead. */
+/** The ONE composition of the recruit's reading leg (#480, #488): the issue document as its own
+ * branch, one branch per repository document the issue cites or the operator names — CHUNKED at
+ * the runtime's own chunk width when a document is longer than one source string may be — and the
+ * NAMED GAPS: every named document this reading could not hand over, in the closed row shape the
+ * seat's brief and the recruit's receipt both render (`{path, state, reason}`, plus the `line` a
+ * secret-shaped row sits on). The members are what the package carries; a document that is absent
+ * has no bytes to carry, and a document a secret-shaped line keeps out must not ride at all, so
+ * each becomes the gap row instead of a branch (#488: the recruit the issue was read for is
+ * admitted, and the seat is told what it did not get). */
 function composeRecruitContextPackage(issue, request, repoRoot) {
   const branches = [];
   // The issue is a MEMBER only when it carries text a seat can read (a title or a body): a leg
@@ -2440,6 +2457,13 @@ function composeRecruitContextPackage(issue, request, repoRoot) {
     });
   }
   const gaps = [];
+  // #488: the width ONE branch may carry, from the runtime's OWN derivation (never a literal
+  // here): a chunk is a source string the deployment's scan admits by construction, which is what
+  // a document longer than that width used to fail on. The policy is the deployment's shipped one
+  // (`defaultRepositoryContextPolicy`), the only policy a resident this CLI can reach is built
+  // with; a deployment that narrowed `maxTextBytes` narrows the source scan's own bound, and the
+  // leg's chunks are that much narrower with it.
+  const chunkBytes = contextSourceChunkBytes();
   // The citation set: the `docs/…` paths the issue body names plus every `--doc` — ONE set, sorted,
   // so two spellings of one document can never become two branches.
   for (const path of [...new Set([...citedDocsInIssue(issue.body), ...request.docs])].sort()) {
@@ -2448,12 +2472,77 @@ function composeRecruitContextPackage(issue, request, repoRoot) {
       gaps.push(Object.freeze({ path, state: 'unreadable', reason: 'absent' }));
       continue;
     }
-    branches.push({
-      name: contextDocBranchName(path, createHash('sha256').update(read.bytes).digest('hex')),
-      text: read.bytes.toString('utf8'),
-    });
+    const text = read.bytes.toString('utf8');
+    // #488: the document's OWN shape, judged by the table the Bench's scan reads, before it is
+    // handed over — the CLI is the only caller that can turn this fact into a gap instead of a
+    // refusal, because it still holds the rest of the leg.
+    const shape = contextSourceSecretShape(text);
+    if (shape !== null) {
+      gaps.push(Object.freeze({
+        path, state: 'unreadable', reason: 'sensitive', line: shape.line,
+      }));
+      continue;
+    }
+    const chunks = chunkDocumentText(text, chunkBytes);
+    // A document with NO bytes is the absent case wearing a different hat: there is nothing to
+    // hand over, and the port refuses an empty branch document as a malformed request. The seat
+    // reads about it as a gap instead of reading nothing at all.
+    if (chunks.length === 0) {
+      gaps.push(Object.freeze({ path, state: 'unreadable', reason: 'empty' }));
+      continue;
+    }
+    // The port admits a bounded number of branch documents; a leg that composed more would be
+    // refused by the wire (as a malformed request) after the root's own reading was spent. The
+    // ceiling is the PORT's constant — read, not restated — and the refusal is this leg's own.
+    const planned = branches.length + chunks.length;
+    if (planned > CONTEXT_PACKAGE_BRANCH_CEILING) {
+      throw contextReadRefusal('context_source_oversize',
+        `${path} is ${read.bytes.length} bytes: its ${chunks.length} chunk branches would make`
+          + ` ${planned} branches, over the ${CONTEXT_PACKAGE_BRANCH_CEILING} one context package`
+          + ' admits — recruit without --issue, or cite fewer documents',
+        { field: 'path', detail: {
+          path, bytes: read.bytes.length, chunks: chunks.length, branches: planned,
+          bound: CONTEXT_PACKAGE_BRANCH_CEILING, limit: 'branches',
+        } });
+    }
+    const sha = createHash('sha256').update(read.bytes).digest('hex');
+    const of = chunks.length;
+    chunks.forEach((chunk, index) => branches.push({
+      name: contextDocBranchName(path, sha, of === 1 ? null : { index, of }),
+      text: chunk,
+    }));
   }
   return Object.freeze({ branches, gaps: Object.freeze(gaps) });
+}
+
+/** The ordered chunks of ONE document's text (#488): at most `chunkBytes` bytes each, cut on the
+ * LAST line boundary that fits inside the window (the newline ends a chunk, so concatenating the
+ * chunks in order reproduces the document byte for byte), and never between a surrogate pair. A
+ * document that fits the window is ONE chunk and rides under its whole-document branch name. */
+function chunkDocumentText(text, chunkBytes) {
+  const chunks = [];
+  let offset = 0;
+  while (offset < text.length) {
+    let end = Math.min(text.length, offset + chunkBytes);
+    while (end > offset && Buffer.byteLength(text.slice(offset, end), 'utf8') > chunkBytes) end -= 1;
+    if (end < text.length && end > offset
+      && /[\uD800-\uDBFF]/u.test(text[end - 1]) && /[\uDC00-\uDFFF]/u.test(text[end])) end -= 1;
+    if (end <= offset) {
+      // A single character wider than a whole chunk: no projection of this document is safe, and
+      // the width it failed at is the derivation's own (never a second number).
+      throw contextReadRefusal('context_source_oversize',
+        `a single character of this document is wider than the ${chunkBytes}-byte chunk width, so`
+          + ' the document cannot ride the package',
+        { field: 'path', detail: { bytes: chunkBytes, bound: chunkBytes, limit: 'chunkBytes' } });
+    }
+    if (end < text.length) {
+      const boundary = text.lastIndexOf('\n', end - 1);
+      if (boundary >= offset) end = boundary + 1;
+    }
+    chunks.push(text.slice(offset, end));
+    offset = end;
+  }
+  return chunks;
 }
 
 /** Whether the document the issue reader answered carries text a seat can read. */
@@ -2750,15 +2839,18 @@ function recruitLegHelpBlocks(topic) {
     'context package:',
     '  baton swarm recruit <SWARM_ID> <PARTICIPANT_ID> <OBJECTIVE> --issue N [--doc PATH …]',
     '  --issue N pulls the GitHub issue through this host\'s own `gh` credential and admits ONE',
-    '  ContextPackage whose branches are `issue:N` and `doc:<path>@<sha>` for every repository doc',
-    '  the issue body cites (plus every --doc); the seat\'s brief renders the package and its run',
+    '  ContextPackage whose branches are `issue:N` and `doc:<path>:<sha>` for every repository doc',
+    '  the issue body cites (plus every --doc); a longer doc rides as ordered chunk branches,',
+    '  `doc:<path>:<sha>:<chunk>-<of>` (chunk and count zero-padded, in order), which a seat',
+    '  reassembles by concatenating the chunks. The seat\'s brief renders the package and its run',
     '  carries the attachment (scope worker:<seat>). A worker never calls gh. Every cited and named',
     '  doc resolves against the DEPLOYMENT\'s checkout root, never this shell\'s cwd; a document that',
-    '  checkout does not carry is a NAMED GAP on the recruit receipt (contextPackage.docs) and in the',
-    '  seat\'s brief, and the recruit is admitted. The reader refuses typed before any effect:',
+    '  checkout does not carry, or one a secret-shaped line keeps out, is a NAMED GAP on the recruit',
+    '  receipt (contextPackage.docs — `reason: absent`, or `reason: sensitive` with the `line`) and',
+    '  in the seat\'s brief, and the recruit is admitted. The reader refuses typed before any effect:',
     '  issue_reader_unavailable, issue_not_found, context_doc_unreadable (a path outside the',
     '  checkout, or a leg that composed no readable member at all — the refusal then names the',
-    '  remedy).',
+    '  remedy), context_source_oversize (a document whose chunks would not fit the package).',
   ].join('\n'), [
     'route probe:',
     '  baton swarm recruit <SWARM_ID> <PARTICIPANT_ID> <OBJECTIVE> \\',

@@ -19,7 +19,8 @@ parallel channel. The primitives and their landed state:
 1. **The issue and the docs it cites — ONE ContextPackage, admitted by the root.** The root's
    CLI (the only place a `gh` credential exists, #347) reads the issue at recruit time and
    admits ONE `baton.context_package` named `issue-<n>` with branches `issue:<n>` and one doc
-   branch per cited or requested doc. The doc branch's spelling derives from ONE exported
+   branch per cited or requested doc (or several, when the document is longer than one chunk —
+   §9.7). The doc branch's spelling derives from ONE exported
    function, `contextDocBranchName(path, sha)` (application-cli.mjs) — `doc:<path with "/" → "."
    and unsafe chars → "-">:<sha256 of the exact bytes read>` — because the store's branch-name
    grammar (`[A-Za-z0-9._:-]`, `_normalizeContextPackageBranch`) admits no `/` and no `@`; the
@@ -30,9 +31,10 @@ parallel channel. The primitives and their landed state:
    CAS is the only byte store, and `admitContextPackage` resolves every branch exactly once at
    admission. Provenance derives from the admission ledger event (docs/32 §3.3), never from a
    self-cited field. Every cited or requested path resolves against the deployment's checkout root
-   (§4.2 rule (a)), and a document that root does not carry becomes a NAMED GAP in the recruit's
-   options and on the receipt rather than a branch (§4.2 rule (b)) — the store's package shape
-   carries branches only, so the gaps ride `options.contextPackage.docs`.
+   (§4.2 rule (a)); a document that root does not carry, and one a secret-shaped line keeps out,
+   each become a NAMED GAP in the recruit's options and on the receipt rather than a branch
+   (§4.2 rule (b), §9.7) — the store's package shape carries branches only, so the gaps ride
+   `options.contextPackage.docs`.
 2. **The package reaches the seat by attachment, not by copy.** The recruit effect attaches the
    package to the seat's run with scope `worker:<seat>` (`attachContextPackage` — a fenced O(1)
    pointer binding; it never re-reads branch bytes). The `package.attached` row IS the durable
@@ -62,7 +64,7 @@ ONE row or projection it renders from and the registry row that bounds it (never
 | 1 | the objective | the recruiter's own words | `run.objective` |
 | 2 | the held work item | the ACTIVE assignment row (#345) | — |
 | 3 | `## Swarm situation` | peers, settled count, contracts, commits-since-base, route usage, parked guidance — the durable folds, as today | the existing rows |
-| 4 | `## Context package` (NEW) | the recruit's `options.contextPackage` resolved against the store's package record: package digest, the leg's NAMED GAPS (`docs: [{path, state, reason}]`, #480 — absent when empty), then per branch its name, digest, byte size and the first `context_package.brief_bytes` of its text (the `issue:<n>` branch first) | `context_package.brief_bytes` per rendered branch slice and per rendered gap line; `context_package.source_bytes` per admitted branch source |
+| 4 | `## Context package` (NEW) | the recruit's `options.contextPackage` resolved against the store's package record: package digest, the leg's NAMED GAPS (`docs: [{path, state, reason}]`, #480 — plus `line` when a secret shape withheld the document, #488 — absent when empty), then per branch its name, digest, byte size and the first `context_package.brief_bytes` of its text (the `issue:<n>` branch first; a chunked doc's branches are its chunks, in name order) | `context_package.brief_bytes` per rendered branch slice and per rendered gap line; `context_package.source_bytes` per admitted branch source |
 | 5 | the read-only mode block | the recruit mode (#373) | — |
 | 6 | the contribution contract example | the validator's own schema (#310/#371/#373) | — |
 | 7 | `## Inheritance from <seat>` | the predecessor's durable rows (#318) | — |
@@ -131,8 +133,11 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    when it composed NO readable member at all — an issue whose title and body carry no text with
    every named document absent — and that refusal names the remedy: recruit without `--issue`, or
    name the documents with `--files` once that leg lands (§9.1). A path that ESCAPES the checkout,
-   or a document the reader cannot use (a permission, a directory, an oversize source), stays the
-   refusal it always was: an operator error is never quietly a gap.
+   or a document the reader cannot use (a permission, a directory, a source over the per-document
+   registry row), stays the refusal it always was: an operator error is never quietly a gap. #488
+   adds the second gap reason: a document a secret-shaped line keeps out is the SAME kind of row
+   with the line the shape sits on (`{path, state: 'unreadable', reason: 'sensitive', line}`,
+   §9.7) — withheld, named, and never quoted.
 3. **What the root still types.** The judgment paragraph — the objective. Composition derives
    the world; it never authors the decision. (`--files <globs>` — scope derivation from the
    issue's file mentions plus the #296 landing-table gates — is NOT in this wave; §9.1.)
@@ -140,8 +145,10 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    - `gh` missing or unauthenticated → `issue_reader_unavailable {issue, reason}`;
    - the issue not found → `issue_not_found {issue}`;
    - a named path that ESCAPES the checkout, or a document the reader cannot use →
-     `context_doc_unreadable {path}`; an oversize source → the registry row's own refusal
-     (`context_package.source_bytes`, `context_package.brief_bytes` — derived, never literal);
+     `context_doc_unreadable {path}`; a source over the per-document registry row
+     (`context_package.source_bytes`, derived, never literal), and a document whose CHUNKS would
+     overflow the package the port admits, → `context_source_oversize` with its measured detail
+     (§9.7);
    - the leg composed no readable member at all → `context_doc_unreadable` naming the remedy
      (rule (b) above) — a document the checkout simply does not carry is a gap, never a refusal.
 5. The web transport has NO context-package route today (grep: web-northbound.mjs names none);
@@ -249,14 +256,17 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
 | text-artifact admit into the CAS | `context-program.mjs` · `StatelessContextBench.admitSource` |
 | branch read projection (the ONE shape) | `application.mjs` · `projectContextPackageBranch` |
 | CLI argv vocabulary, usage rows | `application-cli.mjs` · `parseSwarmCli`, `SWARM_PARSER_LEG_FLAGS`; `swarm-surface.mjs` |
-| CLI refusal codes (`issue_reader_unavailable`, `issue_not_found`, `context_doc_unreadable`) | `application-cli.mjs`, the #430/#431 closed refusal shape |
+| CLI refusal codes (`issue_reader_unavailable`, `issue_not_found`, `context_doc_unreadable`, `context_source_oversize`) | `application-cli.mjs`, the #430/#431 closed refusal shape |
 | registry byte rows (`context_package.brief_bytes`, `context_package.source_bytes`, the read-verb bounds) | `limits.mjs` · `FRAME_LIMITS` |
 | recruit args→attach seam, the `## Context package` brief section | `swarm-runtime.mjs` · `swarm.recruit` effect, `_composeRecruitBrief` |
 | the three read verbs: dispatch table rows | `swarm-runtime.mjs` · the knowledge-dispatch region (:236–350) |
 | the closed seat verb set, brief/help rows | `swarm-native-access.mjs` · `SWARM_SEAT_VERB_NAMES` + the guidance derivation |
 | the verbs' refusal codes | raised as typed bridge refusals today; the `swarm-refusals.mjs` closed-set rows (`package_not_attached_to_run`, `context_package_not_found`, `context_package_branch_not_found`) are the root's hunk (§9.2) |
 | the ONE checkout root the reading leg resolves against | `application-cli.mjs` · `deploymentCheckoutRoot` (the served `repository.root`; shared by citations, `--doc`, and the deferred `--files` scope paths) |
-| the reading leg's NAMED GAPS (`docs: [{path, state, reason}]`) | `application-cli.mjs` · `composeRecruitContextPackage` (writer); `swarm-contract.mjs` · `readRecruitContextPackageOption` (the closed row shape); `swarm-runtime.mjs` · `_recruitContextPackageBriefSection` (the brief line) |
+| the reading leg's NAMED GAPS (`docs: [{path, state, reason}]`, + `line` for `reason: 'sensitive'`) | `application-cli.mjs` · `composeRecruitContextPackage` (writer); `swarm-contract.mjs` · `readRecruitContextPackageOption` (the closed row shape); `swarm-runtime.mjs` · `_recruitContextPackageBriefSection` (the brief line) |
+| the chunk width ONE context source string is projected at (the runtime's chunk loops and this leg) | `context-program-policy.mjs` · `contextSourceChunkBytes` |
+| the secret shapes a source may not carry (the scan and the `context_source_sensitive` detail) | `context-program.mjs` · `CONTEXT_SOURCE_SECRET_SHAPES`, `contextSourceSecretShape`, the typed codes in `normalizeContextSource` |
+| the branch ceiling a context package port admits (the port and the leg that composes one) | `web-northbound.mjs` · `CONTEXT_PACKAGE_BRANCH_CEILING` |
 | contributions derivation (exported, shared with #433) | `swarm-runtime.mjs` · `contributionLedgerRows` + `SWARM_REVIEW_STATES` over the swarm fold |
 | reviewState closed set | docs/46 §2.1 (`unreviewed \| accepted \| rejected`) — this doc adds nothing |
 | claim refusals | docs/45 §2 (`swarm_claim_conflict`, …) — this doc adds nothing |
@@ -293,3 +303,36 @@ admit through contract validation BEFORE any runtime effect (the #318 pattern).
    into the `new WebNorthbound({…})` literal in `application-deployment.mjs` is one line outside
    every #441 lane's scope. Until it lands, `package.admit` on a real resident refuses typed
    `context_source_unavailable` — the feature is complete and its suites wire the hook by hand.
+
+7. **A cited document longer than one source string — RESOLVED this wave (#488).** The reading leg
+   used to hand each document over as ONE branch string, and the deployment's source scan
+   (`context-program.mjs` `normalizeContextSource`) answered `context_source_sensitive` for
+   anything over the policy's own `maxTextBytes`: "oversized" and "secret-shaped" were one code, so
+   a 40 KB cited design doc refused the whole recruit with a code that says the document holds a
+   credential. The leg now projects every document through the RUNTIME's own chunk derivation —
+   `contextSourceChunkBytes(policy) = min(12 KiB, policy.maxTextBytes)`, exported from
+   `context-program-policy.mjs` and read by `context-runtime.mjs`'s two chunk loops AND
+   `application-cli.mjs` `composeRecruitContextPackage`, never a second constant — cutting at most
+   that many bytes per branch on the LAST line boundary inside the window, so concatenating the
+   branches in order reproduces the document byte for byte. A document that fits stays ONE branch
+   under the name above; a longer one rides ordered chunks named `doc:<path>:<sha>:<chunk>-<of>`
+   (`contextDocBranchName(path, sha, {index, of})`, both zero-padded to four digits, chunk 0-based)
+   — the store's grammar admits no `#` and no `/`, so the `#<chunk>/<of>` sketch is inadmissible
+   and the padding makes the store's canonical name order the chunk order a seat reassembles in.
+   The two facts the scan judges now answer TWO codes, both typed and both with their detail, and
+   neither ever carrying the matched text: `context_source_oversize` with
+   `{bytes, bound, limit: 'maxTextBytes'}` (the string is bigger than one source may be) and
+   `context_source_sensitive` with `{pattern, line}` over the ONE named shape table
+   (`CONTEXT_SOURCE_SECRET_SHAPES`: `private_key`, `keyed_secret`, `sk_token`, `gh_token`, read by
+   the scan and the detail alike). The second table is the leg's too: a document a secret-shaped
+   line keeps out is a NAMED GAP — `{path, state: 'unreadable', reason: 'sensitive', line}`, the
+   #480 row shape extended by the line the shape sits on — while the rest of the package admits and
+   the brief names the gap exactly as it names an absent citation. A cited document with NO bytes
+   is the same kind of row (`reason: 'empty'`): there is nothing to hand over, and the port refuses
+   an empty branch document as a malformed request, so the seat reads about it rather than reading
+   a silent hole. Only a leg with no readable member at all refuses (§4.2 rule (b)). The one bound
+   that is NOT a gap is the package's own branch ceiling: a document whose chunks would push the
+   package past
+   `CONTEXT_PACKAGE_BRANCH_CEILING` (`web-northbound.mjs`'s port ceiling, read rather than
+   restated) refuses `context_source_oversize` with `limit: 'branches'` BEFORE any effect, instead
+   of handing the port a request it answers as malformed after the root's reading was spent.

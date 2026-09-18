@@ -699,22 +699,31 @@ for (const name of SWARM_COMMAND_NAMES) {
  * recruit's other vocabulary, so the CLI's writer and the runtime's reader cannot drift; the
  * digest travels, never the package: the seat's brief resolves the branch text from the store.
  * Issue #480: `docs` is the reading leg's NAMED GAPS — the documents the issue's citations or the
- * root's `--doc` flags named that the deployment's checkout does not carry, as the closed rows
+ * root's `--doc` flags named that this reading could not hand over, as the closed rows
  * `{path, state: 'unreadable', reason}` the seat's brief and the recruit's receipt render. The
  * store's package shape carries branches only, so a document with no bytes has nowhere else to
- * travel; the optional field keeps every pre-#480 caller's `{digest}` exactly as admissible. */
+ * travel; the optional field keeps every pre-#480 caller's `{digest}` exactly as admissible.
+ * Issue #488: a document a secret-shaped line keeps out is the SAME kind of row with the line the
+ * shape sits on — `{path, state: 'unreadable', reason: 'sensitive', line}` — so the seat learns
+ * where to look, never what the line said. */
 export const SWARM_RECRUIT_CONTEXT_PACKAGE_FIELDS = Object.freeze(['digest', 'docs']);
 
 /** The ONE state a named gap can be in: the document could not be read as this seat's reading. */
 export const SWARM_RECRUIT_CONTEXT_PACKAGE_GAP_STATES = Object.freeze(['unreadable']);
 
-/** One gap row, exactly: the path the leg named, the state, and why the checkout could not answer. */
+/** One gap row, exactly: the path the leg named, the state, why this reading could not answer —
+ * and, for a row a secret shape kept out (#488), the 1-based `line` it sits on. `line` is
+ * admissible only as a positive integer and only when the reason names the shape that withheld
+ * the document; no row ever carries the matched text. */
 function isContextPackageGapRow(row) {
-  return row !== null && typeof row === 'object' && !Array.isArray(row)
-    && Object.keys(row).sort().join(',') === 'path,reason,state'
+  if (row === null || typeof row !== 'object' || Array.isArray(row)) return false;
+  const fields = row.line === undefined ? 'path,reason,state' : 'line,path,reason,state';
+  return Object.keys(row).sort().join(',') === fields
     && typeof row.path === 'string' && row.path.length > 0
     && SWARM_RECRUIT_CONTEXT_PACKAGE_GAP_STATES.includes(row.state)
-    && typeof row.reason === 'string' && row.reason.length > 0;
+    && typeof row.reason === 'string' && row.reason.length > 0
+    && (row.reason === 'sensitive') === (row.line !== undefined)
+    && (row.line === undefined || (Number.isSafeInteger(row.line) && row.line > 0));
 }
 
 /** Read (and validate) the recruit's context-package option: the digest and its named gaps, or
@@ -734,7 +743,7 @@ export function readRecruitContextPackageOption(options) {
       'swarm_command_invalid',
       {
         field: 'options.contextPackage', rule: 'closed-set',
-        correction: `pass {${fields.join(', ')}} with the 64-hex package digest an admission answered with and, when the leg could not read a document it named, the gap rows {path, state, reason}`,
+        correction: `pass {${fields.join(', ')}} with the 64-hex package digest an admission answered with and, when the leg could not hand over a document it named, the gap rows {path, state, reason} — plus the 1-based line for a row whose reason is "sensitive"`,
       },
     );
   }
@@ -742,6 +751,7 @@ export function readRecruitContextPackageOption(options) {
     digest: value.digest,
     docs: Object.freeze((value.docs ?? []).map((row) => Object.freeze({
       path: row.path, state: row.state, reason: row.reason,
+      ...(row.line === undefined ? {} : { line: row.line }),
     }))),
   });
 }

@@ -183,6 +183,12 @@ const CONTEXT_PACKAGE_COMMANDS = new Set(
   [...CONTEXT_PACKAGE_WEB_ENTRIES, ...CONTEXT_PACKAGE_DOT_WEB_ENTRIES].map(([transport]) => transport),
 );
 
+/** Issue #488: the branch ceiling ONE context package request may carry. The port refuses above it,
+ * and every writer that composes a package — the root's reading leg (`application-cli.mjs`, which
+ * turns each cited document into ordered chunk branches) — reads THIS derivation, so a leg can
+ * never hand the port a package it refuses. */
+export const CONTEXT_PACKAGE_BRANCH_CEILING = 64;
+
 /** Issue #441: the closed request the context-package admit port accepts — the package's name
  * and one branch document per source the root's CLI pulled (the issue, then each doc it cites).
  * Each branch's text is minted into the deployment's context CAS BY THE PORT: the CLI never hands
@@ -194,8 +200,10 @@ function normalizeContextPackageRequest(raw) {
   const name = 'name';
   if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== ['branches', name].sort().join(',')
     || !string(raw.name) || !/^[A-Za-z0-9._:-]{1,512}$/u.test(raw.name)
-    || !Array.isArray(raw.branches) || raw.branches.length === 0 || raw.branches.length > 64) {
-    throw invalid('a context package request carries a name and 1..64 branch documents', 'branches');
+    || !Array.isArray(raw.branches) || raw.branches.length === 0
+    || raw.branches.length > CONTEXT_PACKAGE_BRANCH_CEILING) {
+    throw invalid('a context package request carries a name and 1..'
+      + `${CONTEXT_PACKAGE_BRANCH_CEILING} branch documents`, 'branches');
   }
   const row = FRAME_LIMITS['context_package.source_bytes'];
   const branches = raw.branches.map((branch, index) => {
