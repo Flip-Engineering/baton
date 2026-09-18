@@ -8905,17 +8905,42 @@ export class BatonApplication {
     const observer = normalizePrincipal(rawObserver, 'run observer');
     const deadline = Date.now() + options.timeoutMs;
     let view = await this.status(runId, observer, {}, context);
+    // Issue #409 (audit C36, principle P11): one contract, one wait discipline. run.wait parks
+    // on the SAME event-driven primitive run.follow and run.inspect park on — the coordination
+    // change signal (waitAfter over the viewed cursor, bounded by the caller's remaining
+    // budget) — never a fixed sleep cadence. Every wake re-reads the view through status()
+    // and returns it directly (the blind-waits B1 loop-exit shape); the loop exits at the
+    // caller's deadline, which stays bounded by the admitted validation above. The
+    // zero-budget coordinator read opening each cycle is the pacing seam the blind-waits A1
+    // rows double (issue #164 owns that file): it yields one macrotask turn without sleeping,
+    // so those rows keep observing the loop entry while the wait itself stays event-driven.
+    // Narrow doubles pre-dating the change signal (the Phase-89 double precedent) wire no
+    // coordination.waitAfter; those degrade to a deadline-bounded coordinator wait — still no
+    // fixed cadence — instead of refusing.
+    const park = async (cursor, remaining) => {
+      if (typeof this.driver.coordination?.waitAfter === 'function') {
+        await this.driver.coordination.waitAfter(cursor, remaining);
+      } else {
+        await this.driver.coordinator.wait(remaining);
+      }
+    };
     // docs/36 §4.1 read row / R-OP-9 — `--until terminal` blocks until the application Run itself is
     // terminal; the default (settled) preserves run.wait's historical provider-settlement block.
     if (options.until === 'terminal') {
       while (!APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) && Date.now() < deadline) {
-        await this.driver.coordinator.wait(Math.min(100, Math.max(1, deadline - Date.now())));
+        await this.driver.coordinator.wait(0);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await park(view.cursor, remaining);
         view = await this.status(runId, observer, {}, context);
       }
       return view;
     }
     while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && Date.now() < deadline) {
-      await this.driver.coordinator.wait(Math.min(100, Math.max(1, deadline - Date.now())));
+      await this.driver.coordinator.wait(0);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await park(view.cursor, remaining);
       view = await this.status(runId, observer, {}, context);
     }
     return view;
