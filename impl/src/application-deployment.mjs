@@ -2924,6 +2924,12 @@ class BatonDeployment {
   // #461: this incarnation has WITHDRAWN — its close took down every listener and lease it held
   // and released the successor's process handle. The ONE read the signal path makes first.
   #withdrawn = false;
+  // Issue #482: this incarnation's own stop, as a WAIT for the ONE caller whose own loop ends with
+  // it (see `whenStopped`). `#stopSettled` is set at the ONE site where that stop's outcome is
+  // decided — `#runClose`'s tail, beside `#withdrawn` — and every waiter registered before it
+  // resolves there; a stop that re-publishes (#306r) never reaches that site and settles nothing.
+  #stopSettled = false;
+  #stopWaiters = [];
   // #306r: a handoff FAILED after the resident and publication leases had gone over. The instance
   // cannot re-take a lease directory without minting a new incarnation, so this records the fact
   // once: the next stop's withdrawal is still exact, and the lease it cannot assert is named there
@@ -3837,6 +3843,25 @@ class BatonDeployment {
    * over a coordinator it closed itself, and owns nothing left to count. */
   withdrawn() {
     return this.#withdrawn === true;
+  }
+
+  /** Issue #482: this incarnation's OWN stop, as a wait — the other half of the `withdrawn()` read
+   * above, for the ONE caller whose own loop ends with that stop. A handoff schedules the old
+   * incarnation's close itself (`reincarnate`), so a `baton serve` awaiting only a signal or its
+   * declared parent's exit never settles: the loop drains under an unsettled top-level await and
+   * Node ends the process with exit 13 and "Detected unsettled top-level await" — which every
+   * supervisor (launchd, the fixture helper's parent watch, an operator script) reads as a failure.
+   *
+   * Resolves when the stop SETTLES. The convergent case is the withdrawal itself — the very fact
+   * `withdrawn()` reads, set in the same act, so the caller reads one state and not two. The other
+   * case is a stop that FAILED: the caller must end its own loop for that too, and it reads why
+   * from `close()`'s own refusal (the same promise, rejected), exactly as it reads a
+   * signal-driven stop's failure. A stop that RE-PUBLISHES (#306r) is not a settle — the
+   * incarnation goes on serving and this wait stays pending, as it does for a resident nobody asked
+   * to stop. */
+  whenStopped() {
+    if (this.#stopSettled === true) return Promise.resolve();
+    return new Promise((resolve) => { this.#stopWaiters.push(resolve); });
   }
 
   /** Issue #437: the participants THIS resident owns right now, read from the projection it
@@ -5326,6 +5351,14 @@ class BatonDeployment {
     });
   }
 
+  /** Issue #482: the SEQUEL to the stop's outcome — the one place a settle is announced, called
+   * from `#runClose`'s tail where `#withdrawn` is decided. Idempotent (later calls are no-ops), so
+   * a stop that supersedes a re-publish settles its waiters exactly once. */
+  #settleStop() {
+    this.#stopSettled = true;
+    for (const resolve of this.#stopWaiters.splice(0)) resolve();
+  }
+
   #runClose() {
     if (!this.#closePromise) {
       this.#closePromise = (async () => {
@@ -5509,6 +5542,11 @@ class BatonDeployment {
         // between the withdrawal and the process's own exit narrates no second drain).
         this.#releaseSuccessorHandle(reincarnation);
         if (shutdownFailure === null) this.#withdrawn = true;
+        // Issue #482: the stop's outcome is decided HERE — this incarnation has withdrawn, or its
+        // close failed with the reason the throw below carries — and the ONE caller whose own loop
+        // ends with this stop (`whenStopped`) is told so. Every path that keeps serving returned
+        // above, so nothing settles on a re-publish.
+        this.#settleStop();
         if (shutdownFailure) {
           throw Object.assign(shutdownFailure, { resident: Object.freeze({ state: residentState }) });
         }
