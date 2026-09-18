@@ -3878,6 +3878,11 @@ export class SwarmRuntime {
       // checkout holds paths on nothing).
       for (const claim of Object.values(swarm.claims ?? {})) {
         if (claim.status !== 'active' || claim.participantId !== participantId) continue;
+        // #441 lane D: the seat's declared recruit scope is recorded as its scope claim, and a
+        // scope claim is NOT a hold — it conflicts with nothing and releases nothing — so the
+        // peers-now rows and `run.peers.read` never list it (lane C's parity and byte-identity
+        // pins read holds [] for a seat that only declared a scope).
+        if (claim.claimId === scopeClaimId(participantId)) continue;
         holds.push(typeof claim.workId === 'string'
           ? { kind: 'claim', claimId: claim.claimId, workId: claim.workId, workspaceId: claim.workspaceId ?? null }
           : { kind: 'claim', claimId: claim.claimId, paths: claim.paths ?? [], workspaceId: claim.workspaceId ?? null });
