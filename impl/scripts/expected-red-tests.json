@@ -450,10 +450,6 @@
       "reason": "#268"
     },
     {
-      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: design-not-landed): swarm.view --projection participants spawns no process (#438)",
-      "reason": "#268"
-    },
-    {
       "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: design-not-landed): the participant row carries activity and usage from folded rows",
       "reason": "#268"
     },
