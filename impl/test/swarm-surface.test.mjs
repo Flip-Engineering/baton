@@ -419,12 +419,13 @@ test('implementer: shared context is readable and a finding is an ordinary contr
   await swarm.close({ reason: 'scope shipped' });
   assert.equal(port.calls[4].args.event, 'swarm.closed');
   // Issues #422/#423: the joint coupling actions extend swarm.coupling_updated, and the claim
-  // and work-proposal families add their two kinds to the caller-submittable set.
+  // and work-proposal families add their two kinds to the caller-submittable set. #443 adds the
+  // swarm-level policy an orchestrator declares beside them.
   assert.deepEqual(SWARM_EVENT_KINDS, [
     'swarm.group_updated', 'swarm.work_updated', 'swarm.assignment_updated', 'swarm.coupling_updated',
     'swarm.claim_updated', 'swarm.proposal_updated',
     'swarm.holder_released', 'swarm.context_updated', 'swarm.contribution_recorded',
-    'swarm.contribution_reviewed', 'swarm.participant_left', 'swarm.closed',
+    'swarm.contribution_reviewed', 'swarm.policy_updated', 'swarm.participant_left', 'swarm.closed',
   ]);
 });
 

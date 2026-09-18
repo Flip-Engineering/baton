@@ -85,12 +85,17 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   // arm of coupling_writer_gone (minted in the writer block) and shared_checkout_overlap, minted
   // after the per-seat change-set rows whose cold fill it reads.
   // #422/#423 lane 2 adds claim_holder_gone and shared_checkout_overlap; #433 adds unreviewed_contribution
-  // (minted beside the contribution rows). The list below is the mint order the extractor reads.
-  assert.equal(kinds.length, 22, 'the runtime mints twenty-two attention kinds');
+  // (minted beside the contribution rows). #443 adds the death's ANSWER, minted in the same loop
+  // right after the fault it answers: reroute_proposed when the decision has a candidate route to
+  // name, reroute_no_candidate when the window is closed everywhere — the two arms of ONE row.
+  // The list below is the mint order the extractor reads.
+  assert.equal(kinds.length, 24, 'the runtime mints twenty-four attention kinds');
   assert.deepEqual(kinds, [
     'worker_lost_on_restart',
     'participant_runtime_dead',
     'provider_fault',
+    'reroute_proposed',
+    'reroute_no_candidate',
     'member_left_session_live',
     'delegation_orphaned',
     'assignment_holder_gone',

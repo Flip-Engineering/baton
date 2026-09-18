@@ -483,7 +483,7 @@ the MCP tool table, and the web bus gate on.
 | `swarm.integrate` | `swarmId`, `contributionId`, `target`, `dryRun`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.stop` | `swarmId`, `participantId`, `reason`, `idempotencyKey`, `view` | `emergency_stop`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 
-**`swarm.update` kinds (closed set, 12).** Every domain change a caller may name; the payload
+**`swarm.update` kinds (closed set, 13).** Every domain change a caller may name; the payload
 fields each kind requires of the caller are read from the payload schemas
 (`impl/src/swarm-event-schemas.mjs`).
 
@@ -499,6 +499,7 @@ fields each kind requires of the caller are read from the payload schemas
 | `swarm.context_updated` | recorded by the coordination store and replayed by the fold | `key`, `body` |
 | `swarm.contribution_recorded` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.contribution_reviewed` | recorded by the coordination store and replayed by the fold | `contributionId`, `decision` |
+| `swarm.policy_updated` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
 
@@ -513,12 +514,14 @@ records for itself, disjoint from the caller-submittable set above:
 **Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
 runtime admission check reads (`impl/src/swarm-runtime.mjs`).
 
-**Attention kinds (closed set, 22).** Each view row is a condition that needs an act, derived by the
+**Attention kinds (closed set, 24).** Each view row is a condition that needs an act, derived by the
 runtime from durable state — never asserted by a caller:
 
 - `worker_lost_on_restart`
 - `participant_runtime_dead`
 - `provider_fault`
+- `reroute_proposed`
+- `reroute_no_candidate`
 - `member_left_session_live`
 - `delegation_orphaned`
 - `assignment_holder_gone`

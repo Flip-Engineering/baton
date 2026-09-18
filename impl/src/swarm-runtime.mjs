@@ -10,7 +10,7 @@ import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
   isContributionContractBody, projectContributionContract, validateContributionContract,
   validateContributionContractMode } from './contribution-contract.mjs';
-import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
+import { foldSwarmEvent, SwarmIntegrityError, SWARM_REROUTE_MODES } from './swarm-state.mjs';
 // Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
 // minting a code outside it is a construction-time error.
 import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
@@ -141,6 +141,18 @@ const swarmRouteShape = (value) => (value && typeof value === 'object' && !Array
   ? Object.freeze({ harness: value.harness, model: value.model,
     effort: typeof value.effort === 'string' && value.effort.length > 0 ? value.effort : null })
   : null;
+
+/** One route as a reader reads it in prose (`harness/model@effort`, or `harness/model` when the
+ * route has no effort). The brief's re-route section names routes, and a `@null` tail would be a
+ * spelling no route table anywhere publishes. */
+const routeText = (route) => `${route.harness}/${route.model}${route.effort ? `@${route.effort}` : ''}`;
+
+/** Whether two route values name the same exact route — harness, model and effort, with an absent
+ * effort compared as absent rather than as a wildcard. Used to keep the route a fault came from
+ * out of the excluded list it is already named on. */
+const routeEquals = (left, right) => left != null && right != null
+  && left.harness === right.harness && left.model === right.model
+  && (left.effort ?? null) === (right.effort ?? null);
 
 /** Issue #441: the first `maxBytes` UTF-8 bytes of a branch's text, never splitting a character —
  * the ONE slice the recruit brief's `## Context package` section renders. */
@@ -313,7 +325,10 @@ const UPDATE_PERMISSIONS = Object.freeze({
   // group member's joint declaration at communicate) is the §4.6 derivation in `_updatePermission`
   // below, the ONE place dispatch and the view's `updates` rows both read.
   'swarm.claim_updated': 'organize', 'swarm.proposal_updated': 'organize',
+  // Issue #443: a swarm-level policy is the swarm's own conduct — an organizing declaration, so
+  // the same authority every other swarm-level record takes.
   'swarm.holder_released': 'organize',
+  'swarm.policy_updated': 'organize',
   'swarm.context_updated': 'communicate',
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
@@ -775,6 +790,10 @@ export class SwarmRuntime {
     // Issue #425/#438: how many worker leases the last writer-state projection saw, so a lease
     // set that changed (a resident restart) is re-projected once instead of on every read.
     this.projectedLeaseCount = 0;
+    // Issue #443: whether THIS runtime incarnation is already performing an `auto` re-route — the
+    // recruit it runs is itself a runtime entry, so the guard is what keeps a pending decision from
+    // starting a second successor inside its own resume.
+    this._autoRerouting = false;
   }
 
   /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
@@ -894,10 +913,110 @@ export class SwarmRuntime {
             reason: 'provider_fault',
           }, { actor: 'baton-runtime', key: leaveKey });
         }
+        // Issue #443: the death is answered, not only recorded. The DECISION row names the routes
+        // that could carry this seat's work, ranked by the comparison a recruit performs, with
+        // what the death left to carry: the row the root reads instead of retyping a resume, and
+        // the row an `auto` swarm then performs. It rides its own key, so the decision is recorded
+        // exactly once however often the observation is entered. A death that names no route at
+        // all composes no decision — there is nothing to re-route FROM, and the fault's own rows
+        // are not hostage to it.
+        const reroute = this._rerouteProposal(swarm, participant, binding.workerId, death);
+        if (reroute !== null) {
+          this.store.recordSwarm('swarm.reroute_proposed', reroute,
+            { actor: 'baton-runtime', key: `${key}:reroute` });
+        }
         changed = true;
       }
     }
     if (changed) this._reconcileHostCapacity();
+  }
+
+  /** Issue #443: the ONE decision a provider-fault death composes — the route it came from, the
+   * provider's own reset answer, the candidates the deployment's route rows offer (ranked by the
+   * comparison a recruit performs, never a second ranking), the routes whose window is closed, what
+   * the death left to carry, and the policy the swarm declared. Null when the death names no exact
+   * route: a re-route FROM nothing is not a decision, and the fault's own rows stand without it. */
+  _rerouteProposal(swarm, participant, workerId, death) {
+    const from = swarmRouteShape(death.route) ?? swarmRouteShape(participant.route);
+    if (from === null) return null;
+    const policy = this._policyOf(swarm);
+    const { candidates, excluded } = this._rerouteCandidates(policy.reroutePreferApi, from);
+    // The predecessor's last pinned checkpoint (#318's own derivation, read here so the decision
+    // names what a successor could resume from — never a second checkpoint reader).
+    let checkpoint = null;
+    try {
+      const inherited = this._inheritancePredecessor(this.store.swarm(swarm.swarmId) ?? swarm,
+        participant.participantId);
+      checkpoint = inherited.lastCheckpoint === null ? null
+        : Object.freeze({ sha: inherited.lastCheckpoint.sha, ref: inherited.lastCheckpoint.ref ?? null });
+    } catch { checkpoint = null; }
+    return {
+      swarmId: swarm.swarmId, participantId: participant.participantId, workerId,
+      from, code: death.code, resetAt: death.resetAt ?? null,
+      ...(death.resetAtText ? { resetAtText: death.resetAtText } : {}),
+      candidates, excluded,
+      carry: { snapshotSha: death.snapshotSha ?? null, checkpoint },
+      policy: policy.rerouteOnProviderFault,
+    };
+  }
+
+  /** Issue #443: the `auto` half — the pending decisions of the swarms whose policy performs the
+   * resume itself. Every pending decision the fold holds is answered here, in the order the seats
+   * were read; `manual` swarms are left exactly as recorded. */
+  async _performAutoReroutes() {
+    // A re-route runs a recruit, which is itself a runtime entry: the guard is what keeps that
+    // inner entry from seeing the decision still pending and starting a second resume.
+    if (this._autoRerouting) return;
+    const pending = [];
+    for (const swarm of this.store.swarms()) {
+      if (this._policyOf(swarm).rerouteOnProviderFault !== 'auto') continue;
+      for (const participant of Object.values(swarm.participants ?? {})) {
+        const reroute = participant.reroute ?? null;
+        if (reroute === null || reroute.decision !== null) continue;
+        if (reroute.candidates.length === 0) continue;
+        pending.push({ swarmId: swarm.swarmId, participantId: participant.participantId, reroute });
+      }
+    }
+    if (pending.length === 0) return;
+    this._autoRerouting = true;
+    try {
+      for (const item of pending) await this._autoRerouteOne(item);
+    } finally { this._autoRerouting = false; }
+  }
+
+  /** Issue #443: ONE pending decision performed — the SAME recruit path the root would type, with
+   * `--resume-from` semantics: the successor inherits the workspace (#385's carry is the recruit's
+   * own) and the parked guidance (#337), and the decision row is stamped with what it did. The
+   * successor's id is DERIVED from the seat and the death (never minted per attempt), so a retried
+   * attempt replays the recruit under its own operation key instead of joining a second seat. */
+  async _autoRerouteOne({ swarmId, participantId, reroute }) {
+    const candidate = reroute.candidates[0];
+    const successor = `${participantId}-reroute-${reroute.seq}`;
+    const to = Object.freeze({ harness: candidate.harness, model: candidate.model, effort: candidate.effort ?? null });
+    try {
+      await this.command('swarm.recruit', {
+        swarmId, participantId: successor,
+        objective: `Continue ${participantId}'s lane after its provider killed it`
+          + ` (${reroute.code}): resume from it onto ${this._routeLabel(to)}`,
+        options: { exact: { ...to } },
+        resumeFrom: participantId,
+        idempotencyKey: `swarm-reroute:${swarmId}:${participantId}:${reroute.seq}`,
+      }, { actor: 'baton-runtime', principalId: 'baton-runtime' });
+    } catch {
+      // The recruit's own refusal lane recorded WHY (the standard `swarm.operation_refused` row),
+      // and the decision stays pending: an orchestrator still reads the proposal and may answer it
+      // by hand. A re-route never hides the refusal it drew.
+      return;
+    }
+    // The successor is bound, so the decision is stamped with what it really did: the route the
+    // seat was admitted on (the candidate, exactly) and the proposal it answers.
+    const admitted = swarmRouteShape(this.store.swarm(swarmId)?.participants?.[successor]?.route);
+    this.store.recordSwarm('swarm.rerouted', {
+      swarmId, successor, carriedFrom: participantId,
+      from: Object.freeze({ ...reroute.from }),
+      to: Object.freeze({ ...(admitted ?? to) }),
+      proposalSeq: reroute.seq,
+    }, { actor: 'baton-runtime', key: `swarm-rerouted:${swarmId}:${participantId}:${reroute.seq}` });
   }
 
   _swarm(id) {
@@ -1502,6 +1621,106 @@ export class SwarmRuntime {
       ? Object.freeze({ value: quality, label: `${quality} intelligence` }) : null;
   }
 
+  /** The comparison ONE pair of ready route rows orders by (#341 part 3, #444): a route measured on
+   * the requested axis ranks ahead of one that is not; two measured routes rank by the datum
+   * itself; everything else falls back to the most remaining headroom. Declared ONCE because two
+   * callers ask it — the recruit's own choice below, and the re-route candidate ranking (#443),
+   * which MUST be the same comparison rather than a second opinion about quality. */
+  _compareRouteRows(a, b, prefer) {
+    const left = this._routeAxisFact(a, prefer);
+    const right = this._routeAxisFact(b, prefer);
+    if (left !== null && right === null) return -1;
+    if (left === null && right !== null) return 1;
+    if (left !== null && right !== null && left.value !== right.value) return right.value - left.value;
+    const leftHead = this._routeHeadroom(a);
+    const rightHead = this._routeHeadroom(b);
+    return rightHead.slots - leftHead.slots || leftHead.turns - rightHead.turns;
+  }
+
+  /** Issue #443: a route's billing basis as the row itself publishes it. #429 puts the basis on the
+   * route's MEASURED profile, and the profile's `priceReason` is that basis in its own words — only
+   * a non-`api` route withholds a price and says `subscription`. A route this deployment publishes
+   * no measured profile for carries null: absence is never a guessed basis, and a route that claims
+   * none can never be counted as subscription headroom. */
+  _routeBilling(row) {
+    const profile = row?.profile ?? null;
+    if (profile === null || typeof profile !== 'object') return null;
+    // #429 mints exactly two spellings on this field, and the profile states the basis in its own
+    // words: a flat plan withholds the per-token price and says `subscription`; an api-billed route
+    // publishes the price and states no reason. Neither? Then the profile claims no basis at all.
+    if (profile.priceReason === 'subscription') return 'subscription';
+    if (profile.priceReason !== null && profile.priceReason !== undefined) return null;
+    return profile.price === null || profile.price === undefined ? null : 'api';
+  }
+
+  /** Issue #443: whether a route's window is CLOSED — the provider exhausted its quota (a live
+   * block whose code is the quota class, or the fault episode that class ended as) or the provider
+   * faulted the route outright. This is the one exclusion the re-route names: a route kept out for
+   * any other reason (an expired credential, a static block) is not a window fact, and its own
+   * refusal is the deployment's to publish. */
+  _routeWindowClosed(row) {
+    if (row?.degraded != null) return true;
+    return row?.quota?.state === 'exhausted';
+  }
+
+  /** Issue #443: the routes a re-route may carry a dead seat's work to, and the ones it may not —
+   * derived from the SAME usage rows a recruit compares (_routeUsageRows), never a second route
+   * table. A candidate is a route a recruit could be admitted on right now (_routeEligible: ready,
+   * unexhausted, undegraded), ranked by the ONE comparison above on its default axis; a route whose
+   * window is closed is named in `excluded` with the reason and the instant its provider gave,
+   * instead of being dropped in silence. The route the fault CAME from is never listed as excluded:
+   * the decision row already names it, with the same reason and the same instant. */
+  _rerouteCandidates(preferApi, from = null) {
+    const rows = this._routeUsageRows();
+    if (rows === null || rows.length === 0) return { candidates: [], excluded: [] };
+    const eligible = [];
+    const excluded = [];
+    for (const row of rows) {
+      const billing = this._routeBilling(row);
+      // The candidate row is what a reader audits the decision with: the exact route, the billing
+      // basis its own profile publishes, the state it was ready in, and the measured profile the
+      // comparison ordered on. The ranking itself reads the RAW usage row (`_compareRouteRows`),
+      // which is where the headroom and the profile facts live.
+      const shape = (reason) => Object.freeze({
+        harness: row.route?.harness ?? null, model: row.route?.model ?? null,
+        effort: row.route?.effort ?? null, billing, reason,
+        state: row.state ?? null, resetAt: row.resetAt ?? null,
+        profile: row.profile ?? null,
+      });
+      if (this._routeEligible(row)) {
+        eligible.push({ row, shape: shape(billing === 'subscription' ? 'subscription_headroom' : 'api_fallback') });
+      } else if (this._routeWindowClosed(row) && !routeEquals(row.route, from)) {
+        excluded.push(shape('excluded_window_closed'));
+      }
+    }
+    // The billing preference is a PREFERENCE, never a filter: a subscription route with headroom
+    // ranks first (an idle flat plan is spent before per-token money), the API routes follow, and
+    // `reroutePreferApi` flips exactly that pair. Everything else is the recruit's own ordering —
+    // the SAME comparison (#341 part 3), on its default axis, because a runtime-initiated re-route
+    // has no caller to name one.
+    const rank = (entry) => (entry.shape.billing === 'subscription' ? (preferApi ? 1 : 0) : (preferApi ? 0 : 1));
+    return {
+      candidates: Object.freeze(eligible
+        .sort((left, right) => rank(left) - rank(right)
+          || this._compareRouteRows(left.row, right.row, 'quality'))
+        .map((entry) => entry.shape)),
+      excluded: Object.freeze(excluded),
+    };
+  }
+
+  /** Issue #443: the swarm-level policy a provider-fault re-route follows, with its DEFAULTS
+   * resolved — `manual` (a proposal for a human orchestrator) and no billing preference. The fold
+   * stores only what an orchestrator DECLARED, so the defaults live here, in the ONE derivation
+   * the view and the observation both read. */
+  _policyOf(swarm) {
+    const policy = swarm?.policy ?? null;
+    const mode = policy?.rerouteOnProviderFault ?? null;
+    return Object.freeze({
+      rerouteOnProviderFault: SWARM_REROUTE_MODES.includes(mode) ? mode : 'manual',
+      reroutePreferApi: policy?.reroutePreferApi === true,
+    });
+  }
+
   /** #341 part 3: the routes a recruit compared, why the chosen one was admitted, and the options
    * the deployment is asked to admit — or null when this runtime has no route rows to compare
    * (a bare fixture host) or the caller named no route at all (the deployment's own default then
@@ -1553,18 +1772,7 @@ export class SwarmRuntime {
     let chosen = null;
     if (exact !== null) chosen = this._routeEligible(considered[0]) ? considered[0] : null;
     else if (eligible.length > 0) {
-      chosen = [...eligible].sort((a, b) => {
-        const left = this._routeAxisFact(a, prefer);
-        const right = this._routeAxisFact(b, prefer);
-        // A route measured on the requested axis ranks ahead of one that is not; two measured routes
-        // rank by the datum itself; everything else is #341 part 3's own comparison.
-        if (left !== null && right === null) return -1;
-        if (left === null && right !== null) return 1;
-        if (left !== null && right !== null && left.value !== right.value) return right.value - left.value;
-        const leftHead = this._routeHeadroom(a);
-        const rightHead = this._routeHeadroom(b);
-        return rightHead.slots - leftHead.slots || leftHead.turns - rightHead.turns;
-      })[0];
+      chosen = [...eligible].sort((a, b) => this._compareRouteRows(a, b, prefer))[0];
       orderedOn = this._routeAxisFact(chosen, prefer) === null ? 'headroom' : prefer;
     }
 
@@ -2393,6 +2601,29 @@ export class SwarmRuntime {
           snapshotSha: fault.snapshotSha, at: fault.ts ?? null,
           next: { resume: 'swarm.recruit --resume-from', stop: 'swarm.stop' } });
       }
+      // Issue #443: the death's ANSWER — the decision the observation recorded beside the fault,
+      // raised while nothing has decided it yet. With a candidate it names the exact recruit that
+      // answers it (`--resume-from` onto the ranked first route); with none it is the wait itself,
+      // naming the instant the provider said the window reopens (or the missing route). A decision
+      // an `auto` swarm performed is answered, so it pages nobody.
+      const reroute = fault === null ? null : row.reroute ?? null;
+      if (reroute !== null && reroute.decision === null) {
+        const [first] = reroute.candidates;
+        const common = { participantId: row.participantId,
+          workerId: row.runtime.workerId ?? reroute.workerId, code: reroute.code,
+          from: reroute.from, resetAt: reroute.resetAt ?? null,
+          resetAtText: reroute.resetAtText ?? null, at: reroute.ts ?? null };
+        if (first !== undefined) {
+          organization.push({ kind: 'reroute_proposed', ...common,
+            candidates: reroute.candidates,
+            next: { command: 'swarm.recruit', swarmId: swarm.swarmId,
+              resumeFrom: row.participantId,
+              options: { exact: { harness: first.harness, model: first.model, effort: first.effort ?? null } } } });
+        } else {
+          organization.push({ kind: 'reroute_no_candidate', ...common,
+            next: `wait until ${reroute.resetAt ?? 'the provider\'s window reopens'} or add a route` });
+        }
+      }
       if (row.status !== 'active' && row.runtime.live) {
         organization.push({ kind: 'member_left_session_live', participantId: row.participantId, workerId: row.runtime.workerId,
           ...responsibleFor(row),
@@ -2862,6 +3093,11 @@ export class SwarmRuntime {
       : participants;
     const view = {
       ...clone(swarm),
+      // Issue #443: the swarm-level policy the view RENDERS is the resolved one — the fields an
+      // orchestrator declared with the defaults (`manual`, no billing preference) filled in, from
+      // the ONE derivation the re-route itself reads. A swarm that never declared a policy still
+      // reads what a fault would do.
+      policy: this._policyOf(swarm),
       participants: scopedParticipants,
       work: keep(workEntries, ([workId]) => scopeWorkIds.has(workId)),
       assignments: keep(Object.entries(swarm.assignments ?? {}), ([, assignment]) => scopeSubtree.includes(assignment.participantId)
@@ -3632,7 +3868,13 @@ export class SwarmRuntime {
     }
     const contracts = this._publishedContracts(swarm)
       .filter((row) => row.participantId === predecessor.participantId);
-    return { participantId: predecessor.participantId, lastCheckpoint: checkpoint, contracts };
+    // Issue #443: a predecessor whose PROVIDER killed it carries the fault and the re-route
+    // decision the runtime recorded about it — the same facts the participant row reads, so the
+    // successor's brief says WHY it exists from the one derivation rather than a second scan. Both
+    // are null on an ordinary predecessor (a live seat, or one that stopped).
+    const fault = this._participantFaultCurrent(predecessor);
+    return { participantId: predecessor.participantId, lastCheckpoint: checkpoint, contracts,
+      fault, reroute: fault === null ? null : predecessor.reroute ?? null };
   }
 
   /** The predecessor's workspace state for a resume-from recruit (#385): whether the checkout
@@ -3942,6 +4184,46 @@ export class SwarmRuntime {
     blocks.push(contributionContractBriefSection(
       { readOnly: args.mode === 'read_only'
         || !((args.permissions ?? DEFAULT_PERMISSIONS).includes('contribute')) }));
+    // Issue #443: a successor recruited for a seat its PROVIDER killed says WHY it exists — the
+    // fault, the route it came from, where the runtime's own decision sent it, what was carried and
+    // the predecessor's last checkpoint. ONE derivation with the inheritance block below: the same
+    // `predecessor` / `predecessorWorkspace` facts the recruit already resolved, never a second
+    // reading of the record, and never a second renderer of the same facts.
+    if (predecessor?.fault) {
+      const fault = predecessor.fault;
+      const reroute = predecessor.reroute ?? null;
+      // Where this seat actually went, and — failing that — what the decision offered. A recruit
+      // names its own route, a performed re-route names the one it chose, and a proposal names the
+      // candidate it ranked first; the section never claims a route the seat was not admitted on.
+      const chosen = swarmRouteShape(reroute?.decision?.to);
+      const admitted = swarmRouteShape(args.options?.exact);
+      const ranked = swarmRouteShape(reroute?.candidates?.[0]);
+      const reset = fault.resetAt ?? fault.resetAtText ?? null;
+      const lines = [
+        '## Re-routed',
+        `This seat continues ${predecessor.participantId}, whose provider killed its run`
+          + ` (${fault.code}${reset === null ? '' : `, its window reopens at ${reset}`}).`,
+        `- The route it came from: ${routeText(fault.route)}`,
+      ];
+      if (chosen !== null) {
+        lines.push(`- Re-routed onto: ${routeText(chosen)} (the candidate the swarm policy \`auto\` chose)`);
+      } else if (admitted !== null) {
+        lines.push(`- This recruit named ${routeText(admitted)} for it.`);
+      } else if (ranked !== null) {
+        lines.push(`- The decision ranked ${routeText(ranked)} first among the routes that were ready.`);
+      } else {
+        lines.push('- No candidate route was ready when the death was observed, so this seat was recruited by hand.');
+      }
+      if (predecessorWorkspace?.workspaceId) {
+        lines.push(`- Carried workspace ${predecessorWorkspace.workspaceId}`
+          + (predecessorWorkspace.changedPaths?.length > 0
+            ? `: ${predecessorWorkspace.changedPaths.join(', ')}` : ' (the same checkout, shared)'));
+      }
+      lines.push(predecessor.lastCheckpoint
+        ? `- Last checkpoint: ${predecessor.lastCheckpoint.sha} (retained ref ${predecessor.lastCheckpoint.ref})`
+        : '- Last checkpoint: none was recorded for this predecessor.');
+      blocks.push(lines.join('\n'));
+    }
     if (predecessor) {
       const inheritance = [
         `## Inheritance from ${predecessor.participantId}`,
@@ -4249,6 +4531,13 @@ export class SwarmRuntime {
     // a seat's provider-fault death folds its fault row and settles its membership, every later
     // entry is a no-op.
     this._observeParticipantFaults();
+    // Issue #443: the decision that entry recorded is then ANSWERED when the swarm's policy says
+    // the runtime performs the resume itself. It runs here, on the async entry, BEFORE this
+    // command executes — so the view that observes a fault already carries the successor an `auto`
+    // swarm bound, while a `manual` swarm is left exactly as recorded. A decision still pending
+    // after this (its recruit refused, its store unavailable) is not an error: the proposal stays
+    // readable and the refusal lane holds the reason.
+    await this._performAutoReroutes();
     // The native bridge's refusal report (issue #283). It reaches the runtime through `dispatch`
     // because that is the bridge's ONLY channel, and it is admitted only from a bridge report: the
     // verb is not a swarm command (swarm-contract asserts it never becomes one), so no surface can

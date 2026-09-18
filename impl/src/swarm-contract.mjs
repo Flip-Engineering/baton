@@ -18,6 +18,10 @@ export const SWARM_EVENT_KINDS = Object.freeze([
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_reviewed',
+  // Issue #443: the swarm-level policy an orchestrator declares — `rerouteOnProviderFault` and the
+  // billing preference a provider-fault re-route ranks its candidates on. A declaration of the
+  // swarm's own conduct, so it rides the swarm level (one place), never a seat or a group.
+  'swarm.policy_updated',
   'swarm.participant_left',
   'swarm.closed',
 ]);
@@ -473,6 +477,8 @@ const SWARM_FIELD_RULES = Object.freeze({
   reason: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   payload: Object.freeze({ check: isBody, expectation: 'a JSON object or a non-empty text body' }),
   options: Object.freeze({ check: isJsonObject, expectation: 'a JSON object' }),
+  // Issue #443: a swarm-level policy is declared through `swarm.update` event `swarm.policy_updated`
+  // (the fold's closed sets validate its fields) — the ONE place swarm-level policy lives.
   permissions: Object.freeze({ check: (value) => Array.isArray(value) && value.every(isText), expectation: 'an array of permission names' }),
   // `mode` (#373) names the seat's contribution contract; its closed set is SWARM_RECRUIT_MODES,
   // declared once and named by every refusal and help surface that renders the field.

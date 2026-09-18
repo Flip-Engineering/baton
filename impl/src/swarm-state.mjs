@@ -40,6 +40,18 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   // Issue #385: the runtime-recorded workspace carry — a resume-from successor inherits the
   // predecessor's workspace (same checkout or changes applied from a snapshot).
   'workspace.carried_from',
+  // Issue #443: the swarm-level policy an orchestrator sets (organize authority) — today the one
+  // knob `rerouteOnProviderFault: manual | auto` plus the billing preference a re-route ranks on.
+  // Caller-submittable, exactly as every other swarm-level declaration is.
+  'swarm.policy_updated',
+  // Issue #443: the re-route DECISION the provider-fault observation records — the candidates the
+  // deployment's own route rows offer, ranked by the comparison a recruit performs, with what the
+  // death left to carry. Composed by the swarm runtime from the coordinator's death seam and its
+  // route rows, never caller-submittable: a fabricated proposal would name candidates nobody ranked.
+  'swarm.reroute_proposed',
+  // Issue #443: the PERFORMED re-route — the successor an `auto` swarm bound on the first
+  // candidate, recorded by the runtime from the recruit it really ran, never caller-submittable.
+  'swarm.rerouted',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
@@ -72,6 +84,21 @@ export const SWARM_FAILURE_POLICIES = Object.freeze(['independent']);
 export const SWARM_WORK_STATUSES = Object.freeze(['open', 'completed', 'cancelled']);
 export const SWARM_ASSIGNMENT_STATUSES = Object.freeze(['active', 'released']);
 export const SWARM_REVIEW_DECISIONS = Object.freeze(['accept', 'reject', 'comment']);
+
+// Issue #443: the closed sets the re-route lane declares. The policy's modes are the ONE
+// decision axis a swarm owns (a proposal for a human orchestrator, or the runtime performing the
+// resume itself); the reason vocabulary is what each candidate row says about WHY it ranked, and
+// the exclusion reason is the one way a route leaves the decision without being a candidate.
+export const SWARM_REROUTE_MODES = Object.freeze(['manual', 'auto']);
+export const SWARM_REROUTE_CANDIDATE_REASONS = Object.freeze(['subscription_headroom', 'api_fallback']);
+export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_closed']);
+/** The billing bases a route's own profile publishes (#429): `api` pays per token, `subscription`
+ * is a flat plan. A route whose deployment publishes no measured profile carries none — absence is
+ * never a guessed basis. */
+export const SWARM_ROUTE_BILLING_BASES = Object.freeze(['api', 'subscription']);
+/** The fields a `swarm.policy_updated` row may carry — the closed vocabulary a misspelled policy
+ * field refuses against, so a policy nobody reads never lands in the durable record. */
+export const SWARM_POLICY_FIELDS = Object.freeze(['rerouteOnProviderFault', 'reroutePreferApi']);
 
 // The remedy note a departed-seat group refusal carries (#395). A named constant, not an inline
 // literal: the fold-admission audit classifies an integrity(...) call by its LAST literal
@@ -156,6 +183,71 @@ function validClaimPaths(paths) {
       refuse(`claim path '${entry}' must be repo-relative and name no .. or leading ./`, 'invalid_payload');
     }
   }
+}
+
+// Issue #443: one exact route as every re-route row spells it — harness and model always name one
+// (a fact about a route without them is a fact about nothing), effort is absent on a route that
+// has none. Shared by the proposal, its candidates and the performed re-route, so the four rows
+// can never disagree about what a route is.
+function validRerouteRoute(route, fieldName) {
+  if (route === null || typeof route !== 'object' || Array.isArray(route)
+    || !isNonEmptyString(route.harness) || !isNonEmptyString(route.model)) {
+    refuse(`${fieldName} must name {harness, model, effort}`, 'invalid_payload');
+  }
+  if (route.effort !== null && route.effort !== undefined && !isNonEmptyString(route.effort)) {
+    refuse(`${fieldName} effort must be a non-empty string or null`, 'invalid_payload');
+  }
+}
+
+/** One candidate/excluded row of a re-route decision: the exact route, the billing basis its own
+ * measured profile publishes (null when this deployment publishes none — absence, never a guess)
+ * and the reason it ranked or was kept out, drawn from the closed set the row is FOR. */
+function validRerouteRow(row, fieldName, reasons) {
+  if (row === null || typeof row !== 'object' || Array.isArray(row)) {
+    refuse(`${fieldName} must be one row per route`, 'invalid_payload');
+  }
+  validRerouteRoute(row, fieldName);
+  if (!(row.billing === null || row.billing === undefined || SWARM_ROUTE_BILLING_BASES.includes(row.billing))) {
+    refuse(`${fieldName} billing must be one of: ${SWARM_ROUTE_BILLING_BASES.join(', ')}`, 'invalid_payload');
+  }
+  if (!reasons.includes(row.reason)) {
+    refuse(`${fieldName} reason must be one of: ${reasons.join(', ')}`, 'invalid_payload');
+  }
+}
+
+/** The `carry` a re-route decision publishes: what the death left for the successor — the snapshot
+ * the coordinator preserved and the predecessor's last pinned checkpoint, either of which may be
+ * absent (absence is never invented). */
+function validRerouteCarry(carry) {
+  if (carry === null || typeof carry !== 'object' || Array.isArray(carry)) {
+    refuse('swarm.reroute_proposed requires carry {snapshotSha, checkpoint}', 'invalid_payload');
+  }
+  if (carry.snapshotSha !== null && carry.snapshotSha !== undefined && !isNonEmptyString(carry.snapshotSha)) {
+    refuse('carry snapshotSha must be a non-empty string or null', 'invalid_payload');
+  }
+  const checkpoint = carry.checkpoint ?? null;
+  if (checkpoint !== null) {
+    if (typeof checkpoint !== 'object' || Array.isArray(checkpoint) || !isNonEmptyString(checkpoint.sha)) {
+      refuse('carry checkpoint must be null or {sha, ref}', 'invalid_payload');
+    }
+    validOptionalNonEmptyString(checkpoint.ref, 'carry checkpoint ref', refuse);
+  }
+}
+
+/** One candidate/excluded row as the FOLD keeps it: the exact route, the billing basis the route's
+ * own measured profile publishes (null when this deployment publishes none), the reason it ranked
+ * or was kept out, the live state and reset the decision read, and the measured profile it was
+ * ranked on — the same facts the decision was made from, so a reader audits the ranking instead of
+ * trusting it. */
+function rerouteRowShape(row) {
+  return Object.freeze({
+    harness: row.harness, model: row.model, effort: row.effort ?? null,
+    billing: row.billing ?? null,
+    reason: row.reason,
+    state: row.state ?? null,
+    resetAt: row.resetAt ?? null,
+    profile: row.profile === undefined || row.profile === null ? null : Object.freeze({ ...row.profile }),
+  });
 }
 
 // The plan a work proposal carries (docs/45 §3): the work items the split creates and the claims
@@ -597,6 +689,90 @@ export function validateSwarmEvent(kind, payload) {
     }
     if (p.snapshotSha !== undefined && p.snapshotSha !== null && !isNonEmptyString(p.snapshotSha)) {
       refuse('workspace.carried_from snapshotSha must be a non-empty string or null', 'invalid_payload');
+    }
+    return;
+  }
+
+  if (kind === 'swarm.policy_updated') {
+    // Issue #443: a swarm-level policy row changes the fields it NAMES and refuses a row that
+    // names none (a policy write that changes nothing is noise in the durable record). Every
+    // value is drawn from the closed set this module declares — the fold, the runtime's default
+    // derivation and the refusal a misspelling draws all read the same table.
+    for (const field of Object.keys(p)) {
+      if (field === 'swarmId') continue;
+      if (!SWARM_POLICY_FIELDS.includes(field)) {
+        refuse(`swarm.policy_updated names no policy field this family holds: ${field}`
+          + ` (one of: ${SWARM_POLICY_FIELDS.join(', ')})`, 'invalid_payload');
+      }
+    }
+    if (p.rerouteOnProviderFault !== undefined && !SWARM_REROUTE_MODES.includes(p.rerouteOnProviderFault)) {
+      refuse(`rerouteOnProviderFault must be one of: ${SWARM_REROUTE_MODES.join(', ')}`, 'invalid_payload');
+    }
+    if (p.reroutePreferApi !== undefined && typeof p.reroutePreferApi !== 'boolean') {
+      refuse('reroutePreferApi must be a boolean', 'invalid_payload');
+    }
+    if (p.rerouteOnProviderFault === undefined && p.reroutePreferApi === undefined) {
+      refuse('swarm.policy_updated names no policy field to change', 'invalid_payload');
+    }
+    return;
+  }
+
+  if (kind === 'swarm.reroute_proposed') {
+    // Issue #443: the decision the provider-fault observation records. Shape only — who may WRITE
+    // it is the command surface's business (the kind is not in the caller-submittable set), while
+    // everything a reader acts on is judged here: the seat, the route the fault took down, the
+    // ranked candidates, the routes kept out with their reason, and what the death left to carry.
+    if (!isNonEmptyString(p.participantId)) {
+      refuse('swarm.reroute_proposed requires participantId — the seat whose work must move', 'invalid_payload');
+    }
+    if (!isNonEmptyString(p.workerId)) {
+      refuse('swarm.reroute_proposed requires workerId — the worker its provider killed', 'invalid_payload');
+    }
+    validRerouteRoute(p.from, 'swarm.reroute_proposed from');
+    if (!isNonEmptyString(p.code)) {
+      refuse('swarm.reroute_proposed requires code — the typed provider fault class', 'invalid_payload');
+    }
+    if (p.resetAt !== null && p.resetAt !== undefined
+      && !(isNonEmptyString(p.resetAt) && Number.isFinite(Date.parse(p.resetAt)))) {
+      refuse('swarm.reroute_proposed resetAt must be an ISO-8601 instant or null', 'invalid_payload');
+    }
+    validOptionalNonEmptyString(p.resetAtText, 'reroute resetAtText', refuse);
+    if (!SWARM_REROUTE_MODES.includes(p.policy)) {
+      refuse(`swarm.reroute_proposed policy must be one of: ${SWARM_REROUTE_MODES.join(', ')}`, 'invalid_payload');
+    }
+    if (!Array.isArray(p.candidates)) {
+      refuse('swarm.reroute_proposed requires candidates as an array (empty is a decision)', 'invalid_payload');
+    }
+    for (const row of p.candidates) {
+      validRerouteRow(row, 'reroute candidate', SWARM_REROUTE_CANDIDATE_REASONS);
+    }
+    if (p.excluded !== undefined) {
+      if (!Array.isArray(p.excluded)) refuse('reroute excluded rows must be an array', 'invalid_payload');
+      for (const row of p.excluded) {
+        validRerouteRow(row, 'reroute excluded row', SWARM_REROUTE_EXCLUDED_REASONS);
+        if (row.resetAt !== null && row.resetAt !== undefined
+          && !(isNonEmptyString(row.resetAt) && Number.isFinite(Date.parse(row.resetAt)))) {
+          refuse('reroute excluded row resetAt must be an ISO-8601 instant or null', 'invalid_payload');
+        }
+      }
+    }
+    validRerouteCarry(p.carry);
+    return;
+  }
+
+  if (kind === 'swarm.rerouted') {
+    // Issue #443: the performed re-route. It names the successor it bound, the predecessor it
+    // continues, both routes, and the proposal it answers (the fold checks that the predecessor
+    // really carries that proposal).
+    for (const field of ['successor', 'carriedFrom']) {
+      if (!isNonEmptyString(p[field])) {
+        refuse(`swarm.rerouted requires ${field}`, 'invalid_payload');
+      }
+    }
+    validRerouteRoute(p.from, 'swarm.rerouted from');
+    validRerouteRoute(p.to, 'swarm.rerouted to');
+    if (!Number.isSafeInteger(p.proposalSeq) || p.proposalSeq < 0) {
+      refuse('swarm.rerouted requires proposalSeq — the seq of the proposal it answers', 'invalid_payload');
     }
     return;
   }
@@ -1639,6 +1815,95 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     });
     const parts = new Map(Object.entries(swarm.participants));
     parts.set(p.participantId, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
+    return;
+  }
+
+  if (kind === 'swarm.policy_updated') {
+    // Issue #443: the swarm-level policy. A row changes the fields it NAMES and leaves the rest
+    // standing, so the record reads exactly what an orchestrator declared — the runtime resolves
+    // the DEFAULTS (manual, no billing preference) when it derives the row a view renders, never
+    // by writing them into the fold.
+    const policy = Object.freeze({
+      ...(swarm.policy ?? {}),
+      ...(p.rerouteOnProviderFault === undefined ? {} : { rerouteOnProviderFault: p.rerouteOnProviderFault }),
+      ...(p.reroutePreferApi === undefined ? {} : { reroutePreferApi: p.reroutePreferApi }),
+    });
+    swarms.set(p.swarmId, Object.freeze({
+      ...swarm, policy, actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    }));
+    return;
+  }
+
+  if (kind === 'swarm.reroute_proposed') {
+    // Issue #443: the re-route decision, folded onto the seat whose work must move — the newest
+    // fact about its runtime, exactly as #442 folded the fault above it. A later death (a
+    // successor that faults too) replaces the row; the ledger keeps every one of them.
+    const participant = ownGet(swarm.participants, p.participantId);
+    if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    const updatedParticipant = Object.freeze({
+      ...participant,
+      reroute: Object.freeze({
+        workerId: p.workerId,
+        from: Object.freeze({
+          harness: p.from.harness, model: p.from.model, effort: p.from.effort ?? null,
+        }),
+        code: p.code,
+        resetAt: p.resetAt ?? null,
+        resetAtText: p.resetAtText ?? null,
+        candidates: Object.freeze(p.candidates.map(rerouteRowShape)),
+        excluded: Object.freeze((p.excluded ?? []).map(rerouteRowShape)),
+        carry: Object.freeze({
+          snapshotSha: p.carry.snapshotSha ?? null,
+          checkpoint: p.carry.checkpoint === null || p.carry.checkpoint === undefined
+            ? null : Object.freeze({ sha: p.carry.checkpoint.sha, ref: p.carry.checkpoint.ref ?? null }),
+        }),
+        policy: p.policy,
+        // Nothing is decided by the recorded proposal itself: `swarm.rerouted` is what a performed
+        // resume folds here, so a pending decision reads null rather than a hopeful guess.
+        decision: null,
+        // The instant the decision was RECORDED, under the name every surface reads it by (the
+        // row's own `ts` stays beside it, exactly as the fault row carries both).
+        proposedAt: meta.ts,
+        seq: meta.seq, ts: meta.ts,
+      }),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    });
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
+    return;
+  }
+
+  if (kind === 'swarm.rerouted') {
+    // the seat says both what was proposed for it and what the runtime did about it.
+    const predecessor = ownGet(swarm.participants, p.carriedFrom);
+    if (!predecessor) integrity(`participant ${p.carriedFrom} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    // The row answers ONE proposal, and admission re-derives that against the projection the
+    // ledger itself reconstructed (the proposal row always precedes it, written in the same
+    // observation) — so the rule runs on the APPEND, and a replay of a ledger that carries the
+    // performed re-route without its proposal reads the row as the corrupt history it is rather
+    // than refusing a resident its own record. Replay never fabricates the missing proposal: the
+    // seat keeps the decision its own record carries, and the row still reads on the ledger.
+    const answered = predecessor.reroute ?? null;
+    if (admission && answered?.seq !== p.proposalSeq) {
+      integrity(`swarm.rerouted answers proposal ${p.proposalSeq}, which ${p.carriedFrom} does not carry`,
+        'reroute_proposal_mismatch');
+    }
+    const updatedParticipant = Object.freeze({
+      ...predecessor,
+      ...(answered === null ? {} : { reroute: Object.freeze({
+        ...answered,
+        decision: Object.freeze({
+          policy: 'auto', successor: p.successor, proposalSeq: p.proposalSeq,
+          to: Object.freeze({ harness: p.to.harness, model: p.to.model, effort: p.to.effort ?? null }),
+          seq: meta.seq, ts: meta.ts,
+        }),
+      }) }),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    });
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.carriedFrom, updatedParticipant);
     swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
     return;
   }
