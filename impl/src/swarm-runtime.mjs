@@ -3622,7 +3622,8 @@ export class SwarmRuntime {
    * participant must be able to learn about, and the swarm's refusal lane is where it is legible.
    * The report is the bridge's, so every field is validated here: a malformed report is refused
    * rather than recorded as if it were a refusal, and an absent command or participant is null on
-   * the row, never invented. */
+   * the row, never invented. A bridge-frame refusal's ADVICE rides the row as `detail.fits` (#457):
+   * the root sees what the seat was told without reproducing the bridge's measurement. */
   _recordBridgeRefusal(report, principal) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
     const text = (value) => (typeof value === 'string' && value.length > 0 ? value : null);
@@ -3634,10 +3635,20 @@ export class SwarmRuntime {
       refuse('Swarm bridge refusal report must name the refusal code', 'swarm_command_invalid',
         { field: 'code', rule: 'bridge-report-shape' });
     }
+    // The projection a bridge-frame refusal TOLD the seat would fit (issue #457): the row carries
+    // what the seat was told, so a root reads the advice from the swarm's own record instead of
+    // re-running the bridge's measurement. The report is the bridge's and the vocabulary is the
+    // contract's, so only a DECLARED projection name is admitted; anything else refuses the report.
+    const fits = text(report.fits);
+    if (fits !== null && !Object.hasOwn(SWARM_VIEW_PROJECTIONS, fits)) {
+      refuse('Swarm bridge refusal report names an unknown projection', 'swarm_command_invalid',
+        { field: 'fits', rule: 'bridge-report-shape' });
+    }
     const row = {
       swarmId: text(report.swarmId), command: text(report.command), event: text(report.event),
       code: text(report.code), field: text(report.field), rule: text(report.rule),
       participantId: text(report.participantId),
+      ...(fits === null ? {} : { detail: { fits } }),
     };
     // The bridge's own refusal identity is its own report, and the seat is named by the report
     // (its token table), so the same refused request records exactly once however often it retries.

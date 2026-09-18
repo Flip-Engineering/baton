@@ -2,10 +2,12 @@
 // refusal the bridge raises — an over-cap frame, a request the closed argument vocabulary refuses —
 // lands on the runtime's durable `swarm.operation_refused` lane, wakes a parked watch, and shows on
 // the participant's own row as `lastRefusal` until a later operation of the same command succeeds.
-// The refusal text says on its FIRST LINE that nothing was recorded and what to change. An answer
-// too large for the negotiated ceiling is refused typed with the narrower projection that
-// MEASURABLY fits — never truncated, and never a second hardcoded bound: the client buffers under
-// the bound the bridge published to its environment. Fixture pattern from swarm-runtime.test.mjs
+// The refusal text says on its FIRST LINE that nothing was recorded and what to change. An ANSWER
+// too large for the negotiated ceiling is never truncated: the DEFAULT read (no projection) is
+// answered narrowed — the widest projection that measurably fits, named on the answer (#457) — and
+// an EXPLICIT projection that does not fit is refused typed with the projection that MEASURABLY
+// fits, never a second hardcoded bound: the client buffers under the bound the bridge published to
+// its environment. Fixture pattern from swarm-runtime.test.mjs
 // (a real CoordinationStore under a controllable coordinator) so the bridge talks to a REAL runtime.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -131,14 +133,20 @@ test('a refusal the runtime already recorded is never recorded twice, and an una
   assert.equal(refusalRows(f.store).length, 1, 'no row was minted for an unattributable refusal');
 });
 
-test('an answer too large for the negotiated ceiling is refused typed with the projection that measurably fits', async (t) => {
+test('an explicit over-size projection is refused typed with the projection that measurably fits, and the default read answers narrow', async (t) => {
   const f = await linked(t, { maxFrameBytes: 4096 });
   await f.call('update', {
     event: 'swarm.contribution_recorded',
     payload: { contributionId: 'c-big', participantId: 'alpha', body: 'x'.repeat(24 * 1024) },
   });
 
-  const overBound = await f.send('swarm.view', { swarmId: 'baton' }).then(() => null, (error) => error);
+  // Issue #457: the DEFAULT read names no projection — it is the seat's own first look at its
+  // swarm, and it ANSWERS, narrowed and loud (#349), never refused. The refusal below is the
+  // answer to an EXPLICIT over-size projection, which is the caller's own request to narrow.
+  const answered = await f.send('swarm.view', { swarmId: 'baton' });
+  assert.deepEqual(answered.narrowed, { from: 'full', to: answered.projection, reason: 'bridge-frame' });
+  assert.notEqual(answered.projection, 'full');
+  const overBound = await f.send('swarm.view', { swarmId: 'baton', projection: 'full' }).then(() => null, (error) => error);
   assert.equal(overBound.code, 'swarm_bridge_frame_exceeded');
   assert.equal(overBound.status, 413);
   assert.equal(overBound.detail.direction, 'response');
@@ -157,11 +165,14 @@ test('an answer too large for the negotiated ceiling is refused typed with the p
   const narrower = await f.send('swarm.view', { swarmId: 'baton', projection: overBound.detail.fits });
   assert.equal(narrower.projection, overBound.detail.fits);
 
-  // The over-bound answer was refused, never truncated, and the refusal is on the durable lane.
+  // The over-bound answer was refused, never truncated, and the refusal is on the durable lane —
+  // carrying the advice the seat was given (issue #457: `detail.fits`), so the root reads what the
+  // seat was told instead of re-running the bridge's measurement.
   const row = refusalRows(f.store).at(-1);
   assert.deepEqual({ ...row.payload, seq: undefined },
     { kind: 'swarm.operation_refused', swarmId: 'baton', command: 'swarm.view', event: null,
-      code: 'swarm_bridge_frame_exceeded', field: null, rule: 'bridge-frame', participantId: 'alpha', seq: undefined });
+      code: 'swarm_bridge_frame_exceeded', field: null, rule: 'bridge-frame', participantId: 'alpha',
+      detail: { fits: overBound.detail.fits }, seq: undefined });
   assert.equal(f.store.swarm('baton').contributions['c-big'].body.length, 24 * 1024,
     'the answer was refused; the record it answered about is untouched');
 });

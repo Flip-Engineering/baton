@@ -32,9 +32,14 @@
 // existing `wire.frame` substrate row from limits.mjs (the one declared registry — no re-declared
 // numbers), overridable per bridge instance with `maxFrameBytes` for smaller deployments. The
 // resource reason: this is a substrate memory guard for the bridge process, not a worker cap. An
-// over-bound ANSWER is never truncated: it is refused typed (`swarm_bridge_frame_exceeded`) with
-// the narrower view projection that MEASURABLY fits, computed by re-projecting the answer the
-// bridge already holds through the same slicer the runtime builds views with. The bound is
+// over-bound ANSWER is never truncated and never silently thinned: the DEFAULT read (no
+// `projection`) is ANSWERED, narrowed — the widest projection that measurably fits rides the
+// answer as `narrowed`, and the `participants`/`contributions` families PAGE through the #343 walk
+// — because a seat's first look at its own swarm must answer on exactly the swarms that matter
+// (#457). An EXPLICIT projection that does not fit (`full` included) is the caller's own oversize
+// request and is refused typed (`swarm_bridge_frame_exceeded`) with the narrower view projection
+// that MEASURABLY fits, computed by re-projecting the answer the bridge already holds through the
+// same slicer the runtime builds views with. The bound is
 // negotiated, not assumed: `issue()` publishes it to the participant's environment, and the client
 // below reads it rather than deciding a ceiling of its own.
 //
@@ -51,6 +56,7 @@ import { FRAME_LIMITS, composeFrameLimitRefusal } from './limits.mjs';
 
 import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
   SWARM_COMMAND_ROWS, SWARM_COMMAND_SCHEMAS, SWARM_VIEW_PROJECTIONS, SWARM_VIEW_PROJECTION_NAMES,
+  SWARM_VIEW_DEFAULT_PROJECTION,
   SWARM_EVENT_KINDS, SWARM_BRIDGE_TRANSPORT,
   SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
   projectSwarmView, swarmCommandFieldSummary, swarmIdentityKeyedCommand,
@@ -63,6 +69,9 @@ import { WAKE_CLASSES } from './wake-stream.mjs';
 import { SWARM_PERMISSIONS, validateSwarmKnowledgeCommand, validateSwarmSeatReadCommand,
   swarmSeatReadCommand, SWARM_SEAT_READ_COMMAND_NAMES, SWARM_SEAT_READ_COMMANDS } from './swarm-runtime.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
+// Issue #457: the page walk the resident/MCP leg already serves (#343) — the ONE derivation a
+// seat's over-bound `participants`/`contributions` read is paged with, never a second pager.
+import { pageSwarmViewForBridge } from './web-northbound.mjs';
 import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
 export { SWARM_COMMANDS, validateSwarmCommandArgs, SWARM_KNOWLEDGE_COMMAND_NAMES, SWARM_SEAT_READ_COMMAND_NAMES };
 const isId = (value) => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value);
@@ -171,6 +180,110 @@ function fittingProjections(view, actualBytes, maxFrameBytes, requested) {
     measured: measured.map((row) => row.projection) };
 }
 
+/** The success envelope's own text and byte count — the ONE spelling of the measure the frame
+ * bound is enforced against, so an answer that fits and the refusal about one that does not agree
+ * to the byte. */
+const successEnvelope = (result) => JSON.stringify({ ok: true, result: result ?? null });
+const successFrameBytes = (result) => Buffer.byteLength(successEnvelope(result), 'utf8');
+
+/** The narrowed answer an over-bound DEFAULT `swarm.view` receives (issue #457): the widest
+ * declared projection that MEASURABLY fits, measured by the refusal's own derivation
+ * (`fittingProjections`) so the slice an answer serves and the slice a refusal names cannot
+ * disagree — carrying the #349 record, which is itself paid for before the fit is believed.
+ * Null when no projection fits the frame: the refusal is then the honest answer, naming what a
+ * narrower read must be. */
+function narrowedSwarmViewAnswer(view, actualBytes, maxFrameBytes, requested) {
+  const fit = fittingProjections(view, actualBytes, maxFrameBytes, requested);
+  if (fit === null) return null;
+  for (const projection of fit.measured) {
+    const candidate = {
+      ...projectSwarmView(view, projection),
+      narrowed: { from: SWARM_VIEW_DEFAULT_PROJECTION, to: projection, reason: 'bridge-frame' },
+    };
+    if (successFrameBytes(candidate) <= maxFrameBytes) return candidate;
+  }
+  return null;
+}
+
+/** The page an over-bound `participants`/`contributions` read receives (issue #457): the walk the
+ * resident/MCP leg already serves (#343), over THAT projection's own rows — the same cursor token,
+ * the same `page {cursor, next, total, served, ceiling}` record and the same per-row bounding
+ * (heavy participant fields dropped, contribution bodies head-bounded) — so a seat walks a swarm
+ * larger than one frame instead of being refused. Null when the walk cannot make progress (one row
+ * that cannot fit the frame alone): the refusal then names what fits (#349's fallback, preserved).
+ * The derivation bounds a page by the MCP envelope MIRROR (the answer counted twice), which always
+ * bounds it harder than this bridge's one-frame envelope: the page boundary is conservative, never
+ * a promise this bridge cannot keep. */
+function pagedSwarmViewAnswer(view, projection, maxFrameBytes, row, cursor) {
+  const paged = pageSwarmViewForBridge(projectSwarmView(view, projection),
+    SWARM_VIEW_DEFAULT_PROJECTION, maxFrameBytes, row, cursor);
+  if (paged === null) return null;
+  // `assemble` labels the walk `full` — the derivation's name for "the whole row sequence". The
+  // answer names the projection whose rows it really walks (the `page` record carries no
+  // projection of its own), so a seat that asked for `participants` reads an answer that says so.
+  const answer = { ...paged, projection };
+  return successFrameBytes(answer) <= maxFrameBytes ? answer : null;
+}
+
+/** The answer an over-bound `swarm.view` receives BEFORE any refusal is considered (issue #457).
+ * The default read ANSWERS narrowed; the two row families a seat walks PAGE; an EXPLICIT
+ * projection that does not fit — `full` included, and a page cursor that names no paging
+ * projection — is the caller's own oversize request: null, so the refusal names the slice that
+ * would have fit. */
+function overBoundSwarmViewAnswer(command, args, result, actualBytes, maxFrameBytes, row) {
+  if (command !== 'swarm.view') return null;
+  const requested = typeof args?.projection === 'string' ? args.projection : null;
+  if (requested === 'participants' || requested === 'contributions') {
+    return pagedSwarmViewAnswer(result, requested, maxFrameBytes, row,
+      typeof args?.cursor === 'string' ? args.cursor : null);
+  }
+  if (requested !== null || typeof args?.cursor === 'string') return null;
+  return narrowedSwarmViewAnswer(result, actualBytes, maxFrameBytes, SWARM_VIEW_DEFAULT_PROJECTION);
+}
+
+/** The text a thrown handler crosses with, bounded by the frame its answer must fit: a crash
+ * message is a diagnostic, never a payload that can break the discipline every other answer obeys.
+ * `envelopeBytes` measures the answer that text will REALLY ride — the bridge's crash payload,
+ * which carries it twice — and a text that cannot cross whole is CUT (on a code-point boundary,
+ * with a marker saying so), never dropped and never relayed whole. */
+function boundedHandlerMessage(text, maxFrameBytes, envelopeBytes) {
+  if (envelopeBytes(text) <= maxFrameBytes) return text;
+  const points = Array.from(text);
+  let low = 0;
+  let high = points.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (envelopeBytes(`${points.slice(0, middle).join('')}\u2026`) <= maxFrameBytes) low = middle;
+    else high = middle - 1;
+  }
+  return `${points.slice(0, low).join('')}\u2026`;
+}
+
+/** A handler that threw (carried into #457 from #458): the bridge answers
+ * `swarm_bridge_dispatch_failed` naming the error CLASS and a bounded text — never a bare
+ * catch-all that hides what broke — and the refusal lane records the crash as
+ * `bridge.handler_threw`, so a seat and its root can tell a typed runtime refusal from a defect in
+ * the bridge's own dispatch. The bound is the whole answer, measured as it will be written: the
+ * class, the text and the text's second copy on `detail`, inside the bridge's own frame. */
+function handlerThrew(cause, maxFrameBytes) {
+  const errorClass = cause instanceof Error && typeof cause.name === 'string' && cause.name.length > 0
+    ? cause.name : typeof cause;
+  const crashMessage = (errorMessage) => `Swarm bridge dispatch failed (${errorClass}): ${errorMessage}`;
+  const envelopeBytes = (errorMessage) => Buffer.byteLength(JSON.stringify({
+    ok: false,
+    error: {
+      message: crashMessage(errorMessage), code: 'swarm_bridge_dispatch_failed',
+      detail: { rule: 'bridge.handler_threw', errorClass, errorMessage, refusalRecorded: false },
+    },
+  }), 'utf8');
+  const errorMessage = boundedHandlerMessage(
+    typeof cause?.message === 'string' && cause.message.length > 0 ? cause.message : String(cause),
+    maxFrameBytes, envelopeBytes,
+  );
+  return bridgeError(crashMessage(errorMessage), 'swarm_bridge_dispatch_failed',
+    { rule: 'bridge.handler_threw', errorClass, errorMessage });
+}
+
 function frameRow(maxFrameBytes) {
   // The override keeps the registry row's lane/class identity; only the deployment's smaller
   // ceiling changes. There is no invented lane and no invented number outside the registry.
@@ -269,6 +382,11 @@ export function createSwarmNativeBridge({
       code: typeof error?.code === 'string' && error.code.length > 0 ? error.code : null,
       field: typeof error?.detail?.field === 'string' ? error.detail.field : null,
       rule: typeof error?.detail?.rule === 'string' ? error.detail.rule : null,
+      // The projection a bridge-frame refusal TOLD the caller would fit (#457): the root reads what
+      // the seat was told from the durable row itself, never by re-running the measurement. Only a
+      // declared projection name crosses; anything else is simply absent.
+      fits: typeof error?.detail?.fits === 'string' && Object.hasOwn(SWARM_VIEW_PROJECTIONS, error.detail.fits)
+        ? error.detail.fits : null,
     };
     if (report.code === null) return false;
     try {
@@ -288,7 +406,11 @@ export function createSwarmNativeBridge({
   let closePromise = null;
 
   const server = createServer((req, res) => {
-    handle(req, res).catch(() => sendJson(res, 500, { ok: false, error: errorPayload({ message: 'Swarm bridge request failed', code: 'swarm_bridge_dispatch_failed', detail: {} }) }));
+    // A handler that throws OUTSIDE handle()'s own catch is answered the same way a crashing
+    // dispatch is — the class and a bounded text cross, never a bare catch-all. Nothing here is
+    // attributable to a seat (no token resolved), so nothing is recorded about it.
+    handle(req, res).catch((error) => sendJson(res, 500,
+      { ok: false, error: errorPayload(handlerThrew(error, maxFrameBytes)) }));
   });
   let readyResolve; let readyReject;
   const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
@@ -379,13 +501,24 @@ export function createSwarmNativeBridge({
       try {
         result = await dispatch({ command, args, principal, context });
       } catch (error) {
-        // A refusal the RUNTIME raised is already on the durable refusal lane; the bridge relays it
-        // verbatim and never records a second row about it.
+        // A TYPED error is a refusal the RUNTIME raised: it is already on the durable refusal lane,
+        // so the bridge relays it verbatim and never records a second row about it. Anything else
+        // is this bridge's own handler crashing — a TypeError out of the runtime, a thrown string —
+        // and it crosses typed, naming its class and a bounded text (never a bare catch-all), and
+        // is recorded as `bridge.handler_threw`.
+        if (typeof error?.code !== 'string' || error.code.length === 0) throw handlerThrew(error, maxFrameBytes);
         attempt.runtimeOwned = true;
         throw error;
       }
-      const payload = Buffer.from(JSON.stringify({ ok: true, result: result ?? null }), 'utf8');
-      if (payload.length > maxFrameBytes) throw overBoundResponse(result, payload.length, args?.projection ?? null);
+      const payload = Buffer.from(successEnvelope(result), 'utf8');
+      if (payload.length > maxFrameBytes) {
+        // Issue #457: the answer is tried BEFORE the refusal. A seat's default read answers the
+        // projection that fits; the families it walks page; only an explicit projection that does
+        // not fit is refused, and that refusal names the one that does.
+        const served = overBoundSwarmViewAnswer(command, args, result, payload.length, maxFrameBytes, row);
+        if (served !== null) { sendJson(res, 200, { ok: true, result: served }); return; }
+        throw overBoundResponse(result, payload.length, args?.projection ?? null);
+      }
       sendJson(res, 200, JSON.parse(payload.toString('utf8')));
     } catch (error) {
       const refusalRecorded = await reportRefusal(attempt, error);
