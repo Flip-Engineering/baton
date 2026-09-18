@@ -139,6 +139,12 @@ export function describeStopWait(detail) {
     .map((entry) => Object.freeze({
       resource: entry.resource, reaper: entry.reaper ?? null, since: entry.since ?? null,
     }));
+  const observed = Object.freeze(Object.fromEntries(rows
+    .filter((row) => typeof row.workerId === 'string' && row.workerId.length > 0)
+    .map((row) => [row.workerId, Object.freeze({
+      attempt: Number.isSafeInteger(row.attempt) && row.attempt > 0 ? row.attempt : 0,
+      alive: row.alive === true || row.alive === false ? row.alive : null,
+    })])));
   const released = rows.flatMap((row) => (Array.isArray(row.released) ? row.released : []))
     .filter(record).map((row) => Object.freeze({ ...row }));
   const holds = (row) => (Array.isArray(row.waiting) ? row.waiting : [])
@@ -148,7 +154,8 @@ export function describeStopWait(detail) {
   const workers = ids(rows.filter(holds).map((row) => row.workerId));
   if (workers.length > 0) {
     return Object.freeze({
-      on: 'worker', ids: Object.freeze(workers), entries: Object.freeze(entries), released: Object.freeze(released),
+      on: 'worker', ids: Object.freeze(workers), entries: Object.freeze(entries),
+      released: Object.freeze(released), observed,
     });
   }
   const capacity = entries.filter((entry) => entry.resource.startsWith('capacity:'));
@@ -156,7 +163,7 @@ export function describeStopWait(detail) {
     return Object.freeze({
       on: 'capacity',
       ids: Object.freeze(ids(capacity.map((entry) => entry.resource.slice('capacity:'.length)))),
-      entries: Object.freeze(entries), released: Object.freeze(released),
+      entries: Object.freeze(entries), released: Object.freeze(released), observed,
     });
   }
   // The host-capacity verify lease a lane still holds, and the resident's own publication: the two
@@ -687,11 +694,40 @@ export class BatonWebHost {
         }
         this.wakeBinding = null;
       }
-      this._stopStage(STOP_STAGES.webAdmissionClose);
-      let web;
-      try { web = await this.server.batonShutdown({ drainMs: this.webDrainMs }); }
-      catch (error) { web = { ok: false, result: 'shutdown_failed', code: error?.code ?? error?.name ?? 'web_shutdown_failed' }; }
-      this._say(`baton serve: web admission closed (${web?.result ?? web?.code ?? 'unknown'}); draining the fleet`);
+      // Issue #467: the served transport's close is TWO acts, in this order. ADMISSION closes first,
+      // while the writer authority this transport audits through is still held (the drain releases
+      // it), and closes only new WORK when the transport supports it — a resident in `stopping`
+      // keeps answering its own reads (`stopping` beside the waits it holds, the card, list/view)
+      // over the transport its profile publishes, where the incident's clients got
+      // `cli_transport_failed` for the whole thirteen-cycle drain. The TRANSPORT itself closes once
+      // the stop is over. A transport that does not split (a bare fixture server) closes whole, at
+      // the same point it always did.
+      let admission = null;
+      let transport = null;
+      const closeWebAdmission = async () => {
+        if (admission !== null) return admission;
+        this._stopStage(STOP_STAGES.webAdmissionClose);
+        // The WORK half of the close, when the transport publishes it: reads keep answering over
+        // the still-listening server. A transport that publishes no split (a bare fixture server)
+        // closes whole, once, at the end — exactly as it always did.
+        if (typeof this.server.batonCloseWorkAdmission === 'function') {
+          try { admission = await this.server.batonCloseWorkAdmission(); }
+          catch (error) { admission = { ok: false, result: 'shutdown_failed', code: error?.code ?? error?.name ?? 'web_shutdown_failed' }; }
+        } else {
+          admission = { ok: true, result: 'work_admission_unsplit' };
+        }
+        this._say(`baton serve: web admission closed (${admission?.result ?? admission?.code ?? 'unknown'})`);
+        return admission;
+      };
+      const closeWebTransport = async () => {
+        if (transport !== null) return transport;
+        try { transport = await this.server.batonShutdown({ drainMs: this.webDrainMs }); }
+        catch (error) { transport = { ok: false, result: 'shutdown_failed', code: error?.code ?? error?.name ?? 'web_shutdown_failed' }; }
+        this._say(`baton serve: web transport closed (${transport?.result ?? transport?.code ?? 'unknown'})`);
+        return transport;
+      };
+      await closeWebAdmission();
+      this._say('baton serve: draining the fleet with the served transport open for reads');
       // #276(1): the drain's progress, at the only cadence this host owns — the grace IT declared
       // for its own Web leg. One line says the fleet drain has outlived that grace, so a long drain
       // is visibly alive instead of silent; the deadline itself is the drain's own derivation and
@@ -709,28 +745,37 @@ export class BatonWebHost {
         // #276(2): the deadline names its wait BEFORE this host stops waiting, and the refusal
         // carries the drain's own detail onward — never a bare non-convergence.
         this._say(`baton serve: drain did not converge; ${describeDrainWait(error?.detail) ?? 'no named wait was reported'}`);
-        // Issue #351: a stop that cannot converge NAMES ITS WAIT and then acts on it, instead of
-        // leaving the operator to SIGKILL a resident that is still holding a process. The
+        // Issue #351/#467: a stop that cannot converge NAMES ITS WAIT and then acts on it, instead
+        // of leaving the operator to SIGKILL a resident that is still holding a process. The
         // deployment owns the act (it alone can kill a process group and reap it); when it reports
-        // the named obligations released, the stop has converged and says so.
+        // the named obligations released — or, past its bounded attempts, ABANDONED — the stop has
+        // ended and says so, with the workers it stopped waiting on listed on the outcome.
         const wait = describeStopWait(error?.detail);
         const forced = wait === null ? null : await this._recordStop('waiting', { wait, detail: error?.detail ?? null });
         if (forced?.line) this._say(forced.line);
-        if (forced?.released === true) {
+        if (forced?.released === true || forced?.bounded === true) {
           this._stopStage(STOP_STAGES.stopRecord);
+          const webClosed = await closeWebTransport();
           const stopped = await this._recordStop('stopped', { state: 'stopped_after_deadline', wait });
           if (stopped?.line) this._say(stopped.line);
           return Object.freeze({
             schemaVersion: 1,
             state: 'closed_degraded',
             wakes,
-            web,
+            web: webClosed,
             application: forced.application ?? null,
-            stop: Object.freeze({ state: 'stopped_after_deadline', wait, killed: forced.killed ?? Object.freeze([]) }),
+            stop: Object.freeze({
+              state: 'stopped_after_deadline',
+              wait,
+              killed: forced.killed ?? Object.freeze([]),
+              ...(Array.isArray(forced.abandoned) && forced.abandoned.length > 0
+                ? { abandoned: Object.freeze([...forced.abandoned]) } : {}),
+            }),
           });
         }
+        const webClosed = await closeWebTransport();
         throw Object.assign(new Error('Baton application shutdown failed after Web admission closed'), {
-          code: error?.code ?? 'application_host_shutdown_failed', web,
+          code: error?.code ?? 'application_host_shutdown_failed', web: webClosed,
           detail: error?.detail ?? error?.message ?? null,
           cause: error,
         });
@@ -738,16 +783,17 @@ export class BatonWebHost {
       clearTimeout(progressTimer);
       this._say(`baton serve: drain converged; ${describeDrainOutcome(application)}`);
       this._stopStage(STOP_STAGES.stopRecord);
+      const webClosed = await closeWebTransport();
       const stopped = await this._recordStop('stopped', {
-        state: web?.ok === true && application?.state === 'closed' ? 'stopped' : 'stopped_degraded',
+        state: webClosed?.ok === true && application?.state === 'closed' ? 'stopped' : 'stopped_degraded',
         wait: null,
       });
       if (stopped?.line) this._say(stopped.line);
       return Object.freeze({
         schemaVersion: 1,
-        state: web?.ok === true && application?.state === 'closed' ? 'closed' : 'closed_degraded',
+        state: webClosed?.ok === true && application?.state === 'closed' ? 'closed' : 'closed_degraded',
         wakes,
-        web,
+        web: webClosed,
         application,
       });
     })();

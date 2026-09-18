@@ -383,7 +383,7 @@
         {
           "name": "_stopWaitRows",
           "ordinal": 0,
-          "size": 67,
+          "size": 77,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -705,7 +705,7 @@
         {
           "name": "_performDrain",
           "ordinal": 0,
-          "size": 162,
+          "size": 178,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -2148,7 +2148,7 @@
         {
           "name": "_beginStop",
           "ordinal": 0,
-          "size": 142,
+          "size": 154,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -2859,10 +2859,19 @@
         {
           "name": "_wireAck",
           "ordinal": 0,
-          "size": 17,
-          "seam": "effect",
+          "size": 20,
+          "seam": "observation",
           "evidence": [
-            "delegates:effect"
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_observeKillAbsence",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
           ]
         },
         {
@@ -2898,7 +2907,7 @@
         {
           "name": "_finalizeStop",
           "ordinal": 0,
-          "size": 182,
+          "size": 189,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -2909,11 +2918,66 @@
         {
           "name": "_forceStop",
           "ordinal": 0,
-          "size": 117,
+          "size": 144,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
             "observation:log_append"
+          ]
+        },
+        {
+          "name": "_stopAttemptOf",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_processAbsence",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "effect",
+          "evidence": [
+            "effect:adapter_verb"
+          ]
+        },
+        {
+          "name": "_attestAbsentStop",
+          "ordinal": 0,
+          "size": 37,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_abandonStopWorker",
+          "ordinal": 0,
+          "size": 33,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "abandonedWorkers",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "observeStopAbsence",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:record_name"
           ]
         },
         {

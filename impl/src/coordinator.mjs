@@ -112,6 +112,12 @@ const KILL_RULES = Object.freeze({
   terminalObservation: 'terminal_observation',
 });
 
+// Issue #467: the bounded attempt bound on ONE worker's stop. The ordinary confirmed deadline is
+// attempt 1; a deadline that could not settle prints attempt 2 (the escalation the resident's own
+// group kill + reap drives), and a third does not exist — a stop that keeps re-arming the wait it
+// just failed is the non-convergence this issue reports, not a stop that is still trying.
+const STOP_DEADLINE_ATTEMPT_BOUND = 2;
+
 // BD3-D: the storm-coalescing window for same-run attention wakes. Reasons minted within the
 // window merge into one entry carrying an explicit count + perPhase distribution.
 const ATTENTION_COALESCE_WINDOW_MS = 500;
@@ -2926,12 +2932,21 @@ export class Coordinator {
     const push = (handle, workerId, waiting) => {
       const released = this._drainReleased.filter((row) => row.workerId === workerId)
         .map((row) => Object.freeze({ ...row }));
-      const row = Object.freeze({
+      const row = {
         workerId, status: handle?.status ?? 'absent',
         disposition: dispositions?.get(workerId) ?? null,
         processState: handle?.processRef?.state ?? null,
         waiting: Object.freeze(waiting), released: Object.freeze(released),
-      });
+      };
+      // Issue #467: WHICH bounded attempt this wait belongs to, the pid/group liveness the stop
+      // observed when it named the wait, and whether the stop has already stopped waiting on this
+      // worker. Published by the DP5 pattern the doctor rows already use — a reading consumer
+      // reaches them by property access while the pre-existing serialized row shape (and every pin
+      // on it) stays byte-stable.
+      Object.defineProperty(row, 'attempt', { value: this._stopAttemptOf(handle), enumerable: false });
+      Object.defineProperty(row, 'alive', { value: handle?.stopLivenessObserved ?? null, enumerable: false });
+      Object.defineProperty(row, 'abandoned', { value: handle?.stopAbandoned ? true : false, enumerable: false });
+      Object.freeze(row);
       rows.push(row);
       if (!handle) return;
       try {
@@ -2942,6 +2957,7 @@ export class Coordinator {
           payload: {
             waiting: row.waiting.map((entry) => ({ resource: entry.resource, reaper: entry.reaper, since: entry.since })),
             disposition: row.disposition, status: row.status, processState: row.processState,
+            attempt: row.attempt, alive: row.alive, abandoned: row.abandoned,
             released: released.map((entry) => ({ ...entry })),
           },
         });
@@ -3951,6 +3967,10 @@ export class Coordinator {
         if (result?.ok && result.result === 'confirmed') setDisposition(handle.id, 'killConfirmed');
         else if (result?.ok && ['already_dead', 'already_stopped', 'already_dead_unlogged'].includes(result.result)
           && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) setDisposition(handle.id, 'alreadyTerminal');
+        // Issue #467: the worker's stop has spent both bounded attempts. The drain stops asking and
+        // NAMES the worker it stopped waiting on, so the resident's own bounded waits see a settled
+        // fact instead of arming the deadline that never ends.
+        else if (result?.result === 'stop_attempts_exhausted') this._abandonStopWorker(handle, result);
       } catch { /* exact state below is authoritative; retry until the deployment deadline */ }
     };
     while (Date.now() <= deadline) {
@@ -3963,6 +3983,18 @@ export class Coordinator {
       // keeps its reaper (the trust gate honors cleanupAfterVerification), and a bare operator
       // kill without a run stop keeps the named wait (G-21).
       this._drainWaitObserve(targetWorkerIds);
+      // Issue #467: a target worker whose stop the kill path SETTLED — the kernel's own ESRCH closed
+      // its process, and the reap that follows released what it held — is holding nothing and
+      // waiting on nothing. Recording the disposition it actually reached here keeps the drain's own
+      // success test reachable instead of running the loop out to its deadline (the observed shape:
+      // `coordinator_drain_incomplete {reason: 'convergence', waitingOn: []}`).
+      for (const workerId of targetWorkerIds) {
+        if (dispositions.has(workerId)) continue;
+        const settledTarget = this._workers.get(workerId);
+        if (!settledTarget || this._ownsLocalResources(settledTarget)
+          || (settledTarget.processRef && settledTarget.processRef.state !== 'closed')) continue;
+        setDisposition(workerId, settledTarget.stopAttested ? 'killConfirmed' : 'alreadyTerminal');
+      }
       for (const holder of [...this._workers.values()].filter((candidate) => this._settledDrainHolder(candidate))) {
         const holderTask = this._tasks.get(holder.taskId);
         if (holderTask?.status === 'verifying') continue;
@@ -10181,6 +10213,7 @@ export class Coordinator {
         const evidence = this._coordMapEvent(requested);
         this._coordRecord('control.stop_requested', { taskId: handle.taskId, workerId: handle.id, mode: 'kill', escalation: true, evidence }, `driver.stop_requested:${handle.taskId}:${requested.seq}`, actor);
         existing.mode = 'kill';
+        existing.rule = context?.rule ?? KILL_RULES.interruptEscalated;
         // The physical waiter now belongs to kill. Original interrupt callers retain their
         // requested disposition in typed request entries and settle separately below.
         existing.preserveTurn = false;
@@ -10206,6 +10239,16 @@ export class Coordinator {
         resolve, requestedMode: mode, preserveTurn: context?.preserveTurn === true,
         controlId: context?.controlId ?? null,
       }));
+    }
+
+    // Issue #467: a third deadline does not exist. A worker whose stop has spent both bounded
+    // attempts answers here, typed, naming what the stop observed: the caller (a drain pass, a seat
+    // stop) records the abandonment instead of re-arming the wait the last deadline just failed.
+    if (this._stopAttemptOf(handle) >= STOP_DEADLINE_ATTEMPT_BOUND) {
+      return Promise.resolve({
+        ok: false, result: 'stop_attempts_exhausted',
+        attempts: this._stopAttemptOf(handle), alive: handle.stopLivenessObserved ?? null,
+      });
     }
 
     this._fences.bumpHuman(handle.id);
@@ -10260,6 +10303,7 @@ export class Coordinator {
 
     const waiter = {
       mode,
+      rule,
       workerId: handle.id,
       emulated: false,
       requests: [],
@@ -12038,14 +12082,32 @@ export class Coordinator {
         waiter.emulated = !!(ack && ack.emulated === true);
         waiter.ackReady = true;
         if (ack?.ok === true && ack?.terminal === true) waiter.confirmReceived = true;
+        // Issue #467: a kill Ack is also a moment to ask the kernel — see _observeKillAbsence.
+        if (operationMode === 'kill') this._observeKillAbsence(waiter);
         this._maybeFinalizeStop(waiter.workerId, waiter);
       })
       .catch(() => {
         if (waiter.finalized || waiter.operationGeneration !== operationGeneration
           || waiter.mode !== operationMode) return;
         waiter.ackReady = true;
+        if (operationMode === 'kill') this._observeKillAbsence(waiter);
         this._maybeFinalizeStop(waiter.workerId, waiter);
       });
+  }
+
+  /** Issue #467: every kill Ack is also a moment to ask the kernel. An adapter that refused the
+   * signal because the process is already gone (ESRCH), or one whose Ack arrives after the child
+   * exited, is the same fact as a delivered kill: the process the kill wanted gone IS gone. The
+   * observation is recorded as an attestation on the confirmation row, never presented as an
+   * adapter receipt. */
+  _observeKillAbsence(waiter) {
+    if (waiter.mode !== 'kill') return null;
+    const handle = this._workers.get(waiter.workerId);
+    if (!handle) return null;
+    const absence = this._processAbsence(handle);
+    if (absence !== null) handle.stopLivenessObserved = absence.alive;
+    if (absence?.alive !== false) return null;
+    return this._attestAbsentStop(handle, waiter, waiter.rule ?? KILL_RULES.stopRequested, absence);
   }
 
   _maybeFinalizeStop(workerId, waiter) {
@@ -12117,6 +12179,13 @@ export class Coordinator {
   _finalizeStop(workerId, waiter) {
     if (waiter.finalized) return;
     waiter.finalized = true;
+    // Issue #467: a finalized stop ends its bounded transaction — the attempt count belongs to the
+    // NEXT stop of this worker, never to the worker's whole life.
+    const finalizedHandle = this._workers.get(workerId);
+    if (finalizedHandle) {
+      finalizedHandle.stopDeadlineAttempts = 0;
+      finalizedHandle.stopAbandoned = null;
+    }
     if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
     if (waiter.reapRetryHandle != null) this._clearTimeout(waiter.reapRetryHandle);
     const handle = this._workers.get(workerId);
@@ -12365,17 +12434,31 @@ export class Coordinator {
 
     let deadlineCleanup = null;
     if (handle) {
-      if (handle.processRef && ['initializing', 'ready'].includes(handle.processRef.state)) {
+      // Issue #467: the deadline asks the kernel BEFORE it decides. `_processAbsence` answers false
+      // only on ESRCH for the exact pid (and only when its process group is gone too), so a worker
+      // that exited while the stop was in flight settles here exactly like one whose adapter
+      // reported the correlated close — which is what the deadline has to be for a kill that
+      // already achieved what it wanted.
+      const absence = waiter.mode === 'kill' ? this._processAbsence(handle) : null;
+      const absent = absence?.alive === false;
+      if (absent) {
+        this._attestAbsentStop(handle, null, KILL_RULES.stopDeadline, absence);
+      } else if (waiter.mode === 'kill') {
+        handle.stopDeadlineAttempts = this._stopAttemptOf(handle) + 1;
+        handle.stopLivenessObserved = absence?.alive ?? null;
+      }
+      if (!absent && handle.processRef && ['initializing', 'ready'].includes(handle.processRef.state)) {
         handle.processRef = { ...handle.processRef, state: 'unconfirmed_after_restart' };
       }
       handle.status = 'dead';
       // #265 item 3: a deadline ends our PATIENCE, never the cleanup. When nothing indicates a
-      // live process (no process authority, or an exact correlated close), the ordinary
-      // preserve-then-reap path runs NOW — otherwise the forced stop leaves a dead member holding
-      // its checkout, its runtime scope and `cleanupPending` forever, and the Run stop can never
-      // converge on it (the observed shape: `control.stop_waiting_on {waiting: [disposition,
-      // local_resources:localAuthority, local_resources:worktree, local_resources:cleanupPending]}`,
-      // eleven minutes after the deadline with the checkout still on disk).
+      // live process (no process authority, an exact correlated close, or the kernel's own ESRCH
+      // for this pid), the ordinary preserve-then-reap path runs NOW — otherwise the forced stop
+      // leaves a dead member holding its checkout, its runtime scope and `cleanupPending` forever,
+      // and the Run stop can never converge on it (the observed shape:
+      // `control.stop_waiting_on {waiting: [disposition, local_resources:localAuthority,
+      // local_resources:worktree, local_resources:cleanupPending]}`, eleven minutes after the
+      // deadline with the checkout still on disk).
       //
       // When a process may still be live the runtime and worktree are RETAINED — uncertainty is
       // never permission to destroy — and the holds are named durably instead, so the wait is
@@ -12383,7 +12466,7 @@ export class Coordinator {
       // These resources are retained until an EXACT correlated close exists: an absent or
       // unconfirmed process is exactly the uncertainty a reaper may not act on — nothing observed
       // means nothing proven gone (the recovery lane reports that state as `unknown`).
-      const exactClose = handle.processRef?.state === 'closed';
+      const exactClose = absent || handle.processRef?.state === 'closed';
       handle.cleanupPending = true;
       handle.cleanupError = exactClose ? null : 'stop_unconfirmed';
       const task = this._tasks.get(handle.taskId);
@@ -12396,16 +12479,28 @@ export class Coordinator {
           kind: 'control.stop_deadline_cleanup', actor: 'policy', ...this._routeAttribution(handle, task),
           payload: {
             rule: KILL_RULES.stopDeadline, mode: waiter.mode, forcedSeq: forcedEvent.seq,
-            action: exactClose ? 'reap_after_deadline' : 'retain_until_exact_close',
+            attempt: this._stopAttemptOf(handle),
+            alive: handle.stopLivenessObserved ?? null,
+            action: absent ? 'reap_after_absence' : exactClose ? 'reap_after_deadline' : 'retain_until_exact_close',
           },
         });
       } catch { /* the deadline receipt below still settles the waiter */ }
       if (!exactClose) {
-        try { this._stopWaitingOn([workerId], null, 'policy'); } catch { /* named on the next convergence read */ }
+        // Issue #467: the deadline NAMES the wait it could not settle — once per attempt — and it
+        // never re-arms it. What moves a worker past this deadline is the drain's own retry and the
+        // resident's bounded group kill (#351), which is the second deadline; a stop that spent
+        // both is abandoned here rather than waited on a third time.
+        try {
+          this._stopWaitingOn([workerId], null, 'policy');
+          if (this._stopAttemptOf(handle) >= STOP_DEADLINE_ATTEMPT_BOUND) {
+            this._abandonStopWorker(handle, { alive: handle.stopLivenessObserved ?? null });
+          }
+        } catch { /* named on the next convergence read */ }
       } else {
         deadlineCleanup = { handle, task };
       }
     }
+
 
     const result = coordinationFailure ? { ok: false, result: 'coordination_unavailable' } : { ok: true, result: 'forced' };
     this._resolveStopRequests(waiter, result);
@@ -12413,6 +12508,165 @@ export class Coordinator {
     // The cleanup runs AFTER the waiter is released: the exact-close path guards on there being no
     // stop waiter left, and this transaction is over.
     if (deadlineCleanup) this._cleanupTransportInBackground(deadlineCleanup.handle, deadlineCleanup.task, forcedEvent);
+
+  }
+  /** Issue #467: how many bounded stop deadlines this worker's stop has spent. 0 means the stop is
+   * still inside its ordinary confirmed window. */
+  _stopAttemptOf(handle) {
+    const attempts = handle?.stopDeadlineAttempts;
+    return Number.isSafeInteger(attempts) && attempts > 0 ? attempts : 0;
+  }
+
+  /** Issue #467: the ONE process-absence observation the stop path reads. ESRCH is an exact
+   * statement about THIS pid — a live process can never answer it — so the host's own probe settles
+   * the question the correlated `lifecycle.process_closed` row would have answered. A pid whose
+   * process GROUP still has members is explicitly NOT absence: descendants still carrying the group
+   * remain Baton's responsibility, and uncertainty is never permission to destroy (#351/#428).
+   * `null` means the observation could not be made at all (no pid to probe, or the kernel refused),
+   * which is a different fact from "gone". */
+  _processAbsence(handle) {
+    const ref = handle?.processRef ?? null;
+    const pid = Number.isSafeInteger(ref?.pid) && ref.pid > 0 ? ref.pid : null;
+    if (pid === null) return null;
+    // The observation is only OURS to make for a generation whose identity this controller BOUND
+    // (the spawn authority's own `pidStart`): a pid recorded without a bound identity is a claim the
+    // controller never corroborated, so an ESRCH about it says nothing about the child this stop is
+    // about — and uncertainty is never permission to destroy (#351/#428).
+    const authority = handle?.processAuthority ?? null;
+    if (!authority || authority.generation !== ref.generation || authority.pid !== pid) return null;
+    let alive;
+    try { process.kill(pid, 0); alive = true; }
+    catch (error) { alive = error?.code === 'ESRCH' ? false : error?.code === 'EPERM' ? true : null; }
+    const group = Number.isSafeInteger(ref.processGroupId) && ref.processGroupId > 0 ? ref.processGroupId : null;
+    if (alive !== false) {
+      return Object.freeze({ pid, processGroupId: group, alive: alive === true ? true : null });
+    }
+    if (group !== null && group !== pid && processGroupAlive(group)) {
+      return Object.freeze({ pid, processGroupId: group, alive: null });
+    }
+    return Object.freeze({ pid, processGroupId: group, alive: false });
+  }
+  /** Issue #467: the kill path's ESRCH disposition. A kill wanted this process GONE; the kernel
+   * says it is gone; the two-phase stop's confirmation has therefore arrived — as an attestation
+   * the row itself names (`attestedBy: 'process_absent'`, with the pid it was about), never as a
+   * fabricated adapter receipt. The observed generation is closed exactly (the probe was about the
+   * exact pid), and a live stop waiter finalizes through the same seam an adapter's `kill.confirmed`
+   * reaches. Returns the durable row, or null when the observation was not an absence. */
+  _attestAbsentStop(handle, waiter, rule, absence) {
+    if (!handle || absence?.alive !== false) return null;
+    // An UNTRUSTED-TRANSPORT reap record is the handle's own close authority: it installed a
+    // contract (its timer, and the adapter's proof-carrying reap) that owns the runtime, the
+    // worktree and the local authority, and #351/#428 retain them until THAT reap confirms. A stop
+    // that attested an absence around it would bypass the contract, so the observation is left to
+    // the record — the same rule that keeps uncertainty from destroying anything.
+    if (handle.untrustedTransportReap) return null;
+    let attested;
+    try {
+      attested = this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'kill.confirmed', actor: 'policy', ...this._routeAttribution(handle, this._tasks.get(handle.taskId)),
+        payload: {
+          rule: rule ?? KILL_RULES.stopDeadline, attestedBy: 'process_absent',
+          pid: absence.pid, processGroupId: absence.processGroupId,
+        },
+      });
+    } catch { return null; }
+    const current = handle.processRef;
+    if (current && current.pid === absence.pid) {
+      handle.processRef = { ...current, state: 'closed', ready: false, closedSeq: attested.seq };
+    }
+    // The disposition the drain reads: this worker's stop was settled by an ABSENCE observation, not
+    // by an adapter receipt — and `killConfirmed` is the honest class for it.
+    handle.stopAttested = Object.freeze({
+      seq: attested.seq, pid: absence.pid, at: new Date().toISOString(),
+    });
+    if (waiter && !waiter.finalized) {
+      waiter.confirmationPayload = {
+        ...(waiter.confirmationPayload ?? {}), attestedBy: 'process_absent', pid: absence.pid,
+      };
+      waiter.confirmReceived = true;
+      this._maybeFinalizeStop(handle.id, waiter);
+    }
+    return attested;
+  }
+
+  /** Issue #467: name the worker a stop STOPPED WAITING on, once its bounded attempts are spent.
+   * Nothing is destroyed here — uncertainty is never permission to destroy, so the handle keeps
+   * whatever it holds and the next open's reconciliation owns it. What changes is that the stop no
+   * longer waits: the reader sees the attempts it made, the liveness it observed, and the holds it
+   * leaves behind, and the outcome row lists the worker under `abandoned` beside #450's `released`. */
+  _abandonStopWorker(handle, observation = null) {
+    if (!handle) return null;
+    if (handle.stopAbandoned) return handle.stopAbandoned;
+    const attempts = this._stopAttemptOf(handle);
+    const alive = observation?.alive ?? handle.stopLivenessObserved ?? null;
+    const holds = Object.keys(this._localResourceOwnership(handle));
+    const abandoned = Object.freeze({ at: new Date().toISOString(), attempts, alive, holds: Object.freeze(holds) });
+    handle.stopAbandoned = abandoned;
+    const task = this._tasks.get(handle.taskId) ?? null;
+    try {
+      this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.stop_abandoned', actor: 'policy', ...this._routeAttribution(handle, task),
+        payload: { rule: KILL_RULES.stopDeadline, attempts, alive, holds: [...holds] },
+      });
+    } catch { /* the outcome row below still names it */ }
+    try {
+      this._coordRecord('drain.worker_abandoned', {
+        workerId: handle.id, taskId: task?.id ?? null, attempts, alive, holds: [...holds],
+        reason: 'stop_attempts_exhausted', at: abandoned.at,
+      }, `drain.worker_abandoned:${handle.id}:${attempts}`);
+    } catch { /* the outcome sink below still names it */ }
+    // The sink the deployment's `host.stopped` row reads: the same {workerId, resource, how} shape
+    // #360/#450 mint, with `how: 'abandoned'` saying the stop could NOT release it — never a
+    // fabricated `drain.resource_released` row for a resource that was not released.
+    this._drainReleased ??= [];
+    this._drainReleased.push({
+      workerId: handle.id,
+      resource: `worker:${handle.sessionContext?.ownerTaskId ?? handle.taskId}`,
+      how: 'abandoned', attempt: attempts, alive,
+    });
+    return abandoned;
+  }
+
+  /** Issue #467: the workers a stop has stopped waiting on, read by the deployment's own wait row
+   * and doctor exactly as #450's released rows are. */
+  abandonedWorkers() {
+    return Object.freeze([...this._workers.values()]
+      .filter((handle) => handle.stopAbandoned)
+      .map((handle) => Object.freeze({
+        workerId: handle.id, attempt: handle.stopAbandoned.attempts,
+        alive: handle.stopAbandoned.alive, holds: Object.freeze([...handle.stopAbandoned.holds]),
+      })));
+  }
+
+  /** Issue #467: the resident's own absence observation, handed back to the seat whose stop is
+   * waiting. The deployment that owns the process group reads it first-hand (its group signal
+   * answered ESRCH, or its reap probe reported the group gone); the coordinator is the ONE place a
+   * stop waiter lives, so the observation is judged here — an existence proof for the wait, never a
+   * second authority. Returns the attestation's result so the caller can narrate it. */
+  observeStopAbsence(workerId, observation = {}) {
+    this._assertReadable();
+    const handle = this._workers.get(workerId) ?? null;
+    if (!handle) return { ok: false, result: 'unknown_worker' };
+    if (observation?.alive !== false) return { ok: false, result: 'not_observed' };
+    const seen = Object.freeze({
+      pid: Number.isSafeInteger(observation.pid) ? observation.pid : (handle.processRef?.pid ?? null),
+      processGroupId: Number.isSafeInteger(observation.processGroupId)
+        ? observation.processGroupId : (handle.processRef?.processGroupId ?? null),
+      alive: false,
+    });
+    handle.stopLivenessObserved = false;
+    const waiter = this._stopWaiters.get(workerId) ?? null;
+    const attested = this._attestAbsentStop(handle, waiter, KILL_RULES.stopDeadline, seen);
+    if (attested === null) return { ok: false, result: 'attestation_unavailable' };
+    if (waiter === null) {
+      // No live waiter: the deadline already released this transaction, so the reap is the
+      // coordinator's own — the ordinary confirmed path, run once.
+      handle.status = 'dead';
+      this._cleanupTransportInBackground(handle, this._tasks.get(handle.taskId), attested);
+    }
+    return { ok: true, result: 'confirmed', attestedSeq: attested.seq, pid: seen.pid, processGroupId: seen.processGroupId };
   }
 
   // =========================================================================

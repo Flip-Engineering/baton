@@ -1598,6 +1598,15 @@ export class WebNorthbound {
     this._observationAudits = [];
     this.edge = opts.edge ?? (opts.edgePolicy ? new WebEdgePolicy(opts.edgePolicy) : null);
     this.admitting = true;
+    // Issue #467: the READ half of admission, split from the work half. A resident in `stopping`
+    // closes NEW WORK but keeps answering its own reads (a doctor/card read, `runs.list`,
+    // `swarm.list`, `swarm.view`, an open event stream) over the SAME served transport — a client
+    // is never left with `cli_transport_failed` while the stop drains, and the resident can still
+    // say `stopping` over the transport its own profile publishes. `_admissionClose` memoizes the
+    // audited admission close so the full server close that follows the drain never re-audits
+    // (the writer authority the audit rides is released by the drain itself).
+    this.readOnlyStopping = false;
+    this._admissionClose = null;
     this.readinessChecks = opts.readinessChecks ?? [];
     this.readinessAuthority = opts.readinessAuthority ?? (this.sessions && this.authenticate?.isPrincipalActive
       ? new WebReadinessAuthority({ coordination: this.coordination, sessions: this.sessions, authenticate: this.authenticate, checks: this.readinessChecks }) : null);
@@ -1740,6 +1749,10 @@ export class WebNorthbound {
 
   _admissionOpen() { return this.admitting && (!this.edge || this.edge.admitting); }
 
+  /** Issue #467: the READ half of admission (`this.readOnlyStopping`) is admitted while new work
+   * stays closed; before any stop, the two halves are the same gate. */
+  _readAdmissionOpen() { return this.readOnlyStopping === true || this._admissionOpen(); }
+
   _authorize(ctx, envelope) {
     const principal = ctx.principal;
     // #160 R5 (error-actionability-2026-08-13/contract-fold.md §2 D4 R5): each distinct
@@ -1842,7 +1855,9 @@ export class WebNorthbound {
 
   async execute(ctx, envelope) {
     envelope = resolveWebCommandEnvelope(envelope);
-    if (!this._admissionOpen()) return error(503, 'temporarily_unavailable');
+    if (!(READ_ONLY_COMMANDS.has(envelope.command) ? this._readAdmissionOpen() : this._admissionOpen())) {
+      return error(503, 'temporarily_unavailable');
+    }
     const authFailure = this._authenticate(ctx);
     if (authFailure) {
       try { this._audit('authentication_refused', ctx); } catch { return error(503, 'temporarily_unavailable'); }
@@ -2422,7 +2437,10 @@ export class WebNorthbound {
     }
     if (req.method === 'GET' && url.pathname === '/healthz') return this._write(res, result(200, { ok: true }));
     if (req.method === 'GET' && url.pathname === '/readyz') return this._write(res, this._readinessResponse({ origin, remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null }));
-    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'));
+    if (!this._readAdmissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'));
+    // Issue #467: the reads above answered while a stop drains; the session mutations below are new
+    // WORK and stay closed from the moment the stop closes admission.
+    if (req.method === 'POST' && !this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'));
     if (req.method === 'GET' && url.pathname === OIDC_START_PATH) {
       return this._handleOidcStart(req, res, url, origin);
     }
@@ -2526,7 +2544,7 @@ export class WebNorthbound {
       try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
       let body;
       try { body = await this._readBody(req); } catch { return this._write(res, error(400, 'invalid_command'), origin); }
-      if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
+      if (!this._readAdmissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
       const ctx = { principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null, addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') };
       const authFailure = this._authenticate(ctx);
       if (authFailure) return this._write(res, authFailure, origin);
@@ -2699,7 +2717,7 @@ export class WebNorthbound {
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       let principal;
       try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
-      if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
+      if (!this._readAdmissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
       const authFailure = this._authenticate({ principal, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') });
       if (authFailure) return this._write(res, authFailure, origin);
       const responseValue = await this.stream.open({
@@ -2718,7 +2736,7 @@ export class WebNorthbound {
       try { this._audit('command_body_refused', { principal, origin, remoteAddress: req.socket?.remoteAddress ?? null }, { reason: cause?.code ?? 'invalid_json' }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, error(cause?.code === 'body_too_large' ? 413 : 400, 'invalid_command'), origin);
     }
-    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
+    if (!this._readAdmissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
     let response;
     try {
       response = await this.execute({
@@ -3115,7 +3133,7 @@ export class WebNorthbound {
     let principal;
     try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
     ctx.principal = principal;
-    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
+    if (!this._readAdmissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
     const authFailure = this._authenticate(ctx);
     if (authFailure) {
       try { this._audit('wake_stream_refused', ctx, { reason: authFailure.body?.error?.code ?? 'unauthenticated' }); } catch { /* the refusal is already the answer */ }
@@ -3278,21 +3296,48 @@ export class WebNorthbound {
     res.end(body);
   }
 
+  /** Issue #467: close new WORK admission — and nothing else — while the resident keeps answering
+   * its own READS over this transport. The served close is two acts, and the ORDER is load-bearing:
+   * the admission close is the audited one (`shutdown_started` rides the writer authority this
+   * transport audits through), so it must run while that authority is still held — before the fleet
+   * drain releases it — while the server itself stays listening so a client can still read the
+   * resident's stop state. `shutdown()` below performs this same close (whole) for a caller that
+   * wants the transport gone. Returns the admission receipt. */
+  closeWorkAdmission() {
+    const admission = this._closeAdmission(true);
+    return Object.freeze({ ok: true, result: 'admission_closed', ...admission });
+  }
+
+  /** The admission half, once: new work closed, reads admitted (when `readsOnly`), and the
+   * streams/attachments/audit this transport owns settled. */
+  _closeAdmission(readsOnly) {
+    if (this._admissionClose !== null) return this._admissionClose;
+    this.admitting = false;
+    this.readOnlyStopping = readsOnly === true;
+    // The edge policy gates connections, not verbs: a stopping resident keeps its transports open
+    // for the reads the split admits, so the edge stays admitting too.
+    if (!this.readOnlyStopping) this.edge?.closeAdmission();
+    let auditOk = true;
+    try { this._audit('shutdown_started', {}); } catch { auditOk = false; }
+    let streamOk = true;
+    try { this.stream.shutdown?.(); } catch { streamOk = false; }
+    // A wake attachment is a long-lived socket the server's own close() waits on: abort every one
+    // before the drain clock starts, so a quiet deployment never times out its own shutdown.
+    this.wakes.close?.();
+    for (const finish of [...this._wakeConnections]) { try { finish(); } catch { /* already gone */ } }
+    let exportDeliveryOk = true;
+    try { this.exportDelivery?.shutdown?.(); } catch { exportDeliveryOk = false; }
+    this._admissionClose = Object.freeze({ auditOk, streamOk, exportDeliveryOk });
+    return this._admissionClose;
+  }
+
+  /** Close the whole served transport: admission first (whole, never reads-only), then the server. */
   shutdown({ server, drainMs = 5_000 } = {}) {
-    if (this._shutdown) return this._shutdown;
     if (!Number.isSafeInteger(drainMs) || drainMs <= 0) throw new TypeError('drainMs must be a positive safe integer');
-    this.admitting = false; this.edge?.closeAdmission();
+    this._closeAdmission(false);
+    if (this._shutdown) return this._shutdown;
+    const closing = this._admissionClose;
     this._shutdown = (async () => {
-      let auditOk = true;
-      try { this._audit('shutdown_started', {}); } catch { auditOk = false; }
-      let streamOk = true;
-      try { this.stream.shutdown?.(); } catch { streamOk = false; }
-      // A wake attachment is a long-lived socket the server's own close() waits on: abort every
-      // one before the drain clock starts, so a quiet deployment never times out its own shutdown.
-      this.wakes.close?.();
-      for (const finish of [...this._wakeConnections]) { try { finish(); } catch { /* already gone */ } }
-      let exportDeliveryOk = true;
-      try { this.exportDelivery?.shutdown?.(); } catch { exportDeliveryOk = false; }
       let closed = !server?.close;
       const closePromise = new Promise((resolve) => {
         if (!server?.close) return resolve(true);
@@ -3305,10 +3350,15 @@ export class WebNorthbound {
         await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, Math.min(1_000, drainMs)))]);
       }
       const outcome = closed ? 'shutdown_completed' : 'shutdown_timed_out';
-      try { this._audit(outcome, {}, { streamShutdownOk: streamOk, exportDeliveryShutdownOk: exportDeliveryOk }); } catch { auditOk = false; }
+      const ok = closed && closing.auditOk && closing.streamOk && closing.exportDeliveryOk;
+      try {
+        this._audit(outcome, {}, {
+          streamShutdownOk: closing.streamOk, exportDeliveryShutdownOk: closing.exportDeliveryOk,
+        });
+      } catch { /* the outcome row is the audit; a refused one never fails the stop it reports */ }
       return {
-        ok: closed && auditOk && streamOk && exportDeliveryOk,
-        result: !closed ? 'timed_out' : !auditOk || !streamOk || !exportDeliveryOk ? 'closed_degraded' : 'closed',
+        ok,
+        result: !closed ? 'timed_out' : !ok ? 'closed_degraded' : 'closed',
       };
     })();
     return this._shutdown;
@@ -3346,6 +3396,9 @@ export function createAuthenticatedWebServer(northbound, opts = {}) {
   server.batonWakes = northbound.wakes;
   server.batonAuthenticate = northbound.authenticate;
   server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });
+  // Issue #467: the WORK half of the close, on its own — a stop closes admission while the reads
+  // this transport still admits keep answering over the listening server.
+  server.batonCloseWorkAdmission = () => northbound.closeWorkAdmission();
   return server;
 }
 
@@ -3368,6 +3421,9 @@ export function createLocalAuthenticatedWebServer(northbound) {
   server.batonWakes = northbound.wakes;
   server.batonAuthenticate = northbound.authenticate;
   server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });
+  // Issue #467: the WORK half of the close, on its own — a stop closes admission while the reads
+  // this transport still admits keep answering over the listening server.
+  server.batonCloseWorkAdmission = () => northbound.closeWorkAdmission();
   return server;
 }
 
