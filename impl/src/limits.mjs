@@ -203,6 +203,19 @@ const SUBSTRATE = Object.freeze({
 // hoisted so a second page row cannot re-derive it differently). Two rows read it: the seat read
 // verbs' page and the served-behind commit page.
 const LIST_PAGE_ITEMS = Math.floor(SUBSTRATE['wire.frame'].value / ADMISSION['message.send.body'].value);
+// Issue #464 (the participant row's budget): a participant row carries the objective's FIRST
+// LINE — the line a peer decides on — never the objective itself. The whole text stays on the
+// `swarm.participant_joined` ledger row the join wrote, and the row NAMES it (`roleRef`, with
+// `roleBytes` the length a reader did not get), so nothing is lost and no surface pays a second
+// copy. The bound is DERIVED from the frame a ROSTER must fit, and that arithmetic is quadratic
+// because a seat's brief renders every peer's role line (`## Swarm situation`), in an answer the
+// bridge counts TWICE (the MCP envelope mirrors it):
+//   2 × 36 seats × 35 peer lines × bound ≤ wire.frame ⇒ bound ≤ 416 B
+// 160 B is the registry's own one-line bound (`board.title`, `decision.option.label`: one line a
+// reader scans — the same shape a role line has) and it composes with the roster's own share to
+// spare (36 × 35 × 160 × 2 = 403 200 B, 38 % of the frame), so the value is READ from that row
+// rather than re-typed here.
+const ROLE_HEAD_BYTES = ADMISSION['board.title'].value;
 
 const VIEW = Object.freeze({
   'view.board.bytes': { lane: 'view.board.bytes', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
@@ -253,6 +266,12 @@ const VIEW = Object.freeze({
   'view.served_behind.commits': { lane: 'view.served_behind.commits', class: 'view',
     value: LIST_PAGE_ITEMS, unit: 'items', graceful: 'shed-flagged',
     enforcedAt: 'application-deployment.mjs servedBehind (the commit page the doctor and the recruit advisory name)' },
+  // Issue #464 (the derivation above): the participant row's role line. ONE bound, read by the
+  // fold that mints the row, so the view, `run.peers.read`, the recruit brief's situation line and
+  // the checkpoint cannot disagree about how much of an objective a row carries.
+  'view.role.head': { lane: 'view.role.head', class: 'view', value: ROLE_HEAD_BYTES, unit: 'bytes',
+    graceful: 'shed-flagged',
+    enforcedAt: 'swarm-state.mjs foldSwarmEvent (the participant row\'s role line and roleRef: every surface reads that row)' },
 });
 
 // Issue #441 (the reading half): the two bounds a recruited ContextPackage draws. A branch

@@ -11,6 +11,9 @@
 // Issue #430: every code `refuse`/`integrity` raise draws from the family's ONE closed refusal
 // set; minting a code outside it is a construction-time error.
 import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
+// Issue #464: the participant row's role line is bounded by the ONE `view.role.head` registry row
+// (limits.mjs derives it from the frame a roster must fit) — never a second constant here.
+import { FRAME_LIMITS } from './limits.mjs';
 
 export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.created',
@@ -1151,6 +1154,35 @@ function proposalPlanRows(swarm, proposal, meta, admission) {
   return { work, claims };
 }
 
+/** Issue #464: the participant row's role budget. A row carries the objective's FIRST LINE, never
+ * the objective itself: the whole text stays on the `swarm.participant_joined` row this fold
+ * consumed, so the row NAMES it (`roleRef`) and reports the length a reader did not get
+ * (`roleBytes`). ONE derivation for every surface — the view row, `run.peers.read`, the recruit
+ * brief's situation line (`_composeRecruitBrief` renders each peer's role) and the checkpoint all
+ * read THIS row — which is what bounds the quadratic cost the issue measured: every later seat's
+ * brief carries each peer's role line, so a 36-seat roster costs 36 × 35 role lines and the
+ * `view.role.head` row is derived from exactly that composition. */
+function participantRole(role, seq) {
+  if (typeof role !== 'string' || role.length === 0) return { role: null, roleBytes: 0, roleRef: null };
+  const newline = role.indexOf('\n');
+  const line = newline === -1 ? role : role.slice(0, newline);
+  return {
+    role: headBytes(line, FRAME_LIMITS['view.role.head'].value),
+    roleBytes: Buffer.byteLength(role, 'utf8'),
+    roleRef: Object.freeze({ kind: 'swarm.participant_joined', seq }),
+  };
+}
+
+/** The largest prefix of `text` that is at most `cap` UTF-8 bytes, cut on a code-point boundary:
+ * a role line is never a broken code point (the discipline the bridge's bounded text keeps). */
+function headBytes(text, cap) {
+  if (Buffer.byteLength(text, 'utf8') <= cap) return text;
+  const bytes = Buffer.from(text, 'utf8');
+  let end = cap;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  return bytes.subarray(0, end).toString('utf8');
+}
+
 // `admission` marks a prospective row being judged BEFORE it is written; rows read back from the
 // ledger fold without it. Rules that tighten what may be admitted (audit #292's writer-workspace
 // guard) apply only there: a resident must never refuse its own recorded history at startup.
@@ -1193,7 +1225,7 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       integrity(`parentId ${p.parentId} not found in swarm ${p.swarmId}`, 'participant_not_found');
     }
     const participant = Object.freeze({
-      participantId: p.participantId, role: p.role ?? null, parentId: p.parentId ?? null,
+      participantId: p.participantId, ...participantRole(p.role, meta.seq), parentId: p.parentId ?? null,
       runId: p.runId ?? null, permissions: p.permissions ? Object.freeze([...p.permissions]) : null,
       workspaceId: p.workspaceId ?? null,
       // The route and scope this seat was RECRUITED under, carried by the join itself: the view

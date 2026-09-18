@@ -234,6 +234,15 @@ read answers null instead of throwing, so an unreadable checkout is absence on a
 never a doctor failure. `swarm.recruit` reads the same row to answer its `baseBehind`
 advisory (docs/39).
 
+A participant row carries the objective's FIRST LINE, never the objective (#464): `role` is
+bounded by the ONE `view.role.head` registry row (160 B, derived in `impl/src/limits.mjs` from
+the frame a roster must fit — quadratic, because a seat's brief renders every peer's role line),
+`roleBytes` is the length the recruiter wrote, and `roleRef {kind, seq}` names the
+`swarm.participant_joined` ledger row that holds the whole text. ONE derivation — the fold's
+participant row — so `swarm.view`, `run.peers.read`, the recruit brief's `## Swarm situation`
+section and the checkpoint all carry the same bounded line: a 36-seat roster's participants
+projection (3 KB objectives each) fits one `wire.frame` instead of paging six rows at a time.
+
 ## 5. The open contract: replaying → reconstructing → answering (#351)
 
 A resident's open is three phases, each named on the `baton serve` flip lines and in `startupReport()`:
