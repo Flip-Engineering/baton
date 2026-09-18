@@ -71,12 +71,15 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   const kinds = swarmAttentionKinds();
   // #329 added the two host-admission rows (recruit_queued, recruit_queue_timeout); #269 item 2
   // adds the two check-admission rows (check_queued, check_queue_timeout), minted first in source.
-  assert.equal(kinds.length, 13, 'the runtime mints thirteen attention kinds');
+  // The #357 remainder adds three derived rows (worktree_foreign_changes,
+  // turn_ended_without_contribution, provider_auth_expired), minted after the admission fold.
+  assert.equal(kinds.length, 16, 'the runtime mints sixteen attention kinds');
   assert.deepEqual(kinds, [
     'participant_runtime_dead', 'member_left_session_live', 'delegation_orphaned',
     'assignment_holder_gone', 'group_member_gone', 'coupling_writer_gone',
     'closed_with_live_participants', 'check_queued', 'check_queue_timeout',
     'recruit_queued', 'recruit_queue_timeout',
+    'worktree_foreign_changes', 'turn_ended_without_contribution', 'provider_auth_expired',
     'operation_refused', 'operation_unconfirmed',
   ]);
   // Fail closed: a source whose mint sites changed shape must refuse, never render an empty list.

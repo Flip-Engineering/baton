@@ -3826,7 +3826,7 @@
         {
           "name": "_mintProviderFaultDeath",
           "ordinal": 0,
-          "size": 54,
+          "size": 72,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -12021,9 +12021,18 @@
           ]
         },
         {
+          "name": "_cleanTurnExit",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_seatCompleted",
           "ordinal": 0,
-          "size": 20,
+          "size": 13,
           "seam": "observation",
           "evidence": [
             "delegates:admission",
@@ -12069,7 +12078,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 520,
+          "size": 599,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
