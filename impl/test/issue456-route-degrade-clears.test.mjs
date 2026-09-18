@@ -23,9 +23,11 @@
 //   (c) the probe's own outcome decides: a successful turn on the route retires the episode
 //       (recruits are admitted again, the runtime records `route.recovered`), a provider fault
 //       re-arms it with the next probeAfter, measured from the new death;
-//   (d) the operator override: `swarm recruit … --route-probe` (`options.routeProbe: true`) admits
-//       one recruit onto a degraded route regardless, recorded as `route.probe_admitted {actor}`,
-//       and the `route_degraded` refusal names it as the remedy beside `clearsAt`.
+//   (d) the operator override: `swarm recruit … --options '{"routeProbe": true}'`
+//       (`options.routeProbe: true`, the ONE spelling #475 leaves: the verb declares no probe flag
+//       of its own) admits one recruit onto a degraded route regardless, recorded as
+//       `route.probe_admitted {actor}`, and the `route_degraded` refusal names it as the remedy
+//       beside `clearsAt`.
 //
 // Hermetic: temp dirs under os.tmpdir(), fixture adapters, real git checkouts, no provider process.
 import test from 'node:test';
@@ -338,7 +340,7 @@ test('456-c: a degrade whose provider named no instant carries probeAfter (its o
   assert.equal(error.detail?.clearsAt, degraded.degraded.clearsAt, 'the refusal names when the route clears');
   assert.equal(error.detail?.probeAfter, degraded.degraded.probeAfter, 'and the probe instant itself');
   assert.ok(error.message.includes(degraded.degraded.clearsAt), 'the message names it too');
-  assert.match(error.message, /--route-probe/u, 'and the remedy that admits one probe by hand');
+  assert.match(error.message, /routeProbe/u, 'and the remedy that admits one probe by hand');
   assert.deepEqual(fixture.runs, [], 'the refusal precedes every effect');
 });
 
@@ -442,7 +444,7 @@ test('456-e: a successful probe turn clears the degrade and is recorded; a provi
 
 // ── (d) the operator override ────────────────────────────────────────────────────────────────────
 
-test('456-f: --route-probe admits one recruit onto a live degrade, recorded as route.probe_admitted {actor}', async (t) => {
+test('456-f: options.routeProbe admits one recruit onto a live degrade, recorded as route.probe_admitted {actor}', async (t) => {
   const { deployment, log } = await openDeployment(t, 'probe-override', [DEGRADED_ROUTE, READY_ROUTE]);
   const now = Date.now();
   // A LIVE degrade: the provider's answer named no instant, and its own window has not passed yet.
@@ -483,12 +485,26 @@ test('456-f: --route-probe admits one recruit onto a live degrade, recorded as r
 
 // ── (e) the CLI spelling ─────────────────────────────────────────────────────────────────────────
 
-test('456-g: the CLI admits --route-probe and folds it into options.routeProbe', () => {
+test('456-g: the CLI carries the operator\'s probe as options.routeProbe, and declares no probe flag', () => {
+  // ONE spelling: the runtime reads `options.routeProbe`, and the recruit's own `--options` flag —
+  // the flag the usage line teaches — is what carries it.
   const parsed = parseBatonCli(['--idempotency-key', 'k456', 'swarm', 'recruit', 'wave', 'seat-1', 'work',
-    '--options', JSON.stringify({ exact: DEGRADED_ROUTE }), '--route-probe']);
+    '--options', JSON.stringify({ exact: DEGRADED_ROUTE, routeProbe: true })]);
   assert.equal(parsed.name, 'swarm.recruit');
-  assert.equal(parsed.args.options.routeProbe, true, '--route-probe is options.routeProbe: true');
+  assert.equal(parsed.args.options.routeProbe, true, 'the wire field is options.routeProbe');
   assert.deepEqual(parsed.args.options.exact, DEGRADED_ROUTE, 'beside the options the caller named');
+
+  // …and no `--route-probe` token exists to be offered as a remedy (#475): the closed argv refuses
+  // it exactly as it refuses any other invented flag, naming the flags the verb DOES admit.
+  let refused = null;
+  try {
+    parseBatonCli(['--idempotency-key', 'k458', 'swarm', 'recruit', 'wave', 'seat-1', 'work',
+      '--options', JSON.stringify({ exact: DEGRADED_ROUTE }), '--route-probe']);
+  } catch (error) { refused = error; }
+  assert.ok(refused, '--route-probe is not an admitted recruit flag');
+  assert.equal(refused.detail?.field, '--route-probe', 'the parse refuses it by name');
+  assert.equal(refused.detail?.rule, 'closed-set', 'the #431 closed-set shape');
+  assert.ok(refused.detail?.admitted?.includes('--options'), 'naming the flag that carries the probe');
 
   // Absent, it stays absent: a pre-#456 recruit parses byte-identically.
   const plain = parseBatonCli(['--idempotency-key', 'k457', 'swarm', 'recruit', 'wave', 'seat-1', 'work']);
