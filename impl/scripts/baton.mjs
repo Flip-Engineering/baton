@@ -176,8 +176,12 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
       // #397: a refused checkpoint never appears without its reason and the compared values.
       const checkpointText = report === null ? 'unknown'
         : `${report.checkpoint ?? 'unknown'}${report.reason ? ` (${report.reason}${report.detail ? ` ${JSON.stringify(report.detail)}` : ''})` : ''}`;
+      // Issue #351 lane 4: the flip names the reconstruction too — the phase between the
+      // replayed line and this one, and the wall clock its pass order consumed.
+      const reconstructedText = report?.reconstructionElapsedMs == null ? ''
+        : `; reconstructed ${Math.round(report.reconstructionElapsedMs)}ms`;
       const flip = report === null ? 'answering'
-        : `answering (open ${report.openElapsedMs}ms; ${report.rows ?? 0} rows on the ledger; replayed ${report.replayedEvents ?? 0}; checkpoint ${checkpointText})`;
+        : `answering (open ${report.openElapsedMs}ms; ${report.rows ?? 0} rows on the ledger; replayed ${report.replayedEvents ?? 0}; checkpoint ${checkpointText}${reconstructedText})`;
       process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${flip}`, { tty: TTY, color: TTY })}\n`);
       process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${JSON.stringify(hosted)}`, { tty: TTY, color: TTY })}\n`);
       await new Promise((resolveSignal) => {

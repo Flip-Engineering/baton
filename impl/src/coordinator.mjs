@@ -1442,6 +1442,9 @@ export class Coordinator {
     // settle loop APPENDED before the load finished (TypeError on _loadedLedgerHash, the
     // 2026-09-18 unservable master). On that path the driver runs the reconstruction once the
     // async replay resolves; every other caller reconstructs here, exactly as before.
+    this._startupReconstructionPhase = 'pending';
+    this._startupReconstructionStartedAt = null;
+    this._startupReconstructionElapsedMs = null;
     if (this._coordination?._deferredLoad === true) {
       this._startupReconstructionPending = true;
     } else {
@@ -1450,24 +1453,82 @@ export class Coordinator {
   }
 
   /** Issue #434: the deferred-open completion — createDriver calls this after
-   * loadCoordinationStoreAsync resolves; a second call is a no-op receipt. */
+   * loadCoordinationStoreAsync resolves; a second call is a no-op receipt (synchronous false,
+   * exactly as before) and an early call while the store is still replaying refuses typed.
+   * Issue #351 lane 4: the completion itself drains the ONE pass order with yields on this
+   * path, so it resolves asynchronously; callers await it before the driver's first read. */
   completeDeferredStartup() {
     if (this._startupReconstructionPending !== true) return false;
     if (this._coordination?._deferredLoad === true) {
       throw new CoordinationRefusal('coordination store is still replaying: completeDeferredStartup runs after loadCoordinationStoreAsync resolves', 'coordination_store_loading');
     }
-    this._startupReconstruction();
+    this._startupReconstructionPhase = 'running';
+    this._startupReconstructionStartedAt = Date.now();
+    return this._runStartupReconstructionAsync().then(() => {
+      this._startupReconstructionElapsedMs = Date.now() - this._startupReconstructionStartedAt;
+      this._startupReconstructionPhase = 'done';
+      return true;
+    });
+  }
+
+  /** Issue #351 lane 4: the projection-derived startup, ONE pass order with two cadences. The
+   * pass order lives in _startupReconstructionPasses — a generator that yields after each
+   * bounded unit of history-proportional work (worker-log replay, task seeding, terminalization,
+   * reconciliation), reading the same registry bound the coordination fold reads. The
+   * synchronous constructor path drains the generator without ever awaiting — one synchronous
+   * stretch, exactly as before this lane — and the async-open path (completeDeferredStartup)
+   * awaits a macrotask at every yield, so a startup heartbeat keeps beating on a large ledger. */
+  _startupReconstruction() {
+    this._startupReconstructionPhase = 'running';
+    this._startupReconstructionStartedAt = Date.now();
+    const passes = this._startupReconstructionPasses();
+    let step = passes.next();
+    while (!step.done) step = passes.next();
+    this._startupReconstructionElapsedMs = Date.now() - this._startupReconstructionStartedAt;
+    this._startupReconstructionPhase = 'done';
+  }
+
+  /** The async-open cadence: the SAME pass order, one macrotask of loop freedom at every yield. */
+  async _runStartupReconstructionAsync() {
+    const breathe = () => new Promise((resolve) => { setImmediate(resolve); });
+    const passes = this._startupReconstructionPasses();
+    let step = passes.next();
+    while (!step.done) {
+      await breathe();
+      step = passes.next();
+    }
     return true;
   }
 
-  _startupReconstruction() {
+  /** The reconstruction's own phase truth for the deployment's startup report (#351 lane 4):
+   * 'pending' (deferred open, replay not yet resolved), 'running', 'done'. elapsedMs is the
+   * wall clock the pass order consumed — so-far while running, total once done. */
+  startupReconstructionStatus() {
+    const startedAt = this._startupReconstructionStartedAt ?? null;
+    const state = this._startupReconstructionPhase ?? 'pending';
+    return Object.freeze({
+      state,
+      startedAt,
+      elapsedMs: state === 'done'
+        ? (this._startupReconstructionElapsedMs ?? null)
+        : (startedAt === null ? null : Date.now() - startedAt),
+    });
+  }
+
+  *_startupReconstructionPasses() {
+    const chunk = FRAME_LIMITS['view.wake_replay.items'].value;
     this._startupReconstructionPending = false;
     // One bounded startup clone feeds every reconstruction pass. Per-worker snapshot cloning made
     // replay proportional to worker-count times the complete coordination state.
     this._startupCoordinationSnapshot = this._coordination.snapshot();
-    this._seedCoordinationTasks();
+    yield;
+    yield* this._seedCoordinationTasksPasses();
     if (typeof this._coordination.unsettledPlanNodeTasks === 'function' && typeof this._coordination.settlePlanNodeBudget === 'function') {
-      for (const taskId of this._coordination.unsettledPlanNodeTasks()) this._settlePlanNodeBudget(taskId);
+      let sinceYield = 0;
+      for (const taskId of this._coordination.unsettledPlanNodeTasks()) {
+        this._settlePlanNodeBudget(taskId);
+        if ((sinceYield += 1) >= chunk) { sinceYield = 0; yield; }
+      }
     }
 
     for (const [sourceVendor, adapter] of Object.entries(this._adapters)) {
@@ -1514,7 +1575,8 @@ export class Coordinator {
       });
     }
 
-    this._replay();
+    yield;
+    yield* this._replay();
     // An exact durable process authority can also prove that its group is already absent. Close
     // that generation now, before generic worktree/runtime reconciliation, so this controller's
     // first usable state agrees with the cleanup it is about to expose. This is policy-observed
@@ -1523,7 +1585,9 @@ export class Coordinator {
       handle.processRef?.state === 'unconfirmed_after_restart'
       && processAuthorityState(handle.processRef, handle.processAuthority) === 'absent'
     ));
+    let sinceHandleYield = 0;
     for (const handle of absentRecoveredProcessHandles) {
+      if ((sinceHandleYield += 1) >= chunk) { sinceHandleYield = 0; yield; }
       const task = this._tasks.get(handle.taskId);
       const absent = this._log.append({
         worker: handle.id,
@@ -1706,7 +1770,8 @@ export class Coordinator {
       ])];
       reconcileStartupResources(expectedOwners, expectedWorkers);
     }
-    this._terminalizeUnattachedCoordinationTasks();
+    yield;
+    yield* this._terminalizeUnattachedCoordinationTasks();
     this._startupCoordinationSnapshot = null;
   }
 
@@ -5693,9 +5758,21 @@ export class Coordinator {
   }
 
   _seedCoordinationTasks() {
+    const passes = this._seedCoordinationTasksPasses();
+    let step = passes.next();
+    while (!step.done) step = passes.next();
+  }
+
+  /** Issue #351 lane 4: the seeding loop as a yielding pass — one unit per durable task, a
+   * yield at the registry bound so the async open breathes through a large projection. The
+   * wave-operation callers drain the sync form above. */
+  *_seedCoordinationTasksPasses() {
     if (!this._coordination) return;
+    const chunk = FRAME_LIMITS['view.wake_replay.items'].value;
+    let sinceYield = 0;
     for (const durable of this._startupCoordinationSnapshot?.tasks
       ?? this._coordination.snapshot().tasks) {
+      if ((sinceYield += 1) >= chunk) { sinceYield = 0; yield; }
       if (this._tasks.has(durable.id)) continue;
       const workerId = durable.reservedWorkerId;
       if (!workerId) continue;
@@ -15908,7 +15985,13 @@ export class Coordinator {
   // Construction replay (D10) — rebuild ALL state purely from the log.
   // =========================================================================
 
-  _replay() {
+  /** Issue #351 lane 4: the worker-log replay as a yielding pass — a yield at the registry
+   * bound (events folded, the same unit the coordination fold counts) so the async open
+   * breathes inside a worker's log and between workers. The sync constructor path drains it
+   * without ever awaiting; the fold below is unchanged token for token. */
+  *_replay() {
+    const chunk = FRAME_LIMITS['view.wake_replay.items'].value;
+    let sinceYield = 0;
     const workerIds = this._log.workers();
     for (const workerId of workerIds) this._replayedIds.workers.add(workerId);
     const durableTasksByWorker = new Map();
@@ -15923,6 +16006,7 @@ export class Coordinator {
     for (const rows of durableTasksByWorker.values()) {
       rows.sort((left, right) => left.createdEvent - right.createdEvent);
     }
+    yield;
     // F1: pending interaction records (question/approval/decision) are reconstructed purely
     // from the durable log, keyed by requestId (globally unique by construction). A blocking
     // question/approval/decision asked before a restart must remain answerable after it —
@@ -15996,6 +16080,9 @@ export class Coordinator {
       let preservedTurnEpoch = null;
 
       for (const e of events) {
+        // Issue #351 lane 4: the fold bound — a yield at the registry row, counted before any
+        // `continue` so every folded event advances it.
+        if ((sinceYield += 1) >= chunk) { sinceYield = 0; yield; }
         runId = e.runId ?? runId;
         if (typeof e.turnEpoch === 'number' && e.turnEpoch > maxTurnEpoch) maxTurnEpoch = e.turnEpoch;
         if (typeof e.payload?.requestId === 'string') this._replayedIds.requests.add(e.payload.requestId);
@@ -16792,6 +16879,8 @@ export class Coordinator {
       // reconstructed state.
       this._replayedIds.workers.add(workerId);
       if (typeof taskId === 'string' && taskId.length > 0) this._replayedIds.tasks.add(taskId);
+      // Issue #351 lane 4: the worker's finalize work counts toward the same bound.
+      if ((sinceYield += 1) >= chunk) { sinceYield = 0; yield; }
     }
 
     // F1: seed the reconstructed pending interactions now that every worker/task has been
@@ -16836,6 +16925,8 @@ export class Coordinator {
       ? this._coordination.eventsView()
       : [];
     for (const event of messageEvents) {
+      // Issue #351 lane 4: the whole-ledger message-lane sweep counts toward the same bound.
+      if ((sinceYield += 1) >= chunk) { sinceYield = 0; yield; }
       if (event.kind !== 'message.sent' && event.kind !== 'message.delivered') continue;
       const row = event.payload ?? {};
       const rowKey = event.idempotencyKey ?? '';
@@ -16930,11 +17021,18 @@ export class Coordinator {
     }
   }
 
-  _terminalizeUnattachedCoordinationTasks() {
+  /** Issue #351 lane 4: the unattached-task terminalization sweep as a yielding pass — one
+   * unit per startup task (each does coordination reads and may append/transition), a yield at
+   * the registry bound so the async open breathes through a large projection. The sync
+   * constructor path drains it without ever awaiting. */
+  *_terminalizeUnattachedCoordinationTasks() {
     if (!this._coordination) return;
+    const chunk = FRAME_LIMITS['view.wake_replay.items'].value;
     const startupTasks = this._startupCoordinationSnapshot?.tasks
       ?? this._coordination.snapshot().tasks;
+    let sinceYield = 0;
     for (const original of startupTasks) {
+      if ((sinceYield += 1) >= chunk) { sinceYield = 0; yield; }
       const durable = this._coordination.task(original.id) ?? original;
       // `paused` included for exhaustiveness/audit correctness. Verified a practical no-op: this
       // sweep only fires for a task with NO `lifecycle.spawned` receipt, and a paused task's

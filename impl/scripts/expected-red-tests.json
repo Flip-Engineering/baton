@@ -446,10 +446,6 @@
       "reason": "#10"
     },
     {
-      "key": "test/issue351-open-liveness.test.mjs :: OL-a: a 150 000-row, 600-worker-ledger deployment opens through createDriver with the loop beating",
-      "reason": "#351"
-    },
-    {
       "key": "test/issue422-joint-couplings-red.test.mjs :: #422 RED (stage: design-not-landed): a group member with communicate declares a rotating writer lease over its own group",
       "reason": "#422"
     },

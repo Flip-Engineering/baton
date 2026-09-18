@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 482,
+          "size": 485,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -29,7 +29,7 @@
         {
           "name": "completeDeferredStartup",
           "ordinal": 0,
-          "size": 8,
+          "size": 13,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name"
@@ -38,7 +38,37 @@
         {
           "name": "_startupReconstruction",
           "ordinal": 0,
-          "size": 249,
+          "size": 9,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_runStartupReconstructionAsync",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
+          "name": "startupReconstructionStatus",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "effect:action_verb",
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "_startupReconstructionPasses",
+          "ordinal": 0,
+          "size": 259,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -1154,7 +1184,16 @@
         {
           "name": "_seedCoordinationTasks",
           "ordinal": 0,
-          "size": 57,
+          "size": 5,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_seedCoordinationTasksPasses",
+          "ordinal": 0,
+          "size": 60,
           "seam": "observation",
           "evidence": [
             "observation:coordination_authority",
@@ -3909,7 +3948,7 @@
         {
           "name": "_replay",
           "ordinal": 0,
-          "size": 1002,
+          "size": 1012,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -3933,7 +3972,7 @@
         {
           "name": "_terminalizeUnattachedCoordinationTasks",
           "ordinal": 0,
-          "size": 32,
+          "size": 35,
           "seam": "observation",
           "evidence": [
             "observation:coordination_authority",

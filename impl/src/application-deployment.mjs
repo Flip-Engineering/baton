@@ -3053,17 +3053,28 @@ class BatonDeployment {
   startupReport() {
     if (this.#startupElapsedMs === null) return null;
     const status = this.#driver?.coordination?.startupStatus?.() ?? null;
+    // Issue #351 lane 4: the reconstruction's own phase rides the SAME report shape —
+    // 'reconstructing' is the phase between the replay's flip and the answering flip (the
+    // reconstruction runs only after the replay resolved, so 'pending' during the replay never
+    // overrides the store's own state), and reconstructionElapsedMs is the wall clock the pass
+    // order consumed — so-far while running, the total once done.
+    const reconstruction = this.#driver?.coordinator?.startupReconstructionStatus?.() ?? null;
     return Object.freeze({
       schemaVersion: 1,
       openElapsedMs: this.#startupElapsedMs,
       ...(status === null ? {} : {
-        state: status.state, source: status.source, rows: status.totalEvents,
+        state: reconstruction?.state === 'running' ? 'reconstructing' : status.state,
+        source: status.source, rows: status.totalEvents,
         replayedEvents: status.replayedEvents, checkpointEvents: status.checkpointEvents,
         checkpoint: status.checkpoint,
         // #397: the invariant a refused checkpoint failed and the compared values. Read DIRECTLY —
         // startupStatus attaches them non-enumerable so its pinned enumerable shape stays exact.
         reason: status.checkpointReason ?? null,
         detail: status.checkpointDetail ?? null,
+      }),
+      ...(reconstruction === null ? {} : {
+        reconstructionState: reconstruction.state,
+        reconstructionElapsedMs: reconstruction.elapsedMs,
       }),
     });
   }
