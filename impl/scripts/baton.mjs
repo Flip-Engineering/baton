@@ -130,8 +130,11 @@ async function serveDeployment(rawDeployment) {
       // free enough to answer the self-check; the row says how long the startup took (replay
       // included) and what the ledger held, so "published" is never a guess about readiness.
       const report = typeof deployment.startupReport === 'function' ? deployment.startupReport() : null;
+      // #397: a refused checkpoint never appears without its reason and the compared values.
+      const checkpointText = report === null ? 'unknown'
+        : `${report.checkpoint ?? 'unknown'}${report.reason ? ` (${report.reason}${report.detail ? ` ${JSON.stringify(report.detail)}` : ''})` : ''}`;
       const flip = report === null ? 'answering'
-        : `answering (open ${report.openElapsedMs}ms; ${report.rows ?? 0} rows on the ledger; replayed ${report.replayedEvents ?? 0}; checkpoint ${report.checkpoint ?? 'unknown'})`;
+        : `answering (open ${report.openElapsedMs}ms; ${report.rows ?? 0} rows on the ledger; replayed ${report.replayedEvents ?? 0}; checkpoint ${checkpointText})`;
       process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${flip}`, { tty: TTY, color: TTY })}\n`);
       process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${JSON.stringify(hosted)}`, { tty: TTY, color: TTY })}\n`);
       await new Promise((resolveSignal) => {

@@ -3055,6 +3055,10 @@ class BatonDeployment {
         state: status.state, source: status.source, rows: status.totalEvents,
         replayedEvents: status.replayedEvents, checkpointEvents: status.checkpointEvents,
         checkpoint: status.checkpoint,
+        // #397: the invariant a refused checkpoint failed and the compared values. Read DIRECTLY —
+        // startupStatus attaches them non-enumerable so its pinned enumerable shape stays exact.
+        reason: status.checkpointReason ?? null,
+        detail: status.checkpointDetail ?? null,
       }),
     });
   }
