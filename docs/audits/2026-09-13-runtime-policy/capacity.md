@@ -122,8 +122,9 @@ gate     link(lock.reaper)  serializes reapers; a gate whose owner died is inert
                             operator removes the file the refusal names
 ```
 
-* **Waiting is honest.** The public API is synchronous, so contention blocks this thread in 5 ms
-  `Atomics.wait` slices (no CPU spin, no event-loop damage). The deadline is real elapsed time on
+* **Waiting is honest.** Contention is absorbed by a promise the caller awaits: `_acquire` polls in
+  5 ms slices on the caller's event loop, which stays free for the whole wait (issue #285 G-42; §3
+  names the promise-returning API). The deadline is real elapsed time on
   the monotonic clock — never the injectable domain `now`, which fixtures freeze. Every
   non-progress turn passes through `_waitSlice`; there is no retry counter and no unbounded path.
 * **The refusal is honest.** Deadline refusals carry `lockContention: true`, a message stating
@@ -144,6 +145,12 @@ gate     link(lock.reaper)  serializes reapers; a gate whose owner died is inert
   migration, no new dependencies; Node ≥ 20 only (`performance` is used via `node:perf_hooks`).
 * Constructor: `lockWaitMs` (optional, default 5 000) keeps its meaning; the undocumented
   600 000 ceiling is gone (§1.3). All other options unchanged.
+* Issue #285 G-42: the mutating API is promise-returning (`reserve`, `reserveMany`, `release`,
+  `releaseMany`, `materialize`, `reconcile`, `settleForCleanup`, `adoptWorker`, `releaseAbsent`);
+  contention is awaited in 5 ms slices, and `snapshot`/`floor` read the committed ledger with no
+  lock and no wait. A synchronous caller — the construction-time reconciliation — calls
+  `reconcileNow` / `settleForCleanupNow`, which attempt once and refuse typed on contention
+  (`lockContention: true`, nothing applied).
 * Errors: codes unchanged (`worktree_capacity_unavailable`, `worktree_capacity_exceeded`);
   `lockContention` / `holderPid` additive as before, `gatePid` additive, message text extended.
 * `reconcile`: returns the same shape with additive `retainedVerifiers`; settlement semantics
