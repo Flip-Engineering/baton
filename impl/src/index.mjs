@@ -1231,6 +1231,12 @@ export function createDriver(opts) {
   if (opts.verificationForCapture !== undefined && typeof opts.verificationForCapture !== 'function') {
     throw new TypeError('verificationForCapture must be a function when supplied');
   }
+  // KG-3 rule 9 (docs/34 §3): the brief-time knowledge seam. The provider is the deployment's
+  // authority over what a worker is shown beside its admitted brief; the coordinator consults it
+  // at the provider edge and the block never enters task.brief. Absent → the seam is inert.
+  if (opts.knowledgeBriefingProvider !== undefined && typeof opts.knowledgeBriefingProvider !== 'function') {
+    throw new TypeError('knowledgeBriefingProvider must be a function when supplied');
+  }
   const providerGovernance = opts.providerGovernance === undefined
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
@@ -1639,6 +1645,9 @@ export function createDriver(opts) {
     referee: withVerificationLane(refereeFn.bind(null, verificationRuntime), { concurrency: opts.verificationConcurrency }),
     verificationRuntimeDigest: verificationRuntime.digest,
     ...(opts.verificationForCapture ? { verificationForCapture: opts.verificationForCapture } : {}),
+    // KG-3 rule 9: the deployment's brief-time knowledge authority, consulted at the provider
+    // edge by runtime-briefing.mjs. Absent → the coordinator's seam stays inert.
+    ...(opts.knowledgeBriefingProvider ? { knowledgeBriefingProvider: opts.knowledgeBriefingProvider } : {}),
     route,
     accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),
     acceptOpts: {

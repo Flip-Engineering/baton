@@ -1186,12 +1186,10 @@
         {
           "name": "_providerBrief",
           "ordinal": 0,
-          "size": 100,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:brief_port"
           ]
         },
         {
@@ -6328,11 +6326,10 @@
         {
           "name": "resolveBriefing",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "admission:normalize_name",
-            "observation:durable_read",
             "surface:transport_dispatch"
           ]
         },
@@ -6350,11 +6347,10 @@
         {
           "name": "mintCampaignBriefingInternal",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "observation:record_name",
-            "observation:durable_read",
             "surface:transport_dispatch"
           ]
         },
@@ -15498,6 +15494,51 @@
             "recovery:reconcile_call",
             "admission:authority_check",
             "observation:store_append"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/runtime-briefing.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "providerBrief",
+          "ordinal": 0,
+          "size": 100,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:coordination_authority",
+            "observation:durable_read"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/application-briefing.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "resolveBriefing",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:durable_read",
+            "observation:campaign_briefing_authority"
+          ]
+        },
+        {
+          "name": "mintCampaignBriefingInternal",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read",
+            "observation:campaign_briefing_authority"
           ]
         }
       ]
