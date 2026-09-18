@@ -231,6 +231,19 @@ export function validateContributionContract(body) {
   return body;
 }
 
+/** The seat's recruit mode gates the contract's commit field (#373): a seat recruited
+ * `read_only` runs the read-only result intent — its run accepts no repository mutation, so
+ * there is no lane commit to report and `commit: null` is the by-design publish. A
+ * contract-claiming body carrying a commit object from such a seat is refused by name, with
+ * the same field/expectation detail every contract refusal carries. Any other mode admits the
+ * body unchanged; call AFTER validateContributionContract, on a body that holds. */
+export function validateContributionContractMode(body, mode = 'change') {
+  if (mode !== 'read_only' || body.commit === null) return true;
+  throw Object.assign(
+    new Error('body.commit: contribution_mode_mismatch; expected null — a read_only seat publishes no commit'),
+    { code: 'contribution_mode_mismatch', detail: { mode, field: 'commit', expectation: null } });
+}
+
 /** One contract summary row per contribution for swarm.view: the subject, the commit, the
  * item statuses, the verification summary and the hand-off counts. Defensive over stored
  * rows — a view never refuses what the ledger already holds; strictness lives at publish.

@@ -87,12 +87,21 @@ export const SWARM_VIEW_PROJECTIONS = Object.freeze({
 });
 export const SWARM_VIEW_PROJECTION_NAMES = Object.freeze(Object.keys(SWARM_VIEW_PROJECTIONS));
 
+/** The recruit mode (#373): the seat's contribution contract IS the run contract. `read_only`
+ * starts the seat's run with the read-only result intent (#334), so its brief renders no
+ * repository mutation authority and the read-only acceptance instead, its contract example is
+ * the commit-null variant, and a contribution body carrying a commit is refused
+ * `contribution_mode_mismatch`. Declared ONCE here — the argument validator, the closed-set
+ * refusals, the MCP schema and the CLI flag all read this one table. */
+export const SWARM_RECRUIT_MODES = Object.freeze(['change', 'read_only']);
+
 /** The admitted values one closed-set field accepts, read from the SAME table the
  * validator judges against — the one composition site every refusal, help surface and
  * brief renders from, so a new value cannot land in one without the others (#372). */
 export function swarmClosedSetAdmitted(field) {
   if (field === 'event') return Object.freeze([...SWARM_EVENT_KINDS]);
   if (field === 'projection') return Object.freeze([...SWARM_VIEW_PROJECTION_NAMES]);
+  if (field === 'mode') return Object.freeze([...SWARM_RECRUIT_MODES]);
   return null;
 }
 
@@ -236,13 +245,16 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   }),
   // `options` is the Run start selection ({exact:{harness,model,effort}, scope, profile}) the
   // runtime resolves into a native Run identity it admits and starts under the caller authority;
-  // `permissions` is the requested participant grant set, validated by root. `shareWorkspaceWith`
+  // `permissions` is the requested participant grant set, validated by root. `mode` names the
+  // seat's contribution contract (#373): `read_only` starts the run with the read-only result
+  // intent (#334) — the ONE spelling the contract table declares; the nested options spelling
+  // stays admitted for existing callers, and a named mode overrides it. `shareWorkspaceWith`
   // names an existing participant whose live checkout this participant deliberately works in:
   // the swarm resolves the target's current holder under its own authority and admits a fresh
   // native session in that checkout. The caller names a participant, never an internal
   // workspace id, and the two axes stay independent — adoption is not a native-session resume.
   'swarm.recruit': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions',
+    args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions', 'mode',
       'shareWorkspaceWith', 'resumeFrom', 'workId', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
@@ -430,6 +442,12 @@ const SWARM_FIELD_RULES = Object.freeze({
   payload: Object.freeze({ check: isBody, expectation: 'a JSON object or a non-empty text body' }),
   options: Object.freeze({ check: isJsonObject, expectation: 'a JSON object' }),
   permissions: Object.freeze({ check: (value) => Array.isArray(value) && value.every(isText), expectation: 'an array of permission names' }),
+  // `mode` (#373) names the seat's contribution contract; its closed set is SWARM_RECRUIT_MODES,
+  // declared once and named by every refusal and help surface that renders the field.
+  mode: Object.freeze({
+    check: (value) => SWARM_RECRUIT_MODES.includes(value),
+    expectation: `one of ${SWARM_RECRUIT_MODES.join(', ')}`,
+  }),
   event: Object.freeze({
     check: (value) => SWARM_EVENT_KINDS.includes(value),
     expectation: `one of ${SWARM_EVENT_KINDS.join(', ')}`,
@@ -478,7 +496,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.recruit': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']),
-    optional: Object.freeze(['options', 'permissions', 'shareWorkspaceWith', 'resumeFrom', 'workId', 'view']),
+    optional: Object.freeze(['options', 'permissions', 'mode', 'shareWorkspaceWith', 'resumeFrom', 'workId', 'view']),
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
@@ -692,11 +710,13 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.recruit',
-    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. shareWorkspaceWith names an existing participant whose live checkout the new participant works in. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318). workId names an existing work item the seat holds on join — the runtime writes the assignment row itself and the brief names it. Answers with a mutation receipt (event, changed rows, next) plus scopeOverlap — an advisory row per ACTIVE participant whose declared scope shares paths with the requested scope, across every swarm in the repository; view: true adds the whole refreshed view.',
+    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. mode names the seat’s contribution contract (#373): read_only starts the run with the read-only result intent (#334), so its brief carries no repository mutation authority and its contribution publishes commit null — a body carrying a commit refuses contribution_mode_mismatch. shareWorkspaceWith names an existing participant whose live checkout the new participant works in. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318). workId names an existing work item the seat holds on join — the runtime writes the assignment row itself and the brief names it. Answers with a mutation receipt (event, changed rows, next) plus scopeOverlap — an advisory row per ACTIVE participant whose declared scope shares paths with the requested scope, across every swarm in the repository; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({
       swarmId: ID_SCHEMA, participantId: ID_SCHEMA, objective: TEXT_SCHEMA, view: VIEW_SCHEMA,
       options: JSON_OBJECT_SCHEMA, permissions: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string', minLength: 1 }) }),
+      mode: Object.freeze({ type: 'string', enum: SWARM_RECRUIT_MODES,
+        description: 'the seat’s contribution contract: change (default — the run may edit the repository) or read_only (the run starts read-only; commit null is the by-design publish)' }),
       shareWorkspaceWith: ID_SCHEMA,
       resumeFrom: ID_SCHEMA,
       workId: ID_SCHEMA,

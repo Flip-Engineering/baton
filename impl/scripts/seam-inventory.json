@@ -11966,6 +11966,15 @@
           ]
         },
         {
+          "name": "_recruitMode",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_admitContributionContract",
           "ordinal": 0,
           "size": 35,
@@ -12152,7 +12161,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 599,
+          "size": 608,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -12340,7 +12349,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 104,
+          "size": 113,
           "seam": "effect",
           "evidence": [
             "delegates:admission",
@@ -12351,7 +12360,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 612,
+          "size": 627,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

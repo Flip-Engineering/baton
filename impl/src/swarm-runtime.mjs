@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
-  isContributionContractBody, projectContributionContract, validateContributionContract } from './contribution-contract.mjs';
+  isContributionContractBody, projectContributionContract, validateContributionContract,
+  validateContributionContractMode } from './contribution-contract.mjs';
 import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
 import { pathInScopes } from './path-scope.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
@@ -592,6 +593,21 @@ export class SwarmRuntime {
       { kind: 'note', participantId: payload.participantId });
   }
 
+  /** #373: the recruit mode one participant was started under, read from its durable join —
+   * the join carries `mode` for a read_only seat, and a change recruit writes no field, so
+   * every row recorded before #373 reads identically. Absent is 'change'; the LATEST join for
+   * the seat decides (a refused-admission re-recruit re-joins under a new key). */
+  _recruitMode(swarm, participantId) {
+    let mode = 'change';
+    if (typeof participantId !== 'string' || participantId.length === 0) return mode;
+    for (const event of this.store.eventsView()) {
+      if (event.kind !== 'swarm.participant_joined' || event.payload?.swarmId !== swarm.swarmId
+        || event.payload.participantId !== participantId) continue;
+      if (event.payload.mode !== undefined) mode = event.payload.mode;
+    }
+    return mode;
+  }
+
   /** Admission for a contract-claiming body (#310), after the closed shape validated: a
    * named commit must resolve on the seat's lane branch (`git cat-file -e` in the seat's
    * worktree — the checkout its worker row names), refusing contribution_commit_unresolved
@@ -1075,6 +1091,14 @@ export class SwarmRuntime {
     for (const contribution of Object.values(swarm.contributions ?? {})) {
       if (contribution?.participantId) contributors.add(contribution.participantId);
     }
+    // #373: the recruit mode each seat was started under, read from its durable join — the
+    // view projects it beside the route and scope the seat was recruited with, and the
+    // admission path reads the same durable fact through _recruitMode.
+    const recruitModes = new Map();
+    for (const event of ledger) {
+      if (event.kind !== 'swarm.participant_joined' || event.payload?.swarmId !== swarm.swarmId) continue;
+      if (event.payload.mode !== undefined) recruitModes.set(event.payload.participantId, event.payload.mode);
+    }
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
@@ -1099,7 +1123,8 @@ export class SwarmRuntime {
       // the physical owner named by the live worker's session context and the coordinator's
       // live holder count for it. An unbound or departed worker carries workspace: null.
       const physicalOwnerId = alive ? worker.sessionContext?.ownerTaskId ?? null : null;
-      return { ...clone(participant), delegation: delegations.get(participant.participantId) ?? null,
+      return { ...clone(participant), mode: recruitModes.get(participant.participantId) ?? 'change',
+        delegation: delegations.get(participant.participantId) ?? null,
         // Absence is labelled as absence (2026-09-14 audit, swarm-b/lead.md finding 9): an unbound
         // participant, or a coordinator that cannot answer for native observations at all, has
         // observed nothing. The old shape published `observed_only` beside empty arrays — a claim
@@ -2172,12 +2197,21 @@ export class SwarmRuntime {
       }
     }
     if (situation.length > 0) blocks.push(['## Swarm situation', ...situation].join('\n'));
-    // Issue #310 + #371: the expected contribution shape rides every brief as one worked
-    // example the validator admits, with the closed sets derived from the schema the
-    // validator reads. A seat granted no contribute authority publishes commit null by
-    // design, so its example is the read-only variant.
+    // Issue #310 + #371 + #373: the expected contribution shape rides every brief as one
+    // worked example the validator admits, with the closed sets derived from the schema the
+    // validator reads. A seat recruited read_only — or granted no contribute authority —
+    // publishes commit null by design, so its example is the read-only variant; the read-only
+    // brief also says so, naming the refusal a commit-carrying publish meets.
+    if (args.mode === 'read_only') {
+      blocks.push([
+        '## Read-only mode',
+        'This seat was recruited read_only: its run starts with the read-only result intent, so its brief renders no repository mutation authority — the read-only acceptance applies instead.',
+        'Publish the contribution contract below with commit: null; a body carrying a commit object is refused contribution_mode_mismatch {mode: read_only, field: commit, expectation: null}.',
+      ].join('\n'));
+    }
     blocks.push(contributionContractBriefSection(
-      { readOnly: !((args.permissions ?? DEFAULT_PERMISSIONS).includes('contribute')) }));
+      { readOnly: args.mode === 'read_only'
+        || !((args.permissions ?? DEFAULT_PERMISSIONS).includes('contribute')) }));
     if (predecessor) {
       const inheritance = [
         `## Inheritance from ${predecessor.participantId}`,
@@ -2326,8 +2360,11 @@ export class SwarmRuntime {
       }
       // Issue #310: a contract-claiming body is validated closed and its commit claim is
       // verified against the seat's lane branch; commit:null on a dirty worktree is stamped.
+      // Issue #373: the seat's recruit mode gates the commit claim — a read_only seat has no
+      // lane commit to report, so a commit-carrying body refuses by name before admission.
       if (args.event === 'swarm.contribution_recorded' && isContributionContractBody(payload.body)) {
         validateContributionContract(payload.body);
+        validateContributionContractMode(payload.body, this._recruitMode(swarm, payload.participantId));
         const admitted = this._admitContributionContract(swarm, payload);
         payload.body = admitted.body;
         contributionStatus = admitted.status;
@@ -2373,13 +2410,21 @@ export class SwarmRuntime {
       // usage derivation; this runtime derives a CHOICE, never a second route table.
       const routeSelection = this._routeSelection(args);
       const admittedOptions = routeSelection?.options ?? args.options ?? {};
+      // #373: the seat's contribution mode IS the run contract — a read_only recruit starts
+      // its run with the read-only result intent (#334), which renders the brief's dispatch
+      // block with no repository mutation authority and the read-only acceptance instead.
+      // `mode` is the one spelling the contract table declares; when named it overrides any
+      // nested options spelling an older caller may have sent.
+      const runOptions = args.mode === 'read_only'
+        ? { ...admittedOptions, resultIntent: 'read_only_evidence' }
+        : admittedOptions;
       const runId = `run-${hash([args.swarmId, args.participantId]).slice(0, 32)}`;
       // The route and scope this seat is recruited under (issue #283 root comment 1): the
       // deployment's own resolution when it makes one (prepareRun answers with the admitted
       // intent), otherwise the selection the caller named. They ride the membership write, so the
       // view projects what the seat was started as from the durable join — never from a live
       // worker that may since have been rebound, stopped, or restarted.
-      const intent = await this.prepareRun({ runId, objective: args.objective, options: admittedOptions }, principal);
+      const intent = await this.prepareRun({ runId, objective: args.objective, options: runOptions }, principal);
       const recruitedRoute = swarmRouteShape(intent?.route) ?? swarmRouteShape(admittedOptions.exact);
       const recruitedScope = Array.isArray(intent?.scope) ? [...intent.scope]
         : Array.isArray(args.options?.scope) ? [...args.options.scope] : null;
@@ -2502,6 +2547,10 @@ export class SwarmRuntime {
           runId, permissions, ...(caller ? { parentId: caller.participantId } : {}),
           ...(recruitedRoute ? { route: recruitedRoute } : {}),
           ...(recruitedScope ? { scope: recruitedScope } : {}),
+          // #373: the join carries the seat's contribution mode. A change recruit writes no
+          // field — every join recorded before #373 reads identically, and absence reads
+          // 'change' wherever the mode is projected.
+          ...(args.mode === 'read_only' ? { mode: args.mode } : {}),
           ...(workspace ? { workspaceId: workspace.workspaceId } : {}),
           ...(predecessor ? { resumeFrom: args.resumeFrom } : {}),
           brief,
@@ -2514,7 +2563,7 @@ export class SwarmRuntime {
         // recruit of the same id RESUMES instead of hitting an eternal exists-refusal. The
         // caller still sees the original refusal, unchanged.
         try {
-          await this.startRun({ runId, objective: brief, options: admittedOptions,
+          await this.startRun({ runId, objective: brief, options: runOptions,
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
             ...(workspace ? { workspace } : {}) }, principal, context);
         } catch (error) {
