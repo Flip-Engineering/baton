@@ -2178,7 +2178,7 @@ export class Coordinator {
       if (Date.now() < deadline) return;
       throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
         code: 'coordinator_drain_incomplete',
-        detail: { timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds ?? [], null, ctx.actor) },
+        detail: { timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds ?? [], null, ctx.actor) },
       });
     };
 
@@ -3500,7 +3500,7 @@ export class Coordinator {
             timeoutMs: this._drainPolicy.timeoutMs,
             processed,
             ...(Date.now() >= deadline
-              ? { waitingOn: this._stopWaitingOn([...this._workers.keys()], null, 'policy') }
+              ? { waitingOn: this._drainWaitingOn([...this._workers.keys()], null, 'policy') }
               : { capacity: this._drainPolicy.maxInteractions }),
           },
         });
@@ -3566,7 +3566,7 @@ export class Coordinator {
       dispositions.set(workerId, disposition);
     };
     for (const workerId of targetWorkerIds) {
-      if (Date.now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'deadline', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds, null, physicalActor) } });
+      if (Date.now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'deadline', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds, null, physicalActor) } });
       if (dispositions.has(workerId)) continue;
       const handle = this._workers.get(workerId); const task = handle ? this._tasks.get(handle.taskId) : null;
       if (!handle) { setDisposition(workerId, 'alreadyTerminal'); continue; }
@@ -3607,6 +3607,23 @@ export class Coordinator {
     };
     while (Date.now() <= deadline) {
       const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
+      // #360: release what a settled holder cannot. A worker whose process is exactly closed
+      // and whose seat has left/stopped (a durably admitted run stop) is reaped by the drain
+      // itself — through the #428/#435 custody boundary and with the capacity release through
+      // the capacity authority — instead of being waited on until the deadline; a hold with no
+      // reaper is released with reason `orphaned`, never waited on. A task still verifying
+      // keeps its reaper (the trust gate honors cleanupAfterVerification), and a bare operator
+      // kill without a run stop keeps the named wait (G-21).
+      this._drainWaitObserve(targetWorkerIds);
+      for (const holder of [...this._workers.values()].filter((candidate) => this._settledDrainHolder(candidate))) {
+        const holderTask = this._tasks.get(holder.taskId);
+        if (holderTask?.status === 'verifying') continue;
+        await this._releaseSettledHolder(holder, holderTask);
+        if (!dispositions.has(holder.id) && !this._ownsLocalResources(holder)
+          && (!holder.processRef || holder.processRef.state === 'closed')) {
+          setDisposition(holder.id, 'alreadyTerminal');
+        }
+      }
       // The drain's own success test counts every worker in the fleet that still holds local
       // resources, so the drain attempts every worker that test counts (#277 G-20): a
       // cleanupAfterVerification hold that lands on a non-target mid-drain is attempted, not
@@ -3649,7 +3666,7 @@ export class Coordinator {
         return deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
       }
       await this._beforeDrainDeadline(Promise.all(globalRemaining.map(attempt)), deadline,
-        () => ({ reason: 'deadline', stage: 'remaining', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(globalRemaining.map((handle) => handle.id), null, physicalActor) }));
+        () => ({ reason: 'deadline', stage: 'remaining', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(globalRemaining.map((handle) => handle.id), null, physicalActor) }));
       if (Date.now() >= deadline) break;
       await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
     }
@@ -3657,7 +3674,7 @@ export class Coordinator {
     // non-convergence is never wrapped as its own cause by _drainFailure.
     throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
       code: 'coordinator_drain_incomplete',
-      detail: { reason: 'deadline', stage: 'convergence', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds, null, physicalActor) },
+      detail: { reason: 'deadline', stage: 'convergence', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds, null, physicalActor) },
     });
   }
 
@@ -3678,6 +3695,237 @@ export class Coordinator {
         (error) => { clearTimeout(timer); rejectOperation(error); },
       );
     });
+  }
+
+  /** #360: the seat-left signal the drain may act on. A worker whose process is exactly closed
+   * (or settled to absent) and whose run carries a durably admitted stop — swarm.stop and
+   * run.stop both admit one — is a settled holder: nothing but the drain itself can release
+   * what it still holds. A bare operator kill with no run stop is never enough (G-21: the
+   * named wait stands), and an unconfirmed process is never permission to destroy (#351). */
+  _settledDrainHolder(handle) {
+    if (!handle || !['dead', 'exited'].includes(handle.status)) return false;
+    if (!(!handle.processRef || handle.processRef.state === 'closed')) return false;
+    if (this._stopWaiters.has(handle.id) || this._fatalStopWaiters.has(handle.id)) return false;
+    if (!handle.runId || typeof this._coordination?.runStop !== 'function') return false;
+    try { return this._coordination.runStop(handle.runId) != null; } catch { return false; }
+  }
+
+  /** #360: the drain's own settled-holder release — the reap a stopped seat's dead worker can
+   * no longer perform. The worktree goes through the #428/#435 custody boundary
+   * (`_removeOwnedTaskWorktree`: preserve-then-reap, capture-or-retain, detach on live
+   * co-holders — never a bare delete), the runtime scope through its own exact removal, and a
+   * hold with NO reaper is released immediately with reason `orphaned` instead of being waited
+   * on. Every release is recorded as {workerId, resource, how} — `custody_reaped`, `retained`,
+   * `detached`, `orphaned`, `capacity` — on the durable ledger and on the drain's wait rows. A
+   * custody refusal that names no settled outcome leaves the holds for the next pass, where
+   * the deadline rows name them. */
+  async _releaseSettledHolder(handle, task) {
+    const before = this._localResourceOwnership(handle);
+    if (Object.keys(before).length === 0) return;
+    let worktreeHow = null;
+    if (before.worktree) {
+      const ownerTaskId = handle.sessionContext?.ownerTaskId ?? task?.id ?? null;
+      try {
+        await this._removeOwnedTaskWorktree(handle, task);
+        worktreeHow = 'custody_reaped';
+      } catch (error) {
+        if (error?.code === 'workspace_other_holder_live_retained' && ownerTaskId) {
+          await this._detachSharedWorkspace(handle, Array.isArray(error.holders) ? error.holders : []);
+          worktreeHow = 'detached';
+        } else if (ownerTaskId && (error?.retained === true
+          || error?.code === 'progress_preservation_failed'
+          || (typeof error?.code === 'string' && error.code.endsWith('_retained')))) {
+          // Capture-or-retain: the capture refused, so the checkout is retained for the
+          // reconciliation authority and THIS handle releases its hold — the exact outcome
+          // that keeps the seat's work on disk while the drain converges.
+          await this._releaseRetainedCheckout(handle, { code: error.code, observation: error.observation });
+          this._recordDrainCustodyRetained(handle, task, error);
+          worktreeHow = 'retained';
+        } else {
+          return;
+        }
+      }
+    }
+    if (handle.runtimeScope?.active === true) this._removeRuntimeScope(handle);
+    if (handle.cleanupPending === true && !handle.cleanupPromise) handle.cleanupPending = false;
+    if (handle.cleanupAfterVerification === true) handle.cleanupAfterVerification = false;
+    if (handle.localAuthority === true && (!handle.processRef || handle.processRef.state === 'closed')) {
+      handle.localAuthority = false;
+    }
+    handle.worktreeCreationPending = false;
+    handle.nativeSpawnPending = false;
+    handle.recoverySpawnPending = false;
+    handle.recoveryPending = false;
+    const after = this._localResourceOwnership(handle);
+    const released = [];
+    for (const hold of Object.keys(before)) {
+      if (after[hold]) continue;
+      released.push({
+        workerId: handle.id, resource: `local_resources:${hold}`,
+        how: hold === 'worktree' ? (worktreeHow ?? 'custody_reaped') : 'orphaned',
+      });
+    }
+    // The reservation release through the capacity authority: a reaped checkout settles its
+    // own row inside the worktree authority's removal path; a settled row is named.
+    if (worktreeHow === 'custody_reaped') {
+      const ownerTaskId = handle.sessionContext?.ownerTaskId ?? task?.id ?? null;
+      const snapshot = ownerTaskId && typeof this._worktrees?.capacitySnapshot === 'function'
+        ? this._worktrees.capacitySnapshot() : null;
+      const capacityId = `worker:${ownerTaskId}`;
+      if (snapshot && !snapshot.reservations.some((row) => row.id === capacityId)) {
+        released.push({ workerId: handle.id, resource: capacityId, how: 'capacity' });
+      }
+    }
+    this._recordDrainReleases(handle, task, released);
+  }
+
+  /** #360: durable release rows — one `driver.recorded` row per released resource, idempotent
+   * per (worker, resource, how) so a retried drain replays instead of duplicating — and the
+   * in-memory sink the drain's wait rows carry as `released`. */
+  _recordDrainReleases(handle, task, released) {
+    if (!Array.isArray(released) || released.length === 0) return;
+    this._drainReleased ??= [];
+    for (const row of released) {
+      this._drainReleased.push(row);
+      try {
+        this._coordRecord('drain.resource_released', {
+          workerId: handle.id,
+          taskId: task?.id ?? null,
+          workspaceId: handle.sessionContext?.ownerTaskId ?? task?.id ?? null,
+          resource: row.resource,
+          how: row.how,
+          at: new Date().toISOString(),
+        }, `drain.resource_released:${handle.id}:${row.resource}:${row.how}`);
+      } catch { /* the release still rides the wait rows when the ledger refuses */ }
+    }
+  }
+
+  /** #360/#428: a drain's retention rides the same coordination vocabulary the startup
+   * reconciliation writes, so a checkout the drain refused to destroy is readable from rows —
+   * never a silent disappearance — exactly like a crash reconciliation's retention. */
+  _recordDrainCustodyRetained(handle, task, error) {
+    const workspaceId = handle.sessionContext?.ownerTaskId ?? task?.id ?? null;
+    if (typeof workspaceId !== 'string' || workspaceId.length === 0) return;
+    try {
+      this._coordRecord('worktree.custody_retained', {
+        workspaceId, participantId: null, workerId: handle.id,
+        code: error?.code ?? 'worktree_cleanup_failed', reason: 'drain',
+        headSha: error?.observation?.headSha ?? null,
+        branch: task?.sessionContext?.branch ?? null,
+      }, `worktree.custody_retained:${workspaceId}:drain:${handle.id}:${error?.code ?? 'unknown'}`);
+    } catch { /* the handle's own release row still carries the retention */ }
+  }
+
+  /** #360: first-sight bookkeeping for the drain's wait rows — `since` is when THIS drain first
+   * observed the wait, so an operator reads how long a release has been pending. Cheap: no
+   * appends, one map per drain epoch, kept across request retries. */
+  _drainWaitObserve(targetWorkerIds) {
+    this._drainWaitSince ??= new Map();
+    const at = Date.now();
+    for (const workerId of targetWorkerIds) {
+      const handle = this._workers.get(workerId);
+      if (!handle) continue;
+      for (const hold of Object.keys(this._localResourceOwnership(handle))) {
+        const key = `${workerId}\0local_resources:${hold}`;
+        if (!this._drainWaitSince.has(key)) this._drainWaitSince.set(key, at);
+      }
+      if (handle.processRef && handle.processRef.state !== 'closed') {
+        const key = `${workerId}\0process:${handle.processRef.state}`;
+        if (!this._drainWaitSince.has(key)) this._drainWaitSince.set(key, at);
+      }
+    }
+  }
+
+  /** #360: who will release this hold. Live reapers are named for what they are; the drain's
+   * own settled-holder reap claims a stopped seat's holds; an exact cleanup that is still
+   * being attempted (and failing) keeps the wait honest without the drain stealing it. */
+  _drainReaperFor(handle, hold, settled, verifying) {
+    switch (hold) {
+      case 'stopWaiter':
+      case 'fatalStopWaiter': return 'stop-chain';
+      case 'cleanupPromise': return 'cleanup-promise';
+      case 'untrustedTransportReap': return 'transport-reap';
+      case 'recoveryPending': return 'recovery';
+      case 'process': return 'drain-kill';
+      default: break;
+    }
+    if (verifying) return 'verification';
+    if (settled) return 'drain-reap';
+    // A worker whose process is exactly closed is released by the drain's own exact-close
+    // cleanup — the attempt the convergence loop makes every pass, which keeps the wait honest
+    // while it fails (G-21) — never by a kill that could signal nothing. A still-live process
+    // is the drain's kill, and the spawn holds ride with it.
+    const exactClose = !handle.processRef || handle.processRef.state === 'closed';
+    return exactClose ? 'exact-close-cleanup' : 'drain-kill';
+  }
+
+  _drainWaitEntry(resource, reaper, sinceMs) {
+    const entry = {
+      resource,
+      reaper: reaper ?? null,
+      since: typeof sinceMs === 'number' ? new Date(sinceMs).toISOString() : new Date().toISOString(),
+    };
+    // The host's wait narration joins the entries with `+`; the resource string renders there.
+    Object.defineProperty(entry, 'toString', { value: () => entry.resource, enumerable: false });
+    return Object.freeze(entry);
+  }
+
+  /** #360: the drain's named wait (#265 derivation, enriched). Each `waiting` entry carries
+   * {resource, reaper, since}; each row carries the `released` rows the drain itself settled
+   * for that worker; the durable `control.stop_waiting_on` payload carries the same. A
+   * resource with no reaper never reaches a row — the drain releases it immediately with
+   * reason `orphaned` (see _releaseSettledHolder). */
+  _drainWaitingOn(targetWorkerIds, dispositions, actor) {
+    this._drainWaitSince ??= new Map();
+    this._drainReleased ??= [];
+    const rows = [];
+    for (const workerId of targetWorkerIds) {
+      const handle = this._workers.get(workerId);
+      const waiting = [];
+      if (dispositions && !dispositions.has(workerId)) {
+        waiting.push(this._drainWaitEntry('disposition', 'run-stop-disposition', null));
+      }
+      if (!handle) {
+        if (waiting.length > 0) rows.push(Object.freeze({ workerId, handle: 'absent', waiting: Object.freeze(waiting), released: Object.freeze([]) }));
+        continue;
+      }
+      const settled = this._settledDrainHolder(handle);
+      const verifying = this._tasks.get(handle.taskId)?.status === 'verifying';
+      for (const hold of Object.keys(this._localResourceOwnership(handle))) {
+        waiting.push(this._drainWaitEntry(`local_resources:${hold}`,
+          this._drainReaperFor(handle, hold, settled, verifying),
+          this._drainWaitSince.get(`${workerId}\0local_resources:${hold}`) ?? null));
+      }
+      if (handle.processRef && handle.processRef.state !== 'closed') {
+        waiting.push(this._drainWaitEntry(`process:${handle.processRef.state}`, 'drain-kill',
+          this._drainWaitSince.get(`${workerId}\0process:${handle.processRef.state}`) ?? null));
+      }
+      if (handle.pendingApprovalId) waiting.push(this._drainWaitEntry(`interaction:${handle.pendingApprovalId}`, 'interaction-cancel', null));
+      if (handle.pendingQuestionId) waiting.push(this._drainWaitEntry(`interaction:${handle.pendingQuestionId}`, 'interaction-cancel', null));
+      if (waiting.length === 0) continue;
+      const released = this._drainReleased.filter((row) => row.workerId === workerId)
+        .map((row) => Object.freeze({ ...row }));
+      const row = Object.freeze({
+        workerId, status: handle.status, disposition: dispositions?.get(workerId) ?? null,
+        processState: handle.processRef?.state ?? null, waiting: Object.freeze(waiting),
+        released: Object.freeze(released),
+      });
+      rows.push(row);
+      try {
+        const task = this._tasks.get(handle.taskId);
+        const named = this._log.append({
+          worker: handle.id, harness: handle.vendor ? this._harnessOf(handle.vendor) : '', turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'control.stop_waiting_on', actor, ...this._routeAttribution(handle, task),
+          payload: {
+            waiting: row.waiting.map((entry) => ({ resource: entry.resource, reaper: entry.reaper, since: entry.since })),
+            disposition: row.disposition, status: handle.status, processState: row.processState,
+            released: released.map((entry) => ({ ...entry })),
+          },
+        });
+        this._coordMapEvent(named);
+      } catch { /* the thrown detail still names the wait when the log cannot take the record */ }
+    }
+    return Object.freeze(rows);
   }
 
   _capabilityRegistry() {
