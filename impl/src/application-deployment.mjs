@@ -27,6 +27,7 @@ import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
 import { aaCredentialPath, designArenaCredentialPath } from './adapter.mjs';
 import { createRecipes } from './recipes.mjs';
+import { ResultExportLifecycle } from './result-export.mjs';
 import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
 } from './context-runtime.mjs';
@@ -2814,7 +2815,13 @@ function reincarnationProcessAlive(pid) {
  * predecessor until that incarnation's own stop releases it, so it WAITS on the handoff's declared
  * window — never an instant `coordination_writer_busy` refusal. A resident started any other way
  * keeps the immediate refusal (the store's own). An attempt that partially assembled has already
- * released whatever it claimed (createDriver's own catch), so a retry never doubles a lease. */
+ * released whatever it claimed (createDriver's own catch), so a retry never doubles a lease.
+ *
+ * #306r: a handoff successor whose wait is SPENT is not an ordinary busy writer — the predecessor
+ * re-took the authority and went on serving (docs/48 §11 item 7), so this process stands down with
+ * a typed refusal of its own, naming the lease it could not take. The marker it was handed is
+ * updated in the same act, so the deployment root says why a successor that was started never
+ * published. */
 async function openDriverForHandoff(createDriver, options, handoff, waitMs) {
   const bound = Number.isSafeInteger(waitMs) && waitMs > 0
     ? waitMs : FRAME_LIMITS['host.reincarnation.wait_ms'].value;
@@ -2822,7 +2829,20 @@ async function openDriverForHandoff(createDriver, options, handoff, waitMs) {
   for (;;) {
     try { return createDriver(options); }
     catch (error) {
-      if (handoff === null || error?.code !== 'coordination_writer_busy' || Date.now() >= deadline) throw error;
+      if (handoff === null || error?.code !== 'coordination_writer_busy') throw error;
+      if (Date.now() >= deadline) {
+        writeReincarnationMarker(handoff, process.pid, 'lease_held_by_predecessor');
+        throw reincarnationError('reincarnation_failed',
+          'the predecessor still holds the coordination writer authority, so this successor stands down',
+          Object.freeze({
+            step: 'lease_held_by_predecessor',
+            cause: Object.freeze({ waitedMs: bound, reason: 'writer_lease_held_by_predecessor' }),
+            predecessor: Object.freeze({
+              incarnation: handoff.predecessorIncarnation, pid: handoff.predecessorPid,
+            }),
+            target: Object.freeze({ sha: handoff.target, ref: null }),
+          }));
+      }
       await new Promise((resolveWait) => setTimeout(resolveWait, 50));
     }
   }
@@ -2860,6 +2880,11 @@ class BatonDeployment {
   // #461: this incarnation has WITHDRAWN — its close took down every listener and lease it held
   // and released the successor's process handle. The ONE read the signal path makes first.
   #withdrawn = false;
+  // #306r: a handoff FAILED after the resident and publication leases had gone over. The instance
+  // cannot re-take a lease directory without minting a new incarnation, so this records the fact
+  // once: the next stop's withdrawal is still exact, and the lease it cannot assert is named there
+  // instead of reading as a failed withdrawal (#306r's row carries the same fact durably).
+  #handoffLeasesReleased = false;
   #application;
   #baton;
   #card;
@@ -4352,28 +4377,282 @@ class BatonDeployment {
     } catch { return null; }
   }
 
-  /** #306: the old incarnation's half of the publication handoff. The successor needs the resident
-   * host lease and the publication lease before it can publish at all, so the old releases BOTH —
-   * while KEEPING the published bytes — and then waits, bounded, for a DIFFERENT incarnation to
-   * appear in connection.json. Only after that does close() withdraw (and `removeIfExact` then
-   * removes nothing of the successor's). Returns true when the successor published. */
-  async #completeReincarnationHandoff(handoff) {
+  /** #306r: THE HANDOFF WINDOW — the old incarnation's half of the publication handoff, run BEFORE
+   * any listener of this incarnation closes. The successor cannot publish while this incarnation
+   * holds the writer authority or the resident and publication leases, so the window hands them
+   * over in the order the successor's own open reaches them, and watches the successor's OWN facts
+   * — the marker it narrates on, the publication, and the child's exit — until it publishes or is
+   * done for. The bound is the deadline, never the decision.
+   *
+   * A handoff that fails here is RECOVERABLE, and that recovery is the point of the window: this
+   * incarnation re-takes the writer authority through the same lease path the open uses, records
+   * `host.reincarnation_failed {step: 'publication_handoff'}`, reopens admission and goes on
+   * serving — its publication never withdrawn, its listeners never closed, its process alive. What
+   * the window had already handed over rides the row's `authority`: the resident and publication
+   * leases move only after the successor's own open (the `opened` state on its marker), so a
+   * successor that died before it opened leaves this incarnation's authority whole, and one that
+   * died after leaves the two lease directories free while the publication bytes stay this
+   * incarnation's.
+   *
+   * Returns `{published, stage, cause}`; `published: true` means connection.json names the
+   * successor and this incarnation is committed to its own withdrawal. */
+  async #reincarnationWindow(handoff) {
     const authority = this.#residentAuthority;
+    const bound = this.#reincarnationWait();
+    this.#webHost?._say?.(`baton serve: host.stop_waiting on successor_publication at ${this.#clock()}`);
+    // 1. The fleet drains while this incarnation still holds the writer authority, so the drain's
+    //    rows land where a stop's rows land and no worker of this incarnation is left for the
+    //    successor's startup reconstruction to reconcile.
+    const drainFailure = await this.#handoffFleetDrain(handoff);
+    if (drainFailure !== null) {
+      return Object.freeze({ published: false, stage: 'fleet_drain', cause: drainFailure });
+    }
+    // 2. The result export root is a LEASE this incarnation's application holds until its own
+    //    shutdown releases it, and the successor's open constructs an application over the same
+    //    deployment — so it is released here, by the same lifecycle close the application's
+    //    shutdown performs, BEFORE the successor can reach its own construction. A handoff that
+    //    then fails re-takes it (`ResultExportLifecycle` over the application's own root, the same
+    //    construction the application performs).
+    handoff.applicationReleased = await this.#releaseResultExportRoot();
+    // 3. The writer authority moves. The successor's open waits on exactly this release, and the
+    //    release mints this incarnation's `host.stopped` through the armed outcome — the row the
+    //    ordinary stop's release mints, because it is the same act.
+    try {
+      handoff.writerReleased = this.#driver?.coordination?.releaseWriterLease?.({ requireOwned: true }) === true;
+    } catch { handoff.writerReleased = false; }
     handoff.released = true;
-    try { authority.publicationLease.release(); } catch { /* a lease already released is the state we want */ }
-    try { authority.lease.release(); } catch { /* idem */ }
-    const deadline = Date.now() + this.#reincarnationWait();
-    while (Date.now() < deadline) {
+    // 4. The successor's own open — its replay and its reconstruction, the longest and most
+    //    failure-prone stretch of its startup — published on its marker as `opened`. Until that is
+    //    seen the resident and publication leases are NOT released: a successor that dies during
+    //    its open leaves this incarnation's authority exactly as it was.
+    const opened = await this.#awaitSuccessorOutcome(handoff, { want: 'opened', bound });
+    if (opened.ok !== true) {
+      return Object.freeze({ published: false, stage: 'writer_authority', cause: opened.cause });
+    }
+    // 5. …and only now the two leases the successor needs to publish at all. This incarnation keeps
+    //    the published BYTES and its own listener either way (#288).
+    if (opened.published !== true) {
+      try { authority.publicationLease.release(); } catch { /* a lease already released is the state we want */ }
+      try { authority.lease.release(); } catch { /* idem */ }
+      handoff.authorityReleased = true;
+    }
+    // 6. The publication itself: connection.json naming a DIFFERENT incarnation — the ONE read both
+    //    incarnations agree on. The successor REPLACES this incarnation's bytes atomically, and this
+    //    incarnation's withdrawal later removes nothing of the successor's.
+    const settled = opened.published === true
+      ? opened
+      : await this.#awaitSuccessorOutcome(handoff, { want: null, bound });
+    if (settled.ok === true && settled.published === true) {
+      handoff.published = true;
+      handoff.publishedIncarnation = settled.incarnation;
+      return Object.freeze({ published: true, stage: 'published', cause: null });
+    }
+    return Object.freeze({
+      published: false,
+      stage: handoff.authorityReleased === true ? 'authority' : 'writer_authority',
+      cause: settled.cause ?? opened.cause ?? null,
+    });
+  }
+
+  /** #306r: release the result export root the successor's own open cannot proceed without — the
+   * SAME lifecycle close the application's shutdown performs, run by the handoff because the
+   * successor opens before this incarnation's shutdown would reach it. Returns whether a lifecycle
+   * was held (false for a deployment that exports nothing). */
+  async #releaseResultExportRoot() {
+    const lifecycle = this.#application?.resultExportLifecycle ?? null;
+    if (lifecycle === null) return false;
+    try { await lifecycle.close(); } catch { /* a lifecycle already closed is the state we want */ }
+    return true;
+  }
+
+  /** #306r: re-take the result export root a failed handoff had released — the SAME construction
+   * the application performs over its own export root (`ResultExportLifecycle`), because the lease
+   * is exactly that object's. Absence (no export root, or a lease another process now holds) is
+   * reported, never invented: the failure row's `authority.resultExport` says which. */
+  #retakeResultExportRoot() {
+    const application = this.#application ?? null;
+    if (application === null || application.exportRoot === null || application.exportRoot === undefined) return false;
+    try {
+      application.resultExportLifecycle = new ResultExportLifecycle(application.exportRoot);
+      return true;
+    } catch { return false; }
+  }
+  /** #306r: the fleet drain the handoff runs while it still holds the writer authority. Null when
+   * the fleet drained (or this deployment has no fleet authority to drain); the cause the window
+   * fails with otherwise — a drain that did not converge is never silently skipped into a handover. */
+  async #handoffFleetDrain(handoff) {
+    const coordinator = this.#driver?.coordinator ?? null;
+    if (typeof coordinator?.drain !== 'function') return null;
+    const startedAt = Date.now();
+    try {
+      await coordinator.drain({
+        actor: `deployment:${this.#repository.repoId}:resident`,
+        repoId: this.#repository.repoId,
+        idempotencyKey: `reincarnation:fleet-drain:${handoff.from.incarnation}`,
+      });
+      return null;
+    } catch (error) {
+      return Object.freeze({
+        exit: null, signal: null, stderrTail: null, waitedMs: Date.now() - startedAt,
+        reason: 'fleet_drain_incomplete', code: typeof error?.code === 'string' ? error.code : null,
+      });
+    }
+  }
+
+  /** #306r: the successor's own state, read from the facts it publishes while it opens: the marker
+   * (its narration, in the deployment root) and the publication. 'waiting' is the readiness this
+   * incarnation has already seen; any other state it wrote is progress, and the one state that is a
+   * typed refusal names itself. */
+  #successorMarkerState(handoff) {
+    try {
+      const parsed = JSON.parse(readFileSync(handoff.markerPath, 'utf8'));
+      return typeof parsed?.state === 'string' ? parsed.state : null;
+    } catch { return null; }
+  }
+
+  /** #306r: how the successor's process ended, or null while it is still running — the captured exit
+   * event first, then the handle's own codes (an exit that landed before this incarnation looked
+   * must never read as "still running"). */
+  #successorExit(handoff) {
+    const successor = handoff?.successor ?? null;
+    if (successor === null) return null;
+    if (successor.exit !== null && successor.exit !== undefined) return successor.exit;
+    const child = successor.child ?? null;
+    if (child === null || child === undefined) return null;
+    const code = child.exitCode ?? null;
+    const signal = child.signalCode ?? null;
+    if (code === null && signal === null) return null;
+    return Object.freeze({ code, signal });
+  }
+
+  /** #306r: wait for the successor to reach `want`, or to hand the decision to its own facts: the
+   * publication appearing (a success at either stage), the child's exit, or the bound. Returns
+   * `{ok: true, published, incarnation}` or `{ok: false, cause}` in the #326-shaped cause. */
+  async #awaitSuccessorOutcome(handoff, { want, bound }) {
+    const authority = this.#residentAuthority;
+    const startedAt = Date.now();
+    const deadline = startedAt + bound;
+    for (;;) {
       const published = this.#publishedIncarnation();
       if (published !== null && published !== authority.incarnation) {
-        handoff.published = true;
-        handoff.publishedIncarnation = published;
-        return true;
+        return Object.freeze({
+          ok: true, published: true, incarnation: published, waitedMs: Date.now() - startedAt,
+        });
       }
-
+      const exit = this.#successorExit(handoff);
+      if (exit !== null) {
+        return Object.freeze({
+          ok: false, cause: this.#handoffFailureCause(handoff, {
+            exit, waitedMs: Date.now() - startedAt, reason: null,
+          }),
+        });
+      }
+      const state = this.#successorMarkerState(handoff);
+      if (want !== null && state === want) {
+        return Object.freeze({
+          ok: true, published: false, incarnation: null, waitedMs: Date.now() - startedAt,
+        });
+      }
+      if (state === 'lease_held_by_predecessor') {
+        return Object.freeze({
+          ok: false, cause: this.#handoffFailureCause(handoff, {
+            exit: null, waitedMs: Date.now() - startedAt, reason: 'successor_stood_down',
+          }),
+        });
+      }
+      if (Date.now() >= deadline) {
+        return Object.freeze({
+          ok: false, cause: this.#handoffFailureCause(handoff, {
+            exit: null, waitedMs: Date.now() - startedAt, reason: 'publication_timeout',
+          }),
+        });
+      }
       await new Promise((resolveWait) => setTimeout(resolveWait, 25));
     }
-    return false;
+  }
+
+  /** #306r: the ONE cause a failed publication handoff carries — the successor's exit (or its
+   * absence), the bounded stderr tail it narrated (#326), how long the wait actually ran, and the
+   * reason the wait ended when it was not an exit. */
+  #handoffFailureCause(handoff, { exit, waitedMs, reason }) {
+    return Object.freeze({
+      exit: exit === null || exit === undefined || !Number.isSafeInteger(exit.code) ? null : exit.code,
+      signal: exit === null || exit === undefined || typeof exit.signal !== 'string' ? null : exit.signal,
+      stderrTail: handoff?.successor?.tail?.text ?? null,
+      waitedMs: Number.isSafeInteger(waitedMs) ? waitedMs : 0,
+      ...(reason === null || reason === undefined ? {} : { reason }),
+    });
+  }
+
+  /** #306r: end the successor that will not publish. A successor merely SLOW is not killed — the
+   * bound is the declared startup allowance — but one that has spent it never publishes, and
+   * leaving it running would let it reach for the authority this incarnation is about to re-take.
+   * Bounded by the module's kill-escalation grace; a successor that cannot be ended leaves the
+   * re-take to refuse, which the failure row then names. */
+  async #endSuccessorThatWillNotPublish(handoff) {
+    const child = handoff?.successor?.child ?? null;
+    if (child === null || this.#successorExit(handoff) !== null) return;
+    try { if (typeof child.kill === 'function') child.kill('SIGKILL'); } catch { /* a child already gone needs no kill */ }
+    const deadline = Date.now() + KILL_ESCALATION_GRACE_MS;
+    while (this.#successorExit(handoff) === null && Date.now() < deadline) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    }
+  }
+
+  /** #306r: re-take the coordination writer authority — the SAME lease path the open uses (the
+   * store's own `claimWriterLease`), so the re-published incarnation is fenced exactly as any writer
+   * is. A holder that is still alive refuses typed; the failure row names that rather than pretending
+   * the authority came back. */
+  #reclaimWriterAuthority() {
+    const coordination = this.#driver?.coordination ?? null;
+    if (typeof coordination?.claimWriterLease !== 'function') return false;
+    try { return coordination.claimWriterLease() !== null; } catch { return false; }
+  }
+
+  /** #306r: a handoff the successor did not finish — the old incarnation RE-PUBLISHES. It ends the
+   * successor's process, re-takes the writer authority, records the failure (with what it could and
+   * could not take back), reopens admission and goes on serving. Nothing is withdrawn: this
+   * incarnation's publication is left exactly as it published it. */
+  async #republishAfterHandoffFailure(handoff, outcome) {
+    await this.#endSuccessorThatWillNotPublish(handoff);
+    const writerLease = this.#reclaimWriterAuthority();
+    const resultExport = handoff.applicationReleased === true ? this.#retakeResultExportRoot() : null;
+    const at = this.#clock();
+    this.#reincarnationRecord('host.reincarnation_failed', {
+      step: 'publication_handoff',
+      target: handoff.target,
+      successor: handoff.successor === null ? null : Object.freeze({
+        pid: handoff.successor.pid, incarnation: handoff.successor.incarnation,
+      }),
+      cause: outcome.cause,
+      // What the window had already handed over when the successor failed, and what this
+      // incarnation took back: the writer authority and the result export root are re-taken here
+      // (both are leases this incarnation's own open path can claim again); the resident and
+      // publication leases move only after the successor's own open, so a failure before that
+      // point leaves them held. `publication: 'intact'` is the point of the whole arm — nothing
+      // withdrew it.
+      authority: Object.freeze({
+        writerLease: writerLease === true ? 'reclaimed' : 'unavailable',
+        resultExport: resultExport === null ? 'held'
+          : (resultExport === true ? 'reclaimed' : 'unavailable'),
+        residentLease: handoff.authorityReleased === true ? 'released' : 'held',
+        publicationLease: handoff.authorityReleased === true ? 'released' : 'held',
+        publication: 'intact',
+      }),
+      at,
+    }, 'reincarnation:failed:publication_handoff');
+    // The handoff is over: admission reopens with it, and the next stop mints its own request and
+    // outcome keys rather than replaying this attempt's rows.
+    this.#reincarnation = null;
+    this.#handoffLeasesReleased = handoff.authorityReleased === true;
+    this.#stopToken = null;
+    this.#stopRequestedAt = null;
+    try { rmSync(handoff.markerPath, { force: true }); } catch { /* a stale marker is harmless */ }
+    this.#webHost?._say?.(`baton serve: host.reincarnation_failed publication_handoff `
+      + `(${outcome.cause?.exit ?? outcome.cause?.reason ?? 'error'}, waited ${outcome.cause?.waitedMs ?? 0}ms) at ${at}; `
+      + (writerLease === true
+        ? 'this incarnation re-took the writer authority and keeps serving'
+        : 'this incarnation keeps serving; the writer authority stayed with the successor'));
   }
   /** #306: the successor's own end of the handoff. When the predecessor's process is GONE, the
    * withdrawal the old performed is a fact this incarnation can record on its behalf — the old
@@ -4551,7 +4830,17 @@ class BatonDeployment {
       // detaches — the two facts the closing half of the handoff needs.
       argv: spawned.spec.args,
       stderrListener,
+      // #306r: the bounded tail the successor narrates into (the failure row reads it) and the
+      // exit this incarnation observed — captured here, once, so a child that ends between the
+      // receipt and the window is never read as "still running".
+      tail,
+      exit: null,
     };
+    if (typeof child?.once === 'function') {
+      child.once('exit', (code, signal) => {
+        handoff.successor.exit = Object.freeze({ code: code ?? null, signal: signal ?? null });
+      });
+    }
     const ready = await this.#awaitSuccessorReady(child, { markerPath: handoff.markerPath }, tail);
     if (ready.ok !== true) {
       this.#failReincarnation(handoff, 'successor_start', ready.cause);
@@ -4673,11 +4962,61 @@ class BatonDeployment {
         // #351: the outcome the release will mint for THIS stop, armed before the drain that
         // decides whether it is reached.
         this.#armStopOutcome('stopped');
-        try { hosted = this.#webHost ? await this.#webHost.shutdown() : null; }
-        catch (error) { shutdownFailure = error; }
+        // #306r: THE HANDOFF WINDOW runs FIRST — before any listener of this incarnation closes.
+        // A handoff can end in this incarnation RE-PUBLISHING, and an incarnation that
+        // re-published must still be reachable: no admission, no listener and no fleet is torn
+        // down until the successor's own publication is a fact or the handoff has failed and been
+        // recorded. The window hands the writer authority over itself; the ordinary stop below is
+        // what runs when there is no handoff, or when the successor published and this incarnation
+        // is committed to its own withdrawal.
+        let handoffCommitted = false;
+        if (reincarnation !== null && reincarnation.phase === 'handed') {
+          // #351 lane 2: the durable request is the stop's FIRST act — the reincarnation IS the
+          // request that ends this incarnation, and the row lands before the release that mints
+          // `host.stopped`, so the pair reads in the order the facts happened.
+          this.recordStopRequested('operation_completed');
+          const outcome = await this.#reincarnationWindow(reincarnation);
+          if (outcome.published !== true) {
+            await this.#republishAfterHandoffFailure(reincarnation, outcome);
+            // This incarnation is NOT closing: admission reopens with the handoff record, the
+            // publication and the listeners were never touched, and a later stop runs its own.
+            this.#closePromise = null;
+            return Object.freeze({
+              schemaVersion: 1,
+              state: 'serving',
+              resident: Object.freeze({ state: 'serving', handoff: 'publication_failed' }),
+            });
+          }
+          handoffCommitted = true;
+        }
+        try {
+          hosted = this.#webHost === null ? null
+            : (handoffCommitted
+              ? await this.#webHost.withdrawForHandoff()
+              : await this.#webHost.shutdown());
+        } catch (error) { shutdownFailure = error; }
         this.#markStopStage(STOP_STAGES.hostClosed);
-        const application = hosted?.application
-          ?? (shutdownFailure ? null : await this.#application.shutdown(this.#principal));
+        if (handoffCommitted) {
+          // The application's authority went over with the writer lease, so its shutdown cannot
+          // complete the driver's leg — the exact writer release is the successor's now. Its OWN
+          // obligations are still this incarnation's to release before the successor opens (the
+          // export-root lease the successor's own open needs, the swarm services, the follow
+          // controllers), exactly as the ordinary stop releases them; the ONE refusal that is
+          // expected here is named, never swallowed blindly.
+          try { await this.#application.shutdown(this.#principal); }
+          catch (error) {
+            // The driver's own leg cannot complete — the exact writer release is the successor's —
+            // so the ONE refusal this tolerates is that loss, however the drain's failure shape
+            // wraps it (`coordination_writer_lost` alone, or as the cause the drain names).
+            const expected = ['coordination_writer_lost', 'driver_closed'];
+            if (!expected.includes(error?.code) && !expected.includes(error?.detail?.cause?.code)) throw error;
+            this.#webHost?._say?.(`baton serve: the handoff's authority is the successor's `
+              + `(${error?.detail?.cause?.code ?? error?.code}); this incarnation's own application legs are released`);
+          }
+        }
+        const application = handoffCommitted ? null
+          : hosted?.application
+            ?? (shutdownFailure ? null : await this.#application.shutdown(this.#principal));
         if (shutdownFailure) {
           // Issue #351(2): the second obligation a resident's stop owns — the host-capacity verify
           // lease its lanes reserved. Read from the capacity authority's OWN projection (never
@@ -4718,20 +5057,26 @@ class BatonDeployment {
             this.#residentSession?.sessions.revoke(this.#residentSession.sessionId, {
               actor: `deployment:${this.#repository.repoId}:resident`, reason: 'deployment_closed',
             });
-            let handoffPublished = null;
-            if (handoff !== null && handoff.phase === 'handed') {
-              this.#webHost?._say?.(`baton serve: host.stop_waiting on successor_publication at ${this.#clock()}`);
-              handoffPublished = await this.#completeReincarnationHandoff(handoff);
-            }
+            // #306r: the publication handoff already ran — in the window, before this incarnation
+            // closed anything — so what remains is the withdrawal itself: `close()` removes exactly
+            // this incarnation's bytes (nothing of the successor's) and its own socket, then reports
+            // the lease it no longer holds, which the arm below reads as the committed handoff it is.
             this.#residentAuthority.close();
-            if (handoffPublished === false) residentState = 'reconciliation_required';
           } catch (error) {
             if (handoff !== null && handoff.phase === 'handed' && error?.code === 'application_host_lease_lost') {
               // The handoff released the leases exactly (the successor needed them to publish), so
               // close()'s own assertion is the expected refusal — AFTER it removed the socket and
               // whatever publication bytes were still OURS. The successor's bytes were never ours.
               residentState = handoff.published === true ? 'closed' : 'reconciliation_required';
-            } else {
+            } else if (this.#handoffLeasesReleased === true && error?.code === 'application_host_lease_lost') {
+              // #306r: this incarnation's resident and publication leases went over at a handoff
+              // that then FAILED (the Leases released above the authority column of its row) and
+              // were never re-taken — there is no API to re-take a lease directory without minting
+              // a new incarnation, and minting one would repoint the publication. The withdrawal
+              // itself was still exact: the bytes removed were this incarnation's own and so was
+              // the socket. The stop converged; what it could not assert is a recorded fact.
+              this.#handoffLeasesReleased = false;
+              residentState = 'closed';
               // Issue #351(2): the third obligation a resident's stop owns — its own publication.
               // A withdrawal that fails NAMES that wait rather than leaving a selector pointing at a
               // process that is exiting (the state #276(3) exists to prevent).
@@ -4781,7 +5126,10 @@ class BatonDeployment {
         }
         return Object.freeze({
           ...application,
-          state: application?.state === 'closed' && residentState === 'closed'
+          // #306r: a stop that finished a handoff never ran the application's own shutdown (the
+          // authority went over with the writer lease), so what this incarnation actually closed is
+          // what its own stages and residentState say.
+          state: (handoffCommitted || application?.state === 'closed') && residentState === 'closed'
             && (!hosted || hosted.state === 'closed')
             ? 'closed' : 'closed_degraded',
           resident: Object.freeze({ state: residentState }),
@@ -5292,6 +5640,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const driver = await openDriverForHandoff(
     createDriver, driverOptions, reincarnationHandoff, residentOptions.reincarnationWaitMs,
   );
+  // #306r: the successor's own progress, published on the marker its predecessor is watching:
+  // `opened` means this process holds the writer authority the predecessor released and its open —
+  // the replay and the reconstruction — succeeded. The predecessor withholds the resident and
+  // publication leases until it sees this, so a successor that dies during its open leaves its
+  // predecessor's authority whole (docs/48 §11 item 7).
+  if (reincarnationHandoff !== null) writeReincarnationMarker(reincarnationHandoff, process.pid, 'opened');
   // The floor probe reads the ledger high-water through the authority the driver just built.
   worktreeCapacityRef = driver.worktreeCapacity;
   // Issue #450: the coordinator may never fail a stop on a reservation whose worker is gone. The

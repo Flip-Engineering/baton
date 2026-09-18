@@ -256,7 +256,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'incarnation_changed', scope: 'deployment', terminal: false, next: null,
-    summary: 'the resident reincarnated over this deployment — a successor incarnation serves it now; re-read the view (the rows and the attachment you held came from the predecessor)',
+    summary: 'the resident reincarnated over this deployment — a successor incarnation serves it now, or the handoff failed before its successor published and the same incarnation went on serving; re-read the view (the rows and the attachment you held came from the predecessor)',
     // #306 (lane B): the successor records `host.reincarnated {from, to}` when it sees the old
     // process exit, so the change of incarnation is a DURABLE row and not only the live
     // `resident_lifecycle` observation beside it. It is `dead`'s sibling — the same deployment
@@ -265,7 +265,11 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     // summary carries, since the table's one invariant lets only a terminal class name a `next`
     // command). The subject reads the successor's identity where the successor writes it, with the
     // deployment as the fallback the resident-lifecycle observation already uses.
-    rows: [operationalKind('host.reincarnated')],
+    // #306r: the handoff's FAILURE is the other end of the same fact — the successor never
+    // published, the predecessor re-took the writer authority and went on serving (docs/48 §11
+    // item 7), so a root following this class sees the outcome it is waiting for either way
+    // instead of silence. One row kind, one class (the table's own invariant).
+    rows: [operationalKind('host.reincarnated'), operationalKind('host.reincarnation_failed')],
     subject: { field: 'incarnation', kind: 'resident', fallback: { field: 'deploymentId', kind: 'deployment' } },
   }),
   wakeRow({

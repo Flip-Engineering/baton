@@ -392,13 +392,20 @@ test('306a-f: the reincarnation rows replay byte-identically through a reopened 
   const pending = first.deployment.reincarnate({ target: f.base });
   await until(() => stub !== null, { label: 'the spawn' });
   const receipt = await pending;
-  // The successor never publishes here (only the readiness marker exists), so the handoff ends in
-  // the old's own withdrawal; the rows it wrote must replay byte-identically afterwards.
+  // The successor never publishes here (only the readiness marker exists), so the handoff FAILS at
+  // its publication step: the old incarnation names it and RE-PUBLISHES (docs/48 §11 item 7), which
+  // means the publication is still ITS — the withdrawal happens on the operator's own stop, never
+  // at the handoff's. The rows the old wrote must replay byte-identically afterwards either way.
   const before = hostRows(f.ledgerPath).filter((row) => row.payload.kind === 'host.reincarnation_requested')
     .map((row) => JSON.stringify(row.payload));
+  const failed = await until(() => hostRow(f.ledgerPath, 'host.reincarnation_failed'),
+    { timeoutMs: WAIT_MS * 2, label: 'the durable publication_handoff failure row' });
+  assert.equal(failed.payload.step, 'publication_handoff');
+  assert.equal(existsSync(f.selectorPath), true,
+    'the failed handoff withdrew nothing — the old incarnation re-published and keeps serving');
   await first.deployment.close();
   assert.equal(existsSync(f.selectorPath), false,
-    'a handoff whose successor never published withdraws the old publication at exit');
+    'the old incarnation\'s own stop is what withdraws the publication it kept');
 
   const second = await resident(t, f);
   const replayed = hostRows(f.ledgerPath).map((row) => JSON.stringify(row.payload));
