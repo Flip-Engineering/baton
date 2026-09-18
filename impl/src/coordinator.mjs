@@ -6,7 +6,7 @@
 
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { Cursor } from './log.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
@@ -1116,6 +1116,42 @@ export class SupervisedProcesses {
   }
 }
 
+/**
+ * The ONE suite-layout fact a supervised gate run derives from (issue #463): the runner path as
+ * the checkout spells it. The runner's OWN directory decides the rest — nothing here guesses at a
+ * layout:
+ *
+ *   • `suiteRoot` — the runner's parent, the root the runner resolves its own URLs against
+ *     (`new URL('../', import.meta.url)` in run-suite.mjs) and therefore the root every name it
+ *     takes is spelled against;
+ *   • `tests` — the test directory of that same root (`new URL('../test/', import.meta.url)`),
+ *     expressed relative to it: the shape the runner's own lanes, rows and file arguments carry;
+ *   • `runner` — the runner as the suite root spells it: the argv it is spawned with when that
+ *     root is the child's working directory.
+ *
+ * Paths are POSIX because every one of them is a NAME inside a checkout (the runner path a
+ * deployment declares, the file arguments the suite runner takes), never a host path being walked.
+ *
+ * @param {string} runnerPath the runner as the checkout spells it, e.g. `impl/scripts/run-suite.mjs`
+ * @returns {{runnerDir: string, suiteRoot: string, tests: string, runner: string}}
+ */
+export function gateRunnerLayout(runnerPath) {
+  const named = `${runnerPath}`;
+  const runnerDir = posix.dirname(named);
+  const suiteRoot = posix.dirname(runnerDir);
+  // The runner's own test directory, read off its path the way run-suite.mjs reads it: the
+  // directory the runner's import.meta.url resolves `../test/` to.
+  const tests = posix.relative(suiteRoot, posix.join(runnerDir, '..', 'test'));
+  return Object.freeze({ runnerDir, suiteRoot, tests, runner: posix.relative(suiteRoot, named) });
+}
+
+/** One gate file as the runner takes it: `<tests>/<file>` relative to the suite root. Idempotent —
+ * a name already spelled that way (read back from a receipt, say) is returned unchanged, so a
+ * caller can hand the runner either the derived basename or a name it was given. */
+export function gateRunnerFile(layout, file) {
+  return posix.join(layout.tests, posix.basename(`${file}`));
+}
+
 /** Issue #459: THE integration gate run — one node script (the suite runner over the derived gate
  * set) run OUT OF PROCESS under this resident's supervision, holding the host verify lease the way
  * a seat's own suite does.
@@ -1126,6 +1162,12 @@ export class SupervisedProcesses {
  * behind the process that spawned it. A lease that cannot be taken within the runner's own bound
  * refuses typed — `integrate_gates_busy` naming the holder it waited behind — BEFORE any child is
  * spawned: it never blocks, and it never half-runs a gate set.
+ *
+ * Issue #463: the child's working directory and its file arguments are BOTH read off the runner's
+ * own path (`gateRunnerLayout`). A landing handed this seam bare test basenames while the checkout
+ * root was the working directory, so every name resolved one directory too high and `node --test`
+ * answered "exited 1 without reporting" 192 times. The runner takes names relative to its suite
+ * root; the suite root is where it runs.
  */
 export async function runSupervisedGateRun({
   file, dir, files = [], env = {}, holder, label = 'integration-gate',
@@ -1185,8 +1227,16 @@ export async function runSupervisedGateRun({
   }
   try {
     const digest = lease === null || lease.token === null ? null : suiteLeaseTokenDigest(lease.token);
+    const layout = gateRunnerLayout(file);
     return await (pool ?? new SupervisedProcesses()).run({
-      file, args: [...files], cwd: dir, label, timeoutMs,
+      // The runner is named by its absolute path so the spawn does not depend on any ambient cwd,
+      // and it is run FROM its suite root — the root the names below are spelled against.
+      file: resolve(dir, file),
+      args: files.map((entry) => gateRunnerFile(layout, entry)),
+      // `resolve`, not `join`: a runner a deployment names absolutely keeps its own suite root
+      // rather than being read as a path under the checkout.
+      cwd: resolve(dir, layout.suiteRoot),
+      label, timeoutMs,
       env: { ...env, ...(digest === null ? {} : { [SUITE_VERIFY_LEASE_ENV]: digest }) },
     });
   } finally {

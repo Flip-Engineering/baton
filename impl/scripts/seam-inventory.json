@@ -13210,7 +13210,7 @@
         {
           "name": "_landingFailureDetail",
           "ordinal": 0,
-          "size": 30,
+          "size": 43,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13228,7 +13228,7 @@
         {
           "name": "_landingComment",
           "ordinal": 0,
-          "size": 20,
+          "size": 25,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -13237,7 +13237,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 152,
+          "size": 206,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -13252,6 +13252,15 @@
           "evidence": [
             "admission:refusal_name",
             "observation:record_name"
+          ]
+        },
+        {
+          "name": "_gateSelection",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {

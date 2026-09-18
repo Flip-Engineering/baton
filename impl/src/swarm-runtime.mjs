@@ -24,7 +24,9 @@ import { hostCapacityShortfall, HOST_CAPACITY_BYPASS } from './host-capacity.mjs
 // Issue #459: the landing's two out-of-process steps run through the resident's own supervised
 // pool — an ASYNCHRONOUS child of this resident, never a `spawnSync` on its loop — and the gate
 // run takes the host verify lease through the suite runner's seam.
-import { SupervisedProcesses, runSupervisedGateRun, supervisedGateTimeoutMs } from './coordinator.mjs';
+import {
+  SupervisedProcesses, gateRunnerFile, gateRunnerLayout, runSupervisedGateRun, supervisedGateTimeoutMs,
+} from './coordinator.mjs';
 // #341 part 3: the ONE rendering of the deployment's route-usage rows, shared with the
 // provider-facing brief (adapter.mjs renderBrief) so the seat's brief and the rendered subsection
 // can never spell the same rows differently.
@@ -41,7 +43,7 @@ import { landContribution } from './worktree.mjs';
 import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 // The artifacts a landing regenerates before it commits (#296): the seam inventory, the surface
 // gate's outputs and the rendered docs. They run INSIDE the squash so the target never carries a
@@ -55,6 +57,31 @@ const INTEGRATION_REGENERATORS = Object.freeze([
 /** The suite runner a landing's gate run invokes, and the one script name every row of that step
  * spells. */
 const INTEGRATION_GATE_RUNNER = 'impl/scripts/run-suite.mjs';
+
+/** Issue #463: the layout that runner defines, read off its own path ONCE — the checkout-relative
+ * suite root, the test directory inside it, and the shape every gate file arrives in
+ * (`<tests>/<file>`, relative to that root). The runner's own directory is the one fact; the cwd a
+ * child is spawned with and the names it is handed both derive from it, so the two can never
+ * disagree again. */
+const GATE_RUNNER_LAYOUT = gateRunnerLayout(INTEGRATION_GATE_RUNNER);
+
+/** Issue #463: the verdict line an EMPTY gate derivation answers with — the #300/docs-42 §6
+ * vocabulary for "this change touches no tested path", never a silent widening to the whole suite. */
+const GATE_SKIPPED_LINE = 'skipped — no_affected_tests';
+
+/** Issue #463: the facts one landing attempt derived for its own gate step, with the absent ones
+ * dropped — the ONE shape the refusal detail and the durable failure row are composed from. A
+ * stderr tail is always named with the step that spoke it, so neither reader has to guess whose
+ * words those were. */
+function gateFailureFacts({ selection = null, skipped = null, stderrTail = null, exit = null, regenerated = null } = {}) {
+  return {
+    ...(selection === null ? {} : { selection }),
+    ...(skipped === null ? {} : { skipped }),
+    ...(stderrTail === null ? {} : { stderrTail, script: INTEGRATION_GATE_RUNNER }),
+    ...(Number.isSafeInteger(exit) ? { exit } : {}),
+    ...(Array.isArray(regenerated) ? { regenerated } : {}),
+  };
+}
 
 /** The #326 tail for one captured stream: bound the raw bytes by the adapter's own ceiling, then
  * redact with the one sanitizer. The LAST bytes survive — a dying step's own words are the
@@ -99,7 +126,11 @@ async function defaultIntegrationRegenerate(dir, { pool = null } = {}) {
  * Issue #459: the run is a supervised child that HOLDS THE HOST VERIFY LEASE — taken by this
  * resident through the suite runner's own seam, then proven to the child by the token digest the
  * runner publishes to nested runners. The deadlock the issue observed cannot form: the child never
- * queues behind the process that spawned it, and the resident answers throughout. */
+ * queues behind the process that spawned it, and the resident answers throughout.
+ *
+ * Issue #463: the run's own last words and exit status are read back WITH the verdict, so a RED
+ * gate is as actionable as a crashed one — the refusal carries them either way instead of only
+ * when the runner died before judging. */
 async function defaultIntegrationGates(dir, files, context, { pool = null, holder = null, leaseAuthority = null } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), 'baton-integrate-'));
   const verdictPath = join(scratch, 'verdict.json');
@@ -109,6 +140,9 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
       env: { BATON_SUITE_VERDICT_FILE: verdictPath },
       timeoutMs: supervisedGateTimeoutMs(),
     });
+    // Read ONCE, and carried on both outcomes below.
+    const stderrTail = boundedStderrTail(`${result.stderr || result.stdout}`);
+    const exit = result.status === 'timeout' ? null : result.code ?? null;
     let document = null;
     try {
       document = JSON.parse(readFileSync(verdictPath, 'utf8'));
@@ -123,10 +157,11 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
         verdictLine: null,
         unexpected: [{
           row: result.timedOut ? 'suite-timed-out' : 'suite-did-not-judge',
-          script: INTEGRATION_GATE_RUNNER, exitStatus: result.status === 'timeout' ? null : result.code,
+          script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
           ...(result.timedOut ? { timedOut: true } : {}),
-          stderrTail: boundedStderrTail(`${result.stderr || result.stdout}`),
+          stderrTail,
         }],
+        stderrTail, exit,
       };
     }
     const unexpected = Array.isArray(document.unexpected) ? [...document.unexpected] : [];
@@ -136,6 +171,7 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
         + `unexpected ${unexpected.length}, expected-red ${document.expectedRed}`
         + (context?.squashSha ? `, squash ${`${context.squashSha}`.slice(0, 12)}` : ''),
       unexpected,
+      stderrTail, exit,
     };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -5039,8 +5075,13 @@ export class SwarmRuntime {
    * "failed"), the step that died with its exit status and bounded redacted stderr tail (#451), the
    * admission the gate run could not take (#459), or the range that was never landable. ONE
    * derivation: the caller's refusal and the durable `swarm.integration_failed` row a caller who is
-   * gone reads back must never disagree about why the landing stopped. */
-  _landingFailureDetail(error, swarm) {
+  * gone reads back must never disagree about why the landing stopped.
+  *
+  * Issue #463: `context` is what only THIS runtime knows about the step the failure happened in —
+  * the selection its own gate derivation made, the runner's own words and status, the reason an
+  * empty derivation was skipped under, and the artifacts the regenerators wrote. Absent facts stay
+  * absent: a refusal never wears a row the attempt did not produce. */
+  _landingFailureDetail(error, swarm, context = {}) {
     const detail = {};
     if (Array.isArray(error.paths)) {
       detail.paths = error.paths;
@@ -5068,17 +5109,31 @@ export class SwarmRuntime {
         if (error.detail[field] !== undefined) detail[field] = error.detail[field];
       }
     }
+    // Issue #463: `regenerated` is handed on as `changed - changedBeforeRegeneration` — the same
+    // rule `landContribution` applies to build the receipt's own list, so the refusal a red gate
+    // produces and the receipt a green one produces can never name different artifacts.
+    if (Array.isArray(context.regenerated)) detail.regenerated = context.regenerated;
+    if (context.selection !== undefined && context.selection !== null) detail.selection = context.selection;
+    if (typeof context.skipped === 'string' && context.skipped.length > 0) detail.skipped = context.skipped;
+    if (detail.stderrTail === undefined && typeof context.stderrTail === 'string' && context.stderrTail.length > 0) {
+      detail.stderrTail = context.stderrTail;
+    }
+    if (detail.script === undefined && typeof context.script === 'string' && context.script.length > 0) {
+      detail.script = context.script;
+    }
+    if (detail.exit === undefined && Number.isSafeInteger(context.exit)) detail.exit = context.exit;
     return detail;
   }
 
   /** Translate the git authority's typed landing error into the family's refusal, and nothing else:
    * the failure row a caller who is gone reads records the error's OWN code, so this switch and that
-   * row can never disagree about which code a landing failed with. */
-  _refuseLanding(error, swarm) {
+   * row can never disagree about which code a landing failed with. `facts` is the #463 context the
+   * runtime derived for the step the error came out of — the same rows the durable row records. */
+  _refuseLanding(error, swarm, facts = {}) {
     const raised = typeof error?.code === 'string' && error.code.startsWith('integrate_')
       ? error.code : null;
     if (raised === null) throw error;
-    const detail = this._landingFailureDetail(error, swarm);
+    const detail = this._landingFailureDetail(error, swarm, facts);
     const message = `Landing did not complete: ${error.message}`;
     // The code is spelled at each call site, never passed through: the #430 owner table is audited
     // by reading the LITERAL second argument of every refuse() in this module, so a variable here
@@ -5118,8 +5173,13 @@ export class SwarmRuntime {
         ? '- target head after: unchanged (dry run)'
         : `- target head after: \`${receipt.targetHeadAfter}\``,
       `- changed paths: ${receipt.changedPaths.length}`,
-      `- gates: ${receipt.gates.files.length} file(s)`
-        + `${receipt.gates.verdictLine === null ? '' : ` — ${receipt.gates.verdictLine}`}`,
+      // Issue #463: a gate set that was SKIPPED says which closed reason skipped it — the same
+      // vocabulary the receipt and the refusal carry, so the comment a target's history keeps can
+      // never read as "the suite ran" when nothing was selected.
+      receipt.gates.skipped === undefined
+        ? `- gates: ${receipt.gates.files.length} file(s)`
+          + `${receipt.gates.verdictLine === null ? '' : ` — ${receipt.gates.verdictLine}`}`
+        : `- gates: skipped — ${receipt.gates.skipped}`,
     ];
     if (receipt.regenerated.length > 0) lines.push(`- regenerated: ${receipt.regenerated.join(', ')}`);
     if (receipt.conflicts.length > 0) {
@@ -5189,7 +5249,22 @@ export class SwarmRuntime {
     const swept = [...(this._integrationSweep ?? [])];
     let started = null;
     let landed;
+    // Issue #463: what this landing's OWN gate derivation and gate run answered. The worktree
+    // authority raises the red error itself, and an error minted there cannot carry a fact only
+    // this runtime holds — so the selection, the runner's own words and status, how an empty
+    // derivation was decided, and the artifacts the regenerators wrote are kept here and handed to
+    // the refusal, the durable failure row and the receipt alike.
+    let gateSelection = null;
+    let gateSkipped = null;
+    let gateTail = null;
+    let gateExit = null;
+    let gateRegenerated = null;
+    /** The change as the squash carried it BEFORE the regenerators wrote — read by this runtime's
+     * own regenerate callback, never guessed at afterwards (see `regenerated` below). */
+    let changedBeforeRegeneration = null;
     try {
+      const regenerate = typeof authority.regenerate === 'function'
+        ? authority.regenerate : (dir) => defaultIntegrationRegenerate(dir, { pool });
       landed = await landContribution(authority.repoRoot, {
         contributionId: args.contributionId,
         target: args.target,
@@ -5217,25 +5292,50 @@ export class SwarmRuntime {
             ...(swept.length === 0 ? {} : { swept }),
           }, principal, `swarm-integration-start:${operationKey}`);
         },
-        regenerate: typeof authority.regenerate === 'function'
-          ? authority.regenerate : (dir) => defaultIntegrationRegenerate(dir, { pool }),
+        // Issue #463: the deployment's own regenerator (or the default one) wrapped so the runtime
+        // holds the change as it stood BEFORE the artifacts were written. `regenerated` is then the
+        // same rule `landContribution` applies — this runtime is handed both sides of it by its own
+        // callback — without asking git a second time for what the git authority already knows.
+        regenerate: async (dir, regenerateContext) => {
+          changedBeforeRegeneration = Array.isArray(regenerateContext?.changed)
+            ? [...regenerateContext.changed] : null;
+          return regenerate(dir, regenerateContext);
+        },
         runGates: async (dir, changed, gateContext) => {
           // The gate set is DERIVED from what the squash actually changed — the changed paths, the
           // issues the contribution names, and the seam inventory behind both.
           const gate = gateSetForPaths(changed, { issues: issue === null ? [] : [issue] });
+          // Issue #463: the derived selection reaches the runner in the RUNNER'S shape and at the
+          // runner's root — `<tests>/<file>` relative to the suite root the runner runs from — and
+          // never as a bare basename resolved against the checkout root.
+          const files = gate.files.map((file) => gateRunnerFile(GATE_RUNNER_LAYOUT, file));
+          gateSelection = this._gateSelection(changed, gate, files, issue);
+          gateRegenerated = changedBeforeRegeneration === null ? null
+            : changed.filter((path) => !changedBeforeRegeneration.includes(path));
+          // Issue #463: an empty derivation is a DECISION — the change touches no tested path —
+          // and it is never a quiet widening to the whole suite. Running no gate is what the
+          // determination says; the receipt and the landing comment name it in the #300/docs-42 §6
+          // vocabulary instead of leaving a reader to guess why nothing ran.
+          if (files.length === 0) {
+            gateSkipped = 'no_affected_tests';
+            return { files: [], verdictLine: GATE_SKIPPED_LINE, unexpected: [] };
+          }
           // The deployment's own runner when it configured one (a fixture's, an operator's), else
           // the supervised out-of-process suite runner that holds the host verify lease (#459) —
           // admitted through the RESIDENT's own host-capacity authority when it has one (the same
           // authority a seat's admission runs through, so both read one host observation), else
           // through the suite runner's own seam.
           const verdict = typeof authority.runGates === 'function'
-            ? await authority.runGates(dir, gate.files, {
-              ...gateContext, gate, contributionId: args.contributionId })
-            : await defaultIntegrationGates(dir, gate.files, {
-              ...gateContext, gate, contributionId: args.contributionId },
+            ? await authority.runGates(dir, files, {
+              ...gateContext, gate, selection: gateSelection, contributionId: args.contributionId })
+            : await defaultIntegrationGates(dir, files, {
+              ...gateContext, gate, selection: gateSelection, contributionId: args.contributionId },
             { pool, holder: gateHolder, leaseAuthority: this.hostCapacity ?? null });
+          gateTail = typeof verdict?.stderrTail === 'string' && verdict.stderrTail.length > 0
+            ? verdict.stderrTail : null;
+          gateExit = Number.isSafeInteger(verdict?.exit) ? verdict.exit : null;
           return {
-            files: gate.files,
+            files,
             verdictLine: verdict?.verdictLine ?? null,
             unexpected: Array.isArray(verdict?.unexpected) ? verdict.unexpected : [],
           };
@@ -5247,15 +5347,29 @@ export class SwarmRuntime {
       // from the record: the code the landing failed with, the detail that explains it, and the
       // #451 stderr tail when a step died. Its own key, so a re-attempt under a new idempotency
       // key records its own failure rather than replaying the previous one's.
-      if (started !== null) this._recordIntegrationFailure(args, contribution, error, principal, operationKey);
-      this._refuseLanding(error, swarm);
+      const landingFacts = gateFailureFacts({
+        selection: gateSelection, skipped: gateSkipped, stderrTail: gateTail, exit: gateExit,
+        regenerated: gateRegenerated,
+      });
+      if (started !== null) {
+        this._recordIntegrationFailure(args, contribution, error, principal, operationKey, landingFacts);
+      }
+      this._refuseLanding(error, swarm, landingFacts);
     }
     const receipt = {
       contributionId: args.contributionId, participantId: contribution.participantId,
       base: landed.base, target: landed.target,
       targetHeadBefore: landed.targetHeadBefore, targetHeadAfter: landed.targetHeadAfter,
       squashSha: landed.squashSha, changedPaths: landed.changedPaths,
-      gates: landed.gates, regenerated: landed.regenerated,
+      // Issue #463: the receipt carries the selection the gate set was derived from — the same rows
+      // the refusal and the durable failure row carry — and, when the derivation was empty, the
+      // closed reason it was skipped under instead of a silence that reads as "the suite ran".
+      gates: {
+        ...landed.gates,
+        ...(gateSelection === null ? {} : { selection: gateSelection }),
+        ...(gateSkipped === null ? {} : { skipped: gateSkipped }),
+      },
+      regenerated: landed.regenerated,
       // A hard conflict REFUSES — it never lands. What this list carries is the overlap git merged
       // WITHOUT a conflict: the silent case the #296 observation says went unrecorded.
       conflicts: landed.overlaps,
@@ -5285,16 +5399,59 @@ export class SwarmRuntime {
   /** Issue #459: the durable failure row one landing leaves when it stops after it opened — the
    * outcome a caller that is gone still reads. The code is the error's OWN code (the same literal
    * `_refuseLanding` maps 1:1), so the row and the refusal can never spell the failure
-   * differently. */
-  _recordIntegrationFailure(args, contribution, error, principal, operationKey) {
+   * differently. Issue #463: `facts` is the same context the refusal carries — the row the caller
+   * never saw and the refusal the caller did see are composed from ONE derivation. */
+  _recordIntegrationFailure(args, contribution, error, principal, operationKey, facts = {}) {
     const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : 'integrate_change_invalid';
     try {
       this._recordIntegrationRow('swarm.integration_failed', {
         swarmId: args.swarmId, contributionId: args.contributionId,
         participantId: contribution.participantId, target: args.target,
-        code, detail: this._landingFailureDetail(error, this._swarm(args.swarmId)),
+        code, detail: this._landingFailureDetail(error, this._swarm(args.swarmId), facts),
       }, principal, `swarm-integration-failed:${operationKey}`);
     } catch { /* the refusal below is the caller's answer; a raced failure row is evidence only */ }
+  }
+
+  /** Issue #463: the selection a landing's gate derivation actually made, in the shape the #300
+   * receipt uses — `{files, reason, provenance}` — so a red gate can say "these files were SELECTED
+   * for this change" and never read as "these files failed".
+   *
+   * `files` are the gate files in the runner's own shape (`<tests>/<file>`, relative to the suite
+   * root the runner runs from); `reason` is the one-line account of the derivation — how many
+   * changed paths selected how many files, through which regions, seams and issue rows the landing
+   * table answered; `provenance` names, per file, the cause that put it in the set.
+   *
+   * The causes are derived by asking the SAME table one changed path at a time (and once for the
+   * issue rows the contribution names), never by re-reading its region table here: a second copy of
+   * the rule is exactly what would drift from the set that ran. The table is the landing's one
+   * selection authority, and a landing's change set is its squash — the calls are proportional to
+   * the files the squash carries. */
+  _gateSelection(changed, gate, files, issue) {
+    const issues = issue === null || issue === undefined ? [] : [issue];
+    // The rows the contribution's own issue selects, read from the table with no changed paths at
+    // all — the one basis a per-path reading below cannot see.
+    const issueRows = new Set(gateSetForPaths([], { issues }).files);
+    const byPath = changed.map((path) => ({
+      path, files: new Set(gateSetForPaths([path], { issues: [] }).files),
+    }));
+    const provenance = files.map((file) => {
+      const name = basename(file);
+      if (issueRows.has(name)) {
+        return Object.freeze({ path: file, reason: 'issue', via: `#${issues.join(', #')}` });
+      }
+      const cause = byPath.find((entry) => entry.files.has(name));
+      return Object.freeze(cause === undefined
+        ? { path: file, reason: 'gate-set', via: null }
+        : { path: file, reason: 'region', via: cause.path });
+    });
+    const account = [`${changed.length} changed path(s) select ${files.length} gate file(s)`];
+    if (gate.regions.length > 0) account.push(`regions ${gate.regions.join(', ')}`);
+    if (gate.inventoried.length > 0) account.push(`${gate.inventoried.length} inventoried seam path(s)`);
+    if (issues.length > 0) account.push(`issue #${issues.join(', #')}`);
+    const reason = files.length === 0
+      ? `${changed.length} changed path(s) touch no gate file: the landing runs no gate`
+      : account.join(': ');
+    return Object.freeze({ files: Object.freeze([...files]), reason, provenance: Object.freeze(provenance) });
   }
 
   /** The ONE write behind the landing's own two lifecycle rows (#459): a runtime-owned driver row,
