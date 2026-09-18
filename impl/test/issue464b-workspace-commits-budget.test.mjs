@@ -16,12 +16,14 @@
 //   (b) a bridge PAGE drops the commit rows entirely (they are heavy per-row fields, like
 //       lastToolRows and the native record) and keeps `commitsTotal` — the count and the reach are
 //       what a page carries;
-//   (c) a 36-seat fixture whose seats each carry 60 commits answers its participants projection in
-//       ONE page — served 36, no cursor — which is the acceptance ds-464 could not reproduce-fix.
+//   (c) a 36-seat fixture whose seats are busier than a row may hold answers its participants
+//       projection in ONE frame — every seat, no cursor — the acceptance the issue measured at
+//       6 of 36 rows and lane ds-464 could not reproduce-fix.
 //
-// Red-first at HEAD (f5fc6c40): the row carried all 200 commits with no count at all, a page
-// carried every commit row it paged, and the 36-seat participants page served 29 of 36 rows with
-// `next: swarm-page:full:29`.
+// Red-first at HEAD (f5fc6c40): (a) the row carried all 200 commits and no count at all
+// (`200 !== undefined`); (b) the paged rows still carried their `commits` arrays
+// (`Object.hasOwn(row.workspace, 'commits')` was true); (c) the bridge answered 10 of the 36 rows
+// and named a cursor (`10 !== 36`). All four rows were green after the change.
 //
 // Hermetic: a real CoordinationStore and the real SwarmRuntime (plus the real native bridge for
 // (b)/(c)); commit attribution is written through the SAME `recordDriver('worktree.commit_recorded')`
