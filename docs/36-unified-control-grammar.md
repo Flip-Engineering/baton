@@ -507,8 +507,8 @@ fields each kind requires of the caller are read from the payload schemas
 records for itself, disjoint from the caller-submittable set above:
 
 - `swarm.operation_requested`
-- `swarm.operation_completed`
 - `swarm.operation_unavailable`
+- `swarm.operation_completed`
 - `swarm.operation_refused`
 - `swarm.integration_started`
 - `swarm.integration_failed`

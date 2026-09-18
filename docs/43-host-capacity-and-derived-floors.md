@@ -255,6 +255,14 @@ participant row — so `swarm.view`, `run.peers.read`, the recruit brief's `## S
 section and the checkpoint all carry the same bounded line: a 36-seat roster's participants
 projection (3 KB objectives each) fits one `wire.frame` instead of paging six rows at a time.
 
+A `swarm.operation_completed` row names the seat's objective by REFERENCE, never as a second
+copy (#469): `objectiveRef {kind: 'swarm.participant_joined', seq}` + `objectiveBytes` are the pair
+the participant row mints above, the wrapped `swarm.stop` answer's own `objective` is replaced by
+the same pair, and `planPreview` carries the node's id and the objective's FIRST LINE under
+`view.role.head` — so the receipt that measured 998 271 B (one 320 602 B objective spelled three
+times) and the 473 rows holding 56 MB of the parsed window record rows bounded by their fixed
+fields, and `baton swarm stop`'s rendering prints the line the reference names.
+
 A participant row carries its brief's REACH, never the composed text (#464, the third half):
 `brief` is `{bytes, seq, exposure}` — the composed brief's byte length, the
 `swarm.participant_joined` ledger row that holds it (the fold mints `briefBytes`/`briefRef` at the

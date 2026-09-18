@@ -233,6 +233,68 @@ const routeEquals = (left, right) => left != null && right != null
   && left.harness === right.harness && left.model === right.model
   && (left.effort ?? null) === (right.effort ?? null);
 
+/** Issue #469 (docs/46 §7 cost rule; the #465 breakdown's largest kind): the objective a
+ * `swarm.stop` receipt wraps is ONE durable fact — the `swarm.participant_joined` row the seat's
+ * join wrote — and the fold already mints it on the participant row as `role` (the objective's
+ * first line), `roleBytes` (the length a reader did not get) and `roleRef {kind, seq}` (#464). The
+ * receipt therefore carries that REFERENCE, never a copy: the measured row was 998 271 B because
+ * the same 320 602 B objective was spelled three times (`objective`, `planPreview.objective`,
+ * `planPreview.node.objective`), and 473 such rows held 56 MB of the ledger's 180 MB parsed
+ * window — paid again on every cold open. So:
+ *
+ *   • the view's own `objective` becomes `objectiveRef` + `objectiveBytes` — the pair a reader
+ *     resolves through the join row, the same spelling `roleRef`/`roleBytes` already use;
+ *   • `planPreview` carries the node's ID and the objective's FIRST LINE — the line the
+ *     participant row carries, already bounded by the ONE `view.role.head` registry row — and
+ *     never the text, so the node's own copy is dropped;
+ *   • any other objective the view spells (a plan node's) is bounded the same way rather than
+ *     carried whole.
+ *
+ * ONE derivation: the seat's participant row is READ, never re-derived — no second head or
+ * reference function exists to disagree with the fold. A receipt that carries no objective at all
+ * (a stop whose seat has no live run) comes back untouched. */
+function objectiveReferencedReceipt(receipt, seat) {
+  if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt)) return receipt;
+  const head = typeof seat?.role === 'string' && seat.role.length > 0 ? seat.role : null;
+  const carried = [];
+  // Record the text this projection took off the row and answer what may stand in its place: the
+  // participant row's bounded line, or nothing at all when the seat carries none.
+  const bounded = (text) => { carried.push(text); return head; };
+  const out = { ...receipt };
+  if (typeof out.objective === 'string' && out.objective.length > 0) {
+    carried.push(out.objective);
+    delete out.objective;
+  }
+  const preview = out.planPreview;
+  if (preview !== null && typeof preview === 'object' && !Array.isArray(preview)) {
+    const next = { ...preview };
+    if (typeof next.objective === 'string' && next.objective.length > 0) {
+      const line = bounded(next.objective);
+      if (line === null) delete next.objective; else next.objective = line;
+    }
+    const node = next.node;
+    if (node !== null && typeof node === 'object' && !Array.isArray(node)
+      && typeof node.objective === 'string' && node.objective.length > 0) {
+      carried.push(node.objective);
+      const { objective: _droppedNodeObjective, ...rest } = node;
+      next.node = rest;
+    }
+    out.planPreview = next;
+  }
+  if (Array.isArray(out.nodes)) {
+    out.nodes = out.nodes.map((node) => {
+      if (node === null || typeof node !== 'object' || Array.isArray(node)
+        || typeof node.objective !== 'string' || node.objective.length === 0) return node;
+      const line = bounded(node.objective);
+      if (line !== null) return { ...node, objective: line };
+      const { objective: _droppedNodeObjective, ...rest } = node;
+      return rest;
+    });
+  }
+  if (carried.length === 0) return receipt;
+  return { ...out, ...(seat?.roleRef ? { objectiveRef: seat.roleRef, objectiveBytes: seat.roleBytes ?? 0 } : {}) };
+}
+
 /** Issue #443 hand-back: the policy a `swarm.create` may OPEN with — validated against the SAME
  * closed vocabulary the `swarm.policy_updated` fold reads (swarm-state.mjs owns both tables), so
  * the two spellings of "declare a policy" can never disagree about what a policy is. The check runs
@@ -1786,8 +1848,17 @@ export class SwarmRuntime {
       swarmId: args.swarmId, command, requestDigest, basis: clone(basis), participantId,
     }, { actor: principal.actor, key });
     const operation = Promise.resolve().then(() => effect(clone(requested?.payload.basis ?? basis))).then((result) => {
+      // Issue #469: an operation whose answer names the seat's objective by REFERENCE (a stop's
+      // wrapped run view does, `objectiveReferencedReceipt`) carries that same reference on the row
+      // itself — so a reader of the ledger reads where the objective is without walking the answer
+      // it wraps, and the row's own shape is what `swarm-event-schemas.mjs` describes.
+      const referenced = result?.result?.objectiveRef ? {
+        objectiveRef: clone(result.result.objectiveRef),
+        objectiveBytes: result.result.objectiveBytes ?? 0,
+      } : {};
       this.store.recordDriver('swarm.operation_completed', {
-        swarmId: args.swarmId, command, operationKey: key, participantId, result: clone(result),
+        swarmId: args.swarmId, command, operationKey: key, participantId, ...referenced,
+        result: clone(result),
       }, { actor: principal.actor, key: `${key}:completed` });
       return result;
     }).catch((error) => {
@@ -6703,7 +6774,12 @@ export class SwarmRuntime {
           swarmId: args.swarmId, participantId: participant.participantId, reason: leaveReason,
         }, principal, `${operationKey}:leave`) : null;
         this._reconcileHostCapacity();
-        return { participantId: participant.participantId, result: stopped,
+        // Issue #469: the receipt a stop answers with IS the row the operation lane records
+        // (`_once` writes the effect's own result), so projecting it HERE is what keeps both the
+        // answer and the durable row carrying the objective's reference — never a second copy of
+        // the text the join row already holds.
+        return { participantId: participant.participantId,
+          result: objectiveReferencedReceipt(stopped, seat),
           leaveReason, writes: leave ? [leave] : [] };
       }, { context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
