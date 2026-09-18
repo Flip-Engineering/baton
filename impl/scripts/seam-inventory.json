@@ -12054,7 +12054,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 28,
+          "size": 32,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12092,11 +12092,38 @@
         {
           "name": "_observeParticipantFaults",
           "ordinal": 0,
-          "size": 35,
+          "size": 47,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
             "observation:record_name"
+          ]
+        },
+        {
+          "name": "_rerouteProposal",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_performAutoReroutes",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect"
+          ]
+        },
+        {
+          "name": "_autoRerouteOne",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect"
           ]
         },
         {
@@ -12402,9 +12429,55 @@
           ]
         },
         {
+          "name": "_compareRouteRows",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_routeBilling",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeWindowClosed",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_rerouteCandidates",
+          "ordinal": 0,
+          "size": 37,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_policyOf",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_routeSelection",
           "ordinal": 0,
-          "size": 111,
+          "size": 100,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -12606,7 +12679,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 952,
+          "size": 980,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12787,7 +12860,7 @@
         {
           "name": "_inheritancePredecessor",
           "ordinal": 0,
-          "size": 41,
+          "size": 47,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -12859,7 +12932,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 155,
+          "size": 195,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
@@ -12943,7 +13016,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 807,
+          "size": 814,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

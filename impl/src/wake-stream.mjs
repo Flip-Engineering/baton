@@ -237,6 +237,18 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'worker', kind: 'worker', fallback: { field: 'workerId', kind: 'worker' } },
   }),
   wakeRow({
+    wakeClass: 'reroute_proposed', scope: 'swarm', terminal: true,
+    next: 'baton swarm recruit {swarmId} SUCCESSOR --resume-from {participantId}',
+    summary: 'a seat died under a provider fault and the runtime recorded which routes could carry its work next',
+    // #443: the sibling of `dead`, and the half that class could not carry — a death the swarm can
+    // ANSWER. The fault observation records a decision (`swarm.reroute_proposed`) naming the
+    // ranked candidate routes, the fault's own reset answer and what the death left to carry, and
+    // this class is what wakes the root or the seat's sub-orchestrator on it. Terminal: the
+    // proposal IS the act the consumer takes — the recruit it names, or an explicit refusal of it.
+    rows: [ledgerKind('swarm.reroute_proposed')],
+    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
+  }),
+  wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,
     next: 'baton swarm guide {swarmId} {participantId}',
     summary: 'a turn paused and stays paused until a caller claims, nudges, or waits on it',

@@ -157,6 +157,21 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     reviewerId: STRING('the acting identity that reviewed: your own participant name when a member reviews, or the acting orchestrator\'s principal label; the runtime derives it, and a caller-named identity that is not the actor is refused', { required: false, ...AUTO('derived from the actor; you cannot review under another name') }),
     reason: STRING('why this decision', { example: 'verified against the running deployment' }),
   }),
+  // Issue #443: the swarm-level policy. A row changes the fields it names, so a view reads what an
+  // orchestrator declared and the runtime resolves the defaults (manual, no billing preference).
+  'swarm.policy_updated': KIND('declare the swarm-level policy a re-route follows when a seat\'s provider kills it', {
+    rerouteOnProviderFault: { type: 'string', enum: ['manual', 'auto'], required: false,
+      description: 'what happens when a seat dies under a provider fault: manual (the default) records the decision and pages an orchestrator, auto performs the resume itself onto the first candidate',
+      expectation: 'one of manual, auto', example: 'manual' },
+    reroutePreferApi: { type: 'boolean', required: false,
+      description: 'rank a per-token API route above a subscription route that has headroom (the default ranks a subscription route with headroom first, so an idle plan is spent before API money)',
+      example: false },
+  }, {
+    // A policy names at least ONE field (the fold refuses a row that changes nothing), so the
+    // shipped example names one — a derived example can only name `required` fields, and neither
+    // field is required: an orchestrator sets the mode, the billing preference, or both.
+    rerouteOnProviderFault: 'manual',
+  }),
   'swarm.participant_left': KIND('remove one participant from the swarm', {
     participantId: STRING('the participant who leaves', { required: true, ...AUTO('defaults to your own leave when you call as a member') }),
     reason: STRING('why they are leaving', { example: 'turn complete' }),

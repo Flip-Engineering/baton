@@ -55,12 +55,15 @@ function swarmWithParticipant(swarmId = 'sw1', participantId = 'p1') {
 // ── SWARM_EVENT_KINDS ────────────────────────────────────────────────────────
 
 describe('SWARM_EVENT_KINDS', () => {
-  test('contains all 19 event kinds', () => {
+  test('contains all 23 event kinds', () => {
     const expected = [
       'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound',
       'swarm.participant_left', 'swarm.group_updated', 'swarm.work_updated',
       'swarm.assignment_updated', 'swarm.coupling_updated', 'swarm.coupling_writer_bypassed',
       'swarm.participant_runtime_lost', 'swarm.participant_faulted',
+      // Issue #443: the swarm-level policy, the re-route decision the provider-fault observation
+      // records beside a death, and the performed re-route an `auto` swarm binds.
+      'swarm.policy_updated', 'swarm.reroute_proposed', 'swarm.rerouted',
       // Issue #385: workspace carry on resume-from.
       'workspace.carried_from',
       // Issues #422/#423: the joint coupling, claim and work-proposal families.

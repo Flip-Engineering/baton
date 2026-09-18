@@ -82,6 +82,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_capture_base_unreachable: row(409, ['runtime'], 'the captured revision and the deployment target share no common ancestor'),
   contribution_commit_unresolved: row(409, ['runtime'], 'the contribution names a commit that does not resolve on its lane branch yet'),
   route_degraded: row(409, ['runtime'], 'the named route\'s provider degraded it (one fault class took several seats inside one window); recruits pause on it until a probe succeeds'),
+  // Issue #443: a performed re-route answers ONE proposal, so the fold refuses a row whose
+  // predecessor does not carry that proposal — a successor that continues nothing is not a
+  // re-route, and the recorded decision would name a decision nobody made.
+  reroute_proposal_mismatch: row(409, ['fold'], 'the performed re-route names a proposal its predecessor does not carry'),
   // Issue #296: the landing verb's own refusals. Every one is raised BEFORE the target moves — the
   // scratch checkout is removed and nothing is recorded — except `integrate_target_moved`, which is
   // the one race the verb re-bases over once and then refuses.
