@@ -588,9 +588,17 @@ function dispatchFailure(cause, command = null) {
   }
   if (goalPlanCode === 'application_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'application command forbidden' } } };
   // U-F3: a permanent deployment condition keeps its own code, its verdict and its remedy.
+  // Issue #489: it also keeps the cause's OWN teaching when it has one — the Run view's oversize
+  // refusal names the section that dominates the view, its bytes and the narrowing that works,
+  // which no static remedy row can — exactly as the MCP ladder (mcp-northbound.mjs
+  // PERMANENT_TOOL_CAUSES) and the application_* branch below already cross it.
   const permanent = PERMANENT_DISPATCH_CAUSES[goalPlanCode];
   if (permanent) {
-    return failure(503, goalPlanCode, permanent.message, { retryable: false, action: permanent.remedy });
+    const taught = typeof cause?.message === 'string' && cause.message.length > 0 ? cause.message : null;
+    const detail = isRecord(cause?.detail) ? cause.detail : null;
+    return failure(503, goalPlanCode, taught ?? permanent.message, {
+      retryable: false, action: permanent.remedy, ...(detail === null ? {} : { detail }),
+    });
   }
   // A missing profile is deployment configuration the authenticated caller can read and fix;
   // naming it is not an enumeration surface the way run/worker identifiers are (issue #41).
