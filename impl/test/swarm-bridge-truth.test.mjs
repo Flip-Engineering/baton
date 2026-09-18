@@ -171,9 +171,10 @@ test('the client buffers under the bound the bridge published, so a raised ceili
   assert.equal(f.issued.env[SWARM_BRIDGE_ENV_KEYS.frameBytes], '4096', 'issue() publishes the negotiated bound');
   assert.equal(f.issued.receipt.frameBytes, 4096);
   assert.equal(f.bridge.inspect().frameBytes, 4096);
-  await f.call('update', { event: 'swarm.contribution_recorded', payload: { contributionId: 'c-fit', participantId: 'alpha', body: 'y'.repeat(2000) } });
-  // Between the published bound and the registry row: a client that used the registry default
-  // would reject this answer, and the bridge's own client must not.
+  // The body stays under the published 4096-byte ceiling with the row content the view now carries
+  // (issue #433 adds `reviewState` to every contribution row): the row is what this test prices,
+  // not the ceiling it answers under.
+  await f.call('update', { event: 'swarm.contribution_recorded', payload: { contributionId: 'c-fit', participantId: 'alpha', body: 'y'.repeat(1900) } });
   const view = await f.send('swarm.view', { swarmId: 'baton', projection: 'contributions' });
   assert.deepEqual(view.contributions.map((row) => row.contributionId), ['c-fit']);
   assert.equal(SWARM_BRIDGE_REFUSAL_COMMAND, 'swarm.bridge_refusal', 'the report verb is not a swarm command');

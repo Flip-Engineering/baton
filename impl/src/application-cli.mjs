@@ -2777,11 +2777,12 @@ export async function followSwarm(parsed, client, options = {}) {
  * so `baton swarm watch S --timeout-ms N --wake-class closed` waits for that class or for the
  * deadline.
  *
- * The answer is a WAKE FRAME first: `watch {reason, matchedSeq, event}` — the event enriched to the
- * #272 shape the follow stream prints (class, subject, next, terminal) by the resident's watch arm
- * — plus the refreshed view under the requested projection, which DEFAULTS TO `outline`: a wake is
- * not a view read, and the caller names a wider projection when it wants one. The frame rides
- * before the view in the answer, exactly as the CLI prints it. */
+ * The answer is a WAKE FRAME first: `watch {reason, matchedSeq, pendingSince, event, events}` — the
+ * event enriched to the #272 shape the follow stream prints (class, subject, next, terminal) by the
+ * resident's watch arm, and `events` carrying EVERY row of the frame, one line each in the answer
+ * (docs/46 §3.4, issue #433) — plus the refreshed view under the requested projection, which
+ * DEFAULTS TO `outline`: a wake is not a view read, and the caller names a wider projection when it
+ * wants one. The frame rides before the view in the answer, exactly as the CLI prints it. */
 export async function watchSwarmFiltered(parsed, client) {
   const kinds = parsed.kinds === null || parsed.kinds === undefined ? null : new Set(parsed.kinds);
   const projection = parsed.projection ?? 'outline';
@@ -2797,21 +2798,47 @@ export async function watchSwarmFiltered(parsed, client) {
       projection,
     }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}:${round}`);
     const wake = view?.watch ?? null;
-    const event = wake?.event ?? null;
+    // EVERY row the frame carried, never only the first (docs/46 §3.1, issue #433): a second wake
+    // inside the same call is rendered and filtered like the first. A resident that answered the
+    // single `event` (an older one) reads through the same rows, so the filter never depends on
+    // which shape answered.
+    const rows = Array.isArray(wake?.events) && wake.events.length > 0
+      ? wake.events
+      : (wake?.event === null || wake?.event === undefined ? [] : [wake.event]);
     // The class axis: a resident that names the class on its enriched watch row (#356) is believed
     // through the same table; an older resident's bare row is classified here. `kinds === null` is
     // the UNFILTERED watch: the next row IS the answer, class named when the row has one.
-    const wakeClass = typeof event?.wakeClass === 'string' && wakeClassRow(event.wakeClass) !== null
-      ? event.wakeClass
-      : (event === null ? null : (wakeClassFor({ kind: event.kind,
-        payload: event.payloadKind === null || event.payloadKind === undefined
-          ? null : { kind: event.payloadKind } })?.wakeClass ?? null));
-    const matched = kinds === null
-      ? wake?.reason === 'event'
-      : wakeClass !== null && kinds.has(wakeClass);
-    if (matched) return watchAnswer(view, projection, wake, wakeClass);
-    // Nothing matched: either the deadline passed (the runtime answered its own `timeout` row) or the
-    // row that woke it is outside the filter — resume past that row and keep waiting for a match.
+    const classOf = (row) => (typeof row?.wakeClass === 'string' && wakeClassRow(row.wakeClass) !== null
+      ? row.wakeClass
+      : (wakeClassFor({ kind: row?.kind,
+        payload: row?.payloadKind === null || row?.payloadKind === undefined
+          ? null : { kind: row.payloadKind } })?.wakeClass ?? null));
+    // A filtered watch answers when ANY row of the frame is admitted — the class of the row that
+    // matched is the class the answer names, never the first row's when a later one matched.
+    const matched = kinds === null ? null
+      : rows.find((row) => { const rowClass = classOf(row); return rowClass !== null && kinds.has(rowClass); }) ?? null;
+    const answered = kinds === null ? wake?.reason === 'event' : matched !== null;
+    if (answered) {
+      // The UNFILTERED watch answers the frame verbatim: the caller named no class, so every row
+      // the resident carried is its business.
+      if (kinds === null) return watchAnswer(view, projection, wake, classOf(rows[0] ?? null));
+      // The FILTERED watch answers the rows of the ADMITTED classes, in frame order (docs/46
+      // §3.5): a filtered frame carries `every row of the admitted classes past afterSeq`, and the
+      // class it names is the matching row's — never a row this caller did not ask for, and never
+      // the first row's class when a later row is the one that matched. `pendingSince` crosses
+      // verbatim: it names what the frame BOUND left out, which the filter does not change.
+      const admittedRows = rows.filter((row) => kinds.has(classOf(row)));
+      // `watch.event` is the first row that woke THIS watch — the first admitted row — and it is
+      // kept as the resident enriched it (the #272 frame the follow stream prints) whenever the
+      // frame's own `event` IS that row; otherwise the row the frame carried crosses unchanged.
+      const firstAdmitted = admittedRows[0];
+      const event = firstAdmitted.seq === wake?.event?.seq ? wake.event : firstAdmitted;
+      return watchAnswer(view, projection, { ...wake, event,
+        events: admittedRows, matchedSeq: admittedRows[admittedRows.length - 1].seq }, classOf(matched));
+    }
+    // Nothing matched: either the deadline passed (the runtime answered its own `timeout` row) or
+    // every row the frame carried is outside the filter — resume past the LAST row the frame named
+    // and keep waiting for a match, so a re-arm never skips a row the frame already showed.
     if (wake?.reason !== 'event' || !Number.isSafeInteger(wake.matchedSeq)) {
       return watchAnswer(view, projection, wake, null);
     }

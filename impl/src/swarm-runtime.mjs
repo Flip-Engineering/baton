@@ -534,6 +534,19 @@ export function validateSwarmSeatReadCommand(name, args) {
  * settle, and neither does an empty list). */
 export const SWARM_REVIEW_STATES = Object.freeze(['unreviewed', 'accepted', 'rejected']);
 
+/** The ONE review-state derivation (docs/46 §2.1): every reader of a contribution's review state —
+ * the view's contribution rows, the `contributions` projection, `run.contributions.read` through
+ * `contributionLedgerRows`, and the completion evidence `_acceptedContribution` (which reads
+ * `accepted`) — calls THIS function over the fold's append-only list for one contribution, so a
+ * review can never be counted two ways. `reviews` is in log order; comments carry no decision and
+ * settle nothing, and an empty list is `unreviewed` (absence, never a guess). */
+export function swarmContributionReviewState(reviews = []) {
+  const lastIndexOf = (decision) => reviews.map((review) => review.decision).lastIndexOf(decision);
+  const accepted = lastIndexOf('accept');
+  const rejected = lastIndexOf('reject');
+  return accepted >= 0 && accepted > rejected ? 'accepted' : rejected >= 0 ? 'rejected' : 'unreviewed';
+}
+
 /** The swarm's contributions in ledger order — the ONE derivation `run.contributions.read` reads
  * and a later `swarm.view --projection contributions` lane reuses. `since` is a ledger seq and the
  * filter is strict (rows recorded at or before it are not in the answer), so walking a page's
@@ -546,13 +559,9 @@ export function contributionLedgerRows(swarm, { since = 0 } = {}) {
   const rows = [];
   for (const contribution of Object.values(swarm.contributions ?? {})) {
     if (!Number.isSafeInteger(contribution?.seq) || contribution.seq <= since) continue;
-    const settling = (swarm.reviews?.[contribution.contributionId] ?? [])
-      .filter((review) => review.decision !== 'comment');
-    const lastIndex = (value) => settling.map((review) => review.decision).lastIndexOf(value);
-    const accepted = lastIndex('accept');
-    const rejected = lastIndex('reject');
-    const reviewState = accepted >= 0 && accepted > rejected ? 'accepted'
-      : rejected >= 0 ? 'rejected' : 'unreviewed';
+    const reviews = swarm.reviews?.[contribution.contributionId] ?? [];
+    const settling = reviews.filter((review) => review.decision !== 'comment');
+    const reviewState = swarmContributionReviewState(reviews);
     const body = contribution.body;
     const contract = body !== null && typeof body === 'object' && !Array.isArray(body)
       && isContributionContractBody(body) ? body : null;
@@ -1626,13 +1635,11 @@ export class SwarmRuntime {
     return !(paused.length > 0 && guidance.length > 0);
   }
 
-  /** One contribution is accepted evidence when a review accepts it and no LATER review on the
-   * same contribution rejects it: reviews append in log order, so append order is review order. */
+  /** One contribution is accepted evidence when its ONE review-state derivation (docs/46 §2.1)
+   * reads `accepted`: an accept exists and no LATER review on the same contribution rejects it —
+   * reviews append in log order, so append order is review order. */
   _acceptedContribution(swarm, contributionId) {
-    const reviews = swarm.reviews?.[contributionId] ?? [];
-    const lastIndex = (decision) => reviews.map((review) => review.decision).lastIndexOf(decision);
-    const accept = lastIndex('accept');
-    return accept >= 0 && accept > lastIndex('reject');
+    return swarmContributionReviewState(swarm.reviews?.[contributionId] ?? []) === 'accepted';
   }
 
   /** Evidence per work item (issue #263 item 1): the contributions that reference the work via
@@ -2481,14 +2488,43 @@ export class SwarmRuntime {
     };
     const boundSeqByParticipant = new Map();
     const joinedSeqByParticipant = new Map();
+    // Every brief composition this swarm has recorded, in ledger order — the cadence the
+    // `unreviewed_contribution` rows below are crossed by (docs/46 §2.3).
+    const joinedSeqs = [];
     for (const event of ledger) {
       if (event.payload?.swarmId !== swarm.swarmId || typeof event.payload?.participantId !== 'string') continue;
       if (event.kind === 'swarm.participant_bound') {
         const id = event.payload.participantId;
         boundSeqByParticipant.set(id, Math.max(boundSeqByParticipant.get(id) ?? -1, event.seq));
-      } else if (event.kind === 'swarm.participant_joined' && !joinedSeqByParticipant.has(event.payload.participantId)) {
-        joinedSeqByParticipant.set(event.payload.participantId, event.seq);
+      } else if (event.kind === 'swarm.participant_joined') {
+        joinedSeqs.push(event.seq);
+        if (!joinedSeqByParticipant.has(event.payload.participantId)) {
+          joinedSeqByParticipant.set(event.payload.participantId, event.seq);
+        }
       }
+    }
+    // Issue #433 (docs/46 §2.3): an unreviewed contribution past one recruit-brief cadence. The
+    // cadence is durable evidence, never a clock (#163): a recruit brief IS a
+    // `swarm.participant_joined` row, so a contribution that a LATER join crossed — while its
+    // ONE review-state derivation still reads `unreviewed` — pages its AUTHOR, the seat that sits
+    // `paused` with nothing saying why. Only an ACTIVE member pages (the rule the organization
+    // rows above follow), the row derives its `next` act (the check that settles it), and a
+    // settling review clears it on the next read because nothing here is stored: the fold's
+    // append-only reviews stay the one source.
+    for (const contribution of Object.values(swarm.contributions ?? {})
+      .sort((left, right) => left.seq - right.seq)) {
+      if (!Number.isSafeInteger(contribution?.seq)) continue;
+      const author = participantsById.get(contribution.participantId);
+      if (!author || author.status !== 'active') continue;
+      if (swarmContributionReviewState(swarm.reviews?.[contribution.contributionId] ?? []) !== 'unreviewed') continue;
+      const crossing = joinedSeqs.find((seq) => seq > contribution.seq);
+      if (crossing === undefined) continue;
+      organization.push({ kind: 'unreviewed_contribution', participantId: contribution.participantId,
+        contributionId: contribution.contributionId, seq: contribution.seq,
+        waitingSince: contribution.ts ?? null,
+        cadence: { crossedBy: 'swarm.participant_joined', seq: crossing },
+        next: { command: 'swarm.check', swarmId: swarm.swarmId,
+          participantId: contribution.participantId, contributionId: contribution.contributionId } });
     }
     for (const row of participants) {
       if (row.status !== 'active') continue;
@@ -2754,7 +2790,11 @@ export class SwarmRuntime {
         // Issue #310: a contract-claiming body projects its contract as rows beside the stored
         // row — subject, commit, item statuses, verification summary, hand-off counts.
         const contract = projectContributionContract(row.body);
-        const projected = contract === null ? row : { ...row, contract };
+        // Issue #433 (docs/46 §2.1): every contribution row carries the review state its ONE
+        // derivation reads — unreviewed | accepted | rejected, re-derived on every read — so a
+        // root's landing loop is a read of the view, never a grep of the ledger.
+        const reviewState = swarmContributionReviewState(swarm.reviews?.[row.contributionId] ?? []);
+        const projected = { ...row, reviewState, ...(contract === null ? {} : { contract }) };
         return queued ? { ...projected, admission: { state: 'queued', authority: queued.authority,
           leaseKind: queued.leaseKind, position: queued.position, ahead: queued.ahead,
           shortfall: queued.shortfall, checkId: queued.checkId, participantId: queued.participantId,
@@ -2855,6 +2895,10 @@ export class SwarmRuntime {
     let cursor = afterSeq;
     if (cursor > this.store.ledgerHeadSeq()) refuse('Swarm cursor is ahead of this deployment', 'swarm_cursor_invalid');
     const deadline = performance.now() + (args.timeoutMs ?? 30000);
+    // The frame bound is the ONE substrate row (docs/46 §3.2) — never a fresh constant — and the
+    // frame is byte-measured the way `evidence.search` measures: the FIRST admitted row is always
+    // kept, and the tail the bound cut is NAMED by `pendingSince` instead of being dropped.
+    const frameBytes = FRAME_LIMITS['wire.frame'].value;
     for (;;) {
       const swarm = this._swarm(args.swarmId);
       this._permit(swarm, principal, context, 'read');
@@ -2867,9 +2911,12 @@ export class SwarmRuntime {
       // form reads exactly the tail — `eventsView()` with no argument copies the whole ledger
       // per watch iteration (the store calls that the #210 class; 2026-09-14 audit S-E3).
       const events = this.store.eventsView(cursor + 1);
-      const relevant = events.find(({ kind, payload }) => {
-        // A watch call is itself a native tool call. Waking on tool/usage telemetry makes
-        // the observer generate the next wake indefinitely, even when every peer is paused.
+      // The ONE relevance filter, unchanged: a watch call is itself a native tool call, so waking
+      // on tool/usage telemetry would make the observer generate the next wake indefinitely even
+      // when every peer is paused. What changed (#433, docs/46 §3.1) is that EVERY admitted row
+      // past `afterSeq` is carried — what landed between a wake return and the caller's next
+      // `--after-seq` re-arm is exactly what used to be invisible.
+      const admitted = events.filter(({ kind, payload }) => {
         if (['evidence.mapped', 'driver.recorded'].includes(kind)
           && (payload?.kind === 'content.tool_call' || payload?.kind === 'route.observed'
             || payload?.kind?.startsWith('resource.'))) return false;
@@ -2885,15 +2932,32 @@ export class SwarmRuntime {
         const row = swarm.participants[event.payload?.participantId];
         return row ? { participantId: row.participantId, route: row.route ?? null, scope: row.scope ?? null } : {};
       };
-      if (relevant || performance.now() >= deadline) return {
+      const carried = [];
+      let bytes = 0;
+      for (const event of admitted) {
+        const row = { seq: event.seq, kind: event.kind,
+          payloadKind: event.payload?.kind ?? null, ...recruited(event) };
+        const size = Buffer.byteLength(JSON.stringify(row), 'utf8');
+        if (carried.length > 0 && bytes + size > frameBytes) break;
+        carried.push(row);
+        bytes += size;
+      }
+      if (carried.length > 0 || performance.now() >= deadline) return {
         ...this.inspect(swarm, principal, context, null, args.projection),
         watch: {
-          reason: relevant ? 'event' : 'timeout', afterSeq, matchedSeq: relevant?.seq ?? null,
-          // The wake names what woke it, so a follower can act without re-reading the log; a wake
-          // that IS a recruitment also names the route and scope the seat was started under
-          // (issue #283 root comment 1), projected from the durable join like everything else.
-          event: relevant ? { seq: relevant.seq, kind: relevant.kind,
-            payloadKind: relevant.payload?.kind ?? null, ...recruited(relevant) } : null,
+          reason: carried.length > 0 ? 'event' : 'timeout', afterSeq,
+          // The LAST carried row's seq (docs/46 §3.3): re-arming with `--after-seq matchedSeq`
+          // loses nothing, whether the frame bound cut the tail or not.
+          matchedSeq: carried.length > 0 ? carried[carried.length - 1].seq : null,
+          // The first row the bound could not carry, so a caller that reads one frame knows
+          // exactly where to resume — nothing is ever silently lost (docs/46 §3.2).
+          pendingSince: carried.length < admitted.length ? admitted[carried.length].seq : null,
+          // The FIRST row that woke the watch keeps its meaning for one release of CLI
+          // compatibility (docs/46 §3.4); `events` is the whole frame. A wake that IS a
+          // recruitment also names the route and scope the seat was started under (issue #283
+          // root comment 1), projected from the durable join like everything else.
+          event: carried[0] ?? null,
+          events: carried,
         },
       };
       cursor = this.store.ledgerHeadSeq();

@@ -270,7 +270,13 @@ test('442-b1: the bounded watch returns ON the fault row, and that row derives t
   const answer = await seat.call('watch', { swarmId: 'sw', afterSeq: cursor, timeoutMs: 5_000 });
   assert.equal(answer.watch.reason, 'event', 'the watch returns on the fault, never on its deadline');
   const faultSeq = faultRows(seat.driver)[0].seq;
-  assert.equal(answer.watch.matchedSeq, faultSeq, 'and the row it returned on IS the fault row');
+  // Issue #433 (docs/46 §3.1/§3.3): the frame carries EVERY admitted row past afterSeq — the fault
+  // row is in it — and `matchedSeq` names the frame's LAST row, the seq a re-arm resumes from.
+  assert.ok(answer.watch.events.some((row) => row.seq === faultSeq),
+    'and the row it returned on IS in the frame it answered with');
+  assert.equal(answer.watch.matchedSeq, answer.watch.events.at(-1).seq,
+    'matchedSeq names the last row the frame carried');
+  assert.ok(answer.watch.matchedSeq >= faultSeq);
   assert.equal(participantRow(answer, 'alpha').status, 'left',
     'the answer the root reads carries the settled seat');
 
