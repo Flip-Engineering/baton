@@ -1,0 +1,16 @@
+Deliver GitHub issue #409 in this Baton repository. The worker runtime has no gh credential, so the finding is transcribed here.
+
+TITLE: run.wait polls the coordinator on a 100 ms sleep loop while follow and inspect wait on the event-driven primitive.
+AUDIT FINDING (consolidated C36, principle P11): one contract, two wait disciplines. Sites named: impl/src/application.mjs — the run.wait implementation (grep for the wait loop: a `setTimeout`/sleep of 100 ms or a `pollMs` inside the run.wait handler, around the `until: 'terminal'` / settle-block logic; the lane l06 report cited ~8777–8784, ~9162 and ~11810 at the time — the numbers have moved, the shapes have not), while run.follow and run.inspect wait on the coordinator's event-driven wait primitive (grep how `follow` awaits `coordinator.wait(`/the change signal).
+
+REQUIRED:
+1. run.wait awaits the SAME event-driven primitive follow and inspect use (the coordinator's change signal / wait with a deadline), never a fixed sleep loop; the deadline stays the caller's timeoutMs bounded by the existing policy (the #394 web ceiling row for the web arm; the application's own admitted bound otherwise — read them, never re-type a number). The durable-stop fast path (blind-waits A1 rows) keeps its behaviour.
+2. No numeric literal for the cadence remains in run.wait (the 100 ms is gone; if any cadence must survive it is a limits.mjs row with a derivation).
+3. Red-before rows in a NEW file impl/test/issue409-run-wait-event-driven.test.mjs, built on impl/test/blind-waits-red.test.mjs's fixtures: (a) a run.wait that resolves the moment the run reaches its terminal phase (measure: the wait returns within the primitive's own latency, far under 100 ms, after the terminal row lands — assert against a bound derived from the primitive, not a magic number); (b) a run.wait with an unreachable condition returns at its deadline once, without intermediate polls (spy the coordinator's read behind the loop and assert it is not called more than the primitive's wake count); (c) a grep row: application.mjs run.wait names no sleep cadence literal. Observe every row red at HEAD before editing.
+4. Keep green: impl/test/blind-waits-red.test.mjs, impl/test/issue394-web-wait-ceiling.test.mjs, impl/test/issue365-run-follow-legs.test.mjs, every impl/test/application*.test.mjs and impl/test/run-*.test.mjs, impl/test/frame-economics-red.test.mjs.
+
+OWNED FILES (yours alone): impl/src/application.mjs (the run.wait handler ONLY), impl/test/issue409-*.test.mjs. Do NOT edit coordinator.mjs, web-northbound.mjs, application-cli.mjs or the docs. NEVER run git stash. Never print credential values.
+
+VERIFY: node --test on your new file plus the files in item 4 — NEVER run-suite --changed and NEVER the full suite. Then `node impl/scripts/seam-inventory.mjs --write`; include the regenerated artifact if it changed.
+
+FINISH (muse is one-shot — there is no "later"; never wait on a background job): COMMIT on your lane branch (git add -A impl && git commit -m "<descriptive message>") and record ONE contribution with node "$BATON_SWARM_CLIENT" swarm.update — your brief's Swarm section renders the exact admitted payload example; follow it. Do not end your turn without the swarm.contribution_recorded receipt.
