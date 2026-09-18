@@ -29,18 +29,26 @@ const RESERVATION_FIELDS = Object.freeze([
   'outstandingBytes', 'outstandingInodes',
 ]);
 
-// Independent deployments mutate one repository ledger, so every capacity mutation serializes on
-// a published owner record. The API is synchronous: it cannot await a holder, so ordinary
-// contention is absorbed by blocking this thread in short slices until a deadline. The deadline is
-// real elapsed time (`performance.now`, monotonic), never the injectable domain clock — fixtures
-// freeze that clock for timestamps, and a frozen clock must never become an unbounded wait. Every
-// non-progress turn of the acquisition loop ends in `_waitSlice`, so no state (live holder, live
-// gate, dead lock, churn) can loop past the deadline.
+// Independent deployments mutate one repository ledger, so every capacity MUTATION serializes on
+// a published owner record. READING the ledger takes no lock and never waits: the state is one
+// atomically renamed file, so a reader observes a complete committed state while a writer holds
+// the critical section. The mutating API is promise-returning (issue #285 G-42): contention is
+// absorbed by awaiting short slices until the deadline, so the caller's event loop stays free
+// while the wait runs. The deadline is real elapsed time (`performance.now`, monotonic),
+// never the injectable domain clock — fixtures freeze that clock for timestamps, and a frozen
+// clock must never become an unbounded wait. Every non-progress turn of the acquisition loop ends
+// in `_waitSlice`, so no state (live holder, live gate, dead lock, churn) can loop past the
+// deadline.
 const LOCK_POLL_MS = 5;
 const DEFAULT_LOCK_WAIT_MS = 5_000;
-const LOCK_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 const LOCK_LABEL = 'worktree capacity reservation lock';
 const REAPER_LABEL = 'worktree capacity reservation lock reaper gate';
+
+/** One awaited poll slice of the acquisition loop (issue #285 G-42): the wait is the caller's to
+ * await, so the slice never blocks the thread's event loop. */
+function awaitLockSlice(ms) {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
 
 function digest(value) {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -274,10 +282,6 @@ function livePid(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; }
 }
 
-function waitForLockSlice(ms) {
-  Atomics.wait(LOCK_WAIT_BUFFER, 0, 0, ms);
-}
-
 function validLockOwner(value) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && Object.keys(value).sort().join(',') === ['generation', 'ownerId', 'pid', 'schemaVersion'].sort().join(',')
@@ -467,13 +471,13 @@ export class WorktreeCapacityAuthority {
   // symlink, permissive mode, oversized file, malformed JSON, unknown schema) refuse immediately
   // — never adopted, never waited on, never deleted.
   // -----------------------------------------------------------------------------------------
-  _lock(fn) {
+  async _lock(fn) {
     try { this._ensureRoot(); }
     catch (error) {
       if (error instanceof WorktreeCapacityError) throw error;
       throw typed('worktree capacity root could not be confirmed', 'worktree_capacity_unavailable', error);
     }
-    const generation = this._acquire();
+    const generation = await this._acquire();
     try { return fn(); }
     catch (error) {
       if (error instanceof WorktreeCapacityError) throw error;
@@ -481,42 +485,87 @@ export class WorktreeCapacityAuthority {
     } finally { this._removeOwner(this.lockPath, LOCK_LABEL, generation); }
   }
 
-  // Every turn below returns, throws, or reaches `_waitSlice`, which refuses once the monotonic
+  // One turn of the acquisition protocol, shared by the awaiting acquisition below and by
+  // `_lockNow`'s single attempt: answers the generation this turn published and confirmed, a
+  // `null` wait after it reclaimed a proved-dead holder (the next turn may acquire), or the wait
+  // a contended turn must absorb.
+  _acquireTurn() {
+    const gate = this._observeOwner(this.reaperPath, REAPER_LABEL);
+    if (gate !== null && livePid(gate.pid)) {
+      // A reap is in flight and its tombstone rename may land on any lock published now.
+      return { generation: null, wait: { detail: `the live reaper (pid ${gate.pid}) still held the recovery gate`, extra: { holderPid: gate.pid } } };
+    }
+    const generation = randomBytes(16).toString('hex');
+    if (this._publish(this.lockPath, generation) && this._confirmLock(generation)) {
+      return { generation, wait: null };
+    }
+    this._removeOwner(this.lockPath, LOCK_LABEL, generation); // no-op unless we published it
+    const observed = this._observeOwner(this.lockPath, LOCK_LABEL);
+    if (observed === null) {
+      return { generation: null, wait: { detail: 'the lock could not be published and confirmed', extra: {} } };
+    }
+    if (livePid(observed.pid)) {
+      return { generation: null, wait: { detail: `the live holder (pid ${observed.pid}) still held it`, extra: { holderPid: observed.pid } } };
+    }
+    if (gate !== null) {
+      // A dead lock under a dead gate is inert forever, and reclamation needs the gate.
+      return { generation: null, wait: { detail: `a dead reaper gate (pid ${gate.pid}) blocks reclamation of the dead holder (pid ${observed.pid})`, extra: { gatePid: gate.pid } } };
+    }
+    if (!this._reap(observed)) {
+      return { generation: null, wait: { detail: `the dead holder (pid ${observed.pid}) could not be reclaimed`, extra: {} } };
+    }
+    return { generation: null, wait: null };
+  }
+
+  // Every turn below returns, throws, or awaits `_waitSlice`, which refuses once the monotonic
   // deadline passes — no observed state can make this loop unbounded.
-  _acquire() {
+  async _acquire() {
     const deadline = performance.now() + this.lockWaitMs;
     let firstAttempt = true;
     let lastWait = { detail: 'repeated ownership changes prevented acquisition', extra: {} };
-    const wait = (detail, extra) => {
-      lastWait = { detail, extra };
-      this._waitSlice(deadline, detail, extra);
-    };
     for (;;) {
       if (!firstAttempt && performance.now() >= deadline) {
-        this._waitSlice(deadline, lastWait.detail, lastWait.extra);
+        await this._waitSlice(deadline, lastWait.detail, lastWait.extra);
       }
       firstAttempt = false;
-      const gate = this._observeOwner(this.reaperPath, REAPER_LABEL);
-      if (gate !== null && livePid(gate.pid)) {
-        // A reap is in flight and its tombstone rename may land on any lock published now.
-        wait(`the live reaper (pid ${gate.pid}) still held the recovery gate`, { holderPid: gate.pid });
-        continue;
-      }
-      const generation = randomBytes(16).toString('hex');
-      if (this._publish(this.lockPath, generation) && this._confirmLock(generation)) return generation;
-      this._removeOwner(this.lockPath, LOCK_LABEL, generation); // no-op unless we published it
-      const observed = this._observeOwner(this.lockPath, LOCK_LABEL);
-      if (observed === null) {
-        wait('the lock could not be published and confirmed', {});
-      } else if (livePid(observed.pid)) {
-        wait(`the live holder (pid ${observed.pid}) still held it`, { holderPid: observed.pid });
-      } else if (gate !== null) {
-        // A dead lock under a dead gate is inert forever, and reclamation needs the gate.
-        wait(`a dead reaper gate (pid ${gate.pid}) blocks reclamation of the dead holder (pid ${observed.pid})`, { gatePid: gate.pid });
-      } else if (!this._reap(observed)) {
-        wait(`the dead holder (pid ${observed.pid}) could not be reclaimed`, {});
-      }
+      const turn = this._acquireTurn();
+      if (turn.generation !== null) return turn.generation;
+      if (turn.wait === null) continue;
+      lastWait = turn.wait;
+      await this._waitSlice(deadline, turn.wait.detail, turn.wait.extra);
     }
+  }
+
+  /** The same critical section, attempted with NO wait (issue #285 G-42), for a caller that cannot
+   * await — the construction-time reconciliation, whose work must finish before the deployment
+   * serves. Contention refuses typed and pre-effect, exactly the semantics `lockWaitMs: 0` already
+   * names for the awaiting API, and a turn that reclaimed a proved-dead holder is retried once. */
+  _lockNow(fn) {
+    try { this._ensureRoot(); }
+    catch (error) {
+      if (error instanceof WorktreeCapacityError) throw error;
+      throw typed('worktree capacity root could not be confirmed', 'worktree_capacity_unavailable', error);
+    }
+    let contended = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const turn = this._acquireTurn();
+      if (turn.generation !== null) {
+        try { return fn(); }
+        catch (error) {
+          if (error instanceof WorktreeCapacityError) throw error;
+          throw typed('worktree capacity state update failed', 'worktree_capacity_unavailable', error);
+        } finally { this._removeOwner(this.lockPath, LOCK_LABEL, turn.generation); }
+      }
+      if (turn.wait === null) continue;
+      contended = turn.wait;
+      break;
+    }
+    throw Object.assign(typed(
+      'worktree capacity reservation lock is busy: '
+      + `${contended?.detail ?? 'a proved-dead holder was reclaimed but the lock was republished first'};`
+      + ' this call takes no wait, and no capacity effect was applied',
+      'worktree_capacity_unavailable',
+    ), { lockContention: true, ...(contended?.extra ?? {}) });
   }
 
   // A published lock counts only once both facts are re-observed: the file still carries this
@@ -534,8 +583,8 @@ export class WorktreeCapacityAuthority {
     }
   }
 
-  // Waits one poll slice, or refuses pre-effect once the monotonic deadline has passed.
-  _waitSlice(deadline, detail, extra) {
+  // Awaits one poll slice, or refuses pre-effect once the monotonic deadline has passed.
+  async _waitSlice(deadline, detail, extra) {
     const remaining = deadline - performance.now();
     if (remaining <= 0) {
       throw Object.assign(typed(
@@ -543,7 +592,7 @@ export class WorktreeCapacityAuthority {
         'worktree_capacity_unavailable',
       ), { lockContention: true, ...extra });
     }
-    waitForLockSlice(Math.min(LOCK_POLL_MS, remaining));
+    await awaitLockSlice(Math.min(LOCK_POLL_MS, remaining));
   }
 
   // Reaps one proved-dead generation and reports whether it made progress. The reaper gate is
@@ -619,11 +668,11 @@ export class WorktreeCapacityAuthority {
     return owner;
   }
 
-  reserve(id, request) {
-    return this.reserveMany([{ id, request }])[0];
+  async reserve(id, request) {
+    return (await this.reserveMany([{ id, request }]))[0];
   }
 
-  reserveMany(entries) {
+  async reserveMany(entries) {
     if (!Array.isArray(entries) || entries.length === 0) {
       throw new TypeError('capacity reservation wave must contain a non-empty entry list');
     }
@@ -733,11 +782,11 @@ export class WorktreeCapacityAuthority {
     });
   }
 
-  release(token) {
-    return this.releaseMany([token])[0];
+  async release(token) {
+    return (await this.releaseMany([token]))[0];
   }
 
-  materialize(token, resourcePath) {
+  async materialize(token, resourcePath) {
     if (!token || typeof token !== 'object' || typeof token.id !== 'string'
       || typeof token.ownerId !== 'string' || typeof token.nonce !== 'string') {
       throw new TypeError('capacity materialization requires an exact reservation token');
@@ -798,7 +847,7 @@ export class WorktreeCapacityAuthority {
     });
   }
 
-  releaseMany(tokens) {
+  async releaseMany(tokens) {
     if (!Array.isArray(tokens) || tokens.length === 0) {
       throw new TypeError('capacity release wave must contain a non-empty token list');
     }
@@ -823,7 +872,7 @@ export class WorktreeCapacityAuthority {
     });
   }
 
-  releaseAbsent(id) {
+  async releaseAbsent(id) {
     if (typeof id !== 'string' || id.length === 0) throw new TypeError('capacity absent-resource release id is invalid');
     return this._lock(() => {
       const state = this._read(); const before = state.reservations.length;
@@ -833,22 +882,33 @@ export class WorktreeCapacityAuthority {
     });
   }
 
-  settleForCleanup(id) {
+  async settleForCleanup(id) {
     if (typeof id !== 'string' || id.length === 0) {
       throw new TypeError('capacity cleanup-settlement id is invalid');
     }
-    return this._lock(() => {
-      const state = this._read();
-      const retained = state.reservations.filter((row) => row.id !== id);
-      if (retained.length !== state.reservations.length) {
-        state.reservations = retained;
-        this._write(state);
-      }
-      return state.reservations.every((row) => row.id !== id);
-    });
+    return this._lock(() => this.#settleForCleanup(id));
   }
 
-  adoptWorker(id) {
+  /** Issue #285 G-42: the same settlement for a caller that cannot await — the construction-time
+   * reconciliation — attempted once and refusing typed on contention (`_lockNow`). */
+  settleForCleanupNow(id) {
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new TypeError('capacity cleanup-settlement id is invalid');
+    }
+    return this._lockNow(() => this.#settleForCleanup(id));
+  }
+
+  #settleForCleanup(id) {
+    const state = this._read();
+    const retained = state.reservations.filter((row) => row.id !== id);
+    if (retained.length !== state.reservations.length) {
+      state.reservations = retained;
+      this._write(state);
+    }
+    return state.reservations.every((row) => row.id !== id);
+  }
+
+  async adoptWorker(id) {
     return this._lock(() => {
       const state = this._read(); const index = state.reservations.findIndex((row) => row.id === id && row.kind === 'worker');
       if (index < 0) throw typed('active worker capacity reservation is missing', 'worktree_capacity_unavailable');
@@ -857,75 +917,83 @@ export class WorktreeCapacityAuthority {
     });
   }
 
-  reconcile(activeWorkerIds = [], retainedWorkerIds = []) {
+  async reconcile(activeWorkerIds = [], retainedWorkerIds = []) {
+    return this._lock(() => this.#reconcile(activeWorkerIds, retainedWorkerIds));
+  }
+
+  /** Issue #285 G-42: the same reconciliation for a caller that cannot await — the construction-time
+   * reconciliation — attempted once and refusing typed on contention (`_lockNow`). */
+  reconcileNow(activeWorkerIds = [], retainedWorkerIds = []) {
+    return this._lockNow(() => this.#reconcile(activeWorkerIds, retainedWorkerIds));
+  }
+
+  #reconcile(activeWorkerIds, retainedWorkerIds) {
     const active = new Set(activeWorkerIds.map((id) => `worker:${id}`));
     const retained = new Set(retainedWorkerIds.map((id) => `worker:${id}`));
-    return this._lock(() => {
-      const state = this._read(); const removed = [];
-      const adopted = [];
-      const retainedVerifiers = [];
-      // G-35: a verification running in THIS process is live capacity. Reconciliation can run
-      // while its sandbox exists (a drain or close reconciles the same ledger), and settling the
-      // row then under-counted the committed bytes and inodes every later reservation sees. Only
-      // a proved-dead owner settles a verifier here; an own reservation leaves the ledger when
-      // its owner releases or settles it. Adopting one worker is not proof that another
-      // controller stopped all its verification either.
-      state.reservations = state.reservations.filter((row) => {
-        if (row.kind === 'verify') {
-          if (!livePid(row.pid)) {
-            removed.push(row.id); return false;
-          }
-          retainedVerifiers.push(row.id); return true;
+    const state = this._read(); const removed = [];
+    const adopted = [];
+    const retainedVerifiers = [];
+    // G-35: a verification running in THIS process is live capacity. Reconciliation can run
+    // while its sandbox exists (a drain or close reconciles the same ledger), and settling the
+    // row then under-counted the committed bytes and inodes every later reservation sees. Only
+    // a proved-dead owner settles a verifier here; an own reservation leaves the ledger when
+    // its owner releases or settles it. Adopting one worker is not proof that another
+    // controller stopped all its verification either.
+    state.reservations = state.reservations.filter((row) => {
+      if (row.kind === 'verify') {
+        if (!livePid(row.pid)) {
+          removed.push(row.id); return false;
         }
-        // A retained checkout whose physical-owner binding failed validation is not cleanup or
-        // adoption authority. Preserve its reservation byte-for-byte for its owning controller.
-        if (retained.has(row.id)) return true;
-        if (row.ownerId === this.ownerId && !active.has(row.id)) { removed.push(row.id); return false; }
-        if (row.ownerId !== this.ownerId && !active.has(row.id) && !livePid(row.pid)) { removed.push(row.id); return false; }
-        if (active.has(row.id) && row.ownerId !== this.ownerId) {
-          const next = Object.freeze({ ...row, ownerId: this.ownerId, nonce: randomBytes(16).toString('hex'), pid: process.pid });
-          adopted.push(next); return false;
-        }
-        return true;
-      });
-      state.reservations.push(...adopted);
-      if (removed.length > 0 || adopted.length > 0) this._write(state);
-      return Object.freeze({
-        removed: Object.freeze(removed), adopted: Object.freeze(adopted),
-        retainedVerifiers: Object.freeze(retainedVerifiers),
-        active: Object.freeze(state.reservations.map((row) => row.id)),
-      });
+        retainedVerifiers.push(row.id); return true;
+      }
+      // A retained checkout whose physical-owner binding failed validation is not cleanup or
+      // adoption authority. Preserve its reservation byte-for-byte for its owning controller.
+      if (retained.has(row.id)) return true;
+      if (row.ownerId === this.ownerId && !active.has(row.id)) { removed.push(row.id); return false; }
+      if (row.ownerId !== this.ownerId && !active.has(row.id) && !livePid(row.pid)) { removed.push(row.id); return false; }
+      if (active.has(row.id) && row.ownerId !== this.ownerId) {
+        const next = Object.freeze({ ...row, ownerId: this.ownerId, nonce: randomBytes(16).toString('hex'), pid: process.pid });
+        adopted.push(next); return false;
+      }
+      return true;
+    });
+    state.reservations.push(...adopted);
+    if (removed.length > 0 || adopted.length > 0) this._write(state);
+    return Object.freeze({
+      removed: Object.freeze(removed), adopted: Object.freeze(adopted),
+      retainedVerifiers: Object.freeze(retainedVerifiers),
+      active: Object.freeze(state.reservations.map((row) => row.id)),
     });
   }
 
+  /** The ledger's current projection, read WITHOUT the lock (issue #285 G-42): every mutation
+   * writes the state file by atomic rename, so a reader observes a complete committed state and
+   * never waits for a writer. */
   snapshot() {
-    return this._lock(() => {
-      const state = this._read();
-      const totals = state.reservations.reduce((sum, row) => ({ bytes: sum.bytes + row.bytes, inodes: sum.inodes + row.inodes }), { bytes: 0, inodes: 0 });
-      const outstanding = state.reservations.reduce((sum, row) => ({
-        bytes: sum.bytes + row.outstandingBytes,
-        inodes: sum.inodes + row.outstandingInodes,
-      }), { bytes: 0, inodes: 0 });
-      const stateDigest = digest({ schemaVersion: state.schemaVersion, policyDigest: state.policyDigest, reservations: state.reservations });
-      // #307: the doctor reads the derivation beside the observation — the effective floor, its
-      // source, and the records that produced it.
-      const floor = this.#effectiveFloor(state.estimateHighWater);
-      return Object.freeze({
-        policyDigest: this.policy.digest, stateDigest,
-        totals: Object.freeze(totals), outstanding: Object.freeze(outstanding),
-        estimateHighWater: Object.freeze({ ...state.estimateHighWater }),
-        floor,
-        reservations: Object.freeze(state.reservations.map((row) => Object.freeze({ ...row }))),
-      });
+    const state = this._read();
+    const totals = state.reservations.reduce((sum, row) => ({ bytes: sum.bytes + row.bytes, inodes: sum.inodes + row.inodes }), { bytes: 0, inodes: 0 });
+    const outstanding = state.reservations.reduce((sum, row) => ({
+      bytes: sum.bytes + row.outstandingBytes,
+      inodes: sum.inodes + row.outstandingInodes,
+    }), { bytes: 0, inodes: 0 });
+    const stateDigest = digest({ schemaVersion: state.schemaVersion, policyDigest: state.policyDigest, reservations: state.reservations });
+    // #307: the doctor reads the derivation beside the observation — the effective floor, its
+    // source, and the records that produced it.
+    const floor = this.#effectiveFloor(state.estimateHighWater);
+    return Object.freeze({
+      policyDigest: this.policy.digest, stateDigest,
+      totals: Object.freeze(totals), outstanding: Object.freeze(outstanding),
+      estimateHighWater: Object.freeze({ ...state.estimateHighWater }),
+      floor,
+      reservations: Object.freeze(state.reservations.map((row) => Object.freeze({ ...row }))),
     });
   }
 
   /** The effective floor, resolved fresh from the ledger and the measured runtime footprint —
-   * what the doctor's capacity section shows beside the observation (#307). */
+   * what the doctor's capacity section shows beside the observation (#307). Read without the
+   * lock, like `snapshot()`. */
   floor() {
-    return this._lock(() => {
-      const state = this._read();
-      return this.#effectiveFloor(state.estimateHighWater);
-    });
+    const state = this._read();
+    return this.#effectiveFloor(state.estimateHighWater);
   }
 }

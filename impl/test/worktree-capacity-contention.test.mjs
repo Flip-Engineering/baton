@@ -147,19 +147,19 @@ barrier('ready');
 const tokens = [];
 try {
   if (plan.mode === 'materialize') {
-    const token = authority.reserve(plan.ids[0], plan.request);
+    const token = await authority.reserve(plan.ids[0], plan.request);
     tokens.push(token.id);
     write({ ok: true, stage: 'reserved', tokens });
     awaitPath(plan.goPath, 'go');
-    const materialized = authority.materialize(token, plan.resourcePath);
+    const materialized = await authority.materialize(token, plan.resourcePath);
     write({ ok: true, stage: 'materialized', tokens, materializedAt: materialized.materializedAt });
     awaitPath(plan.donePath, 'done');
   } else {
     for (const id of plan.ids) {
-      const token = authority.reserve(id, plan.request);
+      const token = await authority.reserve(id, plan.request);
       tokens.push(token.id);
       if (plan.holdAfterReserveMs) nap(plan.holdAfterReserveMs);
-      authority.release(token);
+      await authority.release(token);
     }
     write({ ok: true, tokens });
   }
@@ -459,12 +459,12 @@ test('WCC7: the lock wait deadline is explicit, bounded, and configurable to fai
   prepareWorld(world, children);
 
   const failFast = authorityFor(world.repo, { lockWaitMs: 0 });
-  const token = failFast.reserve('worker:fail-fast', REQUEST);
-  assert.equal(failFast.release(token), true, 'an uncontended reservation never waits');
+  const token = await failFast.reserve('worker:fail-fast', REQUEST);
+  assert.equal(await failFast.release(token), true, 'an uncontended reservation never waits');
 
   const planted = plantArtifact(world, 'lock', ownerRecord());
   const started = Date.now();
-  assert.throws(() => failFast.reserve('worker:fail-fast-again', REQUEST), (error) => (
+  await assert.rejects(failFast.reserve('worker:fail-fast-again', REQUEST), (error) => (
     error?.code === REFUSAL_CODE && error?.lockContention === true && error?.holderPid === process.pid
   ));
   assert.ok(Date.now() - started < 1_000, 'lockWaitMs 0 refuses at once instead of waiting');
@@ -506,7 +506,7 @@ test('WCC8: reconcile preserves a live foreign verifier and its materialize stil
   assert.equal(before[0].materializedAt, null);
 
   // A NEW deployment opens the same repository and reconciles while that controller is verifying.
-  const report = authorityFor(world.repo).reconcile([]);
+  const report = await authorityFor(world.repo).reconcile([]);
   assert.deepEqual(report.removed, [], 'a live foreign verifier is not this deployment\'s to settle');
   assert.deepEqual(report.retainedVerifiers, ['verify:claim-verification:1'],
     'the preserved verifier is reported, not silently kept');
@@ -534,15 +534,15 @@ test('WCC9: reconcile keeps a live verifier and still settles a proved-dead one'
   // G-35: this authority's own verification may be running in this process right now, so its
   // reservation is live capacity — reconcile keeps it byte-for-byte until its owner releases it.
   const deployment = authorityFor(world.repo);
-  const owned = deployment.reserve('verify:owned:1', REQUEST);
+  const owned = await deployment.reserve('verify:owned:1', REQUEST);
   const ownedBefore = deployment.snapshot().reservations;
-  const ownedReport = deployment.reconcile([]);
+  const ownedReport = await deployment.reconcile([]);
   assert.deepEqual(ownedReport.removed, [],
     'a live verification of this authority is not reconcile\'s to settle');
   assert.deepEqual(ownedReport.retainedVerifiers, ['verify:owned:1']);
   assert.deepEqual(deployment.snapshot().reservations, ownedBefore,
     'the live reservation survives byte-for-byte');
-  assert.equal(deployment.release(owned), true, 'its owner releases it');
+  assert.equal(await deployment.release(owned), true, 'its owner releases it');
   assert.deepEqual(authorityFor(world.repo).snapshot().reservations, []);
 
   // A verifier whose process is gone is settled: capacity is never leaked by the preservation rule.
@@ -559,7 +559,7 @@ test('WCC9: reconcile keeps a live verifier and still settles a proved-dead one'
   crashed.child.kill('SIGKILL');
   await crashed.settled;
 
-  const crashReport = authorityFor(world.repo).reconcile([]);
+  const crashReport = await authorityFor(world.repo).reconcile([]);
   assert.deepEqual(crashReport.removed, ['verify:crashed-verification:1'],
     `a dead foreign verifier is settled (pid ${reserved.pid} is gone)`);
   assert.deepEqual(crashReport.retainedVerifiers, []);
@@ -594,18 +594,18 @@ test('WCC10: an artifact that vanishes between stat and read is a race, not corr
   }
 });
 
-test('WCC11: a verifier is settled by exact owner identity, never by a shared pid', (t) => {
+test('WCC11: a verifier is settled by exact owner identity, never by a shared pid', async (t) => {
   const world = repoWorld('same-pid-verifier');
   t.after(disposable(world, []));
 
   const first = authorityFor(world.repo);
-  first.reserve('verify:claim-verification:1', REQUEST);
+  await first.reserve('verify:claim-verification:1', REQUEST);
   const untouched = first.snapshot().reservations;
   const second = authorityFor(world.repo); // a distinct deployment generation in the SAME process
   assert.equal(untouched[0].pid, process.pid, 'the scenario is real: foreign owner, identical pid');
   assert.notEqual(untouched[0].ownerId, second.ownerId);
 
-  const report = second.reconcile([]);
+  const report = await second.reconcile([]);
   assert.deepEqual(report.removed, [], 'a shared pid is not ownership: the live foreign generation is preserved');
   assert.deepEqual(report.retainedVerifiers, ['verify:claim-verification:1'],
     'the preserved verifier is reported, not silently kept');
@@ -613,8 +613,8 @@ test('WCC11: a verifier is settled by exact owner identity, never by a shared pi
 
   // Adopting a worker transfers that resource alone. A live controller's unrelated verifier
   // still has exact ownership and may be between reserve and materialize.
-  first.reserve('worker:superseded', REQUEST);
-  const superseding = second.reconcile(['superseded']);
+  await first.reserve('worker:superseded', REQUEST);
+  const superseding = await second.reconcile(['superseded']);
   assert.deepEqual(superseding.removed, [],
     'worker adoption does not settle a foreign live verifier');
   assert.equal(superseding.adopted.length, 1);

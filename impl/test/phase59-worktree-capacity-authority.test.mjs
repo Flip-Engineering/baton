@@ -322,7 +322,7 @@ test('WC2: shared projection target parents are unique and sparse-provided paren
   assert.equal(driver.worktreeCapacity.snapshot().totals.inodes, exactInodes);
 });
 
-test('WC2: projection target-parent paths must match their attested identity digest', (t) => {
+test('WC2: projection target-parent paths must match their attested identity digest', async (t) => {
   const f = fixture('projection-parent-digest', { projection: true });
   t.after(() => rmSync(f.world, { recursive: true, force: true }));
   const authority = new WorktreeCapacityAuthority({
@@ -332,8 +332,8 @@ test('WC2: projection target-parent paths must match their attested identity dig
     observe: () => ({ freeBytes: 10_000, freeInodes: 1_000 }),
   });
 
-  assert.throws(
-    () => authority.reserve('worker:capacity-projection-parent-digest', {
+  await assert.rejects(
+    authority.reserve('worker:capacity-projection-parent-digest', {
       baseSha: f.sha,
       sparsePaths: ['src/selected.txt'],
       sparseCheckoutIdentity: sparseCheckoutIdentity(['src/selected.txt']),
@@ -444,7 +444,7 @@ test('WC4: concurrent admission atomically reserves one worker and refuses the c
   driver = null;
 });
 
-test('WC4a: aggregate reservation admits or refuses the whole wave with one observation and one state transition', (t) => {
+test('WC4a: aggregate reservation admits or refuses the whole wave with one observation and one state transition', async (t) => {
   const f = fixture('aggregate-wave');
   t.after(() => rmSync(f.world, { recursive: true, force: true }));
   const injected = injectedCapacity({ treeBytes: 40, treeInodes: 3 });
@@ -463,7 +463,7 @@ test('WC4a: aggregate reservation admits or refuses the whole wave with one obse
     observe: injected.worktreeCapacityObserve,
   });
 
-  assert.throws(() => authority.reserveMany([
+  await assert.rejects(authority.reserveMany([
     { id: 'worker:aggregate-a', request },
     { id: 'worker:aggregate-b', request },
   ]), (error) => error?.code === 'worktree_capacity_exceeded');
@@ -472,7 +472,7 @@ test('WC4a: aggregate reservation admits or refuses the whole wave with one obse
   assert.deepEqual(authority.snapshot().reservations, []);
 });
 
-test('WC4b: aggregate reservation and release publish one exact all-member state each', (t) => {
+test('WC4b: aggregate reservation and release publish one exact all-member state each', async (t) => {
   const f = fixture('aggregate-release');
   t.after(() => rmSync(f.world, { recursive: true, force: true }));
   const injected = injectedCapacity({ treeBytes: 40, treeInodes: 3 });
@@ -491,7 +491,7 @@ test('WC4b: aggregate reservation and release publish one exact all-member state
     observe: injected.worktreeCapacityObserve,
   });
 
-  const reservations = authority.reserveMany([
+  const reservations = await authority.reserveMany([
     { id: 'worker:aggregate-release-a', request },
     { id: 'worker:aggregate-release-b', request },
   ]);
@@ -500,7 +500,7 @@ test('WC4b: aggregate reservation and release publish one exact all-member state
   assert.deepEqual(authority.snapshot().reservations.map(({ id }) => id), [
     'worker:aggregate-release-a', 'worker:aggregate-release-b',
   ]);
-  assert.deepEqual(authority.releaseMany(reservations), [true, true]);
+  assert.deepEqual(await authority.releaseMany(reservations), [true, true]);
   assert.deepEqual(authority.snapshot().reservations, []);
 });
 
@@ -700,13 +700,13 @@ test('WC12: stale release token cannot delete a later reservation that reused th
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate, worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
   const request = { baseSha: f.sha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null };
-  const first = driver.worktreeCapacity.reserve('worker:capacity-reused', request);
-  assert.equal(driver.worktreeCapacity.release(first), true);
-  const replacement = driver.worktreeCapacity.reserve('worker:capacity-reused', request);
+  const first = await driver.worktreeCapacity.reserve('worker:capacity-reused', request);
+  assert.equal(await driver.worktreeCapacity.release(first), true);
+  const replacement = await driver.worktreeCapacity.reserve('worker:capacity-reused', request);
   assert.notEqual(first.nonce, replacement.nonce);
-  assert.equal(driver.worktreeCapacity.release(first), false);
+  assert.equal(await driver.worktreeCapacity.release(first), false);
   assert.equal(driver.worktreeCapacity.snapshot().reservations[0].nonce, replacement.nonce);
-  assert.equal(driver.worktreeCapacity.release(replacement), true);
+  assert.equal(await driver.worktreeCapacity.release(replacement), true);
 });
 
 test('WC13: provider refusal and runtime creation failure both release pre-worktree reservations', async (t) => {
@@ -745,7 +745,7 @@ test('WC14: valid-shape ledger tampering fails HMAC validation closed', async (t
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate, worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
   const request = { baseSha: f.sha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null };
-  driver.worktreeCapacity.reserve('worker:capacity-hmac-tamper', request);
+  await driver.worktreeCapacity.reserve('worker:capacity-hmac-tamper', request);
   const statePath = join(f.repo, '.baton', 'capacity', 'reservations.json');
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   state.reservations[0].bytes += 1;
@@ -762,8 +762,14 @@ test('WC15: a well-formed dead generation lock is reaped before exact admission'
   });
   const lock = join(f.repo, '.baton', 'capacity', 'lock');
   writeFileSync(lock, `${JSON.stringify({ schemaVersion: 1, pid: 99_999_999, ownerId: 'a'.repeat(32), generation: 'b'.repeat(32) })}\n`, { mode: 0o600 });
-  assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
-  assert.equal(existsSync(lock), false);
+  assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, [],
+    'a read observes the committed ledger while the dead lock stands');
+  const token = await driver.worktreeCapacity.reserve('worker:capacity-dead-lock', {
+    baseSha: f.sha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null,
+  });
+  assert.equal(token.id, 'worker:capacity-dead-lock', 'the admission proceeds past the dead generation');
+  assert.equal(existsSync(lock), false, 'and the proved-dead generation is reaped');
+  await driver.worktreeCapacity.release(token);
 });
 
 test('WC16: worker adoption preserves a live foreign verifier until its owner releases it', async (t) => {
@@ -774,19 +780,19 @@ test('WC16: worker adoption preserves a live foreign verifier until its owner re
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate, worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
   const request = { baseSha: f.sha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null };
-  const worker = driver.worktreeCapacity.reserve('worker:capacity-adopted', request);
-  const verifier = driver.worktreeCapacity.reserve('verify:capacity-abandoned', request);
+  const worker = await driver.worktreeCapacity.reserve('worker:capacity-adopted', request);
+  const verifier = await driver.worktreeCapacity.reserve('verify:capacity-abandoned', request);
   const restarted = new WorktreeCapacityAuthority({
     repoRoot: f.repo, policy: validPolicy, integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(f.repo),
     estimate: injected.worktreeCapacityEstimate, observe: injected.worktreeCapacityObserve,
   });
-  const report = restarted.reconcile(['capacity-adopted']);
+  const report = await restarted.reconcile(['capacity-adopted']);
   assert.deepEqual(report.removed, []);
   assert.deepEqual(report.retainedVerifiers, ['verify:capacity-abandoned']);
-  assert.equal(driver.worktreeCapacity.release(verifier), true);
+  assert.equal(await driver.worktreeCapacity.release(verifier), true);
   assert.equal(report.adopted.length, 1);
   assert.notEqual(report.adopted[0].ownerId, worker.ownerId);
-  assert.equal(restarted.release(report.adopted[0]), true);
+  assert.equal(await restarted.release(report.adopted[0]), true);
 });
 
 test('WC17: legacy close paths refuse active reservations and preserve drain authority', async (t) => {
@@ -846,15 +852,15 @@ test('WC20: failed exact pending release retains its nonce token for retry', asy
     repoRoot: f.repo, logDir: f.logDir, adapters: {}, worktreeCapacity: validPolicy,
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate, worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
-  driver.coordinator._worktrees.reserveCapacity('capacity-release-retry', f.sha);
+  await driver.coordinator._worktrees.reserveCapacity('capacity-release-retry', f.sha);
   const release = driver.worktreeCapacity.release.bind(driver.worktreeCapacity);
   let injectedFailure = true;
   driver.worktreeCapacity.release = (token) => {
     if (injectedFailure) { injectedFailure = false; throw Object.assign(new Error('transient lock failure'), { code: 'worktree_capacity_unavailable' }); }
     return release(token);
   };
-  assert.throws(() => driver.coordinator._worktrees.releaseCapacity('capacity-release-retry'), (error) => error?.code === 'worktree_capacity_unavailable');
-  assert.equal(driver.coordinator._worktrees.releaseCapacity('capacity-release-retry'), true);
+  await assert.rejects(driver.coordinator._worktrees.releaseCapacity('capacity-release-retry'), (error) => error?.code === 'worktree_capacity_unavailable');
+  assert.equal(await driver.coordinator._worktrees.releaseCapacity('capacity-release-retry'), true);
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
 });
 
@@ -866,13 +872,13 @@ test('WC21: drain capacity refusal occurs before irreversible coordinator close 
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate, worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
   const request = { baseSha: f.sha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null };
-  const orphan = driver.worktreeCapacity.reserve('worker:capacity-orphan-drain', request);
+  const orphan = await driver.worktreeCapacity.reserve('worker:capacity-orphan-drain', request);
   const reconcile = driver.coordinator._worktrees.reconcile.bind(driver.coordinator._worktrees);
   driver.coordinator._worktrees.reconcile = () => ({ errors: [] });
   await assert.rejects(driver.drainAndClose('phase59:orphan-first'), (error) => error?.code === 'coordinator_drain_incomplete');
   assert.equal(driver.coordinator._closed, false);
   driver.coordinator._worktrees.reconcile = reconcile;
-  assert.equal(driver.worktreeCapacity.release(orphan), true);
+  assert.equal(await driver.worktreeCapacity.release(orphan), true);
   const receipt = await driver.drainAndClose('phase59:orphan-first');
   assert.equal(receipt.capacity.ownedReservations, 0);
   driver = null;
@@ -913,7 +919,7 @@ test('WC22: trust-gate capacity refusal exposes a bounded typed code without cap
   assert.equal(Object.hasOwn(refusal?.payload ?? {}, 'reservations'), false);
 });
 
-test('WC23: reconciliation releases dead foreign owners without stealing live foreign capacity', (t) => {
+test('WC23: reconciliation releases dead foreign owners without stealing live foreign capacity', async (t) => {
   const f = fixture('dead-foreign-owner');
   t.after(() => rmSync(f.world, { recursive: true, force: true }));
   const policy = { ...validPolicy, maxReservedBytes: 120 };
@@ -926,8 +932,8 @@ test('WC23: reconciliation releases dead foreign owners without stealing live fo
   const request = {
     baseSha: f.sha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null,
   };
-  foreign.reserve('worker:capacity-dead-foreign', request);
-  const liveForeign = foreign.reserve('worker:capacity-live-foreign', request);
+  await foreign.reserve('worker:capacity-dead-foreign', request);
+  const liveForeign = await foreign.reserve('worker:capacity-live-foreign', request);
   const retainedPath = join(f.repo, '.baton', 'wt', 'capacity-dead-foreign');
   mkdirSync(retainedPath, { recursive: true });
 
@@ -942,7 +948,7 @@ test('WC23: reconciliation releases dead foreign owners without stealing live fo
   const restarted = new WorktreeCapacityAuthority({
     repoRoot: f.repo, policy, integrityKey, estimate, observe,
   });
-  const report = restarted.reconcile([]);
+  const report = await restarted.reconcile([]);
 
   assert.deepEqual(report.removed, ['worker:capacity-dead-foreign']);
   assert.deepEqual(report.active, ['worker:capacity-live-foreign']);
@@ -951,13 +957,13 @@ test('WC23: reconciliation releases dead foreign owners without stealing live fo
   assert.equal(retained.ownerId, liveForeign.ownerId);
   assert.equal(retained.pid, process.pid);
 
-  const replacement = restarted.reserve('worker:capacity-dead-replacement', request);
+  const replacement = await restarted.reserve('worker:capacity-dead-replacement', request);
   assert.equal(restarted.snapshot().totals.bytes, 120, 'released dead capacity must be immediately reusable');
-  assert.equal(restarted.release(replacement), true);
-  assert.equal(foreign.release(liveForeign), true);
+  assert.equal(await restarted.release(replacement), true);
+  assert.equal(await foreign.release(liveForeign), true);
 });
 
-test('WC24: materialized allocations retain growth headroom without double-counting their tree bytes', (t) => {
+test('WC24: materialized allocations retain growth headroom without double-counting their tree bytes', async (t) => {
   const f = fixture('materialized-outstanding-capacity');
   t.after(() => rmSync(f.world, { recursive: true, force: true }));
   const policy = {
@@ -984,36 +990,36 @@ test('WC24: materialized allocations retain growth headroom without double-count
     toolchainProjectionTargetParents: [],
   };
 
-  const first = authority.reserve('worker:materialized-first', request);
-  assert.throws(
-    () => authority.materialize(first, join(f.repo, '.baton', 'wt', 'missing')),
+  const first = await authority.reserve('worker:materialized-first', request);
+  await assert.rejects(
+    authority.materialize(first, join(f.repo, '.baton', 'wt', 'missing')),
     (error) => error?.code === 'worktree_capacity_unavailable',
   );
   const foreignPath = join(f.world, 'foreign-materialization');
   mkdirSync(foreignPath);
-  assert.throws(
-    () => authority.materialize(first, foreignPath),
+  await assert.rejects(
+    authority.materialize(first, foreignPath),
     (error) => error?.code === 'worktree_capacity_unavailable',
   );
   const materializedPath = join(f.repo, '.baton', 'wt', 'materialized-first');
   mkdirSync(materializedPath, { recursive: true });
   freeBytes = 180;
   freeInodes = 27;
-  const materialized = authority.materialize(first, materializedPath);
+  const materialized = await authority.materialize(first, materializedPath);
   assert.equal(typeof materialized.materializedAt, 'string');
   assert.equal(materialized.outstandingBytes, policy.runtimeReserveBytes);
   assert.equal(materialized.outstandingInodes, policy.runtimeReserveInodes);
-  assert.deepEqual(authority.materialize(first, materializedPath), materialized,
+  assert.deepEqual(await authority.materialize(first, materializedPath), materialized,
     'response-loss replay returns the original materialization coordinate');
 
-  const second = authority.reserve('worker:materialized-second', request);
+  const second = await authority.reserve('worker:materialized-second', request);
   const snapshot = authority.snapshot();
   assert.deepEqual(snapshot.totals, { bytes: 120, inodes: 10 });
   assert.deepEqual(snapshot.outstanding, { bytes: 80, inodes: 7 });
   assert.equal(snapshot.reservations.find((row) => row.id === first.id).materializedAt,
     materialized.materializedAt);
   assert.equal(snapshot.reservations.find((row) => row.id === second.id).materializedAt, null);
-  assert.deepEqual(authority.releaseMany([materialized, second]), [true, true]);
+  assert.deepEqual(await authority.releaseMany([materialized, second]), [true, true]);
 });
 
 test('P92.2-PO2/WC25: failed materialized capacity release retains physical cleanup authority for exact retry', async (t) => {
@@ -1050,7 +1056,7 @@ test('P92.2-PO2/WC25: failed materialized capacity release retains physical clea
   const receiptBefore = physicalWorkspaceOwnerReceipt(f.repo, created.ownerTaskId);
   const release = driver.worktreeCapacity.release.bind(driver.worktreeCapacity);
   let releaseCalls = 0;
-  driver.worktreeCapacity.release = (token) => {
+  driver.worktreeCapacity.release = async (token) => {
     releaseCalls += 1;
     assert.equal(
       physicalWorkspaceOwnerReceipt(f.repo, created.ownerTaskId)?.receiptDigest,
@@ -1062,7 +1068,7 @@ test('P92.2-PO2/WC25: failed materialized capacity release retains physical clea
         code: 'worktree_capacity_unavailable',
       });
     }
-    const released = release(token);
+    const released = await release(token);
     assert.equal(released, true);
     assert.equal(
       physicalWorkspaceOwnerReceipt(f.repo, created.ownerTaskId)?.receiptDigest,
@@ -1202,7 +1208,7 @@ test('P92.2-PO2/WC27: pending base-mismatch release false retains allocation and
   const binding = {
     runId: 'run-base-mismatch', attemptId: 'attempt-base-mismatch', processGeneration: 1,
   };
-  driver.coordinator._worktrees.reserveCapacity('base-mismatch-logical', f.sha, binding);
+  await driver.coordinator._worktrees.reserveCapacity('base-mismatch-logical', f.sha, binding);
   git(['commit', '--allow-empty', '-qm', 'different requested base'], f.repo);
   const differentSha = git(['rev-parse', 'HEAD'], f.repo);
   const reservation = driver.worktreeCapacity.snapshot().reservations[0];
@@ -1242,7 +1248,7 @@ test('P92.2-PO2/WC28: pending remove release false is a retryable refusal, not c
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate,
     worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
-  driver.coordinator._worktrees.reserveCapacity('pending-remove-logical', f.sha, {
+  await driver.coordinator._worktrees.reserveCapacity('pending-remove-logical', f.sha, {
     runId: 'run-pending-remove', attemptId: 'attempt-pending-remove', processGeneration: 1,
   });
   const reservation = driver.worktreeCapacity.snapshot().reservations[0];
@@ -1418,7 +1424,7 @@ test('P92.2-PO2/WC30: restart settles failed-materialization capacity before des
     beforeOwnerCleanup: (owner) => {
       assert.equal(owner, physicalOwnerId);
       assertCompleteTransaction();
-      return restartedCapacity.settleForCleanup(`worker:${owner}`);
+      return restartedCapacity.settleForCleanupNow(`worker:${owner}`);
     },
   });
   assert.deepEqual(settled.errors, []);
@@ -1526,7 +1532,7 @@ test('P92.2-PO2/WC32: internal post-add failure remains intact until capacity-fi
       physicalOwnerId,
     ]);
   };
-  driver.worktreeCapacity.release = (token) => {
+  driver.worktreeCapacity.release = async (token) => {
     releaseCalls += 1;
     physicalOwnerId ??= token.resourceId;
     assertCompleteTransaction();
@@ -1536,7 +1542,7 @@ test('P92.2-PO2/WC32: internal post-add failure remains intact until capacity-fi
       });
     }
     if (releaseCalls === 2) return false;
-    const settled = release(token);
+    const settled = await release(token);
     assert.equal(settled, true);
     assert.equal(physicalWorkspaceOwnerReceipt(f.repo, physicalOwnerId)?.receiptDigest,
       retainedReceipt.receiptDigest, 'capacity absence must precede receipt finalization');
@@ -1607,8 +1613,8 @@ test('P92.2-PO2/WC33: single preflight refuses a retained failed-create transact
     },
   ));
   const receiptFilesBefore = readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners'));
-  assert.throws(
-    () => driver.coordinator._worktrees.reserveCapacity('single-preflight-gated', f.sha, {
+  await assert.rejects(
+    driver.coordinator._worktrees.reserveCapacity('single-preflight-gated', f.sha, {
       runId: 'run-single-preflight', attemptId: 'attempt-single-preflight', processGeneration: 1,
     }),
     (error) => error?.code === 'worktree_capacity_transaction_pending',
@@ -1656,7 +1662,7 @@ test('P92.2-PO2/WC34: wave preflight refuses one retained failed member before a
     },
   ));
   const receiptsBefore = readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners'));
-  assert.throws(() => driver.coordinator._worktrees.reserveCapacityMany([
+  await assert.rejects(driver.coordinator._worktrees.reserveCapacityMany([
     {
       taskId: 'wave-preflight-gated', requestedBaseSha: f.sha,
       runId: 'run-wave-preflight', attemptId: 'attempt-wave-preflight', processGeneration: 1,
@@ -1686,8 +1692,8 @@ test('P92.2-PO2/WC35: persist-then-throw single reserve retains receipt until ex
   });
   const reserve = driver.worktreeCapacity.reserve.bind(driver.worktreeCapacity);
   let physicalOwnerId;
-  driver.worktreeCapacity.reserve = (id, request) => {
-    const reservation = reserve(id, request);
+  driver.worktreeCapacity.reserve = async (id, request) => {
+    const reservation = await reserve(id, request);
     physicalOwnerId = reservation.resourceId;
     throw Object.assign(new Error('single reservation response lost after persistence'), {
       code: 'injected_reservation_response_loss',
@@ -1702,8 +1708,8 @@ test('P92.2-PO2/WC35: persist-then-throw single reserve retains receipt until ex
     return settleCalls === 1 ? false : settle(id);
   };
 
-  assert.throws(
-    () => driver.coordinator._worktrees.reserveCapacity('unknown-single-reserve', f.sha, {
+  await assert.rejects(
+    driver.coordinator._worktrees.reserveCapacity('unknown-single-reserve', f.sha, {
       runId: 'run-unknown-single', attemptId: 'attempt-unknown-single', processGeneration: 1,
     }),
     (error) => error?.code === 'worktree_capacity_unavailable'
@@ -1714,8 +1720,8 @@ test('P92.2-PO2/WC35: persist-then-throw single reserve retains receipt until ex
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations.map((row) => row.resourceId), [
     physicalOwnerId,
   ]);
-  assert.throws(
-    () => driver.coordinator._worktrees.reserveCapacity('unknown-single-reserve', f.sha, {
+  await assert.rejects(
+    driver.coordinator._worktrees.reserveCapacity('unknown-single-reserve', f.sha, {
       runId: 'run-unknown-single', attemptId: 'attempt-unknown-single', processGeneration: 1,
     }),
     (error) => error?.code === 'worktree_capacity_transaction_pending',
@@ -1726,11 +1732,11 @@ test('P92.2-PO2/WC35: persist-then-throw single reserve retains receipt until ex
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, physicalOwnerId), null);
   driver.worktreeCapacity.reserve = reserve;
-  const fresh = driver.coordinator._worktrees.reserveCapacity('unknown-single-reserve', f.sha, {
+  const fresh = await driver.coordinator._worktrees.reserveCapacity('unknown-single-reserve', f.sha, {
     runId: 'run-unknown-single', attemptId: 'attempt-unknown-single-fresh', processGeneration: 1,
   });
   assert.notEqual(fresh.ownerReceipt.physicalOwnerId, physicalOwnerId);
-  assert.equal(driver.coordinator._worktrees.releaseCapacity('unknown-single-reserve'), true);
+  assert.equal(await driver.coordinator._worktrees.releaseCapacity('unknown-single-reserve'), true);
 });
 
 test('P92.2-PO2/WC36: persist-then-throw reserve wave retains every unknown physical outcome', async (t) => {
@@ -1745,8 +1751,8 @@ test('P92.2-PO2/WC36: persist-then-throw reserve wave retains every unknown phys
   });
   const reserveMany = driver.worktreeCapacity.reserveMany.bind(driver.worktreeCapacity);
   let physicalOwnerIds = [];
-  driver.worktreeCapacity.reserveMany = (entries) => {
-    const reservations = reserveMany(entries);
+  driver.worktreeCapacity.reserveMany = async (entries) => {
+    const reservations = await reserveMany(entries);
     physicalOwnerIds = reservations.map((row) => row.resourceId);
     throw Object.assign(new Error('wave reservation response lost after persistence'), {
       code: 'injected_wave_reservation_response_loss',
@@ -1766,8 +1772,8 @@ test('P92.2-PO2/WC36: persist-then-throw reserve wave retains every unknown phys
     runId: 'run-unknown-wave', attemptId: `attempt-unknown-wave-${suffix}`, processGeneration: 1,
   }));
 
-  assert.throws(
-    () => driver.coordinator._worktrees.reserveCapacityMany(entries),
+  await assert.rejects(
+    driver.coordinator._worktrees.reserveCapacityMany(entries),
     (error) => error?.code === 'worktree_capacity_unavailable'
       && error?.reservationError === 'injected_wave_reservation_response_loss',
   );
@@ -1778,8 +1784,8 @@ test('P92.2-PO2/WC36: persist-then-throw reserve wave retains every unknown phys
   for (const physicalOwnerId of physicalOwnerIds) {
     assert.ok(physicalWorkspaceOwnerReceipt(f.repo, physicalOwnerId));
   }
-  assert.throws(
-    () => driver.coordinator._worktrees.reserveCapacityMany(entries),
+  await assert.rejects(
+    driver.coordinator._worktrees.reserveCapacityMany(entries),
     (error) => error?.code === 'worktree_capacity_transaction_pending',
   );
 
@@ -1790,11 +1796,11 @@ test('P92.2-PO2/WC36: persist-then-throw reserve wave retains every unknown phys
     assert.equal(physicalWorkspaceOwnerReceipt(f.repo, physicalOwnerId), null);
   }
   driver.worktreeCapacity.reserveMany = reserveMany;
-  const fresh = driver.coordinator._worktrees.reserveCapacityMany(entries.map((entry) => ({
+  const fresh = await driver.coordinator._worktrees.reserveCapacityMany(entries.map((entry) => ({
     ...entry, attemptId: `${entry.attemptId}-fresh`,
   })));
   assert.equal(fresh.length, 2);
-  assert.deepEqual(driver.coordinator._worktrees.releaseCapacityMany(
+  assert.deepEqual(await driver.coordinator._worktrees.releaseCapacityMany(
     entries.map((entry) => entry.taskId),
   ), [true, true]);
 });
@@ -1811,8 +1817,8 @@ test('P92.2-PO2/WC37: direct create retains a persisted unknown reserve before e
   });
   const reserve = driver.worktreeCapacity.reserve.bind(driver.worktreeCapacity);
   let retainedOwnerId;
-  driver.worktreeCapacity.reserve = (id, request) => {
-    const reservation = reserve(id, request);
+  driver.worktreeCapacity.reserve = async (id, request) => {
+    const reservation = await reserve(id, request);
     retainedOwnerId = reservation.resourceId;
     throw Object.assign(new Error('direct-create reservation response lost after persistence'), {
       code: 'injected_direct_create_reservation_response_loss',
@@ -1842,8 +1848,8 @@ test('P92.2-PO2/WC37: direct create retains a persisted unknown reserve before e
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations.map((row) => row.resourceId), [
     retainedOwnerId,
   ]);
-  assert.throws(
-    () => driver.coordinator._worktrees.reserveCapacity('unknown-direct-create', f.sha, binding),
+  await assert.rejects(
+    driver.coordinator._worktrees.reserveCapacity('unknown-direct-create', f.sha, binding),
     (error) => error?.code === 'worktree_capacity_transaction_pending',
   );
 
@@ -1875,16 +1881,16 @@ test('P92.2-PO2/WC38: duplicate successful wave preflight replays exact pending 
     runId: 'run-duplicate-wave', attemptId: `attempt-duplicate-wave-${suffix}`,
     processGeneration: 1,
   }));
-  const first = driver.coordinator._worktrees.reserveCapacityMany(entries);
+  const first = await driver.coordinator._worktrees.reserveCapacityMany(entries);
   const snapshotBefore = driver.worktreeCapacity.snapshot();
   const receiptsBefore = readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners'));
-  const replay = driver.coordinator._worktrees.reserveCapacityMany(entries);
+  const replay = await driver.coordinator._worktrees.reserveCapacityMany(entries);
   assert.deepEqual(replay, first);
   assert.equal(replay[0], first[0]);
   assert.equal(replay[1], first[1]);
   assert.deepEqual(driver.worktreeCapacity.snapshot(), snapshotBefore);
   assert.deepEqual(readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners')), receiptsBefore);
-  assert.deepEqual(driver.coordinator._worktrees.releaseCapacityMany(
+  assert.deepEqual(await driver.coordinator._worktrees.releaseCapacityMany(
     entries.map((entry) => entry.taskId),
   ), [true, true]);
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
@@ -1903,12 +1909,12 @@ test('P92.2-PO2/WC39: mixed pending and new wave refuses atomically before owner
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate,
     worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
-  const pending = driver.coordinator._worktrees.reserveCapacity('mixed-wave-existing', f.sha, {
+  const pending = await driver.coordinator._worktrees.reserveCapacity('mixed-wave-existing', f.sha, {
     runId: 'run-mixed-wave', attemptId: 'attempt-mixed-wave-existing', processGeneration: 1,
   });
   const snapshotBefore = driver.worktreeCapacity.snapshot();
   const receiptsBefore = readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners'));
-  assert.throws(() => driver.coordinator._worktrees.reserveCapacityMany([
+  await assert.rejects(driver.coordinator._worktrees.reserveCapacityMany([
     {
       taskId: 'mixed-wave-existing', requestedBaseSha: f.sha,
       runId: 'run-mixed-wave', attemptId: 'attempt-mixed-wave-existing', processGeneration: 1,
@@ -1920,7 +1926,7 @@ test('P92.2-PO2/WC39: mixed pending and new wave refuses atomically before owner
   ]), (error) => error?.code === 'worktree_capacity_reservation_conflict');
   assert.deepEqual(driver.worktreeCapacity.snapshot(), snapshotBefore);
   assert.deepEqual(readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners')), receiptsBefore);
-  assert.equal(driver.coordinator._worktrees.releaseCapacity('mixed-wave-existing'), true);
+  assert.equal(await driver.coordinator._worktrees.releaseCapacity('mixed-wave-existing'), true);
   assert.equal(physicalWorkspaceOwnerReceipt(
     f.repo, pending.ownerReceipt.physicalOwnerId,
   ), null);
@@ -1941,17 +1947,17 @@ test('P92.2-PO2/WC40: mismatched-base wave refuses before replacing any pending 
     runId: 'run-mismatched-wave', attemptId: `attempt-mismatched-wave-${suffix}`,
     processGeneration: 1,
   }));
-  const pending = driver.coordinator._worktrees.reserveCapacityMany(entries);
+  const pending = await driver.coordinator._worktrees.reserveCapacityMany(entries);
   git(['commit', '--allow-empty', '-qm', 'new mismatched wave base'], f.repo);
   const differentSha = git(['rev-parse', 'HEAD'], f.repo);
   const snapshotBefore = driver.worktreeCapacity.snapshot();
   const receiptsBefore = readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners'));
-  assert.throws(() => driver.coordinator._worktrees.reserveCapacityMany(entries.map(
+  await assert.rejects(driver.coordinator._worktrees.reserveCapacityMany(entries.map(
     (entry, index) => ({ ...entry, requestedBaseSha: index === 0 ? differentSha : entry.requestedBaseSha }),
   )), (error) => error?.code === 'worktree_capacity_reservation_conflict');
   assert.deepEqual(driver.worktreeCapacity.snapshot(), snapshotBefore);
   assert.deepEqual(readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners')), receiptsBefore);
-  assert.deepEqual(driver.coordinator._worktrees.releaseCapacityMany(
+  assert.deepEqual(await driver.coordinator._worktrees.releaseCapacityMany(
     entries.map((entry) => entry.taskId),
   ), [true, true]);
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
@@ -1973,12 +1979,12 @@ test('P92.2-PO2/WC41: single preflight replay requires the full immutable alloca
   const binding = {
     runId: 'run-single-binding', attemptId: 'attempt-single-binding', processGeneration: 3,
   };
-  const first = driver.coordinator._worktrees.reserveCapacity(
+  const first = await driver.coordinator._worktrees.reserveCapacity(
     'single-binding-replay', f.sha, binding,
   );
   const snapshotBefore = driver.worktreeCapacity.snapshot();
   const receiptsBefore = readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners'));
-  const replay = driver.coordinator._worktrees.reserveCapacity(
+  const replay = await driver.coordinator._worktrees.reserveCapacity(
     'single-binding-replay', f.sha, binding,
   );
   assert.equal(replay, first);
@@ -1988,8 +1994,8 @@ test('P92.2-PO2/WC41: single preflight replay requires the full immutable alloca
     { ...binding, processGeneration: 4 },
   ];
   for (const candidate of mutations) {
-    assert.throws(
-      () => driver.coordinator._worktrees.reserveCapacity(
+    await assert.rejects(
+      driver.coordinator._worktrees.reserveCapacity(
         'single-binding-replay', f.sha, candidate,
       ),
       (error) => error?.code === 'worktree_capacity_reservation_conflict',
@@ -1998,7 +2004,7 @@ test('P92.2-PO2/WC41: single preflight replay requires the full immutable alloca
     assert.deepEqual(readdirSync(join(f.repo, '.git', 'baton', 'workspace-owners')),
       receiptsBefore);
   }
-  assert.equal(driver.coordinator._worktrees.releaseCapacity('single-binding-replay'), true);
+  assert.equal(await driver.coordinator._worktrees.releaseCapacity('single-binding-replay'), true);
   assert.equal(physicalWorkspaceOwnerReceipt(
     f.repo, first.ownerReceipt.physicalOwnerId,
   ), null);
@@ -2017,7 +2023,7 @@ test('P92.2-PO2/WC42: create cannot consume pending capacity under another immut
   const binding = {
     runId: 'run-create-binding', attemptId: 'attempt-create-binding', processGeneration: 2,
   };
-  const pending = driver.coordinator._worktrees.reserveCapacity(
+  const pending = await driver.coordinator._worktrees.reserveCapacity(
     'create-binding-refusal', f.sha, binding,
   );
   const snapshotBefore = driver.worktreeCapacity.snapshot();
@@ -2057,7 +2063,7 @@ test('P92.2-PO2/WC43: single pending cleanup latches capacity absence through re
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate,
     worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
-  const pending = driver.coordinator._worktrees.reserveCapacity('single-finalize', f.sha, {
+  const pending = await driver.coordinator._worktrees.reserveCapacity('single-finalize', f.sha, {
     runId: 'run-single-finalize', attemptId: 'attempt-single-finalize', processGeneration: 1,
   });
   const receiptPath = canonicalMissingLeaf(join(
@@ -2072,8 +2078,8 @@ test('P92.2-PO2/WC43: single pending cleanup latches capacity absence through re
   };
   syncBuiltinESMExports();
   try {
-    assert.throws(
-      () => driver.coordinator._worktrees.releaseCapacity('single-finalize'),
+    await assert.rejects(
+      driver.coordinator._worktrees.releaseCapacity('single-finalize'),
       (error) => error?.code === 'injected_receipt_unlink_failure',
     );
   } finally {
@@ -2082,13 +2088,13 @@ test('P92.2-PO2/WC43: single pending cleanup latches capacity absence through re
   }
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
   assert.ok(physicalWorkspaceOwnerReceipt(f.repo, pending.ownerReceipt.physicalOwnerId));
-  assert.throws(
-    () => driver.coordinator._worktrees.reserveCapacity('single-finalize', f.sha, {
+  await assert.rejects(
+    driver.coordinator._worktrees.reserveCapacity('single-finalize', f.sha, {
       runId: 'run-single-finalize', attemptId: 'attempt-single-finalize', processGeneration: 1,
     }),
     (error) => error?.code === 'worktree_capacity_transaction_pending',
   );
-  assert.equal(driver.coordinator._worktrees.releaseCapacity('single-finalize'), true);
+  assert.equal(await driver.coordinator._worktrees.releaseCapacity('single-finalize'), true);
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, pending.ownerReceipt.physicalOwnerId), null);
 });
 
@@ -2103,7 +2109,7 @@ test('P92.2-PO2/WC44: releaseCapacityMany reports partial receipt finalization a
     worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
   const taskIds = ['wave-finalize-a', 'wave-finalize-b'];
-  const pending = driver.coordinator._worktrees.reserveCapacityMany(taskIds.map((taskId) => ({
+  const pending = await driver.coordinator._worktrees.reserveCapacityMany(taskIds.map((taskId) => ({
     taskId, requestedBaseSha: f.sha, runId: 'run-wave-finalize',
     attemptId: `attempt-${taskId}`, processGeneration: 1,
   })));
@@ -2118,7 +2124,7 @@ test('P92.2-PO2/WC44: releaseCapacityMany reports partial receipt finalization a
   };
   syncBuiltinESMExports();
   let outcomes;
-  try { outcomes = driver.coordinator._worktrees.releaseCapacityMany(taskIds); }
+  try { outcomes = await driver.coordinator._worktrees.releaseCapacityMany(taskIds); }
   finally {
     fs.rmSync = originalRmSync;
     syncBuiltinESMExports();
@@ -2129,7 +2135,7 @@ test('P92.2-PO2/WC44: releaseCapacityMany reports partial receipt finalization a
     f.repo, pending[0].ownerReceipt.physicalOwnerId,
   ), null);
   assert.ok(physicalWorkspaceOwnerReceipt(f.repo, failedOwnerId));
-  assert.deepEqual(driver.coordinator._worktrees.releaseCapacityMany(taskIds), [false, true]);
+  assert.deepEqual(await driver.coordinator._worktrees.releaseCapacityMany(taskIds), [false, true]);
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, failedOwnerId), null);
 });
 
@@ -2144,7 +2150,7 @@ test('P92.2-PO2/WC45: settleCapacityMany retains a partial receipt failure for e
     worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
   const taskIds = ['settle-finalize-a', 'settle-finalize-b'];
-  const pending = driver.coordinator._worktrees.reserveCapacityMany(taskIds.map((taskId) => ({
+  const pending = await driver.coordinator._worktrees.reserveCapacityMany(taskIds.map((taskId) => ({
     taskId, requestedBaseSha: f.sha, runId: 'run-settle-finalize',
     attemptId: `attempt-${taskId}`, processGeneration: 1,
   })));
@@ -2159,8 +2165,8 @@ test('P92.2-PO2/WC45: settleCapacityMany retains a partial receipt failure for e
   };
   syncBuiltinESMExports();
   try {
-    assert.throws(
-      () => driver.coordinator._worktrees.settleCapacityMany(taskIds),
+    await assert.rejects(
+      driver.coordinator._worktrees.settleCapacityMany(taskIds),
       (error) => error?.code === 'worktree_cleanup_failed',
     );
   } finally {
@@ -2172,11 +2178,11 @@ test('P92.2-PO2/WC45: settleCapacityMany retains a partial receipt failure for e
     f.repo, pending[0].ownerReceipt.physicalOwnerId,
   ), null);
   assert.ok(physicalWorkspaceOwnerReceipt(f.repo, failedOwnerId));
-  assert.deepEqual(driver.coordinator._worktrees.settleCapacityMany(taskIds), [true, true]);
+  assert.deepEqual(await driver.coordinator._worktrees.settleCapacityMany(taskIds), [true, true]);
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, failedOwnerId), null);
 });
 
-test('P92.2-PO2/WC46: post-effect receipt unlink response loss is exact-idempotent', (t) => {
+test('P92.2-PO2/WC46: post-effect receipt unlink response loss is exact-idempotent', async (t) => {
   const f = fixture('post-effect-receipt-unlink');
   const injected = injectedCapacity();
   let driver;
@@ -2190,7 +2196,7 @@ test('P92.2-PO2/WC46: post-effect receipt unlink response loss is exact-idempote
     runId: 'run-post-effect-unlink', attemptId: 'attempt-post-effect-unlink',
     processGeneration: 1,
   };
-  const pending = driver.coordinator._worktrees.reserveCapacity(
+  const pending = await driver.coordinator._worktrees.reserveCapacity(
     'post-effect-unlink', f.sha, binding,
   );
   const receiptPath = canonicalMissingLeaf(join(
@@ -2210,8 +2216,8 @@ test('P92.2-PO2/WC46: post-effect receipt unlink response loss is exact-idempote
   };
   syncBuiltinESMExports();
   try {
-    assert.throws(
-      () => driver.coordinator._worktrees.releaseCapacity('post-effect-unlink'),
+    await assert.rejects(
+      driver.coordinator._worktrees.releaseCapacity('post-effect-unlink'),
       (error) => error?.code === 'injected_post_effect_receipt_unlink',
     );
   } finally {
@@ -2221,12 +2227,12 @@ test('P92.2-PO2/WC46: post-effect receipt unlink response loss is exact-idempote
   assert.equal(crossed, true);
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, pending.ownerReceipt.physicalOwnerId), null);
-  assert.equal(driver.coordinator._worktrees.releaseCapacity('post-effect-unlink'), true);
-  const replacement = driver.coordinator._worktrees.reserveCapacity(
+  assert.equal(await driver.coordinator._worktrees.releaseCapacity('post-effect-unlink'), true);
+  const replacement = await driver.coordinator._worktrees.reserveCapacity(
     'post-effect-unlink', f.sha, binding,
   );
   assert.notEqual(replacement.ownerReceipt.physicalOwnerId, pending.ownerReceipt.physicalOwnerId);
-  assert.equal(driver.coordinator._worktrees.releaseCapacity('post-effect-unlink'), true);
+  assert.equal(await driver.coordinator._worktrees.releaseCapacity('post-effect-unlink'), true);
 });
 
 test('P92.2-PO2/WC47: pending base mismatch retains its receipt-finalization latch', async (t) => {
@@ -2243,7 +2249,7 @@ test('P92.2-PO2/WC47: pending base mismatch retains its receipt-finalization lat
     runId: 'run-base-mismatch-unlink', attemptId: 'attempt-base-mismatch-unlink',
     processGeneration: 1,
   };
-  const pending = driver.coordinator._worktrees.reserveCapacity(
+  const pending = await driver.coordinator._worktrees.reserveCapacity(
     'base-mismatch-unlink', f.sha, binding,
   );
   write(f.repo, 'different-base.txt', 'different base\n');
@@ -2290,7 +2296,7 @@ test('P92.2-PO2/WC48: pending remove retains its receipt-finalization latch', as
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate,
     worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
-  const pending = driver.coordinator._worktrees.reserveCapacity('pending-remove-unlink', f.sha, {
+  const pending = await driver.coordinator._worktrees.reserveCapacity('pending-remove-unlink', f.sha, {
     runId: 'run-pending-remove-unlink', attemptId: 'attempt-pending-remove-unlink',
     processGeneration: 1,
   });
