@@ -529,6 +529,46 @@ for (const name of SWARM_COMMAND_NAMES) {
   }
 }
 
+/** Issue #441 (the reading half): the recruit's ONE option that is not a Run-start selection.
+ * `options.contextPackage` names an ALREADY-ADMITTED ContextPackage (docs/32 §3.3) by digest —
+ * the root's CLI admits it (the issue plus every doc the issue cites) through the deployment's
+ * context-package port before it recruits, and the runtime attaches it to the seat's run with
+ * scope `worker:<seat>` once the run is bound. The field's closed shape lives HERE, beside the
+ * recruit's other vocabulary, so the CLI's writer and the runtime's reader cannot drift; the
+ * digest travels, never the package: the seat's brief resolves the branch text from the store. */
+export const SWARM_RECRUIT_CONTEXT_PACKAGE_FIELDS = Object.freeze(['digest']);
+
+/** Read (and validate) the recruit's context-package option: the digest, or null when the caller
+ * named none. A malformed option refuses with the recruit's own closed-set teaching. */
+export function readRecruitContextPackageOption(options) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) return null;
+  const value = options.contextPackage;
+  if (value === undefined) return null;
+  const fields = SWARM_RECRUIT_CONTEXT_PACKAGE_FIELDS;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join('\0') !== [...fields].sort().join('\0')
+    || !/^[a-f0-9]{64}$/u.test(value.digest ?? '')) {
+    throw swarmError(
+      'swarm.recruit options.contextPackage must name an admitted context package by digest',
+      'swarm_command_invalid',
+      {
+        field: 'options.contextPackage', rule: 'closed-set',
+        correction: `pass {${fields.join(', ')}} with the 64-hex package digest an admission answered with`,
+      },
+    );
+  }
+  return Object.freeze({ digest: value.digest });
+}
+
+/** The Run-start selection without the recruit's own context-package option: the intent a
+ * deployment's prepareRun resolves must never carry a field it does not know. */
+export function withoutRecruitContextPackageOption(options) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)
+    || !Object.hasOwn(options, 'contextPackage')) return options;
+  const { contextPackage: _contextPackage, ...selection } = options;
+  return selection;
+}
+
 /**
  * Validate one swarm command request. Throws a typed error; returns true when the request is
  * admissible. Codes: `swarm_command_unavailable` (unknown name), `swarm_command_invalid` (shape,

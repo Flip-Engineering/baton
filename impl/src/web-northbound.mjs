@@ -133,10 +133,72 @@ const DEPLOYMENT_WEB_ENTRIES = Object.freeze(
 const DEPLOYMENT_ARG_FIELDS = Object.freeze(Object.fromEntries(
   DEPLOYMENT_WEB_ENTRIES.map(([transport]) => [transport, new Set()]),
 ));
+// Issue #441 (the reading half): the context-package direct ports. The root's CLI pulls the
+// GitHub issue (and every doc the issue cites) on the ONE host that holds `gh`, and hands the
+// documents here as branch texts; THIS layer mints each branch into the deployment's own context
+// CAS through the deployment-owned writer (`contextSourceAdmit` — the same
+// `StatelessContextBench.admitSource` the store's reference resolver reads back), composes the
+// exact package fields the hub's normalizer demands (policyDigest from the deployment's own
+// Context Program authority, provenance.principalId from the authenticated caller, runId null —
+// the recruit binds the run), and admits ONE package through the coordination store's own
+// `admitContextPackage`. There is no second registry, and no worker ever calls gh.
+const CONTEXT_PACKAGE_WEB_ENTRIES = Object.freeze([
+  ['package_admit', 'package.admit', Object.freeze(['control', 'observe'])],
+  ['package_attach', 'package.attach', Object.freeze(['control', 'observe'])],
+]);
+const CONTEXT_PACKAGE_DOT_WEB_ENTRIES = Object.freeze(CONTEXT_PACKAGE_WEB_ENTRIES
+  .map(([transport, name, capabilities]) => [name, name, capabilities]));
+// The port's own closed argument authority (direct ports skip validateApplicationCommandArgs):
+// admit takes the package name and its branch documents; attach takes the fenced pointer triple.
+const CONTEXT_PACKAGE_ARG_FIELDS = Object.freeze(Object.fromEntries(
+  [...CONTEXT_PACKAGE_WEB_ENTRIES, ...CONTEXT_PACKAGE_DOT_WEB_ENTRIES].map(([transport, name]) => (
+    [transport, name === 'package.admit' || name === 'package_admit'
+      ? new Set(['name', 'branches']) : new Set(['packageDigest', 'runId', 'scope'])]
+  )),
+));
+const CONTEXT_PACKAGE_COMMANDS = new Set(
+  [...CONTEXT_PACKAGE_WEB_ENTRIES, ...CONTEXT_PACKAGE_DOT_WEB_ENTRIES].map(([transport]) => transport),
+);
+
+/** Issue #441: the closed request the context-package admit port accepts — the package's name
+ * and one branch document per source the root's CLI pulled (the issue, then each doc it cites).
+ * Each branch's text is minted into the deployment's context CAS BY THE PORT: the CLI never hands
+ * a content reference it computed itself, so a caller cannot name bytes this deployment does not
+ * hold. Bounded by the registry row (never a literal). */
+function normalizeContextPackageRequest(raw) {
+  const invalid = (message, field) => Object.assign(new Error(message),
+    { code: 'context_package_invalid', detail: { field } });
+  const name = 'name';
+  if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== ['branches', name].sort().join(',')
+    || !string(raw.name) || !/^[A-Za-z0-9._:-]{1,512}$/u.test(raw.name)
+    || !Array.isArray(raw.branches) || raw.branches.length === 0 || raw.branches.length > 64) {
+    throw invalid('a context package request carries a name and 1..64 branch documents', 'branches');
+  }
+  const row = FRAME_LIMITS['context_package.source_bytes'];
+  const branches = raw.branches.map((branch, index) => {
+    if (!isRecord(branch) || Object.keys(branch).sort().join(',') !== ['name', 'text'].sort().join(',')
+      || !string(branch.name) || !/^[A-Za-z0-9._:-]{1,512}$/u.test(branch.name)
+      || typeof branch.text !== 'string' || branch.text.length === 0) {
+      throw invalid(`context package branch ${index + 1} names {name, text}`, `branches[${index}]`);
+    }
+    const bytes = Buffer.byteLength(branch.text, 'utf8');
+    if (bytes > row.value) {
+      throw Object.assign(new Error(
+        `${branch.name} is ${bytes} bytes (cap ${row.value}); the context package branch row is ${row.lane}`,
+      ), { code: 'context_package_oversize', detail: { field: `branches[${index}]`, bytes, limit: row.value, lane: row.lane } });
+    }
+    return Object.freeze({ name: branch.name, text: branch.text, bytes });
+  });
+  if (new Set(branches.map((branch) => branch.name)).size !== branches.length) {
+    throw invalid('context package branch names must be unique', 'branches');
+  }
+  return Object.freeze({ name: raw.name, branches: Object.freeze(branches) });
+}
 const WEB_DIRECT_PORT_COMMANDS = new Set([
   ...WAVE_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...WORKFLOW_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...DEPLOYMENT_WEB_ENTRIES.map(([transport]) => transport),
+  ...CONTEXT_PACKAGE_COMMANDS,
 ]);
 const WORKFLOW_DOT_WEB_ENTRIES = Object.freeze(WORKFLOW_WEB_ENTRIES
   .map(([transport, name, capabilities]) => [name, name, capabilities]));
@@ -177,6 +239,8 @@ const COMMAND_CAPABILITY = Object.freeze({
   ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(DEPLOYMENT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(CONTEXT_PACKAGE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(CONTEXT_PACKAGE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
@@ -241,6 +305,7 @@ const ARG_FIELDS = Object.freeze({
   // validateEnvelope skips validateApplicationCommandArgs for direct ports.
   ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
+  ...Object.fromEntries(Object.entries(CONTEXT_PACKAGE_ARG_FIELDS)),
 });
 const ACCEPTED_ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(Object.entries(ARG_FIELDS).map(([transport, fields]) => [transport, fields])),
@@ -524,6 +589,41 @@ function dispatchFailure(cause, command = null) {
       });
     }
     return { httpStatus: conflict ? 409 : 400, body: { ok: false, error: { code: goalPlanCode, message: conflict ? 'application state conflict' : 'application precondition failed' } } };
+  }
+  // Issue #441: the context-package ports' own codes. A malformed package the caller composed
+  // crosses 400 with its teaching; an unresolvable/duplicate/branch-empty package crosses 409; a
+  // missing one 404; a deployment with no context CAS writer or no Context Program authority is a
+  // genuinely unavailable capability (503), never a request fault.
+  if (['context_package_invalid', 'context_package_attach_invalid'].includes(goalPlanCode)) {
+    const detail = isRecord(cause?.detail) ? cause.detail : null;
+    return { httpStatus: 400, body: { ok: false, error: {
+      code: goalPlanCode, message: cause?.message ?? 'context package request refused',
+      ...(detail === null ? {} : { detail }),
+    } } };
+  }
+  if (goalPlanCode === 'context_package_oversize') {
+    const detail = isRecord(cause?.detail) ? cause.detail : null;
+    return { httpStatus: 413, body: { ok: false, error: {
+      code: goalPlanCode, message: cause?.message ?? 'context package exceeded its declared bound',
+      ...(detail === null ? {} : { detail }),
+    } } };
+  }
+  if (['context_package_conflict', 'context_artifact_unavailable', 'context_source_integrity',
+    'context_source_oversize', 'context_source_sensitive', 'package_branch_empty',
+    'package_branch_name_conflict'].includes(goalPlanCode)) {
+    return { httpStatus: 409, body: { ok: false, error: {
+      code: goalPlanCode, message: cause?.message ?? 'context package refused by the hub',
+    } } };
+  }
+  if (['context_package_not_found', 'context_source_unavailable'].includes(goalPlanCode)) {
+    return { httpStatus: 404, body: { ok: false, error: {
+      code: goalPlanCode, message: cause?.message ?? 'context package resource not found',
+    } } };
+  }
+  if (goalPlanCode === 'context_package_unavailable') {
+    return { httpStatus: 503, body: { ok: false, error: {
+      code: goalPlanCode, message: cause?.message ?? 'this deployment has no Context Program authority',
+    } } };
   }
   if (goalPlanCode === 'goal_plan_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority forbidden' } } };
   if (goalPlanCode === 'goal_plan_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority unavailable' } } };
@@ -1380,6 +1480,15 @@ export class WebNorthbound {
       || typeof this.application.authorizeReplay !== 'function')) {
       throw new TypeError('web application facade is invalid');
     }
+    // Issue #441: the deployment's ONE context-CAS writer — `StatelessContextBench.admitSource`
+    // (context-program.mjs), wired by the resident that owns the Context Program runtime, so the
+    // context-package admit port can mint the branch documents the root's CLI pulled. Null when
+    // the deployment exposes none: the port then refuses `context_source_unavailable` instead of
+    // admitting a package whose branches nothing could resolve.
+    this.contextSourceAdmit = opts.contextSourceAdmit ?? null;
+    if (this.contextSourceAdmit !== null && typeof this.contextSourceAdmit !== 'function') {
+      throw new TypeError('web context source writer must be a function');
+    }
     this.allowedOrigins = new Set(opts.allowedOrigins ?? []);
     this.repoIds = new Set(opts.repoIds ?? []);
     if (this.repoIds.size > 1) throw new TypeError('one web northbound authority may serve at most one repository');
@@ -2026,6 +2135,12 @@ export class WebNorthbound {
       value = await this.coordinator.respond(a.requestId, a.answer, webActor);
     } else if (envelope.command === 'list') {
       value = this.coordinator.list();
+    } else if (CONTEXT_PACKAGE_COMMANDS.has(envelope.command)) {
+      // Issue #441: the context-package direct ports (admit/attach), whose argument authority is
+      // the port's own closed normalizer below — never validateApplicationCommandArgs.
+      value = envelope.command === 'package_admit' || envelope.command === 'package.admit'
+        ? this._admitContextPackagePort(a, webActor, principal, envelope)
+        : this._attachContextPackagePort(a, webActor, envelope);
     } else if (envelope.command === 'result') {
       value = await this.coordinator.result(a.workerId);
     } else if (envelope.command === 'wait') {
@@ -2113,6 +2228,68 @@ export class WebNorthbound {
       });
     }
     return result(200, { ok: true, commandId: envelope.commandId, result: projected });
+  }
+
+  /** Issue #441: the context-package admit port. The root's CLI pulls the issue and every doc it
+   * cites and hands them here as branch documents; THIS layer mints each branch into the
+   * deployment's own context CAS through the deployment-owned writer, composes the fields the
+   * hub's normalizer demands (policyDigest from this deployment's Context Program authority,
+   * provenance.principalId from the authenticated caller, runId null — the recruit binds the
+   * run), and admits ONE package through the coordination store's own `admitContextPackage`.
+   * The answer names the package digest and each branch's digest and byte size, so the CLI can
+   * recruit with the digest and report what it handed over. */
+  _admitContextPackagePort(raw, webActor, principal, envelope) {
+    if (typeof this.contextSourceAdmit !== 'function') {
+      throw Object.assign(new Error('this deployment exposes no context source writer'),
+        { code: 'context_source_unavailable' });
+    }
+    const authority = typeof this.coordination.contextProgramAuthority === 'function'
+      ? this.coordination.contextProgramAuthority() : null;
+    if (!authority || !/^[a-f0-9]{64}$/u.test(authority.policyDigest ?? '')) {
+      throw Object.assign(new Error('this deployment has no Context Program authority'),
+        { code: 'context_package_unavailable' });
+    }
+    const request = normalizeContextPackageRequest(raw);
+    const branches = request.branches.map((branch) => {
+      let source;
+      try { source = this.contextSourceAdmit(branch.text); }
+      catch (cause) {
+        throw Object.assign(
+          new Error(`context package branch ${branch.name} could not be minted into this deployment's context store`),
+          { code: typeof cause?.code === 'string' ? cause.code : 'context_source_unavailable', cause },
+        );
+      }
+      return { name: branch.name, source, artifact: null, valueRef: null, schema: null };
+    });
+    const admitted = this.coordination.admitContextPackage({
+      schemaVersion: 1, kind: 'baton.context_package', branches,
+      provenance: { runId: null, principalId: principal.userId },
+      policyDigest: authority.policyDigest,
+    }, { actor: webActor, key: `web.context_package.admit:${envelope.commandId}` });
+    return {
+      packageDigest: admitted.package.packageDigest,
+      name: request.name,
+      branches: branches.map((branch, index) => Object.freeze({
+        name: branch.name, digest: branch.source.digest, bytes: request.branches[index].bytes,
+      })),
+    };
+  }
+
+  /** Issue #441: the attach half of the pair — the same fenced O(1) pointer binding the
+   * application's `attachContextPackage` port (and MCP's `baton_package_attach`) makes, over the
+   * authenticated web principal instead of a run-orchestrator lease. It never re-reads branch
+   * bytes: the attach row IS the durable fact. */
+  _attachContextPackagePort(raw, webActor, envelope) {
+    if (!isRecord(raw) || Object.keys(raw).sort().join(',') !== ['packageDigest', 'runId', 'scope'].sort().join(',')
+      || !/^[a-f0-9]{64}$/u.test(raw.packageDigest ?? '') || !string(raw.runId)
+      || !string(raw.scope)) {
+      throw Object.assign(new Error('context package attach request is invalid'),
+        { code: 'context_package_attach_invalid' });
+    }
+    const attached = this.coordination.attachContextPackage({
+      packageDigest: raw.packageDigest, runId: raw.runId, scope: raw.scope,
+    }, { actor: webActor, key: `package.attach:${raw.packageDigest}:${raw.runId}:${raw.scope}:web:${envelope.commandId}` });
+    return { result: attached.result, attachment: attached.attachment };
   }
 
   async handle(req, res) {
