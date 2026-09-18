@@ -11968,7 +11968,7 @@
         {
           "name": "_admitContributionContract",
           "ordinal": 0,
-          "size": 29,
+          "size": 35,
           "seam": "effect",
           "evidence": [
             "effect:process_exec",
@@ -12340,7 +12340,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 101,
+          "size": 104,
           "seam": "effect",
           "evidence": [
             "delegates:admission",
