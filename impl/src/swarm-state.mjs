@@ -38,6 +38,11 @@ export const SWARM_WORK_STATUSES = Object.freeze(['open', 'completed', 'cancelle
 export const SWARM_ASSIGNMENT_STATUSES = Object.freeze(['active', 'released']);
 export const SWARM_REVIEW_DECISIONS = Object.freeze(['accept', 'reject', 'comment']);
 
+// The remedy note a departed-seat group refusal carries (#395). A named constant, not an inline
+// literal: the fold-admission audit classifies an integrity(...) call by its last quoted
+// argument, so the refusal's detail keeps to references and the code literal stays last.
+const DEPARTED_SEAT_REMEDY_NOTE = 'resend exactly these members — the current active set of this group';
+
 // One physical workspace identity (`ws-…`): the checkout a participant works in, as recorded at
 // recruitment and at binding. The writer coupling's exclusivity is exactly this identity, so the
 // shape is named once here rather than re-spelled at each site that carries it.
@@ -53,10 +58,13 @@ export class SwarmRefusal extends Error {
 }
 
 export class SwarmIntegrityError extends Error {
-  constructor(message, code) {
+  constructor(message, code, detail = null) {
     super(message);
     this.name = 'SwarmIntegrityError';
     this.code = code;
+    // Repairable coordinates when the fold can name them (#395): the group, the seat, the
+    // settled status and the exact roster to resend. Null when the error needs no coordinate.
+    this.detail = detail === null ? null : Object.freeze({ ...detail });
   }
 }
 
@@ -64,8 +72,8 @@ function refuse(message, code, detail = null) {
   throw new SwarmRefusal(message, code, detail);
 }
 
-function integrity(message, code) {
-  throw new SwarmIntegrityError(message, code);
+function integrity(message, code, detail = null) {
+  throw new SwarmIntegrityError(message, code, detail);
 }
 
 function isNonEmptyString(value) {
@@ -524,20 +532,59 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     });
     const parts = new Map(Object.entries(swarm.participants));
     parts.set(p.participantId, updatedParticipant);
-    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
+    // Issue #395, on #350's settled-status seam: the leave evicts the seat from every group it
+    // is a member of, so a group's `members` always lists seats that can act — the same rule
+    // the roster follows. The eviction is recorded on the group row (`departed`:
+    // [{participantId, at, seq}], ONE shape, appended — history, never rewritten) and bumps the
+    // group version, so a concurrent caller's expectedVersion collides honestly with the roster
+    // change instead of rewriting over an eviction it never saw. A later group_updated naming
+    // the seat is still refused (participant_not_active, with the repair coordinates) — the
+    // fold never silently rewrites a caller's roster for them.
+    let groups = null;
+    for (const [groupId, group] of Object.entries(swarm.groups)) {
+      if (!group.members.includes(p.participantId)) continue;
+      const updatedGroup = Object.freeze({
+        ...group,
+        members: Object.freeze(group.members.filter((memberId) => memberId !== p.participantId)),
+        departed: Object.freeze([...(group.departed ?? []),
+          Object.freeze({ participantId: p.participantId, at: meta.ts, seq: meta.seq })]),
+        version: group.version + 1,
+        actor: meta.actor, seq: meta.seq, ts: meta.ts,
+      });
+      groups = groups ?? new Map(Object.entries(swarm.groups));
+      groups.set(groupId, updatedGroup);
+    }
+    swarms.set(p.swarmId, groups === null
+      ? replaceField(swarm, 'participants', parts)
+      : replaceField(replaceField(swarm, 'participants', parts), 'groups', groups));
     return;
   }
 
   if (kind === 'swarm.group_updated') {
+    const existingGroup = ownGet(swarm.groups, p.groupId) ?? null;
     // Members must be currently active participants (not left). The refusal names the group
     // and the seat (#290): a release batch trial-folds through here, and "participant_not_active"
-    // without a group/seat left the operator no repairable coordinate.
+    // without a group/seat left the operator no repairable coordinate. Since the leave fold
+    // evicts a departed seat itself (#395), a roster that still names one is a stale resend:
+    // the refusal carries the seat's settled status, the log position it departed at, and a
+    // remedy naming the exact members array to resend — the current active set. No silent
+    // rewrite by the fold: the caller repairs, the fold refuses.
     for (const memberId of p.members) {
       const member = ownGet(swarm.participants, memberId);
       if (!member) integrity(`group member ${memberId} not found in swarm ${p.swarmId} (group ${p.groupId}, seat ${memberId})`, 'participant_not_found');
-      if (member.status !== 'active') integrity(`group member ${memberId} is not active in swarm ${p.swarmId} (group ${p.groupId}, seat ${memberId})`, 'participant_not_active');
+      if (member.status !== 'active') {
+        const activeSet = existingGroup?.members ?? [];
+        integrity(`group member ${memberId} is not active in swarm ${p.swarmId} (group ${p.groupId}, seat ${memberId}); `
+          + `the seat is departed since seq ${member.seq ?? null} — resend exactly ${JSON.stringify(activeSet)}`,
+          'participant_not_active', {
+            groupId: p.groupId,
+            participantId: memberId,
+            status: member.status,
+            sinceSeq: member.seq ?? null,
+            remedy: { members: [...activeSet], note: DEPARTED_SEAT_REMEDY_NOTE },
+          });
+      }
     }
-    const existingGroup = ownGet(swarm.groups, p.groupId) ?? null;
     const currentVersion = existingGroup?.version ?? 0;
     if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
       integrity(`swarm group ${p.groupId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
@@ -546,6 +593,9 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       groupId: p.groupId,
       purpose: p.purpose !== undefined ? p.purpose : (existingGroup?.purpose ?? null),
       members: Object.freeze([...p.members]), version: currentVersion + 1,
+      // The evictions this roster has recorded ride every rewrite (#395): who a group lost is
+      // history, and a departed seat can never be named again without the refusal above.
+      departed: Object.freeze([...(existingGroup?.departed ?? [])]),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const groups = new Map(Object.entries(swarm.groups));
