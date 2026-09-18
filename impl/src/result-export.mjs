@@ -8,6 +8,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { TextDecoder } from 'node:util';
 import { foldCanonicalCase } from './canonical-order.mjs';
 
+import { FRAME_LIMITS } from './limits.mjs';
+
 function exportError(message, code) { return Object.assign(new Error(message), { code }); }
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }
 function canonical(value) {
@@ -431,8 +433,8 @@ export class ResultExportLifecycle {
     return tracked;
   }
 
-  reconcile(exports) {
-    return this.#operate((exportRoot) => reconcileResultExportStaging({ exportRoot, exports }));
+  reconcile(exports, exportPolicy = null) {
+    return this.#operate((exportRoot) => reconcileResultExportStaging({ exportRoot, exports, exportPolicy }));
   }
 
   deriveArchive({ receipt, maxArchiveBytes }) {
@@ -653,9 +655,16 @@ function moveReservedEntry(root, source, prefix, exportId) {
 
 /** Reconcile only the closed, nonce-bound staging namespace. Unknown but structurally safe stages
  * are moved aside atomically; unrelated entries are deliberately invisible to this authority. */
-export function reconcileResultExportStaging({ exportRoot, exports }) {
+export function reconcileResultExportStaging({ exportRoot, exports, exportPolicy = null }) {
   const root = validateResultExportRoot(exportRoot);
   if (!Array.isArray(exports)) throw exportError('result export replay state is invalid', 'result_export_invalid');
+  // Issue #413: an explicitly supplied deployment export policy must carry the rows that bound
+  // an archive; anything else refuses typed instead of degrading to an unbounded derivation.
+  if (exportPolicy !== null && (exportPolicy?.format !== 'directory-v1'
+    || !Number.isSafeInteger(exportPolicy.maxFiles) || exportPolicy.maxFiles <= 0
+    || !Number.isSafeInteger(exportPolicy.maxBytes) || exportPolicy.maxBytes <= 0)) {
+    throw exportError('result export replay policy is invalid', 'result_export_invalid');
+  }
   const bound = new Map();
   for (const entry of exports) {
     const fields = entry?.receipt === undefined
@@ -694,8 +703,18 @@ export function reconcileResultExportStaging({ exportRoot, exports }) {
     }
     if (entry?.status === 'completed' && before && entry.receipt !== undefined) {
       try {
+        // Issue #413: the deployment's export policy bounds the re-derived archive — the policy
+        // rows are read HERE, at the derivation site. With no policy supplied, the receipt's own
+        // policy-validated rows bound it. A stage above the bound refuses typed
+        // (result_export_archive_oversize, checked incrementally) and falls through to
+        // quarantine — it is never re-derived whole.
         deriveResultExportArchive({
-          exportRoot: root, receipt: entry.receipt, maxArchiveBytes: Number.MAX_SAFE_INTEGER,
+          exportRoot: root, receipt: entry.receipt,
+          maxArchiveBytes: exportPolicy === null
+            ? resultExportArchiveCeiling({
+              maxFiles: entry.receipt.fileCount, maxBytes: entry.receipt.byteCount,
+            })
+            : resultExportArchiveCeiling(exportPolicy),
         });
         const moved = moveReservedEntry(root, source, '.reap-stage', entry.exportId);
         const after = ownedPrivateDirectory(moved.destination);
@@ -866,6 +885,18 @@ function ustarHeader({ path, mode, size }) {
   const checksum = [...header].reduce((sum, byte) => sum + byte, 0);
   writeTarBytes(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\0 `);
   return header;
+}
+
+/** Issue #413: the ONE deployment-derived archive ceiling — the export policy's own byte/file
+ * rows plus the registry row that bounds the manifest JSON. Every completed-archive derivation
+ * reads it; a stage above it refuses typed (`result_export_archive_oversize`) through
+ * `deriveResultExportArchive`'s incremental check, never allocated whole. */
+export function resultExportArchiveCeiling({ maxFiles, maxBytes }) {
+  const value = maxBytes + FRAME_LIMITS['view.run.bytes'].value + ((maxFiles + 1) * 1024);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw exportError('result export policy cannot bound an archive', 'result_export_invalid');
+  }
+  return value;
 }
 
 /** Reverify a completed directory-v1 export and derive its versioned deterministic wire archive. */

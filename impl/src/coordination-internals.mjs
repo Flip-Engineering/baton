@@ -43,7 +43,10 @@ export class CoordinationIntegrityError extends Error {
 }
 
 export class CoordinationRefusal extends Error {
-  constructor(message, code) { super(message); this.name = 'CoordinationRefusal'; this.code = code; }
+  // Issue #405: the declared detail travels on the class — the ONE canonical way a refusal
+  // carries it; the neighbouring quarantine refusals' Object.assign overwrites this same
+  // property, so both paths surface one `detail` shape.
+  constructor(message, code, detail = null) { super(message); this.name = 'CoordinationRefusal'; this.code = code; this.detail = detail; }
 }
 
 export const DEFAULT_CONTEXT_PACK_VALIDITY = '2999-12-31T23:59:59.999Z';
