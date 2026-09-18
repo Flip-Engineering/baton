@@ -1206,9 +1206,21 @@ export function pendingRecoveryAttempts(store, limit = 1_000) {
  * removes one — so `reaped` stays 0 and the packs past their validity are reported as `expired`.
  * Reporting them as `reaped: N` claimed N removals that never happened. A reclamation path, if one
  * is ever built, increments `reaped` in the same place it deletes the pack.
+ *
+ * Issue #406 (audit C33, principle P5): the `repoId` parameter is a scope assertion, not a label.
+ * Every deployment holds exactly one repoId (`store._repoId`) and packs carry no per-pack repoId,
+ * so per-pack filtering is impossible — the scan covers this store's packs, which ARE the asserted
+ * repo's packs. A repoId that is not this store's refuses instead of returning another repo's
+ * counts under a foreign label. The receipt keeps the exact `{ expired, reaped }` shape.
  */
 export function reapExpiredContextPacks(store, repoId) {
-  void repoId;
+  const scope = repoId ?? store._repoId;
+  if (scope !== store._repoId) {
+    throw new CoordinationRefusal(
+      'context pack reap repository scope differs from deployment authority',
+      'context_pack_reap_scope_mismatch',
+    );
+  }
   const now = Date.parse(store._clock());
   let expired = 0;
   for (const pack of store._contextPacks.values()) {

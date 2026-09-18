@@ -13993,7 +13993,7 @@
         {
           "name": "reapExpiredContextPacks",
           "ordinal": 0,
-          "size": 9,
+          "size": 15,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name"
