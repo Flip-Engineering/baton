@@ -2,6 +2,7 @@
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS,
   swarmEventAgentRequiredFields, swarmEventFieldExpectation,
   swarmUpdatePayloadSummary, swarmEventFields } from './swarm-event-schemas.mjs';
+import { CONTRIBUTION_NOTE_KIND } from './contribution-contract.mjs';
 /** The closed swarm.update event set. Each event kind is a domain change the runtime applies
  * atomically; `swarm.recruit`/`swarm.guide`/`swarm.stop` are NOT expressible here — spawn and
  * worker binding stay on their own explicit lanes. */
@@ -473,6 +474,69 @@ export function swarmReceiptNext(command, args = {}, outcome = null) {
       return null;
   }
 }
+
+// ── the report body (#481) ──────────────────────────────────────────────────────────────────────
+// A contribution body IS the report — the object the contract below the runtime owns
+// (impl/src/contribution-contract.mjs) — and the note the runtime lands a plain-text publish as
+// (#310) carries the SAME field. #481 is what judging that field loosely cost: a seat serialized
+// the report one time more than the contract expects, `swarm.contribution_recorded` admitted the
+// string, and the row folded as text a reader can only enumerate character by character (one key
+// per character), so the root's landing loop — which reads `body.items` and `body.commit.sha` —
+// had nothing to land. The rule is about the ONE shape both the admission and every client-side
+// pre-check refuse: a body that is its OWN JSON document.
+//
+// The verbs are named HERE, once. `swarm.contribution_recorded` is the only public event whose
+// body is the report; CONTRIBUTION_NOTE_KIND is not submittable (it is what the runtime lands a
+// plain-text publish as, and `swarm.update`'s closed event set never admits it), and it is listed
+// so the rule names BOTH halves of the one publish rather than half a contract. The shared
+// whiteboard's `swarm.context_updated` body is deliberately NOT here: its schema declares the
+// entry as arbitrary JSON and a whiteboard note is text by design (#427), so a string there is a
+// note, not a report — and the well-formedness check below reads the schema table, so a verb that
+// stops carrying `body` cannot keep a rule about it.
+export const SWARM_REPORT_BODY_VERBS = Object.freeze(['swarm.contribution_recorded', CONTRIBUTION_NOTE_KIND]);
+
+if (!swarmEventFields('swarm.contribution_recorded').includes('body')) {
+  throw new Error('the contribution publish must carry the `body` field the report rule judges');
+}
+
+/** The admitted form of a contribution body, the rule a refused one failed, and the one-line
+ * remedy the caller reads — ONE spelling, printed by the contract's own admission, by the CLI's
+ * parse-time pre-check (impl/src/application-cli.mjs) and, through the contract, by the SDK. */
+export const SWARM_REPORT_BODY_ADMITTED = 'the contribution report object (subject, commit, items, verification, needsFromOthers)';
+export const SWARM_REPORT_BODY_RULE = 'object';
+export const SWARM_REPORT_BODY_REMEDY = 'the report was JSON-encoded twice; pass the object';
+
+/** The JSON document a STRING body holds, or null when the string is plain text (the note the
+ * runtime lands, #310) or holds no JSON at all. A string that parses to a document is the report
+ * serialized once too often — the ONE shape the admission and the CLI's pre-check both refuse, so
+ * the two cannot disagree about what "encoded twice" means. */
+export function swarmEncodedReportBody(body) {
+  if (typeof body !== 'string' || !isText(body)) return null;
+  let document;
+  try {
+    document = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  return document !== null && typeof document === 'object' ? document : null;
+}
+
+/** The one-line message a refused report body prints, from the SAME constants its detail carries
+ * (`field` is `payload.body`, `payload`, or the CLI's own flag spelling) — never re-spelled. */
+export function swarmReportBodyRefusalMessage(field) {
+  return `${field} must be ${SWARM_REPORT_BODY_ADMITTED} — ${SWARM_REPORT_BODY_REMEDY}`;
+}
+
+/** The typed refusal a report body that is its own JSON document raises (#481): the field the
+ * caller must fix, the rule that failed, the form that is admitted, and the remedy. */
+function swarmReportBodyRefusal(name, field) {
+  return swarmError(`${name} request is invalid: ${swarmReportBodyRefusalMessage(field)}`,
+    'swarm_command_invalid', {
+      field, rule: SWARM_REPORT_BODY_RULE, admitted: SWARM_REPORT_BODY_ADMITTED,
+      correction: SWARM_REPORT_BODY_REMEDY,
+    });
+}
+
 // ── argument validation ──────────────────────────────────────────────────────────────────────────
 // Plain minimal validation: the closed key set, the required set, and a per-field predicate. No
 // byte ceiling is declared here — the runtime's frame-limit catalog owns size policy (the inline
@@ -737,6 +801,12 @@ export function validateSwarmCommand(name, args) {
   }
   if (name === 'swarm.update' && SWARM_EVENT_KINDS.includes(args.event)) {
     const payload = args.payload;
+    // Issue #481: a report body that is its own JSON document refuses FIRST — before the note
+    // translation the runtime would otherwise land it as, and before any fold. The whole-payload
+    // spelling is the same defect one level up, so it is refused with the same rule and remedy.
+    if (SWARM_REPORT_BODY_VERBS.includes(args.event) && swarmEncodedReportBody(payload) !== null) {
+      throw swarmReportBodyRefusal(name, 'payload');
+    }
     if (payload === undefined || typeof payload === 'string') {
       // Plain-text bodies stay admissible for contributions and an absent payload is honest for
       // kinds the runtime assembles from request identity; but an event that needs caller fields
@@ -773,6 +843,12 @@ export function validateSwarmCommand(name, args) {
             expectation: swarmEventFieldExpectation(args.event, missing[0]),
             rule: 'payload-field-required',
           });
+      }
+      // Issue #481: the field the report really travels in. A string here is the report the caller
+      // already serialized (the incident's `payload.body`), never a report — a BODY that holds no
+      // JSON is the note the runtime has always landed (#310) and stays admissible.
+      if (SWARM_REPORT_BODY_VERBS.includes(args.event) && swarmEncodedReportBody(payload.body) !== null) {
+        throw swarmReportBodyRefusal(name, 'payload.body');
       }
     }
   }

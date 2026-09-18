@@ -18,7 +18,8 @@ import { publishResultExportNoReplace } from './result-export.mjs';
 
 import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, SWARM_VIEW_PROJECTION_NAMES,
-  swarmCliCommand,
+  swarmCliCommand, SWARM_REPORT_BODY_VERBS, SWARM_REPORT_BODY_RULE, SWARM_REPORT_BODY_ADMITTED,
+  swarmEncodedReportBody, swarmReportBodyRefusalMessage,
 } from './swarm-surface.mjs';
 import { webAdmittedCommandNames } from './web-northbound.mjs';
 import { ATTACHMENT_CLOSED_REASONS, WAKE_STREAM_END_REASONS, attachmentClosedFrame, attachmentClosedReason, openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeClassRow, wakeQuery } from './wake-stream.mjs';
@@ -2537,6 +2538,18 @@ function parseSwarmCli(args, idempotencyKey) {
     } else {
       values[entry.field] = token;
     }
+  }
+  // Issue #481: `--payload` is parsed ONCE and a payload whose `body` is its own JSON document is
+  // the report serialized one time more than the contract expects — the parse refuses it HERE,
+  // with the SAME text the contract's own admission prints (both read the rule below), so the
+  // operator fixes the argv instead of reading a wire refusal about a field one hop away. Only the
+  // verbs whose body IS the report are judged (`SWARM_REPORT_BODY_VERBS`, derived beside the
+  // contract table): a plain-text note (#310) and the whiteboard's arbitrary JSON (#427) cross
+  // untouched, exactly as the runtime admits them.
+  if (SWARM_REPORT_BODY_VERBS.includes(values.event)
+    && swarmEncodedReportBody(record(values.payload) ? values.payload.body : values.payload) !== null) {
+    throw swarmFlagRefusal('--payload', SWARM_REPORT_BODY_RULE, SWARM_REPORT_BODY_ADMITTED,
+      `swarm ${verb}: ${swarmReportBodyRefusalMessage('--payload body')}`);
   }
   // The wake flags are parsed before the remainder check, so `--wake-class`/`--kinds`/`--since` are
   // the stream's vocabulary rather than an unexpected argument — on BOTH watch forms (#339): the
