@@ -900,6 +900,15 @@ export class CoordinationStore {
     // metadata, NOT projection state. It records how much of the history lives in archived
     // content-addressed segments so the checkpoint can cache the live window only.
     this._segmentIndex = null;
+    // Issue #351 lane 2: the chunked-yielding open. `deferLoad` leaves the projection unloaded
+    // at construction; `openCoordinationStoreAsync` then drives the SAME replay through
+    // `_loadAsync`, which offers the event loop a breath between chunks. The default
+    // constructor load is untouched — every existing caller constructs loaded.
+    if (opts.deferLoad === true) {
+      if (this._canonicalOrderPolicy) throw new TypeError('deferLoad is unavailable under a canonical-order policy');
+      return;
+    }
+    if (opts.deferLoad !== undefined) throw new TypeError('deferLoad must be true when provided');
     if (this._canonicalOrderPolicy) this._openCanonicalOrderLedger();
     else this._load();
   }
@@ -16224,4 +16233,16 @@ export function coordinationForLog(log, root = join(log.dir, 'coordination')) {
   return new CoordinationStore(root, {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
   });
+}
+
+/** Issue #351 lane 2: the loop-friendly open — a module-level factory beside the other
+ * hand-wired assemblies, deliberately NOT an open-time member of the class census: the
+ * constructor's synchronous load stays the store's one authoritative open. The replay runs
+ * chunked at the registry's own `view.wake_replay.items` bound with a yield to the event loop
+ * between chunks, so a startup heartbeat (and a signal handler) keeps beating however long the
+ * history is. The returned store is fully loaded; every fold error rejects the promise. */
+export async function openCoordinationStoreAsync(root, opts = {}) {
+  const store = new CoordinationStore(root, { ...opts, deferLoad: true });
+  await coordinationReplay._load(store, { async: true });
+  return store;
 }

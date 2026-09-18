@@ -6145,7 +6145,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 177,
+          "size": 186,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
@@ -13479,7 +13479,26 @@
         {
           "name": "_load",
           "ordinal": 0,
-          "size": 130,
+          "size": 29,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_reportLoadFailure",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_loadPlan",
+          "ordinal": 0,
+          "size": 47,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -13844,7 +13863,7 @@
         {
           "name": "_restoreProjectionCheckpoint",
           "ordinal": 0,
-          "size": 64,
+          "size": 77,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

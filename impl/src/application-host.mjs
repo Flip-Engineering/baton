@@ -335,6 +335,16 @@ export class BatonWebHost {
     // Issue #351: the trigger this host was admitted by travels with its stop record — the row
     // that says WHY the resident is going down, not merely that it is.
     this._trigger = trigger;
+    // Issue #351 lane 2: the durable request is the handler's FIRST act — SYNCHRONOUSLY, before
+    // the narration read (a busy loop postpones everything behind it) and before any drain work.
+    // The deployment's own writer path appends the bounded row and dedupes against the drain's
+    // later record; the line is said here so the log reads in the order the facts happened.
+    try {
+      if (this.stopRecords !== null) {
+        const requested = this.stopRecords.requested({ trigger: trigger.kind });
+        if (requested?.line) this._say(requested.line);
+      }
+    } catch { /* the stop narrates without the row rather than wedging the handler */ }
     const readRuns = typeof this.application.command === 'function'
       ? () => this.application.command('runs.list', {}, this.shutdownPrincipal)
       : () => { throw hostError('this application exposes no command bus', 'application_host_narration_unavailable'); };
