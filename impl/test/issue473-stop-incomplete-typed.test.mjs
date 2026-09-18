@@ -10,12 +10,13 @@
 //       the swarm runtime's injected `stopRun` port — crosses as `coordinator_run_stop_incomplete`
 //       with HTTP 409 and the coordinator's own detail (the run the stop named, its deadline, and
 //       the rows the leg is holding), never as the transient 503 row;
-//   (b) the derivation pin over the coordinator's run-stop / kill / drain refusal sites: the roster
-//       is read from the coordinator's own code, every code the RUN-STOP leg raises is a row of
-//       `SWARM_REFUSAL_CODES`, and every other stop-path code is classified with its crossing
-//       PROVEN through the same transport — a code added to any of those legs fails this file until
-//       it is classified and mapped (the #430 narration exists because this gap recurs, and this is
-//       what ends the recurrence);
+//   (b) the derivation pin over the coordinator's run-stop / kill / drain refusal sites AND — issue
+//       #483 — over the coordination store's own wait-abort mint (`waitAfter`, the wait a bounded
+//       `swarm.watch` holds): the roster is read from the modules' own code, every code the RUN-STOP
+//       leg or the wait-abort leg raises is a row of `SWARM_REFUSAL_CODES`, and every other stop-path
+//       code is classified with its crossing PROVEN through the same transport — a code added to any
+//       of those legs fails this file until it is classified and mapped (the #430 narration exists
+//       because this gap recurs, and this is what ends the recurrence; one table, one pin);
 //   (c) the CLI prints the seat, the run and the wait under the refusal line, and the ONE next step
 //       that converges the seat: wait for the deadline, or stop again after it.
 import assert from 'node:assert/strict';
@@ -334,6 +335,13 @@ const STOP_PATH_LEGS = Object.freeze({
   drain: Object.freeze(['drain', '_drainFailure', '_performDrain', '_beforeDrainDeadline']),
   'terminal resource release': Object.freeze(['releaseTerminalTaskResources']),
 });
+/** Issue #483: the SECOND family the same pin covers — the coordination store's own wait-abort mint
+ * (`waitAfter`'s abort path), the code a bounded `swarm.watch` crosses when the incarnation holding
+ * it leaves. It crosses through the same table (a `swarm` row), so a code added or renamed there
+ * fails the audit below until it is classified, exactly like the coordinator's stop-path codes. */
+const WAIT_ABORT_LEGS = Object.freeze({
+  'store wait abort (the wait a bounded swarm.watch holds)': Object.freeze(['waitAfter']),
+});
 const STOP_PATH_CROSSING = Object.freeze({
   coordinator_closed: 'coordinator-lifecycle',
   coordinator_drain_capacity: 'coordinator-lifecycle',
@@ -344,16 +352,29 @@ const STOP_PATH_CROSSING = Object.freeze({
   coordinator_resource_release_invalid: 'transient-fallthrough',
   coordinator_run_stop_incomplete: 'swarm',
   coordinator_run_stop_invalid: 'swarm',
+  coordination_wait_aborted: 'swarm',
 });
 
 const coordinatorSource = readFileSync(new URL('../src/coordinator.mjs', import.meta.url), 'utf8');
+const coordinationStoreSource = readFileSync(new URL('../src/coordination-store.mjs', import.meta.url), 'utf8');
+/** Which module each leg's members live in, and the seam its codes claim as their raiser — the run
+ * stop's leg is the coordinator's own; the wait-abort leg is the store's, whose bare error the
+ * RUNTIME raises into the family refusal (the raiser the row's `raisedBy` must name). */
+const LEG_SOURCE = Object.freeze({
+  ...Object.fromEntries(Object.keys(STOP_PATH_LEGS).map((leg) => [leg, coordinatorSource])),
+  ...Object.fromEntries(Object.keys(WAIT_ABORT_LEGS).map((leg) => [leg, coordinationStoreSource])),
+});
+const LEG_RAISER = Object.freeze({
+  ...Object.fromEntries(Object.keys(STOP_PATH_LEGS).map((leg) => [leg, 'coordinator'])),
+  ...Object.fromEntries(Object.keys(WAIT_ABORT_LEGS).map((leg) => [leg, 'runtime'])),
+});
 const legRoster = new Map();
-for (const [leg, members] of Object.entries(STOP_PATH_LEGS)) {
+for (const [leg, members] of Object.entries({ ...STOP_PATH_LEGS, ...WAIT_ABORT_LEGS })) {
   const codes = new Set();
   for (const member of members) {
-    const body = memberSource(coordinatorSource, member);
+    const body = memberSource(LEG_SOURCE[leg], member);
     assert.ok(body !== null && body.length > 0,
-      `leg "${leg}": the coordinator still declares ${member} (a rename must update this audit, never shrink it)`);
+      `leg "${leg}": the module still declares ${member} (a rename must update this audit, never shrink it)`);
     for (const match of body.matchAll(/code: '([a-z][a-z0-9_]*)'/gu)) codes.add(match[1]);
   }
   legRoster.set(leg, codes);
@@ -364,11 +385,18 @@ const derivedStopPathCodes = new Set([...legRoster.values()].flatMap((codes) => 
 const swarmMappedCodes = Object.entries(STOP_PATH_CROSSING)
   .filter(([, crossing]) => crossing === 'swarm').map(([code]) => code).sort();
 
-test('#473 (b): the audit roster is the coordinator\'s own code — a new stop-path refusal fails until it is classified', () => {
+/** The leg(s) a mapped code is raised by — read from the modules' own code, never from the table. */
+const legOfCode = (code) => [...legRoster.entries()]
+  .filter(([, codes]) => codes.has(code)).map(([leg]) => leg);
+
+test('#473 (b): the audit roster is the modules\' own code — a new stop-path refusal fails until it is classified', () => {
   assert.ok(derivedStopPathCodes.has('coordinator_run_stop_incomplete'),
     `the scan reads the coordinator the issue names: ${[...derivedStopPathCodes].sort().join(', ')}`);
+  // Issue #483: and the store's own wait-abort mint, the other family this ONE table covers.
+  assert.ok(derivedStopPathCodes.has('coordination_wait_aborted'),
+    `the scan reads the coordination store's wait-abort mint (#483): ${[...derivedStopPathCodes].sort().join(', ')}`);
   assert.deepEqual([...derivedStopPathCodes].sort(), Object.keys(STOP_PATH_CROSSING).sort(),
-    'every refusal code the run stop, the kill, the drain or the terminal resource release can raise has ONE crossing row: '
+    'every refusal code the run stop, the kill, the drain, the terminal resource release or the store\'s wait abort can raise has ONE crossing row: '
     + 'classify the new code (a swarm row, a proven dispatchFailure arm, or the documented remainder) instead of letting it reach a serve log');
 });
 
@@ -382,12 +410,13 @@ test('#473 (b): the run stop\'s own leg never reaches the transient fallthrough'
     'a code this leg raises must be mapped (a swarm row) or proven typed (a dispatchFailure arm) — '
     + 'the fallthrough is not an answer for a state the caller must observe');
   for (const code of swarmMappedCodes) {
-    assert.ok(runStopLegCodes.includes(code),
-      `${code} is mapped as a swarm refusal because the run stop raises it — a mapping without a raise site is an invention`);
+    const legs = legOfCode(code);
+    assert.equal(legs.length, 1,
+      `${code} is mapped as a swarm refusal because exactly ONE scanned leg raises it — a mapping without a raise site is an invention: ${JSON.stringify(legs)}`);
     assert.equal(SWARM_REFUSAL_CODES[code]?.status, 409,
       `${code} is a state the caller must observe (409), never a transport fault`);
-    assert.ok(SWARM_REFUSAL_CODES[code]?.raisedBy.includes('coordinator'),
-      `${code} names the coordinator as its raiser — the seam that actually throws it`);
+    assert.ok(SWARM_REFUSAL_CODES[code]?.raisedBy.includes(LEG_RAISER[legs[0]]),
+      `${code} names ${LEG_RAISER[legs[0]]} as its raiser — the seam that actually raises it (leg "${legs[0]}")`);
   }
 });
 
@@ -396,8 +425,18 @@ test('#473 (b): the set\'s coordinator rows are the coordinator\'s own — no in
     .filter(([, row]) => row.raisedBy.includes('coordinator'))
     .map(([code]) => code)
     .sort();
-  assert.deepEqual(declared, swarmMappedCodes,
+  const coordinatorMapped = swarmMappedCodes
+    .filter((code) => LEG_RAISER[legOfCode(code)[0]] === 'coordinator');
+  assert.deepEqual(declared, coordinatorMapped,
     'the rows claiming the coordinator as their raiser are exactly the run-stop codes this audit maps, and no others');
+});
+
+test('#473 (b): the store\'s wait-abort row is the store\'s own — the runtime raises it, and no other scan does', () => {
+  const legs = legOfCode('coordination_wait_aborted');
+  assert.deepEqual(legs, ['store wait abort (the wait a bounded swarm.watch holds)'],
+    'the wait-abort code is raised by the store\'s wait and by nothing else this audit scans');
+  assert.deepEqual([...SWARM_REFUSAL_CODES.coordination_wait_aborted.raisedBy].sort(), ['runtime'],
+    'the store mints the bare code and the RUNTIME raises the family refusal — the raiser the row names');
 });
 
 test('#473 (b): every mapped stop-path code crosses the served transport typed — never the transient fallthrough', async () => {

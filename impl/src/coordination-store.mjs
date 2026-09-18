@@ -872,6 +872,13 @@ export class CoordinationStore {
     this._ledgerSyncScheduled = false;
     this._ledgerSyncFailure = null;
     this._appendWaiters = new Set();
+    // Issue #483: this incarnation's own departure — the ONE fact a bounded wait torn down by a
+    // stop or a reincarnation handoff needs. Folded from the deployment's own `host.*` rows on the
+    // LIVE path only (a row replayed at open belongs to an incarnation that is already gone), and
+    // deliberately NOT a projection-checkpoint field: it describes the process serving this store
+    // NOW, so a checkpoint (cache of a replay) can never carry it into the next one.
+    this._incarnationDeparture = null;
+    this._incarnationHandoff = null;
     if (Object.hasOwn(opts, 'canonicalOrderMigration')) {
       throw new TypeError('canonical order migration is offline-only; use migrateCanonicalOrderLedger()');
     }
@@ -8195,6 +8202,14 @@ export class CoordinationStore {
       // Phase 60 recovery records are closed, causally validated state. Malformed or unmatched
       // known records are integrity failures on replay, never durable facts that projection may
       // silently ignore and later redeliver.
+      // Issue #483: the deployment's OWN incarnation lifecycle, folded beside the recovery rows —
+      // a bounded wait torn down by a stop reads it instead of being left to guess (see
+      // `incarnationDeparture`). Only a LIVE row moves it: the rows this store replays at open are
+      // the incarnations that are already gone, and a resident that starts over the ledger of a
+      // stopped (or killed) one serves its swarms normally.
+      if (this._loading !== true && typeof p?.kind === 'string' && p.kind.startsWith('host.')) {
+        this._foldIncarnationLifecycle(p);
+      }
       if (p?.kind === 'steering.registered' && typeof p?.runId === 'string') {
         this._steeringRuns.add(p.runId);
         // #286 G-31: the current wave binding for this run — LAST write wins. An append-only log's
@@ -9098,6 +9113,62 @@ export class CoordinationStore {
       this._projectionInputFence += 1;
     }
   }
+  /** Issue #483: the deployment's own incarnation lifecycle, folded one row at a time — the six
+   * `host.*` kinds an incarnation writes about itself, read by `incarnationDeparture()` when a
+   * bounded wait is torn down. Last write wins per kind, exactly as the log reads:
+   *
+   *   host.reincarnation_requested — a handoff began (new-turn admission closes; RECOVERABLE: a
+   *                                  handoff that fails re-publishes and this incarnation serves on)
+   *   host.successor_started       — the successor incarnation the handoff minted
+   *   host.successor_published     — …and its publication
+   *   host.reincarnated            — the handoff settled IN FAVOUR OF THE SUCCESSOR: this process
+   *                                  is not (or is no longer) the departure's incarnation
+   *   host.reincarnation_failed    — the handoff settled against the successor; this incarnation
+   *                                  went on serving
+   *   host.stop_requested          — an ordinary stop's first durable act
+   *   host.stop_waiting            — the stop's own named wait
+   *   host.stopped                 — the release that ENDED this incarnation's authority
+   *
+   * A handoff's own stop rows are not a departure on their own — the window can still fail — so
+   * the handoff decides at the release, where the successor is already named. */
+  _foldIncarnationLifecycle(row) {
+    const kind = row.kind;
+    if (kind === 'host.reincarnation_requested') {
+      this._incarnationHandoff = freeze({ successor: null });
+      return;
+    }
+    if (kind === 'host.successor_started' || kind === 'host.successor_published') {
+      if (this._incarnationHandoff === null) return; // a publication with no request belongs to another incarnation
+      if (typeof row.incarnation === 'string' && row.incarnation.length > 0) {
+        this._incarnationHandoff = freeze({ successor: row.incarnation });
+      }
+      return;
+    }
+    if (kind === 'host.reincarnated' || kind === 'host.reincarnation_failed') {
+      this._incarnationHandoff = null;
+      this._incarnationDeparture = null;
+      return;
+    }
+    if (kind === 'host.stop_requested' || kind === 'host.stop_waiting') {
+      if (this._incarnationHandoff !== null) return; // the handoff's own stop: the window still decides
+      this._incarnationDeparture = freeze({ reason: 'resident_stopping', successor: null });
+      return;
+    }
+    if (kind === 'host.stopped') {
+      // The release: this incarnation's authority ended — the ONE row a handoff's stop and an
+      // ordinary stop both mint, which is why the handoff decides HERE (the successor is named by
+      // then) and an ordinary stop re-states the reason its own request already set.
+      if (this._incarnationHandoff === null) {
+        this._incarnationDeparture = freeze({ reason: 'resident_stopping', successor: null });
+        return;
+      }
+      const successor = this._incarnationHandoff.successor;
+      this._incarnationDeparture = freeze({
+        reason: 'incarnation_withdrawn',
+        successor: successor === null ? null : freeze({ incarnation: successor }),
+      });
+    }
+  }
   events(fromSeq = 1, limit = null) {
     return coordinationInternals.events(this._events, fromSeq, limit);
   }
@@ -9117,6 +9188,17 @@ export class CoordinationStore {
     if (limit !== null && (!Number.isSafeInteger(limit) || limit <= 0)) throw new TypeError('event read limit must be a positive safe integer');
     return this._events.slice(start, limit === null ? undefined : start + limit);
   }
+  /** Issue #483: is the incarnation that holds this store LEAVING, and — when the departure is a
+   * reincarnation handoff — which incarnation takes the deployment over? Null while none is.
+   *
+   * The state is folded from the deployment's own `host.*` rows APPENDED LIVE to this store (see
+   * `_foldIncarnationLifecycle`); a row this store replayed at open belongs to an incarnation that
+   * is already gone and never reads as this one's departure. The reasons are the closed set a
+   * torn-down wait crosses with: `incarnation_withdrawn` (a handoff whose release ended this
+   * incarnation's authority — `successor` names the incarnation it minted), `resident_stopping`
+   * (an ordinary stop, `successor: null`). The third crossing reason, `store_closed`, is minted by
+   * the caller of a wait whose store closed with NO live departure on its ledger. */
+  incarnationDeparture() { return this._incarnationDeparture; }
   waitAfter(afterSeq, timeoutMs, options = {}) {
     if (!Number.isSafeInteger(afterSeq) || afterSeq < 0 || afterSeq > this._events.length
       || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0

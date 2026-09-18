@@ -125,6 +125,16 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // deadline, or stopping again after it, is what converges the seat.
   coordinator_run_stop_incomplete: row(409, ['coordinator'], 'the run stop did not converge before its deadline: the named workers are still being reaped, so the seat has not settled'),
   coordinator_run_stop_invalid: row(409, ['coordinator'], 'the admitted run stop names a target authority this deployment cannot act on, so no retry of the same stop converges'),
+  // Issue #483: the bounded watch's own wait. A `swarm.watch` held across a reincarnation handoff
+  // (or an ordinary stop) is torn down when the incarnation holding it leaves: the store mints
+  // `coordination_wait_aborted` (`waitAfter`'s abort path), and the runtime raises the family
+  // refusal with the deployment's own facts — the reason and the successor the watch must re-arm
+  // against. The raiser is the runtime: the store's bare error is not a family refusal, the
+  // runtime's `refuse()` is what carries it to the web layer typed. A state the caller must
+  // OBSERVE (409), never a transport fault — the resident's fallthrough narration named this exact
+  // gap (503 `temporarily_unavailable` "retry once" told the watcher nothing and converged
+  // nothing).
+  coordination_wait_aborted: row(409, ['runtime'], 'the bounded watch\'s wait was aborted because the incarnation that held it is leaving (an ordinary stop, or a reincarnation handoff that ended its authority)'),
 
   // ── 400 request shape: the request itself fails the closed grammar ──
   invalid_payload: row(400, ['fold'], 'the event payload fails the closed shape its kind requires'),

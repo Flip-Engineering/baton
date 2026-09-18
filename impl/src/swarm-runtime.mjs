@@ -1483,6 +1483,27 @@ const SEAT_FACTS_UNRECORDED = Object.freeze({
   usage: Object.freeze({ tokens: 'unavailable', providerCalls: 'unavailable' }),
 });
 
+/** Issue #483: the ONE teaching a bounded watch carries when the incarnation holding it leaves.
+ * Composed from the store's own departure facts, so the reason and the successor are the same two
+ * values the refusal's `detail` carries — never a second reading of the ledger. */
+function watchAbortMessage(departure) {
+  if (departure === null) {
+    return 'the watch was torn down: the coordination store closed under it; re-arm the watch against a resident that serves this deployment (`baton doctor --check`)';
+  }
+  if (departure.reason === 'incarnation_withdrawn') {
+    const successor = departure.successor === null ? null : departure.successor.incarnation;
+    return 'the watch was torn down: this incarnation is withdrawing'
+      + (successor === null ? '' : ` and the successor incarnation ${successor} takes the deployment over`)
+      + '; re-arm the watch against the successor, or subscribe to the incarnation_changed wake class'
+      + ' (host.reincarnated / host.reincarnation_failed) and wait for it to publish';
+  }
+  if (departure.reason === 'resident_stopping') {
+    return 'the watch was torn down: this resident is stopping; re-arm the watch once a resident serves '
+      + 'this deployment again (`baton doctor --check`), or subscribe to the resident_lifecycle wake class';
+  }
+  return 'the watch was torn down: the incarnation holding it is leaving; re-arm the watch against the resident that serves this deployment next';
+}
+
 export class SwarmRuntime {
   /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
    * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
@@ -4614,6 +4635,19 @@ export class SwarmRuntime {
     for (;;) {
       const swarm = this._swarm(args.swarmId);
       this._permit(swarm, principal, context, 'read');
+      // Issue #483: this incarnation may be leaving WHILE the watch is held. The store folds the
+      // deployment's own `host.*` rows as they land (a live stop's first act, the release that
+      // ends a handoff's authority), so re-reading the fact at every wake — the departure row is
+      // itself an append, so the wait returns immediately — is what lets the refusal cross
+      // typed while the resident is still answering, instead of being answered by the transport
+      // that closed first. `afterSeq` is the caller's own re-arm cursor, carried so the watcher
+      // need not remember it.
+      const departure = this._incarnationDeparture();
+      if (departure !== null) {
+        refuse(watchAbortMessage(departure), 'coordination_wait_aborted', {
+          reason: departure.reason, successor: departure.successor, afterSeq,
+        });
+      }
       const members = Object.values(swarm.participants);
       const runIds = new Set(members.map((member) => member.runId).filter(Boolean));
       const bindings = members.flatMap((member) => member.bindings);
@@ -4673,10 +4707,33 @@ export class SwarmRuntime {
         },
       };
       cursor = this.store.ledgerHeadSeq();
-      await this.store.waitAfter(cursor, Math.max(1, Math.ceil(deadline - performance.now())), {
-        signal: this.watchController.signal,
-      });
+      try {
+        await this.store.waitAfter(cursor, Math.max(1, Math.ceil(deadline - performance.now())), {
+          signal: this.watchController.signal,
+        });
+      } catch (error) {
+        // Issue #483: the store's bare abort is the ONE error this loop owns. A wait torn down
+        // without a live departure on the ledger (a bare runtime close, an embedding that closed
+        // the store under the watch) crosses with `store_closed`; one torn down by a stop or a
+        // handoff carries that departure's own reason and successor — the same facts the check
+        // above reads, because the abort can arrive before the departure row is re-read.
+        if (error?.code !== 'coordination_wait_aborted') throw error;
+        const departure = this._incarnationDeparture();
+        refuse(watchAbortMessage(departure), 'coordination_wait_aborted', {
+          reason: departure === null ? 'store_closed' : departure.reason,
+          successor: departure === null ? null : departure.successor,
+          afterSeq,
+        });
+      }
     }
+  }
+
+  /** Issue #483: the store's own departure fact, read through ONE guard — a store built without the
+   * read (an embedding that predates it, a fixture store stub) simply has no departure to report,
+   * which is the same answer a store with no live stop gives. */
+  _incarnationDeparture() {
+    return typeof this.store?.incarnationDeparture === 'function'
+      ? this.store.incarnationDeparture() : null;
   }
 
   /** Completion is derived from evidence (docs/39 §Claims; issue #263 item 1). An organizer may
