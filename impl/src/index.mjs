@@ -1678,8 +1678,10 @@ export function createDriver(opts) {
   liveWorkspaceHoldersFor = (physicalOwnerId, holderOpts) =>
     coordinator.liveWorkspaceHolders(physicalOwnerId, holderOpts);
   if (coordinationAsyncOpen) {
-    coordinationOpened = loadCoordinationStoreAsync(coordination).then((store) => {
-      coordinator.completeDeferredStartup();
+    coordinationOpened = loadCoordinationStoreAsync(coordination).then(async (store) => {
+      // Issue #351 lane 4: the reconstruction drains with yields on this path; coordinationOpened
+      // resolves only once it is done, so the driver's first read still sees the whole state.
+      await coordinator.completeDeferredStartup();
       return store;
     });
   }
