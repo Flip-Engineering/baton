@@ -3796,14 +3796,50 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     });
     return opened;
   } catch (error) {
+    // Issue #384: a start that refuses records WHY, through the deployment's own writer path,
+    // before the process exits — the same bounded best-effort channel every other deployment-owned
+    // row rides (`driver.recorded`), so doctor and the wake stream see the refusal the operator
+    // got, with the cause chain the coordinator composed {reconciler, record, observed, next}.
+    recordStartupRefused(driver, repository, error);
     try {
       if (application) await application.shutdown(principal);
       else await driver.closeAsync();
     } catch {
+      // Issue #384: a driver whose OWN startup refused cannot complete closeAsync — it awaits the
+      // coordinator's ready promise, which rejects with the very refusal being reported — so the
+      // writer lease claimed at open would outlive the refusal and the operator's NEXT start would
+      // refuse `coordination writer is already active`, which teaches nothing about the first one.
+      // The refusal stays authoritative; the lease the refused resident held is released here.
+      try { driver.coordination?.releaseWriterLease?.(); } catch { /* the refusal stays authoritative */ }
       try { await driver.closeAsync(); } catch { /* original construction failure remains authoritative */ }
     }
     throw error;
   }
+}
+
+/** Issue #384: the ONE `host.startup_refused {code, reconciler, record, observed}` row a refused
+ * start leaves on the resident's own ledger. Bounded and best-effort by construction: a ledger that
+ * cannot take the row (no writer lease, a poisoned store) returns null and never masks the refusal
+ * itself. A failure that names no code is not recorded — the row's own vocabulary requires one. */
+function recordStartupRefused(driver, repository, error) {
+  const coordination = driver?.coordination ?? null;
+  if (typeof coordination?.recordDriver !== 'function') return null;
+  const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : null;
+  if (code === null) return null;
+  try {
+    const recorded = coordination.recordDriver('host.startup_refused', {
+      code,
+      reconciler: typeof error.reconciler === 'string' ? error.reconciler : null,
+      record: typeof error.record === 'string' ? error.record : null,
+      observed: error.observed && typeof error.observed === 'object' ? error.observed : null,
+    }, {
+      actor: `deployment:${repository.repoId}:resident`,
+      // A startup refusal is an OBSERVATION of THIS start, not an idempotent command: every attempt
+      // that refuses records its own row (the #351 stop-record rule, applied to the open).
+      key: `host.startup_refused:${code}:${randomBytes(8).toString('hex')}`,
+    });
+    return recorded?.event ?? null;
+  } catch { return null; }
 }
 
 export { DEFAULT_ROUTES as DEFAULT_BATON_DEPLOYMENT_ROUTES };
