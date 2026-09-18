@@ -2585,6 +2585,26 @@ export class Coordinator {
     return failure;
   }
 
+  /** Issue #478: reopen the admission a fleet drain closed, for the ONE caller that owns that
+   * drain's outcome — a deployment whose handoff window drained the fleet, failed, and goes on
+   * serving. `drain()` closes this controller to new work for the whole drain (it is the drain
+   * that makes the fleet's end final), and a drain that came back WITHOUT converging used to leave
+   * it closed for the rest of the process's life: the resident answered reads and re-published its
+   * publication while `_admit`/`_withAuthorityOp` refused every new turn with
+   * `coordinator_draining` — the swarm family's own admission, shut by a stop that never happened.
+   *
+   * The refusal set is the safety of this seam: a CLOSED controller (its authority is gone for
+   * good) and a drain still in flight both answer false and change nothing, so only a drain that
+   * ended without converging — the state the caller's own failed window is in — can be reopened,
+   * and only by the authority that ran it. What the drain DID stays durable (its admission, its
+   * dispositions, its recorded effects): reopening admits new work, it never unwinds the drain. */
+  reopenAdmission() {
+    if (this._closed) return false;
+    if (this._drainState !== 'draining' || this._drainPromise !== null) return false;
+    this._drainState = 'open';
+    return true;
+  }
+
   /** Stop and reap one durable Run target set without fencing or closing unrelated Runs. The
    * coordination store admits the Run stop before this method is called, so late dispatch/claim
    * cannot enter the target set while physical ownership converges here. */

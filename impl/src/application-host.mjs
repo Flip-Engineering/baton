@@ -828,6 +828,21 @@ export class BatonWebHost {
     return shuttingDown;
   }
 
+  /** Issue #478: the INVERSE of the work-admission close above — the re-publish's half of the same
+   * pair. A deployment whose handoff window failed goes on serving over the very transport that
+   * never stopped listening, and the work admission its own stop closed is reopened here, on the
+   * SAME server, before the failure is narrated. A transport that publishes no split (a bare
+   * fixture server) has nothing to reopen and says so; one already closed for good refuses typed. */
+  async reopenAdmission() {
+    if (typeof this.server.batonOpenWorkAdmission !== 'function') {
+      return Object.freeze({ ok: true, result: 'work_admission_unsplit' });
+    }
+    try { return await this.server.batonOpenWorkAdmission(); }
+    catch (error) {
+      return Object.freeze({ ok: false, result: 'reopen_failed', code: errorCode(error) });
+    }
+  }
+
   /** #306r: the handoff's own tail — the listeners close, and nothing else does. The deployment
    * handed its application authority over at the handoff's window (the successor owns the writer
    * lease, and the fleet drain the window ran is the one this host would otherwise run), so a

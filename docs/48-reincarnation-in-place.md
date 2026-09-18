@@ -149,6 +149,38 @@ new key.
    successor records them as OBSERVATIONS of the old incarnation's acts; the wake feed maps
    `host.reincarnated` to the `incarnation_changed` class (§5).
 
+**The order of the drain and the open (#478).** The landed window (§11 item 7) verifies the
+successor's READINESS — the `waiting` state it writes on its marker before its open blocks on the
+leases — before the drain, because `deployment.reincarnate` awaits exactly that marker before the
+handoff is handed over. It does NOT verify the successor's `opened` state before the drain, and the
+drain is therefore the window's first irreversible act. That order is a consequence of the two
+rules above, not a preference, and this is the record of why:
+
+- **Only the old incarnation owns those processes.** A seat's worker is a CHILD of the incarnation
+  that spawned it, on stdio pipes. An old incarnation that exited with its fleet still running
+  would leave live workers with broken pipes and no parent to reap them — a leak of host resources
+  that nothing rebuilds. The drain must happen while the parent is still there to run it.
+- **The drain's rows need the writer authority.** Its admission, its per-worker dispositions and
+  its custody rows (`worktree.snapshotted` / `worktree.removed`) are written through the
+  coordination writer lease, and step 5 (the lease handoff) is exactly what the successor's open
+  waits on. A drain that ran after the release could not record what it did, so the only order in
+  which the drain is durable is before the release — and the open is after it, by construction.
+- **Therefore the failure row carries what the drain destroyed.** `opened` cannot be proven before
+  an act that must precede the release that unblocks it, so a handoff can fail after a drain that
+  killed a live worker's turn: `host.reincarnation_failed {step: 'publication_handoff'}` names the
+  seats it ended and the snapshot each can be resumed from
+  (`drained: [{workerId, participantId, snapshot}]`, empty and never absent), which is what lets a
+  root resume every seat the window could not give back instead of reading the ledger by hand.
+  Readiness — everything the successor publishes BEFORE its open — is still proven before the
+  drain; §11 item 15 records the landing.
+
+**What a handoff costs even when it works.** The same drain runs on the SUCCESS path, so a
+reincarnation always ends every seat's turn — there is no mode in which a live worker's turn
+survives the boundary. §3's row is exact about it: the worker PROCESSES end, and "participants
+survive" means their durable rows, their checkout snapshots (#428 custody) and a later
+`--resume-from` (#318/#385) — never an uninterrupted turn. A root that expects a seat to keep
+working across `baton deployment reincarnate` is expecting the one thing the protocol cannot do.
+
 Crash analysis — what each step leaves behind:
 
 - **Crash after 1, before 4:** the ledger names the request and the closed admission; the
@@ -167,9 +199,16 @@ Crash analysis — what each step leaves behind:
   `host.reincarnated` itself. The handoff completes without the old.
 - **Successor dies before publishing:** the old incarnation is its PARENT — the child `exit`
   event reaches it directly. It records
-  `host.reincarnation_failed {step: 'successor_publish', cause: {exit, stderrTail}}` (the #326
-  bounded tail, registry-bounded), REOPENS admission, and keeps serving. The publication never
-  moved; clients never noticed.
+  `host.reincarnation_failed {step: 'publication_handoff', cause: {exit, signal, stderrTail,
+  waitedMs, reason}, authority, drained}` (the #326 bounded tail, registry-bounded), REOPENS
+  admission, and keeps serving. The publication never moved; clients never noticed. Since #478
+  "reopens admission" is the whole of what the handoff's own stop closed — the served WORK gate
+  over the transport that never stopped listening, the fleet authority's drain gate (a drain that
+  did not converge leaves it closed to new turns), and every per-stop fact (`stoppingSince`, the
+  named waits, the stage clock) a reader would otherwise read as a stop still in flight. The
+  `authority` column says what the window DID with each lease (never what a re-claim happened to
+  answer), and `drained` names the seats the fleet drain already ended, with the snapshot each can
+  be resumed from — see §11 item 15.
 - **Successor dies after publishing, before settlement:** the old's step-7 poll sees the
   successor's incarnation but a dead lease owner; on the poll bound it records
   `host.reincarnation_failed {step: 'publication_handoff', cause}`, re-publishes its OWN
@@ -395,8 +434,10 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
    (the whole authority is the old's again) and `released` when it did — those two lease
    directories cannot be re-taken without minting a new incarnation (which would repoint the
    publication), so a failure past that point leaves them free for the next resident start while
-   the publication bytes stay the old incarnation's; `publication: 'intact'` and `writerLease:
-   'reclaimed'` hold in every case. Two more halves of the same arm: the successor publishes
+  the publication bytes stay the old incarnation's; `publication: 'intact'` holds in every case.
+  (`writerLease` does NOT: item 15 corrects this item's original "`writerLease: 'reclaimed'` holds
+  in every case" — a failure before the release leaves the lease HELD, and saying otherwise is what
+  the live incident's misnaming was.) Two more halves of the same arm: the successor publishes
    `lease_held_by_predecessor` on its marker and stands down typed (its open's lease wait is spent
    and the predecessor went on serving — the refusal a late publisher draws), and the failure row
    now wakes the `incarnation_changed` class beside `host.reincarnated`, so a root following the
@@ -457,6 +498,51 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     {trigger: 'parent_exited', parentPid}`, watched with `reincarnationProcessAlive`) when the
     test runner dies — a reincarnation successor inherits the declaration and the predecessor's
     process group, so a fixture's resident and every successor it spawns die with the runner.
+15. **A failed handoff leaves a SERVING incarnation, not a stopped-looking one (#478).** Live on the
+    clone at `fed18071` (16:13:40Z): `baton deployment reincarnate 82ab2466` with three seats ran the
+    window's step-1 fleet drain, the drain did not converge (`fleet_drain_incomplete`, 90 s), and the
+    old incarnation recorded `host.reincarnation_failed {step: 'publication_handoff'}` — after which
+    `baton doctor --check` answered `state: ready` while every swarm command over the SAME served
+    transport answered `{state: 'stopping', at: <the stop_requested instant>, waits: [], attempts: 0,
+    abandoned: []}`. Four divergences from what this document said the re-publish does:
+    - **The re-publish reopens EVERYTHING the handoff's own stop closed** — one act, three gates.
+      (a) The served WORK gate: `openWorkAdmission` is the inverse of the `closeWorkAdmission` a stop
+      runs (`web-northbound.mjs`: the same `admitting` / `readOnlyStopping` pair; the close's own
+      memo is cleared so the next real close still closes), published on the server as
+      `batonOpenWorkAdmission` and reached by the deployment through the host's `reopenAdmission()`.
+      (b) The fleet authority's drain gate: a fleet drain closes the coordinator to new work for its
+      whole life (`coordinator_draining`), and a drain that came back WITHOUT converging used to
+      leave it closed forever — `Coordinator.reopenAdmission()` reopens exactly that state, refusing
+      when the controller is closed for good or a drain is still in flight. (c) The per-stop facts:
+      `#stoppingSince` (what every served read publishes as `stopping`), the named waits, and the
+      stage clock — a later stop mints its own instead of inheriting the handoff's. The failure line
+      names what was reopened (`… (admission reopened: work open, fleet open)`), so the narration and
+      the gates cannot disagree.
+    - **The `authority` column derives from what the WINDOW did, never from a re-claim alone.** The
+      release at step 3 is the act that gives the lease up; a failure before it — the whole
+      fleet-drain arm — leaves the lease where it was, and `claimWriterLease()` answering null there
+      is the holder being THIS instance (`coordination_writer_busy`), not a lost lease. So
+      `writerLease` is `held` when the release never ran, `reclaimed` when it ran and the same lease
+      path took the authority back, and `unavailable` only when that re-take actually failed. The
+      live row said `unavailable` and the narration said "the writer authority stayed with the
+      successor" about an incarnation that still held it.
+    - **The failure row names what the drain already destroyed** —
+      `drained: [{workerId, participantId, snapshot}]`, derived from the drain's own custody rows
+      (`worktree.removed {reason: 'drain'}` joined to `swarm.participant_bound`), empty and never
+      absent. The window's ordering (drain first — §2 says why) is irreversible, so this is the list
+      a root resumes each ended seat from; the narration names the same seats.
+    - **A stop asked for AFTER the re-publish is an ordinary stop.** The incident's SIGTERM was
+      admitted (`host.stop_requested`) and never converged to `host.stopped` in 240 s, and a
+      deployment whose stop had already been BOUNDED (the host's own attempts spent, the workers it
+      stopped waiting on named abandoned on the `stopped_after_deadline` row) had the raw
+      `coordinator_drain_incomplete` of a pointless extra drain thrown out of `close()`: the outcome
+      row had landed while the caller was told the stop failed. The bounded stop's own accounting is
+      the whole of that leg now, and a stop after the re-publish converges the way any stop does —
+      `host.stopped` behind the failure row, then the withdrawal (#470's `470-c`, #478's `478c`).
+    Pins: `impl/test/issue478-failed-handoff-keeps-serving.test.mjs` (the served read, the authority
+    column on a step-1 and a step-4 failure, the stop, the `drained` list, and a served recruit) and
+    the rows it extends in `impl/test/issue470-stop-supersedes-failed-handoff.test.mjs` /
+    `impl/test/issue306r-republish-arm.test.mjs`.
 
 Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
 (item 11); docs/39's wake section naming `incarnation_changed` and the reincarnation rows beside
