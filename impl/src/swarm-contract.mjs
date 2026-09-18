@@ -74,6 +74,8 @@ const SWARM_VIEW_SLICED_FIELDS = Object.freeze([
   'knowledge', 'attention', 'updatePayloads',
   // Issue #423 (lane 2 hand-back): the two new collections are view fields, sliced like the rest.
   'claims', 'proposals',
+  // Issue #311: the deployment-level situation block — one derived object, sliced like the rest.
+  'situation',
 ]);
 // How a projection narrows a participant row it carries: `whole` is the row the view built, and a
 // named slice keeps the seat's identity plus the one field the projection is about.
@@ -102,6 +104,12 @@ export const SWARM_VIEW_PROJECTIONS = Object.freeze({
   // §Communication intends (a peer reads the note, not the whole record): the rows the fold keeps,
   // in ledger order, each carrying its key, body, groupId, version, actor, seq and ts (#427).
   context: Object.freeze({ rows: Object.freeze(['context']), participant: null }),
+  // The deployment-level situation (#311): the one block the recruit brief's situation section
+  // and this projection both derive — this swarm's peers with their scopes, the can-act seats of
+  // the repository's OTHER swarms with theirs, what those swarms published (subject + a
+  // reference, never the body), the commits landed on the target since the base, and the viewing
+  // seat's predecessor when it is a successor. Served as data; the brief renders the same rows.
+  situation: Object.freeze({ rows: Object.freeze(['situation']), participant: null }),
 });
 export const SWARM_VIEW_PROJECTION_NAMES = Object.freeze(Object.keys(SWARM_VIEW_PROJECTIONS));
 
