@@ -376,13 +376,34 @@ try {
         if ((parsed.check && local.state !== 'configured') || coordination !== null) process.exitCode = 1;
       } else {
         const remote = await clientFor(discoverBatonConnection()).doctor();
+        // Issue #476: a resident that is STOPPING is not merely `not_ready` — it is a state with a
+        // reason and a wait, and #467 keeps this transport's reads open so the operator can read
+        // it. The stopping section the deployment already puts on its own card (`state`, `at`, the
+        // waits it holds — the seat being drained, the instant it was observed, the bounded attempt
+        // the stop reached) is rendered where the resident reported it, beside the ONE next step:
+        // wait for the stop to converge. That wait is bounded (#467: each worker wait is capped by
+        // the drain's own attempts) and ends when the resident exits, so the operator's verb reads
+        // the state instead of a bare `cli_command_failed: … GET /readyz, HTTP 503`.
+        const stopping = remote.stopping ?? null;
+        const state = stopping !== null ? 'stopping' : remote.ready === true ? 'ready' : 'not_ready';
         const result = {
-          schemaVersion: 1, state: remote.ready === true ? 'ready' : 'not_ready',
-          depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: remote.ready === true ? 'ready' : 'not_ready' },
+          schemaVersion: 1, state,
+          depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: state },
+          ...(stopping === null ? {} : { stopping }),
           deployment: remote.deployment,
           routes: remote.routes,
           briefing: remote.briefing ?? null,
           application: remote.application,
+          ...(stopping === null ? {} : {
+            next: [{
+              action: 'wait',
+              command: 'baton doctor --check',
+              reason: `the resident is stopping: ${stopping.waits?.length ?? 0} wait(s) held, `
+                + `bounded attempt ${stopping.attempts ?? 0} reached. It keeps answering this read `
+                + 'until its stop converges and the process exits; a resident that has exited answers '
+                + 'the local `needs_setup` outline instead.',
+            }],
+          }),
         };
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         if (remote.ready !== true) process.exitCode = 1;

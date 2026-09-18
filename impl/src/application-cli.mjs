@@ -4387,6 +4387,12 @@ export class BatonWebClient {
         const refused = `Baton Web request was refused (${options.method ?? 'GET'} ${path}, HTTP ${response.status})`;
         const message = nonempty(wire?.message) ? `${refused}: ${wire.message}` : refused;
         const error = cliError(message, code);
+        // Issue #476: the status the resident answered with, kept ON the refusal — the one fact
+        // the composed text carries but a caller cannot read back without parsing prose. A
+        // readiness read whose 503 IS the answer (the resident is stopping, #467) tells it apart
+        // from a refusal it must rethrow; every other caller is unchanged (the envelope projects
+        // code/message/detail/field only, so nothing new crosses a surface).
+        error.status = response.status;
         if (wire !== null) {
           error.detail = wire;
           // The resident composed this field for the wire; lift it so the MCP bridge forwards
@@ -4402,15 +4408,37 @@ export class BatonWebClient {
     }
   }
 
+  /** Issue #476: a readiness answer is a READ whatever it says. #467 keeps this transport's reads
+   * open for the whole drain, and `/readyz` answers 503 with the stopping row in its body while
+   * new work stays closed — but the `_json` refusal branch turned that answer into
+   * `cli_command_failed: … (GET /readyz, HTTP 503)`, so the operator's own diagnosis verb reported
+   * neither the state nor the reason. A 503 here IS the resident saying "not ready": the card read
+   * that follows (admitted by the same split) is where the state lives. Every other status and
+   * every transport failure still refuses exactly as before — a 401 is not a readiness answer, and
+   * a dead socket is not a state. */
+  async _readiness() {
+    try {
+      return await this._json('/readyz', { headers: { origin: this.origin } });
+    } catch (error) {
+      if (error?.status === 503) return Object.freeze({ ready: false });
+      throw error;
+    }
+  }
+
   async doctor() {
-    const readiness = await this._json('/readyz', { headers: { origin: this.origin } });
+    const readiness = await this._readiness();
     const card = await this._json('/v1/application-card', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
     const deployment = record(card?.application?.readiness)
       ? card.application.readiness : null;
     const routes = Array.isArray(deployment?.routes) ? deployment.routes : [];
+    // Issue #476: the stopping section #467 puts on the served card, carried through verbatim —
+    // the reading consumer renders the state and the waits the stop holds, and never re-derives
+    // either. Null (never absent) for a resident that is not stopping.
+    const stopping = record(card?.application?.stopping) ? card.application.stopping : null;
     return {
       schemaVersion: 1,
       ready: readiness.ready === true,
+      stopping,
       deployment,
       routes,
       // Epic #103 (D6c): the CLI is a READING consumer of the non-enumerable doctor sibling — it

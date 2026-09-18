@@ -1735,8 +1735,30 @@ export class WebNorthbound {
     } catch { return false; }
   }
 
+  /** Issue #476: the readiness answer a STOPPING resident gives. #467 admits this transport's own
+   * reads for the whole drain — the card, the closed read list — but `/readyz` answered a bare
+   * `{ready: false}` in front of them, so an operator's own `curl /readyz` said nothing and the
+   * CLI's doctor leg (which reads readiness FIRST, then the card) reported a bare 503. The body
+   * gains the SAME stopping row the card carries — the deployment's ONE derivation, read through
+   * the facade that already serves it, never a second one minted here — so a bare probe says why.
+   * Only while the work half is closed for a stop: a resident that is merely not-ready (an
+   * ordinary readiness check, a session store that refuses) answers exactly as it always did. */
+  _stoppingRead() {
+    if (this.readOnlyStopping !== true || this.application === null) return null;
+    let stopping;
+    try { stopping = this.application.card()?.stopping ?? null; } catch { return null; }
+    if (stopping === null || typeof stopping !== 'object' || Array.isArray(stopping)) return null;
+    return stopping;
+  }
+
   _readinessResponse(ctx) {
     const ready = this._isReady();
+    const notReady = () => {
+      const stopping = this._stoppingRead();
+      return stopping === null
+        ? result(503, { ready: false })
+        : result(503, { ready: false, ...stopping });
+    };
     try {
       this._audit('readiness_probe', ctx, { ready });
       if (this._lastReady !== ready) {
@@ -1744,7 +1766,7 @@ export class WebNorthbound {
         this._lastReady = ready;
       }
     } catch { return result(503, { ready: false }); }
-    return ready ? result(200, { ready: true }) : result(503, { ready: false });
+    return ready ? result(200, { ready: true }) : notReady();
   }
 
   _admissionOpen() { return this.admitting && (!this.edge || this.edge.admitting); }
