@@ -656,6 +656,9 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         const record = {
           observed: false, phase: null, resting: false, terminal: false,
           narrative: null, attention: null, resultSha: null, observationError: null,
+          // #396: the member's OWN named wait (its waitingOn projection, if any) — retained
+          // per member alongside the last good observation, never withheld behind a sibling.
+          waitingOn: null,
         };
         retained.set(role, record);
         while (canObserve() && !record.resting) {
@@ -672,6 +675,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
             record.terminal = terminalFrom(outline);
             record.narrative = outline.narrative ?? null;
             record.attention = attentionFrom(outline);
+            record.waitingOn = outline.waitingOn ?? null;
             record.observationError = null;
             // A drive is admitted ONLY on a read that answered and still found the member running:
             // a read that timed out or failed is uncertainty, never a reason to drive — and never a
@@ -745,6 +749,12 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
           narrative: record.narrative,
           resultSha: record.resultSha,
         };
+        // #396: a member behind a real dependency settles with its wait named — its own
+        // per-relationship truth, never a roster-wide stall read. Additive-only: a member
+        // with no named wait carries no key, exactly like observationError/progressClass.
+        if (record.waitingOn && typeof record.waitingOn.kind === 'string') {
+          outcome.waitingOn = record.waitingOn;
+        }
         // Uncertainty is reported WITH the last known phase, never instead of it.
         if (record.observationError) outcome.observationError = record.observationError;
         let evidence = null;
