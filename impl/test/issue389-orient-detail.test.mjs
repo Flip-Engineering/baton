@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -330,7 +330,7 @@ test('issue389-c-digest: changing the cited text changes the detail packDigest',
   assert.equal(before?.payload?.ok ?? null, true, 'the first detail answers');
   const digestBefore = before?.payload?.packDigest ?? null;
   assert.match(String(digestBefore ?? ''), /^[a-f0-9]{64}$/u, 'the first answer carries a packDigest');
-  write(join(lane.root, 'src/alpha.js'), ALPHA_TEXT.replace('export const alpha = 1;', 'export const alpha = 2;'));
+  write(lane.root, 'src/alpha.js', ALPHA_TEXT.replace('export const alpha = 1;', 'export const alpha = 2;'));
   emitCodeRead(lane.adapter, handle, query, 'issue389-c-after');
   await flush(40);
   const after = readResults(lane.coordinator, handle).at(-1);
@@ -339,4 +339,97 @@ test('issue389-c-digest: changing the cited text changes the detail packDigest',
     { line: 3, text: 'export const alpha = 2;' }, 'the served lines track the edited text');
   assert.notEqual(after?.payload?.packDigest ?? null, digestBefore,
     'packDigest covers the served content: edited text changes the digest');
+});
+
+// ---------------------------------------------------------------------------
+// open-ds rows (test seat, checkout ws-ae0e...): the audit's actual complaint is
+// ZERO BYTES delivered, so the deliverable is asserted, not only the rendered
+// object; the no-content PIN keeps orientation-red OR-L9's ok:true positive
+// control; the undisclosed-path row pins that a citation admission is a scope,
+// never a licence to probe the repository.
+// ---------------------------------------------------------------------------
+
+const SECRET_TEXT = "const secret = 'undisclosed-token';\nexport default secret;";
+
+test('issue389-a-delivered: the detail deliverable carries the served lines, never zero bytes with ok:true', async () => {
+  const lane = orientedLane({ 'src/alpha.js': ALPHA_TEXT }, 'a-delivered');
+  const { handle, citation } = await mapCitation(lane, 'issue389-a-delivered');
+  emitCodeRead(lane.adapter, handle,
+    { kind: 'code', op: 'code.orient.detail', citation, path: 'src/alpha.js', range: { start: { line: 3 }, end: { line: 5 } } },
+    'issue389-a-delivered-detail');
+  await flush(40);
+  const detail = readResults(lane.coordinator, handle).at(-1);
+  assert.equal(detail?.payload?.ok ?? null, true, 'the detail answers');
+  const delivered = String(detail?.payload?.renderedText ?? '');
+  assert.ok(delivered.includes('export const alpha = 1;') && delivered.includes('return beta(input + alpha);'),
+    'the deliverable carries the served bytes (#389: the rung serialized `lines: []` into the deliverable while answering ok:true)');
+});
+
+test('issue389-a-bytes: every served line is the exact repository byte line', async () => {
+  const lane = orientedLane({ 'src/alpha.js': ALPHA_TEXT }, 'a-bytes');
+  const { handle, citation } = await mapCitation(lane, 'issue389-a-bytes');
+  emitCodeRead(lane.adapter, handle,
+    { kind: 'code', op: 'code.orient.detail', citation, path: 'src/alpha.js', range: { start: { line: 1 }, end: { line: 8 } } },
+    'issue389-a-bytes-detail');
+  await flush(40);
+  const detail = readResults(lane.coordinator, handle).at(-1);
+  const onDisk = readFileSync(join(lane.root, 'src/alpha.js'), 'utf8').split(/\r?\n/);
+  assert.deepEqual(detail?.payload?.detail?.lines ?? null, onDisk.map((text, index) => ({ line: index + 1, text })),
+    'no re-rendering and no truncation: line N is byte-for-byte the repository line N');
+});
+
+test('issue389-a-range-path: range.path names the cited file (the contract\'s canonical spelling)', async () => {
+  const lane = orientedLane({ 'src/alpha.js': ALPHA_TEXT }, 'a-range-path');
+  const { handle, citation } = await mapCitation(lane, 'issue389-a-range-path');
+  emitCodeRead(lane.adapter, handle,
+    { kind: 'code', op: 'code.orient.detail', citation, range: { path: 'src/alpha.js', start: { line: 2 }, end: { line: 3 } } },
+    'issue389-a-range-path-detail');
+  await flush(40);
+  const detail = readResults(lane.coordinator, handle).at(-1);
+  assert.equal(detail?.payload?.ok ?? null, true, 'a range carrying its own path answers');
+  assert.deepEqual(detail?.payload?.detail?.lines ?? null, expectedLines(2, 3),
+    'range.path selects the cited file inside the citation scope');
+});
+
+test('issue389-b-undisclosed: a file outside the citation\'s disclosed scope is never served', async () => {
+  const lane = orientedLane({ 'src/alpha.js': ALPHA_TEXT, 'elsewhere/secret.js': SECRET_TEXT }, 'b-undisclosed');
+  const handle = await lane.coordinator.spawn('mock', makeBrief({ pathScope: ['src'] }));
+  emitCodeRead(lane.adapter, handle, { kind: 'code', op: 'code.orient.map' }, 'issue389-bu-map');
+  await flush(40);
+  const mapResult = readResults(lane.coordinator, handle).at(-1);
+  assert.equal(mapResult?.payload?.ok ?? null, true, 'the scoped map answers (the citation source)');
+  const citation = mapResult?.payload?.packDigest ?? null;
+  assert.equal(typeof citation, 'string', 'the scoped map exposes its pack citation');
+  emitCodeRead(lane.adapter, handle,
+    { kind: 'code', op: 'code.orient.detail', citation, path: 'elsewhere/secret.js', range: { start: { line: 1 }, end: { line: 2 } } },
+    'issue389-bu-detail');
+  await flush(40);
+  const detail = readResults(lane.coordinator, handle).at(-1);
+  assert.equal(detail?.payload?.ok ?? null, false, 'detail is never a probe past the disclosed region');
+  assert.ok(String(detail?.payload?.result ?? detail?.payload?.code ?? '').length > 0, 'the refusal is typed');
+  assert.ok(!JSON.stringify(detail?.payload ?? {}).includes('undisclosed-token'),
+    'an undisclosed file never leaks its bytes through a detail answer');
+});
+
+test('issue389-pin-no-content: a citation that discloses no file content stays ok:true and explains itself', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  emitCodeRead(adapter, handle, { kind: 'code', op: 'code.orient.map' }, 'issue389-pin-map');
+  await flush(40);
+  const citation = readResults(coordinator, handle).at(-1)?.payload?.packDigest ?? null;
+  assert.equal(typeof citation, 'string', 'a lane with no code index still cites its synthetic pack');
+  emitCodeRead(adapter, handle,
+    { kind: 'code', op: 'code.orient.detail', citation, range: { start: { line: 1 }, end: { line: 12 } } },
+    'issue389-pin-detail');
+  await flush(40);
+  const payload = readResults(coordinator, handle).at(-1)?.payload ?? {};
+  assert.equal(payload.ok ?? null, true,
+    'orientation-red OR-L9 asserts ok:true for a contained range against a synthetic citation — this row pins it');
+  const lines = payload.detail?.lines ?? payload.lines ?? null;
+  assert.ok(Array.isArray(lines), 'the answer still carries a lines array');
+  if (lines.length === 0) {
+    assert.match(JSON.stringify(payload), /unavailable|discloses|next|narrow|name/i,
+      'an empty answer is never silent: it names why it served nothing and what to do next');
+  }
 });
