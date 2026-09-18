@@ -11938,6 +11938,25 @@
           ]
         },
         {
+          "name": "_recordContributionNote",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_admitContributionContract",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "effect",
+          "evidence": [
+            "effect:process_exec",
+            "admission:guard_name"
+          ]
+        },
+        {
           "name": "_scopeOverlap",
           "ordinal": 0,
           "size": 15,
@@ -12050,7 +12069,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 499,
+          "size": 520,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -12238,7 +12257,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 82,
+          "size": 88,
           "seam": "effect",
           "evidence": [
             "delegates:admission",
@@ -12248,7 +12267,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 582,
+          "size": 602,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
