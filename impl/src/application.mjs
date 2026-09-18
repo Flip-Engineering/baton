@@ -4997,8 +4997,10 @@ export class BatonApplication {
               this.driver.coordination.contextCell(cellId)?.state !== 'stopped'
             )).length,
             ...(current.schemaVersion >= 3 ? {
+              // #390: a call that reads `stopping` is waiting on exactly the run.stop_completed
+              // receipt this receipt IS, so it counts as ended here — never as remaining.
               remainingCallCount: current.targetContextCallIds.filter((callId) => (
-                !['completed', 'failed', 'stopped'].includes(
+                !['completed', 'failed', 'stopped', 'stopping'].includes(
                   this.driver.coordination.contextCall(callId)?.state,
                 )
               )).length,
