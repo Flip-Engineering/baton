@@ -546,6 +546,15 @@ function dispatchFailure(cause) {
     'plan_effect_invalid', 'plan_goal_mismatch', 'plan_node_invalid', 'plan_node_limit', 'plan_risk_mismatch', 'plan_scope_invalid',
     'plan_too_large', 'plan_verification_invalid', 'plan_dispatch_invalid', 'plan_route_invalid',
     'plan_route_authority_legacy_ambiguous'].includes(goalPlanCode)) {
+    // #362 (the #335 rule): a goal/plan refusal that measured something — a text, goal or plan
+    // over its bound — carries a detail record {field, bytes, limit} from the mint site and
+    // crosses with its own message, so the recruiter learns the bytes and the bound instead of
+    // "precondition failed". A refusal with no detail keeps the fixed class message.
+    const detail = isRecord(cause?.detail) ? cause.detail : null;
+    if (detail !== null && typeof cause?.message === 'string' && cause.message.length > 0) {
+      const field = typeof detail.field === 'string' ? safeFieldName(detail.field) : null;
+      return failure(400, goalPlanCode, cause.message, { retryable: false, ...(field !== null ? { field } : {}), detail });
+    }
     return { httpStatus: 400, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan precondition failed' } } };
   }
   if (['goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_version_limit', 'goal_weakened',

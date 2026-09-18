@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { normalizeContextMapNodeBinding } from './context-map.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 import { normalizeContextEffectNodeBinding } from './context-call.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
@@ -32,7 +33,29 @@ export function sanitizeGoalPlanProjection(value) {
     .filter(([key]) => !PRIVATE_PROJECTION_FIELDS.has(key))
     .map(([key, child]) => [key, sanitizeGoalPlanProjection(child)]));
 }
-function fail(message, code) { throw new GoalPlanValidationError(message, code); }
+/** #362: a refusal that measured something carries its own teaching — `field` and a `detail`
+ * record {field, bytes, limit} — so the web lane and the swarm refusal row can pass it through
+ * (the #335 rule) instead of the numberless "precondition failed". */
+function fail(message, code, detail = null) {
+  const error = new GoalPlanValidationError(message, code);
+  if (detail !== null) Object.assign(error, { field: detail.field, detail: Object.freeze({ ...detail }) });
+  throw error;
+}
+
+/** #362: the goal/plan substrate's own byte ceilings — what ONE goal, plan or status record may
+ * hold — declared once here and read by the policy validator below AND by the deployment's
+ * policy (application-deployment.mjs goalPlanPolicy), so no deployment literal can sit below
+ * the text lane it must admit (a recruit's run objective is the whole composed brief, bounded
+ * by FRAME_LIMITS['run.objective']; a 16 KiB policy literal refused every recruit after #358). */
+export const GOAL_PLAN_CEILINGS = Object.freeze({
+  // One goal/plan text is one durable body: the registry's spill.body substrate row.
+  textBytes: FRAME_LIMITS['spill.body'].value,
+  // A goal record holds up to maxNodes texts' worth of goal material; a plan and a status
+  // record hold the plan's node briefs — sixteen and sixty-four bodies respectively.
+  goalBytes: 16 * FRAME_LIMITS['spill.body'].value,
+  planBytes: 64 * FRAME_LIMITS['spill.body'].value,
+  statusBytes: 64 * FRAME_LIMITS['spill.body'].value,
+});
 function exactObject(value, fields, code = 'goal_plan_invalid') {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).sort().join(',') !== [...fields].sort().join(',')) fail('goal/plan object has unknown or missing fields', code);
@@ -49,7 +72,12 @@ function secretShapedText(value) { return SECRET_SHAPED_TEXT.some((pattern) => p
 function normalizedText(value, maxBytes, label) {
   if (typeof value !== 'string' || value.includes('\0')) fail(`${label} is invalid`, 'goal_plan_invalid');
   const normalized = value.normalize('NFKC').trim();
-  if (normalized.length === 0 || Buffer.byteLength(normalized) > maxBytes) fail(`${label} is invalid`, 'goal_plan_invalid');
+  if (normalized.length === 0) fail(`${label} is invalid`, 'goal_plan_invalid');
+  const bytes = Buffer.byteLength(normalized);
+  if (bytes > maxBytes) {
+    fail(`${label} exceeds the goal/plan policy text bound: ${bytes} bytes observed, ${maxBytes} allowed (limits.maxTextBytes)`,
+      'goal_plan_invalid', { field: label, bytes, limit: maxBytes });
+  }
   if (secretShapedText(normalized)) fail(`${label} contains credential-shaped content`, 'goal_plan_secret_rejected');
   return normalized;
 }
@@ -113,8 +141,8 @@ export function normalizeGoalPlanPolicy(value) {
     || canonicalMaxUsd === null
     || raw.limits.maxGoalVersions > 1_000_000 || raw.limits.maxPlanVersions > 1_000_000
     || raw.limits.maxNodes > 100_000 || raw.limits.maxDepsPerNode > 100_000
-    || raw.limits.maxTextBytes > 1024 * 1024 || raw.limits.maxGoalBytes > 16 * 1024 * 1024
-    || raw.limits.maxPlanBytes > 64 * 1024 * 1024 || raw.limits.maxStatusBytes > 64 * 1024 * 1024) fail('goal/plan policy limits are invalid', 'goal_plan_policy_invalid');
+    || raw.limits.maxTextBytes > GOAL_PLAN_CEILINGS.textBytes || raw.limits.maxGoalBytes > GOAL_PLAN_CEILINGS.goalBytes
+    || raw.limits.maxPlanBytes > GOAL_PLAN_CEILINGS.planBytes || raw.limits.maxStatusBytes > GOAL_PLAN_CEILINGS.statusBytes) fail('goal/plan policy limits are invalid', 'goal_plan_policy_invalid');
   raw.limits.maxUsd = canonicalMaxUsd;
   const normalizedPolicy = { ...clone(raw), riskClasses: risks, effectClasses, capabilityClasses, limits: clone(raw.limits) };
   const policyDigest = goalPlanDigest(normalizedPolicy);
@@ -133,7 +161,11 @@ export function normalizeGoalRequest(value, policy) {
     predecessor: normalizePredecessor(value.predecessor, 'goal'),
   };
   riskIndex(policy, result.risk);
-  if (Buffer.byteLength(JSON.stringify(goalPlanCanonical(result))) > policy.limits.maxGoalBytes) fail('goal exceeds deployment byte ceiling', 'goal_too_large');
+  const goalBytes = Buffer.byteLength(JSON.stringify(goalPlanCanonical(result)));
+  if (goalBytes > policy.limits.maxGoalBytes) {
+    fail(`goal exceeds the deployment byte ceiling: ${goalBytes} bytes observed, ${policy.limits.maxGoalBytes} allowed (limits.maxGoalBytes)`,
+      'goal_too_large', { field: 'goal', bytes: goalBytes, limit: policy.limits.maxGoalBytes });
+  }
   return result;
 }
 
@@ -409,7 +441,11 @@ export function normalizePlanRequest(value, policy, goal, options = {}) {
   if (totals.usd === null || totalUsdNanos > usdToNanos(goal.budget.usd)) fail('plan allocations exceed goal budget', 'plan_budget_exceeded');
   if (!budgetWithin(totals, goal.budget)) fail('plan allocations exceed goal budget', 'plan_budget_exceeded');
   const result = { goal: goalRef, predecessor: normalizePredecessor(value.predecessor, 'plan'), nodes, totals };
-  if (Buffer.byteLength(JSON.stringify(goalPlanCanonical(result))) > policy.limits.maxPlanBytes) fail('plan exceeds deployment byte ceiling', 'plan_too_large');
+  const planBytes = Buffer.byteLength(JSON.stringify(goalPlanCanonical(result)));
+  if (planBytes > policy.limits.maxPlanBytes) {
+    fail(`plan exceeds the deployment byte ceiling: ${planBytes} bytes observed, ${policy.limits.maxPlanBytes} allowed (limits.maxPlanBytes)`,
+      'plan_too_large', { field: 'plan', bytes: planBytes, limit: policy.limits.maxPlanBytes });
+  }
   return result;
 }
 
