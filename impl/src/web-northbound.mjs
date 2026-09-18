@@ -12,7 +12,7 @@ import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
 import { projectSwarmView, SWARM_VIEW_PROJECTIONS } from './swarm-contract.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalAndTransportNames } from './application-semantics.mjs';
-import { WakeStream, parseWakeFilter } from './wake-stream.mjs';
+import { WakeStream, deriveWakeFrame, parseWakeFilter, wakeClassRow } from './wake-stream.mjs';
 
 // Issue #233 (canonical naming unification): every web-flagged application definition is
 // admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
@@ -2043,6 +2043,37 @@ export class WebNorthbound {
     }
     if (value?.result === 'stale_fence') return error(409, 'stale_fence');
     const projected = GOAL_PLAN_MUTATIONS.has(envelope.command) ? sanitizeGoalPlanProjection(value) : json(value);
+    // Issue #356: the bounded watch answers a WAKE FRAME. The runtime's watch row names the ledger
+    // row it woke on (kind, seq, payloadKind) but only the store holds that row's ts, actor and
+    // payload — so the ONE dispatch that read it enriches the event through the ONE wake
+    // classification (wake-stream's deriveWakeFrame: class, subject, next) into the #272 shape the
+    // follow stream prints. A row the store no longer holds, or one that is not a wake row, rides
+    // un-enriched; the consumer's own class derivation still filters it (the CLI believes a
+    // resident-named class only through the same table).
+    if (APPLICATION_COMMAND[envelope.command] === 'swarm.watch') {
+      const watch = projected !== null && typeof projected === 'object' ? projected.watch ?? null : null;
+      const event = watch !== null && watch.event !== null && typeof watch.event === 'object' ? watch.event : null;
+      if (event !== null && Number.isSafeInteger(event.seq)
+        && typeof this.coordination?.eventsView === 'function') {
+        let row = null;
+        try { row = this.coordination.eventsView(event.seq, 1)[0] ?? null; } catch { row = null; }
+        const frame = row !== null && row.seq === event.seq ? deriveWakeFrame(row) : null;
+        if (frame !== null) {
+          projected.watch = {
+            ...watch,
+            event: {
+              ...event,
+              ts: frame.ts,
+              actor: frame.actor,
+              subject: frame.subject,
+              wakeClass: frame.wakeClass,
+              terminal: wakeClassRow(frame.wakeClass)?.terminal ?? false,
+              next: frame.next,
+            },
+          };
+        }
+      }
+    }
     // Issue #343/#349: an oversize swarm.view answer is served through the per-row projection
     // that fits the frame, naming the narrowing — never an oversize failure or a truncation.
     // Narrowing is the answer shape of a caller that DECLARES the frame it answers under
