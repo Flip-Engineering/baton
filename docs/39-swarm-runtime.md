@@ -829,10 +829,19 @@ checkout the deployment owns, runs the regenerators and the derived gate set the
 `swarm.contribution_integrated` — the receipt of the git it actually ran, never
 caller-submittable. Refusals are typed and pre-effect where possible:
 `integrate_contribution_not_accepted`, `integrate_commit_unreachable`, `integrate_conflict`,
-`integrate_gates_red`, `integrate_target_moved`, `integrate_change_invalid`. Known gap at the
-time of writing: the scratch checkout links `node_modules` from the repository root while this
-repository installs under `impl/`, so every regenerator fails and the refusal carries no stderr
-tail (#451, open); until it lands the root's hand chain in README.md remains the landing path.
+`integrate_gates_red`, `integrate_target_moved`, `integrate_change_invalid`. The gate run and
+the regenerators are asynchronous children of the resident's supervised pool, never on its loop
+(#459: `swarm.integration_started` / `swarm.integration_failed` rows, the host verify lease taken
+through the suite runner's own seam, `integrate_gates_busy` when it is spent, `--follow` observing
+the outcome row). The scratch checkout links the dependency install(s) the repository actually
+holds (#451: `impl/node_modules`), and the gate set reaches the runner at the runner's own
+layout — `test/<file>` relative to the suite root the runner runs in, both derived from the
+runner path's directory (#463). An EMPTY derivation (a change that touches no tested path) runs
+no gate and the receipt says `gates.skipped: 'no_affected_tests'`; a red gate's refusal and the
+durable failure row carry the selection `{files, reason, provenance}`, the runner's bounded
+stderr tail with the step that spoke it, and `regenerated`. Live: the verb ran against a live
+resident without stalling it (2026-09-18); the first landing through it is the live check that
+retires the hand chain in README.md.
 
 **A provider fault proposes a re-route (#443).** Beside the #442 fault fold the runtime records
 `swarm.reroute_proposed {participantId, workerId, from, code, resetAt, resetAtText, candidates,
