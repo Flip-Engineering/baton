@@ -3024,6 +3024,70 @@ export function swarmStopRefusalBlock(error, { swarmId = null, participantId = n
   return lines.join('\n');
 }
 
+// ── issue #483: a torn-down bounded watch names the reason, the successor and the next step ─────
+
+/** The watch-abort refusal's own detail, whichever envelope carried it: the wire's error object
+ * (the resident answered the command — the refusal's detail rides `error.detail.detail`) or the
+ * runtime's own error (an embedded client — the detail IS `error.detail`). The `reason` is the
+ * mark of the shape (the refusal's own closed set of departures). Null for every other refusal,
+ * which prints untouched. */
+function watchAbortDetail(error) {
+  if (error?.code !== 'coordination_wait_aborted') return null;
+  const outer = record(error.detail) ? error.detail : null;
+  const nested = outer !== null && record(outer.detail) ? outer.detail : null;
+  if (nested !== null && nonempty(nested.reason)) return nested;
+  return outer !== null && nonempty(outer.reason) ? outer : null;
+}
+
+/** Issue #483 item 1: the block the CLI prints UNDER the refusal line, composed from the refusal's
+ * own facts — why the watch was torn down (the incarnation is withdrawing, or the resident is
+ * stopping), which incarnation takes the deployment over when there is one, and the cursor the
+ * caller re-arms from — plus the ONE next step that restores the watch: re-arm against the
+ * successor, or subscribe to the wake class that names the change of incarnation. Null when this
+ * is not the watch-abort refusal: nothing is invented for a shape we do not own. */
+export function swarmWatchRefusalBlock(error, { swarmId = null, afterSeq = null } = {}) {
+  const detail = watchAbortDetail(error);
+  if (detail === null) return null;
+  const successor = record(detail.successor) && nonempty(detail.successor.incarnation)
+    ? detail.successor.incarnation : null;
+  const cursor = Number.isSafeInteger(detail.afterSeq) ? detail.afterSeq
+    : (Number.isSafeInteger(afterSeq) ? afterSeq : null);
+  const again = `baton swarm watch ${nonempty(swarmId) ? swarmId : 'SWARM_ID'}`
+    + `${cursor === null ? '' : ` --after-seq ${cursor}`}`;
+  const lines = [];
+  if (detail.reason === 'incarnation_withdrawn') {
+    lines.push(`the bounded watch was torn down: this incarnation is withdrawing`
+      + `${successor === null ? '' : `, and incarnation ${successor} takes the deployment over`}`);
+    lines.push(`next: re-arm \`${again}\` against the successor, or subscribe to the incarnation_changed wake class `
+      + '(`baton deployment watch --follow --wake-class incarnation_changed`) and wait for host.reincarnated / host.reincarnation_failed');
+  } else if (detail.reason === 'resident_stopping') {
+    lines.push('the bounded watch was torn down: this resident is stopping');
+    lines.push(`next: re-arm \`${again}\` once a resident serves this deployment again (\`baton doctor --check\`), `
+      + 'or subscribe to the resident_lifecycle wake class (`baton deployment watch --follow --wake-class resident_lifecycle`)');
+  } else if (detail.reason === 'store_closed') {
+    lines.push('the bounded watch was torn down: the coordination store closed under it');
+    lines.push(`next: re-arm \`${again}\` against the resident that serves this deployment now (\`baton doctor --check\`)`);
+  } else {
+    lines.push(`the bounded watch was torn down: this incarnation is leaving (${String(detail.reason)})`);
+    lines.push(`next: re-arm \`${again}\` against the resident that serves this deployment next (\`baton doctor --check\`)`);
+  }
+  if (cursor !== null) lines.push(`the cursor to re-arm from: ${cursor} (nothing past it was delivered)`);
+  return lines.join('\n');
+}
+
+/** The `swarm.watch` legs' ONE call site: every bounded watch (the plain one, the wake-class
+ * filtered one, and the follow legs whose loop holds one open) renders the #483 block under the
+ * refusal line, and every other answer passes through untouched. */
+async function watchSwarmCommand(client, swarmId, args, idempotencyKey) {
+  try {
+    return await client.command('swarm.watch', args, idempotencyKey);
+  } catch (error) {
+    const block = swarmWatchRefusalBlock(error, { swarmId, afterSeq: args?.afterSeq ?? null });
+    if (block !== null) error.message = `${error.message}\n${block}`;
+    throw error;
+  }
+}
+
 /** `swarm.stop`'s own leg: the receipt renders through #469's objective reference, and a refusal
  * whose facts this leg owns renders its block under the refusal line. Every other answer passes
  * through untouched. */
@@ -3078,7 +3142,7 @@ export async function followSwarm(parsed, client, options = {}) {
   let cursor = parsed.afterSeq;
   let view = null;
   for (;;) {
-    view = await client.command('swarm.watch', {
+    view = await watchSwarmCommand(client, parsed.swarmId, {
       swarmId: parsed.swarmId, ...(cursor !== undefined ? { afterSeq: cursor } : {}),
       ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
     }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
@@ -3112,7 +3176,7 @@ export async function watchSwarmFiltered(parsed, client) {
   for (;;) {
     const remaining = deadline - Date.now();
     round += 1;
-    const view = await client.command('swarm.watch', {
+    const view = await watchSwarmCommand(client, parsed.swarmId, {
       swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
       timeoutMs: Math.max(1, remaining),
       projection,
@@ -3210,7 +3274,7 @@ export async function followSwarmCheck(parsed, client, options = {}) {
       });
     }
     const cursor = view?.cursor;
-    view = await client.command('swarm.watch', {
+    view = await watchSwarmCommand(client, parsed.swarmId, {
       swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
       ...(parsed.timeoutMs === undefined ? {} : { timeoutMs: parsed.timeoutMs }),
     }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
@@ -3358,7 +3422,7 @@ export async function followSwarmRecruit(parsed, client, options = {}) {
       return unobserved();
     }
     const cursor = view?.cursor;
-    view = await client.command('swarm.watch', {
+    view = await watchSwarmCommand(client, parsed.swarmId, {
       swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
     }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
     if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
@@ -3451,7 +3515,7 @@ export async function followSwarmIntegrate(parsed, client, options = {}) {
       return unobserved();
     }
     const cursor = view?.cursor;
-    view = await client.command('swarm.watch', {
+    view = await watchSwarmCommand(client, parsed.swarmId, {
       swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
     }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
     if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));

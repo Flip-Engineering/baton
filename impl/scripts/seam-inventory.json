@@ -6575,7 +6575,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 202,
+          "size": 209,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
@@ -8775,11 +8775,20 @@
         {
           "name": "_apply",
           "ordinal": 0,
-          "size": 1244,
+          "size": 1252,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
             "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_foldIncarnationLifecycle",
+          "ordinal": 0,
+          "size": 38,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -8807,6 +8816,15 @@
           "seam": "observation",
           "evidence": [
             "observation:projection_name"
+          ]
+        },
+        {
+          "name": "incarnationDeparture",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -13205,10 +13223,19 @@
         {
           "name": "_watch",
           "ordinal": 0,
-          "size": 76,
+          "size": 104,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_incarnationDeparture",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
