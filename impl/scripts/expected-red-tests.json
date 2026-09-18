@@ -2,6 +2,10 @@
   "schemaVersion": 2,
   "rows": [
     {
+      "key": "",
+      "reason": "#486"
+    },
+    {
       "key": "test/adapter-card-contract.test.mjs :: A-G10 RED: the legacy subprocess tier publishes cards no gate can consume (reason A-G10)",
       "reason": "A-G10"
     },
