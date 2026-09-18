@@ -2312,10 +2312,11 @@
         {
           "name": "_preserveProgressBeforeReap",
           "ordinal": 0,
-          "size": 122,
+          "size": 133,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
+            "effect:worktree_authority",
             "effect:action_name",
             "observation:log_append"
           ]
@@ -9001,7 +9002,7 @@
         {
           "name": "admitContextPackage",
           "ordinal": 0,
-          "size": 77,
+          "size": 95,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -12169,7 +12170,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 38,
+          "size": 43,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12416,10 +12417,9 @@
           "name": "_mutationResult",
           "ordinal": 0,
           "size": 34,
-          "seam": "recovery",
+          "seam": "observation",
           "evidence": [
             "delegates:observation",
-            "delegates:recovery",
             "delegates:admission"
           ]
         },
@@ -12510,10 +12510,37 @@
         {
           "name": "_routeDegradeFor",
           "ordinal": 0,
-          "size": 22,
+          "size": 26,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
+          ]
+        },
+        {
+          "name": "_routeProbeState",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_admitRouteProbe",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_settleRouteProbes",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
           ]
         },
         {
@@ -12812,10 +12839,9 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1040,
-          "seam": "recovery",
+          "size": 1045,
+          "seam": "observation",
           "evidence": [
-            "recovery:reconcile_call",
             "observation:swarm_attention_rows"
           ]
         },
@@ -12909,7 +12935,7 @@
         {
           "name": "_recordBridgeRefusal",
           "ordinal": 0,
-          "size": 24,
+          "size": 34,
           "seam": "admission",
           "evidence": [
             "admission:refusal_name",
@@ -12993,19 +13019,64 @@
         {
           "name": "_inheritancePredecessor",
           "ordinal": 0,
-          "size": 47,
+          "size": 80,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
           ]
         },
         {
-          "name": "_predecessorWorkspace",
+          "name": "_repositoryRoot",
           "ordinal": 0,
-          "size": 38,
+          "size": 6,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_snapshotChangedPaths",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_workspaceCarryPlan",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_predecessorWorkspace",
+          "ordinal": 0,
+          "size": 56,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_applyWorkspaceCarry",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_withdrawRefusedRecruit",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
           ]
         },
         {
@@ -13074,12 +13145,21 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 228,
+          "size": 219,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
             "delegates:effect",
             "delegates:observation"
+          ]
+        },
+        {
+          "name": "_carryBriefLines",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -13186,7 +13266,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 837,
+          "size": 923,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
