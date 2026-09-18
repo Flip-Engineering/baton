@@ -468,7 +468,13 @@ completion.
 model, effort }`, `scope: [...]`), recorded ONCE with the membership write — the deployment's own
 resolution when `prepareRun` makes one, otherwise the selection the caller named. It is projected
 from the durable join, so a worker that is rebound, stopped or restarted never moves it, and the
-wake that IS a recruitment names the route the seat was started under.
+wake that IS a recruitment names the route the seat was started under. The row is BUDGETED (#464):
+`role` is the objective's first line bounded by the `view.role.head` registry row, with
+`roleBytes` (the full length) and `roleRef {kind: 'swarm.participant_joined', seq}` (the ledger
+row that holds the whole text); `workspace.commits` is the NEWEST-bound tail under
+`view.workspace.commits` with `commitsTotal` beside it, and a participantId-scoped read carries the
+list whole while a bridge PAGE drops the array and keeps the count. A 36-seat roster answers its
+participants projection in one `wire.frame`.
 
 **Refusals are the swarm's record, not the caller's private business.** A refused mutation already
 landed durably as `swarm.operation_refused` (#271); the same lane now carries the refusals the
