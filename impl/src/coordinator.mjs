@@ -12885,7 +12885,7 @@ export class Coordinator {
     const resolution = admitted.resolution ?? null;
     const files = Array.isArray(resolution?.files) ? resolution.files : [];
     const baseRoot = resolution?.baseRoot ?? null;
-    if (typeof baseRoot !== 'string' || baseRoot.length === 0 || files.length === 0) return [];
+    if (typeof baseRoot !== 'string' || baseRoot.length === 0 || files.length === 0) return { content: null, lines: [] };
     const startLine = query.range.start.line; const endLine = query.range.end.line;
     // The file selector has two spellings: top-level `path`, and `range.path` (the
     // contract's canonical spelling — the range names the cited file it spans).
@@ -12906,28 +12906,42 @@ export class Coordinator {
         { code: 'orientation_detail_unavailable', detail: { citation, reason: 'file_ambiguous', file: null, range: { start: startLine, end: endLine }, lineCount: 0, next: 'name one admitted file via path' } },
       );
     }
-    // The read is anchored at the ladder's own baseRoot — the same root index.build
-    // scanned and the overlay resolves — never a second root or reader. Admitted paths
-    // are repo-relative; an escape or symlink (the ladder never admits either) refuses.
-    let text;
+    // Issue #389: the content resolves through the SAME atlas the ladder resolves with —
+    // index.build re-derives the base record from the live tree and returns its own
+    // integrity-checked artifact, which _readArtifact verifies by digest before a byte is
+    // served. No second file reader exists on this path, and the served lines carry the
+    // atlas's per-file content digest. Admitted paths are the atlas's own scanned
+    // repo-relative paths (symlink-free by scan), so admission is membership alone.
+    const atlas = this._orientationAtlas();
+    if (!atlas || typeof atlas._invokeSync !== 'function' || typeof atlas._readArtifact !== 'function') {
+      throw this._orientationDetailUnavailable(citation, 'atlas_unavailable', selected.path, startLine, endLine, 0,
+        're-issue code.orient.map or code.orient.region on a lane with an atlas-index capability, then descend from that citation');
+    }
+    let record;
     try {
-      const root = resolve(baseRoot);
-      const absolute = resolve(join(baseRoot, selected.path));
-      const rel = relative(root, absolute);
-      if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) throw new Error('path escapes the orientation root');
-      if (lstatSync(absolute).isSymbolicLink()) throw new Error('orientation content is never served through a symlink');
-      text = readFileSync(absolute, 'utf8');
+      const built = atlas._invokeSync('index.build', {}, { budgetTokens: 10000, baseRoot, actor: 'hub' });
+      const ref = (Array.isArray(built?.refs) ? built.refs : []).find((entry) => entry?.kind === 'atlas_index');
+      if (!ref || typeof ref.path !== 'string' || typeof ref.digest !== 'string') throw new Error('atlas index artifact ref is missing');
+      const base = JSON.parse(atlas._readArtifact(ref.path, ref.digest).toString('utf8'));
+      record = (Array.isArray(base?.files) ? base.files : []).find((file) => file?.path === selected.path) ?? null;
     } catch (cause) {
       if (cause?.code === 'orientation_detail_unavailable') throw cause;
       throw this._orientationDetailUnavailable(citation, 'file_absent', selected.path, startLine, endLine, 0,
         're-issue code.orient.map or code.orient.region for a live citation, then descend from that citation');
     }
-    const all = text.split(/\r?\n/);
+    if (!record || !Array.isArray(record.lines)) {
+      throw this._orientationDetailUnavailable(citation, 'file_absent', selected.path, startLine, endLine, 0,
+        're-issue code.orient.map or code.orient.region for a live citation, then descend from that citation');
+    }
+    const all = record.lines;
     if (endLine > all.length) {
       throw this._orientationDetailUnavailable(citation, 'range_outside_file', selected.path, startLine, endLine, all.length,
         `narrow the range to 1..${all.length} and re-issue code.orient.detail against the live citation`);
     }
-    return all.slice(startLine - 1, endLine).map((lineText, index) => ({ line: startLine + index, text: lineText }));
+    return {
+      content: { digest: typeof record.digest === 'string' ? record.digest : null, file: selected.path, lineCount: all.length, status: 'served' },
+      lines: all.slice(startLine - 1, endLine).map((lineText, index) => ({ line: startLine + index, text: lineText })),
+    };
   }
 
   _orientationSyntheticModule(repoId, rootPath) {
@@ -13039,10 +13053,14 @@ export class Coordinator {
     // typed when the file is absent or the range falls outside it. A citation admitted
     // without repository content (synthetic lane) keeps its legacy ok:true answer but
     // says why it served nothing and what to do next — an empty answer is never silent.
-    const lines = this._orientationDetailLines(citation, query, admitted);
-    const detail = { citation, lines, mergeAuthority: false, range, verificationAuthority: false };
-    if (!admitted.resolution) {
+    const served = this._orientationDetailLines(citation, query, admitted);
+    const detail = { citation, lines: served.lines, mergeAuthority: false, range, verificationAuthority: false };
+    if (served.content) {
+      // the served range is content-addressed: the atlas's own per-file digest rides the answer
+      detail.content = served.content;
+    } else if (!admitted.resolution) {
       detail.note = 'the citation discloses no file content (synthetic orientation lane without a code index); served lines are unavailable — next: re-issue code.orient.map on a lane with an atlas-index capability, then descend from that citation';
+      detail.content = { status: 'unavailable', reason: 'the citation discloses no file content (synthetic orientation lane without a code index)', nextAction: 're-issue code.orient.map on a lane with an atlas-index capability, then descend from that citation' };
     }
     const packDigest = canonicalDigest({ detail, op: 'code.orient.detail' });
     const freshnessDigest = admitted.freshnessDigest;

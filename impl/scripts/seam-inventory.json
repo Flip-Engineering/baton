@@ -3214,7 +3214,7 @@
         {
           "name": "_orientationDetailLines",
           "ordinal": 0,
-          "size": 48,
+          "size": 62,
           "seam": "effect",
           "evidence": [
             "effect:action_verb"
@@ -3261,7 +3261,7 @@
         {
           "name": "_codeOrientationDetail",
           "ordinal": 0,
-          "size": 30,
+          "size": 34,
           "seam": "effect",
           "evidence": [
             "delegates:effect",
