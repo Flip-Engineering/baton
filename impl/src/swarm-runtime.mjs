@@ -223,6 +223,14 @@ const sliceUtf8 = (text, maxBytes) => {
   return new TextDecoder('utf-8', { fatal: false })
     .decode(bytes.subarray(0, maxBytes)).replace(/\uFFFD+$/u, '');
 };
+/** Issue #453: the bound one failed carry's cause is recorded with (#326's discipline — a
+ * readable tail, never a whole git dump). The cause carries git's own last words about the file
+ * it could not apply, so the tail is the half that matters. */
+const CARRY_REASON_BYTES = 512;
+const boundedCarryText = (value) => {
+  const text = typeof value === 'string' ? value : '';
+  return text.length <= CARRY_REASON_BYTES ? text : text.slice(-CARRY_REASON_BYTES);
+};
 // #444: the closed axes a recruit's route comparison may order on — `quality` (the default: the
 // route's MEASURED Artificial Analysis intelligence index) and `design` (the best Design Arena Elo
 // its profile carries). Declared ONCE here, beside the comparison that reads it; the refusal an
@@ -4142,8 +4150,67 @@ export class SwarmRuntime {
       fault, reroute: fault === null ? null : predecessor.reroute ?? null };
   }
 
+  /** Issue #453: the repository root every workspace-carry derivation reads. The deployment's
+   * landing authority names it (#296 wires `integration.repoRoot` from the driver), the situation
+   * seam an embedder or test wires names it next, and a checkout's own session context names its
+   * root last. It is ONE derivation because the incident came from having two: the carry read
+   * `situationGit.repoRoot` alone — which application.mjs never sets — so `--resume-from` skipped
+   * the apply silently and recorded a carry that never happened. */
+  _repositoryRoot(...fallbacks) {
+    for (const candidate of [this.integration?.repoRoot, this.situationGit?.repoRoot, ...fallbacks]) {
+      if (typeof candidate === 'string' && candidate.length > 0) return candidate;
+    }
+    return null;
+  }
+
+  /** Issue #453: the snapshot's OWN changed paths — the custody row's recorded list when it carries
+   * one (the #453 shape the coordinator writes), else the snapshot commit's own diff
+   * (`git diff --name-only base..snapshot`, through the runtime's one read-only git query). `null`
+   * when neither answers: unreadable, which is NEVER read as "the snapshot holds nothing". */
+  _snapshotChangedPaths(repoRoot, baseSha, snapshotSha, recorded) {
+    if (Array.isArray(recorded) && recorded.every((path) => typeof path === 'string' && path.length > 0)) {
+      return [...recorded].sort();
+    }
+    if (repoRoot === null || baseSha === null || !GIT_SHA.test(snapshotSha ?? '')) return null;
+    const { ok, out } = gitQuery(['diff', '--name-only', '-z', baseSha, snapshotSha], repoRoot);
+    if (!ok) return null;
+    return [...new Set(out.split('\0').filter(Boolean))].sort();
+  }
+
+  /** Issue #453: the ONE carry decision a resume-from recruit makes from the predecessor's
+   * workspace facts. The row's fields, the brief's `## Inheritance` lines and the refusal all read
+   * this plan, so the three can never tell two stories. `how` is drawn from the closed set
+   * (`SWARM_CARRY_HOW` in swarm-state.mjs):
+   *   `bound`   — the successor binds the predecessor's own checkout; nothing is applied.
+   *   `applied` — the checkout is gone and the snapshot's own diff goes into the successor's new one.
+   *   `skipped` — nothing was carried, and `reason` says why (`missing` names the inputs the carry
+   *               lacked — `repoRoot`, `baseSha`, `snapshotSha`, or `snapshotPaths` when the
+   *               snapshot's own diff could not be read at all).
+   * `content` says whether the snapshot holds work a skip would lose; unknown content reads as
+   * content (a refusal over a guess), and the caller turns that into the typed refusal. */
+  _workspaceCarryPlan({ exists, changedPaths, snapshotSha, snapshotPaths, missing }) {
+    if (exists) {
+      return Object.freeze({ how: 'bound', paths: Object.freeze([...changedPaths]),
+        snapshotSha: null, reason: null, content: false });
+    }
+    if (snapshotSha === null) {
+      return Object.freeze({ how: 'skipped', paths: Object.freeze([]), snapshotSha: null,
+        reason: Object.freeze({ missing: Object.freeze(['snapshotSha']) }),
+        content: changedPaths.length > 0 });
+    }
+    // The snapshot's own diff is the only honest source for "what the snapshot holds": unreadable
+    // is not empty, so it reads as content the successor would lose.
+    const content = snapshotPaths === null ? true : snapshotPaths.length > 0;
+    if (missing.length > 0) {
+      return Object.freeze({ how: 'skipped', paths: Object.freeze([]), snapshotSha,
+        reason: Object.freeze({ missing: Object.freeze([...missing]) }), content });
+    }
+    return Object.freeze({ how: 'applied', paths: Object.freeze([...(snapshotPaths ?? [])]),
+      snapshotSha, reason: null, content: false });
+  }
+
   /** The predecessor's workspace state for a resume-from recruit (#385): whether the checkout
-   * exists, who holds it, and the changed paths — the facts the workspace carry decision reads.
+   * exists, who holds it, the changed paths, and — #453 — the carry plan above, derived once.
    * Returns null when the predecessor has no recorded workspace. */
   _predecessorWorkspace(swarm, predecessorId) {
     const predecessor = Object.hasOwn(swarm.participants, predecessorId)
@@ -4151,17 +4218,16 @@ export class SwarmRuntime {
     if (!predecessor) return null;
     const workspaceId = predecessor.workspaceId;
     if (!workspaceId) return null;
-    const repoRoot = typeof this.situationGit?.repoRoot === 'string'
-      ? this.situationGit.repoRoot : null;
+    const ctxResult = typeof this.coordinator.predecessorWorkspaceContext === 'function'
+      ? this.coordinator.predecessorWorkspaceContext(workspaceId) : null;
+    const sessionContext = ctxResult?.sessionContext ?? null;
+    const repoRoot = this._repositoryRoot(sessionContext?.repoRoot);
     const exists = repoRoot ? workspaceExists(repoRoot, workspaceId) : false;
     let changedPaths = [];
     if (exists && repoRoot) {
       try { changedPaths = workspaceChangedPaths(repoRoot, workspaceId); }
       catch { changedPaths = []; }
     }
-    const ctxResult = typeof this.coordinator.predecessorWorkspaceContext === 'function'
-      ? this.coordinator.predecessorWorkspaceContext(workspaceId) : null;
-    const sessionContext = ctxResult?.sessionContext ?? null;
     const predecessorWorkerId = predecessor.bindings?.at?.(-1)?.workerId ?? null;
     const predecessorWorkerDead = predecessorWorkerId !== null
       && !this.coordinator.list().some((h) => h.id === predecessorWorkerId
@@ -4172,16 +4238,76 @@ export class SwarmRuntime {
     // FOREIGN live holders only, and `predecessorLive` says whether the predecessor itself is.
     const predecessorLive = predecessorWorkerId !== null && !predecessorWorkerDead;
     const liveHolders = (ctxResult?.holders ?? []).filter((id) => id !== predecessorWorkerId);
-    let snapshotSha = null;
+    // The custody row the removal was backed by (#428); since #453 it names the snapshot's own
+    // paths too, and the LAST row for this workspace is the snapshot being carried.
+    let snapshotRow = null;
     for (const event of this.store.eventsView()) {
       const kind = event.kind === 'driver.recorded' ? event.payload?.kind : event.kind;
       if (kind !== 'worktree.snapshotted') continue;
       const payload = event.payload ?? {};
       if (payload.workspaceId !== workspaceId) continue;
-      snapshotSha = typeof payload.sha === 'string' ? payload.sha : null;
+      // Only a row that names a commit is a snapshot a recruit could carry: the last such row for
+      // this workspace is the snapshot the removal was backed by.
+      if (typeof payload.sha !== 'string' || payload.sha.length === 0) continue;
+      snapshotRow = payload;
     }
+    const snapshotSha = typeof snapshotRow?.sha === 'string' ? snapshotRow.sha : null;
     const baseSha = sessionContext?.baseSha ?? null;
-    return { workspaceId, exists, changedPaths, sessionContext, liveHolders, predecessorLive, snapshotSha, baseSha };
+    const snapshotPaths = exists || snapshotSha === null ? null
+      : this._snapshotChangedPaths(repoRoot, baseSha, snapshotSha, snapshotRow?.paths ?? null);
+    const missing = [];
+    if (!exists && snapshotSha !== null) {
+      if (repoRoot === null) missing.push('repoRoot');
+      if (baseSha === null) missing.push('baseSha');
+      if (repoRoot !== null && baseSha !== null && snapshotPaths === null) missing.push('snapshotPaths');
+    }
+    // A live predecessor carries nothing (#318), so it has no plan: the brief says nothing about a
+    // checkout the successor never gets, and the recruit writes no row.
+    const carry = predecessorLive ? null
+      : this._workspaceCarryPlan({ exists, changedPaths, snapshotSha, snapshotPaths, missing });
+    return { workspaceId, exists, changedPaths, sessionContext, liveHolders, predecessorLive,
+      snapshotSha, baseSha, carry };
+  }
+
+  /** Issue #453: perform the snapshot carry the plan named, into the checkout the bind just
+   * created. Returns the plan with its OUTCOME — `applied`, or `skipped` naming the input that was
+   * missing or the apply's bounded cause — and never throws: the caller decides what a skip with
+   * content means (the typed refusal). `content` on the returned plan says whether the work would
+   * be lost, so the caller's refusal test is the same one the pre-effect refusal uses. */
+  _applyWorkspaceCarry(plan, { repoRoot, targetDir, baseSha }) {
+    const missing = [];
+    if (repoRoot === null) missing.push('repoRoot');
+    if (targetDir === null) missing.push('targetDir');
+    if (baseSha === null) missing.push('baseSha');
+    const content = plan.content || plan.paths.length > 0;
+    if (missing.length > 0) {
+      return { ...plan, how: 'skipped', paths: [], reason: { missing }, content };
+    }
+    try {
+      applySnapshotToWorktree(repoRoot, plan.snapshotSha, targetDir, baseSha);
+    } catch (error) {
+      // The bounded cause the worktree authority attached (#326's discipline, #453): the refusal
+      // names git's own words instead of a swallowed `[]`.
+      return { ...plan, how: 'skipped', paths: [],
+        reason: { error: boundedCarryText(error?.detail ?? error?.message ?? String(error)) },
+        content: true };
+    }
+    return { ...plan, how: 'applied', paths: [...plan.paths], reason: null, content: false };
+  }
+
+  /** #308 × #453: withdraw a recruit whose effect refused AFTER the seat had already joined —
+   * the typed leave row (reason `recruit_refused`, which keeps the identity re-joinable, so the
+   * root decides how to resume) plus the stop of the run the refusal cannot let keep working under
+   * a checkout that lost its inheritance. The stop is best-effort: the refusal is the
+   * authoritative answer and the caller throws it. */
+  async _withdrawRefusedRecruit({ command, args, principal, writes, runId = null, code = null }) {
+    writes.push(this._write('swarm.participant_left', {
+      swarmId: args.swarmId, participantId: args.participantId, reason: 'recruit_refused',
+      ...(code === null ? {} : { code }),
+    }, principal, `swarm-recruit-rollback:${this._operationKey(command, args, principal)}`));
+    if (typeof this.stopRun === 'function' && typeof runId === 'string') {
+      try { await this.stopRun(runId, 'recruit_refused'); } catch { /* the refusal stands */ }
+    }
   }
 
   /** Who parked guidance is from, for the brief line that delivers it (#337): the same
@@ -4581,11 +4707,7 @@ export class SwarmRuntime {
       } else {
         lines.push('- No candidate route was ready when the death was observed, so this seat was recruited by hand.');
       }
-      if (predecessorWorkspace?.workspaceId) {
-        lines.push(`- Carried workspace ${predecessorWorkspace.workspaceId}`
-          + (predecessorWorkspace.changedPaths?.length > 0
-            ? `: ${predecessorWorkspace.changedPaths.join(', ')}` : ' (the same checkout, shared)'));
-      }
+      lines.push(...this._carryBriefLines(predecessorWorkspace?.workspaceId, predecessorWorkspace?.carry));
       lines.push(predecessor.lastCheckpoint
         ? `- Last checkpoint: ${predecessor.lastCheckpoint.sha} (retained ref ${predecessor.lastCheckpoint.ref})`
         : '- Last checkpoint: none was recorded for this predecessor.');
@@ -4614,15 +4736,30 @@ export class SwarmRuntime {
             ? row.carriedForward.map((item) => `  carries forward: ${JSON.stringify(item)}`) : []),
         ]),
       ];
-      if (predecessorWorkspace?.changedPaths?.length > 0) {
-        inheritance.push(`- Carried workspace ${predecessorWorkspace.workspaceId}: ${predecessorWorkspace.changedPaths.join(', ')}`);
-        if (predecessorWorkspace.snapshotSha) {
-          inheritance.push(`  applied from snapshot ${predecessorWorkspace.snapshotSha}`);
-        }
-      }
+      inheritance.push(...this._carryBriefLines(predecessorWorkspace?.workspaceId, predecessorWorkspace?.carry));
       blocks.push(inheritance.join('\n'));
     }
     return blocks.join('\n\n');
+  }
+
+  /** Issue #453: the ONE rendering of what a resume-from successor carries — the workspace, the
+   * carried paths and the `how` the durable row records, all read from the SAME carry plan
+   * (`_workspaceCarryPlan`), so the seat's brief and the ledger can never tell two stories.
+   * `carry` is null for a live predecessor (#318: nothing is carried) and for a predecessor with
+   * no recorded workspace, and then this renders nothing. */
+  _carryBriefLines(workspaceId, carry) {
+    if (!carry || typeof workspaceId !== 'string' || workspaceId.length === 0) return [];
+    const lines = [`- Carried workspace ${workspaceId} [how: ${carry.how}]`
+      + (carry.paths.length > 0 ? `: ${carry.paths.join(', ')}` : '')];
+    if (carry.how === 'applied' && typeof carry.snapshotSha === 'string') {
+      lines.push(`  applied from snapshot ${carry.snapshotSha}`);
+    }
+    if (carry.how === 'skipped') {
+      lines.push(`  nothing was carried — ${carry.reason?.error
+        ? `the apply refused: ${carry.reason.error}`
+        : `missing: ${(carry.reason?.missing ?? []).join(', ')}`}`);
+    }
+    return lines;
   }
 
   /** Issue #441: the `## Context package` section one recruited seat's brief carries — the
@@ -5345,13 +5482,18 @@ export class SwarmRuntime {
                 workspaceId: predecessorWs.workspaceId,
                 holders: predecessorWs.liveHolders.map((h) => h.id ?? h),
               });
-            } else if (!predecessorWs.exists && !predecessorWs.snapshotSha
-              && predecessorWs.changedPaths.length > 0) {
-              refuse('Predecessor workspace is gone and no snapshot exists', 'swarm_workspace_unavailable', {
-                reason: 'predecessor_workspace_uncarriable',
-                workspaceId: predecessorWs.workspaceId,
-                paths: predecessorWs.changedPaths,
-              });
+            } else if (predecessorWs.carry?.how === 'skipped' && predecessorWs.carry.content) {
+              // Issue #453: the carry cannot be attempted and the snapshot holds work the successor
+              // would not get. The recruit refuses BEFORE any membership is written, so the root
+              // chooses how to resume (a fresh seat, a repair, or a hand copy) — never a successor
+              // that silently lost the work. This replaces the pre-#453
+              // `predecessor_workspace_uncarriable` refusal, whose `changedPaths` read is always
+              // empty for the checkout that is gone.
+              refuse('Predecessor workspace cannot be carried into the successor',
+                'swarm_workspace_carry_failed', {
+                  predecessor: predecessor.participantId, snapshotSha: predecessorWs.snapshotSha,
+                  reason: predecessorWs.carry.reason,
+                });
             }
           }
         }
@@ -5456,10 +5598,8 @@ export class SwarmRuntime {
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
             ...(workspace ? { workspace } : {}) }, principal, context);
         } catch (error) {
-          writes.push(this._write('swarm.participant_left', {
-            swarmId: args.swarmId, participantId: args.participantId, reason: 'recruit_refused',
-            ...(typeof error?.code === 'string' && error.code.length > 0 ? { code: error.code } : {}),
-          }, principal, `swarm-recruit-rollback:${this._operationKey(command, args, principal)}`));
+          await this._withdrawRefusedRecruit({ command, args, principal, writes,
+            code: typeof error?.code === 'string' && error.code.length > 0 ? error.code : null });
           throw error;
         }
         const worker = this.coordinator.list().find((row) => row.runId === runId);
@@ -5501,28 +5641,44 @@ export class SwarmRuntime {
         }
         // Issue #425: the new lease learns the checkout's live writer before its seat can act.
         this._settleCheckoutWriterState();
-        // Issue #385: record the workspace carry after binding. Case 1: the successor is
-        // already bound to the predecessor's checkout. Case 2: a new worktree was created
-        // and the snapshot diff is applied to it now.
-        // #318 × #385: a live predecessor keeps its checkout — nothing is carried, no row is written.
+        // Issue #385 + #453: record the workspace carry after binding, from the plan the brief was
+        // composed with — case 1 binds the predecessor's checkout (`how: 'bound'`), case 2 applies
+        // the snapshot's own diff to the checkout this bind just created (`how: 'applied'`), and a
+        // carry that cannot happen records `how: 'skipped'` with its reason — or refuses, when the
+        // snapshot holds work the successor would lose.
         if (predecessorWs && predecessor && !predecessorWs.predecessorLive) {
-          let carriedPaths = predecessorWs.changedPaths;
           const carriedWorkspaceId = checkout?.workspaceId ?? predecessorWs.workspaceId;
-          if (!predecessorWs.exists && predecessorWs.snapshotSha) {
-            const repoRoot = typeof this.situationGit?.repoRoot === 'string'
-              ? this.situationGit.repoRoot : null;
-            const targetDir = checkout?.sessionContext?.worktree ?? null;
-            const baseSha = predecessorWs.baseSha ?? checkout?.sessionContext?.baseSha ?? current.baseCommit ?? null;
-            if (repoRoot && targetDir && baseSha) {
-              try {
-                carriedPaths = applySnapshotToWorktree(repoRoot, predecessorWs.snapshotSha, targetDir, baseSha);
-              } catch { carriedPaths = []; }
-            }
+          let carry = predecessorWs.carry;
+          if (carry.how === 'applied') {
+            carry = this._applyWorkspaceCarry(carry, {
+              // The repository root the deployment's own authority names (#453), and the checkout
+              // the bind just created — the seat's own session context answers for it, and the
+              // shared attachment answers for a successor bound to the predecessor's checkout,
+              // where nothing is applied anyway.
+              repoRoot: this._repositoryRoot(checkout?.sessionContext?.repoRoot,
+                worker.sessionContext?.repoRoot),
+              targetDir: checkout?.sessionContext?.worktree
+                ?? worker.sessionContext?.worktree ?? worker.worktree ?? null,
+              baseSha: predecessorWs.baseSha,
+            });
+          }
+          if (carry.how === 'skipped' && carry.content) {
+            // #453: the work would be lost. The seat is withdrawn (its identity may re-join: the
+            // leave carries `recruit_refused`), its run is stopped, and the root gets a typed
+            // refusal naming the snapshot and the reason — never a successor that lost the work.
+            await this._withdrawRefusedRecruit({ command, args, principal, writes, runId,
+              code: 'swarm_workspace_carry_failed' });
+            refuse('Predecessor snapshot cannot be carried into the successor workspace',
+              'swarm_workspace_carry_failed', {
+                predecessor: predecessor.participantId, snapshotSha: predecessorWs.snapshotSha,
+                reason: carry.reason,
+              });
           }
           writes.push(this._write('workspace.carried_from', {
             swarmId: args.swarmId, participantId: args.participantId,
             workspaceId: carriedWorkspaceId, predecessor: predecessor.participantId,
-            paths: carriedPaths, snapshotSha: predecessorWs.snapshotSha,
+            paths: [...carry.paths], snapshotSha: predecessorWs.snapshotSha, how: carry.how,
+            ...(carry.reason === null ? {} : { reason: carry.reason }),
           }, principal, `workspace-carried:${hash([args.swarmId, args.participantId, carriedWorkspaceId])}`));
         }
         // Issue #345: the recruit named its work item, so the runtime assigns the seat on join —
