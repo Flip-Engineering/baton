@@ -80,14 +80,19 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   // #442 adds the provider-fault row (provider_fault), minted in the same loop immediately after
   // those two: the seat whose worker its provider killed, naming the fault, its route and the two
   // commands that settle it.
-  assert.equal(kinds.length, 19, 'the runtime mints nineteen attention kinds');
+  // #422/#423 (docs/45 §2.1/§4.1/§5) add three: claim_holder_gone, minted beside
+  // assignment_holder_gone (the same hold-outlives-the-seat row for a claim), the rotating-lease
+  // arm of coupling_writer_gone (minted in the writer block) and shared_checkout_overlap, minted
+  // after the per-seat change-set rows whose cold fill it reads.
+  assert.equal(kinds.length, 21, 'the runtime mints twenty-one attention kinds');
   assert.deepEqual(kinds, [
     'worker_lost_on_restart', 'participant_runtime_dead', 'provider_fault', 'member_left_session_live',
     'delegation_orphaned',
-    'assignment_holder_gone', 'group_member_gone', 'coupling_writer_gone',
+    'assignment_holder_gone', 'claim_holder_gone', 'group_member_gone', 'coupling_writer_gone',
     'coupling_writer_bypassed', 'closed_with_live_participants', 'check_queued',
     'check_queue_timeout', 'recruit_queued', 'recruit_queue_timeout',
     'worktree_foreign_changes', 'turn_ended_without_contribution', 'provider_auth_expired',
+    'shared_checkout_overlap',
     'operation_refused', 'operation_unconfirmed',
   ]);
   // Fail closed: a source whose mint sites changed shape must refuse, never render an empty list.

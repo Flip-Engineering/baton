@@ -171,6 +171,11 @@ test('updates names the kinds this caller may send with the permission that admi
   const view = await f.call('view', {}, alpha);
   const advertised = view.updates.map((row) => row.event);
   assert.deepEqual(view.updates, [
+    // docs/45 §4.6: the two new kinds ride the SAME derivation dispatch enforces — a contribute
+    // seat may take its own claim, and any seat's own consent (its arrival at a proposal) is
+    // sendable at read authority, so both are advertised with the permission that admits them.
+    { event: 'swarm.claim_updated', permission: 'contribute' },
+    { event: 'swarm.proposal_updated', permission: 'read' },
     { event: 'swarm.context_updated', permission: 'communicate' },
     { event: 'swarm.contribution_recorded', permission: 'contribute' },
     { event: 'swarm.participant_left', permission: 'read' },
@@ -200,12 +205,15 @@ test('updates names the kinds this caller may send with the permission that admi
   await f.call('recruit', { participantId: 'reader', objective: 'Watch only', permissions: ['read'] }, f.lead);
   const readOnly = await f.call('view', {}, f.asParticipant('reader'));
   assert.deepEqual(readOnly.updates, [
+    // A read-only seat may consent by arriving at a proposal naming it (docs/45 §3/§4.6): its
+    // arrival is an honest self-report, so `swarm.proposal_updated` is advertised at read.
+    { event: 'swarm.proposal_updated', permission: 'read' },
     { event: 'swarm.participant_left', permission: 'read' },
     { command: 'run.board.read', permission: 'read' },
     { command: 'run.scratchpad.read', permission: 'read' },
     { command: 'evidence.search', permission: 'read' },
   ],
-    'a read-only participant is told the one update and the read verbs it may send, with their permissions');
+    'a read-only participant is told the updates and the read verbs it may send, with their permissions');
   await assert.rejects(f.call('update', { event: 'swarm.context_updated', payload: { key: 'k', body: 'b' } }, f.asParticipant('reader')),
     (error) => error.code === 'swarm_permission_required' && error.detail.permission === 'communicate',
     'and the permission the view names is the one dispatch enforces');

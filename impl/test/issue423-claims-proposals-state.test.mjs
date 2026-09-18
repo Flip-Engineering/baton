@@ -3,10 +3,11 @@
 // one-row handoff), and a work split the seats it names accept by arriving, as specified by
 // docs/45-open-coordination.md §2, §3 and §11.
 //
-// These rows are the STATE half of `impl/test/issue423-claims-and-peers-red.test.mjs`: they drive
-// `foldSwarmEvent` directly. The runtime lane (permissions, the `claims`/`proposals` view
+// These rows are the STATE half of `impl/test/issue423-claims-and-peers.test.mjs`: they drive
+// `foldSwarmEvent` directly. The runtime half (permissions, the `claims`/`proposals` view
 // projections, `claim_holder_gone` and `shared_checkout_overlap` attention rows, the peers-now
-// brief section) is still outstanding, so the red file's rows stay red and stay listed.
+// brief section) landed with them: the pairs file's rows are green, its expected-red manifest
+// entries are retired, and its `-red` suffix came off in that change (docs/44 rule 3).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 

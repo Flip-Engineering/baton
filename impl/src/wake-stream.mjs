@@ -132,14 +132,19 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     wakeClass: 'assigned', scope: 'swarm', terminal: false, next: null,
-    summary: 'groups or assignments changed — who holds what work',
-    rows: [ledgerKind('swarm.assignment_updated'), ledgerKind('swarm.group_updated')],
+    summary: 'groups, assignments or claims changed — who holds what work',
+    // docs/45 §8 (#423): a claim is a hold on work or on paths, so it wakes the class that
+    // answers "who holds what" — no new wake vocabulary for a new hold spelling.
+    rows: [ledgerKind('swarm.assignment_updated'), ledgerKind('swarm.group_updated'),
+      ledgerKind('swarm.claim_updated')],
     subject: { field: 'assignmentId', kind: 'assignment', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
     wakeClass: 'work_updated', scope: 'swarm', terminal: false, next: null,
-    summary: 'declared work changed, including its dependencies and status',
-    rows: [ledgerKind('swarm.work_updated')],
+    summary: 'declared work changed, including its dependencies and status — and a work split was proposed or accepted',
+    // docs/45 §8 (#423): a work proposal is a change to declared work — the plan names the work
+    // items it will create — so its rows ride the class that already announces work changes.
+    rows: [ledgerKind('swarm.work_updated'), ledgerKind('swarm.proposal_updated')],
     subject: { field: 'workId', kind: 'work', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
