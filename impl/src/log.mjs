@@ -3,10 +3,16 @@
 // elsewhere is a projection rebuildable from here.
 
 import {
-  appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync,
-  readdirSync, statSync, writeFileSync,
+  appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync,
+  readdirSync, renameSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+
+/** Issue #285 G-13: the archive holding retired workers' logs — `<dir>/archive/`. */
+const ARCHIVE_DIR = 'archive';
+const ARCHIVE_MANIFEST_FILE = 'manifest.json';
+const ARCHIVE_TEMP_PREFIX = '.manifest-tmp-';
 
 /**
  * @typedef {Object} BatonEvent
@@ -31,6 +37,8 @@ export class Log {
     this.clock = clock;
     /** @type {Map<string, number>} in-memory last-seq cache */
     this._seq = new Map();
+    /** Issue #285 G-13: the archive manifest, read lazily and cached. `null` means unread. */
+    this._archive = null;
     /** One immutable parsed event vector per worker. Reads never reparse an already indexed file. */
     this._index = new Map();
     /** File identity and parsed byte frontier for append-aware cross-instance reads. */
@@ -63,6 +71,15 @@ export class Log {
       if (prior?.exists && prior.size > 0) {
         throw Object.assign(new Error(`operational log ${worker} disappeared after indexing`), {
           code: 'operational_log_replaced',
+        });
+      }
+      // Issue #285 G-13: an archived worker's log is not a missing log — it reads refused,
+      // with the graceful path, so no caller mistakes retirement for data loss.
+      if (this._archivedEntry(worker) !== null) {
+        throw Object.assign(new Error(`operational log ${worker} is archived`), {
+          code: 'operational_log_archived',
+          worker,
+          gracefulPath: 'restoreWorker(worker) brings the archived log back to the live directory',
         });
       }
       if (!this._index.has(worker)) {
@@ -246,12 +263,197 @@ export class Log {
     return this._lastSeq(worker);
   }
 
-  /** @returns {string[]} every worker id with at least one event on disk */
+  /** @returns {string[]} every LIVE worker id with at least one event on disk (archived workers excluded) */
   workers() {
     if (!existsSync(this.dir)) return [];
     return readdirSync(this.dir)
       .filter((n) => n.endsWith('.jsonl'))
       .map((n) => n.slice(0, -'.jsonl'.length));
+  }
+
+  // ── Issue #285 G-13: archival ─────────────────────────────────────────────
+  //
+  // A retired worker's JSONL file moves to `<dir>/archive/<worker>.jsonl` and the move is
+  // recorded in `<dir>/archive/manifest.json`. `workers()` then excludes it, so construction
+  // replay (`_replay` reads `workers()` and folds each file in full) never reads its bytes
+  // again — archival is what bounds operational-log startup work. The manifest is the
+  // record: a live file whose worker the manifest lists is refused, never served.
+
+  _archiveDir() {
+    return join(this.dir, ARCHIVE_DIR);
+  }
+
+  _archiveFile(worker) {
+    return join(this._archiveDir(), `${worker}.jsonl`);
+  }
+
+  _manifestFile() {
+    return join(this._archiveDir(), ARCHIVE_MANIFEST_FILE);
+  }
+
+  _fsyncDir(dir) {
+    try {
+      const fd = openSync(dir, 'r');
+      try { fsyncSync(fd); } finally { closeSync(fd); }
+    } catch { /* directory fsync is unavailable on some supported hosts */ }
+  }
+
+  /** The validated manifest entries, read lazily once per instance. */
+  _manifestEntries() {
+    if (this._archive !== null) return this._archive;
+    const file = this._manifestFile();
+    if (!existsSync(file)) {
+      this._archive = [];
+      return this._archive;
+    }
+    let parsed = null;
+    try { parsed = JSON.parse(readFileSync(file, 'utf8')); }
+    catch {
+      throw Object.assign(new Error('the operational log archive manifest is not valid JSON'), {
+        code: 'operational_log_archive_invalid',
+      });
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || parsed.schemaVersion !== 1 || !Array.isArray(parsed.entries)
+      || Object.keys(parsed).sort().join(',') !== 'entries,schemaVersion') {
+      throw Object.assign(new Error('the operational log archive manifest is invalid'), {
+        code: 'operational_log_archive_invalid',
+      });
+    }
+    const seen = new Set();
+    for (const entry of parsed.entries) {
+      const keys = ['archivedAt', 'bytes', 'digest', 'events', 'schemaVersion', 'worker'];
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+        || Object.keys(entry).sort().join(',') !== [...keys].sort().join(',')
+        || entry.schemaVersion !== 1
+        || typeof entry.worker !== 'string' || entry.worker.length === 0
+        || !Number.isSafeInteger(entry.events) || entry.events < 0
+        || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0
+        || typeof entry.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(entry.digest)
+        || !Number.isFinite(Date.parse(entry.archivedAt))
+        || seen.has(entry.worker)) {
+        throw Object.assign(new Error('the operational log archive manifest is invalid'), {
+          code: 'operational_log_archive_invalid',
+        });
+      }
+      seen.add(entry.worker);
+    }
+    this._archive = parsed.entries;
+    return this._archive;
+  }
+
+  _writeManifest(entries) {
+    const dir = this._archiveDir();
+    mkdirSync(dir, { recursive: true });
+    const bytes = Buffer.from(`${JSON.stringify({ schemaVersion: 1, entries })}\n`, 'utf8');
+    const temporary = join(dir, `${ARCHIVE_TEMP_PREFIX}${randomUUID()}`);
+    let fd = null;
+    try {
+      fd = openSync(temporary, 'wx', 0o600);
+      writeFileSync(fd, bytes);
+      fsyncSync(fd);
+      closeSync(fd); fd = null;
+      renameSync(temporary, this._manifestFile());
+    } catch (error) {
+      if (fd !== null) try { closeSync(fd); } catch { /* original write error wins */ }
+      try { unlinkSync(temporary); } catch { /* rename or cleanup already completed */ }
+      throw error;
+    }
+    this._fsyncDir(dir);
+    this._archive = entries;
+  }
+
+  /** The manifest entry for a worker, or null. */
+  _archivedEntry(worker) {
+    return this._manifestEntries().find((entry) => entry.worker === worker) ?? null;
+  }
+
+  _dropIndex(worker) {
+    this._index.delete(worker);
+    this._seq.delete(worker);
+    this._indexFiles.delete(worker);
+    this._kinds.delete(worker);
+  }
+
+  /**
+   * Retire a worker's log: move its live file into the archive and record the manifest
+   * receipt. The worker must have a live file; an already-archived worker refuses with
+   * `operational_log_archived`. Archival is for terminal workers only — a live worker's
+   * newer events would land in a fresh file the next append creates, splitting history.
+   * @param {string} worker
+   * @returns {Readonly<{schemaVersion:number,worker:string,events:number,bytes:number,digest:string,archivedAt:string}>}
+   */
+  archiveWorker(worker) {
+    if (typeof worker !== 'string' || worker.length === 0) throw new TypeError('archiveWorker: worker required');
+    const archived = this._archivedEntry(worker);
+    if (archived !== null) {
+      throw Object.assign(new Error(`operational log ${worker} is already archived`), {
+        code: 'operational_log_archived',
+        worker,
+        gracefulPath: 'restoreWorker(worker) brings the archived log back to the live directory',
+      });
+    }
+    const file = this._file(worker);
+    if (!existsSync(file)) {
+      throw Object.assign(new Error(`operational log ${worker} has no live log to archive`), {
+        code: 'operational_log_archive_missing',
+        worker,
+      });
+    }
+    // Load first: the move is recorded only for a log that parses cleanly.
+    const events = this._load(worker);
+    const bytes = readFileSync(file);
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    mkdirSync(this._archiveDir(), { recursive: true });
+    renameSync(file, this._archiveFile(worker));
+    this._fsyncDir(this._archiveDir());
+    this._fsyncDir(this.dir);
+    const entry = {
+      schemaVersion: 1,
+      worker,
+      events: events.length,
+      bytes: bytes.byteLength,
+      digest,
+      archivedAt: this.clock(),
+    };
+    this._writeManifest([...this._manifestEntries(), entry]);
+    this._dropIndex(worker);
+    return Object.freeze({ ...entry });
+  }
+
+  /**
+   * Bring an archived worker's log back to the live directory, byte-identical.
+   * @param {string} worker
+   */
+  restoreWorker(worker) {
+    if (typeof worker !== 'string' || worker.length === 0) throw new TypeError('restoreWorker: worker required');
+    const entries = this._manifestEntries();
+    if (!entries.some((entry) => entry.worker === worker)) {
+      throw Object.assign(new Error(`operational log ${worker} is not archived`), {
+        code: 'operational_log_archive_missing',
+        worker,
+      });
+    }
+    const archived = this._archiveFile(worker);
+    if (!existsSync(archived)) {
+      throw Object.assign(new Error(`operational log ${worker} is archived but its file is missing`), {
+        code: 'operational_log_archive_invalid',
+        worker,
+      });
+    }
+    renameSync(archived, this._file(worker));
+    this._fsyncDir(this._archiveDir());
+    this._fsyncDir(this.dir);
+    this._writeManifest(entries.filter((entry) => entry.worker !== worker));
+    this._dropIndex(worker);
+    const events = this._load(worker);
+    const entry = { schemaVersion: 1, worker, events: events.length };
+    return Object.freeze(entry);
+  }
+
+  /** @returns {ReadonlyArray<Readonly<{schemaVersion:number,worker:string,events:number,bytes:number,digest:string,archivedAt:string}>>} */
+  archivedWorkers() {
+    return Object.freeze(this._manifestEntries().map((entry) => Object.freeze({ ...entry })));
   }
 }
 
