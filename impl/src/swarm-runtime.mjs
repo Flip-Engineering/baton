@@ -1629,7 +1629,11 @@ export class SwarmRuntime {
       // The shared context every participant is recruited with is swarm-wide by construction, so a
       // scoped view carries it; an entry written for ONE group follows that group's roster, and is
       // visible to the members who can read the group it belongs to (2026-09-14 audit S-G5).
-      context: keep(Object.entries(swarm.context ?? {}), ([, entry]) => entry.groupId === null
+      // Issue #427: the rows read in LEDGER order — a rewritten key sorts by the seq of its latest
+      // write, not by when the key was first seen — so the `context` projection lists the notes the
+      // way the coordination ledger wrote them.
+      context: keep([...Object.entries(swarm.context ?? {})].sort(([, left], [, right]) => left.seq - right.seq),
+        ([, entry]) => entry.groupId === null
         || entry.groupId === undefined
         || (swarm.groups?.[entry.groupId]?.members ?? []).some((member) => scopeSubtree.includes(member))),
       // The swarm's seeded facts are the shared evidence of the WHOLE swarm — the exchange

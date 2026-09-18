@@ -84,6 +84,10 @@ export const SWARM_VIEW_PROJECTIONS = Object.freeze({
   // The knowledge rows the swarm's participants seeded (`run.knowledge.seed` through the bridge):
   // the slice a participant reads to find a peer's fact without the root copying anything (#318).
   knowledge: Object.freeze({ rows: Object.freeze(['knowledge']), participant: null }),
+  // The shared-context notes a swarm writes with `swarm.context_updated` — the whiteboard docs/39
+  // §Communication intends (a peer reads the note, not the whole record): the rows the fold keeps,
+  // in ledger order, each carrying its key, body, groupId, version, actor, seq and ts (#427).
+  context: Object.freeze({ rows: Object.freeze(['context']), participant: null }),
 });
 export const SWARM_VIEW_PROJECTION_NAMES = Object.freeze(Object.keys(SWARM_VIEW_PROJECTIONS));
 
@@ -688,7 +692,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.view',
-    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion — and carries the heavy per-row fields (lastToolRows, the native observation record, full contribution bodies) a paged read leaves out. An optional projection names the slice to answer with (outline, participants, contributions, attention, guidance, workspace, full; default full), so a caller reads what it needs instead of the whole record. Each participant row carries its guidance rows and live checkout custody, and every projected row carries the seq and ts of the record that wrote it. A caller that declares a wire frame (the MCP bridge does) receives an answer too large for that frame as PAGES of whole rows instead of a narrower projection: each page carries page {cursor, next, total, served, ceiling}; pass next back as cursor until it is null and the pages reproduce the whole answer, and name a participantId when a row's heavy fields are needed.",
+    description: `Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion — and carries the heavy per-row fields (lastToolRows, the native observation record, full contribution bodies) a paged read leaves out. An optional projection names the slice to answer with (${SWARM_VIEW_PROJECTION_NAMES.join(', ')}; default full), so a caller reads what it needs instead of the whole record. Each participant row carries its guidance rows and live checkout custody, and every projected row carries the seq and ts of the record that wrote it. A caller that declares a wire frame (the MCP bridge does) receives an answer too large for that frame as PAGES of whole rows instead of a narrower projection: each page carries page {cursor, next, total, served, ceiling}; pass next back as cursor until it is null and the pages reproduce the whole answer, and name a participantId when a row's heavy fields are needed.`,
     readOnlyHint: true, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, projection: PROJECTION_SCHEMA, cursor: CURSOR_SCHEMA }),
     required: Object.freeze(['swarmId']),

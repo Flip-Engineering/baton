@@ -16,7 +16,8 @@ import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
 
 import {
-  SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, swarmCliCommand,
+  SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, SWARM_VIEW_PROJECTION_NAMES,
+  swarmCliCommand,
 } from './swarm-surface.mjs';
 import { webAdmittedCommandNames } from './web-northbound.mjs';
 import { WAKE_STREAM_END_REASONS, openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeClassRow, wakeQuery } from './wake-stream.mjs';
@@ -1554,6 +1555,15 @@ function expectedVerbRefusal() {
   return `expected ${tokens.slice(0, -1).join(', ')}, or ${tokens.at(-1)}`;
 }
 
+/** Issue #427: the projection axis the `swarm.view`/`swarm.watch` help topics take, rendered from
+ * the ONE owner of the vocabulary (`SWARM_VIEW_PROJECTIONS` in swarm-contract.mjs) — a projection
+ * cannot land in the contract without the CLI teaching it, and the help can never drift into a
+ * hand-typed list that omits one. */
+function swarmProjectionHelpBlocks(topic) {
+  if (topic !== 'swarm.view' && topic !== 'swarm.watch') return null;
+  return [`${topic} projection — one of: ${SWARM_VIEW_PROJECTION_NAMES.join(', ')}`];
+}
+
 /** The closed top-level verb set, rendered into the `application` help topic (#340): the same rows
  * the refusal names and CLI.md generates, so `baton --help` can never teach a stale subset. */
 function topLevelVerbHelpBlocks(topic) {
@@ -1590,6 +1600,7 @@ export function batonCliHelp(topic = 'application') {
   if (!definition && swarmHelp) {
     const blocks = [`usage:\n${swarmHelp.usage.map((line) => `  ${line}`).join('\n')}`];
     blocks.push(...swarmHelp.paragraphs);
+    blocks.push(...(swarmProjectionHelpBlocks(topic) ?? []));
     blocks.push(...(wakeWatchHelpBlocks(topic) ?? []));
     return blocks.join('\n\n');
   }
