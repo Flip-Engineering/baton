@@ -496,6 +496,10 @@ const SUBSTRATE_LANES = Object.freeze([
   ['wire.frame', 1048576],
   ['credential.file', 16384],
   ['context_pack.body', 8192],
+  // #375: the liveness probe's capture bound — the substrate guard the probe verdict is judged
+  // over. Its sibling deadline row (route.probe_deadline_ms, unit ms) is pinned by the #375 suite
+  // itself, because A3 reads every listed substrate row as BYTES and an ms row must not weaken it.
+  ['route.probe_capture', 2048],
 ]);
 // spill.body (1 MiB) is the one substrate row that mints a refusal (blocker 3).
 
@@ -1741,7 +1745,6 @@ const F_EXEMPTIONS = Object.freeze([
   ['result-export.mjs', /ownerStat\.size > 16_384/u, 'uncataloged: descriptor file bound'],
   ['result-export.mjs', /Buffer\.byteLength\(path\) > 4_096/u, 'uncataloged: export path bound'],
   ['result-export.mjs', /policy\.maxFiles \* 4_096/u, 'uncataloged: metadata ceiling arithmetic'],
-  ['route-liveness.mjs', /PROBE_CAPTURE_MAX_BYTES = 2048/u, 'uncataloged: probe capture bound'],
   ['route-tuple.mjs', /Buffer\.byteLength\(value\) > 4096/u, 'uncataloged: route tuple identity'],
   ['run-timeline.mjs', /maxFragmentBytes = 4_096/u, 'uncataloged: timeline fragment bound'],
   ['run-timeline.mjs', /maxBytes > 4 \* 1024 \* 1024/u, 'uncataloged: timeline policy ceiling'],

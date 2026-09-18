@@ -104,6 +104,12 @@ const SUBSTRATE = Object.freeze({
   // spill.body is the ONE substrate row that mints a refusal (blocker 3): a substrate ceiling
   // enforced AT ADMISSION — it is a resource ceiling on a durable write, not a scanner window.
   'spill.body': { lane: 'spill.body', class: 'substrate', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mintSpill / admission spill seam', refusalCode: 'spill_body_exceeded' },
+  // #375: the liveness probe's two resource guards (§4.1.2), declared ONCE here like every other
+  // substrate bound — the capture a probe verdict is judged over, and the deadline after which a
+  // probe settles UNKNOWN (a timer adjudicates no claim: a probe that outlived its bound says
+  // nothing about the provider, so it never blocks the route).
+  'route.probe_capture': { lane: 'route.probe_capture', class: 'substrate', value: 2048, unit: 'bytes', graceful: null },
+  'route.probe_deadline_ms': { lane: 'route.probe_deadline_ms', class: 'substrate', value: 120_000, unit: 'ms', graceful: null },
 });
 
 const VIEW = Object.freeze({

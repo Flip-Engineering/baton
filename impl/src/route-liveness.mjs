@@ -1,4 +1,9 @@
+// #375: the probe verdict is "the expected line OCCURS inside the captured turn" over a capture
+// bounded by a registry row, and a probe that outlives its (registry) deadline settles the route
+// UNKNOWN — never blocked: a timer adjudicates no claim about a provider.
 import { createHash, randomBytes } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
+import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 
 // RouteLiveness — the #47 bounded actual-inference readiness tier
 // (docs/reference/evidence/frontier-sweep-2026-08-03/readiness-credentials-contract.md §4.1).
@@ -13,10 +18,15 @@ const PROBE_WORKER_PREFIX = 'liveness-probe-';
 const GROK_WINDOW_MS = 28 * 60 * 1000;
 const CLAUDE_WINDOW_MS = Math.round(4.4 * 60 * 60 * 1000);
 const STATIC_KEY_WINDOW_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_PROBE_TIMEOUT_MS = 120_000;
+const DEFAULT_PROBE_TIMEOUT_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
 const DEFAULT_FAILURE_WINDOW_MS = 10 * 60 * 1000;
 const PROBE_PROMPT_MAX_BYTES = 1024;
-const PROBE_CAPTURE_MAX_BYTES = 2048;
+// #375: the capture the verdict is read over — a resource guard declared in the ONE registry
+// (limits.mjs), never a literal of this module (Decision 8's no-re-declare law).
+const PROBE_CAPTURE_MAX_BYTES = FRAME_LIMITS['route.probe_capture'].value;
+// The bounded head a probe_content_mismatch row publishes: a sub-KiB diagnostic window (the
+// ratchet's scan threshold), redacted before it is cut.
+const PROBE_MISMATCH_HEAD_BYTES = 200;
 const TERMINAL_KINDS = new Set([
   'lifecycle.turn_completed', 'lifecycle.process_closed', 'lifecycle.crashed', 'lifecycle.exited',
 ]);
@@ -24,6 +34,37 @@ const GROK_REMEDY = 'Grok authentication has expired. Run the ordinary `grok log
 
 function routeKey(route) {
   return JSON.stringify([route.harness, route.model, route.effort]);
+}
+
+/** #375: the captured turn the probe verdict is read over — an honest byte cut against the
+ * registry capture row, flagged when the cut removed bytes so a caller reads the cut as a cut. */
+function probeCapture(output) {
+  const raw = typeof output === 'string' ? output : '';
+  const bytes = Buffer.from(raw, 'utf8');
+  if (bytes.length <= PROBE_CAPTURE_MAX_BYTES) return { capture: raw, truncated: false };
+  return { capture: bytes.subarray(0, PROBE_CAPTURE_MAX_BYTES).toString('utf8'), truncated: true };
+}
+
+/** #375: OCCURRENCE, never equality against a slice — the expected line counts when it IS a line
+ * anywhere in the captured turn, whitespace around it trimmed. A provider that prefixes a banner,
+ * pads the line, or answers at length is answering; a line that merely CONTAINS the pin is not the
+ * pin (the content check keeps its meaning: the provider must emit the line). */
+function probeLineOccurs(capture, expectedLine) {
+  const wanted = String(expectedLine ?? '').trim();
+  if (wanted.length === 0) return false;
+  return String(capture ?? '').split(/\r?\n/u).some((line) => line.trim() === wanted);
+}
+
+/** The bounded, redacted head a mismatch row publishes: the #299 sanitiser (the ONE redaction
+ * vocabulary the verification path already applies) runs BEFORE the byte cut, so a token-shaped
+ * value inside the surviving bytes can never cross. */
+function probeCapturedHead(capture) {
+  const sanitized = sanitizeVerifierDiagnosticText(String(capture ?? '')).text;
+  const bytes = Buffer.from(sanitized, 'utf8');
+  return {
+    capturedHead: bytes.subarray(0, PROBE_MISMATCH_HEAD_BYTES).toString('utf8'),
+    capturedHeadBytes: Math.min(bytes.length, PROBE_MISMATCH_HEAD_BYTES),
+  };
 }
 
 /** Mirrors the deployment's exact-route matching (application-deployment.mjs routeCardMatches),
@@ -228,20 +269,29 @@ export class RouteLiveness {
     this._pendingProbes.delete(probeId);
 
     if (!terminalEvent) {
-      // A probe that never started the provider (worktree/runtime unavailable) is honest-
-      // unsupported, never a block; a probe that DID spawn and then hung is a genuine
-      // network/timeout provider_unreachable (§4.1.1).
-      return this._fail(route, credentialKey, 'provider_unreachable', started, probeId, { blocking: pending.sawSpawned });
+      // #375: the probe outlived its (registry) deadline. Nothing was established about the
+      // provider, so the route is UNKNOWN — never blocked: a probe that never started and a probe
+      // that started and hung are equally silent, and only a verdict with evidence blocks a route.
+      return this._unknown(route, credentialKey, started, probeId);
     }
     const payload = terminalEvent.payload ?? {};
     const output = String(payload.output ?? payload.result ?? '');
     if (terminalEvent.kind === 'lifecycle.turn_completed' && payload.status === 'completed') {
-      // Content-verified: the exact expected output within the bounded capture (≤2KiB).
-      const captured = output.slice(0, PROBE_CAPTURE_MAX_BYTES).trim();
-      if (captured === expectedLine) {
-        return this._verify(route, credentialKey, started, probeId);
+      // #375 content-verified: the expected line OCCURS in the bounded capture — the capture bound
+      // is the registry row, and a capture the bound cut is marked (a cut is a cut).
+      const { capture, truncated } = probeCapture(output);
+      if (probeLineOccurs(capture, expectedLine)) {
+        return this._verify(route, credentialKey, started, probeId, { truncated });
       }
-      return this._fail(route, credentialKey, 'probe_content_mismatch', started, probeId, { blocking: pending.sawSpawned });
+      return this._fail(route, credentialKey, 'probe_content_mismatch', started, probeId, {
+        blocking: pending.sawSpawned,
+        detail: {
+          expected: expectedLine,
+          ...probeCapturedHead(capture),
+          captureBytes: Buffer.byteLength(capture, 'utf8'),
+          truncated,
+        },
+      });
     }
     if (/invalid_grant|revok/iu.test(output)) {
       return this._fail(route, credentialKey, 'authentication_refresh_required', started, probeId, { blocking: true });
@@ -249,12 +299,15 @@ export class RouteLiveness {
     return this._fail(route, credentialKey, 'provider_unreachable', started, probeId, { blocking: pending.sawSpawned });
   }
 
-  _verify(route, credentialKey, started, probeId) {
+  _verify(route, credentialKey, started, probeId, { truncated = false } = {}) {
     const latencyMs = this.now() - started;
     const verifiedAt = this.now();
     const expiresAt = verifiedAt + this._windowFor(route);
     const liveness = Object.freeze({
       state: 'verified', verifiedAt, expiresAt, probeId, latencyMs, credentialKey,
+      // #375: the capture that verified the route hit the bound — the row says so, so a reader
+      // never mistakes a cut capture for the provider's whole answer.
+      ...(truncated ? { truncated: true } : {}),
     });
     this._cache.set(routeKey(route), liveness);
     this._mintProbeReceipts(probeId, route, 'readiness.probe_verified', {
@@ -270,7 +323,30 @@ export class RouteLiveness {
     return liveness;
   }
 
-  _fail(route, credentialKey, code, started, probeId, { blocking = true } = {}) {
+  /** #375: the deadline elapsed with no terminal wire. The honest verdict is UNKNOWN — the probe
+   * established nothing about the provider, so the route is not blocked and admission proceeds;
+   * the row names both numbers (what was observed, what the registry requires) and the verdict is
+   * recorded on the same readiness evidence path as every other probe outcome. */
+  _unknown(route, credentialKey, started, probeId) {
+    const observed = this.now() - started;
+    const required = this.probeTimeoutMs;
+    const liveness = Object.freeze({
+      state: 'unknown', code: 'probe_timed_out', observed, required, credentialKey,
+      summary: `The liveness probe did not answer within ${required} ms (observed ${observed} ms): `
+        + 'the route is unknown, not blocked — a later turn on it decides.',
+    });
+    this._cache.set(routeKey(route), liveness);
+    if (probeId) {
+      this._mintProbeReceipts(probeId, route, 'readiness.probe_failed', {
+        route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
+        probeId, latencyMs: observed, observedAt: new Date(this.now()).toISOString(),
+        code: 'probe_timed_out', credentialKey, observed, required,
+      });
+    }
+    return liveness;
+  }
+
+  _fail(route, credentialKey, code, started, probeId, { blocking = true, detail = null } = {}) {
     const latencyMs = this.now() - started;
     const failedAt = this.now();
     if (!blocking) {
@@ -285,6 +361,7 @@ export class RouteLiveness {
           probeId, latencyMs,
           observedAt: new Date(failedAt).toISOString(),
           code, credentialKey,
+          ...(detail ?? {}),
         });
       }
       return liveness;
@@ -293,6 +370,7 @@ export class RouteLiveness {
     const liveness = Object.freeze({
       state: 'failed', code, failedAt, latencyMs, credentialKey,
       ...(summary ? { summary } : {}),
+      ...(detail ?? {}),
     });
     this._cache.set(routeKey(route), liveness);
     if (code === 'authentication_refresh_required') {
@@ -306,6 +384,7 @@ export class RouteLiveness {
         probeId, latencyMs,
         observedAt: new Date(failedAt).toISOString(),
         code, credentialKey,
+        ...(detail ?? {}),
       });
     }
     return liveness;
