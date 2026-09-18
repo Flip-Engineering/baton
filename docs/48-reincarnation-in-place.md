@@ -391,6 +391,21 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     (`turnInFlight`), and §6's `reincarnation_checkout_held {holders}` reads live workers whose
     worktree IS the serving checkout — both from the coordinator's own list, never a second
     custody scan.
+13. **The old incarnation ends when the handoff does (#461, landed `290370b2`).** The live
+    incident: the old lingered four minutes after `host.publication_withdrawn` because it was the
+    successor's parent and the child handle with its stdio pipes kept the loop alive. Now
+    `close()` releases the successor's process handle after the withdrawal (unref child + stdio,
+    detach the stderr listener) and the old exits by itself; the served tail's last stage is
+    `incarnation_exit`, said only by a stop that finished a handoff. The publication wait is a
+    durable `host.stop_waiting {wait: {on: 'successor_publication', entries: [{resource,
+    reaper: 'successor', since}]}}` row recorded at the commit point right after
+    `host.successor_started` (past the release the old holds no writer authority). The signal
+    path reads the incarnation's state first: a withdrawn deployment answers 0 participants and
+    `SignalLifecycleOwner` narrates no second drain (`withdrawn` predicate, wired by `baton serve`).
+    `host.successor_started` carries `argv` (the spawn spelling) and `log: 'stderr'`; the
+    successor's stderr is teed into the old's serve log. Open beside it: #462 — the successor's
+    seats inherit `BATON_INCARNATION` / `BATON_PREDECESSOR_*`, so an in-process deployment a seat
+    opens believes it is a successor.
 
 Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
 (item 11); the §2 crash-table re-publish arm (item 7); docs/39's wake section naming

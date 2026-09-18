@@ -142,6 +142,9 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
     signalEmitter: process,
     shutdown: async () => { await announced; return deployment.close(); },
     announce: narration,
+    // Issue #461: a SIGTERM to an incarnation that has already withdrawn (its handoff completed)
+    // exits at once — the signal path reads the incarnation's state first and drains nothing.
+    withdrawn: () => deployment.withdrawn?.() === true,
     // #351 lane 3: a signal received during the open is admitted here, the moment the
     // lifecycle owns signal admission — the announce above then writes the stop row through
     // the deployment's own writer path and the usual shutdown runs.
