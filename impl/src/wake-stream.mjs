@@ -57,8 +57,14 @@ function typed(message, code, detail = undefined) {
 // Order is the order the docs, the CLI help and the MCP description render: the reader's order
 // (organization, contributions, runtime, deployment), never a priority.
 
+/** One table entry. `aliases` names the SECOND spellings a filter may use for the SAME class — a
+ * class is still derived from exactly one set of ledger rows (the one-class-per-row invariant
+ * `CLASS_BY_LEDGER_ROW` enforces below), so an alias can never become a second classification
+ * (#427: the shared-context projection is named `context`, and the class a swarm.context_updated
+ * row derives is listed here under that spelling too). */
 function wakeRow(row) {
-  return Object.freeze({ ...row, rows: Object.freeze(row.rows.map((matcher) => Object.freeze(matcher))) });
+  return Object.freeze({ ...row, aliases: Object.freeze([...(row.aliases ?? [])]),
+    rows: Object.freeze(row.rows.map((matcher) => Object.freeze(matcher))) });
 }
 
 function ledgerKind(kind) { return Object.freeze({ kind }); }
@@ -99,6 +105,8 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     wakeClass: 'context_updated', scope: 'swarm', terminal: false, next: null,
     summary: 'the swarm shared context changed',
     rows: [ledgerKind('swarm.context_updated')],
+    // #427: the filter admits the class under the projection's own spelling as well.
+    aliases: ['context'],
     // #272: the row carries {key, body} (swarm-state.mjs refuses a keyless write) — the wake
     // names the key it wrote, never the body, so a follower never re-reads the view per wake.
     subject: { field: 'key', kind: 'context', fallback: { field: 'swarmId', kind: 'swarm' } },
@@ -225,6 +233,28 @@ export function wakeClassRow(wakeClass) {
   return WAKE_CLASS_BY_NAME.get(wakeClass) ?? null;
 }
 
+// The admitted ALIASES, resolved once from the same table. An alias names a class, never a second
+// classification; a spelling that is both a class name and an alias (or two classes' alias) is a
+// construction-time error, so the filter vocabulary can never be ambiguous. The canonical name is
+// what every frame, filter echo and refusal carries (#427).
+const WAKE_CLASS_ALIASES = (() => {
+  const index = new Map();
+  for (const row of WAKE_CLASS_TABLE) {
+    for (const alias of row.aliases) {
+      if (WAKE_CLASS_BY_NAME.has(alias)) throw new Error(`wake class alias ${alias} is also a class name`);
+      const existing = index.get(alias);
+      if (existing !== undefined) throw new Error(`wake class alias ${alias} names both ${existing} and ${row.wakeClass}`);
+      index.set(alias, row.wakeClass);
+    }
+  }
+  return index;
+})();
+
+/** The canonical class a filter token names — the class itself or an admitted alias — or null. */
+function wakeClassAdmitted(token) {
+  return WAKE_CLASS_BY_NAME.has(token) ? token : (WAKE_CLASS_ALIASES.get(token) ?? null);
+}
+
 // The ledger-row → class index, built once from the table. Three keys per matcher: the exact
 // container/payload pair, the payload kind in ANY container (`evidence.mapped` and
 // `driver.recorded` are the two projections of one operational event), and the bare row kind.
@@ -269,6 +299,7 @@ export function wakeClassFor(event) {
 export function wakeClassTableRows() {
   return WAKE_CLASS_TABLE.map((row) => Object.freeze({
     wakeClass: row.wakeClass,
+    aliases: Object.freeze([...row.aliases]),
     scope: row.scope,
     terminal: row.terminal,
     next: row.next,
@@ -277,11 +308,13 @@ export function wakeClassTableRows() {
   }));
 }
 
-/** The one text every surface renders: `class [scope, terminal] — summary (next: command)`. */
+/** The one text every surface renders: `class [scope, terminal] — summary (next: command)`, with
+ * any admitted alias named beside the class it resolves to (never as a class of its own). */
 export function wakeClassHelpLines() {
   return wakeClassTableRows().map((row) => {
     const flags = `${row.scope}${row.terminal ? ', terminal' : ''}`;
-    return `${row.wakeClass} [${flags}] — ${row.summary} (next: ${row.next ?? 'none'})`;
+    const also = row.aliases.length === 0 ? '' : ` (also admitted: ${row.aliases.join(', ')})`;
+    return `${row.wakeClass}${also} [${flags}] — ${row.summary} (next: ${row.next ?? 'none'})`;
   });
 }
 
@@ -310,10 +343,19 @@ export function parseWakeFilter(params = {}) {
   if (params === null || typeof params !== 'object' || Array.isArray(params)) {
     throw typed('wake filter must be an object', 'invalid_wake_filter');
   }
-  const kinds = filterList(params.kinds ?? null, 'kinds');
-  if (kinds !== null) {
-    const unknown = [...kinds].filter((kind) => !WAKE_CLASS_BY_NAME.has(kind)).sort();
+  // A token is the class itself or an admitted alias; the filter holds the ONE canonical name, so
+  // matching, echoing and help can never disagree about which class a caller asked for (#427).
+  const tokens = filterList(params.kinds ?? null, 'kinds');
+  let kinds = null;
+  if (tokens !== null) {
+    const unknown = [];
+    kinds = new Set();
+    for (const token of tokens) {
+      const admitted = wakeClassAdmitted(token);
+      if (admitted === null) unknown.push(token); else kinds.add(admitted);
+    }
     if (unknown.length > 0) {
+      unknown.sort();
       throw typed(`unknown wake class(es): ${unknown.join(', ')}; the closed set is ${WAKE_CLASSES.join(', ')}`,
         'invalid_wake_filter', { unknown, classes: [...WAKE_CLASSES] });
     }
