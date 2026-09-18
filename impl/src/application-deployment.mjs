@@ -12,7 +12,7 @@ import { BatonApplication } from './application.mjs';
 import { bindBaton } from './application-client.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { BatonWebClient } from './application-cli.mjs';
-import { BatonWebHost } from './application-host.mjs';
+import { BatonWebHost, STOP_STAGES } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
@@ -2572,6 +2572,15 @@ class BatonDeployment {
   // the one-stop-one-request fact both the handler and the shutdown path read, so a stop that
   // begins in a signal handler owns exactly one `host.stop_requested` row whichever path runs.
   #stopRequestedAt = null;
+  // Issue #351: the stop's stage clock. Each stage costs the time between entering it and entering
+  // the next; the release mints the timeline onto the `host.stopped` row (STOP_STAGES names the
+  // vocabulary), so the next slow stop names its stage instead of only its total.
+  #stopStageCurrent = null;
+  #stopStageSinceMs = null;
+  #stopStages = [];
+  // How many of those stages the minted row carried: the rest are past the release's authority and
+  // are narrated instead (see #sayStopTail).
+  #stopStagesMinted = null;
   // Issue #351 lane 2: the startup truth the publication contract renders — the open's elapsed
   // milliseconds and the coordination startup status, composed once at the flip.
   #startupElapsedMs = null;
@@ -3266,6 +3275,96 @@ class BatonDeployment {
     } catch { return null; } // a ledger that cannot take the row must never block the stop itself
   }
 
+  /** Issue #351: enter one stage of this stop. The stage that was IN PROGRESS is closed with the
+   * time it consumed, and `name` becomes the stage the stop is in now — so a mark taken when a
+   * stage starts still gets its cost measured, which is the only way the last stage before the
+   * release (the fleet drain, the whole application shutdown) can be named at all: the release
+   * mints the row from INSIDE it. Calling a mark twice for one name is a no-op, and a mark can
+   * never throw — the stop it measures goes on whatever the clock does.
+   *
+   * The timeline is closed by the MINT (`#stopStageRows`), which runs while the writer authority
+   * still exists; a stage the stop reaches after its release (the publication withdrawal, the
+   * close that follows) is past the end of the row's authority and rides the serve log instead. */
+  #markStopStage(name) {
+    if (typeof name !== 'string' || name.length === 0) return null;
+    const at = Date.now();
+    if (this.#stopStageCurrent === name) return null;
+    if (this.#stopStages.some((row) => row.name === name)) return null;
+    const closed = this.#closeStopStage(at);
+    this.#stopStageCurrent = name;
+    this.#stopStageSinceMs = at;
+    return closed ?? Object.freeze({ name, elapsedMs: 0 });
+  }
+
+  /** Close the stage in progress at `at`, appending its own elapsed time to the timeline. */
+  #closeStopStage(at) {
+    if (this.#stopStageCurrent === null) return null;
+    const row = Object.freeze({
+      name: this.#stopStageCurrent,
+      elapsedMs: Math.max(0, at - (this.#stopStageSinceMs ?? at)),
+    });
+    this.#stopStages.push(row);
+    this.#stopStageCurrent = null;
+    this.#stopStageSinceMs = null;
+    return row;
+  }
+
+  /** Issue #351: the stage timeline as the release mints it — the stages that finished, then the
+   * one still in progress, closed at the mint. Copied and frozen, so whoever reads the row can
+   * never mutate what the stop recorded; `null` for a stop that never entered a stage. The count
+   * minted is remembered so the stages AFTER it — past the writer authority the row needs — can be
+   * said on the serve log instead of silently dropped. */
+  #stopStageRows() {
+    const open = this.#closeStopStage(Date.now());
+    if (open === null && this.#stopStages.length === 0) return null;
+    this.#stopStagesMinted = this.#stopStages.length;
+    return Object.freeze([...this.#stopStages]);
+  }
+
+  /** Issue #351: say the stages the row could not carry. The `host.stopped` row is minted by the
+   * release, so the publication withdrawal and the close that follow are past its authority; this
+   * closes the stage still in progress and narrates the tail in the SAME shape and vocabulary, so
+   * a slow tail is named rather than silently dropped. */
+  #sayStopTail() {
+    this.#closeStopStage(Date.now());
+    const tail = this.#stopStages.slice(this.#stopStagesMinted ?? this.#stopStages.length);
+    if (tail.length === 0) return;
+    const said = tail.map((row) => `${row.name} ${row.elapsedMs}ms`).join('; ');
+    this.#webHost?._say?.(`baton serve: host.stopped tail ${said}`);
+  }
+
+  /** Issue #437: the participants THIS resident owns right now, read from the projection it
+   * already holds — the coordinator's live worker handles judged by the same local-resource
+   * predicate the fleet drain targets (`_performDrain`, coordinator.mjs) — never a `runs.list`
+   * that re-derives review targets across the ledger. Bounded by the live fleet, so it answers
+   * however large the history is; a resident whose coordinator cannot answer says so with the
+   * code the narration then names. */
+  ownedParticipantCount() {
+    const coordinator = this.#driver?.coordinator ?? null;
+    if (typeof coordinator?.list !== 'function' || typeof coordinator?.localResourceOwnership !== 'function') {
+      throw Object.assign(new Error('this deployment holds no live participant projection'), {
+        code: 'application_host_narration_unavailable',
+      });
+    }
+    let owned = 0;
+    for (const handle of coordinator.list()) {
+      if (coordinator.localResourceOwnership(handle.id)?.owned === true) owned += 1;
+    }
+    return owned;
+  }
+
+  /** Issue #437: record what a read behind the narration refused with, ONCE per (read, code) —
+   * the row is idempotency-keyed per stop incarnation, so a narration repeated by a later stage
+   * writes nothing new. Returns the line the caller narrates, never a throw: the stop the row
+   * describes goes on without it. */
+  recordNarrationRefused({ read, code } = {}) {
+    if (typeof read !== 'string' || read.length === 0 || typeof code !== 'string' || code.length === 0) return null;
+    const at = this.#clock();
+    const recorded = this.#stopRecord('host.narration_refused', { read, code, at }, `narration_refused:${read}:${code}`);
+    if (recorded === null) return null;
+    return { line: `baton serve: host.narration_refused ${read} (${code}) at ${at}` };
+  }
+
   /** The process group this worker's own durable lifecycle rows bind it to, or null when the
    * worker holds no OS process (a harness that runs in-process) or that process is already closed. */
   #workerProcessGroup(workerId) {
@@ -3346,6 +3445,7 @@ class BatonDeployment {
     const kind = typeof trigger === 'string' && trigger.length > 0 ? trigger : 'signal';
     const at = this.#clock();
     const recorded = this.#stopRecord('host.stop_requested', { trigger: kind, at }, 'requested');
+    this.#markStopStage(STOP_STAGES.requested);
     if (recorded === null) return null;
     this.#stopRequestedAt = at;
     return `baton serve: host.stop_requested trigger ${kind} at ${at}`;
@@ -3385,7 +3485,9 @@ class BatonDeployment {
   }
 
   /** The stop-records seam a host narrates and records through. Built once per deployment, handed
-   * to every host it builds. */
+   * to every host it builds. Beside the three durable facts it carries the stop's stage clock
+   * (`stage`), the participant projection the signal line counts from (`participants`), and the
+   * one-shot record of a refusal behind that narration (`narrationRefused`). */
   #stopRecordsFor() {
     this.#stopRecords ??= Object.freeze({
       requested: ({ trigger }) => {
@@ -3419,6 +3521,14 @@ class BatonDeployment {
         const cache = checkpoint === null ? '' : ` (projection checkpoint ${checkpoint.state}${checkpoint.reason ? `: ${checkpoint.reason}` : ''})`;
         return { line: `baton serve: host.stopped ${state} at ${at}${cache}` };
       },
+      /** Issue #351: one mark on the stop's own clock, taken by the host that finished the stage.
+       * Best-effort by construction — a host with no clock to mark simply has no stage rows. */
+      stage: (name) => this.#markStopStage(name),
+      /** Issue #437: the count the signal line carries, from the projection this resident already
+       * holds. It REFUSES (typed) rather than answering a number it cannot observe. */
+      participants: () => this.ownedParticipantCount(),
+      /** Issue #437: one durable row per (read, code) — see recordNarrationRefused. */
+      narrationRefused: (refusal) => this.recordNarrationRefused(refusal),
     });
     return this.#stopRecords;
   }
@@ -3435,6 +3545,10 @@ class BatonDeployment {
         state,
         actor: `deployment:${this.#repository.repoId}:resident`,
         key: `host.stop:${this.#stopToken}:stopped`,
+        // Issue #351: the stage timeline is READ by the release at its mint, so the stages after
+        // this arming (the fleet drain it runs inside, the publication withdrawal after it) still
+        // reach the row. A stop that marks nothing mints an empty timeline.
+        stages: () => this.#stopStageRows(),
       });
     } catch { /* a stop that cannot arm its outcome still stops */ }
   }
@@ -3458,6 +3572,9 @@ class BatonDeployment {
   close() {
     if (!this.#closePromise) {
       this.#closePromise = (async () => {
+        // Issue #351: a close that begins here — an operator's own, not a signal's — is a stop
+        // too, and it enters the same first stage a signal handler marks.
+        this.#markStopStage(STOP_STAGES.requested);
         // #276(3): the resident publication is withdrawn on EVERY exit path — including a drain
         // that did not converge (the state a later SIGKILL turns into `cli_transport_failed` for
         // every client: selector + profile + token + socket all pointing at a dead process).
@@ -3468,6 +3585,7 @@ class BatonDeployment {
         this.#armStopOutcome('stopped');
         try { hosted = this.#webHost ? await this.#webHost.shutdown() : null; }
         catch (error) { shutdownFailure = error; }
+        this.#markStopStage(STOP_STAGES.hostClosed);
         const application = hosted?.application
           ?? (shutdownFailure ? null : await this.#application.shutdown(this.#principal));
         if (shutdownFailure) {
@@ -3506,6 +3624,10 @@ class BatonDeployment {
             this.#webHost?._say?.(`baton serve: host.stop_waiting on publication at ${at}`);
           }
         }
+        // Issue #351: the publication withdrawal is the last stage the stop owns before the close
+        // returns — past the release, so it rides the serve log rather than the row.
+        this.#markStopStage(STOP_STAGES.publicationWithdrawal);
+        this.#sayStopTail();
         if (shutdownFailure) {
           throw Object.assign(shutdownFailure, { resident: Object.freeze({ state: residentState }) });
         }

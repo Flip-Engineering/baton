@@ -42,21 +42,45 @@ function ownedParticipantCount(listResult) {
   return total;
 }
 
-/** Issue #276(1): the ONE line a host writes at signal receipt, naming what it will do before any
- * wait. The count derives from the caller's own `runs.list` authority (the deployment facade for
- * `baton serve`, the application command bus for a `BatonWebHost`); when that read is unavailable
- * the line says so — it never claims an empty fleet it did not observe. */
-export async function signalIntentLine(trigger, readRuns) {
+/** Issue #351: the stages of a resident's stop, in the order the stop enters them. ONE vocabulary:
+ * the host enters the four it drives, the deployment the three only it can see, and the release
+ * mints the timeline (each stage's own cost) onto the `host.stopped` row. The stages after the
+ * release — the publication withdrawal, the close itself — are past the end of the writer
+ * authority that records the row, so the deployment narrates them in the same shape instead. */
+export const STOP_STAGES = Object.freeze({
+  requested: 'stop_requested',
+  wakeBindingClose: 'wake_binding_close',
+  webAdmissionClose: 'web_admission_close',
+  fleetDrain: 'fleet_drain',
+  stopRecord: 'stop_record',
+  hostClosed: 'host_closed',
+  publicationWithdrawal: 'publication_withdrawal',
+});
+
+/** Issue #276(1)/#437: the ONE line a host writes at signal receipt, naming what it will do before
+ * any wait. The count comes from a NAMED read the caller supplies — the projection the resident
+ * already holds (the deployment's live coordinator rows) or, for a caller whose only authority is
+ * its command bus, the `runs.list` page whose `resources.ownedCount` is derived from that same
+ * live ownership filter. When that read refuses, the line names the refusing read AND its code,
+ * and the caller records the refusal once, so "count unavailable" is never the whole answer. */
+export async function signalIntentLine(trigger, source, { onRefused } = {}) {
   const kind = typeof trigger?.kind === 'string' ? trigger.kind : 'signal';
+  const read = typeof source?.read === 'string' && source.read.length > 0 ? source.read : null;
   let count = null;
   let reason = null;
   try {
-    count = ownedParticipantCount(await readRuns());
-    if (count === null) reason = 'the run list does not project owned participants';
+    const answer = await source?.run?.();
+    count = Number.isSafeInteger(answer) && answer >= 0 ? answer : ownedParticipantCount(answer);
+    if (count === null) reason = `the read projects no owned participant count${read === null ? '' : ` (${read})`}`;
   } catch (error) {
     reason = errorCode(error);
+    if (read !== null && typeof onRefused === 'function') {
+      try { onRefused(Object.freeze({ read, code: reason })); } catch { /* the line is still written */ }
+    }
   }
-  if (count === null) return `signal received; draining participants (count unavailable: ${reason}) (${kind})`;
+  if (count === null) {
+    return `signal received; draining participants (count unavailable: ${reason}${read === null ? '' : ` from ${read}`}) (${kind})`;
+  }
   return count === 0
     ? `signal received; nothing to drain (${kind})`
     : `signal received; draining ${count} participants (${kind})`;
@@ -261,7 +285,8 @@ export class BatonWebHost {
       || (options.report !== undefined && typeof options.report !== 'function')
       || (options.stopRecords !== undefined && (!record(options.stopRecords)
         || !['requested', 'stopped'].every((name) => typeof options.stopRecords[name] === 'function')
-        || (options.stopRecords.waiting !== undefined && typeof options.stopRecords.waiting !== 'function')))
+        || !['waiting', 'stage', 'participants', 'narrationRefused']
+          .every((name) => options.stopRecords[name] === undefined || typeof options.stopRecords[name] === 'function')))
       || (!tcp && !local)
       || (tcp && (typeof options.listen.host !== 'string' || options.listen.host.length === 0
         || !Number.isSafeInteger(options.listen.port) || options.listen.port < 0
@@ -389,10 +414,9 @@ export class BatonWebHost {
         if (requested?.line) this._say(requested.line);
       }
     } catch { /* the stop narrates without the row rather than wedging the handler */ }
-    const readRuns = typeof this.application.command === 'function'
-      ? () => this.application.command('runs.list', {}, this.shutdownPrincipal)
-      : () => { throw hostError('this application exposes no command bus', 'application_host_narration_unavailable'); };
-    const announced = (async () => signalIntentLine(trigger, readRuns))().then(
+    const announced = (async () => signalIntentLine(trigger, this._participantSource(), {
+      onRefused: (refusal) => this._recordNarrationRefusal(refusal),
+    }))().then(
       (line) => { this._say(line); },
       (error) => {
         this._say(`signal received; draining participants (narration failed: ${errorCode(error)}) (${trigger.kind})`);
@@ -400,6 +424,42 @@ export class BatonWebHost {
     );
     this._announced = announced;
     return announced;
+  }
+
+  /** Issue #437: what this stop will drain, read from the projection the host ALREADY holds. The
+   * deployment's own coordinator rows come first — a bounded read over the live fleet, never a
+   * `runs.list` that re-derives review targets across the ledger; a host built over a bare
+   * application falls back to the `runs.list` page its command bus can read. The read is NAMED,
+   * so a refusal behind the narration can name it. */
+  _participantSource() {
+    if (typeof this.stopRecords?.participants === 'function') {
+      return Object.freeze({ read: 'coordinator.participants', run: () => this.stopRecords.participants() });
+    }
+    if (typeof this.application.command === 'function') {
+      return Object.freeze({ read: 'runs.list', run: () => this.application.command('runs.list', {}, this.shutdownPrincipal) });
+    }
+    // No read authority at all: the line says so without inventing a read to blame.
+    return Object.freeze({
+      read: null,
+      run: () => { throw hostError('this application exposes no command bus', 'application_host_narration_unavailable'); },
+    });
+  }
+
+  /** Issue #437: the refusal behind the narration is recorded ONCE (the deployment keys it per
+   * read and code) so the doctor and the wake stream see what the operator's line could not
+   * count; the same line is said here, so the log carries both facts. A host with no deployment
+   * records nothing — its log line is the whole record. */
+  _recordNarrationRefusal(refusal) {
+    try {
+      const recorded = this.stopRecords?.narrationRefused?.(refusal);
+      if (recorded?.line) this._say(recorded.line);
+    } catch { /* the narration goes on */ }
+  }
+
+  /** Issue #351: enter one stage of this stop through the deployment's own clock. A bare host
+   * fixture has no clock to mark and simply records no stage rows. */
+  _stopStage(name) {
+    try { this.stopRecords?.stage?.(name); } catch { /* the stop this mark describes goes on */ }
   }
 
   /** Issue #351: one durable row per stop fact, each written through the deployment that owns the
@@ -462,6 +522,7 @@ export class BatonWebHost {
       // server's own close() waits on, and the stream it serves is closing with the resident.
       let wakes = null;
       if (this.wakeBinding !== null) {
+        this._stopStage(STOP_STAGES.wakeBindingClose);
         try {
           this.wakeBinding.close();
           await new Promise((resolve) => {
@@ -476,6 +537,7 @@ export class BatonWebHost {
         }
         this.wakeBinding = null;
       }
+      this._stopStage(STOP_STAGES.webAdmissionClose);
       let web;
       try { web = await this.server.batonShutdown({ drainMs: this.webDrainMs }); }
       catch (error) { web = { ok: false, result: 'shutdown_failed', code: error?.code ?? error?.name ?? 'web_shutdown_failed' }; }
@@ -489,6 +551,7 @@ export class BatonWebHost {
         this.webDrainMs,
       );
       if (typeof progressTimer.unref === 'function') progressTimer.unref();
+      this._stopStage(STOP_STAGES.fleetDrain);
       let application;
       try { application = await this.application.shutdown(this.shutdownPrincipal); }
       catch (error) {
@@ -504,6 +567,7 @@ export class BatonWebHost {
         const forced = wait === null ? null : await this._recordStop('waiting', { wait, detail: error?.detail ?? null });
         if (forced?.line) this._say(forced.line);
         if (forced?.released === true) {
+          this._stopStage(STOP_STAGES.stopRecord);
           const stopped = await this._recordStop('stopped', { state: 'stopped_after_deadline', wait });
           if (stopped?.line) this._say(stopped.line);
           return Object.freeze({
@@ -523,6 +587,7 @@ export class BatonWebHost {
       }
       clearTimeout(progressTimer);
       this._say(`baton serve: drain converged; ${describeDrainOutcome(application)}`);
+      this._stopStage(STOP_STAGES.stopRecord);
       const stopped = await this._recordStop('stopped', {
         state: web?.ok === true && application?.state === 'closed' ? 'stopped' : 'stopped_degraded',
         wait: null,
