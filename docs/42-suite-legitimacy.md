@@ -170,3 +170,17 @@ selection is now derived and shared by the check and the runner:
 Over-selection is the safe direction for both entries: the subset is a fast first verdict, never
 the gate. Under-selection is what would hide a failure the full suite then finds 25 minutes
 later.
+
+## 7. Served-host fixtures and the suite root (#446)
+
+A parallel gate hands every test process its run's SUITE ROOT as `TMPDIR`
+(`baton-suite-XXXXXX` under the system temp dir, 65–69 bytes on this host). A fixture that
+starts a real served host under that root must keep its Unix socket path under the kernel's
+103-byte `sun_path` bound, or the host's own validator refuses `Web host configuration is
+invalid` — and the file then passes alone (a shorter ambient root) while failing under the gate.
+The rule, followed by the resident fixtures (issue276, issue288, issue351, issue356, issue365,
+issue445, issue450, issue316-sse, wake-binding): mint the SOCKET root directly under the short
+system root (`mkdtempSync('/tmp/<fixture>-')`), never under the ambient `TMPDIR`, and never by a
+measured fall-back — the #446 fixture measured with a one-character stand-in for mkdtemp's six
+and missed a 68..72-byte band. Ledger and session roots stay under the ambient root; only the one
+path the kernel bounds leaves it. Row `316-sse-d` pins both ends of the band.
