@@ -308,6 +308,8 @@ inbox and answers with `swarm guide`, `swarm capture`, `swarm check` or `swarm s
 reads state files and never polls. Both directions ride the resident: the swarm must live in the
 published resident (`baton serve`), not in a private in-process deployment.
 
+**Incarnation changes wake too (#306, 2026-09-18).** `incarnation_changed` is a deployment-scope wake class keyed on `host.reincarnated {from: {incarnation, commit}, to: {incarnation, commit}, predecessorExited}`; it is not terminal — the watcher's act is to re-read the view, because the rows and the attachment it held came from the predecessor incarnation. The handoff's own rows (`host.reincarnation_requested`, `host.successor_started`, `host.successor_published`, `host.publication_withdrawn`, `host.reincarnation_failed`) are durable and readable on the deployment ledger like the #351 stop rows.
+
 ### A stop that cannot converge names its wait (issue #265, 2026-09-14)
 
 `swarm stop`, a Run stop and the deployment drain poll the same convergence predicates until a
