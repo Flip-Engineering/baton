@@ -19,12 +19,15 @@
 //       not name. Never a bare `omp_<stopReason>` and never a silent death.
 //
 // The reset instant is a fact about the PROVIDER's clock, and the provider's answer is read
-// exactly as far as it is honest (#442 item 4): an instant the answer ZONE-QUALIFIED is parsed
-// into the one canonical spelling every host reads the same way, and an instant the answer left
-// zone-less stays the provider's own TEXT (`resetAtText`) with `resetAt: null`. Assuming UTC for a
-// wall-clock the provider never qualified is a fabricated instant, and the failure mode is real:
-// the zai GLM answer `reset at 2026-09-18 18:07:32` (Beijing time) was recorded as 18:07:32Z, so
-// every block derived from it would have lapsed eight hours before the provider said it would.
+// exactly as far as it is honest (#442 item 4, #456 item 1): an instant the answer ZONE-QUALIFIED
+// is parsed into the one canonical spelling every host reads the same way; a zone-less instant is
+// read against the PROVIDER's own declared zone when this build knows it (`PROVIDER_RESET_ZONES`),
+// because the provider's clock is a fact about the provider rather than a guess about the text;
+// and a zone-less instant from a provider no zone is documented for stays the provider's own TEXT
+// (`resetAtText`) with `resetAt: null`. Assuming UTC for a wall-clock nobody qualified is a
+// fabricated instant, and the failure mode is real: the zai GLM answer `reset at 2026-09-18
+// 18:07:32` (Beijing wall time, so 10:07:32Z) was recorded as 18:07:32Z, so every block derived
+// from it would have lapsed eight hours before the provider said it would.
 
 import { FRAME_LIMITS } from './limits.mjs';
 
@@ -55,6 +58,56 @@ export function normalizeProviderRoute(route) {
     fields[field] = value;
   }
   return Object.freeze(fields);
+}
+
+// ── #456: the provider's own clock, and the window its answer names ─────────────────────────────
+//
+// The reset instant is a fact about the PROVIDER's clock (#442 item 4), so a wall-clock the answer
+// left zone-less can only be read when the provider's own zone is KNOWN. This table is that
+// knowledge, one row per provider — never a guess on a provider's behalf, and never a second
+// reading of the same answer anywhere else in the tree (Decision 8's no-re-declare law).
+//
+//   zai — z.ai's GLM answers are spelled in Beijing wall time (UTC+08:00). The 2026-09-18 zai 429
+//         ("Usage limit reached for 5 hour … reset at 2026-09-18 18:07:32") named 18:07:32, which
+//         is 10:07:32Z: read as UTC it would have lapsed a full eight hours early. A provider
+//         whose answers have never been captured stays ABSENT — its zone-less instants keep their
+//         text (`resetAtText`) and derive nothing, which is the honest reading #442 item 4 pinned.
+export const PROVIDER_RESET_ZONES = Object.freeze({ zai: '+08:00' });
+
+/** The provider whose clock one route's answers are spelled in, or null when the route names none:
+ * the model's own provider segment (`zai/glm-5.3-flash` → `zai`, the omp fleet's spelling), else
+ * the harness (`glm-via-claude` → `glm-via-claude`, and the aliases its own table resolves). A
+ * route that names neither is a route whose provider nothing here knows — and derives no zone. */
+export function providerOfRoute(route) {
+  const exact = normalizeProviderRoute(route);
+  if (exact === null) return null;
+  const slash = exact.model.indexOf('/');
+  const provider = slash > 0 ? exact.model.slice(0, slash) : exact.harness;
+  return provider.length > 0 ? provider : null;
+}
+
+// The window a provider's own answer names, read from the bounded answer text the same way the
+// reset spelling is: "Usage limit reached for 5 hour" names five hours, and that is the provider's
+// own number rather than a preference of ours (seconds/minutes/hours/days, singular or plural).
+const FAULT_WINDOW_TEXT = /\bfor\s+(\d+(?:\.\d+)?)\s*(second|minute|hour|day)s?\b/iu;
+const FAULT_WINDOW_UNIT_MS = Object.freeze({
+  second: 1_000, minute: 60_000, hour: 3_600_000, day: 86_400_000,
+});
+
+/** The window the provider's OWN words named, in milliseconds, or null when they named none
+ * (#456 item 2). Never defaulted here: the caller that needs a window when the answer named none
+ * reads the registry's own fault-probe row, so this reader answers exactly one question — what did
+ * the provider say. */
+export function providerFaultWindowMs(text) {
+  const message = boundedText(text, ANSWER_SCAN_BYTES);
+  if (message.length === 0) return null;
+  const match = FAULT_WINDOW_TEXT.exec(message);
+  if (!match) return null;
+  const value = Number.parseFloat(match[1]);
+  const unit = FAULT_WINDOW_UNIT_MS[match[2].toLowerCase()];
+  if (!Number.isFinite(value) || value <= 0 || unit === undefined) return null;
+  const millis = Math.round(value * unit);
+  return Number.isSafeInteger(millis) && millis > 0 ? millis : null;
 }
 
 /** Structured codes that mean "the provider refused for quota" — an HTTP-ish status or a
@@ -119,16 +172,25 @@ export function providerResetText(text) {
 
 /**
  * The reset instant the provider's own answer named, as a canonical ISO-8601 UTC string, or null
- * when the answer named none — OR named one without a zone (#442 item 4). A zone-less wall-clock
- * is the provider's local time, and nothing in the answer says which zone that is; reading it as
- * UTC invents an instant that can sit hours off the one the provider meant. The caller keeps the
- * provider's words instead (`providerResetText`) and derives no instant from them.
+ * when no honest instant can be derived from it. Two readings, in this order (#442 item 4, #456
+ * item 1):
+ *
+ *   1. the zone the answer QUALIFIED itself with always wins — it is the provider stating its own
+ *      offset, and nothing this module holds may override a stated fact;
+ *   2. a zone-less wall-clock is read against the PROVIDER's own declared zone
+ *      (`PROVIDER_RESET_ZONES`, keyed by the route's provider) when one is known — zai spells
+ *      Beijing wall time, so `2026-09-18 18:07:32` is 10:07:32Z and not a fabricated UTC instant
+ *      that lapses eight hours early;
+ *   3. a provider no zone is documented for derives NOTHING. The caller keeps the provider's words
+ *      (`providerResetText`) and its route clears by probe instead (#456 item 2).
  */
-export function parseProviderResetAt(text) {
+export function parseProviderResetAt(text, { provider = null } = {}) {
   const spelled = readResetSpelling(text);
-  if (!spelled || spelled.zone === '') return null;
+  if (!spelled) return null;
+  const zone = spelled.zone !== '' ? spelled.zone
+    : (typeof provider === 'string' ? PROVIDER_RESET_ZONES[provider] ?? '' : '');
+  if (zone === '') return null;
   const [year, month, day, hour, minute, second = '00', fraction = '0'] = spelled.fields;
-  const zone = spelled.zone;
   const offset = zone === 'Z' || zone === 'UTC' || zone === 'GMT'
     ? 'Z' : (zone.includes(':') ? zone : `${zone.slice(0, 3)}:${zone.slice(3)}`);
   const millis = Date.parse(
@@ -173,10 +235,14 @@ export function classifyProviderFault(answer = {}, { route = null } = {}) {
   const quotaByCode = codes.some((code) => QUOTA_CODES.has(code));
   const socketByCode = codes.some((code) => SOCKET_CODES.has(code));
   if (quotaByCode || QUOTA_TEXT.test(text)) {
-    const resetAt = parseProviderResetAt(text);
+    // #456 item 1: the zone-less spelling is read against the PROVIDER's own declared zone (this
+    // route's provider), so a zai answer that says `reset at 2026-09-18 18:07:32` types the instant
+    // it meant — 10:07:32Z — while a provider no zone is documented for still derives none.
+    const resetAt = parseProviderResetAt(text, { provider: providerOfRoute(exactRoute) });
     // #442 item 4: the answer's own spelling always rides the typed fault beside the instant this
-    // module was willing to derive from it, so a zone-less answer reads as `{resetAt: null,
-    // resetAtText: '...'}` — the honest pair — and never as a UTC instant nobody stated.
+    // module was willing to derive from it, so a zone-less answer with no known provider zone reads
+    // as `{resetAt: null, resetAtText: '...'}` — the honest pair — and never as a UTC instant
+    // nobody stated.
     const resetAtText = providerResetText(text);
     return Object.freeze({
       code: PROVIDER_FAULT_CODES.quota,

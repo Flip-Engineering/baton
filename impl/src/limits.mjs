@@ -132,6 +132,15 @@ export const WEB_WAIT_DEFAULT_MS = Math.round(WEB_WAIT_CEILING_MS * WEB_WAIT_DEF
 // re-arms from the server's advertised keep-alive window.
 const TRANSPORT_IDLE_MARGIN_MS = WEB_WAIT_CEILING_MS - WEB_WAIT_DEFAULT_MS;
 
+// Issue #456: the fallback probe window for a provider-quota degrade whose own answer named no
+// window at all. The derivation is the window a served provider's OWN answer publishes rather than
+// a preference of ours: the zai 429 this fleet meets says "Usage limit reached for 5 hour", and a
+// probe sent inside the window a provider stated would be the same turn that just died. A fault
+// whose text names its own window overrides this row with the provider's own number
+// (provider-faults.mjs providerFaultWindowMs), exactly as a provider-stated reset instant overrides
+// an inferred one.
+const FAULT_PROBE_WINDOW_MS = 5 * 3_600_000;
+
 const SUBSTRATE = Object.freeze({
   'scanner.window.decision': { lane: 'scanner.window.decision', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
   'scanner.window.scratchpad': { lane: 'scanner.window.scratchpad', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
@@ -152,6 +161,11 @@ const SUBSTRATE = Object.freeze({
   // nothing about the provider, so it never blocks the route).
   'route.probe_capture': { lane: 'route.probe_capture', class: 'substrate', value: 2048, unit: 'bytes', graceful: null },
   'route.probe_deadline_ms': { lane: 'route.probe_deadline_ms', class: 'substrate', value: 120_000, unit: 'ms', graceful: null },
+  // #456 (item 2): the probe instant of a provider-quota degrade whose provider named no reset. The
+  // route row publishes `probeAfter` = the fault's own window (this row when the fault named none)
+  // after the last death of the episode, so no route sits degraded with no next step: one recruit is
+  // admitted as a probe at that instant, and its turn either clears the episode or re-arms it.
+  'route.fault_probe_ms': { lane: 'route.fault_probe_ms', class: 'substrate', value: FAULT_PROBE_WINDOW_MS, unit: 'ms', graceful: null, enforcedAt: 'application-deployment.mjs deriveRouteDegrades (the probe instant a null-reset degrade publishes)' },
   // Issue #394: the web transport's wait ceiling — ONE row for the bound BOTH wait arms draw
   // (the application `run.wait` arm, which refused above it, and the legacy coordinator `wait`
   // arm, which silently clamped to it). The derivation is the transport's own default per-command

@@ -16,7 +16,7 @@ import { BatonWebHost, STOP_STAGES } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
-import { PROVIDER_FAULT_CODES, parseProviderResetAt } from './provider-faults.mjs';
+import { PROVIDER_FAULT_CODES, parseProviderResetAt, providerFaultWindowMs, providerOfRoute } from './provider-faults.mjs';
 import { ProviderQuotaAuthority, routeQuotaKey } from './route-quota.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
 import { matchProviderRefusal, PROVIDER_RESET_AT_FROM_TEXT } from './adapter.mjs';
@@ -2246,8 +2246,11 @@ function deriveRouteRefusals({ log, routes, cardContext }) {
         const evidence = refusalEvidenceOf(event.payload, cardFor(entry.route), kind);
         if (!evidence || !ledgerPositionAfter(position, entry.refusal)) continue;
         const text = publishedRefusalText(evidence.text);
-        const resetAt = evidence.resetAt
-          ?? (evidence.resetAtFromText ? parseProviderResetAt(evidence.text) : null);
+        // #456 item 1: the instant the refusal's own text names is read against the SAME provider
+        // zone the typed fault is read against, so a zai answer that spelled its window in Beijing
+        // wall time blocks the route until the instant it meant — and never forever.
+        const resetAt = evidence.resetAt ?? (evidence.resetAtFromText
+          ? parseProviderResetAt(evidence.text, { provider: providerOfRoute(entry.route) }) : null);
         entry.refusal = { ...position, code: evidence.code, resetAt };
         entry.refusalRow = Object.freeze({ code: evidence.code, text, at: event.ts, resetAt });
       }
@@ -2318,9 +2321,34 @@ function providerRefusalIndex({ log, routes, adapters = {}, liveness = null, now
 // construction; the probe verdict is read too because a probe turn's own rows are not attributed
 // to the route's model/effort coordinates.
 
+
+/** The provider's own words one route's last recorded refusal carries, when that refusal is the
+ * quota class — the fault's own text (#456 item 2), read from the refusal record this deployment
+ * already derives for the route. Null when the route holds no such refusal, so the caller falls
+ * back to the registry's fault-probe row rather than reading prose from a fault nobody typed. */
+function quotaRefusalText(observed, key) {
+  const row = key === null ? null : observed?.get(key) ?? null;
+  return row !== null && row.code === PROVIDER_FAULT_CODES.quota
+    && typeof row.text === 'string' && row.text.length > 0 ? row.text : null;
+}
+
+/** #456 item 2: the probe instant one degrade episode publishes — the instant a probe may test a
+ * route whose provider named no reset, measured from the LAST death of the episode so a probe that
+ * dies re-arms the episode with the next instant instead of leaving it with none. The window is the
+ * fault's OWN words when they name one ("Usage limit reached for 5 hour" → five hours), else the
+ * registry's fault-probe row. Null when the episode's own window end cannot be read: a malformed
+ * row derives no instant, exactly as it retires on none (the fail-closed reading below). */
+function degradeProbeAfter(to, faultText) {
+  const from = typeof to === 'string' ? Date.parse(to) : Number.NaN;
+  if (!Number.isFinite(from)) return null;
+  const windowMs = providerFaultWindowMs(faultText) ?? FRAME_LIMITS['route.fault_probe_ms'].value;
+  return new Date(from + windowMs).toISOString();
+}
+
 /** The degrade episodes one ledger holds per route: the LAST `provider.degraded` row per exact
  * route, its participants and window, read from the same ledger walk the refusals use. */
-function deriveRouteDegrades({ log, routes }) {
+function deriveRouteDegrades({ log, routes, refusals = null }) {
+  const observed = refusals?.observed ?? null;
   const episodes = new Map();
   const keys = new Map();
   for (const route of routes) {
@@ -2344,10 +2372,16 @@ function deriveRouteDegrades({ log, routes }) {
         ? new Date(Date.parse(window.to)).toISOString() : null;
       const participants = Array.isArray(payload.participants)
         ? payload.participants.filter((id) => typeof id === 'string' && id.length > 0) : [];
+      // #442 item 2: the provider's own reset answer, as the coordinator's death fold recorded it —
+      // an instant only when the provider zone-qualified one (or the route's provider zone is
+      // known: provider-faults.mjs), its own text otherwise.
+      const resetAt = typeof payload.resetAt === 'string' && Number.isFinite(Date.parse(payload.resetAt))
+        ? new Date(Date.parse(payload.resetAt)).toISOString() : null;
+      const faultClass = typeof payload.faultClass === 'string' ? payload.faultClass : null;
       episodes.set(key, Object.freeze({
         key,
         route: Object.freeze({ harness: exact.harness, model: exact.model, effort: exact.effort }),
-        faultClass: typeof payload.faultClass === 'string' ? payload.faultClass : null,
+        faultClass,
         participants: Object.freeze([...participants]),
         window: Object.freeze({
           from: typeof window?.from === 'string' && Number.isFinite(Date.parse(window.from))
@@ -2359,12 +2393,19 @@ function deriveRouteDegrades({ log, routes }) {
           ? Object.freeze({ ...payload.next })
           : Object.freeze({ action: 'pause_recruits_until_probe', route: Object.freeze({ ...exact }) }),
         at: to,
-        // #442 item 2: the provider's own reset answer, as the coordinator's death fold recorded
-        // it — an instant only when the provider zone-qualified one, its text otherwise.
-        resetAt: typeof payload.resetAt === 'string' && Number.isFinite(Date.parse(payload.resetAt))
-          ? new Date(Date.parse(payload.resetAt)).toISOString() : null,
+        resetAt,
         resetAtText: typeof payload.resetAtText === 'string' && payload.resetAtText.length > 0
           ? payload.resetAtText : null,
+        // #456 item 2: a QUOTA episode whose provider named no reset carries the instant a probe
+        // may test it — the fault's own window measured from its last death, or the registry's
+        // fault-probe row when its words named none. That is the episode that deadlocks: the
+        // provider said when it comes back in its own words but not in an instant, and no turn can
+        // succeed while recruits are refused. A stall episode (#316) names no window at all and
+        // keeps its existing next act — the readiness probe tier its `next` row asks for, which the
+        // deployment's own run path already consults — and a resetAt-bearing episode needs no probe:
+        // the provider itself said when the route comes back.
+        probeAfter: resetAt === null && faultClass === PROVIDER_FAULT_CODES.quota
+          ? degradeProbeAfter(to, quotaRefusalText(observed, key)) : null,
       }));
     }
   }
@@ -2392,6 +2433,11 @@ function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null, n
     // doctor row and the route table all name it by.
     reason: episode.faultClass, faultClass: episode.faultClass,
     resetAt: episode.resetAt, resetAtText: episode.resetAtText,
+    // #456 item 2: the row never sits degraded with no next step — it names the instant the route
+    // clears (`clearsAt`: the provider's own reset when it named one, else the probe instant) and,
+    // for a provider that named none, the instant ONE probe recruit is admitted at (`probeAfter`).
+    probeAfter: episode.probeAfter ?? null,
+    clearsAt: episode.resetAt ?? episode.probeAfter ?? null,
     participants: episode.participants,
     window: episode.window, count: episode.count, next: episode.next,
   });
@@ -2406,9 +2452,11 @@ function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null, n
 function providerDegradeIndex({ log, routes, refusals = null, liveness = null, now = Date.now }) {
   return () => {
     const at = now();
-    const episodes = deriveRouteDegrades({ log, routes });
-    const live = new Map();
     const observed = refusals === null ? EMPTY_REFUSAL_RECORD : refusalRecordOf(refusals);
+    // #456 item 2: the episode's probe instant is derived from the fault's own words, which ride
+    // the SAME refusal record this read already holds (never a second ledger walk).
+    const episodes = deriveRouteDegrades({ log, routes, refusals: observed });
+    const live = new Map();
     for (const [key, episode] of episodes) {
       // A route whose last turn (or verified probe) SUCCEEDED after the last death of the episode
       // is not degraded: the probe the row's `next` asks for has already succeeded.

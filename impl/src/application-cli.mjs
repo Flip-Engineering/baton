@@ -2442,6 +2442,12 @@ function parseSwarmCli(args, idempotencyKey) {
   // the recruit carries `options.contextPackage = {digest}`. Every other verb refuses them the
   // #431 way, because no other verb admits them.
   const contextPackage = verb === 'recruit' ? takeRecruitContextLeg(args) : null;
+  // Issue #456: the operator's route probe — `swarm recruit … --route-probe` admits ONE recruit onto
+  // a route its provider degraded, before the clear the refusal names (`options.routeProbe: true`,
+  // the field the runtime reads). Like the context leg it is consumed BEFORE the closed-argv check:
+  // it is the ROOT's own decision about a route, not a wire argument on the recruit schema, and the
+  // #431 admitted-flag derivation (`swarmAdmittedFlags`) stays exactly the contract's own set.
+  const routeProbe = verb === 'recruit' && flag(args, '--route-probe');
   assertSwarmArgvClosed(row, args);
   const values = {};
   for (const [index, field] of row.positional.entries()) {
@@ -2484,6 +2490,11 @@ function parseSwarmCli(args, idempotencyKey) {
     } else {
       values[entry.field] = token;
     }
+  }
+  // The probe choice rides the recruit's options beside whatever the caller named (the JSON
+  // `--options` was just parsed above), so the wire carries ONE options object either way.
+  if (routeProbe) {
+    values.options = { ...(record(values.options) ? values.options : {}), routeProbe: true };
   }
   // The wake flags are parsed before the remainder check, so `--wake-class`/`--kinds`/`--since` are
   // the stream's vocabulary rather than an unexpected argument — on BOTH watch forms (#339): the
