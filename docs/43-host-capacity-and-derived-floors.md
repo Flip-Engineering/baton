@@ -255,6 +255,19 @@ participant row — so `swarm.view`, `run.peers.read`, the recruit brief's `## S
 section and the checkpoint all carry the same bounded line: a 36-seat roster's participants
 projection (3 KB objectives each) fits one `wire.frame` instead of paging six rows at a time.
 
+A participant row carries its brief's REACH, never the composed text (#464, the third half):
+`brief` is `{bytes, seq, exposure}` — the composed brief's byte length, the
+`swarm.participant_joined` ledger row that holds it (the fold mints `briefBytes`/`briefRef` at the
+join, the pair `roleBytes`/`roleRef` already use), and the docs/46 §4.1 relationship class this
+caller stands in to the seat (the ONE `_briefExposure`, derived per read: the organizer stands in
+the delegation class, the seat is `self`, a peer `swarm`, a shared checkout `checkout`, a shared
+group `group`). The participantId-scoped read still carries the text whole on the row it names —
+with the same reach beside it as `briefReach` — so the roster (any `participants` projection, the
+whole record's array, a bridge page) pays a fixed small shape per seat instead of the text the
+ledger already holds: the probe's ~17.5 KB per row becomes ~60 B, and a 39-seat fixture carrying
+the live ~17 KB briefs (plus the #464 commit tail) answers its participants projection in ONE
+frame where the same fixture served 22 of 39 rows before.
+
 ## 5. The open contract: replaying → reconstructing → answering (#351)
 
 A resident's open is three phases, each named on the `baton serve` flip lines and in `startupReport()`:
