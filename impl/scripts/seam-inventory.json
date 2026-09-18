@@ -11892,7 +11892,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 12,
+          "size": 23,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12229,9 +12229,9 @@
           ]
         },
         {
-          "name": "_settleCheckoutWriterState",
+          "name": "_projectCheckoutWriterState",
           "ordinal": 0,
-          "size": 47,
+          "size": 25,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -12239,9 +12239,92 @@
           ]
         },
         {
+          "name": "_drainCommitObservations",
+          "ordinal": 0,
+          "size": 46,
+          "seam": "observation",
+          "evidence": [
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_settleCheckoutWriterState",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:key_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_workspaceObservationKey",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_readWorkspaceLive",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_noteWorkspaceObservation",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_workspaceObservationFor",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_turnEpochOf",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_workspaceChangeSetFor",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_workspaceIdOf",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "inspect",
           "ordinal": 0,
-          "size": 706,
+          "size": 764,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -12440,7 +12523,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 635,
+          "size": 636,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
