@@ -715,6 +715,9 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
     // The swarm identity is the environment's for every verb that takes one: the contract commands
     // whose schema names it, and the bridge's own participant verbs (knowledge #318, seat reads
     // #441), whose swarmId the token scope supplies server-side.
+    // #458: `knowledge` is resolved HERE — the auto-fill read a name only the help renderer bound,
+    // so every run.* verb and evidence.search died on a ReferenceError before leaving the process.
+    const knowledge = swarmKnowledgeCommand(command);
     const seatRead = swarmSeatReadCommand(command);
     if ((definition?.args.includes('swarmId') || knowledge !== null || seatRead !== null) && args.swarmId === undefined) {
       args.swarmId = env[SWARM_BRIDGE_ENV_KEYS.swarmId];
