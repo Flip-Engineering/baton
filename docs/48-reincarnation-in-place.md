@@ -47,6 +47,11 @@ exceptions them:
   `host.stop_requested` / `host.stop_waiting` / `host.stopped` rows are the vocabulary a
   reincarnation reuses for its drain and its exit; the tail past the writer's authority is
   narrated in the same shape (`#sayStopTail` precedent), never silently dropped.
+  Since #472 that vocabulary includes the workers the old incarnation STOPPED WAITING ON:
+  `host.stopped` carries them as their own `abandoned: [{workerId, attempt, alive}]` list beside
+  `released` (never inside it, empty and never absent), and a stop that abandons one still mints
+  that row — which is what lets a handoff whose old incarnation gave up on a wedged worker record
+  how it ended instead of exiting without an outcome.
 - **A death is typed and settled (#364, #442).** Workers the successor cannot control are found
   by the startup reconstruction and folded ONCE as `swarm.participant_runtime_lost`; this design
   keeps that row as the one reading of "the seat's runtime died with the old incarnation".

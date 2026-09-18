@@ -286,7 +286,7 @@
         {
           "name": "closeAuthority",
           "ordinal": 0,
-          "size": 27,
+          "size": 31,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -705,7 +705,7 @@
         {
           "name": "_performDrain",
           "ordinal": 0,
-          "size": 178,
+          "size": 195,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -2955,7 +2955,7 @@
         {
           "name": "_abandonStopWorker",
           "ordinal": 0,
-          "size": 33,
+          "size": 29,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
@@ -2965,6 +2965,15 @@
           "name": "abandonedWorkers",
           "ordinal": 0,
           "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "abandonedCapacityReservations",
+          "ordinal": 0,
+          "size": 12,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -6860,7 +6869,7 @@
         {
           "name": "armHostStopOutcome",
           "ordinal": 0,
-          "size": 17,
+          "size": 23,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -6869,7 +6878,7 @@
         {
           "name": "_mintHostStopOutcome",
           "ordinal": 0,
-          "size": 25,
+          "size": 34,
           "seam": "observation",
           "evidence": [
             "observation:store_append",

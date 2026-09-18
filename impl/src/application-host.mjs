@@ -166,6 +166,14 @@ export function describeStopWait(detail) {
       entries: Object.freeze(entries), released: Object.freeze(released), observed,
     });
   }
+  // Issue #472: the controller's own historical reconciliation — the step the drain runs once its
+  // fleet is empty, and the one the abandonment makes reachable mid-attempt. It is a wait this stop
+  // ENDS by asking the application again (the reconciliation the drain started is in flight, or
+  // settled, by the time the refusal names it), never by killing anything — so it is named here and
+  // acted on by the deployment's own bounded retry instead of being a refusal nothing can answer.
+  if (detail.reason === 'historical_reconciliation_pending') {
+    return Object.freeze({ on: 'reconciliation', ids: Object.freeze([]) });
+  }
   // The host-capacity verify lease a lane still holds, and the resident's own publication: the two
   // remaining obligations, named by the reason the stop refused with.
   if (['verify_lease', 'capacity'].includes(detail.reason)) {
@@ -759,9 +767,21 @@ export class BatonWebHost {
           const webClosed = await closeWebTransport();
           const stopped = await this._recordStop('stopped', { state: 'stopped_after_deadline', wait });
           if (stopped?.line) this._say(stopped.line);
+          // Issue #472: the list the stop record just composed its line from is the LIVE read (the
+          // deployment reaches its coordinator), so a worker abandoned between the wait that
+          // returned and this step is still named; the bounded result's own snapshot is the
+          // fallback for a host whose stop records carry none.
+          const abandoned = Array.isArray(stopped?.abandoned) ? stopped.abandoned
+            : Array.isArray(forced.abandoned) ? forced.abandoned : Object.freeze([]);
+          // The EXIT state is this resident's own accounting, and a stop that ended with the workers
+          // it stopped waiting on NAMED abandoned has released it — the abandonment is the named
+          // remainder (the outcome carries the list, its holds are named durably by the #467 rows),
+          // never an unreleased obligation of this incarnation. `closed_degraded` is therefore
+          // reserved for a stop something ELSE still holds: a transport that did not close, or a
+          // bounded stop that named nobody.
           return Object.freeze({
             schemaVersion: 1,
-            state: 'closed_degraded',
+            state: webClosed?.ok === true && abandoned.length > 0 ? 'closed' : 'closed_degraded',
             wakes,
             web: webClosed,
             application: forced.application ?? null,
@@ -769,8 +789,9 @@ export class BatonWebHost {
               state: 'stopped_after_deadline',
               wait,
               killed: forced.killed ?? Object.freeze([]),
-              ...(Array.isArray(forced.abandoned) && forced.abandoned.length > 0
-                ? { abandoned: Object.freeze([...forced.abandoned]) } : {}),
+              // ONE shape: the workers this stop stopped waiting on, empty when it abandoned
+              // nobody — never absent, so a reader of the returned stop never has to guess.
+              abandoned: Object.freeze([...abandoned]),
             }),
           });
         }

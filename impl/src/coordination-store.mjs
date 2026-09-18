@@ -1550,12 +1550,18 @@ export class CoordinationStore {
     // Issue #450: the resources the stop released ({workerId, resource, how}) are read at the
     // mint the same way the stage timeline is — a reader the drain keeps current until the release.
     const released = fields?.released ?? null;
+    // Issue #472: the workers the stop STOPPED WAITING ON ({workerId, attempt, alive}) are read at
+    // the mint too, and minted BESIDE `released` — an abandoned worker is not a release and never
+    // rides a release row.
+    const abandoned = fields?.abandoned ?? null;
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)
       || Object.keys(fields).sort().join('\0')
-        !== [...keys, ...(stages === null ? [] : ['stages']), ...(released === null ? [] : ['released'])].sort().join('\0')
+        !== [...keys, ...(stages === null ? [] : ['stages']), ...(released === null ? [] : ['released']),
+          ...(abandoned === null ? [] : ['abandoned'])].sort().join('\0')
       || keys.some((name) => typeof fields[name] !== 'string' || fields[name].length === 0)
       || (stages !== null && typeof stages !== 'function')
-      || (released !== null && typeof released !== 'function')) {
+      || (released !== null && typeof released !== 'function')
+      || (abandoned !== null && typeof abandoned !== 'function')) {
       throw new TypeError('host stop outcome arming is invalid');
     }
     this._hostStopOutcome = freeze({ ...fields });
@@ -1572,6 +1578,8 @@ export class CoordinationStore {
     try { stages = typeof armed.stages === 'function' ? armed.stages() : null; } catch { stages = null; }
     let released = null;
     try { released = typeof armed.released === 'function' ? armed.released() : null; } catch { released = null; }
+    let abandoned = null;
+    try { abandoned = typeof armed.abandoned === 'function' ? armed.abandoned() : null; } catch { abandoned = null; }
     try {
       return this._append('driver.recorded', {
         kind: 'host.stopped', state: armed.state, at: this._clock(),
@@ -1582,6 +1590,13 @@ export class CoordinationStore {
         // Issue #450: the resources this stop released, verbatim from the drain's own rows
         // ({workerId, resource, how}); empty when nothing was left behind, never absent.
         released: Array.isArray(released) ? released.map((row) => ({ ...row })) : [],
+        // Issue #472: the workers this stop STOPPED WAITING ON — {workerId, attempt, alive}, the
+        // bounded attempt each reached and the liveness the stop observed when it stopped waiting.
+        // Empty for a stop that abandoned nobody, never absent, and NEVER a row inside `released`:
+        // an abandoned worker's holds were not released, which is what the abandonment says.
+        abandoned: Array.isArray(abandoned) ? abandoned.map((row) => ({
+          workerId: row.workerId, attempt: row.attempt, alive: row.alive,
+        })) : [],
       }, { actor: armed.actor, key: armed.key });
     } catch {
       return null; // a release that cannot record its outcome is still an exact release

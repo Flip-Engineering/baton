@@ -2431,7 +2431,11 @@ export class Coordinator {
     // Durable replay handles describe prior ownership; they are not native transports owned by
     // this Coordinator instance. Locally dispatched handles are marked at the resource boundary
     // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
-    const active = [...this._workers.values()].filter((worker) => this._ownsLocalResources(worker));
+    // Issue #472: a worker the stop STOPPED WAITING ON is not authority this fence still holds —
+    // the abandonment IS the release (its holds are named durably by the #467 rows, its checkout is
+    // the next open's reconciliation's), so a stop that ended with abandoned workers closes exactly.
+    const active = [...this._workers.values()]
+      .filter((worker) => this._ownsLocalResources(worker) && !worker.stopAbandoned);
     if (active.length > 0) throw Object.assign(new Error(`coordinator still owns ${active.length} active worker(s); kill/reap before close`), { code: 'coordinator_not_drained' });
     if (this._authorityOps > 0) throw Object.assign(new Error(`coordinator still has ${this._authorityOps} authority operation(s) in flight`), { code: 'coordinator_not_drained' });
     if (this._hasPendingInteractionAuthority()) throw Object.assign(new Error('coordinator still owns pending interaction authority'), { code: 'coordinator_not_drained' });
@@ -3991,7 +3995,15 @@ export class Coordinator {
       for (const workerId of targetWorkerIds) {
         if (dispositions.has(workerId)) continue;
         const settledTarget = this._workers.get(workerId);
-        if (!settledTarget || this._ownsLocalResources(settledTarget)
+        // Issue #472: a target the stop STOPPED WAITING ON is settled for the drain too — the
+        // bounded attempts are spent, the holds it keeps are named durably (`drain.worker_abandoned`
+        // and `control.stop_abandoned`) and the next open's reconciliation owns its checkout. The
+        // drain never waits on it again, so the target reaches the one disposition that means
+        // "nothing left for this drain to do" (the durable vocabulary is closed at three, and the
+        // store demands a disposition for every target).
+        if (!settledTarget) continue;
+        if (settledTarget.stopAbandoned) { setDisposition(workerId, 'alreadyTerminal'); continue; }
+        if (this._ownsLocalResources(settledTarget)
           || (settledTarget.processRef && settledTarget.processRef.state !== 'closed')) continue;
         setDisposition(workerId, settledTarget.stopAttested ? 'killConfirmed' : 'alreadyTerminal');
       }
@@ -4007,8 +4019,12 @@ export class Coordinator {
       // The drain's own success test counts every worker in the fleet that still holds local
       // resources, so the drain attempts every worker that test counts (#277 G-20): a
       // cleanupAfterVerification hold that lands on a non-target mid-drain is attempted, not
-      // merely observed until the deadline.
-      const globalRemaining = [...this._workers.values()].filter((handle) => this._ownsLocalResources(handle));
+      // merely observed until the deadline. Issue #472: a worker the stop STOPPED WAITING ON is not
+      // one this drain still owes — its holds are the abandonment's named remainder (see the
+      // disposition arm above), so counting them here would keep the drain from ever converging
+      // and the stop from ever minting its outcome.
+      const globalRemaining = [...this._workers.values()]
+        .filter((handle) => this._ownsLocalResources(handle) && !handle.stopAbandoned);
       if (globalRemaining.length === 0 && this._authorityOps === 0
         && !this._hasPendingInteractionAuthority() && targetWorkerIds.every((id) => dispositions.has(id))) {
         // Issue #450: a reservation with no live worker behind it is a leak this stop releases and
@@ -4039,8 +4055,13 @@ export class Coordinator {
           this._drainHistoricalReconciled = true;
           continue;
         }
-        const processesObserved = targets.filter((handle) => handle.processRef !== null).length;
-        const processesClosed = targets.filter((handle) => handle.processRef?.state === 'closed').length;
+        // Issue #472: the processes this drain OBSERVED. An abandoned worker's recovered authority
+        // is not an observation — the stop probed it, found nothing to answer and said so
+        // (`alive: null` on its row), so it is counted in neither half of the pair the store
+        // validates as equal (every observed process ends closed).
+        const observedTargets = targets.filter((handle) => !handle.stopAbandoned);
+        const processesObserved = observedTargets.filter((handle) => handle.processRef !== null).length;
+        const processesClosed = observedTargets.filter((handle) => handle.processRef?.state === 'closed').length;
         const counts = {
           pendingCancelled: [...dispositions.values()].filter((value) => value === 'pendingCancelled').length,
           killConfirmed: [...dispositions.values()].filter((value) => value === 'killConfirmed').length,
@@ -12616,21 +12637,20 @@ export class Coordinator {
         workerId: handle.id, taskId: task?.id ?? null, attempts, alive, holds: [...holds],
         reason: 'stop_attempts_exhausted', at: abandoned.at,
       }, `drain.worker_abandoned:${handle.id}:${attempts}`);
-    } catch { /* the outcome sink below still names it */ }
-    // The sink the deployment's `host.stopped` row reads: the same {workerId, resource, how} shape
-    // #360/#450 mint, with `how: 'abandoned'` saying the stop could NOT release it — never a
-    // fabricated `drain.resource_released` row for a resource that was not released.
-    this._drainReleased ??= [];
-    this._drainReleased.push({
-      workerId: handle.id,
-      resource: `worker:${handle.sessionContext?.ownerTaskId ?? handle.taskId}`,
-      how: 'abandoned', attempt: attempts, alive,
-    });
+    } catch { /* the outcome reader below still names it */ }
+    // Issue #472: the abandonment is NOT a release and never rides the release sink (#450's
+    // `released`, or the `host.stopped.released` list minted from it). What the worker keeps is
+    // named right here — the `control.stop_abandoned` row on its own log and the durable
+    // `drain.worker_abandoned` above — and the stop's outcome lists the worker under `abandoned`,
+    // the ONE reader below.
     return abandoned;
   }
 
-  /** Issue #467: the workers a stop has stopped waiting on, read by the deployment's own wait row
-   * and doctor exactly as #450's released rows are. */
+  /** Issue #467/#472: the workers a stop has STOPPED WAITING ON — the ONE reader the stop's own
+   * `abandoned` list is minted from (the deployment's narration line, the doctor and
+   * `host.stopped.abandoned` all read this derivation, never a second sink). Each row names the
+   * bounded attempt the stop reached and the liveness it observed; `holds` says what the worker
+   * kept, which is exactly what the stop did NOT release. */
   abandonedWorkers() {
     return Object.freeze([...this._workers.values()]
       .filter((handle) => handle.stopAbandoned)
@@ -12638,6 +12658,25 @@ export class Coordinator {
         workerId: handle.id, attempt: handle.stopAbandoned.attempts,
         alive: handle.stopAbandoned.alive, holds: Object.freeze([...handle.stopAbandoned.holds]),
       })));
+  }
+
+  /** Issue #472: the capacity reservations the stop's ABANDONED workers still hold — the quota
+   * leash of a worker whose process is unproven and whose checkout is retained. Read from THIS
+   * controller's own handles (never a snapshot scan) and returned in the same row shape #450's
+   * `orphanedCapacityReservations()` publishes, so the deployment's capacity quiescence reads ONE
+   * derivation: a reservation named here is not unreleased authority — the abandonment IS the
+   * release — and leaving it counted would keep the stop from ever minting its outcome. */
+  abandonedCapacityReservations() {
+    const rows = [];
+    for (const handle of this._workers.values()) {
+      if (!handle.stopAbandoned) continue;
+      for (const ownerTaskId of this._capacityOwnerIds(handle, this._tasks.get(handle.taskId) ?? null)) {
+        rows.push(Object.freeze({
+          workerId: handle.id, taskId: handle.taskId, ownerTaskId, resource: `worker:${ownerTaskId}`,
+        }));
+      }
+    }
+    return Object.freeze(rows);
   }
 
   /** Issue #467: the resident's own absence observation, handed back to the seat whose stop is

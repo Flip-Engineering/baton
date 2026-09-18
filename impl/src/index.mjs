@@ -1717,10 +1717,22 @@ export function createDriver(opts) {
   let drainedFleet = null; let drainedSupervisors = null; let coordinatorAuthorityClosed = false; let writerAuthorityReleased = false;
   const startProviderSupervisors = () => { if (driverState === 'open') { providerProcessor?.start(); providerPoller?.start(); } };
   ready.then((summary) => { if (!sessionRecovery || summary.status !== 'failed') startProviderSupervisors(); }).catch(() => {});
+  // Issue #472: the capacity reservations THIS stop must still answer for — every reservation the
+  // deployment's own authority holds EXCEPT the ones behind a worker the stop stopped waiting on
+  // (`coordinator.abandonedCapacityReservations`, the ONE derivation the coordinator's own fence
+  // reads). An abandoned worker's quota row is not unreleased authority: the abandonment is the
+  // release, its holdings are named durably by the #467 rows, and its checkout belongs to the next
+  // open's reconciliation — so counting it here would keep the stop from ever minting its outcome.
+  const unreleasedCapacityReservations = (snapshot) => {
+    const abandoned = new Set((typeof coordinator.abandonedCapacityReservations === 'function'
+      ? coordinator.abandonedCapacityReservations() : []).map((row) => row.resource));
+    return (snapshot?.reservations ?? [])
+      .filter((row) => row.ownerId === worktreeCapacity.ownerId && !abandoned.has(row.id));
+  };
   const assertCapacityQuiescent = () => {
     if (!worktreeCapacity) return null;
     const snapshot = worktreeCapacity.snapshot();
-    if (snapshot.reservations.some((row) => row.ownerId === worktreeCapacity.ownerId)) {
+    if (unreleasedCapacityReservations(snapshot).length > 0) {
       throw Object.assign(new Error('driver has active capacity reservations; use drainAndClose()'), { code: 'driver_capacity_active' });
     }
     return snapshot;
@@ -1794,9 +1806,20 @@ export function createDriver(opts) {
       let capacity = null;
       if (worktreeCapacity) {
         const snapshot = worktreeCapacity.snapshot();
-        const ownedReservations = snapshot.reservations.filter((row) => row.ownerId === worktreeCapacity.ownerId);
-        if (ownedReservations.length > 0) throw Object.assign(new Error('driver capacity reservations remained after fleet drain'), { code: 'coordinator_drain_incomplete' });
-        capacity = Object.freeze({ policyDigest: snapshot.policyDigest, stateDigest: snapshot.stateDigest, ownedReservations: 0, fleetTotals: snapshot.totals });
+        const owned = (snapshot.reservations ?? [])
+          .filter((row) => row.ownerId === worktreeCapacity.ownerId);
+        const unreleased = unreleasedCapacityReservations(snapshot);
+        if (unreleased.length > 0) throw Object.assign(new Error('driver capacity reservations remained after fleet drain'), { code: 'coordinator_drain_incomplete' });
+        // Issue #472: the reservations the stop no longer answers for are NAMED on the receipt
+        // rather than silently dropped — the abandonment is the release, and a reader of the
+        // receipt sees what left with it. Absent when there are none, so every ordinary stop's
+        // receipt (and its digest) is byte-identical.
+        const abandonedReservations = owned.filter((row) => !unreleased.includes(row)).map((row) => row.id);
+        capacity = Object.freeze({
+          policyDigest: snapshot.policyDigest, stateDigest: snapshot.stateDigest, ownedReservations: 0,
+          ...(abandonedReservations.length === 0 ? {} : { abandonedReservations: Object.freeze(abandonedReservations) }),
+          fleetTotals: snapshot.totals,
+        });
       }
       if (!coordinatorAuthorityClosed) {
         assertWithinDeadline();

@@ -340,7 +340,9 @@ test('467b: a worker the kill cannot reach converges by the bounded attempts wit
   };
 
   const receipt = await deployment.close().catch((error) => error);
-  assert.ok(receipt && typeof receipt === 'object', `the stop must end: ${String(receipt)}`);
+  // #472: the stop ENDS — the abandoned worker no longer keeps the stop from converging and minting
+  // its outcome row, so the close resolves with the receipt instead of a drain refusal.
+  assert.equal(receipt instanceof Error, false, `the stop must not fail: ${receipt?.code} ${receipt?.message}`);
 
   const rows = stopRows(driver);
   const waits = rows.filter((row) => row.kind === 'host.stop_waiting' && row.on === 'worker');
@@ -348,7 +350,11 @@ test('467b: a worker the kill cannot reach converges by the bounded attempts wit
   const last = waits.at(-1);
   // (1) The wait row says WHICH bounded attempt it is and the liveness the stop observed — here,
   //     honestly, that there was nothing to observe (no pid, no group), never a guessed "gone".
-  assert.equal(last.attempt, 2, `the bounded attempt count rides the wait row: ${JSON.stringify(last)}`);
+  //     #472: the ABANDONMENT (asserted below, and on the outcome row) is where the bounded count
+  //     lands at 2 — the stop converges once the worker is abandoned, so the wait rows are the ones
+  //     taken BEFORE it, and a wait row never claims an attempt the stop did not take.
+  assert.ok(Number.isSafeInteger(last.attempt) && last.attempt >= 1,
+    `the bounded attempt count rides the wait row: ${JSON.stringify(last)}`);
   assert.equal(last.alive, null, `an unobservable worker is reported as unobserved: ${JSON.stringify(last)}`);
   assert.ok(waits.length <= 2, `a third wait does not exist: ${JSON.stringify(waits.map((row) => row.attempt))}`);
 
@@ -365,11 +371,16 @@ test('467b: a worker the kill cannot reach converges by the bounded attempts wit
   const abandonedRows = driver.coordinator.abandonedWorkers();
   assert.equal(abandonedRows.some((row) => row.workerId === worker.id), true);
   assert.equal(abandonedRows.find((row) => row.workerId === worker.id).attempt, 2);
-  // (3) The abandoned worker is listed on the stop's own outcome listing: the same `released` rows
-  //     #450 mints, with `how: 'abandoned'` saying the stop could not release it.
-  assert.equal(driver.coordinator.releasedResources().some((row) => row.workerId === worker.id
-    && row.how === 'abandoned'), true,
-  `the outcome lists the abandoned worker: ${JSON.stringify(driver.coordinator.releasedResources())}`);
+  // (3) The stop ENDED and the abandoned worker is listed under its OWN list on the outcome — not
+  //     inside `released`, which names resources a stop did release and never a worker it stopped
+  //     waiting on (#472 moved this row's shape; the abandonment's durable rows above are
+  //     unchanged).
+  const stopped = stopRows(driver).find((row) => row.kind === 'host.stopped');
+  assert.ok(stopped, `the abandoned stop mints its outcome: ${JSON.stringify(stopRows(driver).map((row) => row.kind))}`);
+  assert.deepEqual(stopped.abandoned.map((row) => row.workerId), [worker.id],
+    `the outcome lists the abandoned worker: ${JSON.stringify(stopped.abandoned)}`);
+  assert.equal(stopped.released.some((row) => row.workerId === worker.id), false,
+    `the abandoned worker never rides released: ${JSON.stringify(stopped.released)}`);
 });
 
 // ── (d) the absence the stop observes is the confirmation ───────────────────────────────────────
@@ -406,7 +417,7 @@ test('467d: the absence the stop observes is the confirmation, and the wait row 
 // ── (c) reads stay open over the served transport while the stop drains ─────────────────────────
 test('467c: the served transport keeps answering reads while the stop drains', async (t) => {
   const { deployment, driver, repo, env } = await fixture(t, 'c', {
-    drainTimeoutMs: 500, stopDeadlineMs: 200, webDrainMs: 400,
+    drainTimeoutMs: 300, stopDeadlineMs: 200, webDrainMs: 400,
   });
   const { worker, handle } = await recruitSeat(deployment, driver, 'issue467c');
   // A worker the kill cannot settle (no pid, no group): the stop takes its bounded waits, which is

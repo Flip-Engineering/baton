@@ -4252,6 +4252,21 @@ class BatonDeployment {
           const named = wait.ids.length > 0 ? ` ${wait.ids.join(',')}` : '';
           const said = attempt === null ? '' : ` (attempt ${attempt}, alive ${alive ?? 'unobserved'})`;
           line = `baton serve: host.stop_waiting on ${wait.on}${named}${said} at ${at}`;
+          // Issue #472: the controller's own historical reconciliation is a wait this stop can END,
+          // and the only act that ends it is asking the application again — the reconciliation the
+          // drain started is in flight (or settled) by the time the refusal names it, so one bounded
+          // retry on the same escalation grace the worker arm converges with is the whole answer.
+          // Nothing is killed for it: the process the worker may still run is not this wait.
+          if (wait.on === 'reconciliation') {
+            // The outcome row the release will mint says WHICH stop this was — one that had to end
+            // past its drain deadline, arming the same state the worker arm arms before its retry.
+            this.#armStopOutcome('stopped_after_deadline');
+            const application = await this.#retryApplicationShutdown();
+            if (application?.state === 'closed') {
+              return { line, released: true, killed: Object.freeze([]), application };
+            }
+            return { line, released: false };
+          }
           if (wait.on !== 'worker') return { line, released: false };
           const killed = [];
           for (const workerId of wait.ids) killed.push(await this.#stopWorkerGroup(workerId));
@@ -4321,7 +4336,11 @@ class BatonDeployment {
         const abandoned = this.#stoppingAbandoned();
         const waited = abandoned.length === 0 ? ''
           : ` (abandoned ${abandoned.length}: ${abandoned.map((row) => `${row.workerId} attempt ${row.attempt}, alive ${row.alive}`).join(', ')})`;
-        return { line: `baton serve: host.stopped ${state} at ${at}${cache}${said}${waited}` };
+        // Issue #472: the SAME live read the line is composed from rides back to the host — the
+        // worker may be abandoned between the wait that returned and this step (the bounded attempt
+        // the coordinator spends is its own clock), so the exit state is decided from the list the
+        // outcome was actually said with, never from an earlier snapshot.
+        return { line: `baton serve: host.stopped ${state} at ${at}${cache}${said}${waited}`, abandoned };
       },
       /** Issue #351: one mark on the stop's own clock, taken by the host that finished the stage.
        * Best-effort by construction — a host with no clock to mark simply has no stage rows. */
@@ -4359,6 +4378,10 @@ class BatonDeployment {
         // Issue #450: the released rows are read at the mint too — the drain that runs inside
         // this arming is what fills them.
         released: () => this.#driver?.coordinator?.releasedResources?.() ?? [],
+        // Issue #472: and so is the list of workers this stop STOPPED WAITING ON, minted BESIDE the
+        // releases: the bounded attempts the coordinator spent on each, and the liveness it
+        // observed when it stopped waiting.
+        abandoned: () => this.#driver?.coordinator?.abandonedWorkers?.() ?? [],
       });
     } catch { /* a stop that cannot arm its outcome still stops */ }
   }
