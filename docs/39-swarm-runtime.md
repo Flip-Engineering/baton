@@ -478,7 +478,13 @@ wake that IS a recruitment names the route the seat was started under. The row i
 row that holds the whole text); `workspace.commits` is the NEWEST-bound tail under
 `view.workspace.commits` with `commitsTotal` beside it, and a participantId-scoped read carries the
 list whole while a bridge PAGE drops the array and keeps the count. A 36-seat roster answers its
-participants projection in one `wire.frame`.
+participants projection in one `wire.frame`. The row also carries `activity {lastEventKind,
+lastEventAt, turnsCompleted, contributions}` and `usage {tokens, providerCalls}` (#268, docs/46
+§1.2), folded ONCE per view by `_seatActivity` over the ledger the view already holds — a row is
+attributed to a seat when it names the seat, its run, a binding worker or one of their tasks, the
+same rule the wake stream's attribution uses; `usage` answers the string `'unavailable'` per
+field when the adapter reported nothing, never a zero pretending to be a measurement; and
+`run.peers.read` and the recruit brief's peers-now rows carry the same frozen objects.
 
 **Refusals are the swarm's record, not the caller's private business.** A refused mutation already
 landed durably as `swarm.operation_refused` (#271); the same lane now carries the refusals the
