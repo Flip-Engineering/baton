@@ -446,7 +446,12 @@ them). The divergences, reviewed and accepted by the sub-orchestrator:
     over that declaration-free base (the worker runtime's `baseEnv`, the #459 gate run, the
     regenerators, a seat's nested `baton serve`), and `#successorSpec` re-bases on it before it
     mints the NEXT successor's own five keys — so no process an incarnation spawns believes it is
-    a successor, while each reincarnate still hands a fresh declaration to its successor.
+    a successor, while each reincarnate still hands a fresh declaration to its successor. One key
+    is NOT in that list and rides through on purpose: `BATON_SERVE_PARENT_PID` (#471, `0bbf133b`),
+    the declared parent a fixture helper sets so `baton serve` stops itself (`host.stop_requested
+    {trigger: 'parent_exited', parentPid}`, watched with `reincarnationProcessAlive`) when the
+    test runner dies — a reincarnation successor inherits the declaration and the predecessor's
+    process group, so a fixture's resident and every successor it spawns die with the runner.
 
 Carried forward from the lanes (the root's re-brief list): the `served-commit-306` deep-pin hunk
 (item 11); docs/39's wake section naming `incarnation_changed` and the reincarnation rows beside
