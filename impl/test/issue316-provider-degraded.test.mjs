@@ -44,6 +44,7 @@ import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { MockAdapter, createDriver } from '../src/index.mjs';
 import * as deploymentModule from '../src/application-deployment.mjs';
 import { openBatonDeployment } from '../src/application-deployment.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 import * as wakeStreamModule from '../src/wake-stream.mjs';
 import { WAKE_STREAM_END_REASONS, WakeStream, attachWakeWebSocket, openWakeStream, parseWakeFilter } from '../src/wake-stream.mjs';
 import { followWakes } from '../src/application-cli.mjs';
@@ -397,6 +398,56 @@ test('316-a3: a degraded route reads degraded on the doctor and refuses a recrui
 
 // ── (b) an attachment that ends names why ───────────────────────────────────────────────────────
 
+// The rows below await a frame BY IDENTITY (#446). 316-b2 used to sample this consumer's progress
+// with a poll loop and a wall-clock deadline and then compare that sample with the cursor the LEG
+// computed. Those are not the same moment: the leg writes the frames of one pull as a batch and the
+// consumer processes them a message event later, so under load the sample could see frame N while
+// the leg had already delivered N+1 — a healthy deployment failing on `2 !== 1` (observed
+// 2026-09-18 in a gate run, and reproduced from this file). A frame is therefore awaited by the
+// frame's OWN identity — its seq, or the typed final frame's kind — and a wait nothing ever
+// satisfies fails at the TRANSPORT'S OWN bound rather than at a constant written here (#445) or at
+// a poll interval's phase.
+
+const WAKE_LEG_BOUND_MS = FRAME_LIMITS['web.wait_ceiling_ms'].value;
+
+/** The frames an attachment delivered, in wire order, with an await BY IDENTITY. */
+function frameFeed() {
+  const frames = [];
+  const waiters = new Set();
+  const settle = (waiter, frame) => {
+    waiters.delete(waiter);
+    clearTimeout(waiter.timer);
+    waiter.resolve(frame);
+  };
+  return {
+    frames,
+    push(frame) {
+      frames.push(frame);
+      for (const waiter of [...waiters]) if (waiter.predicate(frame)) settle(waiter, frame);
+    },
+    until(predicate, label) {
+      const landed = frames.find(predicate);
+      if (landed !== undefined) return Promise.resolve(landed);
+      return new Promise((resolve, reject) => {
+        const waiter = { predicate, resolve, timer: null };
+        waiters.add(waiter);
+        waiter.timer = setTimeout(() => {
+          waiters.delete(waiter);
+          reject(new Error(`the wake leg never delivered ${label}: ${JSON.stringify(frames)}`));
+        }, WAKE_LEG_BOUND_MS);
+      });
+    },
+  };
+}
+
+/** A wait that is not a frame — the socket's own end — judged by the SAME bound. */
+function withinWakeLegBound(promise, label) {
+  return Promise.race([promise, new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error(`the wake leg never ${label}`)), WAKE_LEG_BOUND_MS);
+    timer.unref?.();
+  })]);
+}
+
 test('316-b1: an attachment whose resident ends the transport delivers the typed attachment_closed frame, never silence', async (t) => {
   const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
@@ -467,33 +518,42 @@ test('316-b2: the bridge names the same closed reason set — the resident\'s ow
     await new Promise((resolve) => { try { server.closeAllConnections?.(); } catch { /* closed */ } server.close(resolve); });
   });
 
-  const received = [];
+  const feed = frameFeed();
   const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/wakes?since=0`,
     { headers: { authorization: 'Bearer resident-token' } });
-  socket.addEventListener('message', (event) => received.push(JSON.parse(event.data)));
+  const socketEnded = withinWakeLegBound(
+    new Promise((resolve) => socket.addEventListener('close', resolve)), 'end the socket it wrote');
+  socket.addEventListener('message', (event) => feed.push(JSON.parse(event.data)));
   t.after(() => { try { socket.close(); } catch { /* already closed */ } });
   await new Promise((resolve) => socket.addEventListener('open', resolve));
 
+  // The row the leg must deliver is awaited BY IDENTITY: the seq of the row just recorded is the
+  // ledger's own head, so this consumer's progress and the leg's are compared at one known point —
+  // never at whatever a poll caught while the first pull's frames were still crossing the wire.
   store.recordSwarm('swarm.participant_joined', { swarmId: 's-316', participantId: 'seat' },
     { actor: 'test:root', key: '316:b2' });
-  const deadline = Date.now() + 20_000;
-  while (!received.some((message) => message.wakeClass === 'recruited')) {
-    if (Date.now() > deadline) throw new Error(`no wake crossed the bridge: ${JSON.stringify(received)}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  const lastSeq = Math.max(...received.filter((message) => Number.isSafeInteger(message.seq))
-    .map((message) => message.seq));
+  const joinedSeq = store.ledgerHeadSeq();
+  await feed.until((message) => message.seq === joinedSeq && message.wakeClass === 'recruited',
+    `the frame for the row recorded at seq ${joinedSeq}`);
 
   // The resident stops serving the stream: the attachment ends, and it says so over the wire.
   stream.close();
-  const closedDeadline = Date.now() + 20_000;
-  while (!received.some((message) => message.kind === 'baton.wake_attachment_closed')) {
-    if (Date.now() > closedDeadline) throw new Error(`the bridge ended in silence: ${JSON.stringify(received)}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  const final = received.find((message) => message.kind === 'baton.wake_attachment_closed');
+  const final = await feed.until((message) => message.kind === 'baton.wake_attachment_closed',
+    'the typed final frame');
+  // The typed final frame is the LAST frame on the leg: the binding writes it before it ends the
+  // socket, so everything the leg delivered rides BEFORE it in wire order — the ordering that makes
+  // `resumeFrom` checkable from this side of the wire at all. The socket's own end settles it.
+  await socketEnded;
+  const endedAt = feed.frames.indexOf(final);
+  assert.equal(endedAt, feed.frames.length - 1,
+    'the typed final frame is the last frame on the leg — no wake follows the end it announces');
+
   assert.equal(final.reason, 'restart', 'the resident ending its own stream names a restart');
-  assert.equal(final.resumeFrom, lastSeq, 'the frame resumes from the last seq the consumer saw');
+  const delivered = feed.frames.slice(0, endedAt)
+    .filter((message) => Number.isSafeInteger(message.seq)).map((message) => message.seq);
+  assert.equal(final.resumeFrom, Math.max(...delivered),
+    'the frame resumes from the last seq the leg delivered to this consumer, in wire order');
+  assert.equal(final.resumeFrom, joinedSeq, 'and that is the row this test recorded and received');
   assert.ok(Number.isFinite(Date.parse(final.at)));
   assert.deepEqual(Object.keys(final).sort(),
     ['at', 'kind', 'reason', 'resumeFrom', 'schemaVersion'],
@@ -518,7 +578,7 @@ test('316-b2: the bridge names the same closed reason set — the resident\'s ow
 
   // The rude connection is a RAW socket, so the frame the bridge writes to IT is what is asserted:
   // a server frame is unmasked, so its payload is everything after the header.
-  const rudeFrames = [];
+  const rudeFrames = frameFeed();
   let pending = Buffer.alloc(0);
   const rude = createConnection({ host: '127.0.0.1', port: errorPort });
   await new Promise((resolve) => rude.once('connect', resolve));
@@ -549,13 +609,8 @@ test('316-b2: the bridge names the same closed reason set — the resident\'s ow
     }
   });
   rude.write(Buffer.from([0x81, 0x02, 0x68, 0x69]));  // unmasked text frame: a protocol error
-  const errorDeadline = Date.now() + 20_000;
-  while (!rudeFrames.some((message) => message.kind === 'baton.wake_attachment_closed'
-    && message.reason === 'error')) {
-    if (Date.now() > errorDeadline) throw new Error(`no protocol-error frame: ${JSON.stringify(rudeFrames)}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  const protocol = rudeFrames.find((message) => message.kind === 'baton.wake_attachment_closed');
+  const protocol = await rudeFrames.until((message) => message.kind === 'baton.wake_attachment_closed'
+    && message.reason === 'error', 'the protocol-error frame');
   assert.deepEqual(wakeStreamModule.ATTACHMENT_CLOSED_REASONS, ['error', 'restart', 'transport_closed'],
     'the three reasons are the ONE closed set the CLI and the bridge share');
   assert.equal(protocol.reason, 'error');
