@@ -471,11 +471,25 @@ const routeProbeAdmissionKey = (route, episodeAt, attempt = 1) => {
  * answers — so the fact lands once however many readers observe it. */
 const routeRecoveredKey = (probeKey) => `route.recovered:${probeKey}`;
 
-/** #475: the ONE spelling of the Run one seat's recruit was admitted under. `swarm.recruit`
- * composes it from the swarm and the seat, and this lane recomputes it to tie a durable probe
- * admission to the `route.observed` rows that seat's turn published; declared once so the two
- * readers can never disagree. */
-const seatRunId = (swarmId, participantId) => `run-${hash([swarmId, participantId]).slice(0, 32)}`;
+/** The ONE spelling of the Run a seat's recruit is admitted under (#475, #490). The Run belongs to
+ * the ATTEMPT, so it is keyed by the recruit's own operation identity: a replay of one operation —
+ * the same `swarm.recruit` under the same `idempotencyKey` by the same caller, which the family
+ * admits for a lost response (#302/#344) — names the SAME Run and re-admits it, while a new attempt
+ * names its own.
+ *
+ * #490: the Run is not the seat. Run creation mints that Run's Goal under the fixed idempotency key
+ * `application:<runId>:goal:v1` (application.mjs `start`) over a request digest that covers the
+ * GOAL'S OBJECTIVE — and the objective a recruit hands over is the seat's composed brief, which
+ * moves with the swarm. Re-using a withdrawn attempt's Run therefore asked the deployment to bind
+ * one key to a second request, which the store refuses (`goal_conflict`); a re-join must name a Run
+ * of its own, so the withdrawn Run keeps the one Goal its attempt minted.
+ *
+ * Called with no `attempt`, this is the seat spelling every join recorded before #490 carries — the
+ * Run a `route.probe_admitted` row recorded before that field existed was admitted on, and the ONE
+ * legacy read left: the recruit composes the attempt-keyed spelling, and the admission records the
+ * Run it admitted. */
+const seatRunId = (swarmId, participantId, attempt = null) =>
+  `run-${hash(attempt === null ? [swarmId, participantId] : [swarmId, participantId, attempt]).slice(0, 32)}`;
 
 /** One instant a ledger row names, spelled the one way every reader of it compares, or null. An
  * instant nothing parses is ABSENCE: the probe lane never names a wall it could not read. */
@@ -484,10 +498,16 @@ const ledgerInstant = (value) => (typeof value === 'string' && Number.isFinite(D
 
 /** #475: one durable probe admission as the lane reads it — the route and episode it names, the key
  * it was recorded under (its own identity), the instant it carries (the row's own `at`, else the
- * ledger's stamp), the seat it started, and the Run that seat runs. Null when the row does not name
+ * ledger's stamp), the seat it started, and the Run it admitted. Null when the row does not name
  * what the lane keys on (a route, an episode identity and an instant, or no key at all): nothing is
  * read out of a row the lane cannot attribute. An admission recorded before #475 carries no
- * `episodeAt` — the clear instant it was admitted beside is the identity it had. */
+ * `episodeAt` — the clear instant it was admitted beside is the identity it had.
+ *
+ * #490: the Run is the admission's OWN `runId` when it carries one, because a re-joined seat runs a
+ * Run of its own and the answering turn's `route.observed` row is keyed by the Run that ran it. A
+ * row recorded before this field existed names none, and reads as the seat spelling — which is the
+ * Run every such row was admitted on (`seatRunId`'s first incarnation, the only spelling in use
+ * then). */
 const routeProbeRow = (event, payload) => {
   const route = swarmRouteShape(payload?.route ?? null);
   const key = typeof event?.idempotencyKey === 'string' && event.idempotencyKey.length > 0
@@ -501,11 +521,13 @@ const routeProbeRow = (event, payload) => {
     ? payload.swarmId : null;
   const participantId = typeof payload.participantId === 'string' && payload.participantId.length > 0
     ? payload.participantId : null;
+  const named = typeof payload.runId === 'string' && payload.runId.length > 0 ? payload.runId : null;
   return Object.freeze({
     key, route, episodeAt, clearsAt, probeAfter: ledgerInstant(payload.probeAfter), at,
     seq: Number.isSafeInteger(event.seq) ? event.seq : null,
     swarmId, participantId,
-    runId: swarmId === null || participantId === null ? null : seatRunId(swarmId, participantId),
+    runId: named ?? (swarmId === null || participantId === null
+      ? null : seatRunId(swarmId, participantId)),
   });
 };
 
@@ -2594,8 +2616,10 @@ export class SwarmRuntime {
 
   /** #475: what the ledger says about the seat that holds one probe — whether it has settled, the
    * provider fault that killed it (the #442 fold's own row, recorded after this admission), and
-   * whether a live worker still runs the seat's Run. A coordinator that cannot answer for its fleet
-   * is never evidence of a dead probe: an unanswerable fleet reads as `live`. */
+   * whether a live worker still runs the Run that admission named (#490: the probe's OWN Run, never
+   * a spelling recomputed from the seat — a re-joined seat runs a Run of its own, and the row
+   * carries it). A coordinator that cannot answer for its fleet is never evidence of a dead probe:
+   * an unanswerable fleet reads as `live`. */
   _probeSeatState(probe) {
     const swarm = probe.swarmId === null ? null : this.store.swarm(probe.swarmId) ?? null;
     const seat = probe.participantId === null
@@ -2604,11 +2628,9 @@ export class SwarmRuntime {
     const fault = seat?.fault ?? null;
     const faulted = fault !== null && Number.isSafeInteger(fault.seq) && fault.seq > probe.seq;
     let live = false;
-    if (!settled && probe.swarmId !== null && probe.participantId !== null) {
-      try {
-        live = this.coordinator.list()
-          .some((worker) => worker.runId === seatRunId(probe.swarmId, probe.participantId));
-      } catch { live = true; }
+    if (!settled && probe.runId !== null) {
+      try { live = this.coordinator.list().some((worker) => worker.runId === probe.runId); }
+      catch { live = true; }
     }
     return Object.freeze({
       participantId: probe.participantId, settled, live, faulted,
@@ -2722,8 +2744,10 @@ export class SwarmRuntime {
    * a second recruit that finds that attempt already held gets null here and refuses, while a
    * re-armed episode (the fold moved the window to a later death) and a released attempt each have
    * their own key and their own probe. `admission` names who admitted it: the `probe` the route's
-   * own clear instant opened, or the operator `override`. */
-  _admitRouteProbe(args, probe, principal) {
+   * own clear instant opened, or the operator `override`. #490: the row also names the Run it
+   * admitted (`runId`), because a probe is an answer about ONE Run's turn — a re-joined seat runs
+   * its own Run, and the answering turn's `route.observed` row is keyed by it. */
+  _admitRouteProbe(args, probe, principal, runId = null) {
     if (probe === null || probe.key === null || probe.route === null) return null;
     // The check and the append sit in one synchronous step: a probe admitted in between is seen as
     // a prior and this caller gets nothing, so one attempt admits one probe.
@@ -2733,7 +2757,7 @@ export class SwarmRuntime {
     const recorded = this.store.recordDriver('route.probe_admitted', {
       route: probe.route, at, reason, episodeAt: probe.episodeAt, attempt: probe.attempt,
       clearsAt: probe.clearsAt, probeAfter: probe.probeAfter,
-      swarmId: args.swarmId ?? null, participantId: args.participantId ?? null,
+      swarmId: args.swarmId ?? null, participantId: args.participantId ?? null, runId,
     }, { actor: principal.actor, key: probe.key });
     const event = recorded?.event ?? null;
     // This command is the newest reader of what it just admitted: index the row, so the same command
@@ -2741,7 +2765,7 @@ export class SwarmRuntime {
     this._indexRouteProbe({ idempotencyKey: probe.key, seq: event?.seq ?? null, ts: at }, {
       route: probe.route, at, episodeAt: probe.episodeAt,
       clearsAt: probe.clearsAt, probeAfter: probe.probeAfter,
-      swarmId: args.swarmId ?? null, participantId: args.participantId ?? null,
+      swarmId: args.swarmId ?? null, participantId: args.participantId ?? null, runId,
     });
     // #486: the admission is in the index, so the delta never reads it back (see `_noteOwnRouteRow`).
     this._noteOwnRouteRow(event);
@@ -5618,19 +5642,58 @@ export class SwarmRuntime {
     return { ...plan, how: 'applied', paths: [...plan.paths], reason: null, content: false };
   }
 
-  /** #308 × #453: withdraw a recruit whose effect refused AFTER the seat had already joined —
-   * the typed leave row (reason `recruit_refused`, which keeps the identity re-joinable, so the
-   * root decides how to resume) plus the stop of the run the refusal cannot let keep working under
-   * a checkout that lost its inheritance. The stop is best-effort: the refusal is the
-   * authoritative answer and the caller throws it. */
+  /** #308 × #453 × #490: withdraw a recruit whose effect refused AFTER the seat had already joined
+   * and after the deployment minted its Run. ONE row does the whole settlement (#350's settle fold,
+   * never a second cleanup path): the typed leave — reason `recruit_refused`, which keeps the
+   * identity re-joinable — names the Run it settles and the refusal that settled it, so the seat's
+   * projection carries the withdrawn Run's `terminalCause {code, at}`, and the run stops with the
+   * same refusal as its cause. The stop is best-effort: the refusal is the authoritative answer and
+   * the caller throws it. */
   async _withdrawRefusedRecruit({ command, args, principal, writes, runId = null, code = null }) {
     writes.push(this._write('swarm.participant_left', {
       swarmId: args.swarmId, participantId: args.participantId, reason: 'recruit_refused',
       ...(code === null ? {} : { code }),
+      ...(typeof runId === 'string' ? { runId } : {}),
     }, principal, `swarm-recruit-rollback:${this._operationKey(command, args, principal)}`));
     if (typeof this.stopRun === 'function' && typeof runId === 'string') {
-      try { await this.stopRun(runId, 'recruit_refused'); } catch { /* the refusal stands */ }
+      try { await this.stopRun(runId, code ?? 'recruit_refused'); } catch { /* the refusal stands */ }
     }
+  }
+
+  /** Issue #490: what a `goal_conflict` at recruit owes its caller. The deployment mints a Run's
+   * Goal under the fixed key `application:<runId>:goal:v1` (application.mjs `start`), so a Run whose
+   * Goal is already bound to another request refuses `goal_conflict` — the ONE conflict a recruit
+   * can still meet, because the Run the seat's own id names is still there. The caller gets the Run,
+   * the Goal it holds (read back from the ledger row that holds them, by the deployment's own key
+   * for that Run: a keyed read, never a scan), that row's identity, and the two remedies — stop the
+   * seat, or recruit the work under a fresh id. Absence is named as absence: a run whose Goal row
+   * cannot be read crosses with `goal: null, row: null` rather than a guessed goal. */
+  _recruitRunConflict({ swarmId, participantId, runId }) {
+    const row = typeof this.store.priorCoordinationEvent === 'function'
+      ? this.store.priorCoordinationEvent(`application:${runId}:goal:v1`) ?? null : null;
+    const goal = row?.kind === 'goal.version_defined' ? row.payload?.goal ?? null : null;
+    return Object.freeze({
+      message: `Run ${runId} already holds a Goal bound to another request`
+        + ` (${goal === null ? 'the Goal this Run was minted for' : `goal ${goal.goalId} version ${goal.version}`}),`
+        + ` so this recruit cannot re-define it: ${row === null
+          ? 'the ledger holds no Goal row for this Run under the key this deployment mints it with'
+          : `ledger row ${row.seq} (${row.kind}) holds it`}`
+        + `; stop the seat (baton swarm stop ${swarmId} --participant-id ${participantId})`
+        + ' or recruit the work under a fresh participant id',
+      detail: Object.freeze({
+        runId, participantId,
+        goal: goal === null ? null : Object.freeze({
+          goalId: goal.goalId, version: goal.version, digest: goal.digest,
+        }),
+        row: row === null ? null : Object.freeze({
+          seq: row.seq, kind: row.kind, idempotencyKey: row.idempotencyKey ?? null,
+        }),
+        next: Object.freeze({
+          command: 'swarm.stop', args: Object.freeze({ swarmId, participantId }),
+          alternative: 'recruit the work under a fresh participant id',
+        }),
+      }),
+    });
   }
 
   /** Issue #473: a stop the run-stop leg refused crosses with the RUN it named. The coordinator's
@@ -7127,7 +7190,16 @@ export class SwarmRuntime {
       // the rule and the admitted form. A `read_only` seat's empty scope is admitted — claims
       // nothing — and is carried as no scope at all.
       const runOptions = admitRecruitSelection(selection, args.mode);
-      const runId = seatRunId(args.swarmId, args.participantId);
+      // #490: the Run this recruit is admitted under — the attempt's own, keyed by the operation
+      // identity `_once` will use, so a replay of this operation names this Run again (a lost
+      // response re-admits the same Run, never a second one) while a new attempt names its own. The
+      // seat a recruit RESUMS keeps the Run it holds, and a withdrawn attempt's Run is never named
+      // again: the Goal the deployment minted for it is never asked to carry a second request.
+      const seat = this._swarm(args.swarmId).participants[args.participantId] ?? null;
+      const resumesWithdrawn = seat !== null && seat.status === 'left' && seat.leftReason === 'recruit_refused';
+      const runId = seat !== null && !resumesWithdrawn && typeof seat.runId === 'string'
+        ? seat.runId
+        : seatRunId(args.swarmId, args.participantId, this._operationKey(command, args, principal));
       // The route and scope this seat is recruited under (issue #283 root comment 1): the
       // deployment's own resolution when it makes one (prepareRun answers with the admitted
       // intent), otherwise the selection the caller named. They ride the membership write, so the
@@ -7154,9 +7226,10 @@ export class SwarmRuntime {
         // or the caller overrode it) is claimed HERE — the first effect of the recruit, before any
         // membership or dispatch is written, keyed by the episode's own identity so one window
         // admits exactly one. A probe that another seat admitted between the check above and this
-        // claim is read as a prior and refuses this caller instead of doubling the probe.
+        // claim is read as a prior and refuses this caller instead of doubling the probe. #490: the
+        // admission names the Run it admits, so the answering turn is read on the Run that ran it.
         if (degrade && probe.admits) {
-          routeProbe = this._admitRouteProbe(args, probe, principal);
+          routeProbe = this._admitRouteProbe(args, probe, principal, runId);
           if (routeProbe === null) {
             // #475: the admission this caller lost is a DURABLE row — read it back and name the seat
             // and the instant it carries, rather than the in-memory guess that read "an unrecorded
@@ -7364,20 +7437,19 @@ export class SwarmRuntime {
         }, principal, resuming
           ? `swarm-participant-resume:${this._operationKey(command, args, principal)}`
           : `swarm-participant:${hash([args.swarmId, args.participantId])}`)];
-        // A recruit whose run admission refuses rolls its join back (issue #308): the seat is
-        // withdrawn durably — `swarm.participant_left {reason: 'recruit_refused', code}` carries
-        // the typed admission code — so the swarm never keeps a phantom member, and a repeated
-        // recruit of the same id RESUMES instead of hitting an eternal exists-refusal. The
-        // caller still sees the original refusal, unchanged.
+        // A recruit whose effect refuses AFTER this join rolls the join back (#308): the seat is
+        // withdrawn durably — `swarm.participant_left {reason: 'recruit_refused', code, runId}`,
+        // which #490 folds as the withdrawn Run's settlement — so the swarm never keeps a phantom
+        // member and a repeated recruit of the same id RESUMES instead of hitting an eternal
+        // exists-refusal. #490: the window is every leg past the mint — the run start, the worker
+        // binding, the scope claim, the package attach and the workspace carry — so a refusal at the
+        // package attach settles the seat and its Run exactly as a refused run start does, through
+        // ONE withdrawal (never a second cleanup path). The caller sees the original refusal, or the
+        // typed conflict the Run itself answers (below).
         try {
           await this.startRun({ runId, objective: brief, options: runOptions,
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
             ...(workspace ? { workspace } : {}) }, principal, context);
-        } catch (error) {
-          await this._withdrawRefusedRecruit({ command, args, principal, writes,
-            code: typeof error?.code === 'string' && error.code.length > 0 ? error.code : null });
-          throw error;
-        }
         const worker = this.coordinator.list().find((row) => row.runId === runId);
         if (!worker) refuse('Recruitment admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
         // The checkout this binding observed is recorded with the seat: the first recruit into a
@@ -7439,11 +7511,10 @@ export class SwarmRuntime {
             });
           }
           if (carry.how === 'skipped' && carry.content) {
-            // #453: the work would be lost. The seat is withdrawn (its identity may re-join: the
-            // leave carries `recruit_refused`), its run is stopped, and the root gets a typed
-            // refusal naming the snapshot and the reason — never a successor that lost the work.
-            await this._withdrawRefusedRecruit({ command, args, principal, writes, runId,
-              code: 'swarm_workspace_carry_failed' });
+            // #453: the work would be lost. The refusal below is what withdraws the seat and stops
+            // its Run (#490: the ONE window, with `swarm_workspace_carry_failed` as the settlement's
+            // code), and the root gets a typed refusal naming the snapshot and the reason — never a
+            // successor that lost the work.
             refuse('Predecessor snapshot cannot be carried into the successor workspace',
               'swarm_workspace_carry_failed', {
                 predecessor: predecessor.participantId, snapshotSha: predecessorWs.snapshotSha,
@@ -7488,8 +7559,30 @@ export class SwarmRuntime {
             }, { actor: principal.actor, key: `message.delivered:${row.messageId}:${args.participantId}` });
           } catch { /* the wake row is evidence, never delivery-critical */ }
         }
+        } catch (error) {
+          const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : null;
+          await this._withdrawRefusedRecruit({ command, args, principal, writes, runId, code });
+          // #490: the Run the seat's own id names is still there, so the deployment will not
+          // re-define its Goal. That is not a mystery to hand the caller: the Run, the Goal it holds,
+          // the ledger row that holds them and the remedy cross as the family's own spelling of the
+          // store's `goal_conflict` — the one the swarm sheet serves whole, detail included.
+          if (code === 'goal_conflict') {
+            const conflict = this._recruitRunConflict({
+              swarmId: args.swarmId, participantId: args.participantId, runId,
+            });
+            refuse(conflict.message, 'swarm_recruit_run_conflict', conflict.detail);
+          }
+          throw error;
+        }
         return {
           participantId: args.participantId, runId, swarmId: args.swarmId, scopeOverlap, writes,
+          // #490: this seat RESUMED a rolled-back join — the withdrawn incarnation's Run, the
+          // instant its refusal was recorded, and the typed code it was withdrawn with. Named on
+          // the receipt so the recruiter reads the history it just continued instead of inferring
+          // it from the ledger.
+          supersedes: resuming
+            ? Object.freeze({ runId: seat.runId, refusedAt: seat.ts, code: seat.leftCode ?? null })
+            : null,
           // #297: the typed admission row — admitted, with the queue facts when this seat waited.
           admission: {
             state: 'admitted', authority: workerLease ? 'host' : 'unwired',
@@ -7516,7 +7609,9 @@ export class SwarmRuntime {
         { participantId: result.participantId, runId: result.runId, swarmId: result.swarmId,
           scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null,
           baseBehind: result.baseBehind ?? null, advisory: result.advisory ?? null,
-          routes: result.routes ?? null });
+          routes: result.routes ?? null,
+          // #490: the withdrawn Run this re-join continued, or null on a first incarnation.
+          ...(result.supersedes === null ? {} : { supersedes: result.supersedes }) });
     }
     const participant = this._participant(swarm, args.participantId);
     if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId

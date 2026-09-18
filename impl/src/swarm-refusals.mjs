@@ -97,6 +97,16 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_capture_base_unreachable: row(409, ['runtime'], 'the captured revision and the deployment target share no common ancestor'),
   contribution_commit_unresolved: row(409, ['runtime'], 'the contribution names a commit that does not resolve on its lane branch yet'),
   route_degraded: row(409, ['runtime'], 'the named route\'s provider degraded it (one fault class took several seats inside one window); recruits pause on it until a probe succeeds'),
+  // Issue #490: the recruit's own Run conflict. The deployment mints a Run's Goal under the fixed
+  // key `application:<runId>:goal:v1` (application.mjs `start`), so a recruit naming a Run whose
+  // Goal is already bound to another request — the withdrawn attempt's Run the seat id still
+  // spells, a Run that is genuinely live — meets the store's `goal_conflict` at the run start. The
+  // runtime raises the FAMILY spelling of that rule at the recruit seam, carrying the Run, the Goal
+  // it holds, the ledger row that holds them and the remedy (`detail.next`). The store's own
+  // `goal_conflict` keeps its code, message and every other caller's crossing byte-stable, and the
+  // web layer serves this spelling through the swarm family's own arm — where the goal/plan arm
+  // would drop the detail. Same rule, two names: the store's, and this one.
+  swarm_recruit_run_conflict: row(409, ['runtime'], 'the recruit names a Run whose Goal is already bound to another request, so the deployment will not re-define it'),
   // Issue #443: a performed re-route answers ONE proposal, so the fold refuses a row whose
   // predecessor does not carry that proposal — a successor that continues nothing is not a
   // re-route, and the recorded decision would name a decision nobody made.
