@@ -2707,11 +2707,26 @@ export class SwarmRuntime {
     for (const record of Object.values(swarm.couplings ?? {})) {
       if (record.released) continue;
       if (record.coupling === 'failure') {
-        for (const memberId of (swarm.groups?.[record.groupId]?.members ?? [])) {
+        // Issue #448: the roster the policy covers is the GROUP ROW'S OWN HISTORY — the members
+        // it carries now plus the seats it recorded as departed (#395's eviction rows, written by
+        // the participant_left fold itself). A settled member is evicted from every group the
+        // moment it settles (#350), so reading `members` alone made this row unreachable for
+        // exactly the death it exists to announce. A departed seat can never be named again
+        // (group_updated refuses a non-active member), so the union is the group's whole roster:
+        // the row the group already carries, never a second membership table.
+        const group = swarm.groups?.[record.groupId] ?? null;
+        const roster = new Set([...(group?.members ?? []),
+          ...(group?.departed ?? []).map((entry) => entry.participantId)]);
+        for (const memberId of roster) {
           const memberRow = participantsById.get(memberId);
           if (!memberRow || !gone(memberRow)) continue;
+          // The works it held when it went gone: its ACTIVE holds, plus the holds the settle's
+          // own aftermath released — `swarm.holder_released`, the remedy every gone-holder row
+          // names, lands as an assignment_updated after the leave, so that row's seq is the newer
+          // one. A hold the member released while it could still act is not one it died holding.
           const heldWork = new Set(Object.values(swarm.assignments ?? {})
-            .filter((assignment) => assignment.status === 'active' && assignment.participantId === memberId)
+            .filter((assignment) => assignment.participantId === memberId
+              && (assignment.status === 'active' || (assignment.seq ?? 0) > (memberRow.seq ?? 0)))
             .map((assignment) => assignment.workId));
           const dependentWork = Object.entries(swarm.work ?? {})
             .filter(([, work]) => (work.dependsOn ?? []).some((entry) => entry.workId !== undefined && heldWork.has(entry.workId)))

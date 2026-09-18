@@ -1641,10 +1641,6 @@
       "reason": "#43"
     },
     {
-      "key": "test/swarm-coupling.test.mjs :: a declared failure policy tells the dependents when a member is gone; independence is the undeclared default",
-      "reason": "#448"
-    },
-    {
       "key": "test/swarm-gap-red.test.mjs :: S-G11 RED (stage: contribution-unbound): a plain-text contribution binds what it names",
       "reason": "S-G11"
     },
