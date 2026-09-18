@@ -12025,7 +12025,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 23,
+          "size": 28,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12767,9 +12767,73 @@
           ]
         },
         {
+          "name": "_contributionTip",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_contributionContract",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_integrationIssue",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_landedBy",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_refuseLanding",
+          "ordinal": 0,
+          "size": 39,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_landingComment",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_integrate",
+          "ordinal": 0,
+          "size": 104,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "admission:swarm_refusal"
+          ]
+        },
+        {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 710,
+          "size": 718,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

@@ -166,6 +166,17 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'contributionId', kind: 'contribution', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
+    // Issue #296: the landing receipt's own class, the sibling of `contribution_recorded` — that
+    // class says a contribution WAITS for a check, this one says the check settled and the work
+    // landed on a target. Terminal: the squash is on the branch and the receipt carries what ran,
+    // so the acknowledgement is a read, not another command.
+    wakeClass: 'contribution_integrated', scope: 'swarm', terminal: true,
+    next: 'baton swarm view {swarmId}',
+    summary: 'a contribution was squashed onto a target and the landing receipt recorded',
+    rows: [ledgerKind('swarm.contribution_integrated')],
+    subject: { field: 'contributionId', kind: 'contribution', fallback: { field: 'swarmId', kind: 'swarm' } },
+  }),
+  wakeRow({
     wakeClass: 'reviewed', scope: 'swarm', terminal: false, next: null,
     summary: 'a contribution was reviewed — accepted, revised, or rejected',
     rows: [ledgerKind('swarm.contribution_reviewed')],

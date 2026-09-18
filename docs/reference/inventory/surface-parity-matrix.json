@@ -985,6 +985,15 @@
       "ledgered": false
     },
     {
+      "name": "swarm.integrate",
+      "category": "control",
+      "cli": "baton swarm integrate",
+      "mcp": "baton_swarm_integrate",
+      "web": "swarm_integrate",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
       "name": "swarm.list",
       "category": "observation",
       "cli": "baton swarm list",

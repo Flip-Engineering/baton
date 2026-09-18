@@ -480,6 +480,7 @@ the MCP tool table, and the web bus gate on.
 | `swarm.guide` | `swarmId`, `participantId`, `message`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.capture` | `swarmId`, `participantId`, `contributionId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
 | `swarm.check` | `swarmId`, `participantId`, `contributionId`, `checkId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
+| `swarm.integrate` | `swarmId`, `contributionId`, `target`, `dryRun`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.stop` | `swarmId`, `participantId`, `reason`, `idempotencyKey`, `view` | `emergency_stop`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 
 **`swarm.update` kinds (closed set, 12).** Every domain change a caller may name; the payload

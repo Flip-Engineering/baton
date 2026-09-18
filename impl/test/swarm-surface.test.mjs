@@ -54,6 +54,12 @@ const EXAMPLES = Object.freeze({
     swarmId: 'swarm:one', participantId: 'reviewer-a',
     contributionId: 'contribution:1', checkId: 'check:1',
   }),
+  // Issue #296: the landing verb. The target rides the CLI as `--onto`, a value flag like every
+  // other; `--dry-run` is a switch, so its absence is the admitted default and the example omits it.
+  'swarm.integrate': Object.freeze({
+    swarmId: 'swarm:one', contributionId: 'contribution:1', target: 'master',
+    idempotencyKey: 'ik-integrate',
+  }),
   'swarm.stop': Object.freeze({
     swarmId: 'swarm:one', participantId: 'impl-a', reason: 'Assignment is finished.',
     idempotencyKey: 'ik-stop',

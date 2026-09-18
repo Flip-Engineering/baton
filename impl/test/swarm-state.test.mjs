@@ -55,7 +55,7 @@ function swarmWithParticipant(swarmId = 'sw1', participantId = 'p1') {
 // ── SWARM_EVENT_KINDS ────────────────────────────────────────────────────────
 
 describe('SWARM_EVENT_KINDS', () => {
-  test('contains all 18 event kinds', () => {
+  test('contains all 19 event kinds', () => {
     const expected = [
       'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound',
       'swarm.participant_left', 'swarm.group_updated', 'swarm.work_updated',
@@ -65,6 +65,9 @@ describe('SWARM_EVENT_KINDS', () => {
       'swarm.claim_updated', 'swarm.proposal_updated',
       'swarm.context_updated',
       'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_reviewed', 'swarm.closed',
+      // Issue #296: the landing receipt, recorded by `swarm.integrate` (never caller-submittable —
+      // it is the runtime's own record of the git it ran).
+      'swarm.contribution_integrated',
     ];
     for (const kind of expected) assert.ok(SWARM_EVENT_KINDS.has(kind), `missing ${kind}`);
     assert.equal(SWARM_EVENT_KINDS.size, expected.length);

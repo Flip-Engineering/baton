@@ -1251,6 +1251,9 @@ const SWARM_OPERATION_EXAMPLES = Object.freeze({
   'swarm.guide': 'baton swarm guide SWARM_ID reviewer "Focus on the tests"',
   'swarm.capture': 'baton swarm capture SWARM_ID reviewer CONTRIBUTION_ID',
   'swarm.check': 'baton swarm check SWARM_ID reviewer CONTRIBUTION_ID CHECK_ID',
+  // Issue #296: the landing verb — both positionals the CLI row requires, and the `--onto` flag
+  // that names the branch (the field the wire and the receipt call `target`).
+  'swarm.integrate': 'baton swarm integrate SWARM_ID CONTRIBUTION_ID --onto BRANCH',
   'swarm.stop': 'baton swarm stop SWARM_ID reviewer "Work complete"',
 });
 

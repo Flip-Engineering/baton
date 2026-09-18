@@ -51,6 +51,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `swarm.check` | `ordinary` | `baton swarm check` | `baton swarm check SWARM_ID reviewer CONTRIBUTION_ID CHECK_ID` |
 | `swarm.create` | `ordinary` | `baton swarm create` | `baton swarm create "Ship the release"` |
 | `swarm.guide` | `ordinary` | `baton swarm guide` | `baton swarm guide SWARM_ID reviewer "Focus on the tests"` |
+| `swarm.integrate` | `ordinary` | `baton swarm integrate` | `baton swarm integrate SWARM_ID CONTRIBUTION_ID --onto BRANCH` |
 | `swarm.list` | `ordinary` | `baton swarm list` | `baton swarm list` |
 | `swarm.recruit` | `ordinary` | `baton swarm recruit` | `baton swarm recruit SWARM_ID reviewer "Review the change"` |
 | `swarm.stop` | `ordinary` | `baton swarm stop` | `baton swarm stop SWARM_ID reviewer "Work complete"` |
