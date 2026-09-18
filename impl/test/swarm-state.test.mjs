@@ -61,6 +61,8 @@ describe('SWARM_EVENT_KINDS', () => {
       'swarm.participant_left', 'swarm.group_updated', 'swarm.work_updated',
       'swarm.assignment_updated', 'swarm.coupling_updated', 'swarm.coupling_writer_bypassed',
       'swarm.participant_runtime_lost', 'swarm.participant_faulted',
+      // Issue #385: workspace carry on resume-from.
+      'workspace.carried_from',
       // Issues #422/#423: the joint coupling, claim and work-proposal families.
       'swarm.claim_updated', 'swarm.proposal_updated',
       'swarm.context_updated',

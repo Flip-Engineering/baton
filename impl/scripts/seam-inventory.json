@@ -2235,6 +2235,15 @@
           ]
         },
         {
+          "name": "predecessorWorkspaceContext",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_checkoutExactUnderContext",
           "ordinal": 0,
           "size": 8,
@@ -12765,6 +12774,15 @@
           ]
         },
         {
+          "name": "_predecessorWorkspace",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_guidanceParkedFromLabel",
           "ordinal": 0,
           "size": 6,
@@ -12821,7 +12839,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 149,
+          "size": 155,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
@@ -12905,7 +12923,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 751,
+          "size": 803,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

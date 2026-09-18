@@ -10313,6 +10313,23 @@ export class Coordinator {
     return workspaceAttachmentOf(this._workers.values(), workerId);
   }
 
+  /** The session context of the worker whose checkout is identified by workspaceId, regardless
+   * of its liveness — for the resume-from workspace carry (#385). Returns the context and the
+   * live holder ids, or null when no worker ever held that workspace. */
+  predecessorWorkspaceContext(workspaceId) {
+    if (typeof workspaceId !== 'string' || workspaceId.length === 0) return null;
+    const allHandles = [...this._workers.values()];
+    let context = null;
+    for (const handle of allHandles) {
+      if (handle.sessionContext?.ownerTaskId !== workspaceId) continue;
+      context = handle.sessionContext;
+      break;
+    }
+    if (!context) return null;
+    const holders = workspaceHolders(allHandles, workspaceId);
+    return { sessionContext: context, holders };
+  }
+
   /** Whether this handle's checkout is exactly usable under its own session context — the
    * precondition for a borrowed holder to close the checkout as the last holder. */
   _checkoutExactUnderContext(handle, task) {

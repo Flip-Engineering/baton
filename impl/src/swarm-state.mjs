@@ -37,6 +37,9 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   // provider-fault kill. Composed by the swarm runtime from the coordinator's own death seam,
   // never caller-submittable.
   'swarm.participant_faulted',
+  // Issue #385: the runtime-recorded workspace carry — a resume-from successor inherits the
+  // predecessor's workspace (same checkout or changes applied from a snapshot).
+  'workspace.carried_from',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
@@ -581,6 +584,19 @@ export function validateSwarmEvent(kind, payload) {
     validOptionalNonEmptyString(p.resetAtText, 'fault resetAtText', refuse);
     if (p.snapshotSha !== null && p.snapshotSha !== undefined && !isNonEmptyString(p.snapshotSha)) {
       refuse('swarm.participant_faulted snapshotSha must be a sha string or null', 'invalid_payload');
+    }
+    return;
+  }
+
+  if (kind === 'workspace.carried_from') {
+    if (!isNonEmptyString(p.participantId)) refuse('workspace.carried_from requires participantId', 'invalid_payload');
+    if (!WORKSPACE_ID.test(p.workspaceId)) refuse('workspace.carried_from requires a valid workspaceId', 'invalid_payload');
+    if (!isNonEmptyString(p.predecessor)) refuse('workspace.carried_from requires predecessor', 'invalid_payload');
+    if (!Array.isArray(p.paths) || !p.paths.every(isNonEmptyString)) {
+      refuse('workspace.carried_from requires paths as an array of non-empty strings', 'invalid_payload');
+    }
+    if (p.snapshotSha !== undefined && p.snapshotSha !== null && !isNonEmptyString(p.snapshotSha)) {
+      refuse('workspace.carried_from snapshotSha must be a non-empty string or null', 'invalid_payload');
     }
     return;
   }
@@ -1428,6 +1444,25 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       ...participant,
       runtimeLost: Object.freeze({
         workerId: p.workerId, incarnation: p.incarnation, at: p.at, seq: meta.seq, ts: meta.ts,
+      }),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    });
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
+    return;
+  }
+
+  if (kind === 'workspace.carried_from') {
+    const participant = ownGet(swarm.participants, p.participantId);
+    if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    const updatedParticipant = Object.freeze({
+      ...participant,
+      carriedFrom: Object.freeze({
+        workspaceId: p.workspaceId, predecessor: p.predecessor,
+        paths: Object.freeze([...p.paths]),
+        snapshotSha: p.snapshotSha ?? null,
+        seq: meta.seq, ts: meta.ts,
       }),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
