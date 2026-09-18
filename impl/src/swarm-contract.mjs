@@ -87,6 +87,15 @@ export const SWARM_VIEW_PROJECTIONS = Object.freeze({
 });
 export const SWARM_VIEW_PROJECTION_NAMES = Object.freeze(Object.keys(SWARM_VIEW_PROJECTIONS));
 
+/** The admitted values one closed-set field accepts, read from the SAME table the
+ * validator judges against — the one composition site every refusal, help surface and
+ * brief renders from, so a new value cannot land in one without the others (#372). */
+export function swarmClosedSetAdmitted(field) {
+  if (field === 'event') return Object.freeze([...SWARM_EVENT_KINDS]);
+  if (field === 'projection') return Object.freeze([...SWARM_VIEW_PROJECTION_NAMES]);
+  return null;
+}
+
 function swarmViewProjection(projection) {
   if (!Object.hasOwn(SWARM_VIEW_PROJECTIONS, projection)) {
     throw swarmError(`swarm view projection must be one of ${SWARM_VIEW_PROJECTION_NAMES.join(', ')}`,
@@ -536,7 +545,7 @@ export function validateSwarmCommand(name, args) {
   for (const key of Object.keys(args)) {
     if (!declared.has(key)) {
       throw swarmError(`${name} request is invalid: unknown field ${key}`, 'swarm_command_invalid',
-        { field: key, rule: 'unknown-field', fields: [...definition.args],
+        { field: key, rule: 'unknown-field', fields: [...definition.args], admitted: [...definition.args],
           correction: `remove ${key} — ${name} accepts ${definition.args.length > 0 ? definition.args.join(', ') : 'no arguments'}` });
     }
   }
@@ -551,10 +560,17 @@ export function validateSwarmCommand(name, args) {
     const rule = SWARM_FIELD_RULES[field];
     if (!rule.check(value)) {
       // A value outside a closed set gets that set named as its own rule: "one of …" is the fix.
-      const closed = field === 'event' || field === 'projection';
+      const closed = swarmClosedSetAdmitted(field);
+      if (closed) {
+        throw swarmError(`${name} request is invalid: ${field} must be one of: ${closed.join(', ')}`,
+          'swarm_command_invalid', {
+            field, rule: 'closed-set', expectation: rule.expectation, admitted: [...closed],
+            correction: `${field} must be one of: ${closed.join(', ')}`,
+          });
+      }
       throw swarmError(`${name} request is invalid: ${field} must be ${rule.expectation}`,
         'swarm_command_invalid', {
-          field, rule: closed ? 'closed-set' : 'field-predicate', expectation: rule.expectation,
+          field, rule: 'field-predicate', expectation: rule.expectation,
           correction: `${field} must be ${rule.expectation}`,
         });
     }

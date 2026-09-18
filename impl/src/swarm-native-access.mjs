@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { createSwarmNativeBridge, SWARM_BRIDGE_GUIDANCE } from './swarm-native-bridge.mjs';
-import { SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES } from './swarm-contract.mjs';
+import { SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES, SWARM_VIEW_PROJECTION_NAMES } from './swarm-contract.mjs';
+import { EVIDENCE_SEARCH_FILTERS } from './evidence-search.mjs';
 import { WORKTREE_STASH_BRIEF_SENTENCE } from './runtime-isolation.mjs';
 
 /** Connect native participant tools to the live deployment without copying owner authority.
@@ -68,7 +69,10 @@ const SWARM_KNOWLEDGE_GUIDANCE = [
 
 export const SWARM_NATIVE_GUIDANCE = [
   'Your native tools, skills, and delegation remain available. You can coordinate directly with this swarm using your own granted authority.',
-  'Run node "$BATON_SWARM_CLIENT" swarm.view to see participants, shared context, knowledge, available actions, and your current permissions. Add "projection":"outline" (or participants, contributions, attention, guidance, workspace, knowledge) to read one slice instead of the whole record — the bridge answers a view too large for its frame with the projection that fits.',
+  'Run node "$BATON_SWARM_CLIENT" swarm.view to see participants, shared context, knowledge, available actions, and your current permissions. Add "projection":"outline" to read one slice instead of the whole record — the bridge answers a view too large for its frame with the projection that fits.',
+  `swarm.view projection — one of: ${[...SWARM_VIEW_PROJECTION_NAMES].join(', ')}`,
+  `evidence.search fields — one of: ${[...EVIDENCE_SEARCH_FILTERS].join(', ')}`,
+  'A closed-set refusal carries the admitted values in detail.admitted and reads "<field> must be one of: ..."; an unknown-field refusal carries the admitted fields the same way. Absent swarm.view projection means full.',
   'Run node "$BATON_SWARM_CLIENT" swarm.update to publish a finding: {"event":"swarm.contribution_recorded","payload":{"body":"your whole report"}} — put the whole report inside the payload\'s `body` field, the payload shape is closed, and an unknown field refuses. An omitted contributionId is minted per call, so every such update records a NEW contribution; name the same contributionId to extend the contribution you already recorded. Group, work, context, and review updates use the permitted event kinds shown by swarm.view — the `updates` field lists, beside availableActions, exactly the kinds you may send now and the permission that admits each.',
   'Use swarm.guide to speak to a participant, swarm.recruit to bring in help when granted, and swarm.watch to await relevant updates. These commands use participant names; no worker, fence, pause, or approval choreography is required. swarm.capture and swarm.check belong to the root, and the root cannot capture or check your work until a contribution is recorded — ending a turn without publishing leaves the work unreachable.',
   SWARM_KNOWLEDGE_GUIDANCE,
