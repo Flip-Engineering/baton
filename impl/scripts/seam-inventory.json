@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 698,
+          "size": 716,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -2035,7 +2035,7 @@
         {
           "name": "_preserveProgressBeforeReap",
           "ordinal": 0,
-          "size": 97,
+          "size": 116,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -2074,10 +2074,11 @@
         {
           "name": "_removeTaskWorktree",
           "ordinal": 0,
-          "size": 7,
+          "size": 24,
           "seam": "effect",
           "evidence": [
-            "effect:worktree_authority"
+            "effect:worktree_authority",
+            "admission:policy_gate"
           ]
         },
         {
@@ -12152,7 +12153,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 599,
+          "size": 654,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"

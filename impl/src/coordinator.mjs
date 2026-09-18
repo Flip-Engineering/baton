@@ -35,7 +35,7 @@ import {
   validRecoveryProcessReapedPayload,
 } from './process-lifecycle.mjs';
 import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
-import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
+import { ensureLaneBranchAtHead, normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
 import { GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanContext, planBriefMatches } from './goal-plan.mjs';
 import { normalizeBrowserUseUrl } from './browser-use.mjs';
 import { addUsd, subtractUsdFloor, usdFromNanos, usdToNanos } from './usd.mjs';
@@ -1583,6 +1583,24 @@ export class Coordinator {
                 } else if (!processValid) {
                   handle.workspaceOwnerBindingDiagnostic = 'workspace_owner_process_authority_unproven';
                 }
+              }
+              // Issue #428: the reconciliation's custody outcomes ride the coordination
+              // ledger (driver.recorded) too, so the swarm projection derives a seat's
+              // workspace story from rows, not from reconstruction.
+              for (const row of report?.removedWorkspaces ?? []) {
+                this._coordRecord('worktree.removed', {
+                  workspaceId: row.physicalOwnerId, participantId: null, workerId: null,
+                  reason: 'crash_reconciliation', snapshot: row.snapshot ?? null,
+                  branch: row.branch ?? null, at: new Date().toISOString(),
+                }, `worktree.removed:${row.physicalOwnerId}:${row.snapshot ?? 'none'}`);
+              }
+              for (const row of report?.diagnostics ?? []) {
+                if (row?.code !== 'workspace_owner_head_uncontained_retained' || row.retained !== true) continue;
+                this._coordRecord('worktree.custody_retained', {
+                  workspaceId: row.physicalOwnerId, participantId: null,
+                  code: row.code, reason: 'crash_reconciliation',
+                  headSha: row.headSha ?? null, branch: row.branch ?? null,
+                }, `worktree.custody_retained:${row.physicalOwnerId}:${row.headSha ?? 'unknown'}`);
               }
               return report;
             };
@@ -9653,6 +9671,17 @@ export class Coordinator {
         }
         captured = await this._captureTrustWorktree(handle, task, { snapshot: true });
       } else {
+        // Issue #428: before the capture commits anything, the seat's lane branch must be
+        // at its checkout's HEAD — a branch that is missing or behind HEAD would leave the
+        // stop's snapshot commit reachable through nothing. A repair refusal retains the
+        // checkout (the catch below), never guesses.
+        const laneBranch = task.sessionContext?.branch ?? null;
+        const ownerTaskId = task.sessionContext?.ownerTaskId ?? task.id;
+        if (laneBranch && typeof handle.worktree === 'string' && existsSync(handle.worktree)) {
+          await Promise.resolve(ensureLaneBranchAtHead(this._repoRoot, ownerTaskId, {
+            worktree: handle.worktree,
+          }));
+        }
         captured = await manager.capture(handle.worktree ?? task.worktree, {
           vendor: handle.vendor,
           model: handle.modelObserved ?? handle.modelResolved,
@@ -9690,6 +9719,14 @@ export class Coordinator {
         },
       });
       this._coordMapEvent(event);
+      // Issue #428: the custody row records exactly what the removal is backed by — the
+      // pinned sha and the lane branch that now names it. It rides the coordination ledger
+      // (driver.recorded) so the swarm projection derives custody from it.
+      this._coordRecord('worktree.snapshotted', {
+        workspaceId: task.sessionContext?.ownerTaskId ?? task.id, participantId: null,
+        workerId: handle.id, taskId: task.id, sha, branch: task.sessionContext?.branch ?? null,
+        snapshotted: captured?.snapshotted === true, stopSeq: stopEvent?.seq ?? null,
+      }, `worktree.snapshotted:${handle.id}:${event.seq}`);
       task.checkpoint = checkpoint;
       task.progressPreservation = Object.freeze({ state: 'pinned', eventSeq: event.seq });
       return checkpoint;
@@ -9750,9 +9787,26 @@ export class Coordinator {
   async _removeTaskWorktree(task, { excludeHolderId = null } = {}) {
     if (!task || !this._worktrees || typeof this._worktrees.remove !== 'function') return;
     const ownerTaskId = task.sessionContext?.ownerTaskId ?? task.id;
+    // The removal row is recorded only for a checkout that actually existed: the facade's
+    // reservation-only paths resolve without touching a worktree, and those are not removals.
+    const worktreePath = ownerTaskId ? join(this._repoRoot, '.baton', 'wt', ownerTaskId) : null;
+    const present = worktreePath !== null && existsSync(worktreePath);
     await Promise.resolve(this._worktrees.remove(ownerTaskId, {
       ...(excludeHolderId ? { excludeHolderId } : {}),
     }));
+    if (!present) return;
+    // Issue #428: the removal is durable and named — which path removed it (a stop or a
+    // drain), and the snapshot sha the removal is backed by. It rides the coordination
+    // ledger (driver.recorded) so the swarm projection derives custody from it.
+    const snapshot = task.checkpoint?.state === 'pinned' ? task.checkpoint.sha
+      : (typeof task.capturedSha === 'string' ? task.capturedSha : null);
+    const at = new Date().toISOString();
+    this._coordRecord('worktree.removed', {
+      workspaceId: ownerTaskId, participantId: null,
+      workerId: typeof excludeHolderId === 'string' ? excludeHolderId : null,
+      reason: this._drainState === 'open' ? 'stop' : 'drain',
+      snapshot, branch: task.sessionContext?.branch ?? null, at,
+    }, `worktree.removed:${ownerTaskId}:${at}`);
   }
 
   /** Release one handle's hold on a shared checkout without destroying it. The remaining holder
@@ -9782,6 +9836,7 @@ export class Coordinator {
       physicalOwnerId, holders: Object.freeze([...remainingHolders]),
     }));
   }
+
 
   /** Release any holder — the checkout's own allocator or a borrowed holder — whose checkout is
    * retained because it holds content no capture recorded. Preservation keeps the resource
