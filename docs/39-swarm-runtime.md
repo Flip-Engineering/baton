@@ -773,3 +773,53 @@ A stop of a seat with no live runtime (worker dead, exited, orphaned, or never b
 run drain entirely and settles the membership row at once (issue #353); a stop that does wait on a
 live worker answers a pending receipt whose observation names the seat's own row (`baton swarm view
 <swarm> --participant-id <seat>`), never `doctor --check`.
+
+## Provider faults, carried workspaces, context packages and landings (issues #442, #385, #441, #296, 2026-09-18)
+
+Four rows landed on 2026-09-18 that the loop now depends on; each is a fold, a wake, and a refusal
+family, never a side channel.
+
+**A provider fault is one fold (#442).** When a seat's worker ends with the provider-fault pair
+the coordinator already emits (`lifecycle.turn_completed status: failed` + `kill.requested rule:
+provider_fault`), the runtime records `swarm.participant_faulted {swarmId, participantId, workerId,
+code, route: {harness, model, effort}, resetAt | null, resetAtText, snapshotSha | null}` and
+settles the seat (`swarm.participant_left {reason: 'provider_fault'}`, #350). The `dead` wake class
+fires on the faulted row, so a bounded watch `--wake-class contribution_recorded,dead` returns on
+it. The deployment's route row for that (harness, model) reads `degraded` with the reset, and
+`swarm.recruit` onto it refuses pre-effect `route_degraded {route, code, resetAt}` (#324's
+readiness consult). `resetAt` is a zone-qualified instant or `null`; a provider string with no
+zone (zai reports Beijing wall time) keeps `resetAtText`. A fault-settled seat stays a resumable
+predecessor for `swarm.recruit --resume-from` — its work is on disk and the death was the
+provider's; a seat the root stopped is not (#452, open). Observed live 09:50Z: fold, wake and
+refusal within one second of the provider's 429.
+
+**A successor carries its predecessor's workspace (#385).** `--resume-from <seat>` whose worker
+is dead binds the predecessor's retained checkout (#428 custody) when no other live worker holds
+it, else carries the change set of the predecessor's last snapshot into a fresh checkout, and
+records `workspace.carried_from {participantId, workspaceId, predecessor, paths, snapshotSha |
+null}`; the brief's `## Inheritance from <seat>` names the carried paths. A predecessor whose
+snapshot holds no changed path carries nothing: fresh workspace, no row. A predecessor that is
+still working keeps its checkout — the successor starts fresh and inherits guidance only (#318);
+a checkout held by a foreign live worker refuses `swarm_workspace_unavailable`.
+
+**A seat reads its issue through a context package (#441 lanes A and B; docs/47).** `swarm recruit
+… --issue N [--doc PATH …]` reads the issue through the root's own `gh` credential and admits ONE
+ContextPackage (`package.admitted`, branches `issue:N` and `doc:<path>@<sha>` for every repository
+doc the issue cites), attaches it to the seat's run (`package.attached`), and the brief renders
+`## Context package` — digests and a bounded head per branch, the full text one `run.package.read`
+away. A recruit without `--issue` composes byte-identically to before. Seat-side reads
+(`run.package.read`, `run.contributions.read`, `run.peers.read`) refuse typed
+(`package_not_attached_to_run`, `swarm_context_package_not_found`,
+`swarm_context_package_branch_not_found`).
+
+**Landing is a verb (#296).** `swarm integrate <swarm> <contributionId> --onto <branch> [--dry-run]`
+squashes the range merge-base..commit.sha of an ACCEPTED contribution onto the target in a scratch
+checkout the deployment owns, runs the regenerators and the derived gate set there
+(`landing-table.mjs`: the seam inventory plus the declared region table), and records
+`swarm.contribution_integrated` — the receipt of the git it actually ran, never
+caller-submittable. Refusals are typed and pre-effect where possible:
+`integrate_contribution_not_accepted`, `integrate_commit_unreachable`, `integrate_conflict`,
+`integrate_gates_red`, `integrate_target_moved`, `integrate_change_invalid`. Known gap at the
+time of writing: the scratch checkout links `node_modules` from the repository root while this
+repository installs under `impl/`, so every regenerator fails and the refusal carries no stderr
+tail (#451, open); until it lands the root's hand chain in README.md remains the landing path.
