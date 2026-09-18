@@ -21,7 +21,7 @@ import {
 } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { ToolchainProjectionError } from './toolchain-projection.mjs';
-import { foldCanonicalCase } from './canonical-order.mjs';
+import { compareCanonicalStrings, foldCanonicalCase } from './canonical-order.mjs';
 // Issue #428: the one custody predicate — a second inline opinion about whether cleanup may
 // destroy a shared checkout is exactly the drift the surface gate refuses.
 import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
@@ -842,17 +842,70 @@ function logEvent(opts, worker, kind, payload) {
   opts.log.append({ worker, harness: 'n/a', turnEpoch: 0, kind, actor: 'orchestrator', payload });
 }
 
+/** The repository-confined absolute path of ONE repo-relative dependency directory. Shape and
+ * containment are decided here — the same two refusals `dependencySources` raises — so a
+ * deployment-configured list can never name anything outside the repository, and the integration
+ * checkout links exactly what this answers. */
+function dependencyDirPath(repoRoot, rel) {
+  const realRepo = realpathSync(repoRoot);
+  if (typeof rel !== 'string' || rel.length === 0 || isAbsolute(rel)) throw new TypeError('dependency directory must be relative');
+  const source = pathResolve(realRepo, rel); const within = pathRelative(realRepo, source);
+  if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new TypeError('dependency directory escapes repository');
+  return source;
+}
+
 function dependencySources(repoRoot, dependencyDirs = []) {
   const realRepo = realpathSync(repoRoot);
   return dependencyDirs.map((rel) => {
-    if (typeof rel !== 'string' || rel.length === 0 || isAbsolute(rel)) throw new TypeError('dependency directory must be relative');
-    const source = pathResolve(realRepo, rel); const within = pathRelative(realRepo, source);
-    if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new TypeError('dependency directory escapes repository');
+    const source = dependencyDirPath(realRepo, rel);
     if (!existsSync(source)) throw new TypeError('dependency directory does not exist');
     const realSource = realpathSync(source); const realWithin = pathRelative(realRepo, realSource);
     if (realWithin === '..' || realWithin.startsWith(`..${sep}`) || isAbsolute(realWithin) || !lstatSync(realSource).isDirectory()) throw new TypeError('dependency directory is not confined');
     return { rel, realSource };
   });
+}
+
+// The directories an installed tree may hide behind are never descended into (an install is a
+// destination, not a place to look for more installs), and the walk is bounded in both depth and
+// directory count so deriving them can never be the expensive part of a landing.
+const DEPENDENCY_SCAN_SKIP = Object.freeze(new Set(['.git', '.baton', '.baton-brief', 'node_modules']));
+const DEPENDENCY_SCAN_DEPTH = 4;
+// A directory COUNT bound for the walk below — never a byte ceiling, which is why it takes no
+// cataloged spelling (impl/src/limits.mjs owns every one of those).
+const DEPENDENCY_SCAN_DIRECTORY_CAP = 5_000;
+const isDirectoryPath = (path) => { try { return statSync(path).isDirectory(); } catch { return false; } };
+
+/**
+ * The dependency directories this repository actually carries: every directory that holds a
+ * `package.json` with a sibling `node_modules`, repo-relative and ordered (issue #451).
+ *
+ * The ONE derivation both consumers share: a deployment configures the lane worktrees with it
+ * (and now threads the same value into the landing), and the integration checkout falls back to
+ * it. It is why a repository whose install lives at `impl/node_modules` — or `packages/worker/…` —
+ * links that install instead of nothing: a name is never hard-coded, it is read from the tree.
+ */
+export function deriveDependencyDirs(repoRoot) {
+  const realRepo = realpathSync(repoRoot);
+  const found = [];
+  const walk = (relative, depth, budget) => {
+    const dir = relative === '' ? realRepo : pathResolve(realRepo, relative);
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    const names = new Set(entries.map((entry) => entry.name));
+    if (names.has('package.json') && names.has('node_modules')
+      && isDirectoryPath(pathResolve(dir, 'node_modules'))) {
+      found.push(relative === '' ? 'node_modules' : join(relative, 'node_modules'));
+    }
+    if (depth === 0) return;
+    for (const entry of entries) {
+      if (!entry.isDirectory() || DEPENDENCY_SCAN_SKIP.has(entry.name)) continue;
+      if (budget.count >= DEPENDENCY_SCAN_DIRECTORY_CAP) return;
+      budget.count += 1;
+      walk(relative === '' ? entry.name : join(relative, entry.name), depth - 1, budget);
+    }
+  };
+  walk('', DEPENDENCY_SCAN_DEPTH, { count: 0 });
+  return found.sort(compareCanonicalStrings);
 }
 
 function materializeDependencies(dir, sources) {
@@ -1806,7 +1859,9 @@ function integrationSlug(contributionId) {
  * @param {string} repoRoot
  * @param {string} contributionId the contribution being landed (names the directory)
  * @param {{target?: string, dependencyDirs?: string[], log?: object}} [opts]
- *   `target` is the branch/ref the scratch checkout starts on (default HEAD).
+ *   `target` is the branch/ref the scratch checkout starts on (default HEAD). `dependencyDirs`
+ *   names the repo-relative installs to link (the deployment's own `workerDependencyDirs`, when it
+ *   configures them); omitted or empty, `deriveDependencyDirs` reads them from the repository.
  * @returns {Promise<{dir: string, target: string, targetHead: string, branch: string,
  *   dependencyLinks: Array<{name: string, source: string, path: string}>, cleanup: () => Promise<void>}>}
  * @throws {WorktreeAlreadyExistsError} when a checkout for this contribution already exists
@@ -1831,6 +1886,7 @@ export async function createIntegrationCheckout(repoRoot, contributionId, opts =
   }
 
   let registered = false;
+  let excludePath = null;
   let cleanupPromise = null;
   const cleanup = () => {
     if (!cleanupPromise) cleanupPromise = (async () => {
@@ -1854,6 +1910,7 @@ export async function createIntegrationCheckout(repoRoot, contributionId, opts =
         }
       }
       registered = false;
+      if (excludePath !== null) { rmSync(excludePath, { force: true }); excludePath = null; }
       try { sh('git', ['worktree', 'prune'], repoRoot); }
       catch (error) { throw new WorktreeCleanupError('integration checkout administration could not be pruned', { cause: error }); }
       if (existsSync(dir) || listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === pathResolve(dir))) {
@@ -1869,14 +1926,29 @@ export async function createIntegrationCheckout(repoRoot, contributionId, opts =
     registered = true;
     // Link, never copy: the installed tree is large, and a landing that copied it would both pay
     // for it and drift from it the moment the repository's own install changed.
-    const repository = realpathSync(repoRoot);
-    for (const name of opts.dependencyDirs ?? ['node_modules']) {
-      const source = join(repository, name);
+    //
+    // Issue #451: the names come from the deployment's own configuration when it sets one (the
+    // SAME value the lane worktrees are built with) and from the repository otherwise — never a
+    // root-only guess, which links nothing on a repository whose install sits under a
+    // sub-directory and leaves every regenerator dying ERR_MODULE_NOT_FOUND.
+    const names = Array.isArray(opts.dependencyDirs) && opts.dependencyDirs.length > 0
+      ? opts.dependencyDirs : deriveDependencyDirs(repoRoot);
+    for (const name of names) {
+      const source = dependencyDirPath(repoRoot, name);
       if (!existsSync(source)) continue;
       const path = join(dir, name);
       if (existsSync(path)) continue;
+      // A configured install may sit under a directory the target's own tree does not carry yet.
+      mkdirSync(dirname(path), { recursive: true });
       symlinkSync(source, path, 'dir');
       dependencyLinks.push({ name, source, path });
+    }
+    if (dependencyLinks.length > 0) {
+      // A link is not repository content, and `.gitignore`'s `node_modules/` matches a DIRECTORY —
+      // never the symlink — so without this the `git add -A` that builds the squash would stage
+      // the link itself into the landed commit. The projection lanes already exclude their own
+      // materialized targets this way: one mechanism, never a second ignore vocabulary.
+      excludePath = configureProjectionExcludes(repoRoot, dir, child, dependencyLinks.map((link) => link.name));
     }
   } catch (error) {
     await cleanup();
@@ -1931,6 +2003,8 @@ export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.b
  * @param {{name: string, email: string}} request.author the seat's actor (the commit's AUTHOR)
  * @param {{name: string, email: string}} request.committer the landing authority (the COMMITTER)
  * @param {(dir: string, paths: {changed: string[], base: string, targetHead: string}) => Promise<{regenerated?: string[]}>} [request.regenerate]
+ * @param {string[]} [request.dependencyDirs] the deployment's own dependency directories, when it
+ *   configures them; omitted, the scratch checkout derives them from the repository (#451)
  * @param {(dir: string, files: string[], context: object) => Promise<{files: string[], verdictLine: string|null, unexpected: any[]}>} [request.runGates]
  * @param {boolean} [request.dryRun]
  * @param {object} [request.log]
@@ -1968,7 +2042,7 @@ export async function landContribution(repoRoot, request) {
   }
   const prepare = async (ontoHead) => {
     const checkout = await createIntegrationCheckout(repoRoot, contributionId, {
-      target: ontoHead, log: request.log,
+      target: ontoHead, log: request.log, dependencyDirs: request.dependencyDirs,
     });
     try {
       // `--squash` is the whole point: it takes the lane's range against the common ancestor and

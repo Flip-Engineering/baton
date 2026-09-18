@@ -30,6 +30,10 @@ import { renderRouteUsageLines } from './adapter.mjs';
 // for a capture.
 import { gateSetForPaths } from './landing-table.mjs';
 import { landContribution } from './worktree.mjs';
+// Issue #451: the ONE stderr-tail derivation the adapters keep since #326 (the bound and the #299
+// redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
+// a tail nobody else's bound describes.
+import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,13 +60,29 @@ function runNodeScript(cwd, args, env = {}) {
   };
 }
 
+/** The #326 tail for one captured stream: bound the raw bytes by the adapter's own ceiling, then
+ * redact with the one sanitizer. The LAST bytes survive — a dying step's own words are the
+ * evidence, never the head of its output. An empty stream keeps an empty tail (absence, never a
+ * guess). */
+function boundedStderrTail(raw) {
+  const text = typeof raw === 'string' ? raw : '';
+  if (text === '') return '';
+  const session = { stderrTailRaw: '' };
+  appendStderrTail(session, text);
+  return crashedStderrTail(session);
+}
+
 /** The default regenerators: the three the repository always runs, each told to WRITE. */
 async function defaultIntegrationRegenerate(dir) {
   for (const script of INTEGRATION_REGENERATORS) {
     const result = runNodeScript(dir, [script, '--write']);
     if (result.status !== 0) {
+      // Issue #451: the refusal carries the cause — WHICH step died, its exit status, and a
+      // bounded, redacted tail of its stderr — so the operator reads why the landing stopped
+      // instead of reproducing the checkout by hand to find out.
       throw Object.assign(new Error(`${script} --write failed in the landing checkout`), {
-        code: 'integrate_change_invalid', stderr: result.stderr.slice(-2000),
+        code: 'integrate_change_invalid',
+        script, exit: result.status, stderrTail: boundedStderrTail(result.stderr),
       });
     }
   }
@@ -83,12 +103,15 @@ async function defaultIntegrationGates(dir, files, context) {
     } catch { document = null; }
     if (document === null) {
       // A runner that died before it could judge is not a green gate set. Never a bare "failed":
-      // the refusal names the exit status and the tail of what the runner said.
+      // the row names the script, its exit status and the #326 tail of what the runner said — the
+      // same bounded, redacted derivation the regenerator refusal carries (issue #451).
       return {
         files,
         verdictLine: null,
-        unexpected: [{ row: 'suite-did-not-judge', exitStatus: result.status,
-          detail: `${result.stderr || result.stdout}`.trim().split('\n').slice(-4).join(' | ') }],
+        unexpected: [{
+          row: 'suite-did-not-judge', script: 'impl/scripts/run-suite.mjs', exitStatus: result.status,
+          stderrTail: boundedStderrTail(`${result.stderr || result.stdout}`),
+        }],
       };
     }
     const unexpected = Array.isArray(document.unexpected) ? [...document.unexpected] : [];
@@ -4063,7 +4086,8 @@ export class SwarmRuntime {
 
   /** Translate the git authority's typed landing error into the family's refusal, naming what the
    * caller must act on: the conflicting files AND the landed contribution that touched them, the
-   * verdict's own unexpected rows (never a bare "failed"), or the range that was never landable. */
+   * verdict's own unexpected rows (never a bare "failed"), the step that died with its exit status
+   * and bounded redacted stderr tail (#451), or the range that was never landable. */
   _refuseLanding(error, swarm) {
     const raised = typeof error?.code === 'string' && error.code.startsWith('integrate_')
       ? error.code : null;
@@ -4082,6 +4106,12 @@ export class SwarmRuntime {
     }
     if (typeof error.path === 'string') detail.path = error.path;
     if (typeof error.sha === 'string') detail.sha = error.sha;
+    // Issue #451: a landing step that DIED says so — the script, its exit status, and the bounded
+    // redacted tail of what it wrote to stderr. Without these the operator saw a bare "failed in
+    // the landing checkout" (`detail: {}`) and had to rebuild the checkout by hand to learn why.
+    if (typeof error.script === 'string') detail.script = error.script;
+    if (Number.isSafeInteger(error.exit)) detail.exit = error.exit;
+    if (typeof error.stderrTail === 'string' && error.stderrTail.length > 0) detail.stderrTail = error.stderrTail;
     const message = `Landing did not complete: ${error.message}`;
     // The code is spelled at each call site, never passed through: the #430 owner table is audited
     // by reading the LITERAL second argument of every refuse() in this module, so a variable here
@@ -4186,6 +4216,10 @@ export class SwarmRuntime {
         target: args.target,
         commitSha: tip,
         message,
+        // Issue #451: the SAME dependency directories the deployment configures for lane
+        // worktrees. Omitted, the worktree authority derives them from where the installs
+        // actually sit — the integration checkout never guesses at a root-only `node_modules`.
+        dependencyDirs: authority.dependencyDirs,
         // Authored by the SEAT and committed by the landing authority: the change is the lane's
         // work, the act that put it on the target is the root's (#296 item 1).
         author: { name: contribution.participantId, email: mailbox(contribution.participantId) },

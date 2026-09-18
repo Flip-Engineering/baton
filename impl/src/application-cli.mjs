@@ -4651,6 +4651,49 @@ async function assertCliRouteServable(parsed, client) {
   }
 }
 
+// ── issue #451: the landing refusal's cause, printed under the refusal line ──────────────────────
+
+/** The `{script, exit, stderrTail}` a landing step's refusal carries, whichever envelope it
+ * arrived in: the wire's own error object (the resident answered the command) or the runtime's
+ * detail unwrapped (an embedded client). Null when the refusal carries no tail — every other
+ * refusal keeps the wire's message verbatim. */
+function integrationRefusalCause(error) {
+  if (!record(error?.detail)) return null;
+  const inner = record(error.detail.detail) ? error.detail.detail : error.detail;
+  if (typeof inner.stderrTail !== 'string' || inner.stderrTail.length === 0) return null;
+  return Object.freeze({
+    script: typeof inner.script === 'string' && inner.script.length > 0 ? inner.script : null,
+    exit: Number.isSafeInteger(inner.exit) ? inner.exit : null,
+    stderrTail: inner.stderrTail,
+  });
+}
+
+/** Issue #451 item (b): the tail renders UNDER the refusal line the operator already reads (the
+ * #265 convention — docs/39: the CLI prints the detail under the refusal line). The tail is the
+ * #326 derivation — bounded and redacted where it was composed — so this only indents it under the
+ * step that produced it. Null when there is nothing to render. */
+function integrationRefusalBlock(error) {
+  const cause = integrationRefusalCause(error);
+  if (cause === null) return null;
+  const head = cause.script === null
+    ? 'the failing landing step'
+    : cause.exit === null ? cause.script : `${cause.script} exited ${cause.exit}`;
+  return `${head}\n${cause.stderrTail.split('\n').map((line) => `  ${line}`).join('\n')}`;
+}
+
+/** `swarm.integrate`'s own leg: the refusal it raises is the one verb whose cause is a subprocess's
+ * dying words, so the block above is appended to the message the CLI prints. Every other verb's
+ * refusals pass through untouched. */
+async function runSwarmIntegrateCli(parsed, client) {
+  try {
+    return await client.command(parsed.name, parsed.args, parsed.idempotencyKey);
+  } catch (error) {
+    const block = integrationRefusalBlock(error);
+    if (block !== null) error.message = `${error.message}\n${block}`;
+    throw error;
+  }
+}
+
 export async function runBatonCli(parsed, client, options = {}) {
   if (parsed.kind === 'help') return { help: BATON_CLI_HELP };
   if (parsed.kind === 'doctor') return client.doctor();
@@ -4703,6 +4746,9 @@ export async function runBatonCli(parsed, client, options = {}) {
         }, parsed.idempotencyKey);
       }
     }
+    // Issue #451: the landing verb's refusal carries its cause, so the CLI renders it under the
+    // refusal line. Every other command keeps the transport's own answer untouched.
+    if (parsed.name === 'swarm.integrate') return runSwarmIntegrateCli(parsed, client);
     return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   }
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
