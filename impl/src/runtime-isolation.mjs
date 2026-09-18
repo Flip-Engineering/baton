@@ -1,7 +1,8 @@
 // Per-worker runtime/config-home isolation. This is an environment and credential boundary, not
 // a claim of kernel filesystem/network sandboxing; adapter cards describe those separately.
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { projectCredentialTree } from './credential-projection.mjs';
 
@@ -44,6 +45,62 @@ export function runtimeIdentity(selection) {
   };
 }
 
+// ── #346: the live credential DOCUMENT ─────────────────────────────────────────────────────────
+//
+// A claude-code subscription seat authenticates from the credential file under its own
+// CLAUDE_CONFIG_DIR. Projecting it at spawn is not enough — that is the spawn-time snapshot #346
+// observed dying mid-lane ("401 OAuth access token has expired") while nothing re-projected the
+// deployment's refreshed credential into the running worker. So the family's credential document
+// is written here at lease creation AND rewritten IN PLACE for every live lease whenever the
+// deployment's credential cache adopts a refresh, atomically (0600, temp + rename): a running seat
+// reads a live access token before its next provider call, with no harness cooperation.
+//
+// The document carries the access token only; the refresh token never enters a worker scope.
+
+/** The bounded, relative path a projected document lands at inside the lease's config dir. */
+function normalizedDocumentPath(relativePath) {
+  if (typeof relativePath !== 'string' || relativePath.length === 0 || relativePath.length > 256
+    || relativePath.includes('\0') || isAbsolute(relativePath)) return null;
+  const segments = relativePath.split(/[\\/]/u);
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
+  return segments.join('/');
+}
+
+/** The document a family's projection currently names, or null. One derivation, read at lease
+ * creation and again on every re-projection — never a cached copy that could go stale. */
+function credentialDocumentOf(projection) {
+  if (!projection || typeof projection.read !== 'function') return null;
+  let document;
+  try { document = projection.read(); } catch { return null; }
+  if (!recordValue(document)) return null;
+  const relativePath = normalizedDocumentPath(document.relativePath);
+  if (relativePath === null || typeof document.content !== 'string' || document.content.length === 0) {
+    return null;
+  }
+  return Object.freeze({ relativePath, content: document.content });
+}
+
+function recordValue(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Atomic, owner-only write of one credential document. */
+function writeCredentialDocument(config, document) {
+  const target = join(config, ...document.relativePath.split('/'));
+  const parent = dirname(target);
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  chmodSync(parent, 0o700);
+  const temporary = join(parent, `.${process.pid}.${randomBytes(8).toString('hex')}.credential.tmp`);
+  try {
+    writeFileSync(temporary, document.content, { mode: 0o600, flag: 'wx' });
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, target);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+  return target;
+}
+
 function privateDir(path) {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   chmodSync(path, 0o700);
@@ -58,6 +115,10 @@ export class RuntimeIsolation {
     this.credentialEnv = opts.credentialEnv ?? {};
     this.credentialFiles = opts.credentialFiles ?? {};
     this.credentialTrees = opts.credentialTrees ?? {};
+    this.credentialDocuments = opts.credentialDocuments ?? {};
+    // #346: every LIVE lease, keyed by worker id — the registry the deployment's refresh
+    // re-projection walks. Removed with the lease, so a reaped worker is never written to.
+    this.leases = new Map();
     this.keepEnv = new Set([...(opts.keepEnv ?? []), ...ALWAYS_KEEP]);
     // Admission constructs policy only. The first accepted worker creates the runtime root so a
     // pre-worktree capacity refusal leaves no runtime filesystem authority behind.
@@ -71,6 +132,9 @@ export class RuntimeIsolation {
     // Grok's native sandbox grants its expected ~/.grok tree, not an arbitrary GROK_HOME outside
     // HOME. Keep HOME private and place the projected config at that vendor-native path.
     const config = privateDir(surface === 'grok' ? join(home, '.grok') : join(root, 'config', family));
+    // #346: the lease is registered BEFORE any credential is written, so a refresh that lands
+    // between the two writes re-projects into this lease rather than skipping it.
+    this.leases.set(workerId, Object.freeze({ family, surface, config }));
 
     const env = {};
     for (const [key, value] of Object.entries(this.baseEnv)) {
@@ -134,6 +198,14 @@ export class RuntimeIsolation {
       }
     }
 
+    // #346: the live credential document (claude-code subscription routes) — written here and
+    // rewritten in place by projectCredentialDocument() on every cache refresh.
+    const document = credentialDocumentOf(this.credentialDocuments[family]);
+    let projectedDocumentCount = 0;
+    if (document) {
+      writeCredentialDocument(config, document);
+      projectedDocumentCount = 1;
+    }
     const frameRedactors = [];
     let projectedFileCount = 0;
     for (const source of this.credentialFiles[family] ?? []) {
@@ -166,13 +238,14 @@ export class RuntimeIsolation {
       frameRedactors.push(projected.redactProviderFrame);
     }
 
-    const projectedCredentialCount = projectedEnvCount + projectedFileCount + projectedTreeCount;
+    const projectedFileAxis = projectedFileCount + projectedDocumentCount;
+    const projectedCredentialCount = projectedEnvCount + projectedFileAxis + projectedTreeCount;
     const adapterManaged = projectedCredentialCount === 0 && adapterCredentialState === 'available';
     const credentialCount = adapterManaged ? 1 : projectedCredentialCount;
     const credentialMechanism = adapterManaged ? 'adapter'
-      : projectedEnvCount > 0 && projectedFileCount > 0
+      : projectedEnvCount > 0 && projectedFileAxis > 0
       ? 'mixed'
-      : projectedEnvCount > 0 ? 'environment' : (projectedFileCount > 0 || projectedTreeCount > 0) ? 'file' : 'none';
+      : projectedEnvCount > 0 ? 'environment' : (projectedFileAxis > 0 || projectedTreeCount > 0) ? 'file' : 'none';
 
     return {
       env,
@@ -199,7 +272,26 @@ export class RuntimeIsolation {
     };
   }
 
+  /** #346: rewrite a family's credential document for every LIVE lease of that family. The
+   * deployment calls this the moment its credential cache adopts a refreshed credential, so a
+   * running seat holds the rollover before its next provider call. Returns how many leases the
+   * document reached (a lease whose directory vanished is reconciled away, never repaired here). */
+  projectCredentialDocument(family) {
+    const document = credentialDocumentOf(this.credentialDocuments[family]);
+    if (!document) return 0;
+    let reached = 0;
+    for (const lease of this.leases.values()) {
+      if (lease.family !== family) continue;
+      try {
+        writeCredentialDocument(lease.config, document);
+        reached += 1;
+      } catch { /* best effort: the lease's own reconciliation owns a vanished directory */ }
+    }
+    return reached;
+  }
+
   remove(workerId) {
+    this.leases.delete(workerId);
     const target = join(this.root, workerId);
     rmSync(target, { recursive: true, force: true });
     if (existsSync(target)) {

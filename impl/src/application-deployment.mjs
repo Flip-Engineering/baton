@@ -488,6 +488,111 @@ export function claudeAuthenticationSummary(code) {
   return 'Claude authentication is absent. Run the ordinary `claude auth login` flow, then retry.';
 }
 
+// ── #346: a credential's remaining lifetime is an admission fact ───────────────────────────────
+//
+// The observed failure (2026-09-17, seat claude-cli): readiness admitted a claude-code
+// subscription route while the credential the worker held had less life left than the lane —
+// `runtime.scope_created {credential: {mechanism: environment}}`, then ~50 minutes in, `401 OAuth
+// access token has expired`, a `provider_fault` kill, and a failed-turn summary telling the
+// WORKER to run `claude auth login`. The operator's credential was valid the whole time. #341
+// part 2 is the after-the-fact half (the refusal text blocks the route); this is the before and
+// during half: the credential's lifetime rides readiness, an admission that cannot outlive it is
+// refused pre-effect, and the deployment's refreshed credential reaches a RUNNING seat.
+
+/** The provider-fault class a refused authentication lands as — the same closed code the route
+ * card's refusal table publishes (adapter.mjs PROVIDER_REFUSAL_CODES.authentication), so the
+ * crash row, the readiness block and the route refusal all name one class. */
+export const PROVIDER_AUTH_EXPIRED = 'provider_auth_expired';
+
+/** #346: ONE mechanism, named once. The claude-code subscription credential a worker holds is a
+ * FILE under its own CLAUDE_CONFIG_DIR that the deployment keeps fresh (RuntimeIsolation writes
+ * it at lease creation and rewrites it in place on every cache adoption). That projection needs
+ * no harness cooperation and survives a token rollover; the spawn-time env snapshot is exactly
+ * the thing #346 observed dying mid-lane. `runtime.scope_created.credential.mechanism` records
+ * it through the lease posture. */
+export const CLAUDE_WORKER_CREDENTIAL_MECHANISM = 'file';
+
+/** #346: how long a lane is expected to run, in ms. The deployment's own wall envelope — the
+ * SAME existing bound (DEFAULT_BUDGET.wallMin) the profile's per-node budget, the approval TTL
+ * and the verification timeout already derive from. Never a constant of this issue's own. */
+export function laneHorizonMs() {
+  return DEFAULT_BUDGET.wallMin * 60_000;
+}
+
+/** #346: the ROOT-side remedy an access token that expired mid-lane names. The seat cannot log in
+ * for itself — the deployment owns the credential — so the act that fixes this is re-projecting
+ * the refreshed credential into the running worker's runtime, or re-recruiting the seat onto a
+ * route whose credential outlives the lane. Deliberately carries no login instruction. */
+export function claudeCredentialExpirySummary({ expiresAt = null, mechanism = null } = {}) {
+  const at = Number.isSafeInteger(expiresAt) ? new Date(expiresAt).toISOString() : null;
+  return 'The Claude access token expired before this provider call'
+    + (at ? ` (expiresAt ${at})` : '')
+    + (mechanism ? ` [credential mechanism: ${mechanism}]` : '')
+    + '. The deployment owns this credential: re-project the refreshed credential into the worker '
+    + 'runtime (or re-recruit the seat onto a route whose credential outlives the lane). A worker '
+    + 'cannot authenticate on its own behalf.';
+}
+
+/** #346: the live credential facts a claude-code route publishes, or null when the deployment has
+ * no credential authority to read. Shape-validating only — a probe that throws, or answers
+ * something that is not a record, reads as absent rather than as a fabricated lifetime. */
+function claudeCredentialFacts(probe) {
+  if (typeof probe !== 'function') return null;
+  let credential;
+  try { credential = probe(); } catch { return null; }
+  if (!record(credential)) return null;
+  return Object.freeze({ ...credential, refreshable: credential.refreshable === true });
+}
+
+/** #346: the credential block a route reads when it cannot outlive its own credential — the
+ * deployment has NO refresh path for it and its `expiresAt` falls inside the lane's horizon.
+ * Derived on every read from the same two published facts (expiresAt, refreshable) on the
+ * deployment's own clock, so the doctor row and the pre-effect admission refusal cannot
+ * disagree (the #341 one-derivation rule). */
+function credentialHorizonBlock(route, credential, lifetime) {
+  if (!lifetime || !route || route.harness !== 'claude-code' || !credential) return null;
+  if (credential.refreshable === true) return null;
+  const expiresAt = credential.expiresAt;
+  if (!Number.isSafeInteger(expiresAt)) return null;
+  const horizonMs = lifetime.horizonMs();
+  if (!Number.isSafeInteger(horizonMs) || horizonMs <= 0) return null;
+  const now = lifetime.now();
+  if (expiresAt > now + horizonMs) return null;
+  const publicRouteFields = publicRoute(route);
+  return Object.freeze({
+    state: 'blocked', code: 'credential_expires_before_horizon',
+    route: publicRouteFields, expiresAt, horizonMs,
+    observedAt: new Date(now).toISOString(),
+    summary: `route ${publicRouteFields.harness}/${publicRouteFields.model}@${publicRouteFields.effort} cannot `
+      + `outlive its credential: the access token expires at ${new Date(expiresAt).toISOString()} and the `
+      + `deployment has no refresh path for it, while a lane's horizon is ${horizonMs} ms — provision a `
+      + 'refresh path (a refresh token the deployment refresh runtime can spend) or pick a route that is ready.',
+  });
+}
+
+/** The refusal a recruit/run on a route that cannot outlive its credential draws BEFORE any
+ * effect: it names the route, the typed class, the credential's `expiresAt`, the horizon it was
+ * judged against, and the routes that ARE ready. */
+function credentialLifetimeRefusal(block, readiness, quota, record) {
+  const { harness, model, effort } = block.route;
+  const ready = readyRouteAlternatives(readiness, quota, record);
+  return Object.assign(new Error(
+    `route ${harness}/${model}@${effort} cannot outlive its credential (${block.code}): `
+    + `the access token expires at ${new Date(block.expiresAt).toISOString()} and the deployment has no `
+    + `refresh path for it, while a lane's horizon is ${block.horizonMs} ms; `
+    + (ready.length > 0
+      ? `routes ready now: ${ready.join(', ')}`
+      : 'no route is ready — provision the credential refresh path or another route'),
+  ), {
+    code: block.code,
+    state: 'blocked',
+    route: Object.freeze({ harness, model, effort }),
+    expiresAt: block.expiresAt,
+    horizonMs: block.horizonMs,
+    readyRoutes: ready,
+  });
+}
+
 function kimiAuthenticationState(kimiRoot, nowMs = Date.now()) {
   if (!KIMI_CREDENTIAL_FILES.every((path) => existingRegular(join(kimiRoot, path)))) {
     const code = 'authentication_required';
@@ -848,15 +953,21 @@ function defaultCredentialProjection(repoRoot, {
     }];
   }
   const credentialEnv = {};
+  // #346: the claude-code subscription worker's credential is a FILE the deployment keeps fresh
+  // under the worker's own CLAUDE_CONFIG_DIR — written at lease creation and rewritten in place
+  // whenever the cache adopts a refreshed credential. The spawn-time env token is deliberately
+  // NOT projected: an env snapshot cannot roll over inside a live seat, which is the death #346
+  // observed. The document is access-token-only (never the refresh token).
+  const credentialDocuments = {};
   if (claudeCredentialCache) {
-    Object.defineProperty(credentialEnv, 'claude', {
-      enumerable: true,
-      get: () => claudeCredentialCache.projectionEnv(),
+    credentialDocuments.claude = Object.freeze({
+      read: () => claudeCredentialCache.projectionDocument(),
     });
   }
   return Object.freeze({
     credentialEnv: Object.freeze(credentialEnv), credentialFiles: credentials,
-    credentialTrees, repoRoot, museKeychainRead, ompCatalogRead,
+    credentialTrees, credentialDocuments: Object.freeze(credentialDocuments),
+    repoRoot, museKeychainRead, ompCatalogRead,
   });
 }
 
@@ -1383,6 +1494,11 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
           credentialController: claudeCredentialCache,
           providerSecretsProbe: () => [claudeCredentialCache.credential?.accessToken].filter(Boolean),
           authenticationSummary: claudeAuthenticationSummary,
+          // #346: the worker's credential is the runtime's projected CLAUDE_CONFIG_DIR document,
+          // not a spawn-time env snapshot (an env token cannot roll over inside a live seat).
+          credentialTransport: 'runtime-file',
+          credentialMechanism: CLAUDE_WORKER_CREDENTIAL_MECHANISM,
+          credentialExpirySummary: claudeCredentialExpirySummary,
         } : {}),
       });
     } else if (route.harness === 'claude-code' && route.provider === 'kimi') {
@@ -1575,6 +1691,9 @@ async function projectedAdapterAuthentication(adapters, repoRoot, runtimeRoot, p
     credentialFiles: projection.credentialFiles,
     credentialEnv: projection.credentialEnv,
     credentialTrees: projection.credentialTrees,
+    // #346: the readiness probe runs against the SAME credential projection a real lease gets —
+    // the file under the probe's CLAUDE_CONFIG_DIR, never an env token the worker would not hold.
+    credentialDocuments: projection.credentialDocuments,
   });
   const results = new Map();
   for (const [name, adapter] of Object.entries(adapters)) {
@@ -1638,6 +1757,10 @@ function credentialProjectionResolves(projection, card) {
   if (adapterCredentialState === 'available') return true;
   const env = projection.credentialEnv[family];
   if (record(env) && Object.values(env).some((value) => value !== undefined && value !== null)) return true;
+  const document = projection.credentialDocuments?.[family];
+  if (typeof document?.read === 'function') {
+    try { if (record(document.read())) return true; } catch { /* an unreadable document resolves nothing */ }
+  }
   const files = projection.credentialFiles[family];
   if (Array.isArray(files) && files.some((path) => existingRegular(path))) return true;
   const trees = projection.credentialTrees[family];
@@ -2028,10 +2151,20 @@ function assertRouteReady(options, readiness) {
 }
 
 /** The blocked row's summary, in the vocabulary of the fact that blocked it: a provider that named
- * the instant it answers again, or one that named none (only a later successful turn retires it). */
+ * the instant it answers again, or one that named none (only a later successful turn retires it).
+ * #346: a refusal of the CREDENTIAL is the one class whose remedy is root-side — the deployment
+ * owns the credential — so that row names the act that clears it instead of sending the reader to
+ * hunt another route, and it never names a login flow the worker cannot complete. */
 function providerBlockSummary(block) {
   const until = block.resetAt
     ? `until ${block.resetAt}` : 'until a later turn on it succeeds';
+  if (block.code === PROVIDER_AUTH_EXPIRED) {
+    return 'The exact route is blocked by its provider (provider_auth_expired) '
+      + `${until}; the DEPLOYMENT owns the credential that was refused, so the act that clears this `
+      + 'is root-side — re-project a refreshed credential into the worker runtime, or re-recruit the '
+      + 'seat onto a route whose credential outlives the lane. A worker cannot authenticate on its '
+      + 'own behalf.';
+  }
   return `The exact route is blocked by its provider (${block.code}) ${until}; recruit on another route.`;
 }
 
@@ -2107,17 +2240,30 @@ function assertRouteRefusalClear(options, readiness, refusals) {
   if (block) throw providerRouteRefusal(block, readiness, null, record);
 }
 
+/** #346: the same pre-effect refusal for a route whose credential cannot outlive the lane. The
+ * block is derived from the SAME published facts (expiresAt, refreshable) the doctor row carries,
+ * on the deployment's own clock, so a route a caller sees blocked is the one the next recruit is
+ * refused by. */
+function assertRouteCredentialLifetimeClear(options, readiness, lifetime, refusals = null) {
+  if (!lifetime) return;
+  const route = requestedReadiness(options, readiness?.routes ?? []);
+  if (!route) return;
+  const block = credentialHorizonBlock(route, lifetime.credential(), lifetime);
+  if (block) throw credentialLifetimeRefusal(block, readiness, null, refusalRecordOf(refusals));
+}
+
 /** Issue #324: the pre-effect route gate run admission shares with recruit admission. The
  * SAME assertions every start-family seam runs — the static readiness row, then (#295 item 4) the
- * route's exhausted-quota state, then (#341 part 2) the refusals its provider's own words recorded
- * — bound to this deployment's rows, quota authority and ledger, so a blocked route refuses
- * identically however the run arrives (embedded recruit or resident run.start), and there is never
- * a second derivation to drift. */
-export function routeAdmissionGate(readiness, routeQuota, refusals = null) {
+ * route's exhausted-quota state, then (#341 part 2) the refusals its provider's own words recorded,
+ * then (#346) the credential's remaining lifetime — bound to this deployment's rows, quota
+ * authority and ledger, so a blocked route refuses identically however the run arrives (embedded
+ * recruit or resident run.start), and there is never a second derivation to drift. */
+export function routeAdmissionGate(readiness, routeQuota, refusals = null, credentialLifetime = null) {
   return (options) => {
     assertRouteReady(options, readiness);
     assertRouteQuotaClear(options, readiness, routeQuota, refusals);
     assertRouteRefusalClear(options, readiness, refusals);
+    assertRouteCredentialLifetimeClear(options, readiness, credentialLifetime, refusals);
   };
 }
 
@@ -2160,6 +2306,10 @@ class BatonDeployment {
   // #341 part 2: the ONE ledger-derived provider-refusal index this deployment reads (built in
   // openBatonDeployment, where the ledger and the adapter cards are both in hand).
   #routeRefusals = null;
+  // #346: the credential-lifetime layer — the live claude credential facts and the lane horizon
+  // every admission judges them against (null when the deployment has no claude credential
+  // authority, in which case no route is judged on a lifetime nobody can read).
+  #credentialLifetime = null;
   // Issue #351: the resident's stop records (bounded rows on its own ledger) and the per-incarnation
   // idempotency token that keeps a repeated stop from minting a second set.
   #stopRecords = null;
@@ -2179,6 +2329,7 @@ class BatonDeployment {
     this.#residentOptions = deployment.residentOptions;
     this.#workspaceProbe = deployment.workspaceProbe ?? null;
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
+    this.#credentialLifetime = deployment.claudeCredentialLifetime ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
     this.#hostCapacityProbe = deployment.hostCapacityProbe ?? null;
     this.#served = deployment.served ?? null;
@@ -2245,13 +2396,15 @@ class BatonDeployment {
   }
 
   /** Every start-family seam asserts the SAME things before any effect: the static route
-   * readiness, (#295 item 4) the route's exhausted-quota state, and (#341 part 2) the refusals the
-   * deployment's own ledger recorded off the provider's words. Each refusal names the code it
-   * carries, the instant the provider stated when it stated one, and the routes that ARE ready. */
+   * readiness, (#295 item 4) the route's exhausted-quota state, (#341 part 2) the refusals the
+   * deployment's own ledger recorded off the provider's words, and (#346) the credential's
+   * remaining lifetime against the lane's horizon. Each refusal names the code it carries, the
+   * instant the provider (or the credential) stated, and the routes that ARE ready. */
   #assertRouteReady(options) {
     assertRouteReady(options, this.#readiness);
     assertRouteQuotaClear(options, this.#readiness, this.#routeQuota, this.#routeRefusals);
     assertRouteRefusalClear(options, this.#readiness, this.#routeRefusals);
+    assertRouteCredentialLifetimeClear(options, this.#readiness, this.#credentialLifetime, this.#routeRefusals);
   }
 
   /** Issue #35: workspace capacity is observed FRESH at each doctor/card read — disk state
@@ -2259,7 +2412,10 @@ class BatonDeployment {
   doctorReadiness() {
     const refusals = this.#routeRefusals ? this.#routeRefusals() : EMPTY_REFUSAL_RECORD;
     const workspace = this.#workspaceProbe ? this.#workspaceProbe() : null;
-    const credential = this.#claudeCredentialProbe ? this.#claudeCredentialProbe() : null;
+    // #346: the live credential facts — `expiresAt` plus whether the deployment can refresh this
+    // credential at all — read FRESH on every doctor/card read (the clock moves), never an
+    // open-time snapshot.
+    const credential = claudeCredentialFacts(this.#claudeCredentialProbe);
     const grokCredential = this.#grokCredentialProbe ? this.#grokCredentialProbe() : null;
     const routes = Object.freeze(this.#readiness.routes.map((route) => {
       let row = route;
@@ -2292,6 +2448,19 @@ class BatonDeployment {
           ...row, state: 'blocked', code: block.code, resetAt: block.resetAt ?? null,
           quotaBlockedSince: observedAt,
           summary: providerBlockSummary(block),
+        });
+      }
+      // #346: a credential that cannot outlive the lane blocks the route on the SAME derivation
+      // the pre-effect admission assert reads — one authority, no second copy to drift.
+      const credentialBlock = row.state === 'blocked'
+        ? null : credentialHorizonBlock(row, row.credential, this.#credentialLifetime);
+      if (credentialBlock) {
+        row = Object.freeze({
+          ...row, state: 'blocked', code: credentialBlock.code,
+          credentialExpiresAt: credentialBlock.expiresAt,
+          credentialHorizonMs: credentialBlock.horizonMs,
+          credentialBlockedSince: credentialBlock.observedAt,
+          summary: credentialBlock.summary,
         });
       }
       // §4.2.2: doctor rows gain the roster fields — liveness + occupancy (RT-7b), so every
@@ -2430,6 +2599,9 @@ class BatonDeployment {
         usage: Object.freeze({ turns, tokens, usd }),
         concurrency: Object.freeze({ ceiling, inUse: occupancy.inFlight }),
         lastProviderRefusal: doctorRow?.lastProviderRefusal ?? null,
+        // #346: the credential facts the route's doctor row publishes — expiresAt and whether the
+        // deployment can refresh it — so the usage row and the readiness row cannot disagree.
+        credential: doctorRow?.credential ?? null,
         quota,
       });
     }));
@@ -3088,8 +3260,17 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       throw deploymentError(`advanced claudeCredentials.${field} must be a positive safe integer`);
     }
   }
-  const claudeCredentialCache = usesBuiltInAdapters
-    && routes.some((route) => route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude')
+  // #346: the cache's adoption hook. Every refreshed credential is re-projected into the live
+  // workers' CLAUDE_CONFIG_DIR documents; late-bound to the driver's runtime registry (built
+  // below), so an adoption during open writes nothing.
+  let claudeCredentialReprojection = null;
+  // #346: the cache exists for a built-in claude route, OR for a fixture/embedded deployment that
+  // wires the advanced.claudeCredentials shim (the CC-1 seam: credential path, keychain/time
+  // overrides, refresh runtime). Without the second case the shim would have no deployment-level
+  // home and a fixture deployment could not exercise the lifetime facts at all.
+  const claudeCredentialCache = ((usesBuiltInAdapters
+    && routes.some((route) => route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude'))
+    || Object.keys(rawClaudeCredentials).length > 0)
     ? await ClaudeCredentialCache.open({
       credentialPath: rawClaudeCredentials.credentialPath ?? join(homedir(), '.claude', '.credentials.json'),
       refreshRoot: join(runtimeRoot, 'claude-refresh'),
@@ -3101,6 +3282,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       keychainRead: rawClaudeCredentials.keychainRead ?? defaultMacosKeychainRead(),
       keychainMtime: rawClaudeCredentials.keychainMtime ?? defaultMacosKeychainMtime(),
       ...rawClaudeCredentials,
+      // #346: the deployment's own adoption hook — appended AFTER the caller's options, so a
+      // caller never has to carry it and can never replace it.
+      onCredential: (credential) => { claudeCredentialReprojection?.(credential); },
     }) : null;
   // #84 grok credential controller wiring (contract §4.3.1). Unlike the claude cache, the grok
   // cache is created whenever advanced.grokCredentials is provided — the controller serves the
@@ -3316,6 +3500,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       credentialEnv: projection.credentialEnv,
       credentialFiles: projection.credentialFiles,
       credentialTrees: projection.credentialTrees,
+      // #346: the live credential document channel — the file the runtime writes into each
+      // worker's own config dir and rewrites in place when the cache adopts a refresh.
+      credentialDocuments: projection.credentialDocuments,
     },
     goalPlanAuthority: deploymentGoalPlanAuthority(repository.repoId),
     contextProgram: contextRuntime.driverConfiguration(),
@@ -3336,6 +3523,27 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   });
   // The floor probe reads the ledger high-water through the authority the driver just built.
   worktreeCapacityRef = driver.worktreeCapacity;
+  // #346: the live re-projection. Every adoption by the credential cache rewrites the credential
+  // document of every LIVE claude lease through the runtime registry the driver just built — a
+  // running seat holds the rollover before its next provider call, with no harness cooperation.
+  claudeCredentialReprojection = () => {
+    const scopes = driver.coordinator?._runtimeScopes ?? null;
+    if (!scopes || typeof scopes.projectCredentialDocument !== 'function') return 0;
+    try { return scopes.projectCredentialDocument('claude'); } catch { return 0; }
+  };
+  // #346: the credential-lifetime layer readiness publishes and every pre-effect admission reads.
+  // The facts (expiresAt, refreshable) are read FRESH — the clock moves — and the horizon is the
+  // deployment's own wall envelope (laneHorizonMs), never a constant of this issue's own.
+  const claudeCredentialProbe = claudeCredentialCache
+    ? () => Object.freeze({
+      ...claudeCredentialCache.metadata(), refreshable: claudeCredentialCache.refreshable(),
+    })
+    : null;
+  const claudeCredentialLifetime = claudeCredentialCache ? Object.freeze({
+    credential: () => claudeCredentialFacts(claudeCredentialProbe),
+    now: residentOptions.now,
+    horizonMs: laneHorizonMs,
+  }) : null;
   // #47 liveness controller: wraps the adapter listeners (the coordinator's single-slot onEvent)
   // so it observes probe turns and worker-turn refresh-token death without disturbing the
   // coordinator's own handling.
@@ -3427,14 +3635,15 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // ledger-derived provider refusals (#341 part 2), never a second derivation. A run or
       // explore naming a blocked route refuses inside start(), before goal/plan records, worktree,
       // capacity reservation, or worker spawn — and the refusal names the ready alternatives.
-      routeAdmission: routeAdmissionGate(readiness, routeQuota, routeRefusals),
+      routeAdmission: routeAdmissionGate(readiness, routeQuota, routeRefusals, claudeCredentialLifetime),
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota, refusals: routeRefusals,
       hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,
       liveness: livenessController,
-      claudeCredentialProbe: claudeCredentialCache ? () => claudeCredentialCache.metadata() : null,
+      claudeCredentialProbe,
+      claudeCredentialLifetime,
       claudeCredentialCache,
       grokCredentialProbe,
       grokCredentialCache,

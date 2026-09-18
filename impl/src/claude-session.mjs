@@ -504,6 +504,30 @@ function claudeResultFailureCode(obj) {
     ? 'authentication_refresh_required' : null;
 }
 
+// ── #346: the 401-at-expiry death ──────────────────────────────────────────────────────────────
+//
+// The observed failure: a claude-code seat held a spawn-time env token, the token expired ~50
+// minutes into the lane, the provider answered `401 OAuth access token has expired`, and the
+// failed-turn summary told the WORKER to run `claude auth login`. The worker cannot log in for
+// itself — the deployment owns the credential — so the death lands typed, with the credential
+// facts and the ROOT-side remedy, and never with a login instruction.
+//
+// The EXPIRY spelling is this class's signature ("401 OAuth access token has expired") — the
+// exact text the deployment's route-refusal table names. The REVOKED spelling ("...has been
+// revoked") is deliberately NOT: a revoked credential has no remaining lifetime to reason about
+// and no refresh the deployment can spend, so it keeps the #11 `authentication_refresh_required`
+// vocabulary.
+const CLAUDE_EXPIRED_TOKEN_TEXT = /oauth access token has expired/iu;
+
+/** The provider class this death lands as — the closed code the route card's refusal table
+ * publishes (adapter.mjs PROVIDER_REFUSAL_CODES.authentication). */
+const PROVIDER_AUTH_EXPIRED = 'provider_auth_expired';
+
+function claudeExpiredCredentialResult(obj) {
+  return claudeResultFailureCode(obj) === 'authentication_refresh_required'
+    && typeof obj?.result === 'string' && CLAUDE_EXPIRED_TOKEN_TEXT.test(obj.result);
+}
+
 // ---------------------------------------------------------------------------
 // ClaudeSessionCli
 // ---------------------------------------------------------------------------
@@ -539,6 +563,21 @@ export class ClaudeSessionCli {
       providerSecretsProbe: opts.providerSecretsProbe,
       credentialController: opts.credentialController,
       authenticationSummary: opts.authenticationSummary,
+      // #346: how the worker's credential reaches it. 'runtime-file' means the deployment's own
+      // projected document under CLAUDE_CONFIG_DIR carries the access token and is rewritten in
+      // place on every refresh — so no spawn-time env token is injected (an env snapshot cannot
+      // roll over inside a live seat, and it would shadow the file). The default keeps the
+      // env-token transport every direct embedder and fixture already uses.
+      //
+      // VENDOR ASSUMPTION (UNVERIFIED, hermetically untestable here): Claude Code re-resolves its
+      // credential from `<CLAUDE_CONFIG_DIR>/.credentials.json` for a call made after the file
+      // changed — the same way the harness's own refresh rewrites that file. If a live receipt
+      // shows the CLI holding a process-lifetime token instead, the fallback is the pausable
+      // turn-boundary re-materialisation (`_retryAfterAuthenticationRefresh`), which this tier
+      // already runs on the 401 path.
+      credentialTransport: opts.credentialTransport === 'runtime-file' ? 'runtime-file' : 'environment',
+      credentialMechanism: typeof opts.credentialMechanism === 'string' ? opts.credentialMechanism : null,
+      credentialExpirySummary: opts.credentialExpirySummary,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
     };
     /** @type {Map<string, object>} worker -> session */
@@ -746,13 +785,17 @@ export class ClaudeSessionCli {
     if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
-    // Issue #11 v3 spawn-TTL gate: refresh before child creation, then project the cache's
-    // current access token into this spawn. No known-dead token reaches a provider process.
+    // Issue #11 v3 spawn-TTL gate: refresh before child creation. #346: with the runtime-file
+    // transport the deployment's refreshed credential is re-projected into the worker's
+    // CLAUDE_CONFIG_DIR document here (through the cache's adoption hook) and no env snapshot is
+    // injected; otherwise the cache's current access token projects into this spawn.
     let credentialEnv = null;
     if (this._cfg.credentialController) {
       try {
         await this._cfg.credentialController.ensureFresh();
-        credentialEnv = this._cfg.credentialController.projectionEnv();
+        if (this._cfg.credentialTransport !== 'runtime-file') {
+          credentialEnv = this._cfg.credentialController.projectionEnv();
+        }
       } catch (error) {
         return {
           ok: false, code: error?.code ?? 'authentication_refresh_required',
@@ -1299,6 +1342,10 @@ export class ClaudeSessionCli {
     }
     const status = obj.is_error ? 'failed' : 'completed';
     const failureCode = claudeResultFailureCode(obj);
+    // #346: the credential expired mid-turn. The retry path re-materialises it once (a refresh
+    // the root can still spend); a turn that cannot be rescued lands TYPED as the provider class,
+    // with the root-side remedy — never with an instruction to the worker to log in.
+    const expiredCredential = claudeExpiredCredentialResult(obj);
     if (failureCode === 'authentication_refresh_required'
       && this._cfg.credentialController && session.retryCount === 0 && session.lastTurnText) {
       session.retryCount = 1;
@@ -1308,14 +1355,18 @@ export class ClaudeSessionCli {
     }
     this._emit(session, 'lifecycle.turn_completed', {
       result: makeResult(
-        status, obj.result, obj.usage, usage.usdDelta, failureCode,
-        failureCode ? this._cfg.authenticationSummary?.(failureCode) : null,
+        status,
+        expiredCredential ? this._expiredCredentialSummary() : obj.result,
+        obj.usage, usage.usdDelta,
+        expiredCredential ? PROVIDER_AUTH_EXPIRED : failureCode,
+        failureCode && !expiredCredential ? this._cfg.authenticationSummary?.(failureCode) : null,
       ),
       usageSeal: usage.seal,
       pid: session.pid,
       modelRequested: session.modelRequested,
       modelObserved: session.modelObserved,
     });
+    if (expiredCredential) this._emitExpiredCredentialCrash(session);
   }
 
   _attachChild(session, child) {
@@ -1366,7 +1417,8 @@ export class ClaudeSessionCli {
       const oldReady = session.spawnedEmitted;
       const env = {
         ...session.spawnSpec.env,
-        ...this._cfg.credentialController.projectionEnv(),
+        ...(this._cfg.credentialTransport === 'runtime-file'
+          ? {} : this._cfg.credentialController.projectionEnv()),
       };
       const child = spawn(this._cfg.cmd, session.spawnSpec.argv, {
         cwd: session.spawnSpec.cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
@@ -1399,17 +1451,67 @@ export class ClaudeSessionCli {
       try { process.kill(-oldPid, 'SIGKILL'); } catch { try { oldChild.kill('SIGKILL'); } catch {} }
     } catch (error) {
       session.turnInFlight = false;
+      const expiredCredential = claudeExpiredCredentialResult(failedResult);
       const failureCode = error?.code === 'authentication_required'
         ? 'authentication_required' : 'authentication_refresh_required';
       this._emit(session, 'lifecycle.turn_completed', {
         result: makeResult(
-          'failed', failedResult.result, failedResult.usage, failedResultUsdDelta,
-          failureCode, this._cfg.authenticationSummary?.(failureCode),
+          'failed',
+          expiredCredential ? this._expiredCredentialSummary() : failedResult.result,
+          failedResult.usage, failedResultUsdDelta,
+          expiredCredential ? PROVIDER_AUTH_EXPIRED : failureCode,
+          expiredCredential ? null : this._cfg.authenticationSummary?.(failureCode),
         ),
         usageSeal: unavailableUsageSeal(), pid: session.pid,
         modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       });
+      if (expiredCredential) this._emitExpiredCredentialCrash(session);
     }
+  }
+
+  /** #346: the credential facts a typed expiry row carries — the instant the deployment's own
+   * credential cache says the access token expired, and the mechanism that carried it into the
+   * worker. Both are null when the deployment wired no credential authority. */
+  _credentialExpiryFacts() {
+    let metadata = null;
+    try { metadata = this._cfg.credentialController?.metadata?.() ?? null; } catch { metadata = null; }
+    return Object.freeze({
+      expiresAt: Number.isSafeInteger(metadata?.expiresAt) ? metadata.expiresAt : null,
+      mechanism: typeof this._cfg.credentialMechanism === 'string' ? this._cfg.credentialMechanism : null,
+    });
+  }
+
+  /** #346: the ROOT-side remedy for an expired credential — never an instruction to log in. The
+   * deployment owns this credential; a worker cannot re-materialise it for itself. */
+  _expiredCredentialSummary() {
+    const facts = this._credentialExpiryFacts();
+    const summarize = this._cfg.credentialExpirySummary;
+    if (typeof summarize === 'function') {
+      try {
+        const summary = summarize(facts);
+        if (typeof summary === 'string' && summary.length > 0) return summary;
+      } catch { /* a deployment summary defect falls through to the neutral root-side remedy */ }
+    }
+    return 'The provider refused this turn because the projected credential expired and no fresher '
+      + 'one reached this worker first. The deployment owns the credential: re-project the refreshed '
+      + 'credential into the worker runtime, or re-recruit the seat onto a route whose credential '
+      + 'outlives the lane. A worker cannot authenticate on its own behalf.';
+  }
+
+  /** #346: the typed 401-at-expiry row — `{phase: 'provider', code, expiresAt, mechanism}` plus
+   * the root-side remedy. Emitted AFTER the failed-turn terminal (a crash row is a session-terminal
+   * event kind, so anything after it would be suppressed). */
+  _emitExpiredCredentialCrash(session) {
+    const facts = this._credentialExpiryFacts();
+    this._emit(session, 'lifecycle.crashed', {
+      phase: 'provider',
+      code: PROVIDER_AUTH_EXPIRED,
+      expiresAt: facts.expiresAt,
+      mechanism: facts.mechanism,
+      error: 'the provider refused the turn: the projected Claude access token had expired and no fresher credential reached this worker before the call',
+      remedy: this._expiredCredentialSummary(),
+      usageSeal: unavailableUsageSeal(),
+    });
   }
 
   /** A can_use_tool / elicitation control_request FROM the wire, addressed TO us. */

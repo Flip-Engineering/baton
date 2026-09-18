@@ -195,6 +195,10 @@ export class ClaudeCredentialCache {
       }));
     this.persist = options.persist ?? atomicPersist;
     this.onReceipt = options.onReceipt ?? (() => {});
+    // #346: the ONE adoption seam the deployment hooks to re-project a refreshed credential into
+    // live workers. Internal-only (never a caller-facing advanced.claudeCredentials field): the
+    // deployment wires it while it owns the runtime's leases.
+    this.onCredential = options.onCredential ?? (() => {});
     this.lockTimeoutMs = options.lockTimeoutMs ?? 30_000;
     this.lockPollMs = options.lockPollMs ?? 10;
     this.credential = null;
@@ -221,7 +225,7 @@ export class ClaudeCredentialCache {
     const file = claudeCredentialCandidate(this.fileRead(this.path), {
       source: 'file', sourceMtimeMs: this.fileProbe(this.path).mtimeMs,
     });
-    this.credential = keychain.candidate ?? file;
+    this._adopt(keychain.candidate ?? file);
     this.source = keychain.candidate ? (file ? 'keychain_preferred' : 'keychain_only')
       : file ? 'file_fallback' : 'absent';
   }
@@ -232,6 +236,47 @@ export class ClaudeCredentialCache {
   }
 
   credentialEnv() { return Object.freeze({ claude: this.projectionEnv() }); }
+
+  /** #346: whether the deployment can refresh this credential at all — a refresh token is
+   * present, the refresh runtime is wired, and no revocation latch has closed the path. A route
+   * whose credential cannot be refreshed must outlive the lane on its own remaining lifetime,
+   * which is the fact route admission refuses on. */
+  refreshable() {
+    return Boolean(this.credential?.refreshToken) && !this.revocationLatched
+      && typeof this.refreshRuntime === 'function';
+  }
+
+  /** #346: the access-token-only DOCUMENT a live worker's CLAUDE_CONFIG_DIR holds. This is the
+   * projection that survives a token rollover: RuntimeIsolation writes it into the worker's
+   * config dir (0600) and rewrites it IN PLACE on every adoption, so a running seat reads a fresh
+   * access token before its next provider call instead of a spawn-time env snapshot. The refresh
+   * token never leaves the deployment — the document carries the vendor schema minus
+   * `refreshToken` (the access-token-only rule #11/#328 already holds for grok). Null when no
+   * credential is usable. */
+  projectionDocument() {
+    if (!this.credential || this.revocationLatched) return null;
+    const oauth = { ...this.credential.wire.claudeAiOauth };
+    delete oauth.refreshToken;
+    return Object.freeze({
+      relativePath: '.credentials.json',
+      content: `${JSON.stringify({ ...this.credential.wire, claudeAiOauth: oauth })}\n`,
+    });
+  }
+
+  /** The ONE adoption seam: every path that replaces the in-memory credential notifies the
+   * deployment, whose re-projection rewrites every live worker's credential document — so a
+   * refresh that lands reaches running seats without any harness cooperation. */
+  _adopt(credential) {
+    const changed = credential !== null && (!this.credential
+      || this.credential.accessToken !== credential?.accessToken
+      || this.credential.expiresAt !== credential?.expiresAt);
+    this.credential = credential;
+    this.source = credential?.source ?? 'absent';
+    if (changed) {
+      try { this.onCredential(credential); } catch { /* a projection defect never blocks adoption */ }
+    }
+    return credential;
+  }
 
   metadata() {
     const file = this.fileProbe(this.path); // cheap per-read stat; never calls Keychain.
@@ -270,10 +315,7 @@ export class ClaudeCredentialCache {
     const key = this.path;
     if (flights.has(key)) {
       return flights.get(key).then((credential) => {
-        if (!this.credential || credential.expiresAt > this.credential.expiresAt) {
-          this.credential = credential;
-          this.source = credential.source;
-        }
+        if (!this.credential || credential.expiresAt > this.credential.expiresAt) this._adopt(credential);
         return credential;
       });
     }
@@ -304,7 +346,7 @@ export class ClaudeCredentialCache {
         .filter((candidate) => candidate && (!incumbent || candidate.expiresAt > incumbent.expiresAt))
         .sort((left, right) => right.expiresAt - left.expiresAt)[0];
       if (preexisting) {
-        this.credential = preexisting;
+        this._adopt(preexisting);
         return preexisting;
       }
       if (!incumbent?.refreshToken) {
@@ -334,8 +376,7 @@ export class ClaudeCredentialCache {
       if (!harvest || harvest.expiresAt <= incumbent.expiresAt) {
         throw credentialError('authentication_refresh_required', 'Claude refresh produced no strictly fresher schema-valid credential');
       }
-      this.credential = harvest;
-      this.source = harvest.source;
+      this._adopt(harvest);
       this.onReceipt(Object.freeze({ reason, writeBackTarget: result?.writeBackTarget ?? harvest.source }));
       if (explicit) this.persist(this.path, harvest.wire); // explicit-command-only persist-back
       return harvest;
