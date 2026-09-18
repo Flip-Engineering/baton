@@ -306,6 +306,61 @@ headless mode for a host without a resident.
 - `baton_surface watch` stays: it is the bounded composite notification loop for an operator
   client, not a per-operation block.
 
+> **Landed (2026-09-18, lane 2 — receipts and wakes).** Law (d) is live on the served surface, and
+> the pieces are:
+>
+> - **The composer.** `coreMutationAnswer({command, args, result, wake})` (impl/src/mcp-northbound.mjs)
+>   is the ONE answer shape, and `coreDerivedReceipt`/`coreWakeHandoffFilter`/`coreWakeHandoff` are
+>   its derivations. The bridge facade applies it on its dispatch seam (`BatonWebApplicationFacade.command`);
+>   the command → verb facts come from the core table itself (`coreCommandFacts`,
+>   impl/src/mcp-core-tools.mjs), never a bridge-side hand list — an application command the core
+>   does not fold in keeps the answer its own lane sends, untouched.
+> - **One derivation, never a second.** An answer that already carries a receipt — every swarm
+>   mutation, the runtime's own `_mutationResult` — rides through UNTOUCHED beside the envelope's
+>   `schemaVersion`/`command`; only the run/waves/knowledge families, which answer a projection
+>   today, derive one (the row the answer's identity names, the outcome the projection itself
+>   carries, and `event: null` — the landed #302 rule for an effect whose answer names no recorded
+>   event). The whole view never rides the answer; `view: true` opts in, as the swarm family already
+>   does.
+> - **The blocking answer is gone.** `_inspectOutline` (the run.start/run.stop follow-up read that
+>   answered the whole outline) is retired, along with its `run_inspect` round trip; a mutation
+>   returns as soon as its receipt exists.
+> - **The four long verbs** — `run.start`, `swarm.recruit`, `swarm.check`, `waves.start` — answer
+>   `{receipt, wake}` where `wake` is the landed subscription receipt verbatim (its own filter echo
+>   and cursor) plus `settleOn`. The subscription opens on the session's ONE plane, filtered by the
+>   classes AND the scope axes §2's third column declares (`recruit` by swarm and participant,
+>   `check` by swarm, the run/waves families by classes alone — the #294 filter has no run axis,
+>   §12 Q2); frames are delivered through the session sink the MCP server installs at construction
+>   (the same sink an explicit `baton_wakes subscribe` delivers through).
+> - **#479.** `baton_deployment {verb: doctor}` projects the client's own `doctor()` result
+>   including its `stopping` section (#467/#476) — `null`, never absent, for a resident that is not
+>   stopping.
+>
+> Pins: `impl/test/issue314-lane2-receipts-wakes.test.mjs` (the four long verbs over the production
+> bridge, the receipt identity against a real `SwarmRuntime` receipt, the doctor projection), and
+> red row 314-d2 (green; its manifest row retired). The U-E2 row of `impl/test/unified-mcp-surface.test.mjs`
+> now routes the meta block and the three meta calls through `baton_surface {verb}` (its own law —
+> advertised == dispatchable, no kernel merge, the ghost refused — is unchanged, and its manifest
+> row is retired).
+>
+> **Hand-back NOT taken — the inventory renderer, blocked by an out-of-scope hunk.** Hand-back (i)
+> (`renderMcpToolInventory()` renders the SHIPPED core table + MCP.md regenerated, lane 4's ES-B
+> green) is implemented and measured, and it CANNOT land alone: the moment MCP.md's block lists the
+> seven core tools, `runSurfaceConformanceMain`'s CS-1 profile parity compares it against
+> `instantiateProfileInventory('mcp.application')` — which still returns the RAW flat table
+> (`mcpApplicationToolNames()`, impl/scripts/surface-conformance.mjs:464, and the inventory artifact's
+> `counts.mcpApplicationTools`/`pins.batonRunsAdvertised` at :713/:735) — so `surface-gate.mjs` goes
+> red and `run-suite.mjs` refuses before any test (measured: gate exit 0 at the base commit, exit 1
+> with the renderer switch alone, 32 `documented but unserved` findings). The pair must travel
+> together: (1) `impl/scripts/render-surface-docs.mjs` `renderMcpToolInventory()` (this lane's one-line
+> shape above), (2) `impl/scripts/surface-conformance.mjs`'s `mcp.application` inventory + its
+> regenerated `impl/scripts/surface-inventory-artifact.json` (`node impl/scripts/surface-conformance.mjs
+> --write-inventory`), (3) `node impl/scripts/render-surface-docs.mjs`. Until then ES-B is listed in
+> the expected-red manifest under `#314` (it was red at this base and unlisted) and MCP.md's inventory
+> block still documents the flat table — the two rows the pair closes.
+> `mcp-profile-parity-red.test.mjs`'s RG-10b/RG-10c read the flat counterparts out of that same block
+> and move with it (already tracked under `#156`).
+
 ## 6. Reincarnation survival
 
 **Law (e).** A bridge session survives a resident reincarnation (#306): it re-attests against
@@ -477,8 +532,8 @@ and they ride their core verb instead of refusing (§3).
 |---|---|
 | the seven core tool names and their verb enums | `impl/src/mcp-core-tools.mjs` (new — the core table, derived from the registry rows) |
 | per-verb argument schemas | the same table, composed from the registry rows it projects — never retyped |
-| the receipt + wake answer shape | the dispatch answer composer, `impl/src/mcp-northbound.mjs`; the receipt derivation stays `swarmChangedRow`/`swarmReceiptNext` (impl/src/swarm-contract.mjs) |
-| the wake handoff's per-verb class lists | the core table, values drawn from `WAKE_CLASS_TABLE` (impl/src/wake-stream.mjs) — a class named there, never a literal that drifts |
+| the receipt + wake answer shape | the dispatch answer composer, `impl/src/mcp-northbound.mjs` (`coreMutationAnswer`/`coreDerivedReceipt`; the swarm receipt derivation stays `swarmChangedRow`/`swarmReceiptNext`, impl/src/swarm-contract.mjs); the command → verb facts a bridge reads are `coreCommandFacts` (impl/src/mcp-core-tools.mjs) |
+| the wake handoff's per-verb class lists and scope axes | the core table, values drawn from `WAKE_CLASS_TABLE` (impl/src/wake-stream.mjs) — a class named there, never a literal that drifts — and the scope axes from §2's third column (`recruit`: swarm + participant; `check`: swarm; the run/waves families: none) |
 | the session notification method | beside `WAKE_NOTIFICATION_METHOD`, impl/src/mcp-northbound.mjs:926 |
 | the rebind authority and re-attestation rule | `BatonWebApplicationFacade`, impl/src/mcp-web-bridge.mjs |
 | the migration table | docs/49 §7, pinned executable in the red file |
@@ -499,12 +554,21 @@ Red rows: **314-a, 314-b, 314-c, 314-g**. Watch: the wrapper's merge seam
 (production-mcp-convergence.mjs:668+) and the instruction suffix (:517) move with the fold.
 
 **Lane 2 — receipts and wakes.** Files: `impl/src/mcp-web-bridge.mjs` (retire the
-`_inspectOutline` answer, :638-665; compose the receipt + wake handoff on the dispatch seam),
+`_inspectOutline` answer; compose the receipt + wake handoff on the dispatch seam),
 `impl/src/mcp-northbound.mjs` (the answer shape; the `run`/`waves` receipt derivation beside
 `swarmChangedRow`). Red rows: **314-d1, 314-d2**. Dependency: lane 1's table (the verb →
 receipt/wake mapping lives on the core rows). Watch: `run.start`/`run.stop` outline consumers
 (phase64's UA5 pin names the card commands, not the answer shape — check
 `grep -rn _inspectOutline impl/test` before landing).
+
+> **Landed (2026-09-18, lane 2).** Red rows 314-d1 and 314-d2 are green and 314-d2's manifest row is
+> retired; the answer composer lives in `impl/src/mcp-northbound.mjs` with `coreCommandFacts` on the
+> core table, the facade applies it on the dispatch seam, and `_inspectOutline` is gone
+> (`grep -rn _inspectOutline impl/test` found no consumer). The lane also carried two hand-backs from
+> lanes 1 and 4: the U-E2 row now routes the meta block and its three calls through
+> `baton_surface {verb}` (landed, its manifest row retired), while the inventory renderer switch is
+> BLOCKED on an out-of-scope hunk — §5's landed note names the pair. Pins:
+> `impl/test/issue314-lane2-receipts-wakes.test.mjs`.
 
 **Lane 3 — reincarnation survival.** Files: `impl/src/mcp-web-bridge.mjs` (the `rediscover`
 construction option, the re-attestation relaxation scoped to rebind, the atomic swap, the wake

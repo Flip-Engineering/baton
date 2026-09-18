@@ -324,27 +324,27 @@ test('an ordinary surface advertises exactly what tools/call dispatches — no a
   const ghost = await server.handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'fleet_list', arguments: { repoId: REPO } } });
   assert.equal(ghost.error?.code, -32602, 'a non-advertised kernel tool refuses at the guard, not inside a dispatch');
 
-  // #287 U-E2/N7: the six meta tools are advertised, dispatchable in practice, and documented —
-  // the greeting must not name a baton_surface_* tool the guide never describes.
+  // #287 U-E2/N7 × #314 (docs/49 §2-§3): the six meta tools carry their verbs through ONE
+  // `baton_surface` tool now — the progressive-disclosure surface. The row's own law is unchanged:
+  // what is advertised IS dispatchable, the kernel posture stays projected rather than merged, and
+  // the greeting must not name a spelling the guide never describes.
   const META = ['baton_surface_catalog', 'baton_surface_describe', 'baton_surface_invoke',
     'baton_surface_snapshot', 'baton_surface_watch', 'baton_surface_visualize'];
-  for (const name of META) {
-    assert.ok(names.includes(name), `${name} ships on the ordinary surface`);
-    assert.ok(dispatchable.has(name), `${name} is dispatchable`);
-  }
-  const catalog = await server.handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'baton_surface_catalog', arguments: {} } });
+  assert.ok(names.includes('baton_surface'), 'the one progressive-disclosure tool ships on the ordinary surface');
+  assert.ok(dispatchable.has('baton_surface'), 'baton_surface is dispatchable');
+  const catalog = await server.handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'baton_surface', arguments: { verb: 'catalog' } } });
   assert.equal(catalog.result.structuredContent.error, undefined,
-    `baton_surface_catalog answers: ${JSON.stringify(catalog.result.structuredContent).slice(0, 400)}`);
+    `baton_surface {verb: catalog} answers: ${JSON.stringify(catalog.result.structuredContent).slice(0, 400)}`);
   assert.ok(Array.isArray(catalog.result.structuredContent.capabilities)
     && catalog.result.structuredContent.capabilities.length > 0, 'the catalog projects the live capability set');
   // The guide's kernel posture, pinned: a fleet_* tool is NOT in the ordinary inventory, and the
   // meta route still projects it (routed to the same shadow) instead of walling the profile off.
   // The capability must dispatch — an argument refusal from the routed tool is the proof; a
   // profile wall would answer surface_profile_restricted without reaching it.
-  const described = await server.handle({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'baton_surface_describe', arguments: { name: 'fleet_spawn' } } });
+  const described = await server.handle({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'baton_surface', arguments: { verb: 'describe', name: 'fleet_spawn' } } });
   assert.equal(described.result.structuredContent.capability.liveMcp.toolName, 'fleet_spawn',
     'the catalog projects the kernel tool behind the capability (U-E2/N7)');
-  const invoked = await server.handle({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'baton_surface_invoke', arguments: { name: 'fleet_spawn', args: {} } } });
+  const invoked = await server.handle({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'baton_surface', arguments: { verb: 'invoke', name: 'fleet_spawn', args: {} } } });
   assert.notEqual(invoked.result.structuredContent.error?.code, 'surface_profile_restricted',
     'the meta route reaches the capability rather than refusing the profile');
   const { readFileSync } = await import('node:fs');

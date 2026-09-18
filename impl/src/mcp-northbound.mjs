@@ -1099,6 +1099,130 @@ export const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     return withSpellingNote(Object.freeze({ ...base, name: sibling.tool }));
   }),
 ]);
+
+// ── the core mutation answer (docs/49 §5; issues #302, #294) ─────────────────────────────────────
+//
+// Law (d): every mutation verb answers a RECEIPT, and no core verb blocks. The shape is the landed
+// #302 one — `{receipt: {command, event, changed}, next}` — and this is the ONE composer for it, so
+// the resident bridge and any other caller of the same table cannot disagree about what a mutation
+// answered.
+//
+// Two sources, in this order:
+//
+//   * an answer that ALREADY carries a receipt (every swarm mutation: the runtime's own
+//     _mutationResult) rides through UNTOUCHED — the receipt derivation stays exactly where #302
+//     put it (swarmChangedRow/swarmReceiptNext, swarm-contract.mjs), never re-derived here;
+//   * the run and waves families answer their projection today (application.mjs _buildView): the
+//     receipt is derived from that projection's own facts — the row the answer's identity names and
+//     the outcome the projection itself carries (its `lastAction`, or its `stop` receipt) — and the
+//     projection never rides the answer unless the caller asked (`args.view`, the same opt-in
+//     spelling the swarm family already reads).
+//
+// `event` is the recorded row the answer carries, and null when it carries none — the landed #302
+// rule for an effect whose answer names no event of its own (swarm-runtime.mjs _mutationResult).
+
+export const CORE_ANSWER_SCHEMA_VERSION = 1;
+
+/** Whether an answer is a Run projection (the view application.mjs _buildView mints): a runId
+ * beside a phase. A small outcome (the message lane's own row, a wave start's wave and members,
+ * the knowledge seed's node) is not one, and rides the receipt as the operation's own outcome. */
+function runProjection(value) {
+  return record(value) && nonempty(value.runId) && typeof value.phase === 'string';
+}
+
+/** The row(s) a landed run/waves answer names, in the #302 `changed` spelling — `{collection, id}`
+ * under the collection names the views themselves use. The identity the answer carries IS the row:
+ * a Run for the run family (and for a wave member lane), the wave plus its member runs for
+ * `waves.start`. An answer naming no identity changed no row: the receipt says so with []. */
+function landedChangedRows(args, result) {
+  const rows = [];
+  const push = (collection, id) => { if (nonempty(id)) rows.push({ collection, id }); };
+  if (nonempty(result?.waveId)) {
+    push('waves', result.waveId);
+    for (const member of Array.isArray(result.members) ? result.members : []) push('runs', member?.runId ?? null);
+    return rows;
+  }
+  const runId = nonempty(result?.runId) ? result.runId
+    : nonempty(args?.runId) ? args.runId
+      : nonempty(args?.intent?.runId) ? args.intent.runId : null;
+  push('runs', runId);
+  return rows;
+}
+
+/** The operation's own outcome: the projection's own action row (a settlement, an action's result)
+ * or its stop receipt, and — for an answer that is not a projection at all — the answer verbatim
+ * (the message lane's row, the knowledge seed's node, the wave start's wave). The whole view is
+ * never an outcome; `view: true` is how a caller asks for that. */
+function landedOutcome(result) {
+  if (!record(result)) return result === undefined ? null : result;
+  if (record(result.lastAction)) return result.lastAction;
+  if (record(result.stop)) return result.stop;
+  return runProjection(result) ? null : result;
+}
+
+/** The step that follows one run/waves mutation — the twin of swarmReceiptNext
+ * (swarm-contract.mjs): the read that continues from the row the receipt changed, with the
+ * identity the caller already holds. Null when the answer named no row to read. */
+function landedReceiptNext(args, result) {
+  const rows = landedChangedRows(args, result);
+  const wave = rows.find((row) => row.collection === 'waves') ?? null;
+  if (wave !== null) return { command: 'waves.progress', args: { waveId: wave.id } };
+  const run = rows.find((row) => row.collection === 'runs') ?? null;
+  return run === null ? null : { command: 'run.view', args: { runId: run.id } };
+}
+
+/** The receipt for an answer that does not already carry one: the #302 triple, with the
+ * operation's own outcome beside the rows it changed — what happened, which rows moved, and (on
+ * the envelope) what to do next. */
+export function coreDerivedReceipt(command, args, result) {
+  const outcome = landedOutcome(result);
+  return {
+    command,
+    event: null,
+    changed: landedChangedRows(args, result),
+    ...(outcome === null || outcome === undefined ? {} : { outcome }),
+  };
+}
+
+/** The answer a core mutation sends (docs/49 §5): `{schemaVersion, command, receipt, next, ...}`,
+ * plus the wake handoff composed for a long verb and the whole view only when the caller asked
+ * for it. `wake` is the handoff `coreWakeHandoff` composed, or null for every other verb. */
+export function coreMutationAnswer({ command, args, result, wake = null }) {
+  // The landed answer's own objects ride through by reference: their producer owns them (the swarm
+  // runtime's receipt, the application's deep-frozen view), and the envelope only wraps them.
+  const body = record(result?.receipt)
+    ? result
+    : {
+      receipt: coreDerivedReceipt(command, args, result),
+      next: landedReceiptNext(args, result),
+      ...(args?.view === true && result !== undefined && result !== null ? { view: result } : {}),
+    };
+  return Object.freeze({
+    schemaVersion: CORE_ANSWER_SCHEMA_VERSION,
+    command,
+    ...body,
+    ...(wake === null ? {} : { wake }),
+  });
+}
+
+/** The filter a long verb's handoff subscription opens under (docs/49 §2's third column): the
+ * classes the core row declares, narrowed by the operation's own subject where the row names those
+ * axes. The swarm and the participant ARE filter axes; the run and waves families name none — the
+ * #294 filter carries no run axis, so their frames correlate client-side (docs/49 §12 Q2). */
+export function coreWakeHandoffFilter(facts, args) {
+  const filter = { kinds: [...facts.wake.kinds] };
+  if (facts.wake.scope.includes('swarmId') && nonempty(args?.swarmId)) filter.swarms = [args.swarmId];
+  if (facts.wake.scope.includes('participantId') && nonempty(args?.participantId)) {
+    filter.participants = [args.participantId];
+  }
+  return filter;
+}
+
+/** The handoff the answer carries: the landed subscription receipt verbatim — its own filter echo
+ * and cursor — plus the `settleOn` subset whose frame settles THIS operation's follow-up. */
+export function coreWakeHandoff(subscription, facts) {
+  return { ...subscription, settleOn: [...facts.wake.settleOn] };
+}
 // Issue #233: the canonical dot-name twins of every advertised application tool. A dot twin is
 // its base tool under the dot spelling of the application command APPLICATION_TOOL routes it to
 // (canonicalAndTransportNames(command).canonical), inheriting the base's exact wire schema,
@@ -1835,6 +1959,14 @@ export class McpFleetServer {
     this.notificationSink = null;
     if (opts.notificationSink !== undefined && opts.notificationSink !== null) {
       this.attachNotificationSink(opts.notificationSink);
+    }
+    // Issue #314 (docs/49 §5, §10): a long verb's answer hands back a wake subscription, and that
+    // subscription delivers through THIS session's transport — the same `notify` an explicit
+    // `baton_wakes subscribe` delivers through. An application that admits a session delivery sink
+    // (the resident bridge facade) is handed it here, late-bound to whatever sink the driver
+    // attaches, so the handoff and the explicit verb share ONE session sink.
+    if (typeof this.application?.attachWakeDelivery === 'function') {
+      this.application.attachWakeDelivery((frame) => this.notify(WAKE_NOTIFICATION_METHOD, frame));
     }
     this.lifecycle = 'new';
     const surfaceTools = this.surface === 'application' ? ORDINARY_APPLICATION_TOOL_DEFINITIONS
