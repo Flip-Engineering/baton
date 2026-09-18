@@ -77,9 +77,13 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   // writer block, right after coupling_writer_gone — one row paging the writer, one the bypasser.
   // #364 adds the restart row (worker_lost_on_restart), minted in the participant loop beside
   // participant_runtime_dead, which it replaces for a seat the restart reconciliation found lost.
-  assert.equal(kinds.length, 18, 'the runtime mints eighteen attention kinds');
+  // #442 adds the provider-fault row (provider_fault), minted in the same loop immediately after
+  // those two: the seat whose worker its provider killed, naming the fault, its route and the two
+  // commands that settle it.
+  assert.equal(kinds.length, 19, 'the runtime mints nineteen attention kinds');
   assert.deepEqual(kinds, [
-    'worker_lost_on_restart', 'participant_runtime_dead', 'member_left_session_live', 'delegation_orphaned',
+    'worker_lost_on_restart', 'participant_runtime_dead', 'provider_fault', 'member_left_session_live',
+    'delegation_orphaned',
     'assignment_holder_gone', 'group_member_gone', 'coupling_writer_gone',
     'coupling_writer_bypassed', 'closed_with_live_participants', 'check_queued',
     'check_queue_timeout', 'recruit_queued', 'recruit_queue_timeout',

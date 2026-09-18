@@ -28,6 +28,10 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   // from the fleet THIS incarnation recovered. Composed by the swarm runtime from the
   // coordinator's own fleet capture, never caller-submittable.
   'swarm.participant_runtime_lost',
+  // Issue #442: the runtime-recorded provider fault — a seat whose worker ended under a
+  // provider-fault kill. Composed by the swarm runtime from the coordinator's own death seam,
+  // never caller-submittable.
+  'swarm.participant_faulted',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
@@ -383,6 +387,36 @@ export function validateSwarmEvent(kind, payload) {
       refuse('swarm.participant_runtime_lost requires incarnation — the lost worker process generation', 'invalid_payload');
     }
     if (!isNonEmptyString(p.at)) refuse('swarm.participant_runtime_lost requires at — when the loss was reconciled', 'invalid_payload');
+    return;
+  }
+
+  if (kind === 'swarm.participant_faulted') {
+    if (!isNonEmptyString(p.participantId)) refuse('swarm.participant_faulted requires participantId', 'invalid_payload');
+    if (!isNonEmptyString(p.workerId)) refuse('swarm.participant_faulted requires workerId', 'invalid_payload');
+    // The typed provider fault class (#295): the runtime reads it off the coordinator's death
+    // cert, so a fault row can never be minted from prose or from a class this family invented.
+    if (!isNonEmptyString(p.code)) refuse('swarm.participant_faulted requires code — the typed provider fault class', 'invalid_payload');
+    // The exact route the fault is a fact about. Harness and model always name one (a fault row
+    // without them would be a fault about nothing); effort is absent on a route that has none.
+    const route = p.route;
+    if (!route || typeof route !== 'object' || Array.isArray(route)
+      || !isNonEmptyString(route.harness) || !isNonEmptyString(route.model)) {
+      refuse('swarm.participant_faulted requires route {harness, model, effort}', 'invalid_payload');
+    }
+    if (route.effort !== null && route.effort !== undefined && !isNonEmptyString(route.effort)) {
+      refuse('swarm.participant_faulted route effort must be a non-empty string or null', 'invalid_payload');
+    }
+    // #442 item 4: the instant is either the provider's ZONE-QUALIFIED one or absent — a
+    // zone-less answer keeps its own text (`resetAtText`) and derives no instant, never a
+    // UTC reading nobody stated.
+    if (p.resetAt !== null && p.resetAt !== undefined
+      && !(isNonEmptyString(p.resetAt) && Number.isFinite(Date.parse(p.resetAt)))) {
+      refuse('swarm.participant_faulted resetAt must be an ISO-8601 instant or null', 'invalid_payload');
+    }
+    validOptionalNonEmptyString(p.resetAtText, 'fault resetAtText', refuse);
+    if (p.snapshotSha !== null && p.snapshotSha !== undefined && !isNonEmptyString(p.snapshotSha)) {
+      refuse('swarm.participant_faulted snapshotSha must be a sha string or null', 'invalid_payload');
+    }
     return;
   }
 
@@ -841,6 +875,34 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       ...participant,
       runtimeLost: Object.freeze({
         workerId: p.workerId, incarnation: p.incarnation, at: p.at, seq: meta.seq, ts: meta.ts,
+      }),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    });
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
+    return;
+  }
+
+  if (kind === 'swarm.participant_faulted') {
+    // Issue #442: the seat's worker ended under a provider-fault kill. Like the #364 loss, the row
+    // is HISTORY on the participant — the newest fact about its runtime, folded so the view, the
+    // brief and the wake feed read one derivation — never a second membership settle (the #350
+    // settle stays the `swarm.participant_left` fold the runtime writes beside this row).
+    const participant = ownGet(swarm.participants, p.participantId);
+    if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    const updatedParticipant = Object.freeze({
+      ...participant,
+      fault: Object.freeze({
+        workerId: p.workerId,
+        code: p.code,
+        route: Object.freeze({
+          harness: p.route.harness, model: p.route.model, effort: p.route.effort ?? null,
+        }),
+        resetAt: p.resetAt ?? null,
+        resetAtText: p.resetAtText ?? null,
+        snapshotSha: p.snapshotSha ?? null,
+        seq: meta.seq, ts: meta.ts,
       }),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });

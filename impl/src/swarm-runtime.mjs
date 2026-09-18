@@ -462,6 +462,56 @@ export class SwarmRuntime {
     if (changed) this._reconcileHostCapacity();
   }
 
+  /** Issue #442: the provider-fault observation. The coordinator knows the ONE fact this row
+   * needs — `providerFaultDeathFor(workerId)`, recorded at its own death seam the moment a bound
+   * seat's worker ended under a provider fault (#295's typed `kill.requested rule=provider_fault`
+   * death) — and this runtime is what turns it into swarm state: ONE durable
+   * `swarm.participant_faulted {participantId, workerId, code, route, resetAt, resetAtText,
+   * snapshotSha}` row per death (history on the participant, exactly the #364 shape), plus the
+   * #350 membership settle the fault owes every other surface — `swarm.participant_left {reason:
+   * 'provider_fault'}`, the ONE representation of a settled seat — so the participant stops
+   * reading `active` the moment its provider killed it, instead of riding into every later
+   * recruit brief as a live peer (#350's rule, applied to a death nobody asked for).
+   *
+   * Idempotent by construction: the fault row is keyed per (swarm, seat, worker, death), and a
+   * seat whose membership is already settled writes no second leave. A coordinator that cannot
+   * answer for fault deaths (a bare fixture host) observes nothing — absence is never a fault. */
+  _observeParticipantFaults() {
+    if (typeof this.coordinator.providerFaultDeathFor !== 'function') return;
+    let changed = false;
+    for (const swarm of this.store.swarms()) {
+      for (const participant of Object.values(swarm.participants ?? {})) {
+        const binding = participant.bindings?.at(-1) ?? null;
+        // An unbound seat has no worker to fault, and a settled seat already had this observation
+        // made about it: both are absence, never a second row.
+        if (!binding || participant.status !== 'active') continue;
+        const death = this.coordinator.providerFaultDeathFor(binding.workerId);
+        if (!death) continue;
+        const key = `swarm-participant-faulted:${swarm.swarmId}:${participant.participantId}`
+          + `:${binding.workerId}:${death.seq}`;
+        if (this.store.priorCoordinationEvent(key)) continue;
+        this.store.recordSwarm('swarm.participant_faulted', {
+          swarmId: swarm.swarmId, participantId: participant.participantId,
+          workerId: binding.workerId, code: death.code,
+          route: death.route ?? null, resetAt: death.resetAt ?? null,
+          ...(death.resetAtText ? { resetAtText: death.resetAtText } : {}),
+          snapshotSha: death.snapshotSha ?? null,
+        }, { actor: 'baton-runtime', key });
+        // The settle rides its OWN key: a replayed observation (or a resident that already settled
+        // this seat for another reason) never re-writes a membership row it already wrote.
+        const leaveKey = `${key}:leave`;
+        if (!this.store.priorCoordinationEvent(leaveKey)) {
+          this.store.recordSwarm('swarm.participant_left', {
+            swarmId: swarm.swarmId, participantId: participant.participantId,
+            reason: 'provider_fault',
+          }, { actor: 'baton-runtime', key: leaveKey });
+        }
+        changed = true;
+      }
+    }
+    if (changed) this._reconcileHostCapacity();
+  }
+
   _swarm(id) {
     const swarm = this.store.swarm(id);
     if (!swarm) refuse('Swarm is unavailable', 'swarm_not_found');
@@ -971,6 +1021,17 @@ export class SwarmRuntime {
     return (lost.seq ?? 0) > newestBindingSeq ? lost : null;
   }
 
+  /** Issue #442: the provider fault a seat's CURRENT binding ended under, or null. The row
+   * `swarm.participant_faulted` is written once per death at the first runtime entry after the
+   * coordinator recorded it; like the #364 loss, a LATER binding supersedes the reading, so a
+   * resumed seat is not read as faulted forever. */
+  _participantFaultCurrent(participant) {
+    const fault = participant?.fault ?? null;
+    if (!fault) return null;
+    const newestBindingSeq = participant.bindings?.at(-1)?.seq ?? 0;
+    return (fault.seq ?? 0) > newestBindingSeq ? fault : null;
+  }
+
   /** Issue #350: the ONE "this seat can still act" predicate every surface reads — peers
    * in the brief, scope overlap, roster intersection, closed-with-live-participants, holder
    * checks, and the completion derivation. A seat acts while its membership is active AND
@@ -1176,6 +1237,9 @@ export class SwarmRuntime {
     // Issue #364: the restart reconciliation reads the same way — a view is a runtime entry, so
     // the lost seats are folded (and their host leases released) before this view projects them.
     this._reconcileParticipantRuntimes();
+    // Issue #442: the provider-fault observation reads the same way — a seat whose provider killed
+    // its worker is folded (fault row + the #350 settle) before this view projects it.
+    this._observeParticipantFaults();
     swarm = this.store.swarm(swarm.swarmId) ?? swarm;
     const caller = this._permit(swarm, principal, context, 'read');
     // An optional participantId scopes the read to that participant's delegation (issue #263
@@ -1338,8 +1402,12 @@ export class SwarmRuntime {
       // Issue #364: the restart reconciliation supersedes the replayed handle. A worker the
       // resident does not own reads `idle`/`working` out of the ledger — a status, not a process —
       // so the seat's runtime reading is the settled loss: dead, not live, no turn to guide.
-      const liveness = this._runtimeLostCurrent(participant) !== null
-        ? { state: 'dead', live: false, turn: null }
+      // Issue #442: a seat whose worker ended under a provider fault reads the same way — the
+      // death is settled history, so the runtime reading is dead whatever status the replayed
+      // handle still carries, and a reader never has to interpret exited-vs-dead.
+      const settled = this._runtimeLostCurrent(participant) !== null
+        || this._participantFaultCurrent(participant) !== null;
+      const liveness = settled ? { state: 'dead', live: false, turn: null }
         : swarmParticipantLiveness(worker, paused.length);
       const alive = liveness.live;
       const guidance = worker ? (guidanceByWorker.get(worker.id) ?? []) : [];
@@ -1417,6 +1485,11 @@ export class SwarmRuntime {
         // deployment's target, derived from the repository at read time. A seat with no checkout
         // to observe carries base: null — absence, never a guess.
         base: participantBase(worker),
+        // Issue #442: the typed provider fault this seat's runtime ended under, or null — the
+        // class, the exact route it is a fact about, the provider's own reset answer (its instant
+        // when the answer zone-qualified one, its text otherwise) and the snapshot the death
+        // preserved. A seat no provider killed carries null: absence, never an invented fault.
+        fault: this._participantFaultCurrent(participant),
         lastRefusal: lastRefusal(participant.participantId) };
     });
     // Organization truth an orchestrator would otherwise assemble by hand: members whose process
@@ -1463,6 +1536,20 @@ export class SwarmRuntime {
       } else if (row.status === 'active' && !row.runtime.live && row.runtime.workerId !== null
         && row.runtime.state !== 'completed') {
         organization.push({ kind: 'participant_runtime_dead', participantId: row.participantId, state: row.runtime.state });
+      }
+      // Issue #442: the seat's provider killed its worker, and this is the ONE row that says so at
+      // the swarm level — the typed fault class, the exact route, and the provider's own reset
+      // answer (its instant when the answer zone-qualified one, its text otherwise), with the two
+      // acts that settle the seat: resume it from where the death left it, or stop it. Raised
+      // whether or not the settle has landed yet, so a root reading the view acts on the fault
+      // itself rather than on the runtime vocabulary behind it.
+      const fault = this._participantFaultCurrent(row);
+      if (fault !== null) {
+        organization.push({ kind: 'provider_fault', participantId: row.participantId,
+          workerId: row.runtime.workerId ?? fault.workerId, code: fault.code,
+          route: fault.route, resetAt: fault.resetAt, resetAtText: fault.resetAtText,
+          snapshotSha: fault.snapshotSha, at: fault.ts ?? null,
+          next: { resume: 'swarm.recruit --resume-from', stop: 'swarm.stop' } });
       }
       if (row.status !== 'active' && row.runtime.live) {
         organization.push({ kind: 'member_left_session_live', participantId: row.participantId, workerId: row.runtime.workerId,
@@ -2294,7 +2381,14 @@ export class SwarmRuntime {
       refuse('Swarm recruit predecessor is unavailable in this swarm', 'swarm_recruit_predecessor_unavailable',
         { participantId: resumeFrom });
     }
-    if (predecessor.status !== 'active') {
+    // #442: a seat whose PROVIDER killed it settles (#350) the moment the fault is observed, and
+    // that settle is exactly what the fault's own attention row answers with
+    // `swarm.recruit --resume-from` — so a fault-settled seat stays a resumable predecessor.
+    // Its work is on disk and its contracts are published; the death was the provider's doing,
+    // not the seat's, and refusing here would leave the root with no way to continue the lane
+    // (a settled identity cannot re-join either). Every other non-active status keeps refusing.
+    const faultSettled = predecessor.status === 'left' && predecessor.leftReason === 'provider_fault';
+    if (predecessor.status !== 'active' && !faultSettled) {
       refuse('Swarm recruit predecessor is not an active participant', 'swarm_recruit_predecessor_unavailable',
         { participantId: resumeFrom, status: predecessor.status });
     }
@@ -2525,6 +2619,10 @@ export class SwarmRuntime {
     // incarnation recovered — idempotent, so the first operation after a restart folds the lost
     // seats and every later entry is a no-op.
     this._reconcileParticipantRuntimes();
+    // Issue #442: the fault observation rides the same idempotent entry: the first operation after
+    // a seat's provider-fault death folds its fault row and settles its membership, every later
+    // entry is a no-op.
+    this._observeParticipantFaults();
     // The native bridge's refusal report (issue #283). It reaches the runtime through `dispatch`
     // because that is the bridge's ONLY channel, and it is admitted only from a bridge report: the
     // verb is not a swarm command (swarm-contract asserts it never becomes one), so no surface can
@@ -2701,9 +2799,10 @@ export class SwarmRuntime {
       }
       // #316 (a): a route its provider degraded is refused BEFORE any effect — no worktree, no
       // credential projection, no process, and no seat dead within seconds — and the refusal names
-      // the route, the instant the episode opened and the next act (pause recruits on it until a
-      // probe succeeds). Derived from the SAME usage rows the comparison below reads, so the route
-      // the caller sees degraded is the route it is refused on.
+      // the route, the instant the episode opened, the provider's OWN reset answer when it gave one
+      // (#442 item 2: `resetAt` when the answer zone-qualified it, its text otherwise) and the next
+      // act (pause recruits on it until a probe succeeds). Derived from the SAME usage rows the
+      // comparison below reads, so the route the caller sees degraded is the route it is refused on.
       const degrade = this._routeDegradeFor(args);
       if (degrade) {
         const ready = this._readyRouteLabels();
@@ -2712,6 +2811,8 @@ export class SwarmRuntime {
           + ` since ${degrade.since ?? 'an unrecorded instant'}: ${degrade.count ?? degrade.participants?.length ?? 0}`
           + ' seat(s) died on it inside one window — recruits pause on it until a probe succeeds'
           + ' (the deployment\'s own run path probes a route before it starts one)'
+          + (degrade.resetAt ? `; its provider said it resets at ${degrade.resetAt}`
+            : degrade.resetAtText ? `; its provider said it resets at ${degrade.resetAtText}` : '')
           + (ready.length > 0
             ? `; routes ready now: ${ready.join(', ')}`
             : '; no route is ready — wait for a probe or provision another route'),
@@ -2720,6 +2821,9 @@ export class SwarmRuntime {
             route: degrade.route, since: degrade.since ?? null,
             faultClass: degrade.faultClass ?? null, participants: degrade.participants ?? [],
             window: degrade.window ?? null, next: degrade.next ?? null,
+            // #442 item 2: the provider's own reset answer rides the typed refusal, so a caller
+            // acts on when the route comes back instead of retrying into the same wall.
+            resetAt: degrade.resetAt ?? null, resetAtText: degrade.resetAtText ?? null,
           },
         );
       }

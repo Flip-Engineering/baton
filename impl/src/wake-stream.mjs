@@ -199,8 +199,15 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     wakeClass: 'dead', scope: 'deployment', terminal: true,
     next: 'baton swarm update {swarmId} swarm.holder_released',
     summary: 'a worker runtime crashed; its holder seats are still assigned to it until released',
-    rows: [operationalKind('lifecycle.crashed')],
-    subject: { field: 'worker', kind: 'worker', fallback: { field: 'taskId', kind: 'task' } },
+    // #442: a seat whose provider killed its worker IS a worker death, and it is the class that
+    // was silent through six GLM kills: the fault death is a FAILED TURN followed by a policy kill,
+    // never a crash cert, so nothing derived from `lifecycle.crashed` ever fires for it. The
+    // runtime's own `swarm.participant_faulted` row is the durable evidence, so it wakes here —
+    // with the seat it took and the fault it took it with (the row's payload names both).
+    rows: [operationalKind('lifecycle.crashed'), ledgerKind('swarm.participant_faulted')],
+    // Two spellings, one fact: the worker log names the worker `worker`, the swarm's own rows name
+    // it `workerId`. A frame from either carries the worker the wake is about.
+    subject: { field: 'worker', kind: 'worker', fallback: { field: 'workerId', kind: 'worker' } },
   }),
   wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,

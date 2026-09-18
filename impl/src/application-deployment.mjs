@@ -2289,6 +2289,12 @@ function deriveRouteDegrades({ log, routes }) {
           ? Object.freeze({ ...payload.next })
           : Object.freeze({ action: 'pause_recruits_until_probe', route: Object.freeze({ ...exact }) }),
         at: to,
+        // #442 item 2: the provider's own reset answer, as the coordinator's death fold recorded
+        // it — an instant only when the provider zone-qualified one, its text otherwise.
+        resetAt: typeof payload.resetAt === 'string' && Number.isFinite(Date.parse(payload.resetAt))
+          ? new Date(Date.parse(payload.resetAt)).toISOString() : null,
+        resetAtText: typeof payload.resetAtText === 'string' && payload.resetAtText.length > 0
+          ? payload.resetAtText : null,
       }));
     }
   }
@@ -2298,16 +2304,25 @@ function deriveRouteDegrades({ log, routes }) {
 /** The live degrade block for one route, or null: an episode no later successful turn and no
  * later verified probe has retired. `success`/`probeVerifiedAt` are the two readings the caller
  * owns; both are instants, and the later one wins. */
-function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null } = {}) {
+function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null, now = null } = {}) {
   const retired = [successAt, probeVerifiedAt].filter((at) => typeof at === 'string');
   for (const at of retired) {
     // An episode whose own window end cannot be read (a malformed row) stays degraded: the
     // fail-closed reading is the one that never admits a seat onto a route that is killing seats.
     if (episode.window.to !== null && Date.parse(at) > Date.parse(episode.window.to)) return null;
   }
+  // #442 item 2: the provider itself said when the route comes back. Past that instant the episode
+  // is HISTORY — the same derivation-by-fact rule #341's refusals retire on, never a timer — so a
+  // quota episode does not hold a route off after its own reset while a stall episode (which names
+  // no instant) keeps waiting for the probe its `next` asks for.
+  if (episode.resetAt !== null && Number.isFinite(now) && Date.parse(episode.resetAt) <= now) return null;
   return Object.freeze({
     state: 'degraded', route: episode.route, since: episode.window.from,
-    faultClass: episode.faultClass, participants: episode.participants,
+    // The fault class is the reason this route is off the table: the one spelling the refusal, the
+    // doctor row and the route table all name it by.
+    reason: episode.faultClass, faultClass: episode.faultClass,
+    resetAt: episode.resetAt, resetAtText: episode.resetAtText,
+    participants: episode.participants,
     window: episode.window, count: episode.count, next: episode.next,
   });
 }
@@ -2315,9 +2330,12 @@ function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null } 
 /** #316 (a): the ONE degrade accessor for a deployment, in the shape the refusal index publishes:
  * `{ live }` — the routes degraded right now — plus the episodes themselves for the route table.
  * Deliberately uncached for the same reason the refusal index is: the ledger read is already
- * append-aware, and a cache would hold an episode a later turn has retired. */
-function providerDegradeIndex({ log, routes, refusals = null, liveness = null }) {
+ * append-aware, and a cache would hold an episode a later turn has retired. `now` is the
+ * deployment's own clock (#442 item 2 reads it to retire a quota episode at its provider's reset
+ * instant), never a second one invented here. */
+function providerDegradeIndex({ log, routes, refusals = null, liveness = null, now = Date.now }) {
   return () => {
+    const at = now();
     const episodes = deriveRouteDegrades({ log, routes });
     const live = new Map();
     const observed = refusals === null ? EMPTY_REFUSAL_RECORD : refusalRecordOf(refusals);
@@ -2334,7 +2352,7 @@ function providerDegradeIndex({ log, routes, refusals = null, liveness = null })
           }
         } catch { probeVerifiedAt = null; }
       }
-      const block = liveDegradeBlock(episode, { successAt, probeVerifiedAt });
+      const block = liveDegradeBlock(episode, { successAt, probeVerifiedAt, now: at });
       if (block) live.set(key, block);
     }
     return Object.freeze({ live, episodes });
@@ -2847,18 +2865,24 @@ class BatonDeployment {
       const doctorRow = key === null ? null : stateOf.get(key) ?? null;
       const blocked = doctorRow?.state === 'blocked';
       const code = blocked ? doctorRow.code ?? null : null;
-      const resetAt = blocked ? doctorRow.resetAt ?? null : null;
-      // The quota axis is the provider's own quota fact: a live exhausted-quota block, or a refusal
-      // whose code IS the quota class. An authentication refusal leaves it `ok` — the route is
-      // blocked, but not because anything ran out.
-      const quotaRefused = code === PROVIDER_FAULT_CODES.quota;
+      // #316 (a): the episode the coordinator's fold recorded for this route, if it is still live —
+      // read from the SAME doctor row's published degrade (never a second ledger walk), so the
+      // usage row and the readiness row cannot disagree about it. Read BEFORE the quota axis, which
+      // #442 makes read the same episode: a provider fault that exhausted the route is one fact.
+      const degraded = doctorRow?.degraded ?? null;
+      // #442 item 2: the route a provider faulted names WHEN it comes back. The blocked row's own
+      // instant wins when both are present (the recorded refusal is the more specific fact); the
+      // degrade episode's instant is the fault's own answer.
+      const degradedResetAt = typeof degraded?.resetAt === 'string' ? degraded.resetAt : null;
+      const resetAt = blocked ? doctorRow.resetAt ?? null : degradedResetAt;
+      // The quota axis is the provider's own quota fact: a live exhausted-quota block, a refusal
+      // whose code IS the quota class, or the fault episode that class ended as. An authentication
+      // refusal leaves it `ok` — the route is blocked, but not because anything ran out.
+      const quotaRefused = code === PROVIDER_FAULT_CODES.quota
+        || degraded?.reason === PROVIDER_FAULT_CODES.quota;
       const quota = quotaRefused
         ? Object.freeze({ state: 'exhausted', resetAt })
         : Object.freeze({ state: 'ok', resetAt: null });
-      // #316 (a): the episode the coordinator's fold recorded for this route, if it is still live —
-      // read from the SAME doctor row's published degrade (never a second ledger walk), so the
-      // usage row and the readiness row cannot disagree about it.
-      const degraded = doctorRow?.degraded ?? null;
       const occupancy = this.#occupancyFor(route);
       let ceiling = occupancy.concurrencyCeiling;
       if (ceiling === null) {
@@ -2877,6 +2901,9 @@ class BatonDeployment {
         state: blocked ? 'blocked' : (degraded ? 'degraded' : 'ready'),
         code,
         resetAt,
+        // #442 item 2: which fault took the route down — the typed class this row's `state` is a
+        // consequence of, null on a route nothing faulted.
+        reason: degraded?.reason ?? (blocked ? code : null),
         usage: Object.freeze({ turns, tokens, usd }),
         concurrency: Object.freeze({ ceiling, inUse: occupancy.inFlight }),
         lastProviderRefusal: doctorRow?.lastProviderRefusal ?? null,
@@ -3997,6 +4024,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // derivation rather than three that can drift.
   const routeDegrades = providerDegradeIndex({
     log: driver.log, routes, refusals: routeRefusals, liveness: livenessController,
+    // #442 item 2: the SAME clock the refusal index retires its blocks on, so a provider-stated
+    // reset instant expires a degrade episode on one timeline across the route table.
+    now: residentOptions.now ?? Date.now,
   });
   const grokCredentialProbe = grokCredentialCache ? () => {
     const metadata = grokCredentialCache.metadata();

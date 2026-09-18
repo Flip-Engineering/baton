@@ -18,11 +18,13 @@
 //   provider_turn_failed    — the named generic, for a failed turn whose class the boundary could
 //       not name. Never a bare `omp_<stopReason>` and never a silent death.
 //
-// The reset instant is a fact about the PROVIDER's clock, so the parse is deliberately narrow: a
-// spelled ISO-8601-shaped date-time, with an explicit zone when the answer carries one. A
-// zone-less date-time is read as UTC, so the same answer means the same instant on every host
-// that recorded it (a host-local reading would make one recorded reset compare differently per
-// machine, which is exactly what a readiness derivation may not do).
+// The reset instant is a fact about the PROVIDER's clock, and the provider's answer is read
+// exactly as far as it is honest (#442 item 4): an instant the answer ZONE-QUALIFIED is parsed
+// into the one canonical spelling every host reads the same way, and an instant the answer left
+// zone-less stays the provider's own TEXT (`resetAtText`) with `resetAt: null`. Assuming UTC for a
+// wall-clock the provider never qualified is a fabricated instant, and the failure mode is real:
+// the zai GLM answer `reset at 2026-09-18 18:07:32` (Beijing time) was recorded as 18:07:32Z, so
+// every block derived from it would have lapsed eight hours before the provider said it would.
 
 import { FRAME_LIMITS } from './limits.mjs';
 
@@ -88,21 +90,46 @@ function boundedText(value, limit) {
 }
 
 /**
- * The reset instant the provider's own answer named, as a canonical ISO-8601 UTC string, or null
- * when the answer named none. Bounded scan (the message is already bounded by the caller), one
- * spelling: an ISO-8601-shaped date-time. A zone-less reading is UTC (see the module header).
+ * The reset instant the provider's answer spelled, or null when it spelled none. Bounded scan
+ * (the message is already bounded by the caller), one spelling: an ISO-8601-shaped date-time.
+ * The match is returned with the zone the answer carried, verbatim, so the caller can keep the
+ * provider's own words beside the instant this module does or does not derive from them.
  */
-export function parseProviderResetAt(text) {
+function readResetSpelling(text) {
   const message = boundedText(text, ANSWER_SCAN_BYTES);
   if (message.length === 0) return null;
   const match = RESET_AT_TEXT.exec(message);
   if (!match) return null;
-  const [, year, month, day, hour, minute, second = '00', fraction = '0', zone = ''] = match;
+  const [, year, month, day, hour, minute, second = '00', , zone = ''] = match;
   const numeric = [year, month, day, hour, minute, second].map((part) => Number.parseInt(part, 10));
   if (numeric.some((part) => !Number.isSafeInteger(part))) return null;
-  const [y, mo, d, h, mi, s] = numeric;
+  const [mo, d, h, mi, s] = numeric.slice(1);
   if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return null;
-  const offset = zone === '' || zone === 'Z' || zone === 'UTC' || zone === 'GMT'
+  return Object.freeze({ spelling: match[0].trim(), zone, fields: match.slice(1, 8) });
+}
+
+/**
+ * The provider's own reset spelling — the text as the answer carried it, or null when the answer
+ * named no reset instant at all. This is the value a consumer keeps when no honest instant can be
+ * derived from it (#442 item 4).
+ */
+export function providerResetText(text) {
+  return readResetSpelling(text)?.spelling ?? null;
+}
+
+/**
+ * The reset instant the provider's own answer named, as a canonical ISO-8601 UTC string, or null
+ * when the answer named none — OR named one without a zone (#442 item 4). A zone-less wall-clock
+ * is the provider's local time, and nothing in the answer says which zone that is; reading it as
+ * UTC invents an instant that can sit hours off the one the provider meant. The caller keeps the
+ * provider's words instead (`providerResetText`) and derives no instant from them.
+ */
+export function parseProviderResetAt(text) {
+  const spelled = readResetSpelling(text);
+  if (!spelled || spelled.zone === '') return null;
+  const [year, month, day, hour, minute, second = '00', fraction = '0'] = spelled.fields;
+  const zone = spelled.zone;
+  const offset = zone === 'Z' || zone === 'UTC' || zone === 'GMT'
     ? 'Z' : (zone.includes(':') ? zone : `${zone.slice(0, 3)}:${zone.slice(3)}`);
   const millis = Date.parse(
     `${year}-${month}-${day}T${hour}:${minute}:${second}.${fraction.padEnd(3, '0')}${offset}`,
@@ -147,11 +174,16 @@ export function classifyProviderFault(answer = {}, { route = null } = {}) {
   const socketByCode = codes.some((code) => SOCKET_CODES.has(code));
   if (quotaByCode || QUOTA_TEXT.test(text)) {
     const resetAt = parseProviderResetAt(text);
+    // #442 item 4: the answer's own spelling always rides the typed fault beside the instant this
+    // module was willing to derive from it, so a zone-less answer reads as `{resetAt: null,
+    // resetAtText: '...'}` — the honest pair — and never as a UTC instant nobody stated.
+    const resetAtText = providerResetText(text);
     return Object.freeze({
       code: PROVIDER_FAULT_CODES.quota,
       detail: Object.freeze({
         ...detail,
         resetAt,
+        resetAtText,
         ...(statusCode ? { statusCode: Number.parseInt(statusCode, 10) } : {}),
       }),
     });
@@ -179,12 +211,17 @@ export function readProviderFaultDetail(value) {
   const route = normalizeProviderRoute(value.route);
   const resetAt = typeof value.resetAt === 'string' && Number.isFinite(Date.parse(value.resetAt))
     ? new Date(Date.parse(value.resetAt)).toISOString() : null;
+  // #442 item 4: the provider's own spelling, bounded exactly as the scan reads it. Absent unless
+  // the payload carried one, so a detail written before the field existed reads byte-identically.
+  const resetAtText = typeof value.resetAtText === 'string' && value.resetAtText.length > 0
+    ? value.resetAtText.slice(0, ANSWER_SCAN_BYTES) : null;
   const statusCode = Number.isSafeInteger(value.statusCode) && value.statusCode >= 100 && value.statusCode <= 599
     ? value.statusCode : null;
-  if (!route && resetAt === null && statusCode === null) return null;
+  if (!route && resetAt === null && resetAtText === null && statusCode === null) return null;
   return Object.freeze({
     ...(route ? { route } : {}),
     resetAt,
+    ...(resetAtText === null ? {} : { resetAtText }),
     ...(statusCode === null ? {} : { statusCode }),
   });
 }

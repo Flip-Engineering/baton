@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 493,
+          "size": 498,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -73,6 +73,15 @@
           "evidence": [
             "recovery:restart_name",
             "effect:action_verb"
+          ]
+        },
+        {
+          "name": "providerFaultDeathFor",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
           ]
         },
         {
@@ -3935,7 +3944,7 @@
         {
           "name": "_mintProviderFaultDeath",
           "ordinal": 0,
-          "size": 76,
+          "size": 99,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -3944,7 +3953,7 @@
         {
           "name": "_foldProviderDegrade",
           "ordinal": 0,
-          "size": 44,
+          "size": 54,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -3953,7 +3962,7 @@
         {
           "name": "_recordProviderDegrade",
           "ordinal": 0,
-          "size": 15,
+          "size": 18,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -11977,6 +11986,16 @@
           ]
         },
         {
+          "name": "_observeParticipantFaults",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:reconcile_call",
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_swarm",
           "ordinal": 0,
           "size": 5,
@@ -12243,6 +12262,15 @@
           ]
         },
         {
+          "name": "_participantFaultCurrent",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_canAct",
           "ordinal": 0,
           "size": 7,
@@ -12328,7 +12356,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 724,
+          "size": 750,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12472,7 +12500,7 @@
         {
           "name": "_inheritancePredecessor",
           "ordinal": 0,
-          "size": 34,
+          "size": 41,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -12528,7 +12556,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 663,
+          "size": 673,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
