@@ -433,3 +433,54 @@ test('issue389-pin-no-content: a citation that discloses no file content stays o
       'an empty answer is never silent: it names why it served nothing and what to do next');
   }
 });
+
+// Recursively collect numeric values held under count-ish keys, wherever the implementer places
+// the file's actual line count.
+function numericFieldsUnder(obj, keyPattern, out = []) {
+  if (Array.isArray(obj)) { for (const value of obj) numericFieldsUnder(value, keyPattern, out); return out; }
+  if (obj && typeof obj === 'object') {
+    for (const [key, value] of Object.entries(obj)) {
+      if (keyPattern.test(key) && typeof value === 'number') out.push({ key, value });
+      numericFieldsUnder(value, keyPattern, out);
+    }
+  }
+  return out;
+}
+
+// Acceptance (b) is about the ANSWER the worker reads, not the exception an implementer throws:
+// both refusals must carry file, range, actual line count and next action IN THE RECEIPT.
+test('issue389-b-receipt-absent: the absence refusal receipt names the file, range, line count and next action', async () => {
+  const lane = orientedLane({ 'src/alpha.js': ALPHA_TEXT }, 'b-receipt-absent');
+  const { handle, citation } = await mapCitation(lane, 'issue389-bra');
+  const missing = 'src/does-not-exist.js';
+  emitCodeRead(lane.adapter, handle,
+    { kind: 'code', op: 'code.orient.detail', citation, path: missing, range: { start: { line: 2 }, end: { line: 5 } } },
+    'issue389-bra-detail');
+  await flush(40);
+  const payload = readResults(lane.coordinator, handle).at(-1)?.payload ?? {};
+  assert.equal(payload.ok ?? null, false, 'the read refuses');
+  const body = JSON.stringify(payload);
+  assert.ok(body.includes(missing), `the worker-visible receipt names the file: ${body.slice(0, 300)}`);
+  assert.ok(body.includes('2') && body.includes('5'), 'the receipt names the requested range');
+  assert.ok(numericFieldsUnder(payload, /actual|total|count/i).some((entry) => entry.value === 0),
+    `the receipt carries the file's actual line count (0): ${body.slice(0, 400)}`);
+  assert.match(body, /next|retry|narrow|action/i, 'the receipt names the next action');
+});
+
+test('issue389-b-receipt-eof: the beyond-EOF refusal receipt carries the actual line count', async () => {
+  const lane = orientedLane({ 'src/alpha.js': ALPHA_TEXT }, 'b-receipt-eof');
+  const { handle, citation } = await mapCitation(lane, 'issue389-bre');
+  const expectedCount = ALPHA_LINES.length;
+  emitCodeRead(lane.adapter, handle,
+    { kind: 'code', op: 'code.orient.detail', citation, path: 'src/alpha.js', range: { start: { line: 3 }, end: { line: 50 } } },
+    'issue389-bre-detail');
+  await flush(40);
+  const payload = readResults(lane.coordinator, handle).at(-1)?.payload ?? {};
+  assert.equal(payload.ok ?? null, false, 'the read refuses past the end of the file');
+  const body = JSON.stringify(payload);
+  assert.ok(body.includes('src/alpha.js'), 'the receipt names the file');
+  assert.ok(body.includes('3') && body.includes('50'), 'the receipt names the requested range');
+  assert.ok(numericFieldsUnder(payload, /actual|total|count/i).some((entry) => entry.value === expectedCount),
+    `the receipt carries the file's actual line count (${expectedCount}): ${body.slice(0, 400)}`);
+  assert.match(body, /next|retry|narrow|action/i, 'the receipt names the next action');
+});
