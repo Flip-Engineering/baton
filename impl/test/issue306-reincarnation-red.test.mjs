@@ -26,7 +26,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -357,7 +357,9 @@ test('#306 §2.4: the successor spawns at the target with BATON_PREDECESSOR_INCA
   assert.equal(spec.env.BATON_REINCARNATION_TARGET, f.base, 'and the commit it serves');
   assert.equal(typeof spec.env.BATON_INCARNATION, 'string',
     'the old mints the successor identity, so host.successor_started can name it (docs/48 §11)');
-  assert.equal(spec.cwd, f.repo, 'the successor serves the same checkout, moved to the target');
+  // The deployment resolves the serving checkout through realpath (macOS mounts the temp root
+  // under /private), so the pin compares realpaths — the same directory, not the same spelling.
+  assert.equal(realpathSync(spec.cwd), realpathSync(f.repo), 'the successor serves the same checkout, moved to the target');
   assert.equal(receipt.successor.pid, stub.pid);
   const started = hostRow(f.ledgerPath, 'host.successor_started');
   assert.ok(started, 'host.successor_started is durable');
