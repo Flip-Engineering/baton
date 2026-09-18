@@ -5,9 +5,9 @@
 // Every row asserts the behaviour docs/47 specifies against the CURRENT runtime and is expected
 // RED: `--issue`/`--doc` are not in the recruit argv vocabulary (today the parse refuses
 // closed-set), `options.contextPackage` attaches nothing, no `## Context package` section
-// composes, and the three read verbs (`run.package.read`, `swarm.contributions.read`,
-// `swarm.peers.read`) are not in the seat verb set (today each refuses
-// swarm_command_unavailable). Each row's message names what the implementer must land. When a
+// composes, and the three read verbs (`run.package.read`, `run.contributions.read`,
+// `run.peers.read` — the `run.*` participant namespace, docs/47 §3) are not in the seat verb
+// set (today each refuses swarm_command_unavailable). Each row's message names what the implementer must land. When a
 // row goes green its expected-red manifest entry is stale and is retired with the landing
 // (docs/44).
 //
@@ -136,11 +136,11 @@ test('#441 RED (stage: design-not-landed): (d) contributions read serves the fol
   let ledgerReads = 0;
   const eventsView = f.store.eventsView.bind(f.store);
   f.store.eventsView = (...args) => { ledgerReads += 1; return eventsView(...args); };
-  const answer = await f.seatCall('swarm.contributions.read', { since: 0 }, seat);
+  const answer = await f.seatCall('run.contributions.read', { since: 0 }, seat);
   f.store.eventsView = eventsView;
   const rows = answer?.contributions ?? [];
   assert.ok(rows.some((row) => row.contributionId === 'c-1'),
-    'land swarm.contributions.read (docs/47 §3): the fold\'s contribution rows since the seq, in ledger order');
+    'land run.contributions.read (docs/47 §3): the fold\'s contribution rows since the seq, in ledger order');
   assert.equal(ledgerReads, 0,
     'the read derives from the fold — zero ledger scans on the read path (docs/46 §7, docs/47 §3)');
 });
