@@ -1297,6 +1297,14 @@
       "reason": "#460"
     },
     {
+      "key": "test/readiness-honesty-red.test.mjs :: A-L (pin): the fixture adapter plants the conditions it claims — the complete probe emits the exact content pin, the quota modes carry the quota/capacity wire, the die mode emits no turn_completed, and the expected-line parser reads the bounded probe prompt",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A-Lcap (pin): the bounded-capture law — a probe whose exact pin sits beyond the 2KiB capture bound never verifies; it fails probe_content_mismatch through the real classification (D1 cost-honesty, G2, A-L twin)",
+      "reason": "#460"
+    },
+    {
       "key": "test/readiness-honesty-red.test.mjs :: A1a (stage: enumerable honest projection): a static-only doctor row reads unverified with probedAt null — never self-relabeled probe-verified — and the fields survive JSON.stringify; a fresh content-verified probe reads probe-verified with probedAt = recorded verifiedAt (D2 cardinal law + wire law)",
       "reason": "#167"
     },
@@ -1321,12 +1329,28 @@
       "reason": "#167"
     },
     {
+      "key": "test/readiness-honesty-red.test.mjs :: A4p (pin): a quota/capacity worker-turn death fires NO invalid_grant credential fan-out, while the landed invalid_grant class still invalidates every row sharing the credentialKey — and only those rows (fold F-1, A4 negative control)",
+      "reason": "#460"
+    },
+    {
       "key": "test/readiness-honesty-red.test.mjs :: A5 (stage: honest-projection refusal): a failed verdict refuses wave preflight with wave_driver_route_unready BEFORE any member spawn, and the driver never substitutes a route (D3)",
       "reason": "#167"
     },
     {
+      "key": "test/readiness-honesty-red.test.mjs :: A5p (pin): the landed preflight still refuses a static-blocked member with wave_driver_route_unready, and matchRoute performs no route substitution (RT-5p, D3)",
+      "reason": "#460"
+    },
+    {
       "key": "test/readiness-honesty-red.test.mjs :: A6 (stage: spawn-gate coverage): #livenessGate is consulted on every provider-spawn surface — run, startMany, workflow, explore, review — before any real turn, exactly as assertRouteReady already is (D1 trigger 1, blocker 4)",
       "reason": "#167"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: A6p (pin): all five provider-spawn surfaces still consult assertRouteReady — the existing static gate is not weakened by the liveness fold (G1, A6 sibling)",
+      "reason": "#460"
+    },
+    {
+      "key": "test/readiness-honesty-red.test.mjs :: P-stale (pin): the landed staleness law — a lapsed verified window projects unverified with the recorded measurement, never stale-verified, and a never-probed route reads unverified (D2, route-liveness.mjs:366-371)",
+      "reason": "#460"
     },
     {
       "key": "test/readiness-honesty-red.test.mjs :: V-stale (stage: lapsed-window verdict): the honest verdict follows the staleness law — a lapsed verified window reads verdict unverified, NEVER stale probe-verified, with probedAt retaining the last recorded measurement (D2 staleness law, P-stale twin)",
