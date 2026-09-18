@@ -6376,12 +6376,13 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 189,
+          "size": 202,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
             "effect:filesystem_mutation",
-            "admission:typed_refusal"
+            "admission:typed_refusal",
+            "observation:story_ingest"
           ]
         },
         {
@@ -6547,7 +6548,7 @@
         {
           "name": "_writeProjectionCheckpoint",
           "ordinal": 0,
-          "size": 58,
+          "size": 67,
           "seam": "effect",
           "evidence": [
             "effect:filesystem_mutation",
@@ -6569,9 +6570,28 @@
         {
           "name": "_boundedCheckpointWrite",
           "ordinal": 0,
-          "size": 14,
+          "size": 22,
           "seam": "observation",
           "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_rewriteProjectionCheckpoint",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_sweepProjectionCheckpointTemps",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
             "observation:ledger_name"
           ]
         },
@@ -14092,7 +14112,7 @@
         {
           "name": "startupStatus",
           "ordinal": 0,
-          "size": 29,
+          "size": 44,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -14173,7 +14193,7 @@
         {
           "name": "_loadPlan",
           "ordinal": 0,
-          "size": 49,
+          "size": 54,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -14538,12 +14558,13 @@
         {
           "name": "_restoreProjectionCheckpoint",
           "ordinal": 0,
-          "size": 176,
+          "size": 217,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "recovery:reconcile_call",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "observation:story_ingest"
           ]
         },
         {

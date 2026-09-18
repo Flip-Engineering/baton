@@ -3464,6 +3464,25 @@ class BatonDeployment {
     // overrides the store's own state), and reconstructionElapsedMs is the wall clock the pass
     // order consumed — so-far while running, the total once done.
     const reconstruction = this.#driver?.coordinator?.startupReconstructionStatus?.() ?? null;
+    // Issue #449: the checkpoint's own outcome rides the same row, because the flip line renders
+    // exactly these fields. `checkpoint` names which state the open reached — `stale_shape` (a
+    // checkpoint another projection shape wrote: replayed in full, then rewritten) beside
+    // `corrupt` (an envelope invariant failed: #397's repair path) — and the detail carries the
+    // invariant with the shape digest and served commit that wrote it. The rewrite the open
+    // performed after a full replay and the leftover temp files it swept are read off the store's
+    // status the same way reason/detail are (non-enumerable there, so its pinned enumerable shape
+    // stays exact); a sweep with no restore reason of its own names itself, `swept` rides the
+    // detail so the operator's line prints the file names verbatim.
+    const restoreDetail = status?.checkpointDetail ?? null;
+    const rewrite = status?.checkpointRewrite ?? null;
+    const swept = status?.checkpointSwept ?? null;
+    const detail = restoreDetail === null && rewrite === null && (swept === null || swept.length === 0)
+      ? null
+      : {
+        ...(restoreDetail ?? {}),
+        ...(rewrite === null ? {} : { rewrite }),
+        ...(swept === null || swept.length === 0 ? {} : { swept: [...swept] }),
+      };
     return Object.freeze({
       schemaVersion: 1,
       openElapsedMs: this.#startupElapsedMs,
@@ -3474,8 +3493,8 @@ class BatonDeployment {
         checkpoint: status.checkpoint,
         // #397: the invariant a refused checkpoint failed and the compared values. Read DIRECTLY —
         // startupStatus attaches them non-enumerable so its pinned enumerable shape stays exact.
-        reason: status.checkpointReason ?? null,
-        detail: status.checkpointDetail ?? null,
+        reason: status.checkpointReason ?? (swept !== null && swept.length > 0 ? 'temp_swept' : null),
+        detail,
       }),
       ...(reconstruction === null ? {} : {
         reconstructionState: reconstruction.state,
@@ -3518,7 +3537,18 @@ class BatonDeployment {
       stopped: ({ state }) => {
         const at = this.#clock();
         const checkpoint = this.#driver?.coordination?.checkpointReleaseState?.() ?? null;
-        const cache = checkpoint === null ? '' : ` (projection checkpoint ${checkpoint.state}${checkpoint.reason ? `: ${checkpoint.reason}` : ''})`;
+        // Issue #449: the outcome names the quantities and the bounds the release judged — the
+        // measured checkpoint bytes (absent when the window's own ledger bytes alone proved it
+        // past the ceiling, which is then the named evidence), the window's ledger bytes, and both
+        // declared ceilings, so `checkpoint: {state, reason, bytes, bound}` reads off the stop row
+        // and the line together.
+        const measured = [];
+        if (Number.isSafeInteger(checkpoint?.bytes)) measured.push(`${checkpoint.bytes} bytes`);
+        else if (Number.isSafeInteger(checkpoint?.ledgerBytes)) measured.push(`${checkpoint.ledgerBytes} ledger bytes`);
+        if (Number.isSafeInteger(checkpoint?.costBound)) measured.push(`cost bound ${checkpoint.costBound} bytes`);
+        if (Number.isSafeInteger(checkpoint?.bound)) measured.push(`replay frame bound ${checkpoint.bound} rows`);
+        const cache = checkpoint === null ? ''
+          : ` (projection checkpoint ${checkpoint.state}${checkpoint.reason ? `: ${checkpoint.reason}` : ''}${measured.length === 0 ? '' : `; ${measured.join('; ')}`})`;
         return { line: `baton serve: host.stopped ${state} at ${at}${cache}` };
       },
       /** Issue #351: one mark on the stop's own clock, taken by the host that finished the stage.

@@ -779,6 +779,11 @@ export class CoordinationStore {
     // Issue #351: what the last clean release did with the projection checkpoint, and why. A
     // lifecycle path reports the skip instead of paying an unbounded main-thread serialization.
     this._checkpointRelease = null;
+    // Issue #449: the open's own checkpoint facts — the rewrite it performed after a stale-shape
+    // replay, and the temp files it swept. Both are reported through `startupStatus()`
+    // non-enumerably, like #397's reason/detail, so the pinned enumerable shape stays exact.
+    this._checkpointRewrite = null;
+    this._checkpointSweep = null;
     // Issue #351: the resident's stop outcome, armed by the deployment that owns the stop and
     // minted by the release itself — see armHostStopOutcome.
     this._hostStopOutcome = null;
@@ -920,6 +925,14 @@ export class CoordinationStore {
       contextEnvironmentDigest: this._contextEnvironmentDigest,
       contextReferenceIdentity: this._contextReferenceIdentity,
     });
+    // Issue #449(2): this build's projection shape — the digest of the sorted field list the
+    // checkpoint's payload carries. It rides every envelope the store writes beside the commit that
+    // served the write, and the restore compares it before it judges any shape-specific invariant,
+    // so a checkpoint another build wrote is provably STALE (replay + rewrite) instead of being
+    // reported as corruption (repair). Derived from PROJECTION_CHECKPOINT_FIELDS, the ONE field
+    // list the durable payload is composed from — never a second declaration of it.
+    this._projectionShapeDigest = createHash('sha256')
+      .update([...PROJECTION_CHECKPOINT_FIELDS].sort().join(',')).digest('hex');
     this._resetProjection();
     if (opts.operationalRangeRead !== undefined && typeof opts.operationalRangeRead !== 'function') throw new TypeError('operationalRangeRead must be a function');
     this._operationalRead = opts.operationalRead ?? null;
@@ -1110,9 +1123,16 @@ export class CoordinationStore {
     return payload;
   }
 
-  _writeProjectionCheckpoint() {
+  /** Issue #449: the ONE writer of the projection checkpoint. It returns the bytes it MEASURED
+   * (`bytes`) and whether the checkpoint was written (`written`) — the serialize is paid once and
+   * the exact bytes are reused for the envelope, so no caller measures the same projection twice.
+   * `costBound` (bytes) is the declared ceiling a housewriting caller judges the checkpoint's own
+   * cost against: the measurement is the cost, so the ceiling is applied HERE, on the bytes the
+   * write would actually persist, and a checkpoint past it is reported (never written) with its
+   * measured size. The operator's `compact()` calls this with no ceiling — it is not housewriting. */
+  _writeProjectionCheckpoint({ costBound = null } = {}) {
     this._assertWriterLease();
-    if (this._projectionPoison) return false;
+    if (this._projectionPoison) return { written: false, bytes: 0 };
     const raw = existsSync(this.file) ? readFileSync(this.file) : Buffer.alloc(0);
     if (raw.byteLength > 0 && raw.at(-1) !== 0x0a) {
       throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
@@ -1127,6 +1147,9 @@ export class CoordinationStore {
       );
     }
     const projectionBytes = serialize(this._projectionCheckpointPayload({ durable: true }));
+    if (costBound !== null && projectionBytes.byteLength > costBound) {
+      return { written: false, bytes: projectionBytes.byteLength };
+    }
     // #223: throughSeq is the count of events the parsed cache covers — the LIVE WINDOW.
     // Archived events live in segments and are NOT part of the ledger bytes or the cache.
     const base = this._segmentIndex?.archivedThroughSeq ?? 0;
@@ -1134,6 +1157,12 @@ export class CoordinationStore {
     const envelope = {
       schemaVersion: 1,
       authorityDigest: this._checkpointAuthorityDigest,
+      // Issue #449(2): the writer's own projection shape and the commit it served. A checkpoint
+      // another build wrote is then STALE (its parsed cache belongs to a different projection),
+      // which the open answers with a full replay and a rewrite — never with the word 'corrupt',
+      // whose remedy is a repair. Recorded here so the distinction is provable, not inferred.
+      projectionShapeDigest: this._projectionShapeDigest,
+      servedCommit: this._deploymentBaseSha ?? null,
       throughSeq: windowCount,
       prefixBytes: raw.byteLength,
       prefixDigest: sha256Bytes(raw),
@@ -1155,7 +1184,7 @@ export class CoordinationStore {
         try { fsyncSync(rootFd); } finally { closeSync(rootFd); }
       } catch { /* directory fsync is unavailable on some supported hosts */ }
       this._checkpointWriteFailure = null;
-      return true;
+      return { written: true, bytes: projectionBytes.byteLength };
     } catch (error) {
       if (fd !== null) try { closeSync(fd); } catch { /* original write error wins */ }
       try { unlinkSync(temporary); } catch { /* rename or cleanup already completed */ }
@@ -1169,48 +1198,104 @@ export class CoordinationStore {
     }
   }
 
-  /** Issue #351: a clean release writes the projection checkpoint only while it is still a
-   * BOUNDED record. The checkpoint is housekeeping (#229: crash-recovery acceleration; the ledger
-   * stays authoritative), but `_writeProjectionCheckpoint` pays `readFileSync` of the whole ledger,
-   * two digests over it, and one `v8.serialize` of the ENTIRE projection — including the parsed
-   * `_events` cache, a second copy of the same ledger — synchronously on the main thread. On the
-   * stop path that cost is proportional to the whole ledger (and to a live campaign's projection,
+  /** Issue #351/#449: a clean release writes the projection checkpoint while the checkpoint is
+   * still a BOUNDED record. The checkpoint is housekeeping (#229: crash-recovery acceleration; the
+   * ledger stays authoritative), but `_writeProjectionCheckpoint` pays `readFileSync` of the whole
+   * ledger, two digests over it, and one `v8.serialize` of the ENTIRE projection — including the
+   * parsed `_events` cache, a second copy of the same ledger — synchronously on the main thread. On
+   * the stop path that cost is proportional to the projection (and to a live campaign's projection,
    * which is larger than the ledger it folds): a SIGTERM drain that must serve an operator's
    * deadline may not spend it re-encoding history nobody asked it to cache.
    *
-   * The bound is DERIVED, never invented: the checkpoint exists to serve a replay, and
-   * `view.wake_replay.items` is the registry's own ceiling for how many ledger rows one replay
-   * carries. A projection holding more rows than that is no longer a bounded record, so the
-   * release records the skip (with the row count, the bound and the reason) and leaves the ledger
-   * — which every loader still replays exactly — authoritative. The deferred append-path
-   * checkpoint and the operator's `compact()` write are untouched: neither is a lifecycle path.
-   */
+   * The bound is DERIVED from the checkpoint's OWN cost (#449): the ceiling is the registry's row
+   * `checkpoint.projection_bytes`, and the quantity judged against it is the serialized projection
+   * measured at write time — never the ledger's row count, which is not the cache's cost. The
+   * deferred append-path checkpoint and the operator's `compact()` write are untouched: neither is
+   * a lifecycle path (`compact()` is not housewriting and keeps its unconditional write). */
   _releaseProjectionCheckpoint() {
     if (this._startupState?.state !== 'ready' || this._projectionPoison) return null;
     this._checkpointRelease = this._boundedCheckpointWrite('release');
     return this._checkpointRelease;
   }
 
-  /** The one bound every HOUSEWRITING checkpoint obeys (#229's deferred append-path write and
-   * #351's release write): housekeeping may only ever re-encode a BOUNDED projection. The bound is
-   * DERIVED, never invented — the checkpoint exists to serve a replay, and
-   * `view.wake_replay.items` is the registry's own ceiling for how many ledger rows one replay
-   * carries. Beyond it the write is skipped, with the row count, the bound and the reason recorded,
-   * and the ledger — which every loader still replays exactly — stays authoritative. The operator's
-   * own `compact()` verb is NOT housewriting and keeps its unconditional cache write. */
+  /** Issue #449: the one bound every HOUSEWRITING checkpoint obeys (#229's deferred append-path
+   * write and #351's release write): housekeeping may only ever re-encode a checkpoint whose OWN
+   * cost is bounded — the bytes of its serialized projection, against the registry's declared
+   * ceiling for that quantity (`checkpoint.projection_bytes`; both ceilings that apply are named on
+   * the outcome, and the row count is reported beside them).
+   *
+   * The pre-#449 bound was the wake-replay FRAME's row ceiling applied to the ledger's row count:
+   * on any ledger that had done real work — and with #223's archival rung not running, on every
+   * ledger — the release recorded `release_checkpoint_unbounded` and every restart replayed the
+   * whole ledger (#449: 65 s of republish on the primary, 13 s on the clone).
+   *
+   * The verdict is reached in the order that keeps a stop path bounded. The window's OWN ledger
+   * bytes are an exact, O(1) floor of the cache's cost (the parsed cache IS that window), so a
+   * window already past the ceiling is skipped WITHOUT serializing anything; only a window inside
+   * the ceiling is measured, and the measured bytes are then written as-is. The outcome names the
+   * measured bytes, the window's ledger bytes, the row count, the replay frame's row ceiling
+   * (`bound`) and this ceiling (`costBound`). A skip is recorded, never silent, and the ledger —
+   * which every loader still replays exactly — stays authoritative. */
   _boundedCheckpointWrite(phase) {
-    const bound = FRAME_LIMITS['view.wake_replay.items'].value;
-    const rows = this._events.length - (this._segmentIndex?.archivedThroughSeq ?? 0);
-    if (rows > bound) {
-      return freeze({ state: 'skipped', reason: `${phase}_checkpoint_unbounded`, rows, bound });
+    const frame = FRAME_LIMITS['view.wake_replay.items'];
+    const cost = FRAME_LIMITS['checkpoint.projection_bytes'];
+    const declared = {
+      rows: this._events.length - (this._segmentIndex?.archivedThroughSeq ?? 0),
+      ledgerBytes: this._loadedLedgerIdentity?.bytes ?? 0,
+      bound: frame.value,
+      costBound: cost.value,
+    };
+    if (declared.ledgerBytes > cost.value) {
+      return freeze({ state: 'skipped', reason: `${phase}_checkpoint_unbounded`, bytes: null, ...declared });
     }
     try {
-      this._writeProjectionCheckpoint();
-      return freeze({ state: 'written', reason: null, rows, bound });
+      const written = this._writeProjectionCheckpoint({ costBound: cost.value });
+      return written.written
+        ? freeze({ state: 'written', reason: null, bytes: written.bytes, ...declared })
+        : freeze({ state: 'skipped', reason: `${phase}_checkpoint_unbounded`, bytes: written.bytes, ...declared });
     } catch {
       // The ledger stays authoritative; cache telemetry cannot block the path that reached here.
-      return freeze({ state: 'failed', reason: 'checkpoint_write_failed', rows, bound });
+      return freeze({ state: 'failed', reason: 'checkpoint_write_failed', bytes: null, ...declared });
     }
+  }
+
+  /** Issue #449(2): the ONE checkpoint write that is NOT judged against the housewriting ceiling.
+   * The open performs it right after it has replayed the whole ledger because the checkpoint it
+   * found belongs to another projection shape. Its bound is the replay that just completed: the
+   * open has already parsed and folded exactly these rows, so the rewrite is the same order of work
+   * behind a load that holds no stop's deadline — and it is the only write that makes the NEXT open
+   * bounded, which is what #449's live proof asks for (a restart after a landing replays once, not
+   * on every restart). It reports its own measured bytes; a failure costs the open nothing. */
+  _rewriteProjectionCheckpoint(reason) {
+    const frame = FRAME_LIMITS['view.wake_replay.items'];
+    const cost = FRAME_LIMITS['checkpoint.projection_bytes'];
+    const declared = {
+      rows: this._events.length - (this._segmentIndex?.archivedThroughSeq ?? 0),
+      ledgerBytes: this._loadedLedgerIdentity?.bytes ?? 0,
+      bound: frame.value,
+      costBound: cost.value,
+    };
+    try {
+      const written = this._writeProjectionCheckpoint();
+      return freeze({ state: 'written', reason, bytes: written.bytes, ...declared });
+    } catch {
+      return freeze({ state: 'failed', reason: 'checkpoint_write_failed', bytes: null, ...declared });
+    }
+  }
+
+  /** Issue #449(3): a checkpoint write that dies mid-flight leaves its temp file behind — the
+   * atomic rename never ran, and nothing ever removed it (the observed resident carried a 135 MB
+   * `.projection.checkpoint.<uuid>` beside its live checkpoint from a crash a month earlier). The
+   * open sweeps them and names what it swept: the writer lease makes the store the only author of
+   * these names, so a temp file an open can see is one whose writer is gone. */
+  _sweepProjectionCheckpointTemps() {
+    const swept = [];
+    for (const name of readdirSync(this.root).sort()) {
+      if (!name.startsWith(PROJECTION_CHECKPOINT_TEMP_PREFIX)) continue;
+      try { unlinkSync(join(this.root, name)); swept.push(name); }
+      catch { /* a temp file another process holds is not this open's to remove */ }
+    }
+    return freeze(swept);
   }
 
   /** Issue #351: what the last clean release did with the projection checkpoint, and why. `null`
