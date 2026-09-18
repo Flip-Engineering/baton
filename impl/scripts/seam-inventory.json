@@ -286,7 +286,7 @@
         {
           "name": "closeAuthority",
           "ordinal": 0,
-          "size": 31,
+          "size": 27,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -705,7 +705,7 @@
         {
           "name": "_performDrain",
           "ordinal": 0,
-          "size": 195,
+          "size": 178,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -2955,7 +2955,7 @@
         {
           "name": "_abandonStopWorker",
           "ordinal": 0,
-          "size": 29,
+          "size": 33,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
@@ -2965,15 +2965,6 @@
           "name": "abandonedWorkers",
           "ordinal": 0,
           "size": 8,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
-          "name": "abandonedCapacityReservations",
-          "ordinal": 0,
-          "size": 12,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -6869,7 +6860,7 @@
         {
           "name": "armHostStopOutcome",
           "ordinal": 0,
-          "size": 23,
+          "size": 17,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -6878,7 +6869,7 @@
         {
           "name": "_mintHostStopOutcome",
           "ordinal": 0,
-          "size": 34,
+          "size": 25,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
@@ -12314,7 +12305,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 49,
+          "size": 43,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12635,139 +12626,11 @@
         {
           "name": "_routeUsageRows",
           "ordinal": 0,
-          "size": 7,
+          "size": 6,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
             "observation:key_name"
-          ]
-        },
-        {
-          "name": "_withRouteRecovery",
-          "ordinal": 0,
-          "size": 12,
-          "seam": "recovery",
-          "evidence": [
-            "recovery:restart_name"
-          ]
-        },
-        {
-          "name": "_routeProbeEpisodeRecovered",
-          "ordinal": 0,
-          "size": 10,
-          "seam": "recovery",
-          "evidence": [
-            "recovery:restart_name"
-          ]
-        },
-        {
-          "name": "_readRouteProbeLedger",
-          "ordinal": 0,
-          "size": 13,
-          "seam": "observation",
-          "evidence": [
-            "observation:read_name",
-            "observation:ledger_name"
-          ]
-        },
-        {
-          "name": "_indexRouteProbe",
-          "ordinal": 0,
-          "size": 16,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
-          "name": "_indexRouteRecovery",
-          "ordinal": 0,
-          "size": 14,
-          "seam": "recovery",
-          "evidence": [
-            "recovery:restart_name"
-          ]
-        },
-        {
-          "name": "_indexRouteObservation",
-          "ordinal": 0,
-          "size": 11,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
-          "name": "_observeRouteProbeTurns",
-          "ordinal": 0,
-          "size": 11,
-          "seam": "observation",
-          "evidence": [
-            "observation:record_name"
-          ]
-        },
-        {
-          "name": "_probeAnswer",
-          "ordinal": 0,
-          "size": 9,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
-          "name": "_recordRouteRecovered",
-          "ordinal": 0,
-          "size": 16,
-          "seam": "recovery",
-          "evidence": [
-            "recovery:restart_name",
-            "observation:record_name"
-          ]
-        },
-        {
-          "name": "_routeProbeAttempts",
-          "ordinal": 0,
-          "size": 4,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
-          "name": "_routeProbeHold",
-          "ordinal": 0,
-          "size": 21,
-          "seam": "observation",
-          "evidence": [
-            "delegates:observation"
-          ]
-        },
-        {
-          "name": "_probeSeatState",
-          "ordinal": 0,
-          "size": 19,
-          "seam": "observation",
-          "evidence": [
-            "observation:key_name"
-          ]
-        },
-        {
-          "name": "_routeProbeFailure",
-          "ordinal": 0,
-          "size": 9,
-          "seam": "admission",
-          "evidence": [
-            "admission:refusal_name"
-          ]
-        },
-        {
-          "name": "_probeHoldText",
-          "ordinal": 0,
-          "size": 9,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
           ]
         },
         {
@@ -12782,7 +12645,7 @@
         {
           "name": "_routeDegradeFor",
           "ordinal": 0,
-          "size": 27,
+          "size": 26,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -12791,7 +12654,7 @@
         {
           "name": "_routeProbeState",
           "ordinal": 0,
-          "size": 23,
+          "size": 26,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -12800,7 +12663,7 @@
         {
           "name": "_admitRouteProbe",
           "ordinal": 0,
-          "size": 25,
+          "size": 22,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -12809,7 +12672,7 @@
         {
           "name": "_settleRouteProbes",
           "ordinal": 0,
-          "size": 13,
+          "size": 17,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -12909,7 +12772,7 @@
         {
           "name": "_routeSelection",
           "ordinal": 0,
-          "size": 100,
+          "size": 109,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -13397,15 +13260,6 @@
           ]
         },
         {
-          "name": "_runStopRefusal",
-          "ordinal": 0,
-          "size": 7,
-          "seam": "admission",
-          "evidence": [
-            "admission:refusal_name"
-          ]
-        },
-        {
           "name": "_guidanceParkedFromLabel",
           "ordinal": 0,
           "size": 6,
@@ -13601,7 +13455,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 980,
+          "size": 964,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
