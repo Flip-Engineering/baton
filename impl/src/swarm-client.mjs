@@ -21,10 +21,26 @@ function clientError(message, code = 'application_client_invalid') {
   return Object.assign(new Error(message), { code });
 }
 
+/** One options object refused with its own teaching (issue #474, the #431 shape): the offending
+ * key as `field`, the rule it failed and the keys the verb admits. The SDK is a client, so its
+ * code stays `application_client_invalid` — but a client-side refusal is exactly where a caller
+ * can still fix the request, and "options are invalid" alone teaches nothing. */
+function optionsRefusal(label, field, rule, detail) {
+  throw Object.assign(clientError(`${label} options are invalid`), { field, detail: { field, rule, ...detail } });
+}
+
 function exactOptions(value, allowed, label) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).some((key) => !allowed.has(key))) {
-    throw clientError(`${label} options are invalid`);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    optionsRefusal(label, 'options', 'field-predicate', {
+      expectation: 'a JSON object naming the options this verb admits', admitted: [...allowed],
+    });
+  }
+  const unknown = Object.keys(value).find((key) => !allowed.has(key));
+  if (unknown !== undefined) {
+    optionsRefusal(label, unknown, 'unknown-field', {
+      admitted: [...allowed],
+      correction: `remove ${unknown} — ${label} admits ${allowed.size > 0 ? [...allowed].join(', ') : 'no options'}`,
+    });
   }
 }
 
@@ -127,7 +143,20 @@ export class Swarm {
     const selection = Object.fromEntries(selectionFields.filter((field) => options[field] !== undefined)
       .map((field) => [field, options[field]]));
     if (options.options !== undefined && Object.keys(selection).length) {
-      throw clientError('Recruitment must use one route selection, not both nested and direct options');
+      // Issue #474: the two spellings would disagree about the seat's route, so the refusal names
+      // both admitted forms instead of only saying that the pair is wrong.
+      throw Object.assign(
+        clientError('Recruitment must use one route selection, not both nested and direct options'),
+        {
+          field: 'options',
+          detail: {
+            field: 'options', rule: 'exclusive',
+            admitted: ['one nested options object',
+              'the direct selection fields (exact, harness, model, effort, scope, profile, resultIntent)'],
+            correction: 'pass either the nested options object or the direct selection fields, never both',
+          },
+        },
+      );
     }
     const runOptions = options.options ?? (Object.keys(selection).length ? selection : undefined);
     return this._send('swarm.recruit', {

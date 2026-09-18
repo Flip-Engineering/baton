@@ -2172,6 +2172,14 @@ function assertSwarmArgvClosed(row, args) {
   throw error;
 }
 
+/** Issue #474: one swarm flag's own value refused at the parse, in the #431 shape — the flag as
+ * `field`, the rule that refused, and the admitted form beside the rendered message. */
+function swarmFlagRefusal(flag, rule, admitted, message) {
+  const error = cliError(message);
+  error.detail = { field: flag, rule, admitted };
+  return error;
+}
+
 function swarmPayload(token) {
   const trimmed = token.trim();
   if (trimmed.startsWith('{')) {
@@ -2499,8 +2507,21 @@ function parseSwarmCli(args, idempotencyKey) {
       if (!Number.isSafeInteger(value)) throw cliError(`${entry.flag} must be an integer`);
       values[entry.field] = value;
     } else if (entry.field === 'options' || entry.field === 'permissions' || entry.field === 'policy') {
-      try { values[entry.field] = JSON.parse(token); }
-      catch { throw cliError(`${entry.flag} must be JSON`); }
+      // Issue #474: the parse's own refusal is typed like #431's argv refusals (the flag, the rule
+      // and the admitted form), and the shape the wire schema requires — an object for `options`
+      // and `policy`, an array for `permissions` — refuses HERE, where the caller can still fix it.
+      // A value that is JSON but the wrong shape otherwise reaches the wire and comes back as a
+      // contract refusal about a field the caller cannot see.
+      const admitted = entry.field === 'permissions' ? 'one JSON array' : 'one JSON object';
+      let parsed;
+      try {
+        parsed = JSON.parse(token);
+      } catch {
+        throw swarmFlagRefusal(entry.flag, 'json', admitted, `${entry.flag} must be JSON: ${admitted}`);
+      }
+      const shaped = entry.field === 'permissions' ? Array.isArray(parsed) : record(parsed);
+      if (!shaped) throw swarmFlagRefusal(entry.flag, 'json-shape', admitted, `${entry.flag} must be ${admitted}`);
+      values[entry.field] = parsed;
     } else if (entry.field === 'payload') {
       values[entry.field] = swarmPayload(token);
     } else {

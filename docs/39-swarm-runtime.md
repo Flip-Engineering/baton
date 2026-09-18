@@ -486,6 +486,42 @@ same rule the wake stream's attribution uses; `usage` answers the string `'unava
 field when the adapter reported nothing, never a zero pretending to be a measurement; and
 `run.peers.read` and the recruit brief's peers-now rows carry the same frozen objects.
 
+**A recruit's own preconditions refuse typed — never as "application precondition failed" (#474).**
+`swarm.recruit` takes a whole Run selection, and the deployment's own preflight (`prepareRun` →
+`prepareRunStart`) refuses a bad scope, route or option with a bare coded `application_client_invalid`
+error carrying no `detail`; the web layer's generic `application_*` branch crosses exactly that shape
+as the fixed text `application precondition failed` (HTTP 400), so a caller could not tell an empty
+`scope` from a bad `resultIntent` and learned no field, no rule and no remedy. The runtime therefore
+judges the selection it owns BEFORE the deployment sees it, in the swarm family's vocabulary:
+`swarm_command_invalid` with `{field, rule, expectation|admitted, correction}`, the message carrying
+the remedy beside the rule (the #431 shape), recorded on the usual `swarm.operation_refused` lane with
+its field and rule. The preconditions are: an unknown `options` key; a blank `profile`, `model`,
+`harness`, `effort`, `driverKind`, `waveId` or `waveRole`; a malformed `waveStart`; an `exact` object
+outside the three route axes; an `exact` route named beside a loose harness/model/effort selector (two
+disagreeing spellings of one choice); a manual route missing `model` or `effort`; a `resultIntent`
+outside the closed set; and the scope rule below. The deployment keeps the facts only it holds (its
+profile's path scope, its served route table, its defaults): a refusal it mints without teaching gets
+the teaching record attached at the boundary (`withRecruitPreflightTeaching`, the mint's own code and
+message preserved verbatim), so **no recruit refusal reaches a caller as the generic text** — a
+taught refusal (the #335 route table) crosses untouched.
+
+**The comparison's resolution is handed on as ONE exact selection.** When `_routeSelection` resolves
+a prefix (`{harness: 'codex'}`, `{model: 'gpt-5.6'}`) it replaces the selector axes it consumed with
+the `exact` route it chose — a deployment's option set is closed, and `exact` beside the loose
+selector is precisely the pair it refuses, which is how a prefix or manual-route recruit used to
+cross as a bare "application precondition failed". The caller's own scope, profile, result intent and
+remaining fields ride through unchanged.
+
+**A read-only seat claims nothing, so an empty scope is admitted for `mode: read_only` (#474, #373).**
+`scope: []` on a contributing seat is refused typed — `field: 'options.scope'`, `rule: 'non_empty'`,
+`admitted: 'one or more repository paths'`, with the read-only spelling named as the alternative that
+makes the same request admissible — while the SAME request under `--mode read_only` is admitted and
+carried as no scope at all: no `scope` on the join, no `scope:<seat>` claim row, no scope on the
+seat's run options, and `scopeOverlap: []`. The decision belongs to the runtime because the mode is
+the runtime's fact: the deployment's preflight never sees `mode`, and its Run-start grammar would
+refuse the empty array either way. A `read_only` seat that names a real scope is admitted as before —
+the declaration is visibility (docs/47 §5), never a hold.
+
 **Refusals are the swarm's record, not the caller's private business.** A refused mutation already
 landed durably as `swarm.operation_refused` (#271); the same lane now carries the refusals the
 NATIVE BRIDGE raises before dispatch — an over-cap frame, a request the closed argument vocabulary

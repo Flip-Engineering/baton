@@ -364,15 +364,239 @@ const routeProbeRouteKey = (route) => JSON.stringify([route.harness, route.model
 const routeProbeAdmissionKey = (route, episodeAt) =>
   `route.probe_admitted:${hash([routeProbeRouteKey(route), episodeAt])}`;
 
-/** #456: the Run-start selection without the recruit's own route-probe flag. `routeProbe` is the
- * runtime's own decision about a route (the operator's hand on a degrade), read before the intent
- * is resolved — a deployment's option set is closed, so it must never reach `prepareRun`. The
- * context package's leg is stripped the same way, for the same reason. */
-function withoutRecruitRouteProbeOption(options) {
+/** #456/#474: the Run-start selection without the recruit's OWN option legs. `routeProbe` (#456)
+ * is the runtime's own decision about a degraded route (the operator's hand on a degrade) and
+ * `prefer` (#444) is the axis its route comparison ordered on — both are read before the intent is
+ * resolved, and a deployment's option set is closed, so neither may reach `prepareRun`: a leaked
+ * `prefer` made the deployment's own preflight refuse the very recruit the axis was meant to order.
+ * The context package's leg is stripped upstream, for the same reason (#441). */
+function withoutRecruitRuntimeOptions(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)
-    || !Object.hasOwn(options, 'routeProbe')) return options;
-  const { routeProbe: _routeProbe, ...selection } = options;
+    || (!Object.hasOwn(options, 'routeProbe') && !Object.hasOwn(options, 'prefer'))) return options;
+  const { routeProbe: _routeProbe, prefer: _prefer, ...selection } = options;
   return selection;
+}
+
+// ── #474: the recruit's OWN Run-selection preconditions ─────────────────────────────────────────
+//
+// A recruit hands its selection to the deployment's `prepareRun`, whose own preflight judges the
+// Run-start grammar and refuses a bad scope, route or option with a bare `application_client_invalid`
+// — a coded application refusal with no `detail`, which the web layer's generic `application_*`
+// branch crosses as the fixed text "application precondition failed" (HTTP 400). The caller learned
+// no field, no rule and no remedy: an empty `scope` was indistinguishable from a bad `resultIntent`
+// (issue #474). Every precondition THIS verb owns is therefore minted here, in the swarm family's
+// vocabulary, with `{field, rule, expectation|admitted, correction}` — the #335/#336 rule, at the one
+// verb that resolves a whole Run selection. The deployment's preflight is left the facts only it
+// holds (the profile's path scope, its served route table), and `withRecruitPreflightTeaching` gives
+// even those refusals the teaching record the web layer crosses, so no recruit refusal can reach a
+// caller as the generic text.
+
+/** The keys a recruit's `options` may carry. `prefer` (#444) and `routeProbe` (#456) are the
+ * recruit's own legs, consumed by the runtime and stripped before `prepareRun`; `runId` is
+ * admitted because the runtime always replaces it with the seat's own derived identity, so a caller
+ * that names it is never refused for a field the runtime owns. */
+const RECRUIT_SELECTION_KEYS = Object.freeze([
+  'driverKind', 'effort', 'exact', 'harness', 'model', 'prefer', 'profile', 'resultIntent',
+  'runId', 'scope', 'waveId', 'waveRole', 'waveStart',
+]);
+/** The Run-start selection axes that are plain text, and the ONE predicate each must satisfy —
+ * the deployment's own `nonempty` (non-empty after trim, at most 4096 bytes). */
+const RECRUIT_SELECTION_TEXT_KEYS = Object.freeze([
+  'profile', 'model', 'harness', 'effort', 'driverKind', 'waveId', 'waveRole',
+]);
+const RECRUIT_ROUTE_AXES = Object.freeze(['harness', 'model', 'effort']);
+const RECRUIT_RESULT_INTENTS = Object.freeze(['change', 'read_only_evidence']);
+const RECRUIT_SCOPE_ADMITTED = 'one or more repository paths';
+const RECRUIT_SCOPE_RULE = 'an array of 1 to 64 unique repository paths, each non-empty text of at most 4096 bytes';
+
+const isSelectionText = (value) => typeof value === 'string' && value.trim().length > 0
+  && Buffer.byteLength(value) <= 4_096;
+
+/** #474: a selection without the route selector axes a comparison has already resolved into ONE
+ * exact route. The exact route expresses the choice; handing the loose selector along beside it is
+ * a second, disagreeing spelling of the same selection. */
+function withoutRecruitRouteSelectors(options) {
+  if (!RECRUIT_ROUTE_AXES.some((axis) => Object.hasOwn(options, axis))) return options;
+  const { harness: _harness, model: _model, effort: _effort, ...selection } = options;
+  return selection;
+}
+
+/** Judge one recruit's Run-start selection. Returns the admitted form — the caller's options,
+ * minus a `read_only` seat's empty scope (a seat that claims nothing is never handed an empty
+ * scope the deployment's preflight would refuse) — and refuses typed for every precondition this
+ * verb owns: an unknown option, a selector that is not the selection grammar, a bad result intent,
+ * a malformed wave start, and the scope rule below. */
+function admitRecruitSelection(options, mode) {
+  // The message carries the remedy beside the rule (the #431 posture: what was refused, what is
+  // admitted, and the step that follows), and the detail record repeats it for a machine reader.
+  const refused = (field, rule, expectation, detail = {}) => refuse(
+    `Swarm recruit options are invalid: ${field} must be ${expectation}`
+      + (typeof detail.correction === 'string' ? ` — ${detail.correction}` : ''),
+    'swarm_command_invalid',
+    { field, rule, expectation, ...detail },
+  );
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    // The swarm contract refuses a non-object `options` before this seam; the arm exists so the
+    // judgement is total for any caller that reaches it, and it teaches the same shape.
+    refused('options', 'field-predicate', 'a JSON object naming the Run-start selection',
+      { admitted: Object.freeze([...RECRUIT_SELECTION_KEYS]) });
+  }
+  for (const key of Object.keys(options)) {
+    if (!RECRUIT_SELECTION_KEYS.includes(key)) {
+      refused(`options.${key}`, 'unknown-field', 'a Run-start selection key', {
+        admitted: Object.freeze([...RECRUIT_SELECTION_KEYS]),
+        correction: `remove options.${key} — a recruit's options admit ${RECRUIT_SELECTION_KEYS.join(', ')}`,
+      });
+    }
+  }
+  for (const key of RECRUIT_SELECTION_TEXT_KEYS) {
+    if (options[key] !== undefined && !isSelectionText(options[key])) {
+      refused(`options.${key}`, 'non_empty', 'non-empty text of at most 4096 bytes');
+    }
+  }
+  if (options.waveStart !== undefined) {
+    const waveStart = options.waveStart;
+    const shape = waveStart && typeof waveStart === 'object' && !Array.isArray(waveStart)
+      && Object.keys(waveStart).sort().join('\0') === ['idempotencyKey', 'roster'].sort().join('\0')
+      ? waveStart : null;
+    if (shape === null || !isSelectionText(shape.idempotencyKey)
+      || !Array.isArray(shape.roster) || shape.roster.length === 0 || shape.roster.length > 64
+      || !shape.roster.every(isSelectionText)) {
+      refused('options.waveStart', 'closed-set',
+        'an object naming exactly {roster, idempotencyKey} — 1 to 64 role names and the wave idempotency key',
+        { admitted: Object.freeze(['roster', 'idempotencyKey']) });
+    }
+  }
+  // #474 (item 2): a `read_only` seat claims nothing (#373 — its run starts with the read-only
+  // result intent and its brief renders no repository mutation authority), so an EMPTY scope is the
+  // honest spelling of "claims nothing" and is admitted, carried as no scope at all. A contributing
+  // seat's empty scope is a precondition failure, and its refusal names the read-only spelling as
+  // the alternative that makes the same request admissible.
+  const scope = options.scope;
+  const claimlessScope = mode === 'read_only' && Array.isArray(scope) && scope.length === 0;
+  if (scope !== undefined && !claimlessScope) {
+    if (!Array.isArray(scope) || scope.length > 64
+      || scope.some((path) => !isSelectionText(path)) || new Set(scope).size !== scope.length) {
+      refused('options.scope', 'field-predicate', RECRUIT_SCOPE_RULE, {
+        admitted: RECRUIT_SCOPE_ADMITTED,
+        correction: 'name the repository paths this seat may work in, or recruit it with mode: read_only — a read-only seat claims nothing and needs no scope',
+      });
+    }
+    if (scope.length === 0) {
+      refused('options.scope', 'non_empty', RECRUIT_SCOPE_RULE, {
+        admitted: RECRUIT_SCOPE_ADMITTED,
+        correction: 'name at least one repository path, or recruit the seat with mode: read_only — a read-only seat claims nothing and needs no scope',
+      });
+    }
+  }
+  const exact = options.exact;
+  if (exact !== undefined) {
+    // The SHAPE only: an object drawn from the three axes, each axis text when named. An
+    // INCOMPLETE `exact` (`{harness, model}`, a family) stays admitted — the comparison reads it as
+    // a prefix and the deployment resolves the axes that are missing (the #341 rule the seat-scope
+    // row pins: an incomplete selector is never padded into a route here).
+    const shape = exact && typeof exact === 'object' && !Array.isArray(exact) ? exact : null;
+    const offending = shape === null ? null
+      : Object.keys(shape).find((axis) => !RECRUIT_ROUTE_AXES.includes(axis));
+    if (shape === null || offending !== undefined
+      || RECRUIT_ROUTE_AXES.some((axis) => shape[axis] !== undefined && !isSelectionText(shape[axis]))) {
+      refused('options.exact', 'closed-set',
+        `an object drawn from {${RECRUIT_ROUTE_AXES.join(', ')}}, each axis non-empty text of at most 4096 bytes`,
+        {
+          admitted: Object.freeze([...RECRUIT_ROUTE_AXES]),
+          ...(offending === undefined || offending === null ? {} : { offending: `options.exact.${offending}` }),
+        });
+    }
+    const selectors = RECRUIT_ROUTE_AXES.filter((axis) => options[axis] !== undefined);
+    if (selectors.length > 0) {
+      refused('options.exact', 'exclusive-with',
+        'either options.exact or the harness/model/effort selectors, never both',
+        {
+          admitted: Object.freeze(['options.exact', 'options.harness + options.model + options.effort']),
+          offending: Object.freeze(selectors.map((axis) => `options.${axis}`)),
+          correction: `remove ${selectors.map((axis) => `options.${axis}`).join(', ')} — options.exact already names the route`,
+        });
+    }
+  } else {
+    const named = RECRUIT_ROUTE_AXES.filter((axis) => options[axis] !== undefined);
+    // A manual route is the model/effort pair: a bare `harness` (or `model` alone) names no route,
+    // so the refusal names the axis that is missing rather than the one the caller did send.
+    const missing = ['model', 'effort'].filter((axis) => options[axis] === undefined);
+    if (named.length > 0 && missing.length > 0) {
+      refused(`options.${missing[0]}`, 'required-with',
+        'model and effort together (options.harness alone narrows to no route)',
+        {
+          admitted: Object.freeze(['options.model + options.effort', 'options.exact {harness, model, effort}']),
+          named: Object.freeze(named.map((axis) => `options.${axis}`)),
+        });
+    }
+  }
+  // The seat's mode OWNS the run's result intent when it is `read_only` (#373): a nested
+  // `resultIntent` is overridden there, so only a contributing seat's own value is judged.
+  if (mode !== 'read_only' && options.resultIntent !== undefined
+    && !RECRUIT_RESULT_INTENTS.includes(options.resultIntent)) {
+    refused('options.resultIntent', 'closed-set',
+      `one of: ${RECRUIT_RESULT_INTENTS.join(', ')}`,
+      {
+        admitted: Object.freeze([...RECRUIT_RESULT_INTENTS]),
+        correction: `options.resultIntent must be one of: ${RECRUIT_RESULT_INTENTS.join(', ')}`,
+      });
+  }
+  if (!claimlessScope) return options;
+  const { scope: _scope, ...claimless } = options;
+  return claimless;
+}
+
+/** #474: the teaching record attached to a deployment's own pre-effect refusal when it carries a
+ * code and no teaching at all. `prepareRun` is the deployment's (`application.mjs`): the selection
+ * it resolves is the one only it can judge — the profile's path scope, its served route table, its
+ * defaults — and its preflight spells those refusals as bare coded `application_*` errors, which
+ * the web layer crosses as the fixed text "application precondition failed". The mint's code and
+ * message are preserved byte-for-byte (an in-process caller's refusal is unchanged, and it is
+ * pinned); only the missing teaching is added, so the same refusal reaches an HTTP caller with the
+ * field, the rule and the remedy the deployment owed it. */
+const RECRUIT_PREFLIGHT_TEACHING = Object.freeze({
+  application_client_invalid: Object.freeze({
+    field: 'options', rule: 'run-selection',
+    expectation: 'a Run-start selection this deployment resolves',
+    correction: 'a documented selection is options.exact {harness, model, effort} with an optional options.scope; read the refusal message for the fact the deployment would not resolve, or the deployment\'s served routes with `baton doctor`',
+  }),
+  application_scope_not_allowed: Object.freeze({
+    field: 'options.scope', rule: 'within-deployment-profile',
+    expectation: 'repository paths inside the deployment profile\'s path scope',
+    correction: 'name paths the deployment profile admits (`baton doctor` prints the profile), or omit options.scope to take the profile\'s own default scope',
+  }),
+  application_route_ambiguous: Object.freeze({
+    field: 'options.exact', rule: 'unique-route',
+    expectation: 'one exact harness/model/effort route the deployment serves',
+    correction: 'pass options.exact {harness, model, effort} — read the served routes from `baton doctor`; a selector that matches several routes names no route',
+  }),
+  application_profile_ambiguous: Object.freeze({
+    field: 'options.profile', rule: 'deployment-default',
+    expectation: 'the profile the run resolves under',
+    correction: 'name options.profile — this deployment declares no single default profile',
+  }),
+});
+const RECRUIT_PREFLIGHT_FALLBACK = Object.freeze({
+  field: 'options', rule: 'run-selection',
+  expectation: 'a Run-start selection this deployment resolves',
+  correction: 'the deployment refused the selection before any effect; its message names the fact it would not resolve',
+});
+
+/** #474: a coded `application_*` refusal with no teaching record gets one, so no recruit refusal
+ * ever reaches a caller as the web layer's fixed "application precondition failed" text. A taught
+ * refusal (the #335 route table), an uncoded fault and a swarm-family refusal are returned
+ * untouched — the teaching is never re-spelled where the mint already composed it. */
+function withRecruitPreflightTeaching(error) {
+  const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : null;
+  const taught = error?.detail !== null && typeof error?.detail === 'object'
+    && Object.keys(error.detail).length > 0;
+  if (code === null || taught || !code.startsWith('application_')) return error;
+  error.detail = {
+    ...(RECRUIT_PREFLIGHT_TEACHING[code] ?? RECRUIT_PREFLIGHT_FALLBACK),
+    cause: Object.freeze({ code, message: typeof error.message === 'string' ? error.message : null }),
+  };
+  return error;
 }
 
 /** Issue #441: the first `maxBytes` UTF-8 bytes of a branch's text, never splitting a character —
@@ -2300,7 +2524,16 @@ export class SwarmRuntime {
     const chosenRow = answerRows.find((row) => row.route.harness === chosen?.route?.harness
       && row.route.model === chosen?.route?.model && row.route.effort === chosen?.route?.effort) ?? null;
     return {
-      options: chosen === null ? null : { ...options, exact: Object.freeze({ ...chosen.route }) },
+      // #474: the resolved choice is handed on as ONE exact selection. A prefix the comparison
+      // consumed (`{harness: 'codex'}` → one route) must not ride along beside the exact route it
+      // resolved to: a deployment's option set is closed, and `exact` beside a loose selector is
+      // precisely the pair it refuses — the recruit this comparison existed to place crossed as a
+      // bare "application precondition failed". A caller that named a COMPLETE exact route keeps its
+      // own selection untouched (the #341 rule: an exact route is admitted as the caller named it,
+      // and a pair of two disagreeing spellings is refused by the recruit's own preflight instead).
+      options: chosen === null ? null
+        : { ...(exact === null ? withoutRecruitRouteSelectors(options) : options),
+          exact: Object.freeze({ ...chosen.route }) },
       routes: Object.freeze({
         chosen: chosenRow,
         considered: Object.freeze(answerRows),
@@ -6170,7 +6403,10 @@ export class SwarmRuntime {
       // ran there. Nothing degrades-less moves: a recruit that is not a probe keeps the selection.
       const probeRoute = degrade && probe.admits ? probe.route : null;
       const admittedOptions = routeSelection?.options
-        ?? (probeRoute === null ? args.options ?? {} : { ...(args.options ?? {}), exact: probeRoute });
+        // A probe pins this recruit to ONE route, so the loose selectors it may have matched are
+        // consumed by that choice exactly as the comparison's own resolution consumes them (#474).
+        ?? (probeRoute === null ? args.options ?? {}
+          : { ...withoutRecruitRouteSelectors(args.options ?? {}), exact: probeRoute });
       // Issue #441: the recruit's context package is NOT a Run-start selection — it names an
       // admitted ContextPackage by digest, and the runtime attaches it to the seat's run once the
       // run is bound. It never reaches prepareRun/startRun (a deployment resolves a selection it
@@ -6179,26 +6415,43 @@ export class SwarmRuntime {
       // #456: the operator's probe flag is the same shape of leg — the runtime's own decision about
       // a route, read above, and never a field a deployment's `prepareRun` resolves (its option set
       // is closed, so a leaked flag would refuse the very recruit the override was meant to admit).
-      const selectionOptions = withoutRecruitRouteProbeOption(
+      const selectionOptions = withoutRecruitRuntimeOptions(
         withoutRecruitContextPackageOption(admittedOptions));
       // #373: the seat's contribution mode IS the run contract — a read_only recruit starts
       // its run with the read-only result intent (#334), which renders the brief's dispatch
       // block with no repository mutation authority and the read-only acceptance instead.
       // `mode` is the one spelling the contract table declares; when named it overrides any
       // nested options spelling an older caller may have sent.
-      const runOptions = args.mode === 'read_only'
+      const selection = args.mode === 'read_only'
         ? { ...selectionOptions, resultIntent: 'read_only_evidence' }
         : selectionOptions;
+      // #474: the recruiter's own selection is judged HERE, in the swarm family's vocabulary, before
+      // the deployment's preflight can refuse it with a bare coded application error: every
+      // precondition this verb owns (the scope rule below included) crosses typed, with the field,
+      // the rule and the admitted form. A `read_only` seat's empty scope is admitted — claims
+      // nothing — and is carried as no scope at all.
+      const runOptions = admitRecruitSelection(selection, args.mode);
       const runId = `run-${hash([args.swarmId, args.participantId]).slice(0, 32)}`;
       // The route and scope this seat is recruited under (issue #283 root comment 1): the
       // deployment's own resolution when it makes one (prepareRun answers with the admitted
       // intent), otherwise the selection the caller named. They ride the membership write, so the
       // view projects what the seat was started as from the durable join — never from a live
       // worker that may since have been rebound, stopped, or restarted.
-      const intent = await this.prepareRun({ runId, objective: args.objective, options: runOptions }, principal);
+      // #474: a refusal only the deployment could judge (its profile's path scope, its route
+      // table) is a coded application refusal with no teaching — the shape the web layer crosses as
+      // the fixed text "application precondition failed". It keeps its own code and message and
+      // gets the teaching record it owed, so no recruit refusal reaches a caller untaught.
+      let intent;
+      try {
+        // A deployment's `prepareRun` may be synchronous (a test host resolves the intent inline),
+        // so the refusal is caught around the await rather than chained onto its answer.
+        intent = await this.prepareRun({ runId, objective: args.objective, options: runOptions }, principal);
+      } catch (error) {
+        throw withRecruitPreflightTeaching(error);
+      }
       const recruitedRoute = swarmRouteShape(intent?.route) ?? swarmRouteShape(admittedOptions.exact);
       const recruitedScope = Array.isArray(intent?.scope) ? [...intent.scope]
-        : Array.isArray(args.options?.scope) ? [...args.options.scope] : null;
+        : Array.isArray(runOptions?.scope) ? [...runOptions.scope] : null;
       const result = await this._once(command, args, principal, async (sharedContext) => {
         this._permit(this._swarm(args.swarmId), principal, context, 'recruit');
         // #456 item 2: the probe this recruit is (when its route publishes a clear it has reached,
