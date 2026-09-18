@@ -12160,7 +12160,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 32,
+          "size": 37,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -12483,10 +12483,37 @@
         {
           "name": "_routeDegradeFor",
           "ordinal": 0,
-          "size": 22,
+          "size": 26,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
+          ]
+        },
+        {
+          "name": "_routeProbeState",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_admitRouteProbe",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_settleRouteProbes",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
           ]
         },
         {
@@ -12938,7 +12965,7 @@
         {
           "name": "_peersRead",
           "ordinal": 0,
-          "size": 88,
+          "size": 93,
           "seam": "admission",
           "evidence": [
             "delegates:observation",
@@ -13131,7 +13158,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 833,
+          "size": 900,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
