@@ -34,6 +34,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { FRAME_LIMITS } from '../src/limits.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 import {
   APPLICATION_COMMAND_DEFINITIONS,
@@ -1798,10 +1799,18 @@ test('FP-17 (stage: validators absent): at-cap admitted, cap+1 refused naming ca
       command: 'run.board.post', code: 'application_board_post_invalid', cap: /\b8\b/u, actual: /\b9\b/u,
     },
     {
-      label: 'knowledge seed body ≤4,096 bytes (the disclosed SURFACE cap, OQ-7)',
-      atCap: { runId: 'run:j1', type: 'Finding', grounding: 'observed', body: 'k'.repeat(4096) },
-      overCap: { runId: 'run:j1', type: 'Finding', grounding: 'observed', body: 'k'.repeat(4097) },
-      command: 'run.knowledge.seed', code: 'application_knowledge_seed_invalid', cap: /4096/u, actual: /4097/u,
+      // #436 decision (a) — the pin is stale, the gate order is already right: the
+      // 4,096-byte SURFACE cap (OQ-7) moved off with #358, which bounds objectives by
+      // the substrate spill ceiling alone; _normalizeKnowledgeSeed now enforces
+      // FRAME_LIMITS['run.objective'].value (1,048,576) and knowledgeSeed validates
+      // BEFORE _authorize like every other body-capped verb, so no application.mjs
+      // change was needed. The row reads the registry cap so it cannot go stale again.
+      label: `knowledge seed body ≤${FRAME_LIMITS['run.objective'].value} bytes (the run.objective registry row, #358)`,
+      atCap: { runId: 'run:j1', type: 'Finding', grounding: 'observed', body: 'k'.repeat(FRAME_LIMITS['run.objective'].value) },
+      overCap: { runId: 'run:j1', type: 'Finding', grounding: 'observed', body: 'k'.repeat(FRAME_LIMITS['run.objective'].value + 1) },
+      command: 'run.knowledge.seed', code: 'application_knowledge_seed_invalid',
+      cap: new RegExp(String(FRAME_LIMITS['run.objective'].value), 'u'),
+      actual: new RegExp(String(FRAME_LIMITS['run.objective'].value + 1), 'u'),
     },
   ];
   for (const row of rows) {
