@@ -1837,6 +1837,73 @@ function integrationSlug(contributionId) {
   return normalizePhysicalOwnerId(folded.length > 0 ? folded : 'contribution', 'integration contributionId');
 }
 
+/** Remove one integration checkout's directory AND its worktree administration, exactly. The `git
+ * worktree remove` fast path runs first (it tears down the administrative entry with the
+ * directory); a checkout a crash left unadministrable falls back to an rm and a prune, and the
+ * caller's own postcheck proves the absent state rather than trusting either path. ONE spelling:
+ * the landing's own cleanup (issue #296) and the open-time sweep (issue #459) remove a checkout
+ * the same way, so a leftover and a live checkout can never be removed by two different rules. */
+function removeIntegrationCheckout(repoRoot, dir) {
+  try {
+    sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
+  } catch (error) {
+    if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* the caller's postcheck decides */ }
+    if (listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === pathResolve(dir))) {
+      throw new WorktreeCleanupError('integration checkout administration could not be removed', { cause: error });
+    }
+  }
+}
+
+/**
+ * Issue #459: sweep the integration checkouts a PREVIOUS incarnation left behind.
+ *
+ * A landing that dies with its resident (a killed gate run, a stop, a crash) leaves its scratch
+ * checkout under `.baton/wt` — and `createIntegrationCheckout` refuses a contribution whose
+ * directory already exists, so the next attempt at the same contribution could never start. The
+ * open of the resident that owns this repository removes every `integrate-*` checkout and the
+ * projection-exclude file beside it, and returns the names it swept so the caller's own row can
+ * name them: absence is never silent, and a sweep that removed nothing records nothing.
+ *
+ * Called at the resident's open, BEFORE any landing of this incarnation exists — a checkout this
+ * call can see is therefore one whose landing is gone.
+ */
+export async function sweepIntegrationCheckouts(repoRoot) {
+  const root = authorityRoot(repoRoot, 'wt', { create: false });
+  if (root === null || !existsSync(root)) return Object.freeze([]);
+  const children = readdirSync(root).sort();
+  const swept = [];
+  for (const child of children) {
+    if (!child.startsWith('integrate-')) continue;
+    const dir = join(root, child);
+    // Only the checkouts the landing verb names. The projection-exclude file a checkout wrote is
+    // removed WITH its checkout: an exclude named on its own (the checkout's own removal already
+    // took it) is removed the same way, and a lane worktree's exclude — never `integrate-*` — is
+    // none of this sweep's business.
+    if (child.endsWith('.projection.exclude')) {
+      rmSync(dir, { force: true });
+      continue;
+    }
+    // An entry that vanished between the listing and this stat is already gone; the sweep is not
+    // racing anything but its own removals.
+    let stat = null;
+    try { stat = lstatSync(dir); } catch { continue; }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+    authorityChild(repoRoot, 'wt', child, { kind: 'directory', mustExist: true });
+    removeIntegrationCheckout(repoRoot, dir);
+    if (existsSync(dir) || listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === pathResolve(dir))) {
+      throw new WorktreeCleanupError('integration checkout sweep did not reach an exact absent state');
+    }
+    rmSync(join(root, `${child}.projection.exclude`), { force: true });
+    swept.push(child);
+  }
+  if (swept.length > 0) {
+    try { sh('git', ['worktree', 'prune'], repoRoot); }
+    catch (error) { throw new WorktreeCleanupError('integration checkout administration could not be pruned', { cause: error }); }
+  }
+  return Object.freeze(swept);
+}
+
 // ---------------------------------------------------------------------------
 // Integration scratch checkout (issue #296)
 // ---------------------------------------------------------------------------
@@ -1899,15 +1966,7 @@ export async function createIntegrationCheckout(repoRoot, contributionId, opts =
         .some((entry) => pathResolve(entry.dir) === pathResolve(dir));
       if (present || administrativelyRegistered) {
         if (present) authorityChild(repoRoot, 'wt', child, { kind: 'directory', mustExist: true });
-        try {
-          sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
-        } catch (error) {
-          if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-          try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* exact postcheck below */ }
-          if (listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === pathResolve(dir))) {
-            throw new WorktreeCleanupError('integration checkout administration could not be removed', { cause: error });
-          }
-        }
+        removeIntegrationCheckout(repoRoot, dir);
       }
       registered = false;
       if (excludePath !== null) { rmSync(excludePath, { force: true }); excludePath = null; }
@@ -2008,6 +2067,9 @@ export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.b
  * @param {(dir: string, files: string[], context: object) => Promise<{files: string[], verdictLine: string|null, unexpected: any[]}>} [request.runGates]
  * @param {boolean} [request.dryRun]
  * @param {object} [request.log]
+ * @param {(info: {dir: string, target: string}) => Promise<void>} [request.started] the caller's
+ *   start hook (#459): called once, the moment the scratch checkout exists and before the squash
+ *   or any gate, so the durable record of a landing names its directory while it is still running
  * @returns {Promise<{base: string, target: string, targetHeadBefore: string, targetHeadAfter: string|null,
  *   squashSha: string, changedPaths: string[], regenerated: string[],
  *   gates: {files: string[], verdictLine: string|null, unexpected: any[]}, dryRun: boolean}>}
@@ -2040,10 +2102,21 @@ export async function landContribution(repoRoot, request) {
   } catch {
     throw mergeError(`the contribution commit ${commitSha} and ${target} share no common ancestor`, 'integrate_commit_unreachable');
   }
+  // Issue #459: the start callback fires ONCE, at the first scratch checkout this landing opens —
+  // the re-base path below prepares a SECOND checkout when the target moved, and a second start
+  // row would name a landing that never happened twice.
+  let started = false;
   const prepare = async (ontoHead) => {
     const checkout = await createIntegrationCheckout(repoRoot, contributionId, {
       target: ontoHead, log: request.log, dependencyDirs: request.dependencyDirs,
     });
+    // The caller's start hook runs as soon as the scratch checkout exists — before the squash and
+    // before any gate — so the durable record names the directory while the landing is still in
+    // flight, and a caller that never sees the outcome still reads where it opened.
+    if (!started && typeof request.started === 'function') {
+      started = true;
+      await request.started({ dir: checkout.dir, target: ontoHead });
+    }
     try {
       // `--squash` is the whole point: it takes the lane's range against the common ancestor and
       // stages it as ONE change, so a lane that pinned two checkpoints lands both deltas.
