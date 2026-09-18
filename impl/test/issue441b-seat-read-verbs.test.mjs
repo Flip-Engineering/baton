@@ -235,7 +235,7 @@ test('441b-a: a package attached to the seat run reads by digest and by branch; 
       && error.detail?.participantId === 'beta' && /ask the root to attach/u.test(error.detail?.correction ?? ''));
   // A branch the attached package does not carry names itself.
   await assert.rejects(beta('run.package.read', { packageDigest, branchName: 'doc:missing' }),
-    (error) => error.code === 'context_package_branch_not_found');
+    (error) => error.code === 'swarm_context_package_branch_not_found');
 
   // The seat's own run is the scope: a seat whose run never carried it cannot read it either.
   const alpha = await f.bridgeFor('alpha', f.alphaRunId);

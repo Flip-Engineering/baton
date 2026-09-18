@@ -528,7 +528,6 @@ export function contributionLedgerRows(swarm, { since = 0 } = {}) {
  * introduces. They are raised directly rather than through `refuse()` because `refuse()` draws
  * every code from the swarm family's ONE closed set (impl/src/swarm-refusals.mjs), which these
  * codes are not in — and NOTHING here writes a durable row, so no refusal lane is bypassed. */
-const seatReadRefusal = (message, code, detail = {}) => Object.assign(new Error(message), { code, detail });
 
 /** One branch of a package, as the branch LIST projects it: the ref the branch carries (a package
  * branch holds exactly one content ref — artifact, source or value_ref), its digest, and the byte
@@ -2510,14 +2509,14 @@ export class SwarmRuntime {
     const attached = [...runIds].some((runId) => this.store.contextPackageAttachments(runId)
       .some((row) => row.packageDigest === packageDigest));
     if (!attached) {
-      throw seatReadRefusal('This context package is not attached to your run or your swarm',
+      refuse('This context package is not attached to your run or your swarm',
         'package_not_attached_to_run',
         { packageDigest, participantId: caller.participantId, runId: caller.runId, rule: 'package-scope',
           correction: 'read the digest your brief named, or ask the root to attach the package to your run' });
     }
     const pkg = this.store.contextPackage(packageDigest);
     if (!pkg) {
-      throw seatReadRefusal('Context package is unavailable', 'context_package_not_found',
+      refuse('Context package is unavailable', 'swarm_context_package_not_found',
         { packageDigest, rule: 'package-known',
           correction: 'check the digest — this deployment holds no admitted package with it' });
     }
@@ -2529,8 +2528,19 @@ export class SwarmRuntime {
           principalId: pkg.provenance?.principalId ?? null,
           admittedEvent: pkg.admittedEvent ?? null, admittedAt: pkg.admittedAt ?? null }) };
     }
-    const resolved = this.store.withContextArtifactVerification(
-      () => this.store.resolveContextPackageBranch(packageDigest, args.branchName));
+    let resolved;
+    try {
+      resolved = this.store.withContextArtifactVerification(
+        () => this.store.resolveContextPackageBranch(packageDigest, args.branchName));
+    } catch (error) {
+      // The store spells its miss `context_package_branch_not_found`; the swarm family raises its
+      // own closed-set spelling (#430) so the web status map stays total — the same runtime/fold
+      // split `swarm_participant_not_found` / `participant_not_found` already carries.
+      if (error?.code !== 'context_package_branch_not_found') throw error;
+      refuse('This context package carries no branch by that name', 'swarm_context_package_branch_not_found',
+        { packageDigest, branchName: args.branchName, rule: 'package-branch-known',
+          correction: 'read the branch names your brief printed, or list them by reading the package without branchName' });
+    }
     const { projectContextPackageBranch } = await import('./application.mjs');
     return { swarmId: swarm.swarmId, packageDigest: pkg.packageDigest,
       branch: projectContextPackageBranch(resolved) };
