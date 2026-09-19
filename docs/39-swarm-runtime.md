@@ -1196,6 +1196,21 @@ derive it. Red-first: `impl/test/issue311-situation-projection.test.mjs` pins th
 declaration, every block's shape and honesty rules, the brief rendering, and the slicer parity
 (`view(projection)` is byte-identical to `projectSwarmView(full, projection)`).
 
+**Item 3 — every knowledge verb is taught or refused, and the classification is pinned
+(2026-09-19).** The audit found the classification itself already landed (#318's verb table and
+the #503 brief block) but pinned only for three retired verbs. `swarm-knowledge.test.mjs` now
+derives the whole knowledge/scratchpad/board/context/package family from the canonical registry
+and asserts the participant bridge refuses every member the brief does not teach — 22 rows at
+this writing: the wave-settlement lane (`knowledge.promote`, `knowledge.settlement_lease`,
+`scratchpad.settle`, the kernel `scratchpad.elevate`), the S-2 orchestrator board and package
+tools, the worker `board.claim`/`board.report` wire frames, the orchestrator knowledge reads
+(`knowledge.recall`, `knowledge.horizon`), and the context engine (`context.eval`/`map`/`reduce`/
+`retry`). A new family verb lands red until it is taught to participants or classified off their
+surface. The issue's "context packs" are not these `context.*` verbs: the packs are the store's
+briefing and orientation machinery (`mintContextPack`, `context.pack_granted`), which no command
+surface exposes, and the #318 section above records their retirement from the participant
+surface.
+
 ## A brief's objective is read against the contribution contract at recruit (issue #502, 2026-09-19)
 
 The #492 audit swarm's operator-written objective told every auditor lane to report its results in

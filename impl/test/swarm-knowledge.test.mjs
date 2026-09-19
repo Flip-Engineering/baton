@@ -23,8 +23,9 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/index.mjs';
-import { SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
+import { SWARM_PERMISSIONS, SWARM_SEAT_READ_COMMAND_NAMES } from '../src/swarm-runtime.mjs';
 import { SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES } from '../src/swarm-contract.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { SWARM_NATIVE_GUIDANCE } from '../src/swarm-native-access.mjs';
 import { wakeClassFor } from '../src/wake-stream.mjs';
 import { parseBatonCli } from '../src/application-cli.mjs';
@@ -182,13 +183,27 @@ test('every surviving knowledge verb dispatches from the bridge, and its permiss
       `the brief section names the situation of ${name}`);
   }
 
-  // A verb that cannot be reached from a participant was retired, not advertised: the bridge
-  // refuses the settlement pair outright.
-  for (const retired of ['knowledge.promote', 'knowledge.settlement_lease', 'scratchpad.settle']) {
-    await assert.rejects(alphaSend(retired, {}), (error) => (
+  // Issue #311 item 3 (the closed-set half): every knowledge-family canonical operation is
+  // EITHER a taught participant verb (dispatched above, brief-taught below) or refused by the
+  // participant bridge outright. The set is DERIVED from the one canonical registry, never
+  // re-spelled, so a new knowledge/scratchpad/board/context/package verb lands red here until
+  // it is classified — taught to participants or kept off their bridge. The refused members
+  // keep their own surfaces (the wave-settlement lane and the S-2 orchestrator board/package
+  // tools on MCP, the worker board claim/report frames on the managed-worker wire, the
+  // context engine on the CLI/MCP/web); a participant reaches none of them.
+  const taught = new Set([...SWARM_KNOWLEDGE_COMMAND_NAMES, ...SWARM_SEAT_READ_COMMAND_NAMES]);
+  const family = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+    .map((operation) => operation.key)
+    .filter((key) => /^(?:knowledge|scratchpad|board|context|package)\./u.test(key)
+      || /^run\.(?:knowledge|board|scratchpad)(?:\.|$)/u.test(key));
+  const retired = family.filter((key) => !taught.has(key));
+  assert.ok(retired.length > 0, 'the derivation found the non-participant family rows');
+  for (const retiredName of retired) {
+    await assert.rejects(alphaSend(retiredName, {}), (error) => (
       error.code === 'swarm_command_invalid' || error.code === 'swarm_bridge_request_invalid'
       || error.code === 'swarm_command_unavailable'));
-    assert.ok(!SWARM_KNOWLEDGE_COMMAND_NAMES.includes(retired), `${retired} is not on the participant table`);
+    assert.ok(!SWARM_KNOWLEDGE_COMMAND_NAMES.includes(retiredName),
+      `${retiredName} is not on the participant table`);
   }
 });
 test('the brief names each knowledge verb with its one situation and the swarm situation projection', async (t) => {
