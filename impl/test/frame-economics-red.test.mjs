@@ -1679,6 +1679,16 @@ const F_EXEMPTIONS = Object.freeze([
   ['application.mjs', /comment.*validText\(attention\.requestId, 4_096\)|\/\/ entry failing `validText\(attention\.requestId, 4_096\)`/u, 'uncataloged: comment citing an id-class check'],
   ['application.mjs', /bounds\.maxBytes - fixedBytes - 16 \* 1024/u, 'uncataloged: semantic-bounds arithmetic'],
   ['application.mjs', /Math\.max\(256, Math\.min\(4_096, bounds\.maxBytes - 16_384\)\)/u, 'uncataloged: semantic-bounds arithmetic'],
+  // slice 15: the observation bucket moved to application-observation.mjs — the moved lines keep
+  // their exemptions under the module's own rows (the member-window exemptions follow the map).
+  ['application-observation.mjs', /max = 64, maxBytes = 4096/u, 'uncataloged: normalizeStringSet default'],
+  ['application-observation.mjs', /Buffer\.byteLength\(item\) > 4096/u, 'uncataloged: command arguments bound'],
+  ['application-observation.mjs', /validText\((input\.summary|finding\.message), 4_096\)/u, 'uncataloged: review intake fields'],
+  ['application-observation.mjs', /bounds\.maxBytes - 8_192/u, 'uncataloged: semantic-bounds arithmetic'],
+  ['application-observation.mjs', /bounds\.maxBytes - fixedBytes - 16 \* 1024/u, 'uncataloged: semantic-bounds arithmetic'],
+  ['application-observation.mjs', /Math\.max\(256, Math\.min\(4_096, bounds\.maxBytes - 16_384\)\)/u, 'uncataloged: semantic-bounds arithmetic'],
+  ['application-observation.mjs', /validText\((ref\.id|node\.taskId|taskId|integrationTaskId|worker|rawRequest\.actionId|pending\.requestId|checkpoint\.requestId|attention\.requestId|requestId|request\.inputs\.query|action\.target\?\.requestId|action\.target\?\.pauseId|handle\.sessionRef\?\.id), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['application-observation.mjs', /validText\(worker, 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
   ['atlas-representation-producer.mjs', /Buffer\.byteLength\(value\.handle\) > 4_096/u, 'uncataloged: representation handle bound'],
   ['atlas-representation-producer.mjs', /policy\.maxArgumentBytes > 1024 \* 1024/u, 'uncataloged: representation policy ceiling'],
   ['cairn-run-scorecard.mjs', /maxTaskTypeBytes > 4_096/u, 'uncataloged: route-advice policy ceiling'],

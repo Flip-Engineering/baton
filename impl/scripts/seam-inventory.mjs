@@ -201,6 +201,16 @@ export const TARGETS = Object.freeze([
     file: `impl/src/runtime-event-handlers/${mod}.mjs`, className: null, receiver: 'coordinator',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   })),
+  // Slice 15's module target: the application's observation bucket (80 members — the run,
+  // workflow, context and episode projections) moves to application-observation.mjs under the
+  // bare application receiver: BatonApplication owns no recorder, so no port rides along (the
+  // slice-3 precedent, extended by slice 13's authority-free module). The relocated projection
+  // helpers the moved bodies read (94 functions; the consts are not members) are module-scope
+  // members here.
+  Object.freeze({
+    file: 'impl/src/application-observation.mjs', className: null, receiver: 'application',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -289,7 +299,9 @@ const AUTHORITY_RULES = Object.freeze([
   // Slice 11 extends the port rules to the admission bucket: a member whose body is a delegate
   // into runtime-admission.mjs keeps the admission seam its body had there.
   { seam: 'admission', id: 'runtime_admission_port', weight: 3, call: /\bruntimeAdmission\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted admission module (runtime-admission.mjs)' },
-
+  // Slice 15 extends the port rules to the application's observation bucket: a member whose body
+  // is a delegate into application-observation.mjs keeps the observation seam its body had there.
+  { seam: 'observation', id: 'application_observation_port', weight: 3, call: /\bapplicationObservation\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted application observation module (application-observation.mjs)' },
   // Slice 5 extends the rule to the admission bucket: a member whose body is a delegate into
   // coordination-admission.mjs keeps the seam its body had there.
   { seam: 'admission', id: 'admission_port', weight: 3, call: /\bcoordinationAdmission\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted admission module (coordination-admission.mjs)' },

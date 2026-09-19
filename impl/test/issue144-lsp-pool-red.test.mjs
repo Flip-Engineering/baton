@@ -524,9 +524,9 @@ test('GP-A (pin): the trust-gate enum is the closed live set, "never path string
   // declaration order — scope → red_green → coverage → route_mismatch → forbidden_effect → unknown.
   // The debugGateFromLiveCode if-chain order differs (forbidden_effect is SECOND there); this pin
   // guards the SET, which is what R12/D4.1 says must stay closed and LSP-free.
-  const setStart = grepFirstLineNum('application.mjs', 'const DEBUG_GATE_CODES = Object.freeze');
-  assert.ok(setStart > 0, 'the DEBUG_GATE_CODES set literal is found in application.mjs');
-  const gateBlock = sedSrc('application.mjs', setStart, setStart + 2);
+  const setStart = grepFirstLineNum('application-observation.mjs', 'const DEBUG_GATE_CODES = Object.freeze');
+  assert.ok(setStart > 0, 'the DEBUG_GATE_CODES set literal is found in application-observation.mjs');
+  const gateBlock = sedSrc('application-observation.mjs', setStart, setStart + 2);
   const order = ['scope', 'red_green', 'coverage', 'route_mismatch', 'forbidden_effect', 'unknown']
     .map((g) => gateBlock.indexOf(`'${g}'`));
   assert.deepEqual(order, [...order].sort((a, b) => a - b),
@@ -535,7 +535,7 @@ test('GP-A (pin): the trust-gate enum is the closed live set, "never path string
     assert.ok(gateBlock.includes(`'${g}'`), `gate ${g} is in the live set`);
   }
   // The digests-only scope branch is categorical — "never path strings" (grep-anchored; ~:969 at HEAD).
-  assert.ok(grepCount('application.mjs', 'Digests \\+ counts only') >= 1,
+  assert.ok(grepCount('application-observation.mjs', 'Digests \\+ counts only') >= 1,
     'the "never path strings" clause is pinned in source');
   // R12: no gate gains an LSP-derived code — the gate mapping returns none of the LSP family.
   for (const code of LSP_REFUSAL_FAMILY) {
@@ -630,15 +630,15 @@ test('GP-F (pin): the sanctioned sanitizers are reused verbatim — no parallel 
   // F6: boundedAttentionText is grep-anchored (drift-proof) — the function signature via
   // grepFirstLineNum, the credential-shaped redaction via a direct grep (the old fixed 334-341
   // window lost the redaction line on the #153 +7 line drift).
-  const attentionStart = grepFirstLineNum('application.mjs', 'function boundedAttentionText');
-  assert.ok(attentionStart > 0, 'boundedAttentionText is found in application.mjs');
-  const bounded = sedSrc('application.mjs', attentionStart, attentionStart + 7);
+  const attentionStart = grepFirstLineNum('application-observation.mjs', 'function boundedAttentionText');
+  assert.ok(attentionStart > 0, 'boundedAttentionText is found in application-observation.mjs');
+  const bounded = sedSrc('application-observation.mjs', attentionStart, attentionStart + 7);
   assert.ok(/function boundedAttentionText/u.test(bounded),
     'boundedAttentionText is the attention-class sanitizer');
-  assert.ok(grepCount('application.mjs', 'credential-shaped content redacted') >= 1,
+  assert.ok(grepCount('application-observation.mjs', 'credential-shaped content redacted') >= 1,
     'boundedAttentionText redacts credential-shaped content');
-  assert.ok(grepCount('application.mjs', "FRAME_LIMITS\\['view.attention_text.bytes'\\]") >= 1,
-    'MAX_ATTENTION_TEXT_BYTES is bounded by the #89 registry row (application.mjs:59)');
+  assert.ok(grepCount('application-observation.mjs', "FRAME_LIMITS\\['view.attention_text.bytes'\\]") >= 1,
+    'MAX_ATTENTION_TEXT_BYTES is bounded by the #89 registry row (moved with slice 15)');
   // The live sanitizer is importable and behaves — proves the path the LSP tier must reuse.
   assert.equal(typeof sanitizeVerifierDiagnosticText, 'function');
   const secret = 'sk-proj-abcdefghijklmnop1234567890';
@@ -688,7 +688,7 @@ test('GP-H (pin): the read-port byte bound rows the LSP tier SHARES — no new #
 
 test('GP-I (pin): localeCompare is banned across the cited machinery; the compare is locale-free (campaign law, §6)', () => {
   for (const rel of [
-    'application.mjs', 'coordinator.mjs', 'atlas-index.mjs', 'referee.mjs',
+    'application.mjs', 'application-observation.mjs', 'coordinator.mjs', 'atlas-index.mjs', 'referee.mjs',
     'process-lifecycle.mjs', 'verifier-diagnostics.mjs', 'limits.mjs', 'canonical-order.mjs',
   ]) {
     assert.equal(grepCount(rel, 'localeCompare'), 0, `${rel} uses no localeCompare (ACTUAL order, not collation)`);
@@ -1115,9 +1115,9 @@ test('R12 (stage: no LSP evidence exists to gate with): LSP-derived evidence is 
 
   // The gate enum stays the live code set (GP-A pins it); none of the LSP family is a gate code.
   // F4-class: grep-anchored to the DEBUG_GATE_CODES set literal (drift-proof, same as the GP-A fix).
-  const setStart = grepFirstLineNum('application.mjs', 'const DEBUG_GATE_CODES = Object.freeze');
-  assert.ok(setStart > 0, 'the DEBUG_GATE_CODES set literal is found in application.mjs');
-  const gateBlock = sedSrc('application.mjs', setStart, setStart + 2);
+  const setStart = grepFirstLineNum('application-observation.mjs', 'const DEBUG_GATE_CODES = Object.freeze');
+  assert.ok(setStart > 0, 'the DEBUG_GATE_CODES set literal is found in application-observation.mjs');
+  const gateBlock = sedSrc('application-observation.mjs', setStart, setStart + 2);
   for (const code of LSP_REFUSAL_FAMILY) {
     assert.equal(gateBlock.includes(code), false,
       `${code} is an LSP evidence/refusal code, never a trust-gate verdict code`);

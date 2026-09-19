@@ -30,20 +30,27 @@ function extractDelimited(text, start, end) {
 }
 
 function extractRunPhases() {
+  // slice 15: the observation bucket's phase literals live in application-observation.mjs now.
+  // The regex and line scans read both texts; the two phase-set markers are read from the
+  // module alone, where the declarations live — application.mjs carries only the re-export
+  // name, and extracting from it would sweep unrelated literals between the marker and the
+  // next ']);'
   const application = src('application.mjs');
+  const applicationObservation = src('application-observation.mjs');
+  const bothTexts = application + applicationObservation;
   const phases = new Set();
   for (const pattern of [
     /\bphase\s*=(?!=)\s*'([a-z_]+)'/gu,
     /\b(?:view\.)?phase\s*===\s*'([a-z_]+)'/gu,
   ]) {
-    for (const phase of extractAll(application, pattern)) phases.add(phase);
+    for (const phase of extractAll(bothTexts, pattern)) phases.add(phase);
   }
   for (const marker of ['PROVIDER_EXECUTION_SETTLED_PHASES', 'APPLICATION_RUN_TERMINAL_PHASES']) {
-    for (const phase of extractAll(extractDelimited(application, marker, ']);'), /'([a-z_]+)'/gu)) {
+    for (const phase of extractAll(extractDelimited(applicationObservation, marker, ']);'), /'([a-z_]+)'/gu)) {
       phases.add(phase);
     }
   }
-  for (const line of application.split('\n')) {
+  for (const line of bothTexts.split('\n')) {
     if (!/^\s*(?:(?:const|let)\s+)?phase\s*=(?!=)/u.test(line)) continue;
     for (const phase of extractAll(line, /'([a-z_]+)'/gu)) phases.add(phase);
   }
@@ -61,7 +68,7 @@ function extractRunPhases() {
 
 export function collectSurfaceInventory() {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
-  const applicationText = src('application.mjs');
+  const applicationText = src('application.mjs') + src('application-observation.mjs');
   const mcpText = src('mcp-northbound.mjs');
   const definitions = Object.keys(APPLICATION_COMMAND_DEFINITIONS);
   const applicationWebCommands = definitions
@@ -91,8 +98,8 @@ export function collectSurfaceInventory() {
     }
   }
   const synonymDensity = {};
-  const applicationLayer = ['application.mjs', 'application-client.mjs', 'application-cli.mjs',
-    'application-semantics.mjs', 'application-deployment.mjs'].map(src).join('\n');
+  const applicationLayer = ['application.mjs', 'application-observation.mjs', 'application-client.mjs',
+    'application-cli.mjs', 'application-semantics.mjs', 'application-deployment.mjs'].map(src).join('\n');
   for (const word of ['worker', 'member', 'workstream', 'seat', 'assignee']) {
     synonymDensity[word] = (applicationLayer.match(new RegExp(word, 'giu')) ?? []).length;
   }

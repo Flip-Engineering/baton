@@ -630,15 +630,18 @@ test('P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as to
   assert.deepEqual(item.value.feedback?.findings, coaching.findings, 'P6: the packet carries the authored findings');
 });
 
-test('P7 (PIN): the contract refusal vocabulary is typed and surface-constant in application.mjs', () => {
-  const source = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8');
+test('P7 (PIN): the contract refusal vocabulary is typed and surface-constant across the application seam', () => {
+  // slice 15: the feedback projections (and their refusal literals) moved to
+  // application-observation.mjs — the vocabulary is scanned across both texts.
+  const source = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8')
+    + readFileSync(new URL('../src/application-observation.mjs', import.meta.url), 'utf8');
   for (const code of [
     'application_workflow_feedback_invalid',
     'application_workflow_feedback_anchor_invalid',
     'application_workflow_feedback_unavailable',
     'application_workflow_integrity',
   ]) {
-    assert.ok(source.includes(code), `refusal code ${code} is typed in application.mjs`);
+    assert.ok(source.includes(code), `refusal code ${code} is typed across the application seam`);
   }
 });
 

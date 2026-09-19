@@ -196,7 +196,10 @@ test('DG-1a: stream-death/crash lands on the failure leg as a whitelisted summar
 });
 
 test('DG-1a: #53 closed-shape whitelist amendment is pinned by source-scan', () => {
-  const source = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8');
+  // slice 15: the debug projection's whitelist moved to application-observation.mjs — the scan
+  // reads both texts.
+  const source = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8')
+    + readFileSync(new URL('../src/application-observation.mjs', import.meta.url), 'utf8');
   // Receipt kinds the debug projection admits (whitelist, not blacklist).
   assert.ok(
     /scratchpad\.write_result/.test(source) && /authority\.rejected/.test(source),
