@@ -232,6 +232,12 @@ test('a390 (d): a ledger with the admission but not the receipt replays to stopp
   // replay rides the driver level only.
   await deployment.close();
   const replay = createDriver(driverOptions);
+  // #509: the captured options carry the open path's internal `coordinationAsyncOpen`, so this
+  // driver's store replays asynchronously and its projection holds nothing until `coordinationOpened`
+  // resolves — the driver contract requires that promise be awaited before the store's first read
+  // (the deployment open awaits it at its own first read). Reading straight after `createDriver`
+  // raced the replay and answered from the empty projection.
+  await replay.coordinationOpened;
   const replayed = replay.coordination.contextCall(callId);
   assert.equal(replayed.state, 'stopping',
     'the admission-only ledger must replay to the same stopping view, never stopped');
