@@ -1770,8 +1770,12 @@ function applicationProfile(repoId, routes, verification, exportBounds) {
       requireAdoptedResult: true, requireSemanticReview: false,
     },
     followPolicy: {
+      // #500: the follow/inspect response ceiling IS the registry's view.run.bytes row —
+      // the one Run-view ceiling, shed-flagged with the #489 narrowing ladder as its
+      // graceful path — and the profile validator refuses any value above it
+      // (application.mjs normalizeFollowPolicy), so the shipped default reads the row.
       mode: 'enabled', maxWaitMs: 30_000, maxChanges: 128,
-      maxResponseBytes: 512 * 1024, maxScanEvents: 1024,
+      maxResponseBytes: FRAME_LIMITS['view.run.bytes'].value, maxScanEvents: 1024,
     },
     exportPolicy: {
       mode: 'manual', format: 'directory-v1',

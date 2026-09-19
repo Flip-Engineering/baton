@@ -1653,7 +1653,6 @@ const F_EXEMPTIONS = Object.freeze([
   ['application-deployment.mjs', /maxTextBytes: 16_384, maxItems: 128/u, 'uncataloged: goal-plan policy limits'],
   ['application-deployment.mjs', /providerTurns: 2_048/u, 'uncataloged: provider-turn COUNT'],
   ['application-deployment.mjs', /maxGoalBytes: 256 \* 1024, maxPlanBytes: 512 \* 1024, maxStatusBytes: 1024 \* 1024/u, 'uncataloged: goal-plan policy ceilings'],
-  ['application-deployment.mjs', /maxResponseBytes: 512 \* 1024/u, 'uncataloged: knowledge-promotion policy ceiling'],
   ['application-deployment.mjs', /maxBuffer: 1024 \* 1024/u, 'uncataloged: exec buffer'],
   ['application-deployment.mjs', /maxOutputBytes: 1024 \* 1024/u, 'uncataloged: verification output bound'],
   ['application-semantics.mjs', /items: \{ type: 'string', minLength: 1, maxLength: 4096 \}/u, 'uncataloged: definitionOfDone/scope item schemas'],
