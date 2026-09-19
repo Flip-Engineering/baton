@@ -166,6 +166,10 @@ selection is now derived and shared by the check and the runner:
   passthrough options, and refuses to run with no paths — an unnamed selection would silently
   mean the whole suite. An empty selection is not a failure: the verdict is green with zero rows
   judged, and the run says so.
+  A selected file is scheduled only when its own source imports the test framework the reporter
+  reads (`node:test`); the #300 selection and a direct file name can both reach a driver script
+  or helper module under `test/` (#508), and the verdict reports such a file as
+  `skipped: no test-framework import` while judging only the files that ran.
 
 Over-selection is the safe direction for both entries: the subset is a fast first verdict, never
 the gate. Under-selection is what would hide a failure the full suite then finds 25 minutes

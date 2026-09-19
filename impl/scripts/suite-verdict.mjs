@@ -283,6 +283,7 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
   const hung = [];
   const stale = [];
   const stalled = [];
+  const skipped = [];
   // Environment rows: a row whose reason class is credential/environment is the row's own
   // declaration that this machine decides its outcome (2026-09-14 audit R-1). It is judged
   // against what the run OBSERVED, never against itself. A row that names its `prerequisite`
@@ -317,6 +318,9 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
   let cancelled = 0;
   let passed = 0;
   for (const summary of summaries) {
+    // Issue #508: files the runner declined to schedule (not test files) ride the summary as
+    // skipped rows — named by the verdict, judged by nothing.
+    for (const row of summary.skipped ?? []) skipped.push({ file: row.file, reason: row.reason });
     for (const row of summary.passed) {
       passed += 1;
       const key = rowKey(row.file, row.name);
@@ -365,15 +369,18 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
   return Object.freeze({
     green, passed, expectedRed, expectedRedByClass: Object.freeze(byClass), codeRed,
     environmentRed, environment, unexpected, stale, unseen, hung, stalled, cancelled,
+    skipped: Object.freeze(skipped),
   });
 }
 
 export function formatVerdict(verdict) {
   const lines = [];
+  const skipped = verdict.skipped ?? [];
+  const skippedNote = skipped.length > 0 ? `, ${skipped.length} skipped` : '';
   const headline = verdict.green
     ? (verdict.environmentRed.length > 0 ? 'GREEN except environment' : 'GREEN')
     : 'RED';
-  lines.push(`baton suite verdict: ${headline} — ${verdict.passed} passed, ${verdict.expectedRed.length} expected red (${verdict.codeRed.length} code, ${verdict.environmentRed.length} environment-red, ${verdict.cancelled ?? 0} of them cancelled by a dangling await earlier in their file), ${verdict.unexpected.length} unexpected failure(s), ${verdict.stale.length} stale expectation(s), ${verdict.hung.length} hung, ${verdict.stalled.length} stalled lane(s)`);
+  lines.push(`baton suite verdict: ${headline} — ${verdict.passed} passed, ${verdict.expectedRed.length} expected red (${verdict.codeRed.length} code, ${verdict.environmentRed.length} environment-red, ${verdict.cancelled ?? 0} of them cancelled by a dangling await earlier in their file), ${verdict.unexpected.length} unexpected failure(s), ${verdict.stale.length} stale expectation(s), ${verdict.hung.length} hung, ${verdict.stalled.length} stalled lane(s)${skippedNote}`);
   if (verdict.environment) lines.push(`  ${formatEnvironment(verdict.environment)}`);
   const classes = REASON_CLASSES.filter((klass) => (verdict.expectedRedByClass?.[klass] ?? 0) > 0);
   if (classes.length > 0) {
@@ -393,6 +400,7 @@ export function formatVerdict(verdict) {
   for (const key of verdict.unseen) lines.push(`  stale expectation (never ran — renamed or deleted): ${key}`);
   for (const row of verdict.hung) lines.push(`  hung (${row.failureType ?? 'pending promise'}): ${row.key}`);
   for (const row of verdict.stalled) lines.push(`  stalled lane ${row.lane}: no test event for ${row.idleMs} ms after ${row.lastEvent ?? 'the lane started'}`);
+  for (const row of skipped) lines.push(`  skipped: ${row.reason}: ${row.file}`);
   return lines.join('\n');
 }
 
@@ -418,6 +426,7 @@ export function verdictDocument(verdict) {
     unseen: [...verdict.unseen],
     hung: verdict.hung.map((row) => row.key),
     stalled: [...verdict.stalled],
+    skipped: (verdict.skipped ?? []).map((row) => ({ file: row.file, reason: row.reason })),
     environment: verdict.environment
       ? { absent: [...verdict.environment.absent], present: [...verdict.environment.present], declared: [...verdict.environment.declared], prerequisites: verdict.environment.prerequisites.map((row) => ({ ...row })) }
       : null,

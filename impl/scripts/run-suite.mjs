@@ -283,6 +283,22 @@ function relativeTestPath(file) {
   return rel.startsWith('..') ? absolute : rel;
 }
 
+// Issue #508: a file the runner schedules must register its tests with the framework the verdict
+// reporter reads. The #300 selection and a directly named file both reach driver scripts and
+// helper modules under test/ (issue480-citation-driver.mjs, seam-member-source.mjs), and such a
+// file produces no test events when run. The file's own source decides: a quoted `node:test`
+// specifier is the registration the reporter needs. A file without one is skipped and named in
+// the verdict with that reason; the verdict judges only the files that ran.
+const TEST_FRAMEWORK_IMPORT = /['"`]node:test['"`]/u;
+
+function fileImportsTestFramework(file) {
+  try {
+    return TEST_FRAMEWORK_IMPORT.test(readFileSync(file, 'utf8'));
+  } catch {
+    return true; // unreadable here is the lane's report to make, not the scheduler's guess
+  }
+}
+
 function laneFiles(changedSelection = null) {
   const lanes = JSON.parse(readFileSync(lanesPath, 'utf8'));
   const serial = new Set(lanes.serial);
@@ -292,16 +308,24 @@ function laneFiles(changedSelection = null) {
     process.stderr.write(`baton test runner: suite-lanes.json names files that do not exist: ${missing.join(', ')}\n`);
     process.exit(1);
   }
-  if (explicitFiles.length > 0) {
-    const requested = explicitFiles.map(relativeTestPath);
-    return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)), canonical: all.length };
+  const requested = explicitFiles.length > 0
+    ? explicitFiles.map(relativeTestPath)
+    // A selected file keeps its lane discipline: process-heavy files still run one at a time.
+    : changedSelection
+      ? changedSelection.files.map((file) => relativeTestPath(join(fileURLToPath(repositoryRoot), file)))
+      : all;
+  const runnable = [];
+  const skipped = [];
+  for (const file of requested) {
+    if (fileImportsTestFramework(resolve(implRootPath, file))) runnable.push(file);
+    else skipped.push({ file, reason: 'no test-framework import' });
   }
-  // A selected file keeps its lane discipline: process-heavy files still run one at a time.
-  if (changedSelection) {
-    const requested = changedSelection.files.map((file) => relativeTestPath(join(fileURLToPath(repositoryRoot), file)));
-    return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)), canonical: all.length };
-  }
-  return { parallel: all.filter((file) => !serial.has(file)), serial: all.filter((file) => serial.has(file)), canonical: all.length };
+  return {
+    parallel: runnable.filter((file) => !serial.has(file)),
+    serial: runnable.filter((file) => serial.has(file)),
+    canonical: all.length,
+    skipped,
+  };
 }
 
 let requestedSignal = null;
@@ -569,6 +593,9 @@ if (legacyPassthrough) {
     }
   }
   const files = laneFiles(changedSelection);
+  for (const row of files.skipped) {
+    process.stderr.write(`baton test runner: skipped (${row.reason}): ${row.file}\n`);
+  }
   // Issue #424: the plan — what this run expanded and the lane width it resolved (the derivation
   // reads the host's load, so a saturated host resolves one lane) — prints BEFORE admission and
   // before any lane. A reader sees the size of the run even when the host queues the verdict,
@@ -610,7 +637,7 @@ if (legacyPassthrough) {
       if (requestedSignal || spawnError || !groupReaped) {
         finish(1, requestedSignal, spawnError, groupReaped);
       } else {
-        const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), stalled: null }];
+        const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), stalled: null, skipped: files.skipped }];
         let rewriteRefused = false;
         if (writeExpectedRedRequested) {
           const failures = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed');
