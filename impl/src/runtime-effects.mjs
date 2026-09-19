@@ -249,10 +249,11 @@ export function _dispatch(coordinator, recorder, task, vendor, model, effort, wo
       });
     // WF1-WF5: readiness is a coordinator-owned prerequisite. Normalize both synchronous and
     // asynchronous creation failure before the adapter can observe the rejection, abort any
-    // pending native spawn, write one fixed non-leaking terminal fact, and still rethrow a typed
-    // rejection to the adapter so it cannot fall through to the orchestrator cwd. A concurrent
-    // stop retains terminal authority; the second reap handles partial creation that failed late.
-    worktreeReady = worktreeReady.catch((cause) => {
+    // pending native spawn, release the checkout this attempt owned, write one fixed
+    // non-leaking terminal fact, and still rethrow a typed rejection to the adapter so it cannot
+    // fall through to the orchestrator cwd. A concurrent stop retains terminal authority; the
+    // second reap handles partial creation that failed late.
+    worktreeReady = worktreeReady.catch(async (cause) => {
       void cause;
       const failure = new Error('worktree unavailable');
       failure.name = 'WorktreeReadinessError';
@@ -260,10 +261,24 @@ export function _dispatch(coordinator, recorder, task, vendor, model, effort, wo
       if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
         handle.spawnAbort.abort({ reason: failure.code });
       }
-      const terminalized = coordinator._fatalError ? false : coordinator._onSpawnRefused(handle, task, harness, {
+      // WF1-WF4: the checkout this attempt owned is released BEFORE the refusal is terminalized,
+      // so a task whose result reads `failed` is never observed still holding it — and the
+      // refusal path that terminalizes through an installed process reference releases it too.
+      // The release is the same preserve-then-reap authority the stop/reap path uses and is
+      // idempotent with it through `handle.cleanupPromise`; a retention refusal stays observable
+      // on the handle and never replaces the typed readiness failure. A borrowed checkout
+      // (resume or deliberate attachment) is not this attempt's to release.
+      if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true) {
+        try { await coordinator._removeOwnedTaskWorktree(handle, task); } catch { /* best effort */ }
+      }
+      // The creation window closes only once the checkout is released: the reap's own idle guard
+      // reads a handle with no checkout, no owned authority, no live runtime scope and a closed
+      // window as already released, so the window must stay open across the release and close
+      // before the refusal below can reach the reap a second time.
+      handle.worktreeCreationPending = false;
+      if (!coordinator._fatalError) coordinator._onSpawnRefused(handle, task, harness, {
         ok: false, reason: failure.message, code: failure.code, [WORKTREE_FAILURE]: true,
       });
-      if (!terminalized && task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true) coordinator._bestEffort(coordinator._removeOwnedTaskWorktree(handle, task), 'worktree_release');
       throw failure;
     }).finally(() => { handle.worktreeCreationPending = false; });
     handle.worktreeReady = worktreeReady;
