@@ -21,7 +21,7 @@
 //       that converges the seat: wait for the deadline, or stop again after it.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -33,6 +33,7 @@ import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 import { SWARM_REFUSAL_CODES } from '../src/swarm-refusals.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
+import { memberSource } from './seam-member-source.mjs';
 // The red-before HEAD has no rendering leg and no owner row: the rows below show their own red
 // then, instead of the file failing to link before any of them runs.
 let swarmStopRefusalBlock = null;
@@ -275,53 +276,6 @@ test('#473 (a): a swarm.stop whose run stop stalls crosses coordinator_run_stop_
 
 // ── (b) the derivation pin over the coordinator's own stop-path refusal sites ────────────────────
 
-/** Comments are prose, not code: a `//` line that mentions a code (the coordinator documents its
- * own refusals that way) is blanked in place so offsets — and therefore the line numbers the
- * member scan walks — stay exact. */
-function blankComments(rawSource) {
-  return rawSource
-    .replace(/\/\*[\s\S]*?\*\//gu, (match) => ' '.repeat(match.length))
-    .replace(/^[ \t]*\/\/.*$/gmu, (match) => ' '.repeat(match.length));
-}
-function skipString(text, at) {
-  const quote = text[at];
-  for (let cursor = at + 1; cursor < text.length; cursor += 1) {
-    if (text[cursor] === '\\') { cursor += 1; continue; }
-    if (text[cursor] === quote) return cursor;
-  }
-  return text.length - 1;
-}
-
-/** One class member's own source: from its declaration line to the brace that closes its BODY (the
- * parameter list is walked first, so a default like `opts = {}` is never mistaken for the body).
- * Null when the member is gone — the caller asserts, so a rename fails the pin instead of silently
- * shrinking its roster. */
-function memberSource(rawSource, name) {
-  const cleaned = blankComments(rawSource);
-  const match = new RegExp(`^  (?:async )?${name}\\(`, 'mu').exec(cleaned);
-  if (match === null) return null;
-  let depth = 0;
-  let at = match.index + match[0].length - 1;
-  for (; at < cleaned.length; at += 1) {
-    const character = cleaned[at];
-    if (character === "'" || character === '"' || character === '`') { at = skipString(cleaned, at); continue; }
-    if (character === '(') depth += 1;
-    else if (character === ')') { depth -= 1; if (depth === 0) break; }
-  }
-  const open = cleaned.indexOf('{', at);
-  depth = 0;
-  for (let cursor = open; cursor < cleaned.length; cursor += 1) {
-    const character = cleaned[cursor];
-    if (character === "'" || character === '"' || character === '`') { cursor = skipString(cleaned, cursor); continue; }
-    if (character === '{') depth += 1;
-    else if (character === '}') {
-      depth -= 1;
-      if (depth === 0) return rawSource.slice(match.index, cursor + 1);
-    }
-  }
-  return null;
-}
-
 /** The operator's own reading of the coordinator's convergence legs (2026-09-18, issue #473): which
  * members each leg is, and — for every refusal code those members raise — where the code crosses
  * the web layer. `swarm` is the family set this lane maps; `coordinator-lifecycle` is the web
@@ -355,15 +309,13 @@ const STOP_PATH_CROSSING = Object.freeze({
   coordination_wait_aborted: 'swarm',
 });
 
-const coordinatorSource = readFileSync(new URL('../src/coordinator.mjs', import.meta.url), 'utf8');
-const coordinationStoreSource = readFileSync(new URL('../src/coordination-store.mjs', import.meta.url), 'utf8');
-/** Which module each leg's members live in, and the seam its codes claim as their raiser — the run
- * stop's leg is the coordinator's own; the wait-abort leg is the store's, whose bare error the
- * RUNTIME raises into the family refusal (the raiser the row's `raisedBy` must name). */
-const LEG_SOURCE = Object.freeze({
-  ...Object.fromEntries(Object.keys(STOP_PATH_LEGS).map((leg) => [leg, coordinatorSource])),
-  ...Object.fromEntries(Object.keys(WAIT_ABORT_LEGS).map((leg) => [leg, coordinationStoreSource])),
-});
+/** The legs' members are read where the #259 seam split actually put them, through the shared
+ * resolver (test/seam-member-source.mjs) over the live seam inventory — a member the split moved
+ * out of the coordinator's own file (the drain and terminal-release delegates' bodies, and the
+ * wait-abort mint) is scanned wherever the split put it.
+ * The seam each leg's codes claim as their raiser is unchanged: the run stop's leg is the
+ * coordinator's, and the wait-abort leg is the store's, whose bare error the RUNTIME raises into
+ * the family refusal (the raiser the row's `raisedBy` must name). */
 const LEG_RAISER = Object.freeze({
   ...Object.fromEntries(Object.keys(STOP_PATH_LEGS).map((leg) => [leg, 'coordinator'])),
   ...Object.fromEntries(Object.keys(WAIT_ABORT_LEGS).map((leg) => [leg, 'runtime'])),
@@ -372,9 +324,9 @@ const legRoster = new Map();
 for (const [leg, members] of Object.entries({ ...STOP_PATH_LEGS, ...WAIT_ABORT_LEGS })) {
   const codes = new Set();
   for (const member of members) {
-    const body = memberSource(LEG_SOURCE[leg], member);
-    assert.ok(body !== null && body.length > 0,
-      `leg "${leg}": the module still declares ${member} (a rename must update this audit, never shrink it)`);
+    const body = memberSource(member);
+    assert.ok(body.length > 0,
+      `leg "${leg}": the seam inventory still declares ${member} (a rename must update this audit, never shrink it)`);
     for (const match of body.matchAll(/code: '([a-z][a-z0-9_]*)'/gu)) codes.add(match[1]);
   }
   legRoster.set(leg, codes);
