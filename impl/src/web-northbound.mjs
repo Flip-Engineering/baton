@@ -735,6 +735,14 @@ function dispatchFailure(cause, command = null) {
   if (cause?.code === 'scratch_oracle_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'Scratch oracle unavailable' } } };
   if (cause?.code === 'scratch_oracle_integrity') return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'Scratch oracle evidence refused' } } };
   if (['run_sealed', 'run_not_terminal', 'run_membership_changed', 'run_prefix_changed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'run state conflict' } } };
+  // #521: a route blocked at readiness because no credential is projected into the worker
+  // runtime is a state conflict, never a transient condition — retrying the identical request
+  // cannot project a credential, so it crosses typed 409 with the readiness summary instead of
+  // the 503 fallthrough.
+  if (cause?.code === 'route_credentials_unprojected') return { httpStatus: 409, body: { ok: false, error: {
+    code: cause.code,
+    message: typeof cause?.message === 'string' && cause.message.length > 0 ? cause.message : 'no provider credential is projected into the worker runtime for this route',
+  } } };
   if (['invalid_run_id', 'run_not_found'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'run precondition failed' } } };
   if (['causal_request_invalid', 'causal_context_invalid', 'causal_audit_invalid', 'causal_trace_invalid', 'causal_recall_invalid', 'causal_promotion_invalid', 'causal_correction_invalid', 'causal_contradiction_invalid'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'causal operation precondition failed' } } };
   if (['causal_repo_mismatch', 'causal_promotion_forbidden', 'causal_correction_forbidden', 'causal_contradiction_forbidden'].includes(cause?.code)) return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'causal repository authority forbidden' } } };

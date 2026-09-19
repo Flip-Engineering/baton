@@ -54,6 +54,11 @@ function exactAdapter(scenario = {
   adapter.card = () => ({
     ...rawCard(),
     authPosture: 'subscription',
+    // #327 credential-ownership rule: this caller-supplied adapter owns its credential and says
+    // so, exactly as the rule at application-deployment.mjs credentialProjectionResolves
+    // requires — readiness and dispatch trust the advertisement instead of blocking the route
+    // as route_credentials_unprojected.
+    providerCompatibility: { credentialState: 'available' },
     modelSelection: {
       mode: 'exact', configuredDefault: ROUTE.model, available: [ROUTE.model],
       family: ROUTE.harness, acceptedPrefixes: [], acceptedAliases: [],
