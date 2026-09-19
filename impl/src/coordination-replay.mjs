@@ -601,6 +601,7 @@ function* _loadRun(store, plan, progress) {
       const problem = yield* _adoptProjectionCheckpoint(store, checkpoint);
       if (problem === null) {
         adopted = true;
+        _reverifyAdoptedProviderDeliveries(store);
       } else {
         // The body and the ledger disagree (a reference the ledger cannot back): the body is not
         // adoptable, and the ledger is authoritative — every covered row folds after all.
@@ -673,12 +674,38 @@ function* _adoptProjectionCheckpoint(store, checkpoint) {
  * fold writes is frozen and every projection CONTAINER is mutable — the fold resolves an append by
  * `Map.set`/`Array.push` on it — so an adopted family must keep the body's own (deserialized,
  * extensible) container while its rows take the law the fold's rows already obey. Freezing the
- * container here would refuse the next append with `Cannot add property…, object is not extensible`. */
+ * container here would refuse the next append with `Cannot add property…, object is not extensible`.
+ * A Map value that is itself an Array (e.g. _knowledgeNodeHistory) is also a mutable container:
+ * the fold appends to it with `history.push(version)`, so the array stays extensible while each
+ * element it holds is frozen. */
 function _adoptedRows(container) {
   if (container instanceof Map || container instanceof Set || Array.isArray(container)) {
-    for (const row of container.values()) freeze(row);
+    for (const row of container.values()) {
+      if (Array.isArray(row)) { for (const element of row) freeze(element); }
+      else freeze(row);
+    }
   }
   return container;
+}
+
+/** After a checkpoint adoption, covered provider delivery rows were read but never folded, so the
+ * HMAC/ed25519 private CAS integrity gate in `_validateProviderDeliveryPayload` did not fire. This
+ * pass reverifies every native-auth delivery the adopted projection covers. */
+function _reverifyAdoptedProviderDeliveries(store) {
+  if (typeof store._advisoryReceiptReverify !== 'function') return;
+  for (const event of store._events) {
+    if (event.kind !== 'provider.delivery_received') continue;
+    const receipt = event.payload?.receipt;
+    if (!receipt) continue;
+    const configured = store._advisoryFeedCards.get(receipt.providerId);
+    if (!configured || !['hmac-sha256', 'ed25519'].includes(configured.card.auth?.scheme)) continue;
+    const replayReceipt = { schemaVersion: 1, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, cardDigest: receipt.cardDigest, mode: receipt.mode, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, sequence: receipt.sequence, coordinates: clone(receipt.coordinates), advisoryIds: clone(receipt.advisoryIds), source: { handle: `art:sha256:${receipt.rawDigest}`, digest: receipt.rawDigest, bytes: receipt.rawBytes, mediaType: 'application/json' }, contentDigest: receipt.verificationDigest };
+    let reverified;
+    try { reverified = store._advisoryReceiptReverify(replayReceipt); }
+    catch (error) { throw new CoordinationIntegrityError('native provider receipt private CAS replay failed', error?.code ?? 'provider_cas_invalid'); }
+    if (reverified && typeof reverified.then === 'function') throw new CoordinationIntegrityError('native provider receipt replay must be synchronous', 'provider_cas_replay_required');
+    if (canonicalDigest(reverified) !== canonicalDigest(replayReceipt)) throw new CoordinationIntegrityError('native provider receipt private CAS replay diverged', 'provider_cas_invalid');
+  }
 }
 
 /** Moved from `CoordinationStore._recoveryBatchIdentity` (issue #259 slice 1). Reads no store state. */
