@@ -517,8 +517,11 @@ function parseCommitted(text) {
   }
 }
 
-/** Compare the committed artifact with a fresh regeneration. Findings are human-readable. */
-export function checkSeamInventory({ path = INVENTORY_PATH } = {}) {
+/** Compare the committed artifact with a fresh regeneration. Findings are human-readable. The
+ * committed artifact's per-target member counts are the floor (issue #510): a count may grow or
+ * hold between commits, and a drop — or a target the regeneration loses entirely — is refused by
+ * name with both counts. */
+export function checkSeamInventory({ path = INVENTORY_PATH, fresh = collectSeamInventory() } = {}) {
   const findings = [];
   let committed;
   try {
@@ -527,7 +530,6 @@ export function checkSeamInventory({ path = INVENTORY_PATH } = {}) {
     return [`committed inventory is unreadable: ${error.message} (run --write)`];
   }
   if (committed.error) return [`committed inventory is not JSON: ${committed.error} (run --write)`];
-  const fresh = collectSeamInventory();
   // A member is a DEFINITION: the key is (file, name, ordinal), so Coordinator declaring one
   // method twice shows as two rows, and a line that moves (every ordinary edit) changes nothing.
   const identity = (file, member) => `${file}#${member.name}#${member.ordinal ?? 0}`;
@@ -543,6 +545,17 @@ export function checkSeamInventory({ path = INVENTORY_PATH } = {}) {
       if (prior.seam !== member.seam) findings.push(`${file.file}:${member.line}: ${member.name} is committed as ${prior.seam} but classifies as ${member.seam} (run --write)`);
       else if (JSON.stringify(prior.evidence) !== JSON.stringify(member.evidence)) findings.push(`${file.file}:${member.line}: ${member.name} evidence drifted (run --write)`);
     }
+  }
+  // The per-target floor (issue #510): the committed artifact's per-target member counts are the
+  // floor a fresh regeneration must meet. A count may grow or hold between commits; a drop, or a
+  // committed target the regeneration no longer carries at all, is the dropped-TARGETS-entry
+  // incident, refused here by target with both counts.
+  const committedCounts = new Map((committed.files ?? []).map((file) => [file.file, (file.members ?? []).length]));
+  const freshCounts = new Map(fresh.files.map((file) => [file.file, file.members.length]));
+  for (const [file, before] of committedCounts) {
+    const after = freshCounts.get(file);
+    if (after === undefined) findings.push(`${file}: target absent from the regeneration (committed ${before} members, regenerated 0)`);
+    else if (after < before) findings.push(`${file}: member count dropped (committed ${before}, regenerated ${after})`);
   }
   // Sizes and ordering are part of the committed form too (a member that grew is worth a review).
   if (findings.length === 0 && renderSeamInventory(committed) !== renderSeamInventory(fresh)) {
