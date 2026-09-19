@@ -195,8 +195,11 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
   const counts = [...moved.values()].reduce((acc, namespace) => ({ ...acc, [namespace]: (acc[namespace] ?? 0) + 1 }), {});
   // #286 added three internals helpers (waveBinding, orientationReadHead, orientationReadLatest)
   // and their store delegates, and issue #259 slice 2 relocated the last 14 members two suite-pinned
-  // source scans had keyed to the store file; the census is the point, so it moves with them.
-  assert.deepEqual(counts, { coordinationInternals: 103, coordinationReplay: 51 },
+  // source scans had keyed to the store file; the census is the point, so it moves with them. Slice 7
+  // then moved the two orientation read delegates (orientationReadHead, orientationReadLatest) to the
+  // ledger-writes port with the store's effect bucket — they still reach the same internals helpers,
+  // one module call away — so the internals census is 101.
+  assert.deepEqual(counts, { coordinationInternals: 101, coordinationReplay: 51 },
     'the map must show the moved surface and recovery buckets — every store member whose body left');
 
   const wired = delegates();
@@ -209,7 +212,7 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
   }
   // The replay module is exactly its port: 51 exports, one delegate each. The internals module also
   // exports the relocated primitives (keys, digests, paths) the store imports back, so the claim
-  // there is: 103 distinct delegate-reached helpers, each reached by exactly one delegate — and every
+  // there is: 101 distinct delegate-reached helpers, each reached by exactly one delegate — and every
   // name the store imports from either module must exist.
   const replay = MODULES.find((module) => module.namespace === 'coordinationReplay');
   const reached = [...wired.values()].filter((delegate) => delegate.module === replay.namespace).map((delegate) => delegate.helper).sort();
@@ -217,7 +220,7 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
     `${replay.file}: every export has exactly one delegate, and every delegate names an export`);
   const helpers = [...wired.values()].filter((delegate) => delegate.module === 'coordinationInternals').map((delegate) => delegate.helper);
   assert.equal(new Set(helpers).size, helpers.length, 'one delegate per internals helper');
-  assert.equal(helpers.length, 103, 'the internals port carries 103 delegate-reached helpers');
+  assert.equal(helpers.length, 101, 'the internals port carries 101 delegate-reached helpers');
   for (const imported of importedFromMovedModules()) {
     const module = MODULES.find((entry) => entry.file === imported.module);
     assert.ok(Object.hasOwn(module.exports, imported.name),

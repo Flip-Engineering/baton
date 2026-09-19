@@ -6563,13 +6563,10 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 209,
+          "size": 3,
           "seam": "effect",
           "evidence": [
-            "recovery:durable_load",
-            "effect:filesystem_mutation",
-            "admission:typed_refusal",
-            "observation:story_ingest"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -6663,23 +6660,23 @@
         {
           "name": "_cleanupCanonicalOrderTemps",
           "ordinal": 0,
-          "size": 6,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "_writeCanonicalReceipt",
           "ordinal": 0,
-          "size": 23,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
             "observation:projection_name",
             "observation:record_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -6807,13 +6804,13 @@
         {
           "name": "_projectionCheckpointWriteSteps",
           "ordinal": 0,
-          "size": 99,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
             "observation:record_name",
             "observation:ledger_name",
-            "observation:story_ingest"
+            "observation:story_ingest",
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -6893,20 +6890,20 @@
         {
           "name": "_dropBorrowedWriterLease",
           "ordinal": 0,
-          "size": 11,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation"
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "_sweepProjectionCheckpointTemps",
           "ordinal": 0,
-          "size": 9,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -6999,11 +6996,10 @@
         {
           "name": "claimWriterLease",
           "ordinal": 0,
-          "size": 51,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "recovery:durable_load",
-            "effect:filesystem_mutation"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -7091,10 +7087,10 @@
         {
           "name": "releaseWriterLease",
           "ordinal": 0,
-          "size": 44,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -7120,33 +7116,33 @@
         {
           "name": "_cleanupSegmentTemps",
           "ordinal": 0,
-          "size": 9,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "_writeSegment",
           "ordinal": 0,
-          "size": 24,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
             "observation:record_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "_writeSegmentIndex",
           "ordinal": 0,
-          "size": 20,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
             "observation:record_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -7165,11 +7161,10 @@
         {
           "name": "compact",
           "ordinal": 0,
-          "size": 88,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:filesystem_mutation",
-            "observation:store_append"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -7417,12 +7412,12 @@
         {
           "name": "revokeRunOrchestratorLease",
           "ordinal": 0,
-          "size": 25,
+          "size": 1,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
             "effect:action_name",
-            "observation:store_append"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -8961,10 +8956,10 @@
         {
           "name": "waitAfter",
           "ordinal": 0,
-          "size": 33,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:timer_arm"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -9365,12 +9360,12 @@
         {
           "name": "attachContextPackage",
           "ordinal": 0,
-          "size": 32,
+          "size": 1,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
             "effect:action_name",
-            "observation:store_append"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -10402,12 +10397,12 @@
         {
           "name": "revokeTaskAcceptance",
           "ordinal": 0,
-          "size": 38,
+          "size": 1,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
             "effect:action_name",
-            "observation:store_append"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -10874,10 +10869,11 @@
         {
           "name": "materializeContextPack",
           "ordinal": 0,
-          "size": 8,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:action_name"
+            "effect:action_name",
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -11081,21 +11077,22 @@
         {
           "name": "materializeSpill",
           "ordinal": 0,
-          "size": 6,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:action_name"
+            "effect:action_name",
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "grantContextPack",
           "ordinal": 0,
-          "size": 4,
+          "size": 1,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
             "effect:action_name",
-            "observation:store_append"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -11142,12 +11139,10 @@
         {
           "name": "proposeOrientationCandidate",
           "ordinal": 0,
-          "size": 26,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "delegates:effect",
-            "delegates:admission",
-            "delegates:observation"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -11172,48 +11167,51 @@
         {
           "name": "_orientationLatestSource",
           "ordinal": 0,
-          "size": 4,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:action_verb"
+            "effect:action_verb",
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "orientationReadLatest",
           "ordinal": 0,
-          "size": 3,
+          "size": 1,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
-            "surface:internals_port"
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "_orientationWorkerFreshness",
           "ordinal": 0,
-          "size": 3,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:action_verb"
+            "effect:action_verb",
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "orientationReadHead",
           "ordinal": 0,
-          "size": 3,
+          "size": 1,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
-            "surface:internals_port"
+            "effect:ledger_writes_port"
           ]
         },
         {
           "name": "_orientationCandidate",
           "ordinal": 0,
-          "size": 4,
+          "size": 1,
           "seam": "effect",
           "evidence": [
-            "effect:action_verb"
+            "effect:action_verb",
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -11691,12 +11689,12 @@
         {
           "name": "revokeBoardGrants",
           "ordinal": 0,
-          "size": 22,
+          "size": 1,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
             "effect:action_name",
-            "observation:store_append"
+            "effect:ledger_writes_port"
           ]
         },
         {
@@ -20725,6 +20723,327 @@
             "admission:policy_gate",
             "observation:log_append",
             "observation:durable_read"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/coordination-ledger-writes.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "nullPrototypeFields",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "validRoutePolicy",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "validRepresentationPolicy",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "writerProcessStartIdentity",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "effect",
+          "evidence": [
+            "effect:process_exec",
+            "observation:record_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "writerOwnerState",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "effect",
+          "evidence": [
+            "effect:adapter_verb",
+            "observation:record_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "constructor",
+          "ordinal": 0,
+          "size": 209,
+          "seam": "effect",
+          "evidence": [
+            "recovery:durable_load",
+            "effect:filesystem_mutation",
+            "admission:typed_refusal",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_cleanupCanonicalOrderTemps",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_writeCanonicalReceipt",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
+            "observation:projection_name",
+            "observation:record_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_projectionCheckpointWriteSteps",
+          "ordinal": 0,
+          "size": 99,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
+            "observation:record_name",
+            "observation:ledger_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "_dropBorrowedWriterLease",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation"
+          ]
+        },
+        {
+          "name": "_sweepProjectionCheckpointTemps",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "claimWriterLease",
+          "ordinal": 0,
+          "size": 51,
+          "seam": "effect",
+          "evidence": [
+            "recovery:durable_load",
+            "effect:filesystem_mutation"
+          ]
+        },
+        {
+          "name": "releaseWriterLease",
+          "ordinal": 0,
+          "size": 44,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation"
+          ]
+        },
+        {
+          "name": "_cleanupSegmentTemps",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_writeSegment",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
+            "observation:record_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_writeSegmentIndex",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
+            "observation:record_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "compact",
+          "ordinal": 0,
+          "size": 88,
+          "seam": "effect",
+          "evidence": [
+            "effect:filesystem_mutation",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "revokeRunOrchestratorLease",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "effect:action_name",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "waitAfter",
+          "ordinal": 0,
+          "size": 33,
+          "seam": "effect",
+          "evidence": [
+            "effect:timer_arm"
+          ]
+        },
+        {
+          "name": "attachContextPackage",
+          "ordinal": 0,
+          "size": 32,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "effect:action_name",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "revokeTaskAcceptance",
+          "ordinal": 0,
+          "size": 38,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "effect:action_name",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "materializeContextPack",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_name"
+          ]
+        },
+        {
+          "name": "materializeSpill",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_name"
+          ]
+        },
+        {
+          "name": "grantContextPack",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "effect:action_name",
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "proposeOrientationCandidate",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect"
+          ]
+        },
+        {
+          "name": "_orientationLatestSource",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "orientationReadLatest",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "surface:internals_port"
+          ]
+        },
+        {
+          "name": "_orientationWorkerFreshness",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "orientationReadHead",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "surface:internals_port"
+          ]
+        },
+        {
+          "name": "_orientationCandidate",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "revokeBoardGrants",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "effect:action_name",
+            "observation:store_append"
           ]
         }
       ]

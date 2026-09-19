@@ -149,6 +149,13 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/runtime-recovery.mjs', className: null, receiver: 'coordinator',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Slice 7's module target: the store's effect bucket (26 members) moves to
+  // coordination-ledger-writes.mjs — the ledger-write authorities. Same receiver convention: the
+  // explicit `store` first parameter, and the relocated primitives are module-scope members here.
+  Object.freeze({
+    file: 'impl/src/coordination-ledger-writes.mjs', className: null, receiver: 'store',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -219,6 +226,11 @@ const AUTHORITY_RULES = Object.freeze([
   // heuristic — `_apply`, `_append`, `writeScratchpad` and the rest classify as observation because
   // the call says where their bodies went, exactly as `replay_port` says it for `_load`.
   { seam: 'observation', id: 'ledger_port', weight: 3, call: /\bcoordinationLedger\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted observation module (coordination-ledger.mjs)' },
+  // Slice 7 extends the same rule to the effect bucket: a member whose body is a delegate into
+  // coordination-ledger-writes.mjs keeps the effect seam its body had there. Without the rule the
+  // delegate's evidence collapses to whatever its name suggests — `waitAfter`'s timer is in the
+  // module, so the three-line delegate would fall to the surface fallback.
+  { seam: 'effect', id: 'ledger_writes_port', weight: 3, call: /\bcoordinationLedgerWrites\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted ledger-writes module (coordination-ledger-writes.mjs)' },
 
   // Slice 5 extends the rule to the admission bucket: a member whose body is a delegate into
   // coordination-admission.mjs keeps the seam its body had there.

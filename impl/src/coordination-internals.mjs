@@ -149,6 +149,13 @@ export const SEGMENT_FILE_SUFFIX = '.jsonl';
 
 export const SEGMENT_INDEX_FILE = 'index.json';
 
+/** #286 G-41: the scratchpad partition ceiling DEFAULTS (128 worker / 512 shared) — admission
+ * bounds a deployment may raise via scratchpadPartitionPolicy, never replay validation. Moved
+ * out of coordination-store.mjs with the constructor that reads them (issue #259 slice 7); the
+ * store re-exports them, so every existing import path resolves to the same binding. */
+export const MAX_SCRATCHPAD_WORKER_ENTRIES = 128;
+export const MAX_SCRATCHPAD_SHARED_ENTRIES = 512;
+
 // Issue #290: the quarantine ledger lives beside events.jsonl and is written only through the
 // supported repair verbs — never by editing the authoritative ledger. Each entry names one seq
 // whose durable event the fold refused, so replay can skip exactly that fold after a restart.

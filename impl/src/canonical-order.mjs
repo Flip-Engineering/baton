@@ -28,6 +28,11 @@ export function foldCanonicalCase(value) {
   return value.toLowerCase();
 }
 
+/** The offline-only canonical-order migration option key (a symbol, so no wire payload can
+ * carry it). Declared beside the migration normalizer it keys; moved out of
+ * coordination-store.mjs with the constructor that reads it (issue #259 slice 7). */
+export const CANONICAL_ORDER_MIGRATION = Symbol('canonical-order-migration');
+
 export function normalizeCanonicalOrderPolicy(value) {
   closedOptions(value, ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'], 'canonical order policy');
   for (const field of ['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes']) {
