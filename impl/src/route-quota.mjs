@@ -13,7 +13,7 @@
 // two. There is no timer, no poll, and no re-probe: when the recorded reset passes, the route
 // reads ready again because the fact that blocked it is in the past.
 
-import { PROVIDER_FAULT_CODES, normalizeProviderRoute } from './provider-faults.mjs';
+import { PROVIDER_FAULT_CODES, normalizeProviderRoute, routeQuotaScope } from './provider-faults.mjs';
 
 /** The one exact-route identity this authority keys on: harness, model, effort. */
 export function routeQuotaKey(route) {
@@ -47,18 +47,18 @@ export class ProviderQuotaAuthority {
    * record here — while an out-of-order observation (an older `at`) never rewrites newer truth.
    */
   record(route, details = {}) {
-    const key = routeQuotaKey(route);
-    if (key === null) return null;
+    const scope = routeQuotaScope(route);
+    if (scope === null) return null;
     const exact = normalizeProviderRoute(route);
     const resetAt = typeof details.resetAt === 'string' && Number.isFinite(Date.parse(details.resetAt))
       ? new Date(Date.parse(details.resetAt)).toISOString() : null;
-    const prior = this._blocks.get(key) ?? null;
+    const prior = this._blocks.get(scope) ?? null;
     const recordedAt = Number.isFinite(details.at) ? details.at : this._now();
     if (prior && recordedAt < prior.observedAt) {
       return Object.freeze({ ...prior, observedCount: prior.observedCount + 1 });
     }
     const row = {
-      key, route: exact,
+      key: scope, scope, route: exact,
       code: PROVIDER_FAULT_CODES.quota,
       resetAt,
       observedAt: recordedAt,
@@ -66,8 +66,8 @@ export class ProviderQuotaAuthority {
       workerId: typeof details.workerId === 'string' && details.workerId.length > 0 ? details.workerId : null,
       runId: typeof details.runId === 'string' && details.runId.length > 0 ? details.runId : null,
     };
-    this._blocks.delete(key);
-    this._blocks.set(key, row);
+    this._blocks.delete(scope);
+    this._blocks.set(scope, row);
     while (this._blocks.size > this._maxEntries) {
       const oldest = this._blocks.keys().next();
       if (oldest.done) break;
@@ -79,12 +79,12 @@ export class ProviderQuotaAuthority {
   /** The live block for one route, or null. An expired block is dropped as it is read — the
    * expiry is derived from the recorded instant, never from a polling constant. */
   blockFor(route, now = this._now()) {
-    const key = routeQuotaKey(route);
-    if (key === null) return null;
-    const row = this._blocks.get(key);
+    const scope = routeQuotaScope(route);
+    if (scope === null) return null;
+    const row = this._blocks.get(scope);
     if (!row) return null;
     if (row.resetAt !== null && Date.parse(row.resetAt) <= now) {
-      this._blocks.delete(key);
+      this._blocks.delete(scope);
       return null;
     }
     return Object.freeze({ state: 'blocked', ...row });

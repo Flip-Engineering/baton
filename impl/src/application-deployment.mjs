@@ -16,7 +16,7 @@ import { BatonWebHost, STOP_STAGES } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli, loadProviderCredentialFile } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
-import { PROVIDER_FAULT_CODES, parseProviderResetAt, providerFaultWindowMs, providerOfRoute } from './provider-faults.mjs';
+import { PROVIDER_FAULT_CODES, parseProviderResetAt, providerFaultWindowMs, providerOfRoute, routeQuotaScope } from './provider-faults.mjs';
 import {
   deriveServiceUsage, fetchServiceModels, normalizeProviderServices, normalizeServiceClients,
   resolveServiceCredentialValue, serviceCredentialReference, serviceForRoute, serviceStateOf,
@@ -2281,13 +2281,22 @@ function routeAdapterCard(route, { adapters = {}, liveness = null } = {}) {
  */
 function deriveRouteRefusals({ log, routes, cardContext }) {
   const observations = new Map();
+  const scopeEntries = new Map();
+  const scopeByKey = new Map();
   for (const route of routes) {
     const key = routeQuotaKey(route);
-    if (key === null) continue;
-    observations.set(key, {
-      route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
-      refusal: null, refusalRow: null, success: null,
-    });
+    const scope = routeQuotaScope(route);
+    if (key === null || scope === null) continue;
+    scopeByKey.set(key, scope);
+    let entry = scopeEntries.get(scope);
+    if (!entry) {
+      entry = {
+        route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
+        refusal: null, refusalRow: null, success: null,
+      };
+      scopeEntries.set(scope, entry);
+    }
+    observations.set(key, entry);
   }
   if (!log || observations.size === 0) return observations;
   const cards = new Map();
@@ -2299,10 +2308,13 @@ function deriveRouteRefusals({ log, routes, cardContext }) {
   for (const worker of log.workers()) {
     for (const kind of REFUSAL_LEDGER_KINDS) {
       for (const event of log.byKind(worker, kind)) {
-        const key = routeQuotaKey({
+        const eventKey = routeQuotaKey({
           harness: event.harnessResolved, model: event.modelResolved, effort: event.effortResolved,
         });
-        const entry = key === null ? undefined : observations.get(key);
+        const scope = eventKey !== null
+          ? (scopeByKey.get(eventKey) ?? routeQuotaScope({ harness: event.harnessResolved, model: event.modelResolved }))
+          : null;
+        const entry = scope === null ? undefined : scopeEntries.get(scope);
         if (!entry) continue;
         const position = { at: event.ts, worker: event.worker, seq: event.seq };
         if (kind === 'lifecycle.turn_completed') {
@@ -2316,11 +2328,12 @@ function deriveRouteRefusals({ log, routes, cardContext }) {
         const evidence = refusalEvidenceOf(event.payload, cardFor(entry.route), kind);
         if (!evidence || !ledgerPositionAfter(position, entry.refusal)) continue;
         const text = publishedRefusalText(evidence.text);
-        // #456 item 1: the instant the refusal's own text names is read against the SAME provider
-        // zone the typed fault is read against, so a zai answer that spelled its window in Beijing
-        // wall time blocks the route until the instant it meant — and never forever.
+        const eventRoute = Object.freeze({
+          harness: event.harnessResolved, model: event.modelResolved, effort: event.effortResolved,
+        });
         const resetAt = evidence.resetAt ?? (evidence.resetAtFromText
-          ? parseProviderResetAt(evidence.text, { provider: providerOfRoute(entry.route) }) : null);
+          ? parseProviderResetAt(evidence.text, { provider: providerOfRoute(eventRoute) }) : null);
+        entry.route = eventRoute;
         entry.refusal = { ...position, code: evidence.code, resetAt };
         entry.refusalRow = Object.freeze({ code: evidence.code, text, at: event.ts, resetAt });
       }
@@ -2415,42 +2428,55 @@ function degradeProbeAfter(to, faultText) {
   return new Date(from + windowMs).toISOString();
 }
 
-/** The degrade episodes one ledger holds per route: the LAST `provider.degraded` row per exact
- * route, its participants and window, read from the same ledger walk the refusals use. */
+/** The degrade episodes one ledger holds per scope: the LAST `provider.degraded` row per quota
+ * scope (#523), its participants and window. Old durable rows without payload.scope re-derive
+ * scope from their route coordinates through the registry. */
 function deriveRouteDegrades({ log, routes, refusals = null }) {
   const observed = refusals?.observed ?? null;
-  const episodes = new Map();
-  const keys = new Map();
+  const scopeByKey = new Map();
+  const servedScopes = new Set();
   for (const route of routes) {
     const key = routeQuotaKey(route);
-    if (key !== null) keys.set(key, route);
+    const scope = routeQuotaScope(route);
+    if (key !== null && scope !== null) {
+      scopeByKey.set(key, scope);
+      servedScopes.add(scope);
+    }
   }
-  if (!log || keys.size === 0) return episodes;
+  if (!log || servedScopes.size === 0) return new Map();
+  const scopeEpisodes = new Map();
   for (const worker of log.workers()) {
     for (const event of log.byKind(worker, 'provider.degraded')) {
       const payload = event.payload ?? {};
       const route = record(payload.route) ? payload.route : null;
-      const key = routeQuotaKey({
+      const payloadScope = typeof payload.scope === 'string' && payload.scope.length > 0 ? payload.scope : null;
+      const eventKey = routeQuotaKey({
         harness: route?.harness ?? event.harnessResolved,
         model: route?.model ?? event.modelResolved,
         effort: route?.effort ?? event.effortResolved,
       });
-      if (key === null || !keys.has(key)) continue;
-      const exact = keys.get(key);
+      const scope = payloadScope
+        ?? (eventKey !== null ? (scopeByKey.get(eventKey) ?? routeQuotaScope({
+          harness: route?.harness ?? event.harnessResolved,
+          model: route?.model ?? event.modelResolved,
+        })) : null);
+      if (scope === null || !servedScopes.has(scope)) continue;
+      const eventRoute = Object.freeze({
+        harness: route?.harness ?? event.harnessResolved,
+        model: route?.model ?? event.modelResolved,
+        effort: route?.effort ?? event.effortResolved,
+      });
       const window = record(payload.window) ? payload.window : null;
       const to = typeof window?.to === 'string' && Number.isFinite(Date.parse(window.to))
         ? new Date(Date.parse(window.to)).toISOString() : null;
       const participants = Array.isArray(payload.participants)
         ? payload.participants.filter((id) => typeof id === 'string' && id.length > 0) : [];
-      // #442 item 2: the provider's own reset answer, as the coordinator's death fold recorded it —
-      // an instant only when the provider zone-qualified one (or the route's provider zone is
-      // known: provider-faults.mjs), its own text otherwise.
       const resetAt = typeof payload.resetAt === 'string' && Number.isFinite(Date.parse(payload.resetAt))
         ? new Date(Date.parse(payload.resetAt)).toISOString() : null;
       const faultClass = typeof payload.faultClass === 'string' ? payload.faultClass : null;
-      episodes.set(key, Object.freeze({
-        key,
-        route: Object.freeze({ harness: exact.harness, model: exact.model, effort: exact.effort }),
+      scopeEpisodes.set(scope, Object.freeze({
+        key: scope, scope,
+        route: eventRoute,
         faultClass,
         participants: Object.freeze([...participants]),
         window: Object.freeze({
@@ -2461,23 +2487,24 @@ function deriveRouteDegrades({ log, routes, refusals = null }) {
         count: Number.isSafeInteger(payload.count) ? payload.count : participants.length,
         next: record(payload.next)
           ? Object.freeze({ ...payload.next })
-          : Object.freeze({ action: 'pause_recruits_until_probe', route: Object.freeze({ ...exact }) }),
+          : Object.freeze({ action: 'pause_recruits_until_probe', route: eventRoute }),
         at: to,
         resetAt,
         resetAtText: typeof payload.resetAtText === 'string' && payload.resetAtText.length > 0
           ? payload.resetAtText : null,
-        // #456 item 2: a QUOTA episode whose provider named no reset carries the instant a probe
-        // may test it — the fault's own window measured from its last death, or the registry's
-        // fault-probe row when its words named none. That is the episode that deadlocks: the
-        // provider said when it comes back in its own words but not in an instant, and no turn can
-        // succeed while recruits are refused. A stall episode (#316) names no window at all and
-        // keeps its existing next act — the readiness probe tier its `next` row asks for, which the
-        // deployment's own run path already consults — and a resetAt-bearing episode needs no probe:
-        // the provider itself said when the route comes back.
         probeAfter: resetAt === null && faultClass === PROVIDER_FAULT_CODES.quota
-          ? degradeProbeAfter(to, quotaRefusalText(observed, key)) : null,
+          ? degradeProbeAfter(to, quotaRefusalText(observed, eventKey)) : null,
+        probeFromText: quotaRefusalText(observed, eventKey) !== null,
       }));
     }
+  }
+  const episodes = new Map();
+  for (const route of routes) {
+    const key = routeQuotaKey(route);
+    const scope = routeQuotaScope(route);
+    if (key === null || scope === null) continue;
+    const episode = scopeEpisodes.get(scope);
+    if (episode) episodes.set(key, episode);
   }
   return episodes;
 }
@@ -2498,16 +2525,15 @@ function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null, n
   // no instant) keeps waiting for the probe its `next` asks for.
   if (episode.resetAt !== null && Number.isFinite(now) && Date.parse(episode.resetAt) <= now) return null;
   return Object.freeze({
-    state: 'degraded', route: episode.route, since: episode.window.from,
-    // The fault class is the reason this route is off the table: the one spelling the refusal, the
-    // doctor row and the route table all name it by.
+    state: 'degraded', scope: episode.scope ?? null, route: episode.route, since: episode.window.from,
     reason: episode.faultClass, faultClass: episode.faultClass,
     resetAt: episode.resetAt, resetAtText: episode.resetAtText,
     // #456 item 2: the row never sits degraded with no next step — it names the instant the route
     // clears (`clearsAt`: the provider's own reset when it named one, else the probe instant) and,
     // for a provider that named none, the instant ONE probe recruit is admitted at (`probeAfter`).
     probeAfter: episode.probeAfter ?? null,
-    clearsAt: episode.resetAt ?? episode.probeAfter ?? null,
+    clearsAt: episode.resetAt
+      ?? (episode.probeFromText === true ? episode.probeAfter : null) ?? null,
     participants: episode.participants,
     window: episode.window, count: episode.count, next: episode.next,
   });
@@ -3227,8 +3253,10 @@ class BatonDeployment {
    * remaining lifetime against the lane's horizon. Each refusal names the code it carries, the
    * instant the provider (or the credential) stated, and the routes that ARE ready. */
   #assertRouteReady(options) {
-    assertRouteReady(options, this.#readiness);
+    // #523: the provider's own quota block takes precedence over static readiness — a route the
+    // subscription exhausted names the provider's fact, not the deployment's structural state.
     assertRouteQuotaClear(options, this.#readiness, this.#routeQuota, this.#routeRefusals, this.#services);
+    assertRouteReady(options, this.#readiness);
     assertRouteRefusalClear(options, this.#readiness, this.#routeRefusals, this.#services);
     assertRouteCredentialLifetimeClear(options, this.#readiness, this.#credentialLifetime, this.#routeRefusals);
   }
@@ -3609,6 +3637,9 @@ class BatonDeployment {
       const doctorRow = key === null ? null : stateOf.get(key) ?? null;
       const blocked = doctorRow?.state === 'blocked';
       const code = blocked ? doctorRow.code ?? null : null;
+      // #523: the quota authority's own block for this route's scope, read directly so the quota
+      // axis is a fact about the subscription even when the doctor row is blocked for another reason.
+      const quotaBlock = this.#routeQuota ? this.#routeQuota.blockFor(route) : null;
       // #316 (a): the episode the coordinator's fold recorded for this route, if it is still live —
       // read from the SAME doctor row's published degrade (never a second ledger walk), so the
       // usage row and the readiness row cannot disagree about it. Read BEFORE the quota axis, which
@@ -3618,14 +3649,14 @@ class BatonDeployment {
       // instant wins when both are present (the recorded refusal is the more specific fact); the
       // degrade episode's instant is the fault's own answer.
       const degradedResetAt = typeof degraded?.resetAt === 'string' ? degraded.resetAt : null;
-      const resetAt = blocked ? doctorRow.resetAt ?? null : degradedResetAt;
-      // The quota axis is the provider's own quota fact: a live exhausted-quota block, a refusal
-      // whose code IS the quota class, or the fault episode that class ended as. An authentication
-      // refusal leaves it `ok` — the route is blocked, but not because anything ran out.
+      const resetAt = quotaBlock?.resetAt ?? (blocked ? doctorRow.resetAt ?? null : degradedResetAt);
+      // The quota axis is the provider's own quota fact: the quota authority's live block, the
+      // doctor row's own quota code, or the fault episode whose class is the quota code.
       const quotaRefused = code === PROVIDER_FAULT_CODES.quota
+        || quotaBlock?.code === PROVIDER_FAULT_CODES.quota
         || degraded?.reason === PROVIDER_FAULT_CODES.quota;
       const quota = quotaRefused
-        ? Object.freeze({ state: 'exhausted', resetAt })
+        ? Object.freeze({ state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt })
         : Object.freeze({ state: 'ok', resetAt: null });
       const occupancy = this.#occupancyFor(route);
       let ceiling = occupancy.concurrencyCeiling;
@@ -3645,15 +3676,18 @@ class BatonDeployment {
         // for this route (one read of the cache per doctor read), present only when this deployment
         // has a profile authority at all.
         ...(profiles === null ? {} : { profile: profiles.get(key) ?? null }),
-        // #316 (a): a route the provider-degraded fold has taken down is not `ready` — the state a
-        // recruit compares and a seat's brief renders says what the route is doing right now. A
-        // static block keeps its own verdict: it is the substrate every admission reads first.
-        state: blocked ? 'blocked' : (degraded ? 'degraded' : 'ready'),
-        code,
-        resetAt,
+        // #523: the usage row's state reflects provider-level facts about the subscription, not
+        // static deployment readiness. A quota block from the authority takes precedence, then a
+        // provider refusal on the doctor row, then a degrade episode, then ready. A static block
+        // (omp_agent_unconfigured, route_policy_unsupported, etc.) is invisible here.
+        state: quotaBlock ? 'blocked'
+          : (blocked && code?.startsWith('provider_')) ? 'blocked'
+          : degraded ? 'degraded' : 'ready',
+        code: quotaBlock?.code ?? ((blocked && code?.startsWith('provider_')) ? code : null),
+        resetAt: quotaBlock?.resetAt ?? ((blocked && code?.startsWith('provider_')) ? doctorRow.resetAt ?? null : degradedResetAt),
         // #442 item 2: which fault took the route down — the typed class this row's `state` is a
         // consequence of, null on a route nothing faulted.
-        reason: degraded?.reason ?? (blocked ? code : null),
+        reason: degraded?.reason ?? (quotaBlock?.code ?? ((blocked && code?.startsWith('provider_')) ? code : null)),
         usage: Object.freeze({ turns, tokens, usd }),
         concurrency: Object.freeze({ ceiling, inUse: occupancy.inFlight }),
         lastProviderRefusal: doctorRow?.lastProviderRefusal ?? null,

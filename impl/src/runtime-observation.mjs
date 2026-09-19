@@ -17,7 +17,7 @@ import {
 } from './messages.mjs';
 import { NATIVE_SETTLEMENT_GAP, nativeSubagentView } from './native-subagent-view.mjs';
 import { validProcessClosedPayload } from './process-lifecycle.mjs';
-import { PROVIDER_FAULT_CODES } from './provider-faults.mjs';
+import { PROVIDER_FAULT_CODES, routeQuotaScope } from './provider-faults.mjs';
 import { providerGovernanceRoute } from './provider-governance.mjs';
 import * as runtimeBriefing from './runtime-briefing.mjs';
 import { PublicationError, WORKTREE_FAILURE } from './runtime-effects.mjs';
@@ -3515,13 +3515,12 @@ export function _foldProviderDegrade(coordinator, recorder, handle, task, death)
       || typeof route.effort !== 'string') return null;
     const faultClass = death.fault?.code ?? null;
     if (faultClass === null) return null;
+    const scope = routeQuotaScope(route);
+    if (scope === null) return null;
     const at = Number.isFinite(death.mintedAt) ? death.mintedAt : coordinator._now();
     const windowMs = coordinator._watchdog.stallMs;
-    const key = `${route.harness}\u0000${route.model}\u0000${route.effort}`;
+    const key = scope;
     const open = coordinator._providerDegrades.get(key) ?? null;
-    // One episode: the same class on the same route, with the previous death no further back than
-    // the declared window. Anything else opens a NEW episode — an older one is history and stays
-    // readable as the row it was minted as.
     const same = open !== null && open.faultClass === faultClass && (at - open.to) <= windowMs;
     const next = Object.freeze({ action: 'pause_recruits_until_probe', route });
     if (same && Array.isArray(open.row.participants)) {
@@ -3531,21 +3530,16 @@ export function _foldProviderDegrade(coordinator, recorder, handle, task, death)
       open.row.window = Object.freeze({
         from: open.row.window.from, to: new Date(at).toISOString(),
       });
-      // #442 item 2: the episode carries the provider's own reset answer, so the route row a
-      // recruit is refused on can name when the provider said the route comes back — and the
-      // deployment's derivation can retire the episode at that instant instead of holding a route
-      // off forever on an episode whose provider already said it was over.
       if (death.fault?.resetAt && death.fault.resetAt !== open.row.resetAt) open.row.resetAt = death.fault.resetAt;
       if (death.fault?.resetAtText && death.fault.resetAtText !== open.row.resetAtText) {
         open.row.resetAtText = death.fault.resetAtText;
       }
-      coordinator._recordProviderDegrade(handle, task, open.row);
       return open.row;
     }
     const row = {
       seq: ++coordinator._attentionCursor,
       kind: 'provider_degraded',
-      // Deployment-level: the route degraded, not this run.
+      scope,
       runId: null,
       mintEpoch: ++coordinator._attentionMintEpoch,
       mintedAt: at,
@@ -3572,11 +3566,9 @@ export function _recordProviderDegrade(coordinator, recorder, handle, task, row)
         harnessResolved: row.route.harness, modelResolved: row.route.model,
         effortResolved: row.route.effort,
         payload: {
-          route: row.route, faultClass: row.faultClass,
+          scope: row.scope, route: row.route, faultClass: row.faultClass,
           participants: Object.freeze([...row.participants]),
           window: row.window, count: row.count, next: row.next,
-          // #442 item 2: the provider's own reset answer rides the durable episode — the deployment
-          // derives the route's degraded state (and whether the instant has passed) from THIS row.
           resetAt: row.resetAt ?? null, resetAtText: row.resetAtText ?? null,
         },
       });

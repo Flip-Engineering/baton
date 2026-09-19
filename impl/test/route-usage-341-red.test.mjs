@@ -172,12 +172,12 @@ test('USAGE-341-3: a codex quota crash marks the route blocked with resetAt on t
   assert.equal(usageB.state, 'blocked', 'route state must be blocked');
   assert.equal(usageB.code, PROVIDER_FAULT_CODES.quota, 'code must be provider_quota_exhausted');
 
-  // Route A should still be ok
+  // #523: Route A shares the codex scope with Route B — both are exhausted.
   const usageA = doctor.routeUsage?.find((r) =>
     r.route.effort === ROUTE_A.effort);
   assert.ok(usageA, 'route A usage row must be present');
-  assert.equal(usageA.quota.state, 'ok', 'route A is unaffected');
-  assert.equal(usageA.state, 'ready', 'route A is ready');
+  assert.equal(usageA.quota.state, 'exhausted', '#523: route A shares the codex scope');
+  assert.equal(usageA.state, 'blocked', '#523: route A is blocked by the scope-wide quota');
 });
 
 // ── USAGE-341-4: recruit on exhausted route is refused naming ready routes ───
@@ -201,14 +201,12 @@ test('USAGE-341-4: recruit on an exhausted route is refused and the refusal name
   );
   assert.equal(spawns, 0, 'the refusal precedes every adapter effect');
 
-  // Route A should still admit
-  // (We don't fully run it since there's no real provider, just verify no admission refusal)
+  // #523: Route A shares the codex scope — both routes are blocked by the scope-wide quota.
   const doctor = await deployment.doctor();
-  const readyRoutes = doctor.routes.filter((r) => r.state === 'ready');
-  assert.ok(readyRoutes.length > 0, 'at least one route must be ready');
+  const blockedRoutes = doctor.routes.filter((r) => r.state === 'blocked');
   assert.ok(
-    readyRoutes.some((r) => r.effort === ROUTE_A.effort),
-    'route A must be among the ready routes',
+    blockedRoutes.some((r) => r.effort === ROUTE_A.effort),
+    '#523: route A is blocked by the scope-wide quota',
   );
 });
 

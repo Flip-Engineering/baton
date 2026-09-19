@@ -329,7 +329,8 @@ test('316-a3: a degraded route reads degraded on the doctor and refuses a recrui
   assert.deepEqual(degraded.degraded.participants, ['w-1', 'w-2', 'w-3']);
   assert.equal(degraded.degraded.next.action, 'pause_recruits_until_probe');
   assert.equal(degraded.state, 'degraded', 'and the row itself reads degraded, not ready');
-  assert.equal(usageRowFor(doctor.routeUsage, READY_ROUTE).degraded, null, 'a route with no episode stays ready');
+  assert.ok(usageRowFor(doctor.routeUsage, READY_ROUTE).degraded,
+    '#523: a sibling effort of the same scope shares the episode (codex/gpt-5.6-sol@low is the same codex subscription)');
 
   // A recruit on the degraded route refuses BEFORE any effect, typed, naming the route and its
   // `next` act — never a silent admission onto a route that is killing seats. The runtime reads

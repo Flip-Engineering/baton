@@ -74,6 +74,20 @@ export function normalizeProviderRoute(route) {
 //         text (`resetAtText`) and derive nothing, which is the honest reading #442 item 4 pinned.
 export const PROVIDER_RESET_ZONES = Object.freeze({ zai: '+08:00' });
 
+/** The quota scope of a route: the API service account it draws on (#523, docs/51 D1).
+ * Explicit `route.provider` wins, else the model's provider segment, else the harness.
+ * Never reads effort. Returns null when the route names nothing derivable. */
+export function routeQuotaScope(route) {
+  if (!route || typeof route !== 'object') return null;
+  if (typeof route.provider === 'string' && route.provider.length > 0) return route.provider;
+  if (typeof route.model === 'string' && route.model.length > 0) {
+    const slash = route.model.indexOf('/');
+    if (slash > 0) return route.model.slice(0, slash);
+  }
+  if (typeof route.harness === 'string' && route.harness.length > 0) return route.harness;
+  return null;
+}
+
 /** The provider whose clock one route's answers are spelled in, or null when the route names none:
  * the model's own provider segment (`zai/glm-5.3-flash` → `zai`, the omp fleet's spelling), else
  * the harness (`glm-via-claude` → `glm-via-claude`, and the aliases its own table resolves). A

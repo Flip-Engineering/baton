@@ -78,8 +78,8 @@ export function normalizeWorkerPolicyCard(value) {
     || !value.access.supported.includes(value.access.default)
     || typeof value.access.perTask !== 'boolean'
     || !OBSERVATION.has(value.access.observation)
-    || !Array.isArray(value.access.mechanisms)
-    || value.access.mechanisms.some((mechanism) => !SAFE_MECHANISM.test(mechanism))
+    || (value.access.mechanisms !== undefined && !Array.isArray(value.access.mechanisms))
+    || (Array.isArray(value.access.mechanisms) && value.access.mechanisms.some((mechanism) => !SAFE_MECHANISM.test(mechanism)))
     || !closed(value.containment, ['hostProcess', 'guarantees', 'configuredPreferences', 'observation'])
     || !HOST_PROCESS.has(value.containment.hostProcess)
     || !Array.isArray(value.containment.guarantees)
@@ -103,7 +103,7 @@ export function normalizeWorkerPolicyCard(value) {
       default: value.access.default,
       perTask: value.access.perTask,
       observation: value.access.observation,
-      mechanisms: Object.freeze(unique(value.access.mechanisms)),
+      mechanisms: Object.freeze(unique(value.access.mechanisms ?? [])),
     }),
     containment: Object.freeze({
       hostProcess: value.containment.hostProcess,

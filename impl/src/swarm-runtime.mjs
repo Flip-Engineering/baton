@@ -2753,9 +2753,6 @@ export class SwarmRuntime {
   _routeDegradeFor(args) {
     const rows = this._routeUsageRows();
     if (rows === null || rows.length === 0) return null;
-    // #456/#475: a probe whose episode the route no longer carries has ANSWERED — the route clears.
-    // `_routeUsageRows` derived that clearing the moment it read these rows (#486: one derivation,
-    // read where route truth is read), so a refusal is never minted against an answered probe.
     const options = args.options ?? {};
     const named = swarmRouteShape(options.exact);
     const exact = named !== null && named.effort !== null ? named : null;
