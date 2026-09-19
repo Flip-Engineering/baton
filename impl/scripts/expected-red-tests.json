@@ -462,6 +462,26 @@
       "reason": "#460"
     },
     {
+      "key": "test/issue523-quota-scope-red.test.mjs :: 523-a: routeQuotaScope is the subscription axis — provider, else model segment, else harness; effort is never read",
+      "reason": "#523"
+    },
+    {
+      "key": "test/issue523-quota-scope-red.test.mjs :: 523-b: a quota block recorded on one effort reads live for every route of the scope, and never for another subscription",
+      "reason": "#523"
+    },
+    {
+      "key": "test/issue523-quota-scope-red.test.mjs :: 523-c: every route of an exhausted subscription reads blocked, a recruit on any sibling refuses pre-effect, another subscription stays ready",
+      "reason": "#523"
+    },
+    {
+      "key": "test/issue523-quota-scope-red.test.mjs :: 523-d: a provider.degraded episode degrades every route of its scope and a success on any member retires it",
+      "reason": "#523"
+    },
+    {
+      "key": "test/issue523-quota-scope-red.test.mjs :: 523-e: same-class deaths at two efforts of one model fold to ONE episode, and the episode names its scope",
+      "reason": "#523"
+    },
+    {
       "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
       "reason": "#24"
     },
@@ -934,11 +954,11 @@
       "reason": "U-E7"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: an observe-only remote session refuses mutation locally before any Web command",
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
       "reason": "#289"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session",
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web listener with pure stdio",
       "reason": "#289"
     },
     {
@@ -974,11 +994,11 @@
       "reason": "#289"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session",
       "reason": "#289"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web listener with pure stdio",
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: an observe-only remote session refuses mutation locally before any Web command",
       "reason": "#289"
     },
     {
