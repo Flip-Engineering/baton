@@ -14,7 +14,7 @@ import {
   operatorAsset,
   parseBatonCli,
 } from '../src/index.mjs';
-import { ordinaryMcpToolNames } from '../scripts/surface-truth.mjs';
+import { northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase67-${name}-`));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
@@ -647,9 +647,10 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
   // M4b: the canonical grammar tools render beside the retained legacy tools (docs/36 §9 M4).
   // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
   // Facade-projection epic (#87+#48): the six workflow-surface tools join the compact default.
-  // The served order is THE derivation (surface-truth.ordinaryMcpToolNames) — the definition
-  // table and the wire surface cannot drift.
-  assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), ordinaryMcpToolNames());
+  // This row reads the RAW McpFleetServer table (docs/49 §2: the raw class keeps its flat table for
+  // embedders and its own pins) — the served order is
+  // surface-truth.northboundApplicationToolNames.
+  assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), northboundApplicationToolNames());
   assert.equal(ordinary.toolDefinitions.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(ordinary.toolDefinitions.every((tool) => tool._meta?.['baton/registryDigest'] === value.digest), true);
   assert.equal(ordinary.toolDefinitions.some((tool) => /spawn|worker|kill|drain|ledger|shutdown/u.test(tool.name)), false);

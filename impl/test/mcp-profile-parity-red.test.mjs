@@ -107,7 +107,7 @@ import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import * as mcpNorthbound from '../src/mcp-northbound.mjs';
 import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { renderMcpToolInventory } from '../scripts/render-surface-docs.mjs';
-import { combinedMcpToolNames, mockApplicationCard, ordinaryMcpToolNames } from '../scripts/surface-truth.mjs';
+import { combinedMcpToolNames, mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const conformanceScript = fileURLToPath(
@@ -572,47 +572,49 @@ test('RG-P3 PIN: committed artifact mcp.combined count equals the live combined 
     'artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)');
 });
 
-// ── RG-P4..RG-P7 (PIN) — the four application tool-list pins tie to the ONE derivation ──────────
-// The literals are gone (issue #261): each site now pins surface-truth.ordinaryMcpToolNames(),
-// so the wire surface and the definition table cannot drift; the live-output leg below keeps the
+// ── RG-P4..RG-P7 (PIN) — the four RAW application-table pins tie to the ONE derivation ───────────
+// The literals are gone (issue #261): each site pins surface-truth's served-order derivation of the
+// RAW northbound application table. Issue #513: those four sites read the flat table an embedder's
+// raw McpFleetServer serves (docs/49 §2 keeps that table for embedders and its own pins), so the
+// derivation is northboundApplicationToolNames() and the live-output leg below keeps the
 // mcpApplicationToolNames() agreement the pins historically carried.
 
 const PINNED_TOOL_LIST_SITES = [
   ['phase16', join(repoRoot, 'impl', 'test', 'phase16-mcp-northbound.test.mjs'),
-    'assert.deepEqual(response.result.tools.map((tool) => tool.name), ordinaryMcpToolNames())'],
+    'assert.deepEqual(response.result.tools.map((tool) => tool.name), northboundApplicationToolNames())'],
   ['mcp-reflex', join(repoRoot, 'impl', 'test', 'mcp-reflex-surface-red.test.mjs'),
-    'assert.deepEqual(response.result.tools.map((tool) => tool.name), ordinaryMcpToolNames())'],
+    'assert.deepEqual(response.result.tools.map((tool) => tool.name), northboundApplicationToolNames())'],
   ['phase67', join(repoRoot, 'impl', 'test', 'phase67-progressive-agent-experience.test.mjs'),
-    'assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), ordinaryMcpToolNames())'],
+    'assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), northboundApplicationToolNames())'],
   ['phase72', join(repoRoot, 'impl', 'test', 'phase72-kimi-orchestrator-mcp.test.mjs'),
-    'assert.deepEqual(listed.result.tools.map((tool) => tool.name), ordinaryMcpToolNames())'],
+    'assert.deepEqual(listed.result.tools.map((tool) => tool.name), northboundApplicationToolNames())'],
 ];
 
 test('RG-P4 PIN: phase16 application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)', () => {
   assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[0][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[0][2]),
     'phase16 application tool list ties to the served-order derivation (stage: phase16-application-tool-list-pin)');
-  assert.deepEqual(sortedSet(ordinaryMcpToolNames()), mcpNorthbound.mcpApplicationToolNames(),
+  assert.deepEqual(sortedSet(northboundApplicationToolNames()), mcpNorthbound.mcpApplicationToolNames(),
     'phase16 pinned application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)');
 });
 
 test('RG-P5 PIN: mcp-reflex application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)', () => {
   assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[1][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[1][2]),
     'mcp-reflex application tool list ties to the served-order derivation (stage: mcp-reflex-application-tool-list-pin)');
-  assert.deepEqual(sortedSet(ordinaryMcpToolNames()), mcpNorthbound.mcpApplicationToolNames(),
+  assert.deepEqual(sortedSet(northboundApplicationToolNames()), mcpNorthbound.mcpApplicationToolNames(),
     'mcp-reflex pinned application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)');
 });
 
 test('RG-P6 PIN: phase67 application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)', () => {
   assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[2][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[2][2]),
     'phase67 application tool list ties to the served-order derivation (stage: phase67-application-tool-list-pin)');
-  assert.deepEqual(sortedSet(ordinaryMcpToolNames()), mcpNorthbound.mcpApplicationToolNames(),
+  assert.deepEqual(sortedSet(northboundApplicationToolNames()), mcpNorthbound.mcpApplicationToolNames(),
     'phase67 pinned application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)');
 });
 
 test('RG-P7 PIN: phase72 application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)', () => {
   assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[3][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[3][2]),
     'phase72 application tool list ties to the served-order derivation (stage: phase72-application-tool-list-pin)');
-  assert.deepEqual(sortedSet(ordinaryMcpToolNames()), mcpNorthbound.mcpApplicationToolNames(),
+  assert.deepEqual(sortedSet(northboundApplicationToolNames()), mcpNorthbound.mcpApplicationToolNames(),
     'phase72 pinned application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)');
 });
 

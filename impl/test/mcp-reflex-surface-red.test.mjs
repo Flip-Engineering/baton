@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
-import { mockApplicationCard, ordinaryMcpToolNames } from '../scripts/surface-truth.mjs';
+import { mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-22T00:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-reflex-'));
@@ -197,9 +197,10 @@ test('Inventory: the ordinary (Web-bridge) surface admits exactly the MCP-W1/W2 
   // Facade-projection epic (#87+#48): the six workflow-surface tools join between the settlement
   // family and the view verbs.
   // docs/39: the ten baton_swarm_* tools are ordinary application capabilities (37 -> 47).
-  // The served order is THE derivation (surface-truth.ordinaryMcpToolNames).
-  assert.equal(response.result.tools.length, ordinaryMcpToolNames().length);
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), ordinaryMcpToolNames());
+  // This row reads the RAW McpFleetServer table (docs/49 §2: the raw class keeps its flat table
+  // for embedders and its own pins). The served order is surface-truth.northboundApplicationToolNames.
+  assert.equal(response.result.tools.length, northboundApplicationToolNames().length);
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), northboundApplicationToolNames());
 });
 
 test('Inventory: the advanced-only surface (no application facade) is unaffected by the reflex table', () => {

@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { CoordinationStore, McpFleetServer, serveMcpStdio } from '../src/index.mjs';
-import { combinedMcpToolNames, mockApplicationCard, ordinaryMcpToolNames } from '../scripts/surface-truth.mjs';
+import { combinedMcpToolNames, mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-11T21:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-'));
@@ -86,10 +86,11 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
   // Facade-projection epic (#87+#48): the six workflow-surface tools join between the settlement
   // family and the view verbs (message×2, attention.watch, scratchpad.read/elevate, knowledge.seed).
-  // The served order is THE derivation (surface-truth.ordinaryMcpToolNames) — the wire surface
-  // and the definition table cannot drift, and the set is byte-stable against the committed
-  // inventory artifact (surface-truth.test.mjs pins that leg).
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), ordinaryMcpToolNames());
+  // This row reads the RAW McpFleetServer the embedder constructs (docs/49 §2: the raw class keeps
+  // its flat table for embedders and its own pins), so the served order is the northbound
+  // application table's — surface-truth.northboundApplicationToolNames, which surface-truth.test.mjs
+  // pins against mcp-northbound's own mcpApplicationToolNames().
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), northboundApplicationToolNames());
   const inspectSchema = response.result.tools.find((tool) => tool.name === 'baton_run_inspect').inputSchema;
   for (const field of ['offset', 'pageCursor', 'recipient']) {
     assert.equal(Object.hasOwn(inspectSchema.properties, field), true, field);

@@ -20,7 +20,6 @@ import * as applicationCli from '../src/application-cli.mjs';
 import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
 import * as webNorthbound from '../src/web-northbound.mjs';
 import {
-  mcpApplicationToolNames,
   mcpAdvancedToolNames,
   mcpCombinedToolNames,
   mcpDispatchToolNames,

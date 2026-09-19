@@ -12,12 +12,13 @@ import test from 'node:test';
 
 import {
   applicationCardCommands, BYTE_STABLE_COMMAND_KEYS, combinedMcpToolNames, commandKeys,
-  mockApplicationCard, ordinaryMcpToolNames, swarmVerbs, webCardCommands,
+  mockApplicationCard, northboundApplicationToolNames, ordinaryMcpToolNames, swarmVerbs, webCardCommands,
 } from '../scripts/surface-truth.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from '../src/swarm-contract.mjs';
 import { McpFleetServer, mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
+import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 
 const artifact = JSON.parse(
   readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'),
@@ -59,26 +60,40 @@ test('webCardCommands: the sorted web-admitted card plus the wave direct ports, 
   }
 });
 
-test('ordinaryMcpToolNames: served order is deterministic and its set is byte-stable against the artifact', () => {
+test('ordinaryMcpToolNames: the shipped ordinary surface is the core table, byte-stable against the artifact', () => {
   const names = ordinaryMcpToolNames();
   assert.deepEqual(names, ordinaryMcpToolNames(), 'the served order is deterministic');
-  assert.deepEqual([...names].sort(), mcpApplicationToolNames(),
-    'the served set equals mcpApplicationToolNames()');
-  assert.deepEqual([...names].sort(), artifact.profiles['mcp.application'],
-    'the served set is byte-stable against the committed mcp.application profile');
+  assert.deepEqual(names, artifact.profiles['mcp.application'],
+    'the served set, in served order, is byte-stable against the committed mcp.application profile');
   assert.equal(names.length, artifact.counts.mcpApplicationTools);
-  assert.ok(names.includes('baton_swarm_list'), 'the swarm family rides the ordinary surface');
+  assert.deepEqual([...names].sort(), [...CORE_TOOL_NAMES].sort(),
+    'the shipped ordinary surface IS the core table the production wrapper advertises (docs/49 §2)');
+  assert.ok(names.includes('baton_swarm'), 'the swarm family rides the ordinary surface as its verb tool');
   assert.ok(!names.some((name) => /shutdown|fleet_/u.test(name)), 'no host-lifecycle or fleet_ tool');
 });
 
-test('combinedMcpToolNames: byte-stable against the artifact and a superset of the ordinary set', () => {
+test('northboundApplicationToolNames: the raw northbound table is the flat list the phase pins read', () => {
+  const names = northboundApplicationToolNames();
+  assert.deepEqual(names, northboundApplicationToolNames(), 'the served order is deterministic');
+  assert.deepEqual([...names].sort(), mcpApplicationToolNames(),
+    'the raw application table equals mcpApplicationToolNames()');
+  assert.equal(new Set(names).size, names.length, 'no duplicate tool names');
+  assert.ok(names.includes('baton_swarm_list'), 'the flat swarm family rides the raw application table');
+  assert.ok(!names.some((name) => /shutdown|fleet_/u.test(name)), 'no host-lifecycle or fleet_ tool');
+});
+
+test('combinedMcpToolNames: byte-stable against the artifact and a superset of the raw ordinary table', () => {
   const names = combinedMcpToolNames();
   assert.deepEqual(names, artifact.profiles['mcp.combined'],
     'the combined set is byte-stable against the committed mcp.combined profile');
   assert.equal(names.length, artifact.counts.mcpCombinedTools);
   assert.equal(new Set(names).size, names.length, 'no duplicate tool names');
-  const ordinary = new Set([...ordinaryMcpToolNames()].sort());
-  for (const name of ordinary) assert.ok(names.includes(name), `${name} stays served on combined`);
+  // The combined profile is the RAW table's superset (its flat tools plus the kernel families).
+  // The shipped ordinary surface is the core verb-tools, a projection the production wrapper
+  // installs on `surface: 'application'` alone — docs/49 §9 leaves advanced/combined on the flat
+  // table, so the core spellings are not part of this profile.
+  const flat = new Set([...northboundApplicationToolNames()].sort());
+  for (const name of flat) assert.ok(names.includes(name), `${name} stays served on combined`);
 });
 
 test('applicationCardCommands: table keys first, then the M4b canonical names, disjoint and derived', () => {
@@ -123,7 +138,7 @@ test('mockApplicationCard: a table-derived card that satisfies the real server c
     applicationOwned: false,
   };
   assert.equal(new McpFleetServer({ ...common, surface: 'application' }).toolDefinitions.length,
-    ordinaryMcpToolNames().length);
+    northboundApplicationToolNames().length);
   assert.equal(new McpFleetServer({ ...common, surface: 'combined' }).toolDefinitions.length,
     combinedMcpToolNames().length);
 });

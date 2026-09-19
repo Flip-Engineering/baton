@@ -8,7 +8,8 @@
 //                               then the M4b canonical-grammar names advertised beside them)
 //   mockApplicationCard(id)   — a mock application card for tests, commands derived from the table
 //   webCardCommands()         — the sorted web-admitted card names plus the six wave direct ports
-//   ordinaryMcpToolNames()    — the ordinary MCP surface in SERVED order (definition order)
+//   ordinaryMcpToolNames()    — the SHIPPED ordinary MCP surface in SERVED order (the core table)
+//   northboundApplicationToolNames() — the RAW McpFleetServer application table in SERVED order
 //   combinedMcpToolNames()    — the combined MCP surface names (sorted, the served set)
 //
 // Byte-stability of a set is pinned against the committed surface-inventory artifact
@@ -19,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { SWARM_COMMAND_NAMES } from '../src/swarm-contract.mjs';
+import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { mcpCombinedToolNames, McpFleetServer } from '../src/mcp-northbound.mjs';
 
 /** The byte-stable insertion-order key list of APPLICATION_COMMAND_DEFINITIONS (docs/36 §9 M3:
@@ -83,9 +85,6 @@ export function webCardCommands() {
   ].sort();
 }
 
-// The served tool order is the definition order of the MCP tables, and those tables are assembled
-// inside mcp-northbound.mjs — the ONE honest derivation reads them off a real server. The stubs
-// below satisfy the constructor's authority checks only; no dispatch ever runs.
 const SURFACE_TRUTH_REPO_ID = 'repo-surface-truth';
 function surfaceTruthServer(surface) {
   const coordination = Object.fromEntries(
@@ -109,9 +108,23 @@ function surfaceTruthServer(surface) {
   });
 }
 
-/** The ordinary MCP surface's tool names in SERVED order (the definition order tools/list
- * returns) — the set is byte-stable against the committed artifact's `profiles['mcp.application']`. */
+/** The shipped ordinary MCP surface's tool names in SERVED order — the seven verb-tools, one per
+ * family, that the production wrapper advertises on `surface: 'application'` (docs/49 §2 law (a),
+ * MCP.md "One tool table, two entries"). The ONE source is CORE_TOOL_NAMES: surface-conformance.mjs
+ * records that same table in the committed artifact's `profiles['mcp.application']`, so the shipped
+ * surface and the profile cannot drift. */
 export function ordinaryMcpToolNames() {
+  return [...CORE_TOOL_NAMES];
+}
+
+/** The RAW `McpFleetServer` application table's tool names in SERVED order — the flat
+ * `baton_<noun>_<verb>` list an embedder that constructs the server directly is served (docs/49 §2:
+ * the raw class keeps its flat table for embedders and its own pins). The shipped composition
+ * replaces that table with the core one above, so the phase pins that read the raw wire surface
+ * derive from it. The order is the definition order of the table mcp-northbound.mjs assembles — the
+ * one honest derivation reads it off a real server. The stub below satisfies the constructor's
+ * authority checks only; no dispatch ever runs. */
+export function northboundApplicationToolNames() {
   return surfaceTruthServer('application').toolDefinitions.map((tool) => tool.name);
 }
 
