@@ -72,6 +72,11 @@ import {
 import * as runtimeRecovery from './runtime-recovery.mjs';
 import * as runtimeEffects from './runtime-effects.mjs';
 import * as runtimeObservation from './runtime-observation.mjs';
+import * as runtimeAdmission from './runtime-admission.mjs';
+import {
+  coachingError, resolveCardModel, SupervisedProcesses,
+} from './runtime-admission.mjs';
+export { DependencyCycleError, SupervisedProcesses, guidanceSender } from './runtime-admission.mjs';
 import {
   closedVerificationVerdict, noop, pathInScope,
 } from './runtime-observation.mjs';
@@ -86,7 +91,7 @@ const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 // #295 item 2: a dropped provider connection is not the member's death. The turn is re-driven
 // once, in place, on the same session and worktree; only a fault the retry ALSO hits (or one that
 // is not transient at all) settles the member. The count is declared, bounded, and never a clock.
-const TRANSIENT_TURN_RETRY_LIMIT = 1;
+
 
 // The instruction a re-driven turn carries. Deterministic policy text — the coordinator's own
 // words, like a follow-up or a nudge — never a model-authored summary, so a retry cannot invent
@@ -112,7 +117,7 @@ const STOP_DEADLINE_ATTEMPT_BOUND = 2;
 // BD3-D: the storm-coalescing window for same-run attention wakes. Reasons minted within the
 // window merge into one entry carrying an explicit count + perPhase distribution.
 
-const PHYSICAL_LOG_APPENDS = new WeakMap();
+
 
 // Phase 90: the coordination ledger supplies total ordering for each Run timeline. Keep this
 // allowlist closed: provider payloads stay in the operational log while an integrity-checked
@@ -129,11 +134,8 @@ const PHYSICAL_LOG_APPENDS = new WeakMap();
 // Issue #79 (D3/R7): the kinds that are NEVER worker-addressed. The orchestration/operator kinds
 // (run/wave-view decisions) and the #10-era inbox vocabulary are out of the push's source set —
 // the push serves ONLY the refused-write / gate-verdict / pending-interaction projection.
-const ATTENTION_PUSH_ORCHESTRATOR_ONLY_KINDS = new Set([
-  'answer_decision', 'candidate_selection', 'workflow_revision', 'workflow_recovery',
-  'session_preservation', 'turn_checkpoint',
-]);
-const ATTENTION_PUSH_INBOX_KINDS = new Set(['approval', 'question', 'blocked', 'stalled', 'budget_alarm']);
+
+
 
 /** Epic #78 Decision 2: the orchestrator-selected permission subset is recorded on the grant at
  * mint time (the caller names no permissions). Executor-class members receive the full
@@ -194,12 +196,7 @@ export class ReviewSelectionError extends Error {
 
 
 
-export class DependencyCycleError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'DependencyCycleError';
-  }
-}
+
 
 function canonicalActionPath(path) {
   let existing = resolve(path); const suffix = [];
@@ -215,69 +212,21 @@ function canonicalActionPath(path) {
 
 // SC13: cancellation is terminal too. No late spawn/delivery/turn continuation may revive it.
 
-const COORDINATION_MUTATORS = new Set([
-  'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
-  'createAndClaimRecoveryRefinement', 'createAndClaimPlanRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
-  'admitRunResultExport', 'completeRunResultExport',
-  'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
-  'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
-  'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
-  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'recordProviderSourceReconciliation', 'recordProviderProcessingDeferral',
-  'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain',
-  'issueRunOrchestratorLease', 'revokeRunOrchestratorLease', 'admitRunLineage',
-  'recordRepresentationProduction',
-  'defineGoal', 'proposePlan', 'approvePlan', 'createPlanGatedTask', 'createPlanRevisionTask',
-  'admitContextSession', 'admitContextCell', 'settleContextCell', 'admitContextMapCall',
-  'admitReplManifest', 'admitReplSession',
-  'admitContextEffectCall',
-  'settleContextCall', 'settleContextMapCall', 'settleContextEffectCall',
-  'recordTaskResourceRelease',
-  'admitBoardCommand',
-  'requestBoardClaim', 'submitBoardReport', 'expireBoardClaim',
-  'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
-]);
+
 
 /** The convergence policy every stop/drain deadline derives from. Closed and bounded by design:
  * each field is a deployment decision, never a silent numeric default that acts as a limit.
  * `maxInteractions` bounds the in-flight interaction authority a drain cancels; when the
  * deployment does not name it, it is derived from the fleet (16 interactions per reserved
  * worker), never from a duration. */
-const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, timeoutMs: 60_000, pollMs: 10 });
 
-function normalizeDrainPolicy(value) {
-  if (value === undefined) return DEFAULT_DRAIN_POLICY;
-  const requiredFields = ['maxWorkers', 'pollMs', 'timeoutMs'];
-  const optionalFields = ['maxInteractions'];
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new TypeError('drain policy must be a closed bounded deployment policy');
-  }
-  const keys = Object.keys(value).sort();
-  const requiredSorted = [...requiredFields].sort();
-  const allowedSorted = [...requiredFields, ...optionalFields].sort();
-  const validField = (field) => Number.isSafeInteger(value[field]) && value[field] > 0;
-  if ((keys.join(',') !== requiredSorted.join(',') && keys.join(',') !== allowedSorted.join(','))
-    || !requiredFields.every(validField)
-    || (value.maxInteractions !== undefined && !validField('maxInteractions'))
-    || value.maxWorkers > 100_000 || value.timeoutMs > 300_000 || value.pollMs > value.timeoutMs) {
-    throw new TypeError('drain policy must be a closed bounded deployment policy');
-  }
-  return Object.freeze({
-    maxWorkers: value.maxWorkers,
-    maxInteractions: value.maxInteractions ?? value.maxWorkers * 16,
-    timeoutMs: value.timeoutMs,
-    pollMs: value.pollMs,
-  });
-}
+
+
 
 /** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
  * gracefulPath} on the thrown error AND a human message composed by the ONE helper — numbers
  * only, never body content (AS-4). */
-function coachingError(row, actual, cap = row?.value) {
-  return Object.assign(new Error(composeFrameLimitRefusal(row, actual, cap)), {
-    code: row?.refusalCode ?? 'size_exceeded',
-    cap, actual, unit: 'bytes', gracefulPath: frameLimitRefusalPath(row, cap),
-  });
-}
+
 
 /** Cap a string at maxBytes on a UTF-8 scalar boundary (the capBytes helper, messages.mjs). */
 function capBytesToScalar(text, maxBytes) {
@@ -320,31 +269,13 @@ function capBytesToScalar(text, maxBytes) {
  * root orchestrator. The label the recipient reads in the frame is derived HERE, and the swarm
  * runtime's relationship (`{kind: 'root'|'lead'|'peer', participantId}`, swarm-runtime.mjs
  * `guidanceFromRelationship`) reads this same identity instead of parsing the namespace again. */
-export function guidanceSender(actor) {
-  const parts = typeof actor === 'string' ? actor.split(':') : [];
-  if (parts[0] === 'swarm-native' && parts.length >= 3) {
-    const participantId = parts.slice(2).join(':');
-    return Object.freeze({ kind: 'seat', swarmId: parts[1], participantId,
-      label: `participant "${participantId}" of swarm "${parts[1]}"` });
-  }
-  const root = parts[0] === 'web' || parts[0] === 'mcp' || actor === 'orchestrator';
-  const named = typeof actor === 'string' && actor.length > 0;
-  return Object.freeze({ kind: 'root', swarmId: null, participantId: null,
-    label: root ? 'the root orchestrator' : named ? actor : 'an unnamed sender' });
-}
+
 
 /** The phrase a recipient reads for one sender — the frame's `from` text (#273, coordinator
  * side). A thin reader of `guidanceSender`: the naming rule lives there, once. */
-function guidanceSenderLabel(actor) {
-  return guidanceSender(actor).label;
-}
 
-function normalizedDecisionText(value, field, maxBytes) {
-  if (typeof value !== 'string' || value.trim().length === 0 || Buffer.byteLength(value) > maxBytes || value.includes('\0')) {
-    const error = new TypeError(`reuse decision ${field} is invalid`); error.code = 'invalid_reuse_decision'; throw error;
-  }
-  return value.trim().replace(/\s+/g, ' ');
-}
+
+
 
 /** The sentinel for a delivery-chain slot that deliberately observes nothing: `slot.then(noop, noop)`
  * keeps the chain alive for the NEXT sender without projecting this one's outcome. It is never a
@@ -362,24 +293,12 @@ function normalizedDecisionText(value, field, maxBytes) {
  * future refactor. An operational rejection is never silent here — it carries its own typed
  * receipt (`_recordOperationFailure`), and the count of this call is the count of the other.
  */
-function bestEffort(promise, reason, record) {
-  return Promise.resolve(promise).catch((error) => {
-    if (typeof record === 'function') record(reason, error);
-    return undefined;
-  });
-}
+
 
 /** The sync twin of `bestEffort` — the same observational policy for a write that is not a promise
  * (the coordination-store audit calls are synchronous). Same contract: record the reason, return
  * `undefined`, and never let the observation touch the operation. */
-function bestEffortSync(run, reason, record) {
-  try {
-    return run();
-  } catch (error) {
-    if (typeof record === 'function') record(reason, error);
-    return undefined;
-  }
-}
+
 
 /** swarm-a finding 8: an adapter frame names its interaction by `requestId`, and that string IS the
  * key every later act (answer, claim, ack, stop, drain) resolves the record by. A key that is not a
@@ -444,54 +363,14 @@ function normalizeModelPolicy(model, policy, effort) {
   return Object.freeze(normalized);
 }
 
-function cardAcceptsExactModel(card, model) {
-  const selection = card?.modelSelection;
-  if (!selection || selection.mode !== 'exact') return false;
-  if (Array.isArray(selection.available)) return selection.available.includes(model);
-  if (selection.configuredDefault === model) return true;
-  if (selection.acceptedAliases?.includes(model)) return true;
-  return (selection.acceptedPrefixes ?? []).some((prefix) => model.startsWith(prefix));
-}
 
-function resolveCardModel(card, requested, policy, { explicit = false } = {}) {
-  const selection = card?.modelSelection;
-  const family = selection?.family ?? null;
-  if (policy?.allowFamilies && !policy.allowFamilies.includes(family)) return { ok: false, reason: 'family_not_allowed' };
-  if (policy?.denyFamilies?.includes(family)) return { ok: false, reason: 'family_denied' };
-  if (policy?.reasoningEffort && !selection?.reasoningEffort?.includes(policy.reasoningEffort)) {
-    return { ok: false, reason: 'reasoning_effort_unsupported' };
-  }
-  if (policy?.serviceTier && !selection?.serviceTier?.includes(policy.serviceTier)) {
-    return { ok: false, reason: 'service_tier_unsupported' };
-  }
 
-  if (requested != null) {
-    return cardAcceptsExactModel(card, requested)
-      ? { ok: true, model: requested }
-      : { ok: false, reason: 'model_unavailable' };
-  }
 
-  const permitted = (model) => model == null
-    ? !(policy?.allow?.length)
-    : (!policy?.allow || policy.allow.includes(model)) && !policy?.deny?.includes(model);
-  for (const preferred of policy?.prefer ?? []) {
-    if (permitted(preferred) && cardAcceptsExactModel(card, preferred)) return { ok: true, model: preferred };
-  }
-  const configured = selection?.configuredDefault ?? null;
-  if (permitted(configured)) return { ok: true, model: configured };
-  if (Array.isArray(selection?.available)) {
-    const candidate = selection.available.find(permitted);
-    if (candidate !== undefined) return { ok: true, model: candidate };
-  }
-  return { ok: false, reason: 'model_policy_unmatched' };
-}
 
 /** C1: the default done-gate, behavior-preserving-by-construction for every caller that
  * doesn't override it — exactly today's inline check, moved into an injectable, named
  * function. `acceptOpts.expectExit` carries the per-task expected exit code. */
-function defaultAccept(verdict, acceptOpts) {
-  return !!(verdict && verdict.reverified === true && verdict.observedExit === acceptOpts.expectExit);
-}
+
 
 /** Issue #384: the record a reconciler's failure names — the retained workspace owner, the worker
  * process or the lease the reconciler could not settle. A failure that names none has no record;
@@ -519,7 +398,7 @@ function defaultAccept(verdict, acceptOpts) {
  * chatty runner can never grow the resident's memory through this seam. Characters are kept, so the
  * effective byte bound is this ceiling times the widest UTF-8 sequence; the ONE byte-exact bound
  * (and the redaction) stays where it always was, in the adapter these tails are composed by. */
-const SUPERVISED_STREAM_TAIL_BYTES = MAX_STDERR_TAIL_BYTES;
+
 
 /** The knob a deployment pins to extend the patience of ONE supervised gate run: the SAME variable
  * the suite runner honours for a hung file (`BATON_SUITE_IDLE_MS`, run-suite.mjs), and the same
@@ -539,77 +418,7 @@ export function supervisedGateTimeoutMs(env = process.env) {
  * class minted, carrying the process group it may kill and the label its caller named. The set is
  * process-state, never durable: a child that outlives its resident is exactly the leftover the
  * landing's own sweep (worktree.mjs, issue #459) removes at the next open. */
-export class SupervisedProcesses {
-  constructor() {
-    /** @type {Map<string, {id: string, pid: number|null, label: string, child: object}>} */
-    this._live = new Map();
-    this._seq = 0;
-  }
 
-  /**
-   * Run ONE node script to completion in its own process group. Resolves — never rejects — with the
-   * exit facts plus the bounded tails of both streams: a caller distinguishes a red run (an exit
-   * status) from a run that never judged, and this seam never turns a child's own failure into an
-   * exception the caller cannot read. `timedOut` marks the run this supervisor killed at its
-   * deadline. `detached` puts the child in its own group so a kill reaches the grandchildren a
-   * runner spawns (test files, nested runners), never only the child itself.
-   */
-  async run({ file, args = [], cwd, env = {}, timeoutMs, label = 'worker' }) {
-    if (typeof file !== 'string' || file.length === 0) throw new TypeError('a supervised worker needs the script it runs');
-    if (typeof cwd !== 'string' || cwd.length === 0) throw new TypeError('a supervised worker needs the directory it runs in');
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError('a supervised worker needs a positive deadline in milliseconds');
-    const id = `supervised-worker-${++this._seq}`;
-    const child = spawn(process.execPath, [file, ...args], {
-      cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
-    });
-    const entry = { id, pid: child.pid ?? null, label, child };
-    this._live.set(id, entry);
-    let stdout = ''; let stderr = ''; let timedOut = false;
-    const tail = (current, chunk) => (current.length + chunk.length <= SUPERVISED_STREAM_TAIL_BYTES
-      ? current + chunk : (current + chunk).slice(-SUPERVISED_STREAM_TAIL_BYTES));
-    child.stdout?.setEncoding('utf8');
-    child.stderr?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk) => { stdout = tail(stdout, chunk); });
-    child.stderr?.on('data', (chunk) => { stderr = tail(stderr, chunk); });
-    const killGroup = (signal) => {
-      try { process.kill(-child.pid, signal); }
-      catch { try { child.kill(signal); } catch { /* already gone */ } }
-    };
-    const deadline = setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
-    if (typeof deadline.unref === 'function') deadline.unref();
-    const settled = await new Promise((resolve) => {
-      child.once('error', (error) => resolve({ status: 'failed', code: null, signal: null, error: `${error?.message ?? error}` }));
-      child.once('close', (code, signal) => resolve({ status: code === 0 ? 'ok' : 'failed', code, signal }));
-    });
-    clearTimeout(deadline);
-    this._live.delete(id);
-    return Object.freeze({
-      id, label, pid: child.pid ?? null, timedOut, stdout, stderr,
-      status: timedOut ? 'timeout' : settled.status,
-      code: settled.code ?? null, signal: settled.signal ?? null,
-      ...(settled.error === undefined ? {} : { error: settled.error }),
-    });
-  }
-
-  /** Kill every child this resident supervises, each with its whole process group. The first
-   * signal is the caller's; a group that ignores it is escalated ONCE after the same grace every
-   * other kill in this module waits out. Called by the resident's own fence — a stop that left a
-   * gate run burning the host would be a stop that did not stop. */
-  killAll(signal = 'SIGTERM') {
-    const killed = [];
-    for (const entry of [...this._live.values()]) {
-      const pid = entry.pid;
-      if (pid === null) continue;
-      try { process.kill(-pid, signal); killed.push(pid); }
-      catch { try { entry.child.kill(signal); killed.push(pid); } catch { /* already gone */ } }
-      const escalation = setTimeout(() => {
-        try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ }
-      }, KILL_ESCALATION_GRACE_MS);
-      if (typeof escalation.unref === 'function') escalation.unref();
-    }
-    return Object.freeze(killed);
-  }
-}
 
 /**
  * The ONE suite-layout fact a supervised gate run derives from (issue #463): the runner path as
@@ -743,518 +552,8 @@ export async function runSupervisedGateRun({
 
 export class Coordinator {
   /** @param {object} opts */
-  constructor(opts) {
-    if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch', 'scratchpadSnapshot', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
-      if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-    }
-    this._closed = false;
-    // Issue #459: the out-of-process deployment steps THIS resident supervises (today the
-    // integration gate run). The pool is process-state beside the worker handles: the resident's
-    // fence kills it, and nothing about it is durable.
-    this._supervised = new SupervisedProcesses();
-    this._drainState = 'open';
-    this._drainPolicy = normalizeDrainPolicy(opts.drainPolicy);
-    this._drainPromise = null;
-    this._drainReceipt = null;
-    this._drainRequestPromises = new Map();
-    this._drainTargetIds = null;
-    this._drainPhysicalId = null;
-    this._drainPhysicalActor = null;
-    this._drainKillToken = Object.freeze({});
-    this._drainHistoricalReconciled = false;
-    this._drainHistoricalReconcilePromise = null;
-    this._authorityOps = 0;
-    this._authorityTokens = new Set();
-    this._derivedReviewPlanToken = Object.freeze({});
-    this._derivedResumePlanToken = Object.freeze({});
-    this._derivedRevisionPlanToken = Object.freeze({});
-    this._planRecoveryAuthority = Object.freeze({});
-    this._preservedProcesslessAttachAuthority = Object.freeze({});
-    // Keep coordinator-local health/attribution wrappers on a facade. Reusing one Log across a
-    // restart must not stack controller closures on the shared writer and let the prior
-    // controller overwrite the fresh controller's task/run attribution.
-    const rawLog = opts.log;
-    const physicalLogAppend = PHYSICAL_LOG_APPENDS.get(rawLog) ?? rawLog.append.bind(rawLog);
-    if (!PHYSICAL_LOG_APPENDS.has(rawLog)) PHYSICAL_LOG_APPENDS.set(rawLog, physicalLogAppend);
-    this._log = new Proxy({}, {
-      get: (target, property, receiver) => {
-        if (Object.hasOwn(target, property)) return Reflect.get(target, property, receiver);
-        const value = property === 'append' ? physicalLogAppend : Reflect.get(rawLog, property, rawLog);
-        if (typeof value !== 'function') return value;
-        const bound = value.bind(rawLog);
-        return property === 'append' ? (...args) => {
-          if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
-          return bound(...args);
-        } : bound;
-      },
-      set: (target, property, value, receiver) => Reflect.set(target, property, value, receiver),
-    });
-    this._fences = opts.fences;
-    this._adapters = opts.adapters;
-    this._providerGovernance = opts.providerGovernance === undefined
-      ? null
-      : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(this._adapters));
-    if (this._providerGovernance) {
-      for (const adapter of Object.values(this._adapters)) validateProviderGovernanceCard(adapter.card());
-      if (typeof opts.coordination.revokeTaskAcceptance !== 'function') throw new TypeError('Coordinator coordination store is missing revokeTaskAcceptance()');
-    }
-    this._worktrees = opts.worktrees;
-    this._taskTopologyPolicy = opts.taskTopologyPolicy === undefined
-      ? null : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
-    if (this._taskTopologyPolicy && (typeof opts.coordination.taskTopologyPolicy !== 'function'
-      || typeof opts.coordination.previewTaskTopology !== 'function'
-      || canonicalDigest(opts.coordination.taskTopologyPolicy()) !== canonicalDigest(this._taskTopologyPolicy))) {
-      throw new TypeError('Coordinator task topology policy disagrees with durable coordination');
-    }
-    this._runLineagePolicy = opts.runLineagePolicy === undefined
-      ? null : normalizeRunLineagePolicy(opts.runLineagePolicy);
-    if (this._runLineagePolicy) {
-      for (const method of [
-        'runLineagePolicy', 'issueRunOrchestratorLease', 'revokeRunOrchestratorLease',
-        'runOrchestratorLease', 'activeRunOrchestratorLeaseForSession',
-        'admitRunLineage', 'runLineage', 'runChildren', 'runDescendants',
-        'authorizeRunOrchestratorCommand',
-      ]) {
-        if (typeof opts.coordination[method] !== 'function') {
-          throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-        }
-      }
-      if (canonicalDigest(opts.coordination.runLineagePolicy()) !== canonicalDigest(this._runLineagePolicy)) {
-        throw new TypeError('Coordinator run lineage policy disagrees with durable coordination');
-      }
-    }
-    this._runtimeScopes = opts.runtimeScopes ?? null;
-    this._capabilities = opts.capabilities ?? null;
-    if (this._capabilities) {
-      for (const method of ['cards', 'invoke', 'resume', 'reverify']) {
-        if (typeof this._capabilities[method] !== 'function') {
-          throw new TypeError(`Coordinator capability registry is missing ${method}()`);
-        }
-      }
-    }
-    this._atlasStructuralEvidence = opts.atlasStructuralEvidence ?? null;
-    if (this._atlasStructuralEvidence !== null && typeof this._atlasStructuralEvidence.classify !== 'function') throw new TypeError('Coordinator Atlas structural evidence authority is invalid');
-    this._advisoryFeeds = opts.advisoryFeeds ?? null;
-    const advisoryCards = this._advisoryFeeds?.cards?.() ?? [];
-    if (advisoryCards.length > 0) {
-      if (typeof this._advisoryFeeds.verify !== 'function') throw new TypeError('Coordinator advisory feed registry is missing verify()');
-      for (const method of ['recordProviderDelivery', 'pendingProviderReconciliation', 'providerReceipt', 'providerProcessing']) {
-        if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-      }
-      if (advisoryCards.some((card) => card.modes.includes('poll'))) {
-        if (typeof this._advisoryFeeds.pollFull !== 'function' || typeof this._advisoryFeeds.reverifyPollSync !== 'function') throw new TypeError('Coordinator advisory feed registry is missing poll authority');
-        for (const method of ['providerSourceHealth', 'recordProviderSourceReconciliation']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-      }
-    }
-    this._providerReconciliation = null;
-    if (opts.providerReconciliation !== undefined) {
-      const config = opts.providerReconciliation; const authority = config?.indexAuthority; const card = authority?.card?.();
-      if (!config || Object.keys(config).sort().join(',') !== ['budgetTokens', 'indexAuthority', 'repoId'].sort().join(',') || !Number.isSafeInteger(config.budgetTokens) || config.budgetTokens <= 0
-        || typeof config.repoId !== 'string' || !authority || typeof authority.current !== 'function' || typeof authority.reverify !== 'function'
-        || !card || Object.keys(card).sort().join(',') !== ['schemaVersion', 'authorityId', 'repoId', 'atlasCardDigest'].sort().join(',') || card.schemaVersion !== 1 || card.repoId !== config.repoId
-        || typeof card.authorityId !== 'string' || !/^[a-f0-9]{64}$/.test(card.atlasCardDigest ?? '')) throw new TypeError('provider reconciliation requires deployment-owned index authority');
-      const cq = this._capabilities?.cards?.().find((item) => item.name === 'cartographer-quartermaster');
-      if (!cq?.ops?.['reuse.vet'] || cq.actions?.reverify !== true) throw new TypeError('provider reconciliation requires reverifiable Quartermaster reuse.vet');
-      const activePolicy = opts.coordination.reusePolicyState(config.repoId);
-      if (!cq.reusePolicy || !activePolicy || activePolicy.policyHash !== cq.reusePolicy.hash) throw new TypeError('provider reconciliation requires the active Quartermaster policy');
-      for (const method of ['providerProcessingAdmission', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'reusePolicyState']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-      this._providerReconciliation = Object.freeze({ repoId: config.repoId, budgetTokens: config.budgetTokens, indexAuthority: authority, card: Object.freeze({ ...card }) });
-    }
-    this._providerProcessingSchedule = null;
-    this._providerProcessingScanActive = false;
-    if (opts.providerProcessingSchedule !== undefined) {
-      const config = opts.providerProcessingSchedule; const fields = ['repoId', 'intervalMs', 'maxBatch', 'maxAttempts', 'initialBackoffMs', 'maxBackoffMs', 'maxStateRows'];
-      if (!config || Object.keys(config).sort().join(',') !== fields.sort().join(',') || typeof config.repoId !== 'string' || config.repoId.length === 0
-        || Object.entries(config).filter(([key]) => key !== 'repoId').some(([, value]) => !Number.isSafeInteger(value) || value <= 0)
-        || config.initialBackoffMs > config.maxBackoffMs || config.intervalMs > 24 * 60 * 60 * 1_000 || config.maxBatch > 10_000 || config.maxBatch > config.maxStateRows || config.maxAttempts > 1_000_000 || config.maxBackoffMs > 24 * 60 * 60 * 1_000 || config.maxStateRows > 1_000_000
-        || !this._providerReconciliation || this._providerReconciliation.repoId !== config.repoId
-        || typeof opts.coordination.providerAttemptPolicy !== 'function' || typeof opts.coordination.dueProviderProcessing !== 'function' || typeof opts.coordination.recordProviderProcessingDeferral !== 'function') throw new TypeError('provider processing schedule requires bounded deployment retry and reconciliation authority');
-      const { repoId, ...policy } = config;
-      if (canonicalDigest(opts.coordination.providerAttemptPolicy()) !== canonicalDigest(policy)) throw new TypeError('provider processing schedule disagrees with durable attempt policy');
-      this._providerProcessingSchedule = Object.freeze({ ...config });
-    }
-    this._providerRead = null;
-    if (opts.providerRead !== undefined) {
-      const config = opts.providerRead;
-      if (!config || Object.keys(config).sort().join(',') !== ['maxBytes', 'maxProcessing', 'maxProviders', 'maxStateRows', 'repoId'].sort().join(',')
-        || typeof config.repoId !== 'string' || config.repoId.length === 0 || Object.entries(config).filter(([key]) => key !== 'repoId').some(([, value]) => !Number.isSafeInteger(value) || value <= 0)
-        || config.maxProviders > 10_000 || config.maxProcessing > 100_000 || config.maxStateRows > 1_000_000 || config.maxBytes > 16 * 1024 * 1024
-        || typeof opts.coordination.readProviderStatus !== 'function' || advisoryCards.length === 0) throw new TypeError('provider reads require one deployment repository, provider cards, and positive ceilings');
-      this._providerRead = Object.freeze({ ...config });
-    }
-    const rawCoordination = opts.coordination;
-    this._coordination = new Proxy(rawCoordination, {
-      get: (target, property, receiver) => {
-        const value = Reflect.get(target, property, receiver);
-        if (typeof value !== 'function') return value;
-        const bound = value.bind(target);
-        if (!COORDINATION_MUTATORS.has(property)) return bound;
-        return (...args) => {
-          try { return bound(...args); } catch (err) {
-            if (err?.name === 'CoordinationRefusal' || err instanceof TypeError) throw err;
-            throw this._poisonCoordination(err);
-          }
-        };
-      },
-    });
-    this._referee = opts.referee;
-    // #297: the host-wide capacity authority (application-deployment built it once; null when
-    // unwired). The contribution operations admit their verdicts through it.
-    this._hostCapacity = opts.hostCapacity ?? null;
-    // Issue #450: the capacity authority's own cleanup settlement (`settleForCleanup`), handed in
-    // by the deployment that owns it. The coordinator holds only the worktree façade, which can
-    // settle a reservation only by reaping its checkout; a reservation whose worker is gone and
-    // whose checkout the custody boundary RETAINED has to be settled through the authority itself.
-    this._capacitySettlement = typeof opts.capacitySettlement === 'function' ? opts.capacitySettlement : null;
-    this._route = opts.route;
-    this._routeLearningPolicy = opts.routeLearningPolicy ? Object.freeze({ ...opts.routeLearningPolicy }) : null;
-    if (this._routeLearningPolicy && (typeof opts.coordination.routePolicy !== 'function' || typeof opts.coordination.routeObservations !== 'function' || canonicalDigest(opts.coordination.routePolicy()) !== canonicalDigest(this._routeLearningPolicy))) throw new TypeError('Coordinator route learning policy disagrees with durable coordination');
-    this._story = opts.story ?? null;
-    this._repoRoot = opts.repoRoot ?? null;
-    this._repoId = opts.repoId ?? null;
-    if (opts.contextBriefMaterializer !== undefined
-      && typeof opts.contextBriefMaterializer !== 'function') {
-      throw new TypeError('Context Brief materializer must be a function');
-    }
-    this._contextBriefMaterializer = opts.contextBriefMaterializer ?? null;
-    // KG-3 rule 6/6a (v2-P0-1): the briefing rides the `{ brief, briefing }` wrapper the
-    // provider seam passes to spawn (:2814) and the recovery prompt (:4553-4555), NEVER
-    // task.brief. Inert unless a briefing provider is configured, so existing dispatch
-    // behavior (and every adapter that reads the inner brief) is byte-unchanged.
-    if (opts.knowledgeBriefingProvider !== undefined && typeof opts.knowledgeBriefingProvider !== 'function') {
-      throw new TypeError('Knowledge briefing provider must be a function');
-    }
-    this._knowledgeBriefingProvider = opts.knowledgeBriefingProvider ?? null;
-    if (opts.recorderPort !== undefined && opts.recorderPort !== null
-      && (typeof opts.recorderPort !== 'object' || typeof opts.recorderPort.log?.append !== 'function')) {
-      throw new TypeError('recorderPort must carry a log with append()');
-    }
-    this._recorder = opts.recorderPort
-      ?? recorderPort.createRecorderPort({ log: this._log, coordination: this._coordination, route: this._route });
-    this._goalPlanAuthority = null;
-    if (opts.goalPlanAuthority !== undefined) {
-      const authority = opts.goalPlanAuthority;
-      if (!authority || Object.keys(authority).sort().join(',') !== ['authorize', 'policy'].sort().join(',')
-        || typeof authority.authorize !== 'function' || typeof opts.coordination.goalPlanPolicy !== 'function'
-        || canonicalDigest(opts.coordination.goalPlanPolicy()) !== canonicalDigest(authority.policy)) {
-        throw new TypeError('Goal/Plan authority requires exact deployment policy and authorizer');
-      }
-      for (const method of ['defineGoal', 'proposePlan', 'approvePlan', 'goalPlanStatus', 'previewPlanDispatch', 'createPlanGatedTask', 'reconcilePlanGatedTask', 'createAndClaimPlanRecoveryRefinement', 'previewPlanRevision', 'createPlanRevisionTask', 'reconcilePlanRevisionTask']) {
-        if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
-      }
-      this._goalPlanAuthority = Object.freeze({ policy: Object.freeze({ ...authority.policy }), authorize: authority.authorize });
-    }
-    this._scratchOraclePolicy = null;
-    if (opts.scratchOraclePolicy !== undefined) {
-      const policy = opts.scratchOraclePolicy; const fields = ['repoId', 'maxTargetBytes', 'maxConstraints', 'maxConstraintBytes'];
-      if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || typeof policy.repoId !== 'string' || policy.repoId.length === 0 || policy.repoId !== this._repoId
-        || !Number.isSafeInteger(policy.maxTargetBytes) || policy.maxTargetBytes <= 0 || policy.maxTargetBytes > 1024 * 1024
-        || !Number.isSafeInteger(policy.maxConstraints) || policy.maxConstraints <= 0 || policy.maxConstraints > 1_024
-        || !Number.isSafeInteger(policy.maxConstraintBytes) || policy.maxConstraintBytes <= 0 || policy.maxConstraintBytes > 64 * 1024
-        || typeof opts.coordination.scratchFactOracleTarget !== 'function') throw new TypeError('Scratch oracle requires exact bounded deployment authority');
-      this._scratchOraclePolicy = Object.freeze({ ...policy });
-    }
-    this._resolveEnvironmentRef = opts.resolveEnvironmentRef ?? null;
-    this._reuseDecisionPolicy = null;
-    if (opts.reuseDecisionPolicy !== undefined) {
-      const policy = opts.reuseDecisionPolicy;
-      if (!policy || typeof policy.authorize !== 'function' || !Number.isSafeInteger(policy.maxNeedBytes) || policy.maxNeedBytes <= 0
-        || !Number.isSafeInteger(policy.maxRationaleBytes) || policy.maxRationaleBytes <= 0) throw new TypeError('reuse decision policy requires actor authorization and text ceilings');
-      if (policy.authorizeRecheck !== undefined && typeof policy.authorizeRecheck !== 'function') throw new TypeError('reuse decision authorizeRecheck must be a function');
-      const reconcile = policy.policyReconcile;
-      if (!reconcile || Object.keys(reconcile).sort().join(',') !== ['maxDecisionTargets', 'maxGuardTargets', 'maxAffectedReads', 'maxStateRows', 'maxObservedPolicyHashes', 'maxEventBytes'].sort().join(',') || Object.values(reconcile).some((value) => !Number.isSafeInteger(value) || value <= 0)) throw new TypeError('reuse decision policy requires reconciliation ceilings');
-      // Decision 1(d) / OQ4 (blocker 6): the registry's decision.need / decision.rationale values
-      // are the ceiling-of-ceilings — an override ABOVE them refuses at injection, never a silent
-      // min() (the provider-read hard-ceiling precedent). The message names the ceiling AND the
-      // attempted value.
-      if (policy.maxNeedBytes > FRAME_LIMITS['decision.need'].value) {
-        throw Object.assign(new Error(
-          `reuse decision policy maxNeedBytes ${policy.maxNeedBytes} exceeds the registry ceiling ${FRAME_LIMITS['decision.need'].value} (decision.need)`,
-        ), { code: 'reuse_decision_policy_ceiling_exceeded' });
-      }
-      if (policy.maxRationaleBytes > FRAME_LIMITS['decision.rationale'].value) {
-        throw Object.assign(new Error(
-          `reuse decision policy maxRationaleBytes ${policy.maxRationaleBytes} exceeds the registry ceiling ${FRAME_LIMITS['decision.rationale'].value} (decision.rationale)`,
-        ), { code: 'reuse_decision_policy_ceiling_exceeded' });
-      }
-      this._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, authorizeRecheck: policy.authorizeRecheck ?? null, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes, policyReconcile: Object.freeze({ ...reconcile }) });
-    }
-    this._now = opts.now || Date.now;
-    this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
-    this._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
-    // #201 durable member retry: the bounded retry COUNT for death-cert crashes (never a
-    // clock — the #163 law). Absent/null = authority OFF (deaths settle failed exactly as
-    // today); N>=0 = up to N retry_pending parks per member task before failed.
-    this._memberRetryAttempts = Number.isSafeInteger(opts.memberRetryAttempts) && opts.memberRetryAttempts >= 0
-      ? opts.memberRetryAttempts : null;
-    // #295 item 2: a transient provider fault re-drives the turn in place — the transport
-    // dropped, the session is alive, and no result was recorded — at most
-    // TRANSIENT_TURN_RETRY_LIMIT times. A deployment that configured its own member retry
-    // authority raises that count; the bound is a declared count, never a clock (#163).
-    this._transientTurnRetryLimit = Number.isSafeInteger(this._memberRetryAttempts)
-      ? Math.max(TRANSIENT_TURN_RETRY_LIMIT, this._memberRetryAttempts) : TRANSIENT_TURN_RETRY_LIMIT;
-    // #295 item 4: the deployment's exhausted-route authority. The SAME instance the route
-    // readiness derivation and the pre-effect recruit refusal read, so a quota refusal observed
-    // here is a fact the next recruit on that route is refused by — and it expires by derivation
-    // from the recorded reset instant, never by a re-probe.
-    const providerQuota = opts.providerQuotaAuthority ?? null;
-    if (providerQuota !== null
-      && (typeof providerQuota.record !== 'function' || typeof providerQuota.blockFor !== 'function')) {
-      throw new TypeError('providerQuotaAuthority must implement record() and blockFor()');
-    }
-    this._providerQuota = providerQuota;
-    // D4 rung 2 (stall seam, #67): the bounded window an armed stall claim waits for its
-    // re-arm evidence before the stall ladder escalates. A deployment knob, NOT
-    // stallTimeoutMs/watchdog. The pause seam no longer uses it — a paused checkpoint never
-    // arms a window (see `_admitPauseRecord`).
-    this._progressNudgeWindowMs = opts.progressNudgeWindowMs ?? 300_000;
-    this._recoveryTimeoutMs = opts.recoveryTimeoutMs ?? 15000;
-    this._recoveryMaxAttempts = opts.recoveryMaxAttempts ?? 3;
-    if (!Number.isSafeInteger(this._recoveryMaxAttempts) || this._recoveryMaxAttempts <= 0
-      || this._recoveryMaxAttempts > 1_000_000) {
-      throw new TypeError('recoveryMaxAttempts must be an exact bounded deployment ceiling');
-    }
-    this._startupRecoveryAuthority = opts.startupRecoveryAuthority ?? null;
-    this._startupRecoveryState = this._startupRecoveryAuthority ? 'idle' : 'disabled';
-    this._startupRecoveryError = null;
-    this._startupCleanupPromises = [];
-    this._startupCleanupPending = 0;
-    this._startupCleanupError = null;
-    const budgetPolicy = opts.budgetPolicy ?? {};
-    const budgetPolicyKeys = new Set(['hardStopAt', 'terminalGraceMs', 'thresholds']);
-    if (!budgetPolicy || typeof budgetPolicy !== 'object' || Array.isArray(budgetPolicy)
-      || Object.keys(budgetPolicy).some((key) => !budgetPolicyKeys.has(key))) throw new TypeError('budget policy must be a closed bounded deployment policy');
-    const budgetThresholds = budgetPolicy.thresholds ?? [0.5, 0.8, 1];
-    // Issue #258: a budget threshold is evidence for the orchestrator, never a stop. A hard stop
-    // exists only when the deployment owner names one (`hardStopAt`); the default is none, so no
-    // built-in number can kill a productive worker.
-    const budgetHardStopAt = budgetPolicy.hardStopAt ?? null;
-    const budgetTerminalGraceMs = budgetPolicy.terminalGraceMs ?? 250;
-    if (!Array.isArray(budgetThresholds) || budgetThresholds.length === 0 || budgetThresholds.length > 32
-      || budgetThresholds.some((value) => !Number.isFinite(value) || value <= 0 || value > 100)
-      || new Set(budgetThresholds).size !== budgetThresholds.length
-      || (budgetHardStopAt !== null && (!Number.isFinite(budgetHardStopAt) || budgetHardStopAt <= 0 || budgetHardStopAt > 100))
-      || !Number.isSafeInteger(budgetTerminalGraceMs) || budgetTerminalGraceMs < 0 || budgetTerminalGraceMs > 60_000) {
-      throw new TypeError('budget policy must be a closed bounded deployment policy');
-    }
-    this._budgetThresholds = Object.freeze([...budgetThresholds].sort((a, b) => a - b));
-    this._budgetHardStopAt = budgetHardStopAt;
-    this._budgetTerminalGraceMs = budgetTerminalGraceMs;
-    const scopeAction = opts.watchdog?.scopeAction ?? 'kill';
-    let scopeOrientation = null;
-    if (scopeAction === 'orient') {
-      const policy = opts.watchdog?.orientation;
-      if (!policy || !/^[a-f0-9]{64}$/.test(policy.indexEpoch ?? '')
-        || typeof policy.focus !== 'string' || policy.focus.length === 0 || policy.focus.includes('\0')
-        || !['brief', 'map'].includes(policy.shape ?? 'brief')
-        || !Number.isSafeInteger(policy.budgetTokens) || policy.budgetTokens <= 0
-        || !Number.isSafeInteger(policy.cooldownMs) || policy.cooldownMs < 0
-        || !Number.isSafeInteger(policy.maxRefreshesPerTurn) || policy.maxRefreshesPerTurn <= 0
-        || (policy.notePrefix !== undefined && (typeof policy.notePrefix !== 'string' || policy.notePrefix.length === 0 || Buffer.byteLength(policy.notePrefix) > 1_024 || policy.notePrefix.includes('\0')))) {
-        throw new TypeError('scope orientation policy requires exact epoch, bounded focus/shape/budget/cooldown/maxRefreshesPerTurn');
-      }
-      if (Buffer.byteLength(policy.focus) > FRAME_LIMITS['steering.focus'].value) {
-        throw coachingError(FRAME_LIMITS['steering.focus'], Buffer.byteLength(policy.focus), FRAME_LIMITS['steering.focus'].value);
-      }
-      scopeOrientation = Object.freeze({
-        indexEpoch: policy.indexEpoch, focus: policy.focus, shape: policy.shape ?? 'brief', budgetTokens: policy.budgetTokens,
-        cooldownMs: policy.cooldownMs, maxRefreshesPerTurn: policy.maxRefreshesPerTurn,
-        notePrefix: policy.notePrefix ?? 'Scope drift detected; re-anchor on the configured boundary.',
-      });
-      const orientationCard = this._capabilities?.cards().find((card) => card.name === 'cartographer-quartermaster');
-      if (!orientationCard?.ops?.['orientation.slice']) throw new TypeError('scope orientation policy requires registered cartographer-quartermaster/orientation.slice');
-    }
-    this._watchdog = Object.freeze({
-      stallMs: opts.watchdog?.stallMs ?? 120000,
-      blockingInteractionTimeoutMs: opts.watchdog?.blockingInteractionTimeoutMs ?? 20 * 60_000,
-      loopThreshold: opts.watchdog?.loopThreshold ?? 3,
-      scopeAction,
-      orientation: scopeOrientation,
-      // Issue #258: loop and stall evidence escalates to the orchestrator by default; a stop is
-      // an operator's explicit choice (`watchdog.loopAction` / `watchdog.stallAction`).
-      loopAction: opts.watchdog?.loopAction ?? 'escalate',
-      stallAction: opts.watchdog?.stallAction ?? 'escalate',
-    });
-    this._waitPollMs = opts.waitPollMs ?? 25;
-    // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
-    this._accept = opts.accept ?? defaultAccept;
-    this._acceptOpts = opts.acceptOpts ?? {};
-    // #269: the deployment may choose a lighter verification for captures that touch none of the
-    // paths the code verification covers (docs-only). Absent, every check runs the brief's own.
-    this._verificationForCapture = typeof opts.verificationForCapture === 'function' ? opts.verificationForCapture : null;
-    const verificationRequirements = {
-      requireRedGreen: this._acceptOpts.requireRedGreen === true,
-      requireCoverage: this._acceptOpts.requireCoverage === true,
-      requireMutation: this._acceptOpts.requireMutation === true,
-    };
-    this._verificationAcceptancePolicy = deepFreeze({
-      policy: verificationRequirements.requireRedGreen ? 'red_green_required'
-        : verificationRequirements.requireCoverage || verificationRequirements.requireMutation
-          ? 'pass_plus_hardening' : 'pass_only',
-      ...verificationRequirements,
-    });
-    // VR6: the immutable deployment verifier-runtime identity, used to conflict a retry whose
-    // admission was recorded under a different runtime policy than the one now bound.
-    this._verificationRuntimeDigest = opts.verificationRuntimeDigest ?? null;
-    this._requireIndependentOracle = opts.requireIndependentOracle ?? false;
-    this._publisher = opts.publisher ?? null;
-    // C4: injectable timer primitives for a real, unref'd stop-deadline timer.
-    this._setTimeout = opts.setTimeout ?? globalThis.setTimeout;
-    this._clearTimeout = opts.clearTimeout ?? globalThis.clearTimeout;
-
-    // D8/CK1: feed the optional story sink, but never turn an authoritative-log failure into a
-    // warning-and-drop. Once an append fails the coordinator is poisoned: every public command
-    // fails closed until process restart/replay, and any not-yet-entered spawn is aborted. A
-    // caller may tear storage down only after it has quiesced the coordinator; racing teardown
-    // is an integrity failure, not a benign sink failure.
-    {
-      const rawAppend = this._log.append.bind(this._log);
-      this._appendFailures = 0;
-      this._fatalError = null;
-      this._log.append = (partial) => {
-        let e;
-        try {
-          const handle = this._workers?.get?.(partial?.worker) ?? null;
-          // A provider event is untrusted input. For a known worker, current coordinator
-          // ownership is the only task/run attribution authority; adapter-supplied fields may
-          // neither move cost/evidence into another task nor escape the run being scored.
-          const taskId = handle?.taskId ?? partial?.taskId ?? null;
-          const task = taskId == null ? null : this._tasks?.get?.(taskId) ?? null;
-          const runId = handle ? task?.runId ?? null : partial?.runId ?? task?.runId ?? null;
-          e = rawAppend({ ...partial, taskId, runId });
-        } catch (err) {
-          this._appendFailures += 1;
-          if (!this._fatalError) {
-            const fatal = new Error(`authoritative operational log append failed: ${err?.message ?? err}`, { cause: err });
-            fatal.name = 'OperationalLogIntegrityError';
-            fatal.code = 'operational_log_unavailable';
-            this._fatalError = fatal;
-            for (const handle of this._workers?.values?.() ?? []) {
-              if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
-                handle.spawnAbort.abort({ reason: 'operational_log_unavailable' });
-              }
-              if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) {
-                handle.recoverySpawnAbort.abort({ reason: 'operational_log_unavailable' });
-              }
-            }
-          }
-          throw this._fatalError;
-        }
-        if (e.runId !== null && e.taskId !== null && RUN_TIMELINE_OPERATIONAL_KINDS.has(e.kind)) {
-          try {
-            this._coordMapEvent(e);
-          } catch (err) {
-            // The operational occurrence is already durable. Losing its Run-wide ordering map
-            // would make the projected stream silently incomplete, so poison before accepting
-            // further work and require restart/reconciliation.
-            this._poisonCoordination(err);
-            throw this._fatalError;
-          }
-        }
-        if (this._story && typeof this._story.record === 'function') {
-          this._bestEffortSync(() => this._story.record(e), 'story_sink');
-        }
-        return e;
-      };
-      // Keep the public Log surface attributed by the newest controller while the controller's
-      // own facade retains its immutable physical append. A restart replaces this one forwarding
-      // closure instead of stacking the prior controller's task/run authority around the writer.
-      rawLog.append = (...args) => this._log.append(...args);
-    }
-
-    /** G-46: reason -> {count, lastCode, lastMessage} for every failure this controller recorded
-     * instead of silencing. Beside the durable receipts, so even a receipt the log could not take
-     * is still answerable. */
-    this._failures = new Map();
-    /** @type {Map<string, object>} taskId -> DriverTask */
-    this._tasks = new Map();
-    /** @type {string[]} creation order, for FIFO dispatch */
-    this._taskOrder = [];
-    /** @type {Map<string, object>} workerId -> WorkerHandle (internal) */
-    this._workers = new Map();
-    /** @type {Map<string, object>} requestId -> pending question/approval record */
-    this._pending = new Map();
-    /** Active interaction authority only; historical resolved records stay queryable in _pending. */
-    this._activeInteractionIds = new Set();
-    /**
-     * Issue #31 §2.1(2): `pause:${taskId}:${seq}` -> single-consumer pause record, the
-     * interaction family's exact shape. Coordinator-side and replay-reconstructed from the
-     * per-worker log, exactly like `_pending` — deliberately NOT a store projection, so
-     * PROJECTION_CHECKPOINT_FIELDS gains nothing. Task-scoped, not worker-scoped: a task is what
-     * a 31-b nudge/wait/claim act targets.
-     * @type {Map<string, object>}
-     */
-    this._pausedTurns = new Map();
-    /** KG-1 Part A rule 2: Map<taskId, number> — a replay-derived count of admitted interaction
-     * lifecycle events scoped to that task's worker, incremented in the same _handleEvent
-     * switch that rebuilds _pending/_activeInteractionIds on replay (not a new event kind). */
-    this._interactionGeneration = new Map();
-    /** KG-1 Part A rule 3: Map<runId, number> — a replay-derived count of decision.settled events
-     * whose owning task belongs to runId (a strict subset of the interaction-generation kinds). */
-    this._decisionSettleCount = new Map();
-    /** KG-1 rule 6: union-fence horizon projection cache, keyed by `${kind}:${scopeIdentity}`. */
-    this._horizonCache = new Map();
-    /** @type {Map<string, object>} workerId -> stop-waiter bookkeeping */
-    this._stopWaiters = new Map();
-    /** @type {Map<string, object>} workerId -> unaudited emergency-stop waiter after poison */
-    this._fatalStopWaiters = new Map();
-    /** @type {Map<string, {identity:string,promise:Promise<object>}>} workerId -> live recovery */
-    this._recoveryAttempts = new Map();
-    /** @type {Map<string, Cursor>} */
-    this._cursors = new Map();
-    /** @type {Map<string, number>} workerId -> highest seq served but not yet acked */
-    this._pendingAck = new Map();
-    // BD3-C message lane: messageId -> lane record (minted sender, delivery, receipt state).
-    // Delivery/read observations are process-scoped; message content and per-sender reply
-    // links reconstruct from durable rows without fabricating delivery acknowledgements.
-    this._messages = new Map();
-    /** @type {Map<string, number>} workerId -> message-lane process generation. A delivery is
-     * marked read only by a turn_started in the SAME generation; a respawn (process_closed then
-     * a fresh turn) never inherits its predecessor's reads. */
-    this._messageProcessGeneration = new Map();
-    // BD3-D attention inbox: seq-ordered wake reasons, cursor-chained by `seq`. Coalescing
-    // happens at mint time (storm members merge into one count/perPhase reason).
-    this._attentionReasons = [];
-    this._attentionCursor = 0;
-    this._attentionMintEpoch = 0;
-    /** #316 (a): the OPEN provider-degrade episode per exact route — one entry holds the single
-     * deployment-level row the route's deaths fold into while they are inside the deployment's
-     * declared provider-failure window, so one provider fault class is never N anonymous deaths. */
-    this._providerDegrades = new Map();
-
-    this._workerSeq = 0;
-    this._taskSeq = 0;
-    this._publicationSeq = 0;
-    this._refinementSeq = 0;
-    // #267: the identifiers replay has seen, by field. Allocation is checked against them (and
-    // against live and durable state) by value; nothing is inferred from the shape of an id.
-    this._replayedIds = { workers: new Set(), tasks: new Set(), requests: new Set() };
-
-    // Issue #434: everything below reads the coordination projection (snapshot, task seeding,
-    // plan-node settlement, the worker-log replay, startup reconciliation). A store opened
-    // DEFERRED (#351 lane 3, createDriver's coordinationAsyncOpen) has no projection yet, and
-    // its first chunk may already be folded — reading it here seeded a partial world and the
-    // settle loop APPENDED before the load finished (TypeError on _loadedLedgerHash, the
-    // 2026-09-18 unservable master). On that path the driver runs the reconstruction once the
-    // async replay resolves; every other caller reconstructs here, exactly as before.
-    this._startupReconstructionPhase = 'pending';
-    this._startupReconstructionStartedAt = null;
-    this._startupReconstructionElapsedMs = null;
-    // Issue #364: the workers THIS incarnation actually controls, captured once by the
-    // reconstruction below (null until it has run) — the fact the swarm runtime reconciles its
-    // participant runtime rows against after a restart.
-    this._startupWorkerFleet = null;
-    // Issue #442: the provider-fault deaths THIS incarnation recorded, by worker — the ONE place
-    // both the typed fault (#295) and the preservation it left are known, read by the swarm runtime
-    // so a seat's fault row is composed from the coordinator's own death seam rather than a scan of
-    // the worker ledger.
-    this._providerFaultDeaths = new Map();
-    if (this._coordination?._deferredLoad === true) {
-      this._startupReconstructionPending = true;
-    } else {
-      this._startupReconstruction();
-    }
+    constructor(opts) {
+    runtimeAdmission.constructor(this, opts);
   }
 
   /** Issue #434: the deferred-open completion — createDriver calls this after
@@ -1345,14 +644,8 @@ export class Coordinator {
   }
 
   /** The admission states that refuse EVERY command, read or mutating. */
-  _assertTickable() {
-    if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
-    if (this._drainState !== 'open') throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
-    if (this._fatalError) throw this._fatalError;
-    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('startup session recovery is pending'), { code: 'session_recovery_pending' });
-    if (this._startupRecoveryState === 'failed') throw this._startupRecoveryError;
-    if (this._startupCleanupPending > 0) throw Object.assign(new Error('startup owned-resource reconciliation is pending'), { code: 'coordinator_cleanup_pending' });
-    if (this._startupCleanupError) throw this._startupCleanupError;
+    _assertTickable() {
+    return runtimeAdmission._assertTickable(this, this._recorder);
   }
 
   /** Whether a recorded deadline has come due, derived from the RECORDS themselves (never a timer
@@ -1380,43 +673,20 @@ export class Coordinator {
     return false;
   }
 
-  _assertReadable() {
-    if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
-    if (this._fatalError) throw this._fatalError;
-    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('startup session recovery is pending'), { code: 'session_recovery_pending' });
-    if (this._startupRecoveryState === 'failed') throw this._startupRecoveryError;
-    if (this._startupCleanupError) throw this._startupCleanupError;
-    // Reads stay observational during drain. Deadline transitions, forced stops, and policy
-    // resolutions are effects and remain owned by admitted control paths/timers.
+    _assertReadable() {
+    return runtimeAdmission._assertReadable(this, this._recorder);
   }
 
-  async _withAuthorityOp(operation) {
-    if (this._drainState !== 'open') throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
-    // Preserve same-tick command admission once production startup reconciliation is complete.
-    // Only a genuinely pending injected/asynchronous reconciler introduces an await boundary.
-    if (this._startupCleanupPending > 0) await Promise.all(this._startupCleanupPromises);
-    if (this._startupCleanupError) throw this._startupCleanupError;
-    const release = this._acquireAuthorityOp();
-    try { return await operation(); }
-    finally { release(); }
+    _withAuthorityOp(operation) {
+    return runtimeAdmission._withAuthorityOp(this, this._recorder, operation);
   }
 
-  _acquireAuthorityOp(allowDraining = false) {
-    if (this._drainState !== 'open' && !(allowDraining && this._drainState === 'draining')) throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
-    const token = Object.freeze({}); let active = true;
-    this._authorityTokens.add(token); this._authorityOps = this._authorityTokens.size;
-    return () => {
-      if (!active) return;
-      active = false; this._authorityTokens.delete(token); this._authorityOps = this._authorityTokens.size;
-    };
+    _acquireAuthorityOp(allowDraining = false) {
+    return runtimeAdmission._acquireAuthorityOp(this, this._recorder, allowDraining);
   }
 
-  _trackAuthorityPromise(operation, allowDraining = false) {
-    const release = this._acquireAuthorityOp(allowDraining);
-    let result;
-    try { result = operation(); }
-    catch (error) { release(); return Promise.reject(error); }
-    return Promise.resolve(result).finally(release);
+    _trackAuthorityPromise(operation, allowDraining = false) {
+    return runtimeAdmission._trackAuthorityPromise(this, this._recorder, operation, allowDraining);
   }
 
   // Compose the swallowed startup error. Issue #384: the refusal must TEACH. It carries
@@ -1449,7 +719,9 @@ export class Coordinator {
     return runtimeRecovery.startupReady(this, this._recorder);
   }
 
-  _fleetDrainOwnsShutdown() { return this._drainState !== 'open'; }
+    _fleetDrainOwnsShutdown() {
+    return runtimeAdmission._fleetDrainOwnsShutdown(this, this._recorder);
+  }
 
   beginStartupRecovery(authority) {
     return runtimeRecovery.beginStartupRecovery(this, this._recorder, authority);
@@ -1469,43 +741,13 @@ export class Coordinator {
 
   /** Keep fleet capabilities behind the same coordinator health boundary as every other
    * public command. Northbounds call these methods; they never receive a second controller. */
-  async _assertOperational() {
-    await Promise.all(this._startupCleanupPromises);
-    if (this._startupCleanupError) throw this._startupCleanupError;
-    this.tick();
+    _assertOperational() {
+    return runtimeAdmission._assertOperational(this, this._recorder);
   }
 
   /** Irreversibly fence this controller before its durable writer lease is handed off. */
-  closeAuthority() {
-    if (this._closed) return false;
-    // Issue #459: the fence reaches the out-of-process steps too. A supervised gate run is not a
-    // worker handle the drain converges — it is a child this controller spawned, so a stop that
-    // leaves one burning the host would be a stop that did not stop; killing it here (before the
-    // not-drained checks, which judge worker handles) keeps the fence exactly as abrupt as its
-    // name. The landing that owned the run records its own failure row, and a run that never got
-    // to leaves the scratch checkout to the next open's sweep.
-    this._supervised.killAll();
-    // Durable replay handles describe prior ownership; they are not native transports owned by
-    // this Coordinator instance. Locally dispatched handles are marked at the resource boundary
-    // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
-    // Issue #472: a worker the stop STOPPED WAITING ON is not authority this fence still holds —
-    // the abandonment IS the release (its holds are named durably by the #467 rows, its checkout is
-    // the next open's reconciliation's), so a stop that ended with abandoned workers closes exactly.
-    const active = [...this._workers.values()]
-      .filter((worker) => this._ownsLocalResources(worker) && !worker.stopAbandoned);
-    if (active.length > 0) throw Object.assign(new Error(`coordinator still owns ${active.length} active worker(s); kill/reap before close`), { code: 'coordinator_not_drained' });
-    if (this._authorityOps > 0) throw Object.assign(new Error(`coordinator still has ${this._authorityOps} authority operation(s) in flight`), { code: 'coordinator_not_drained' });
-    if (this._hasPendingInteractionAuthority()) throw Object.assign(new Error('coordinator still owns pending interaction authority'), { code: 'coordinator_not_drained' });
-    if (this._startupCleanupPending > 0) throw Object.assign(new Error('coordinator owned-resource reconciliation is pending'), { code: 'coordinator_not_drained' });
-    if (this._startupCleanupError) throw Object.assign(new Error('coordinator owned-resource reconciliation is incomplete'), { code: 'coordinator_not_drained' });
-    if (this._drainHistoricalReconcilePromise) throw Object.assign(new Error('coordinator historical resource reconciliation is pending'), { code: 'coordinator_not_drained' });
-    if (!['disabled', 'ready'].includes(this._startupRecoveryState) && !(this._drainHistoricalReconciled && this._drainReceipt)) {
-      throw Object.assign(new Error('coordinator startup recovery authority is not settled'), { code: 'coordinator_not_drained' });
-    }
-    this._drainState = 'draining';
-    this._closed = true;
-    this._drainState = 'closed';
-    return true;
+    closeAuthority() {
+    return runtimeAdmission.closeAuthority(this, this._recorder);
   }
 
   /** Issue #459: the pool of out-of-process steps this resident supervises — what the landing's
@@ -1531,14 +773,8 @@ export class Coordinator {
     return runtimeObservation.drain(this, this._recorder, ctx);
   }
 
-  _drainFailure(error) {
-    if (['coordinator_closed', 'coordinator_drain_capacity', 'coordinator_drain_invalid', 'coordinator_drain_unavailable'].includes(error?.code)) return error;
-    const failure = Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
-    // The wrapper names its cause: a deadline that already names the wait keeps it; any other
-    // failure rides as {code, message} so the drain never reports a bare non-convergence.
-    if (error?.detail !== undefined && error?.detail !== null) failure.detail = error.detail;
-    else if (error?.code !== undefined) failure.detail = { cause: { code: error.code, message: error?.message ?? null } };
-    return failure;
+    _drainFailure(error) {
+    return runtimeAdmission._drainFailure(this, this._recorder, error);
   }
 
   /** Issue #478: reopen the admission a fleet drain closed, for the ONE caller that owns that
@@ -1554,11 +790,8 @@ export class Coordinator {
    * ended without converging — the state the caller's own failed window is in — can be reopened,
    * and only by the authority that ran it. What the drain DID stays durable (its admission, its
    * dispositions, its recorded effects): reopening admits new work, it never unwinds the drain. */
-  reopenAdmission() {
-    if (this._closed) return false;
-    if (this._drainState !== 'draining' || this._drainPromise !== null) return false;
-    this._drainState = 'open';
-    return true;
+    reopenAdmission() {
+    return runtimeAdmission.reopenAdmission(this, this._recorder);
   }
 
   /** Stop and reap one durable Run target set without fencing or closing unrelated Runs. The
@@ -1790,8 +1023,8 @@ export class Coordinator {
     return Object.freeze(Object.fromEntries(Object.entries(holds).filter(([, held]) => held)));
   }
 
-  _ownsLocalResources(handle) {
-    return Object.keys(this._localResourceOwnership(handle)).length > 0;
+    _ownsLocalResources(handle) {
+    return runtimeAdmission._ownsLocalResources(this, this._recorder, handle);
   }
 
   /** #265/#360/#450: the ONE derivation of a stop's named waits, shared by the fleet drain and the
@@ -1885,33 +1118,20 @@ export class Coordinator {
     return this._stopWaitRows(targetWorkerIds, dispositions, actor);
   }
 
-  _hasPendingInteractionAuthority() {
-    return this._activeInteractionIds.size > 0;
+    _hasPendingInteractionAuthority() {
+    return runtimeAdmission._hasPendingInteractionAuthority(this, this._recorder);
   }
 
-  _resolveInteractionAuthority(requestId, record) {
-    record.state = 'resolved';
-    this._activeInteractionIds.delete(requestId);
+    _resolveInteractionAuthority(requestId, record) {
+    return runtimeAdmission._resolveInteractionAuthority(this, this._recorder, requestId, record);
   }
 
   /** swarm-a finding 8: the boundary refusal for an interaction frame whose `requestId` cannot key
    * a record. Same durable shape as the decision family's malformed rejection — a named reason on
    * the worker's own stream plus the coordinated `authority.rejected`, and NO admission side
    * effect: no pending record, no task transition, no interaction authority. */
-  _refuseInteractionFrameId({ workerId, harness, turnEpoch, handle, appendAttributed, family, requestId }) {
-    const observed = requestId === undefined ? 'missing'
-      : typeof requestId === 'string' ? (requestId.length === 0 ? 'empty' : 'unusable') : typeof requestId;
-    const rejected = appendAttributed({
-      worker: workerId, harness, turnEpoch, kind: 'control.malformed_interaction_rejected', actor: 'policy',
-      payload: { requestId: null, kind: family, reason: 'malformed_request_id', observed },
-    });
-    const task = this._tasks.get(handle.taskId);
-    const evidence = this._coordMapEvent(rejected);
-    this._coordRecord('authority.rejected', {
-      taskId: task?.id ?? null, workerId, requestId: null, kind: family,
-      reason: 'malformed_request_id', observed, evidence,
-    }, `driver.authority.rejected:${workerId}:malformed:${rejected.seq}`, 'policy');
-    this._bumpInteractionGeneration(handle.taskId);
+    _refuseInteractionFrameId({ workerId, harness, turnEpoch, handle, appendAttributed, family, requestId }) {
+    return runtimeAdmission._refuseInteractionFrameId(this, this._recorder, { workerId, harness, turnEpoch, handle, appendAttributed, family, requestId });
   }
 
   /** The worker's live pending interaction, resolved BY KEY from `_pending`. The handle's
@@ -1929,9 +1149,8 @@ export class Coordinator {
    * auto-settle, stamping `consumer: 'policy'` (the same convention `_cancelPendingForDrain`
    * uses). 31-b's nudge/wait/claim acts reuse this helper unmodified.
    */
-  _resolvePauseAuthority(pauseId, record, consumer = 'policy') {
-    record.state = 'resolved';
-    record.consumer = consumer;
+    _resolvePauseAuthority(pauseId, record, consumer = 'policy') {
+    return runtimeAdmission._resolvePauseAuthority(this, this._recorder, pauseId, record, consumer);
   }
 
   /**
@@ -1970,65 +1189,8 @@ export class Coordinator {
    *   gate from a checkpoint. `claim_turn` (the real verifier), `nudge_turn` (a continuation),
    *   and `wait_turn` are the only dispositions, and each is an explicit caller act.
    */
-  _admitPauseRecord(handle, task, terminalEvent, wr, appendAttributed) {
-    const workerId = handle.id;
-    const turnEpoch = terminalEvent?.turnEpoch ?? this._safeTurnEpoch(handle);
-    const changedPathsDigest = this._pauseChangedPathsDigest(handle, task);
-    // Bidirectional v2 rule 1/2: durable pause-origin claim, sanitized AT MINT via the shared
-    // messages.mjs pipeline (redact-before-truncate, 240-byte text bound, wrapProse untrusted).
-    // Replay reconstructs origin byte-for-byte; projection never depends on in-memory workerResult.
-    const rawSummary = wr?.summary;
-    const originSummary = (rawSummary == null || rawSummary === '')
-      ? null
-      : wrapProse(workerId, boundedAttentionText(rawSummary, 240));
-    const origin = Object.freeze({
-      kind: 'turn_completed',
-      resultStatus: 'completed',
-      summary: originSummary,
-    });
-    // Same `appendAttributed` durability tier and per-worker stream as question.asked /
-    // approval.requested / decision.requested. `workerId` rides the envelope's own `worker`
-    // field and is deliberately NOT duplicated into the payload — the interaction-family shape.
-    const pausedEvent = appendAttributed({
-      worker: workerId, harness: terminalEvent?.harness, turnEpoch,
-      kind: 'turn.paused', actor: 'worker',
-      payload: { taskId: task.id, turnEpoch, changedPathsDigest, origin },
-    });
-    const pauseId = `pause:${task.id}:${terminalEvent.seq}`;
-    const record = {
-      state: 'pending', resolution: null, consumer: null, worker: workerId,
-      taskId: task.id, turnEpoch, changedPathsDigest, mintedEvent: terminalEvent.seq,
-      // 31-b Part D rule 8: `claim` RE-RUNS the live trust gate, and `_runTrustGate(handle,
-      // workerResult)` needs the turn's own worker result as its second argument. The record
-      // carries it so a later `claim` reproduces the SAME call an ordinary turn completion makes.
-      // `changedPathsDigest` above is attention-only evidence and is never gate input.
-      workerResult: wr ?? null,
-      // Bidirectional v2: durable origin also mirrored on the in-memory record so live projection
-      // and replay share one shape (replay seeds origin from the event payload).
-      origin,
-    };
-    this._pausedTurns.set(pauseId, record);
-    this._coordTransition(task, 'paused', `task.paused:${task.id}:${terminalEvent.seq}`,
-      this._coordMapEvent(pausedEvent), 'policy');
-    // `_coordTransition` never writes in-memory status; every existing call site carries its own
-    // explicit assignment. P2-3: `handle.status` deliberately stays 'working' — no 31-a-owned
-    // projection reads it to decide whether a task is paused.
-    task.status = 'paused';
-
-    // Pause ownership (revised 2026-09-12, native-completion-loop finding). The checkpoint is a
-    // VISIBLE park, never a self-driving one: the coordinator sends no policy progress nudge,
-    // arms no window, and never lets elapsed time decide the claim. The retired automatic cycle
-    // made the policy's own nudge start the next turn, read that boundary as the answer, and arm
-    // another cycle for the completed turn — so the policy renewed its own work indefinitely
-    // (570 provider turns on a real native self-build while the model kept reporting "Complete,
-    // no remaining work").
-    //
-    // Completion authority belongs to the autonomous orchestrator, not to this seam, and it is
-    // identical for a driven and an un-driven run. The record stays pending and is projected by
-    // `pausedTurns()`; an explicit `claim_turn` runs the existing verifier/trust gate,
-    // `nudge_turn` admits a real continuation, and `wait_turn` notes intent. `false` parks the
-    // turn: no gate dispatch, no settle, no prompt, no timer.
-    return false;
+    _admitPauseRecord(handle, task, terminalEvent, wr, appendAttributed) {
+    return runtimeAdmission._admitPauseRecord(this, this._recorder, handle, task, terminalEvent, wr, appendAttributed);
   }
 
   // =========================================================================
@@ -2087,71 +1249,17 @@ export class Coordinator {
   }
 
   /** Snapshot a contribution while its author continues. Legacy mutating ports need a pause. */
-  captureContribution(workerId, { contributionId } = {}) {
-    return this._withAuthorityOp(async () => {
-      const service = this._contributionOperations();
-      const prior = service.captured(workerId, contributionId);
-      if (prior) return structuredClone(prior);
-      if (typeof this._worktrees.snapshot === 'function') {
-        const handle = this._getWorker(workerId);
-        const task = this._tasks.get(handle.taskId);
-        if (['stopping', 'dead', 'exited'].includes(handle.status)) {
-          throw Object.assign(new Error('Participant workspace is closing or closed'), { code: 'contribution_workspace_unavailable' });
-        }
-        // Register the whole queue before yielding. Stop can close a process, but must wait
-        // for every admitted capture to be retained before it removes this workspace.
-        const operation = (handle.contributionCapturePending ?? Promise.resolve()).catch(() => {}).then(async () => {
-          await handle.worktreeReady;
-          return service.capture({ handle, task, contributionId });
-        });
-        const settled = operation.then(() => {}, () => {});
-        handle.contributionCapturePending = settled;
-        try { return await operation; }
-        finally { if (handle.contributionCapturePending === settled) handle.contributionCapturePending = null; }
-      }
-      const pause = this.pausedTurns({ workerId })[0];
-      if (!pause) throw Object.assign(new Error('Contribution capture requires a paused turn'), {
-        code: 'contribution_capture_not_paused',
-      });
-      const reservation = await this._reservePauseRecord(pause.pauseId);
-      if (!reservation.ok) throw Object.assign(new Error('Contribution turn changed before capture'), {
-        code: 'contribution_capture_conflict',
-      });
-      const targets = this._pausedActTargets(reservation.record);
-      if (!targets.ok) {
-        reservation.rollback();
-        throw Object.assign(new Error('Contribution author is no longer paused'), {
-          code: 'contribution_capture_not_paused',
-        });
-      }
-      const { handle, task } = targets;
-      // Stop may proceed with process closure, but preservation/reaping waits for this exact
-      // filesystem operation. Verification does not borrow the author's mutable workspace.
-      let release;
-      handle.contributionCapturePending = new Promise((resolve) => { release = resolve; });
-      try {
-        await handle.worktreeReady;
-        return await service.capture({ handle, task, contributionId });
-      } finally {
-        handle.contributionCapturePending = null;
-        release();
-        reservation.rollback();
-      }
-    });
+    captureContribution(workerId, { contributionId } = {}) {
+    return runtimeAdmission.captureContribution(this, this._recorder, workerId, { contributionId });
   }
 
-  observedNativeSubagents(workerId) {
-    this._assertReadable();
-    return nativeSubagentView(this._log.read(workerId));
+    observedNativeSubagents(workerId) {
+    return runtimeAdmission.observedNativeSubagents(this, this._recorder, workerId);
   }
 
   /** A retained revision can be checked while its author continues, or after its session stops. */
-  checkContribution(workerId, { contributionId, checkId, signal } = {}) {
-    return this._withAuthorityOp(async () => {
-      const handle = this._getWorker(workerId);
-      const task = this._tasks.get(handle.taskId);
-      return this._contributionOperations().check({ handle, task, contributionId, checkId, signal });
-    });
+    checkContribution(workerId, { contributionId, checkId, signal } = {}) {
+    return runtimeAdmission.checkContribution(this, this._recorder, workerId, { contributionId, checkId, signal });
   }
 
   /** #235: the transport-liveness attention projection — EVIDENCE CLASSIFICATION ONLY (the
@@ -2187,38 +1295,8 @@ export class Coordinator {
    * a different authority op. COMMIT only after the act's own effect durably lands; a throw or a
    * refusal anywhere in the bundle rolls the record back to `pending` with nothing consumed.
    */
-  async _reservePauseRecord(pauseId) {
-    const record = this._pausedTurns.get(pauseId);
-    if (!record) return { ok: false, result: 'not_found' };
-    if (record.state === 'resolving') {
-      await record.resolvingDone;
-      if (record.state === 'resolved') {
-        return { ok: false, result: 'already_resolved', resolution: record.resolution };
-      }
-      return this._reservePauseRecord(pauseId);
-    }
-    if (record.state !== 'pending') {
-      return { ok: false, result: 'already_resolved', resolution: record.resolution };
-    }
-    record.state = 'resolving';
-    let releaseResolving;
-    record.resolvingDone = new Promise((resolve) => { releaseResolving = resolve; });
-    const finishResolving = () => { releaseResolving(); delete record.resolvingDone; };
-    return {
-      ok: true,
-      record,
-      rollback: () => {
-        record.state = 'pending';
-        record.consumer = null;
-        record.resolution = null;
-        finishResolving();
-      },
-      commit: (resolution, consumer) => {
-        this._resolvePauseAuthority(pauseId, record, consumer);
-        record.resolution = resolution;
-        finishResolving();
-      },
-    };
+    _reservePauseRecord(pauseId) {
+    return runtimeAdmission._reservePauseRecord(this, this._recorder, pauseId);
   }
 
   /** The live worker/task pair behind a reserved pause record, or a typed refusal. */
@@ -2232,22 +1310,8 @@ export class Coordinator {
    * longer strand the record in `resolving`, where it hangs every later act forever and invisibly:
    * `_reservePauseRecord` makes a racing second caller await `record.resolvingDone`, which only
    * rollback()/commit() ever release. */
-  async _withPauseReservation(pauseId, run) {
-    const reservation = await this._reservePauseRecord(pauseId);
-    if (!reservation.ok) return reservation;
-    let settled = false;
-    const once = (settle) => (...args) => {
-      if (settled) return undefined;
-      settled = true;
-      return settle(...args);
-    };
-    const commit = once(reservation.commit);
-    const rollback = once(reservation.rollback);
-    try {
-      return await run({ record: reservation.record, commit, rollback });
-    } finally {
-      rollback(); // idempotent: a reservation that already committed is never rolled back
-    }
+    _withPauseReservation(pauseId, run) {
+    return runtimeAdmission._withPauseReservation(this, this._recorder, pauseId, run);
   }
 
   /**
@@ -2471,14 +1535,8 @@ export class Coordinator {
    * (`<repoRoot>/.baton/wt/<ownerTaskId>`), compared by real path. Only such a checkout has a
    * lane branch for the #428 custody repair; a fixture's or embedder's checkout elsewhere is
    * outside the authority and is preserved through capture alone. */
-  _isAuthorityCheckout(worktree, ownerTaskId) {
-    if (typeof this._repoRoot !== 'string' || typeof ownerTaskId !== 'string' || ownerTaskId.length === 0) return false;
-    try {
-      const expected = realpathSync(join(this._repoRoot, '.baton', 'wt', ownerTaskId));
-      return realpathSync(worktree) === expected;
-    } catch {
-      return false;
-    }
+    _isAuthorityCheckout(worktree, ownerTaskId) {
+    return runtimeAdmission._isAuthorityCheckout(this, this._recorder, worktree, ownerTaskId);
   }
 
   /** Whether this handle works in a checkout it deliberately shares with another live holder — or
@@ -2867,12 +1925,8 @@ export class Coordinator {
 
   /** Issue #450: a worker this controller watched die and whose holds are all released — the only
    * worker whose reservation may be released without destroying anything. */
-  _capacityWorkerGone(handle) {
-    if (!handle || !['dead', 'exited', 'orphaned'].includes(handle.status)) return false;
-    if (handle.processRef && handle.processRef.state !== 'closed') return false;
-    if (this._ownsLocalResources(handle)) return false;
-    if (this._capacityOwnerHeld(handle.sessionContext?.ownerTaskId ?? handle.taskId)) return false;
-    return true;
+    _capacityWorkerGone(handle) {
+    return runtimeAdmission._capacityWorkerGone(this, this._recorder, handle);
   }
 
   /** Issue #450: the capacity reservations whose worker is closed/absent — the leak #360's
@@ -3104,78 +2158,26 @@ export class Coordinator {
 
   /** Dispatch admission for one pending task, as a closed outcome: `selected` | `deferred`
    * {vendor, ceiling, inFlight} | `unavailable` {reason}. */
-  _resolveVendor(task) {
-    if (task.vendorRequested !== 'auto') {
-      const selected = this._resolveExplicitRoute(task.vendorRequested, {
-        sessionRequest: task.sessionRequest, model: task.modelRequested,
-        modelPolicy: task.modelPolicy, effort: task.effortRequested,
-        workerPolicyRequest: task.workerPolicyRequest,
-      });
-      if (!selected.ok) return { outcome: 'unavailable', reason: selected.reason ?? 'route_unavailable' };
-      return this._admitResolvedVendor(selected.selection);
-    }
-    const auto = this._selectAutoRoute(task);
-    if (auto.selection) return this._admitResolvedVendor(auto.selection);
-    if (auto.saturated) return { outcome: 'deferred', ...auto.saturated };
-    return { outcome: 'unavailable', reason: 'no_capable_route' };
+    _resolveVendor(task) {
+    return runtimeAdmission._resolveVendor(this, this._recorder, task);
   }
 
   /** The ONE configured-ceiling enforcement point, applied to the vendor a route actually
    * resolved — so no `_route` implementation, adaptive or custom, can dispatch over a configured
    * ceiling, and an exact route is deferred for its own vendor rather than rerouted. */
-  _admitResolvedVendor(selection) {
-    const vendor = selection.vendor;
-    const inFlight = this._inFlightCount(vendor);
-    const ceiling = this._configuredCeiling(vendor);
-    if (ceiling !== null && inFlight >= ceiling) return { outcome: 'deferred', vendor, ceiling, inFlight };
-    return { outcome: 'selected', selection };
+    _admitResolvedVendor(selection) {
+    return runtimeAdmission._admitResolvedVendor(this, this._recorder, selection);
   }
 
   /** The auto route: build the capable card set, select over it, and report the first saturated
    * capable candidate when selection yields nothing (so the wait is ledgered with a real vendor). */
-  _selectAutoRoute(task) {
-    const cards = {};
-    const resolvedModels = {};
-    const resolvedWorkerPolicies = {};
-    for (const [name, ad] of Object.entries(this._adapters)) {
-      const card = ad.card();
-      if (!cardSupportsSession(card, task.sessionRequest)) continue;
-      const resolved = resolveCardModel(card, task.modelRequested, task.modelPolicy, { explicit: false });
-      const effort = resolveEffort(card, task.effortRequested);
-      let workerPolicy = null;
-      try {
-        workerPolicy = task.workerPolicyRequest ? resolveWorkerPolicy(task.workerPolicyRequest, card.workerPolicy) : null;
-      } catch { continue; }
-      if (resolved.ok && effort.ok) {
-        cards[name] = {
-          ...card,
-          modelSelection: { ...(card.modelSelection ?? {}), resolved: resolved.model ?? null, resolvedEffort: effort.effort ?? null },
-        };
-        resolvedModels[name] = resolved.model;
-        resolvedWorkerPolicies[name] = workerPolicy;
-        cards[name]._resolvedEffort = effort.effort;
-      }
-    }
-    const inFlight = {};
-    for (const name of Object.keys(this._adapters)) inFlight[name] = this._inFlightCount(name);
-    const chosen = this._route(task, cards, inFlight);
-    if (chosen && this._adapters[chosen] && Object.hasOwn(resolvedModels, chosen)) {
-      return {
-        selection: {
-          vendor: chosen, model: resolvedModels[chosen], effort: cards[chosen]._resolvedEffort ?? null,
-          workerPolicyResolution: resolvedWorkerPolicies[chosen] ?? null,
-        },
-        saturated: null,
-      };
-    }
-    return { selection: null, saturated: this._firstSaturatedCandidate(cards, inFlight) };
+    _selectAutoRoute(task) {
+    return runtimeAdmission._selectAutoRoute(this, this._recorder, task);
   }
 
   /** The card's configured ceiling, or null for "no configured limit"/no card. */
-  _configuredCeiling(vendor) {
-    return normalizeConcurrencyCeiling(
-      this._adapters[vendor]?.card()?.concurrencyCeiling, `${vendor} concurrencyCeiling`,
-    );
+    _configuredCeiling(vendor) {
+    return runtimeAdmission._configuredCeiling(this, this._recorder, vendor);
   }
 
   /** The first capable candidate (registration order) at its configured ceiling. Candidates
@@ -3190,49 +2192,8 @@ export class Coordinator {
     return null;
   }
 
-  _resolveExplicitRoute(requestedHarness, options = {}) {
-    const candidates = Object.entries(this._adapters)
-      .filter(([name, adapter]) => name === requestedHarness || adapter.card()?.harness === requestedHarness);
-    if (candidates.length === 0) return { ok: false, reason: 'unknown_harness' };
-    const sessionCandidates = candidates.filter(([, adapter]) => cardSupportsSession(adapter.card(), options.sessionRequest));
-    if (sessionCandidates.length === 0) return { ok: false, reason: 'session_unavailable' };
-    const modelCandidates = sessionCandidates.map(([vendor, adapter]) => ({
-      vendor, adapter,
-      model: resolveCardModel(adapter.card(), options.model, options.modelPolicy, { explicit: true }),
-    })).filter((candidate) => candidate.model.ok);
-    if (modelCandidates.length === 0) return { ok: false, reason: 'model_unavailable' };
-    const effortCandidates = modelCandidates.map((candidate) => ({
-      ...candidate,
-      effort: resolveEffort(candidate.adapter.card(), options.effort),
-    }));
-    const capable = effortCandidates.filter((candidate) => candidate.effort.ok);
-    if (capable.length === 0) {
-      const reasons = [...new Set(effortCandidates.map((candidate) => candidate.effort.reason).filter(Boolean))];
-      return { ok: false, reason: reasons.length === 1 ? reasons[0] : 'effort_unavailable' };
-    }
-    const policyCandidates = capable.map((candidate) => {
-      try {
-        return {
-          ...candidate,
-          workerPolicyResolution: options.workerPolicyRequest
-            ? resolveWorkerPolicy(options.workerPolicyRequest, candidate.adapter.card().workerPolicy) : null,
-        };
-      } catch (error) { return { ...candidate, workerPolicyError: error }; }
-    });
-    const policyCapable = policyCandidates.filter((candidate) => !candidate.workerPolicyError);
-    if (policyCapable.length === 0) {
-      const reasons = [...new Set(policyCandidates.map((candidate) => candidate.workerPolicyError?.code).filter(Boolean))];
-      return { ok: false, reason: reasons.length === 1 ? reasons[0] : 'worker_policy_unavailable' };
-    }
-    if (policyCapable.length > 1) return { ok: false, reason: 'route_ambiguous' };
-    const selected = policyCapable[0];
-    return {
-      ok: true,
-      selection: {
-        vendor: selected.vendor, model: selected.model.model, effort: selected.effort.effort,
-        workerPolicyResolution: selected.workerPolicyResolution,
-      },
-    };
+    _resolveExplicitRoute(requestedHarness, options = {}) {
+    return runtimeAdmission._resolveExplicitRoute(this, this._recorder, requestedHarness, options);
   }
 
   /**
@@ -3299,31 +2260,8 @@ export class Coordinator {
     return runtimeRecovery._exactPreservedRecoveryContext(this, this._recorder, handle, opts);
   }
 
-  _semanticTargetMatches(handle, expected, expectedDigest) {
-    if (!handle || !expected || typeof expected !== 'object'
-      || canonicalDigest(expected) !== expectedDigest) return false;
-    const task = this._tasks.get(handle.taskId);
-    const activeCount = [...this._workers.values()].filter((candidate) => {
-      if (!['working', 'blocked', 'interrupted'].includes(candidate.status)) return false;
-      const candidateTask = this._tasks.get(candidate.taskId);
-      return (candidateTask?.runId ?? candidate.runId ?? null)
-        === (task?.runId ?? handle.runId ?? null);
-    }).length;
-    const actual = {
-      workerId: handle.id,
-      taskId: task?.id ?? handle.taskId,
-      fence: this._fences.current(handle.id).fence,
-      // Role is immutable Plan metadata resolved by the Application before effect start. The
-      // Plan-binding digest below prevents a changed Plan/node from retaining this value.
-      role: expected.role,
-      activeCount,
-      turnEpoch: this._safeTurnEpoch(handle),
-      turnState: handle.status,
-      preservationReceiptDigest: handle.status === 'interrupted'
-        ? handle.sessionPreservation?.receiptDigest ?? null : null,
-      ...this._semanticControlBinding(handle, task),
-    };
-    return canonicalDigest(actual) === expectedDigest;
+    _semanticTargetMatches(handle, expected, expectedDigest) {
+    return runtimeAdmission._semanticTargetMatches(this, this._recorder, handle, expected, expectedDigest);
   }
 
     _failWorkerPolicyObservation(handle, turnEpoch, mismatches, observation = null) {
@@ -3363,129 +2301,16 @@ export class Coordinator {
     return runtimeObservation._providerRoutePolicy(this, this._recorder, handle);
   }
 
-  _providerCapabilityRefusal(handle, route) {
-    const adapter = this._adapters[handle.vendor];
-    const governance = adapter?.card()?.governance;
-    if (!governance) return 'provider_governance_card_unavailable';
-    if (!Number.isSafeInteger(governance.maxWireFrameBytes)
-      || governance.maxWireFrameBytes <= 0
-      || governance.maxWireFrameBytes > this._providerGovernance.projection.maxWireFrameBytes) return 'wire_frame_bound_unavailable';
-    if (route.mode !== 'strict') return null;
-    if (governance.usage?.terminalSeal !== 'native') return 'terminal_usage_seal_unavailable';
-    if (route.terminalReserve.tokens > 0 && governance.usage?.tokens !== 'native') return 'native_token_usage_unavailable';
-    if (route.terminalReserve.usd > 0 && governance.usage?.usd !== 'native') return 'native_usd_usage_unavailable';
-    if (governance.providerCalls?.enforcement !== 'native_pre_effect') return 'provider_call_pre_effect_enforcement_unavailable';
-    if (governance.toolCalls?.enforcement !== 'approval_pre_effect') return 'tool_call_pre_effect_enforcement_unavailable';
-    if (typeof adapter?.bindProviderGovernance !== 'function') return 'provider_policy_binding_unavailable';
-    return null;
+    _providerCapabilityRefusal(handle, route) {
+    return runtimeAdmission._providerCapabilityRefusal(this, this._recorder, handle, route);
   }
 
-  _bindStrictProviderGovernance(handle, route) {
-    if (route.mode !== 'strict') return { ok: true, binding: null };
-    const core = {
-      schemaVersion: 1,
-      policyDigest: this._providerGovernance.digest,
-      routeDigest: route.digest,
-      harness: handle.vendor,
-      model: handle.modelResolved,
-      effort: handle.effortResolved,
-      maxWireFrameBytes: this._providerGovernance.projection.maxWireFrameBytes,
-      maxProviderCallsPerTurn: this._providerGovernance.projection.maxProviderCallsPerTurn,
-      maxToolCallsPerTurn: this._providerGovernance.projection.maxToolCallsPerTurn,
-      terminalReserve: { ...route.terminalReserve },
-    };
-    const envelope = deepFreeze({ ...core, bindingDigest: canonicalDigest(core) });
-    let ack;
-    try { ack = this._adapters[handle.vendor].bindProviderGovernance(envelope); }
-    catch { return { ok: false, code: 'provider_policy_binding_refused' }; }
-    if (!ack || typeof ack !== 'object' || typeof ack.then === 'function'
-      || Object.keys(ack).sort().join(',') !== ['bindingDigest', 'ok'].sort().join(',')
-      || ack.ok !== true || ack.bindingDigest !== envelope.bindingDigest) {
-      return { ok: false, code: 'provider_policy_binding_refused' };
-    }
-    return { ok: true, binding: { mechanism: 'adapter_sync_pre_effect', bindingDigest: envelope.bindingDigest } };
+    _bindStrictProviderGovernance(handle, route) {
+    return runtimeAdmission._bindStrictProviderGovernance(this, this._recorder, handle, route);
   }
 
-  _admitProviderTurn(handle, task, phase) {
-    const route = this._providerRoutePolicy(handle);
-    handle.providerGovernance = route;
-    handle.providerPolicyDigest = route ? this._providerGovernance?.digest ?? null : null;
-    if (!this._providerGovernance) return { ok: true, route: null };
-    if (!route) {
-      const event = this._log.append({
-        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
-        kind: 'resource.provider_turn_refused', actor: 'policy', ...this._routeAttribution(handle, task),
-        payload: {
-          phase,
-          code: 'exact_provider_route_unconfigured',
-          policyDigest: this._providerGovernance.digest,
-          harness: handle.vendor ?? null,
-          model: handle.modelResolved ?? null,
-          effort: handle.effortResolved ?? null,
-        },
-      });
-      return { ok: false, route: null, event, code: 'exact_provider_route_unconfigured' };
-    }
-    const limits = {
-      tokens: Number(task?.brief?.budget?.tokens ?? 0),
-      usd: usdFromNanos(usdToNanos(Number(task?.brief?.budget?.usd ?? 0))) ?? 0,
-    };
-    const used = { ...handle.budgetUsed };
-    const remaining = {
-      tokens: limits.tokens > 0 ? Math.max(0, limits.tokens - used.tokens) : 0,
-      usd: limits.usd > 0 ? subtractUsdFloor(limits.usd, used.usd) ?? 0 : 0,
-    };
-    const capabilityRefusal = this._providerCapabilityRefusal(handle, route);
-    const headroomRefusal = route.terminalReserve.tokens > 0 && (limits.tokens <= 0 || remaining.tokens < route.terminalReserve.tokens)
-      ? 'token_reserve_unavailable'
-      : route.terminalReserve.usd > 0 && (limits.usd <= 0 || remaining.usd < route.terminalReserve.usd)
-        ? 'usd_reserve_unavailable'
-        : null;
-    let refusal = capabilityRefusal ?? headroomRefusal;
-    const strictBinding = refusal ? { ok: false, binding: null } : this._bindStrictProviderGovernance(handle, route);
-    refusal ??= strictBinding.ok ? null : strictBinding.code;
-    const core = {
-      phase,
-      policyDigest: this._providerGovernance.digest,
-      routeDigest: route.digest,
-      harness: route.harness,
-      model: route.model,
-      effort: route.effort,
-      mode: route.mode,
-      reserve: { ...route.terminalReserve },
-      used,
-      limits,
-      remaining,
-      providerCallLimit: this._providerGovernance.projection.maxProviderCallsPerTurn,
-      toolCallLimit: this._providerGovernance.projection.maxToolCallsPerTurn,
-      ...(strictBinding.binding ? { strictBinding: strictBinding.binding } : {}),
-    };
-    const event = this._log.append({
-      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
-      kind: refusal ? 'resource.provider_turn_refused' : 'resource.provider_turn_admitted', actor: 'policy',
-      ...this._routeAttribution(handle, task),
-      payload: refusal ? { ...core, code: refusal } : core,
-    });
-    if (refusal) return { ok: false, route, event, code: refusal };
-    handle.providerTurn = {
-      admissionSeq: event.seq,
-      phase,
-      usage: { tokens: 0, usd: 0 },
-      counterIds: new Set(),
-      counterObservations: new Map(),
-      providerCallIds: new Set(),
-      providerCallPhases: new Map(),
-      anonymousProviderCalls: 0,
-      providerCalls: 0,
-      toolCallIds: new Set(),
-      toolCallPhases: new Map(),
-      anonymousToolCalls: 0,
-      toolCalls: 0,
-      violation: null,
-      sealed: false,
-    };
-    handle.providerTerminalSeal = null;
-    return { ok: true, route, event };
+    _admitProviderTurn(handle, task, phase) {
+    return runtimeAdmission._admitProviderTurn(this, this._recorder, handle, task, phase);
   }
 
   _failInitialProviderAdmission(handle, task, admission) {
@@ -3510,20 +2335,8 @@ export class Coordinator {
    * of its family; possession of a superseded digest is never authority. Throws
    * context_pack_stale (or context_pack_invalid for a malformed citation list) — the typed
    * refusal surfaces to the spawn caller, never a silent serve of an old version. */
-  _admitContextPackCitations(brief) {
-    if (!brief?.contextPacks) return;
-    if (!Array.isArray(brief.contextPacks)
-      || new Set(brief.contextPacks).size !== brief.contextPacks.length
-      || brief.contextPacks.some((id) => typeof id !== 'string' || !/^context-pack:[a-f0-9]{64}$/u.test(id))) {
-      throw Object.assign(new Error('brief context pack citations are invalid'), { code: 'context_pack_invalid' });
-    }
-    for (const packId of brief.contextPacks) {
-      const pack = this._coordination.contextPack(packId);
-      const head = pack ? this._coordination.contextPackHead(pack.family) : null;
-      if (!pack || !head || head.packId !== packId) {
-        throw Object.assign(new Error(`context pack ${packId} is not the live head`), { code: 'context_pack_stale' });
-      }
-    }
+    _admitContextPackCitations(brief) {
+    return runtimeAdmission._admitContextPackCitations(this, this._recorder, brief);
   }
 
   /** The brief a provider sees for one dispatch: the admitted brief plus every block this
@@ -3609,65 +2422,8 @@ export class Coordinator {
   /** The genuinely-pending, push-qualified items addressed to THIS worker (D3/D5). Derived from
    * the durable log (+ _pending for the interaction still-pending predicate) — never the run-view
    * `.slice(-2)`/MAX_ATTENTION display bounds (the D2 v1.2 per-source pin). */
-  _derivePendingAttentionItems(workerId) {
-    // #286 G-39: per-kind buckets from the log's own index — never a slice of the whole vector.
-    const writeResults = this._log.byKind(workerId, 'scratchpad.write_result');
-    const items = [];
-
-    // (1) scratchpad_write_failed — a refused write with no later ok:true corrective (D5).
-    let lastOkSeq = 0;
-    for (let i = writeResults.length - 1; i >= 0; i -= 1) {
-      if (writeResults[i].payload?.ok === true) { lastOkSeq = writeResults[i].seq; break; }
-    }
-    for (const event of writeResults) {
-      if (event.payload?.ok !== false || event.seq <= lastOkSeq) continue;
-      const code = typeof event.payload?.result === 'string' ? event.payload.result : null;
-      items.push({
-        kind: 'scratchpad_write_failed',
-        requestId: `swf:${workerId}:${event.seq}`,
-        workerId,
-        code,
-        text: code ? boundedAttentionText(code) : '',
-      });
-    }
-
-    // (2) answer_question / answer_approval — still-pending interactions (D3/D5/D7). The text
-    // rides the durable ask event (never _pending, which stores no prose); the still-pending
-    // predicate leans on _pending (rebuilt on replay from the same log).
-    for (const event of [...this._log.byKind(workerId, 'question.asked'), ...this._log.byKind(workerId, 'approval.requested')]) {
-      if (event.kind === 'question.asked') {
-        const requestId = event.payload?.requestId;
-        const record = typeof requestId === 'string' ? this._pending.get(requestId) : null;
-        if (record && record.worker === workerId && record.state === 'pending') {
-          items.push({
-            kind: 'answer_question',
-            requestId,
-            workerId,
-            text: boundedAttentionText(typeof event.payload?.question === 'string' ? event.payload.question : ''),
-          });
-        }
-      } else if (event.kind === 'approval.requested') {
-        const requestId = event.payload?.requestId;
-        const record = typeof requestId === 'string' ? this._pending.get(requestId) : null;
-        if (record && record.worker === workerId && record.state === 'pending') {
-          items.push({
-            kind: 'answer_approval',
-            requestId,
-            workerId,
-            text: boundedAttentionText(typeof event.payload?.kind === 'string' ? event.payload.kind : ''),
-          });
-        }
-      }
-    }
-
-    // (3) gate_verdict — the worker's latest sanitized gate refusal (D6).
-    const verdict = this._gateVerdictItemForWorker(workerId, {
-      errors: this._log.byKind(workerId, 'error'),
-      reverified: this._log.byKind(workerId, 'verify.reverified'),
-    });
-    if (verdict) items.push(verdict);
-
-    return items;
+    _derivePendingAttentionItems(workerId) {
+    return runtimeAdmission._derivePendingAttentionItems(this, this._recorder, workerId);
   }
 
   /** Mint the digest-cited spill for the overflow/shed items, preserving each item's per-item
@@ -3728,44 +2484,8 @@ export class Coordinator {
    * the typed codes — never a silent drop. Order: the structural bound first (oversized with no
    * spill lane), then the addressing law (orchestrator-only/inbox kinds), then dedup (unknown id,
    * then a resolved id). */
-  _assertAttentionPushServed(workerId, items, opts = {}) {
-    const candidate = Array.isArray(items) ? items : [];
-    const inBlockCount = candidate.filter((item) => !isAttentionSpillItem(item)).length;
-    const itemCap = FRAME_LIMITS['view.attention_push.items'].value;
-    if (inBlockCount > itemCap && opts.spillLane === false) {
-      throw Object.assign(
-        new Error(composeFrameLimitRefusal(FRAME_LIMITS['view.attention_push.items'], inBlockCount, itemCap)),
-        {
-          name: 'CoordinationRefusal', code: 'attention_push_oversized',
-          cap: itemCap, actual: inBlockCount, unit: 'items',
-          gracefulPath: frameLimitRefusalPath(FRAME_LIMITS['view.attention_push.items'], itemCap),
-        },
-      );
-    }
-    for (const item of candidate) {
-      if (ATTENTION_PUSH_ORCHESTRATOR_ONLY_KINDS.has(item?.kind) || ATTENTION_PUSH_INBOX_KINDS.has(item?.kind)) {
-        throw Object.assign(new Error(PUSH_REFUSAL_CODES.attention_push_not_addressed), {
-          name: 'CoordinationRefusal', code: 'attention_push_not_addressed',
-        });
-      }
-    }
-    const knownIds = this._knownAttentionIds(workerId);
-    const pendingIds = new Set(
-      this._pendingAttentionPush(workerId).filter((item) => !isAttentionSpillItem(item)).map((item) => item.requestId),
-    );
-    for (const item of candidate) {
-      if (isAttentionSpillItem(item)) continue;
-      if (!knownIds.has(item.requestId)) {
-        throw Object.assign(new Error(PUSH_REFUSAL_CODES.attention_push_unknown_item), {
-          name: 'CoordinationRefusal', code: 'attention_push_unknown_item',
-        });
-      }
-      if (!pendingIds.has(item.requestId)) {
-        throw Object.assign(new Error(PUSH_REFUSAL_CODES.attention_push_stale), {
-          name: 'CoordinationRefusal', code: 'attention_push_stale',
-        });
-      }
-    }
+    _assertAttentionPushServed(workerId, items, opts = {}) {
+    return runtimeAdmission._assertAttentionPushServed(this, this._recorder, workerId, items, opts);
   }
 
   /** SC1d: a refused spawn Ack may never strand its task in 'working'. `lifecycle.crashed` is
@@ -3780,36 +2500,24 @@ export class Coordinator {
   // First-class Goal/Plan authority
   // =========================================================================
 
-  async _goalPlanAuth(ctx, power, operation, request) {
-    if (!this._goalPlanAuthority) throw Object.assign(new Error('goal/plan authority is not configured'), { code: 'goal_plan_unavailable' });
-    let normalized;
-    try { normalized = normalizeGoalPlanContext(ctx, this._goalPlanAuthority.policy, power); }
-    catch (error) {
-      if (error instanceof GoalPlanValidationError) throw Object.assign(new Error(error.message), { code: error.code });
-      throw error;
-    }
-    const allowed = await this._goalPlanAuthority.authorize(Object.freeze({ operation, power, principalId: normalized.principalId, repoId: normalized.repoId, runId: normalized.runId, requestDigest: goalPlanDigest(request) }));
-    if (allowed !== true) throw Object.assign(new Error('goal/plan authority denied the operation'), { code: 'goal_plan_unauthorized' });
-    return normalized;
+    _goalPlanAuth(ctx, power, operation, request) {
+    return runtimeAdmission._goalPlanAuth(this, this._recorder, ctx, power, operation, request);
   }
 
-  defineGoal(fields, ctx) {
-    return this._withAuthorityOp(async () => this._coordination.defineGoal(fields, await this._goalPlanAuth(ctx, 'goal:define', 'goal_define', fields)));
+    defineGoal(fields, ctx) {
+    return runtimeAdmission.defineGoal(this, this._recorder, fields, ctx);
   }
 
-  proposePlan(fields, ctx) {
-    return this._withAuthorityOp(async () => this._coordination.proposePlan(fields, await this._goalPlanAuth(ctx, 'plan:propose', 'plan_propose', fields)));
+    proposePlan(fields, ctx) {
+    return runtimeAdmission.proposePlan(this, this._recorder, fields, ctx);
   }
 
-  approvePlan(fields, ctx) {
-    return this._withAuthorityOp(async () => this._coordination.approvePlan(fields, await this._goalPlanAuth(ctx, 'plan:approve', 'plan_approve', fields)));
+    approvePlan(fields, ctx) {
+    return runtimeAdmission.approvePlan(this, this._recorder, fields, ctx);
   }
 
-  goalPlanStatus(fields, ctx) {
-    return this._withAuthorityOp(async () => {
-      const auth = await this._goalPlanAuth(ctx, 'goal:observe', 'goal_plan_status', fields);
-      return this._coordination.goalPlanStatus(fields, auth);
-    });
+    goalPlanStatus(fields, ctx) {
+    return runtimeAdmission.goalPlanStatus(this, this._recorder, fields, ctx);
   }
 
   spawnPlanWave(members, opts = {}) {
@@ -4776,8 +3484,8 @@ export class Coordinator {
   }
 
   /** Preserve an accepted result under Baton's protected result-ref namespace without merging it. */
-  preserveResult(workerId, expectedSha) {
-    return this._withAuthorityOp(() => this._preserveResult(workerId, expectedSha));
+    preserveResult(workerId, expectedSha) {
+    return runtimeAdmission.preserveResult(this, this._recorder, workerId, expectedSha);
   }
 
   async _preserveResult(workerId, expectedSha) {
@@ -4869,9 +3577,8 @@ export class Coordinator {
   }
 
   /** VR6: the deployment verifier-runtime identity this coordinator was constructed with. */
-  verificationRuntimeDigest() {
-    this._assertReadable();
-    return this._verificationRuntimeDigest;
+    verificationRuntimeDigest() {
+    return runtimeAdmission.verificationRuntimeDigest(this, this._recorder);
   }
 
   /** VR6: reverify the physical non-adoptable checkpoint ref for a worker's inconclusive result. */
@@ -4910,58 +3617,8 @@ export class Coordinator {
     return runtimeRecovery._resumePreservedWork(this, this._recorder, workerId, opts);
   }
 
-  _normalizeResumeRequest(opts) {
-    if (!opts || typeof opts !== 'object' || Array.isArray(opts)) {
-      throw Object.assign(new TypeError('preserved resume request is invalid'), { code: 'resume_invalid' });
-    }
-    const stringField = (value, label, max = 256) => {
-      if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > max || value.includes('\0')) {
-        throw Object.assign(new TypeError(`preserved resume ${label} is invalid`), { code: 'resume_invalid' });
-      }
-      return value;
-    };
-    const actor = stringField(opts.actor, 'actor');
-    const principalId = stringField(opts.principalId, 'principalId');
-    const sessionId = stringField(opts.sessionId, 'sessionId');
-    const runId = stringField(opts.runId, 'runId');
-    const taskId = stringField(opts.taskId, 'taskId', 4_096);
-    const idempotencyKey = stringField(opts.idempotencyKey, 'idempotencyKey', 4_096);
-    const reasonDigest = stringField(opts.reasonDigest, 'reasonDigest', 64);
-    if (!/^[a-f0-9]{64}$/u.test(reasonDigest)) {
-      throw Object.assign(new TypeError('preserved resume reason digest is invalid'), { code: 'resume_invalid' });
-    }
-    if (!Array.isArray(opts.powers) || opts.powers.length === 0 || opts.powers.some((p) => typeof p !== 'string' || p.length === 0)) {
-      throw Object.assign(new TypeError('preserved resume powers are invalid'), { code: 'resume_invalid' });
-    }
-    if (!opts.gate || typeof opts.gate !== 'object' || Array.isArray(opts.gate)) {
-      throw Object.assign(new TypeError('preserved resume gate is invalid'), { code: 'resume_invalid' });
-    }
-    if (!opts.route || typeof opts.route !== 'object' || Array.isArray(opts.route)
-      || Object.keys(opts.route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) {
-      throw Object.assign(new TypeError('preserved resume route is invalid'), { code: 'resume_invalid' });
-    }
-    const checkpointSha = stringField(opts.checkpointSha, 'checkpointSha', 64);
-    const checkpointRef = stringField(opts.checkpointRef, 'checkpointRef', 256);
-    if (!/^[a-f0-9]{40,64}$/u.test(checkpointSha) || !/^refs\/baton\/checkpoints\/[a-f0-9]{40,64}$/u.test(checkpointRef)) {
-      throw Object.assign(new TypeError('preserved resume checkpoint attestation is invalid'), { code: 'resume_invalid' });
-    }
-    let semanticActionId;
-    let semanticPrincipalScopeDigest;
-    if (opts.semanticActionId !== undefined || opts.semanticPrincipalScopeDigest !== undefined) {
-      semanticActionId = stringField(opts.semanticActionId, 'semanticActionId', 64);
-      semanticPrincipalScopeDigest = stringField(opts.semanticPrincipalScopeDigest, 'semanticPrincipalScopeDigest', 64);
-      if (!/^[a-f0-9]{64}$/u.test(semanticActionId) || !/^[a-f0-9]{64}$/u.test(semanticPrincipalScopeDigest)) {
-        throw Object.assign(new TypeError('preserved resume semantic action identity is invalid'), { code: 'resume_invalid' });
-      }
-    }
-    return Object.freeze({
-      actor, principalId, sessionId, runId, taskId, idempotencyKey, reasonDigest,
-      powers: Object.freeze([...opts.powers]),
-      gate: Object.freeze(JSON.parse(JSON.stringify(opts.gate))),
-      route: Object.freeze({ ...opts.route }),
-      checkpointSha, checkpointRef,
-      ...(semanticActionId ? { semanticActionId, semanticPrincipalScopeDigest } : {}),
-    });
+    _normalizeResumeRequest(opts) {
+    return runtimeAdmission._normalizeResumeRequest(this, this._recorder, opts);
   }
 
   /**
@@ -4971,8 +3628,8 @@ export class Coordinator {
    * already exist (admitRunVerificationRetry); this method executes and completes that one
    * attempt exactly once, response-loss safe.
    */
-  retryVerification(workerId, opts) {
-    return this._withAuthorityOp(() => this._retryVerification(workerId, opts));
+    retryVerification(workerId, opts) {
+    return runtimeAdmission.retryVerification(this, this._recorder, workerId, opts);
   }
 
   async _retryVerification(workerId, opts = {}) {
@@ -5205,8 +3862,8 @@ export class Coordinator {
   }
 
   /** Materialize one exact accepted, still-protected Git result under deployment-owned authority. */
-  materializeAcceptedResult(workerId, expectedSha, request) {
-    return this._withAuthorityOp(() => this._materializeAcceptedResult(workerId, expectedSha, request));
+    materializeAcceptedResult(workerId, expectedSha, request) {
+    return runtimeAdmission.materializeAcceptedResult(this, this._recorder, workerId, expectedSha, request);
   }
 
   async _materializeAcceptedResult(workerId, expectedSha, request) {
@@ -5248,25 +3905,8 @@ export class Coordinator {
     return id;
   }
 
-  _assertNoCycle(taskId, deps) {
-    const graph = new Map();
-    for (const [id, t] of this._tasks) graph.set(id, t.deps);
-    graph.set(taskId, deps);
-
-    const visiting = new Set();
-    const visited = new Set();
-    const dfs = (node) => {
-      if (visited.has(node)) return false;
-      if (visiting.has(node)) return true;
-      visiting.add(node);
-      for (const dep of graph.get(node) ?? []) {
-        if (dfs(dep)) return true;
-      }
-      visiting.delete(node);
-      visited.add(node);
-      return false;
-    };
-    if (dfs(taskId)) throw new DependencyCycleError(`spawn() would create a dependency cycle at "${taskId}"`);
+    _assertNoCycle(taskId, deps) {
+    return runtimeAdmission._assertNoCycle(this, this._recorder, taskId, deps);
   }
 
     _workerPolicyProjection(handle) {
@@ -5615,54 +4255,14 @@ export class Coordinator {
   // member's terminal transition are marked memberState 'terminal-at-mint'.
   // -------------------------------------------------------------------------
 
-  async attentionFollow({ scope, targets, afterCursor, timeoutMs } = {}, principal = {}) {
-    // #286 G-40: this is a READ — it authorizes, normalizes targets and answers from the attention
-    // projection, and it changes nothing. It runs the fast tick: the deadline work only when a
-    // recorded deadline has come due.
-    this.tickRead();
-    if (!scope || typeof scope !== 'object' || Array.isArray(scope)
-      || Object.keys(scope).sort().join(',') !== 'runId'
-      || (scope.runId != null && (typeof scope.runId !== 'string'
-        || !/^[A-Za-z0-9._:-]{1,256}$/u.test(scope.runId)))) {
-      throw Object.assign(new TypeError('attention follow scope is invalid'), { code: 'attention_scope_invalid' });
-    }
-    const runId = scope.runId ?? null;
-    // Scope BEFORE targets: the caller's parent scope is authorized first. The deployment's
-    // orchestrator principal is the viewer of record; a run-scoped follow also admits a live
-    // run-orchestrator lease holder for that run. A bare deployment scope admits any
-    // authenticated principal (the run-scoped target check still holds them honest).
-    if (!this._attentionScopeAuthorized(principal, runId)) {
-      throw Object.assign(new Error('attention scope is forbidden'), { code: 'attention_scope_forbidden' });
-    }
-    // Targets are then normalized and derived server-side. A scope-violating target refuses
-    // identically to an unknown one (no existence leak either direction) — both draw the same
-    // constant before any existence check.
-    const targetKinds = new Set();
-    for (const target of targets ?? []) {
-      if (typeof target === 'string') {
-        targetKinds.add(target);
-      } else if (target && typeof target === 'object' && !Array.isArray(target)
-        && typeof target.runId === 'string') {
-        if (target.runId !== runId) {
-          throw Object.assign(new Error('attention target is outside the authorized scope'), { code: 'attention_scope_forbidden' });
-        }
-      } else {
-        throw Object.assign(new TypeError('attention target is invalid'), { code: 'attention_target_invalid' });
-      }
-    }
-    const reasons = this._attentionPage(runId, targetKinds, afterCursor, principal);
-    const throughCursor = reasons.length > 0
-      ? reasons.reduce((max, reason) => Math.max(max, reason.seq), afterCursor)
-      : afterCursor;
-    return { reasons, throughCursor, afterCursor, runId };
+    attentionFollow({ scope, targets, afterCursor, timeoutMs } = {}, principal = {}) {
+    return runtimeAdmission.attentionFollow(this, this._recorder, { scope, targets, afterCursor, timeoutMs }, principal);
   }
 
   /** The caller's parent scope (run/wave/deployment) is authorized before any target is
    * examined. The deployment's orchestrator principal is the viewer of record. */
-  _attentionScopeAuthorized(principal, runId) {
-    if (principal?.principalId === 'wave-owner') return true;
-    if (runId == null) return typeof principal?.principalId === 'string' && principal.principalId.length > 0;
-    return this._isReviewAuthority(principal, runId);
+    _attentionScopeAuthorized(principal, runId) {
+    return runtimeAdmission._attentionScopeAuthorized(this, this._recorder, principal, runId);
   }
 
   /** Review authority = the deployment's orchestrator principal, or a live settlement/review
@@ -5695,30 +4295,13 @@ export class Coordinator {
    * holds guidance to its batch boundary does so — while `now` rides the immediate steer lane
    * the run-send idiom's `now` already spells, pre-empting an in-flight tool call. A paused seat
    * takes either through its turn's own delivery queue (pause selection stays inside it). */
-  guideParticipant(workerId, message, { actor = 'orchestrator', priority = 'next_boundary' } = {}) {
-    const guidance = Object.freeze({ from: guidanceSenderLabel(actor), sentAt: new Date(this._now()).toISOString() });
-    const framed = `[baton swarm guidance from ${guidance.from} · ${guidance.sentAt}]\n${message}`;
-    return this._withAuthorityOp(() => this._send(workerId, framed, priority === 'now' ? 'steer' : 'nudge', {
-      actor, continueParticipant: true, guidance,
-    }));
+    guideParticipant(workerId, message, { actor = 'orchestrator', priority = 'next_boundary' } = {}) {
+    return runtimeAdmission.guideParticipant(this, this._recorder, workerId, message, { actor, priority });
   }
 
   /** Address a continuing participant; pause selection occurs inside its delivery queue. */
-  send(workerId, message, mode, opts = {}) {
-    const handle = this._workers.get(workerId);
-    const task = handle ? this._tasks.get(handle.taskId) : null;
-    if (mode === 'turn' && handle?.status === 'idle'
-      && task && TERMINAL_TASK_STATUSES.has(task.status)
-      && task.brief?.goalPlan) {
-      return Promise.resolve({ ok: false, result: 'goal_plan_continuation_not_authorized' });
-    }
-    if (mode === 'turn' && task?.runId
-      && this._coordination.run?.(task.runId)?.status === 'sealed') {
-      return Promise.reject(Object.assign(new Error(`run ${task.runId} is sealed`), {
-        name: 'CoordinationRefusal', code: 'run_sealed',
-      }));
-    }
-    return this._withAuthorityOp(() => this._send(workerId, message, mode, opts));
+    send(workerId, message, mode, opts = {}) {
+    return runtimeAdmission.send(this, this._recorder, workerId, message, mode, opts);
   }
 
     async _send(workerId, message, mode, opts = {}) {
@@ -6186,8 +4769,8 @@ export class Coordinator {
   // Command: interrupt() / kill() — two-phase stop (D9)
   // =========================================================================
 
-  prepareSemanticInterrupt(workerId, actor = 'orchestrator') {
-    return this._withAuthorityOp(() => this._prepareSemanticInterrupt(workerId, actor));
+    prepareSemanticInterrupt(workerId, actor = 'orchestrator') {
+    return runtimeAdmission.prepareSemanticInterrupt(this, this._recorder, workerId, actor);
   }
 
     async _prepareSemanticInterrupt(workerId, actor) {
@@ -6564,26 +5147,12 @@ export class Coordinator {
     return runtimeRecovery._retryProcessReap(this, this._recorder, handle);
   }
 
-  _resolveStopRequests(waiter, physicalResult) {
-    for (const request of waiter.requests) {
-      if (waiter.mode === 'kill' && request.requestedMode === 'interrupt'
-        && request.preserveTurn === true) {
-        request.resolve({
-          ok: false, result: 'superseded_by_stop',
-          escalation: physicalResult?.result ?? 'unknown',
-        });
-      } else {
-        request.resolve(physicalResult);
-      }
-    }
+    _resolveStopRequests(waiter, physicalResult) {
+    return runtimeAdmission._resolveStopRequests(this, this._recorder, waiter, physicalResult);
   }
 
-  _safeTurnEpoch(handle) {
-    try {
-      return this._fences.current(handle.id).turnEpoch;
-    } catch {
-      return 0;
-    }
+    _safeTurnEpoch(handle) {
+    return runtimeAdmission._safeTurnEpoch(this, this._recorder, handle);
   }
 
     _coordTransition(task, to, key, evidence = null, actor = 'policy') {
@@ -6903,26 +5472,8 @@ export class Coordinator {
   /** Issue #447: the seat's lease. `checkout` is a checkout the caller already knows the seat
    * works in (a resumed or attached one, never a path the seat's environment supplies); a
    * checkout the spawn mints is recorded the moment readiness confirms it (below). */
-  _ensureRuntimeScope(handle, checkout = null) {
-    if (!this._runtimeScopes || typeof this._runtimeScopes.create !== 'function') return null;
-    if (handle.runtimeLease) return handle.runtimeLease;
-    const adapterCard = this._adapters[handle.vendor]?.card?.();
-    if (!adapterCard) throw Object.assign(new Error('selected adapter card unavailable for runtime isolation'), { code: 'runtime_card_unavailable' });
-    const identity = typeof checkout === 'string' && isAbsolute(checkout) ? checkout : null;
-    const lease = this._runtimeScopes.create(handle.id, { card: adapterCard, ...(identity ? { checkout: identity } : {}) });
-    const extension = this._participantRuntimes?.get(handle.runId);
-    const runtime = extension ? {
-      ...lease, env: { ...lease.env, ...extension.env },
-      redactProviderFrame: (frame) => extension.redactProviderFrame(
-        lease.redactProviderFrame ? lease.redactProviderFrame(frame) : frame),
-    } : lease;
-    handle.runtimeLease = runtime;
-    handle.runtimeScope = { ...lease.posture, active: true };
-    this._log.append({
-      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
-      kind: 'runtime.scope_created', actor: 'policy', payload: handle.runtimeScope,
-    });
-    return runtime;
+    _ensureRuntimeScope(handle, checkout = null) {
+    return runtimeAdmission._ensureRuntimeScope(this, this._recorder, handle, checkout);
   }
 
   _removeRuntimeScope(handle) {
@@ -7032,25 +5583,20 @@ export class Coordinator {
   // =========================================================================
 
   /** An observational rejection, recorded under its reason and never surfaced as an outcome. */
-  _bestEffort(promise, reason) {
-    return bestEffort(promise, reason, (name, error) => this._noteFailure(name, error));
+    _bestEffort(promise, reason) {
+    return runtimeAdmission._bestEffort(this, this._recorder, promise, reason);
   }
 
   /** The sync twin of `_bestEffort`, for the audit writes that are not promises. */
-  _bestEffortSync(run, reason) {
-    return bestEffortSync(run, reason, (name, error) => this._noteFailure(name, error));
+    _bestEffortSync(run, reason) {
+    return runtimeAdmission._bestEffortSync(this, this._recorder, run, reason);
   }
 
   /** The in-memory reason registry: what was recorded instead of silenced. Lazily initialised so a
    * recording path reached during construction (the log facade is installed before the maps are)
    * can never turn its own observation into a second failure. */
-  _noteFailure(reason, error) {
-    const failures = (this._failures ??= new Map());
-    const row = failures.get(reason) ?? { reason, count: 0, lastCode: null, lastMessage: null };
-    row.count += 1;
-    row.lastCode = typeof error?.code === 'string' ? error.code : null;
-    row.lastMessage = String(error?.message ?? error);
-    failures.set(reason, row);
+    _noteFailure(reason, error) {
+    return runtimeAdmission._noteFailure(this, this._recorder, reason, error);
   }
 
   /** The projection over `_noteFailure`: one row per reason, with what that reason counted. This is
@@ -7117,53 +5663,8 @@ export class Coordinator {
     return runtimeObservation._scheduleScopeOrientation(this, this._recorder, handle, path);
   }
 
-  _normalizeUsage(handle, payload) {
-    const source = payload?.source ?? 'unknown';
-    const wireAccounting = payload?.accounting ?? (payload?.tokenUsage ? 'cumulative' : 'delta');
-    const governed = handle.providerGovernance != null;
-    const own = (value, key) => value !== null && typeof value === 'object' && Object.hasOwn(value, key);
-    const tokenTotal = payload?.tokenUsage?.total;
-    const tokensReported = own(payload, 'tokens') || own(payload, 'totalTokens') || own(tokenTotal, 'totalTokens');
-    const usdReported = own(payload, 'usd') || own(payload, 'totalCostUsd');
-    const rawTokens = own(payload, 'tokens') ? payload.tokens
-      : own(payload, 'totalTokens') ? payload.totalTokens
-        : own(tokenTotal, 'totalTokens') ? tokenTotal.totalTokens : 0;
-    const rawUsd = own(payload, 'usd') ? payload.usd : own(payload, 'totalCostUsd') ? payload.totalCostUsd : 0;
-    if (governed && !['delta', 'cumulative'].includes(wireAccounting)) return { invalidCode: 'usage_accounting_invalid' };
-    if (governed && ((tokensReported && (!Number.isSafeInteger(rawTokens) || rawTokens < 0))
-      || (usdReported && usdToNanos(rawUsd) === null))) {
-      return { invalidCode: 'usage_value_invalid' };
-    }
-    const normalizedRawTokens = governed ? rawTokens : Number(rawTokens);
-    const normalizedRawUsd = governed ? usdFromNanos(usdToNanos(rawUsd)) : Number(rawUsd);
-    const counterId = payload?.counterId ?? source;
-    if (governed && (typeof counterId !== 'string' || counterId.length === 0 || Buffer.byteLength(counterId) > 256 || counterId.includes('\0'))) return { invalidCode: 'usage_counter_invalid' };
-    const tokenMetric = payload?.tokenMetric ?? null;
-    if (governed && tokensReported) {
-      const expectedMetric = this._adapters[handle.vendor]?.card()?.governance?.usage?.tokenMetric ?? null;
-      if (typeof tokenMetric !== 'string' || tokenMetric.length === 0 || Buffer.byteLength(tokenMetric) > 256
-        || tokenMetric.includes('\0') || tokenMetric !== expectedMetric) return { invalidCode: 'usage_token_metric_invalid' };
-    }
-    const deltaFor = (dimension, current) => {
-      if (!Number.isFinite(current) || current < 0) return 0;
-      if (wireAccounting !== 'cumulative') return current;
-      const key = `${counterId}:${dimension}`;
-      const prior = handle.usageCumulative.get(key) ?? 0;
-      if (governed && current < prior) return null;
-      handle.usageCumulative.set(key, current);
-      if (dimension === 'usd') return current >= prior ? subtractUsdFloor(current, prior) : current;
-      return current >= prior ? current - prior : current;
-    };
-    const tokens = deltaFor('tokens', normalizedRawTokens);
-    const usd = deltaFor('usd', normalizedRawUsd);
-    if (tokens === null || usd === null) return { invalidCode: 'usage_counter_regressed' };
-    return {
-      ...payload,
-      tokens, usd, accounting: 'delta', counterId,
-      tokenMetric: tokensReported ? tokenMetric : null,
-      reportedDimensions: { tokens: tokensReported, usd: usdReported },
-      wireAccounting, wireTokens: normalizedRawTokens, wireUsd: normalizedRawUsd,
-    };
+    _normalizeUsage(handle, payload) {
+    return runtimeAdmission._normalizeUsage(this, this._recorder, handle, payload);
   }
 
   _scheduleProviderStop(handle, action = 'kill') {
@@ -7191,35 +5692,8 @@ export class Coordinator {
     return runtimeObservation._recordUsage(this, this._recorder, handle, event);
   }
 
-  _validateTerminalUsageSeal(handle, seal) {
-    if (!handle.providerGovernance) return { ok: true, seal: null };
-    const fields = ['counterId', 'tokenMetric', 'tokens', 'usd'];
-    if (!seal || typeof seal !== 'object' || Array.isArray(seal)
-      || Object.keys(seal).sort().join(',') !== fields.sort().join(',')) return { ok: false, code: 'usage_seal_invalid' };
-    const availability = new Set(['reported', 'unavailable', 'not_applicable']);
-    if (!availability.has(seal.tokens) || !availability.has(seal.usd)) return { ok: false, code: 'usage_seal_invalid' };
-    if (seal.counterId !== null && (typeof seal.counterId !== 'string' || seal.counterId.length === 0 || Buffer.byteLength(seal.counterId) > 256 || seal.counterId.includes('\0'))) return { ok: false, code: 'usage_seal_invalid' };
-    if (seal.tokenMetric !== null && (typeof seal.tokenMetric !== 'string' || seal.tokenMetric.length === 0 || Buffer.byteLength(seal.tokenMetric) > 256 || seal.tokenMetric.includes('\0'))) return { ok: false, code: 'usage_seal_invalid' };
-    const reported = seal.tokens === 'reported' || seal.usd === 'reported';
-    if (reported && (seal.counterId === null || !handle.providerTurn?.counterIds?.has(seal.counterId))) return { ok: false, code: 'usage_seal_counter_unobserved' };
-    if (!reported && seal.counterId !== null) return { ok: false, code: 'usage_seal_invalid' };
-    if (seal.tokens !== 'reported' && seal.tokenMetric !== null) return { ok: false, code: 'usage_seal_invalid' };
-    const observation = seal.counterId === null ? null : handle.providerTurn?.counterObservations?.get(seal.counterId) ?? null;
-    if (seal.tokens === 'reported' && observation?.tokens !== true) return { ok: false, code: 'usage_seal_tokens_unobserved' };
-    if (seal.usd === 'reported' && observation?.usd !== true) return { ok: false, code: 'usage_seal_usd_unobserved' };
-    if (seal.tokens !== 'reported' && observation?.tokens === true) return { ok: false, code: 'usage_seal_tokens_contradiction' };
-    if (seal.usd !== 'reported' && observation?.usd === true) return { ok: false, code: 'usage_seal_usd_contradiction' };
-    const usageCard = this._adapters[handle.vendor]?.card()?.governance?.usage;
-    if (seal.tokens === 'reported' && usageCard?.tokens !== 'native') return { ok: false, code: 'usage_seal_card_contradiction' };
-    if (seal.usd === 'reported' && usageCard?.usd !== 'native') return { ok: false, code: 'usage_seal_card_contradiction' };
-    if (seal.tokens === 'reported') {
-      const metric = usageCard?.tokenMetric ?? null;
-      if (seal.tokenMetric === null || seal.tokenMetric !== metric || observation?.tokenMetric !== metric) return { ok: false, code: 'usage_seal_metric_mismatch' };
-    }
-    if (handle.providerGovernance.terminalReserve.tokens > 0 && seal.tokens !== 'reported') return { ok: false, code: 'token_usage_unavailable' };
-    if (handle.providerGovernance.terminalReserve.usd > 0 && seal.usd !== 'reported') return { ok: false, code: 'usd_usage_unavailable' };
-    if (handle.providerTurn?.sealed) return { ok: false, code: 'usage_seal_duplicate' };
-    return { ok: true, seal: deepFreeze({ tokens: seal.tokens, usd: seal.usd, counterId: seal.counterId, tokenMetric: seal.tokenMetric }) };
+    _validateTerminalUsageSeal(handle, seal) {
+    return runtimeAdmission._validateTerminalUsageSeal(this, this._recorder, handle, seal);
   }
 
     _failTerminalProviderGovernance(handle, terminalEvent, code, beginStop = true) {
@@ -7322,63 +5796,12 @@ export class Coordinator {
     this._finalizeStop(workerId, waiter);
   }
 
-  _onStopConfirmed(handle, confirmKind, payload = {}) {
-    const waiter = this._stopWaiters.get(handle.id);
-    if (!waiter) return;
-    if (confirmKind !== waiter.mode) return; // stale/mismatched confirmation — ignore
-    if (handle.providerGovernance && handle.providerTurn && !handle.providerTurn.sealed
-      && handle.recoveryProviderReleaseDeferred !== true) {
-      const verdict = this._validateTerminalUsageSeal(handle, payload?.usageSeal ?? null);
-      waiter.providerSealVerdict = verdict;
-      handle.turnTerminalObserved = true;
-      if (verdict.seal) {
-        handle.providerTerminalSeal = verdict.seal;
-        handle.providerTurn.sealed = true;
-      }
-    }
-    waiter.confirmationPayload = payload && typeof payload === 'object' ? { ...payload } : {};
-    waiter.confirmReceived = true;
-    this._maybeFinalizeStop(handle.id, waiter);
+    _onStopConfirmed(handle, confirmKind, payload = {}) {
+    return runtimeAdmission._onStopConfirmed(this, this._recorder, handle, confirmKind, payload);
   }
 
-  _sessionPreservationReceipt(handle, waiter) {
-    if (!handle || waiter.preserveTurn !== true || waiter.mode !== 'interrupt') return null;
-    const task = this._tasks.get(handle.taskId);
-    const card = this._adapters[handle.vendor]?.card();
-    const payload = waiter.confirmationPayload ?? {};
-    const observedSessionId = payload.threadId ?? payload.sessionId ?? null;
-    // Preservation is a positive claim: an absent transport observation is uncertainty,
-    // never evidence that a provider session survived the interrupted turn.
-    const transportOpen = payload.transportOpen === true
-      && handle.processRef?.state !== 'closed'
-      && handle.processRef?.state !== 'unconfirmed_after_restart';
-    const attached = handle.sessionRef
-      && typeof observedSessionId === 'string'
-      && observedSessionId === handle.sessionRef.id
-      && ['native', 'emulated'].includes(card?.sessions?.multiTurn)
-      && transportOpen
-      && waiter.interactionResolutionOk === true
-      && (!handle.providerGovernance || (waiter.providerSealVerdict?.ok === true
-        && handle.providerTurn?.sealed === true
-        && handle.providerTelemetryFailed !== true
-        && handle.providerPolicyHardExceeded !== true))
-      && handle.localAuthority === true
-      && this._worktreeAuthorityAvailable(handle)
-      && !(task?.runId && this._coordination.runStop?.(task.runId));
-    if (!attached) return null;
-    const binding = this._semanticControlBinding(handle, task);
-    const core = {
-      schemaVersion: 2,
-      state: 'preserved',
-      transport: 'attached',
-      attached: true,
-      reattachment: 'not_required',
-      ...binding,
-      adapterCardDigest: canonicalDigest(card),
-      turnEpoch: this._safeTurnEpoch(handle),
-      fence: this._fences.current(handle.id).fence,
-    };
-    return deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
+    _sessionPreservationReceipt(handle, waiter) {
+    return runtimeAdmission._sessionPreservationReceipt(this, this._recorder, handle, waiter);
   }
 
   _finalizeStop(workerId, waiter) {
@@ -7807,28 +6230,8 @@ export class Coordinator {
    * answered ESRCH, or its reap probe reported the group gone); the coordinator is the ONE place a
    * stop waiter lives, so the observation is judged here — an existence proof for the wait, never a
    * second authority. Returns the attestation's result so the caller can narrate it. */
-  observeStopAbsence(workerId, observation = {}) {
-    this._assertReadable();
-    const handle = this._workers.get(workerId) ?? null;
-    if (!handle) return { ok: false, result: 'unknown_worker' };
-    if (observation?.alive !== false) return { ok: false, result: 'not_observed' };
-    const seen = Object.freeze({
-      pid: Number.isSafeInteger(observation.pid) ? observation.pid : (handle.processRef?.pid ?? null),
-      processGroupId: Number.isSafeInteger(observation.processGroupId)
-        ? observation.processGroupId : (handle.processRef?.processGroupId ?? null),
-      alive: false,
-    });
-    handle.stopLivenessObserved = false;
-    const waiter = this._stopWaiters.get(workerId) ?? null;
-    const attested = this._attestAbsentStop(handle, waiter, KILL_RULES.stopDeadline, seen);
-    if (attested === null) return { ok: false, result: 'attestation_unavailable' };
-    if (waiter === null) {
-      // No live waiter: the deadline already released this transaction, so the reap is the
-      // coordinator's own — the ordinary confirmed path, run once.
-      handle.status = 'dead';
-      this._cleanupTransportInBackground(handle, this._tasks.get(handle.taskId), attested);
-    }
-    return { ok: true, result: 'confirmed', attestedSeq: attested.seq, pid: seen.pid, processGroupId: seen.processGroupId };
+    observeStopAbsence(workerId, observation = {}) {
+    return runtimeAdmission.observeStopAbsence(this, this._recorder, workerId, observation);
   }
 
   // =========================================================================
@@ -7847,8 +6250,8 @@ export class Coordinator {
   // Command: claimInteraction() — D3 OQ-1. The orchestrator-side ack on a pending interaction
   // (the claim_turn shape): an acknowledged interaction is skipped by the deadline sweep, so a
   // legitimate >window operator review is never preempted (blk-7).
-  claimInteraction(requestId, opts = {}) {
-    return this._withAuthorityOp(() => this._claimInteraction(requestId, opts));
+    claimInteraction(requestId, opts = {}) {
+    return runtimeAdmission.claimInteraction(this, this._recorder, requestId, opts);
   }
 
   async _claimInteraction(requestId, opts = {}) {
@@ -7864,30 +6267,8 @@ export class Coordinator {
   }
 
   /** Bounded ownership projection used by run-centric application answer routing. */
-  interactionStatus(requestId) {
-    this._assertReadable();
-    if (typeof requestId !== 'string' || requestId.length === 0 || Buffer.byteLength(requestId) > 4_096) return null;
-    const record = this._pending.get(requestId);
-    if (!record) return null;
-    const handle = this._workers.get(record.worker);
-    const task = handle ? this._tasks.get(handle.taskId) : null;
-    return Object.freeze({
-      requestId,
-      kind: record.kind,
-      state: record.state,
-      workerId: record.worker,
-      taskId: task?.id ?? null,
-      runId: task?.runId ?? null,
-      // Part B: decision content is worker-authored (untrusted); the caller (application.mjs
-      // RunView projection) is responsible for sanitizing/bounding it before display.
-      ...(record.kind === 'decision' ? {
-        question: record.question,
-        options: record.options,
-        allowFreeResponse: record.allowFreeResponse,
-        recommended: record.recommended,
-        deadlineAt: record.deadlineAt ?? null,
-      } : {}),
-    });
+    interactionStatus(requestId) {
+    return runtimeAdmission.interactionStatus(this, this._recorder, requestId);
   }
 
     async _resolveRecord(requestId, answer, actor) {
@@ -8088,115 +6469,38 @@ export class Coordinator {
   // Command: result() / list()
   // =========================================================================
 
-  async result(workerId) {
-    this._assertReadable();
-    const handle = this._getWorker(workerId);
-    const task = this._tasks.get(handle.taskId);
-    const providerGovernance = handle.providerGovernance ? {
-      policyDigest: handle.providerPolicyDigest ?? null,
-      routeDigest: handle.providerGovernance.digest,
-      mode: handle.providerGovernance.mode,
-      observationOnly: handle.providerGovernance.mode === 'observe',
-      hardExceeded: handle.providerPolicyHardExceeded === true,
-      telemetryFailed: handle.providerTelemetryFailed === true,
-    } : null;
-    const verdictAccepted = task?.verdict?.reverified === true && task.verdict.passed === true
-      && (!this._verificationAcceptancePolicy.requireRedGreen || task.verdict.redGreen === true)
-      && (!this._verificationAcceptancePolicy.requireCoverage
-        || task.verdict.coverageOfChange === true)
-      && (!this._verificationAcceptancePolicy.requireMutation
-        || task.verdict.mutationPassed === true);
-    const attribution = {
-      taskId: task?.id ?? handle.taskId ?? null,
-      runId: task?.runId ?? handle.runId ?? null,
-      vendor: handle.vendor,
-      harnessRequested: task?.vendorRequested ?? null,
-      harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
-      modelRequested: handle.modelRequested ?? null,
-      modelResolved: handle.modelResolved ?? null,
-      modelObserved: handle.modelObserved ?? null,
-      modelMismatch: handle.modelMismatch ?? null,
-      effortRequested: handle.effortRequested ?? null,
-      effortResolved: handle.effortResolved ?? null,
-      effortObserved: handle.effortObserved ?? null,
-      effortMismatch: handle.effortMismatch ?? null,
-      workerPolicy: this._workerPolicyProjection(handle),
-      routeKey: handle.routeKey ?? task?.routeKey ?? null,
-      checkpoint: task?.checkpoint ?? null,
-      sessionRequest: handle.sessionRequest ?? { mode: 'new' },
-      sessionRef: handle.sessionRef ?? null,
-      sessionContext: handle.sessionContext ?? null,
-      lineage: handle.lineage ?? null,
-      topology: this._taskTopologyProjection(task?.id ?? handle.taskId),
-      review: task?.review ?? null,
-      integration: task?.integration ?? null,
-      publication: task?.publication ?? null,
-      capturedSha: task?.capturedSha ?? null,
-      retainedResultRef: task?.retainedResultRef ?? null,
-      verificationStability: task?.verificationStability ?? null,
-      providerGovernance,
-      observationOnly: providerGovernance?.observationOnly === true,
-      terminalCause: handle.terminalCause ?? null,
-      verificationAcceptance: {
-        ...this._verificationAcceptancePolicy,
-        accepted: task?.status === 'completed' && verdictAccepted,
-      },
-    };
-    if (handle.recoveryPending === true) return { ready: false, status: 'orphaned', ...attribution };
-    if (!task) return { ready: false, status: handle.status, ...attribution };
-    if (!TERMINAL_TASK_STATUSES.has(task.status)) return { ready: false, status: task.status, ...attribution };
-    return { ready: true, status: task.status, verdict: task.verdict, artifacts: task.result ? task.result.artifacts : undefined, ...attribution };
+    result(workerId) {
+    return runtimeAdmission.result(this, this._recorder, workerId);
   }
 
   /** Return the closed, deployment-owned fleet capability inventory. */
-  capabilityCards() {
-    this._assertReadable();
-    return this._capabilities ? this._capabilities.cards() : [];
+    capabilityCards() {
+    return runtimeAdmission.capabilityCards(this, this._recorder);
   }
 
   /** Deployment adapter inventory for application-owned exact route selectors. Cards contain
    * capability metadata only; credential values and adapter/session objects are never exposed. */
-  routeCards() {
-    this._assertReadable();
-    return deepFreeze(Object.entries(this._adapters)
-      .map(([name, adapter]) => ({ name, card: JSON.parse(JSON.stringify(adapter.card())) }))
-      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+    routeCards() {
+    return runtimeAdmission.routeCards(this, this._recorder);
   }
 
   /** Return deployment-pinned machine-ingress cards. This inventory is separate from ACI and
    * carries no user, MCP, install, merge, or verification authority. */
-  advisoryFeedCards() {
-    this._assertReadable();
-    return this._advisoryFeeds?.cards?.() ?? [];
+    advisoryFeedCards() {
+    return runtimeAdmission.advisoryFeedCards(this, this._recorder);
   }
 
   /** Admit one machine-authenticated provider delivery. The fixed provider route selects the
    * adapter; neither a user actor nor provider body may choose authority. Durable receipt and
    * pending fences are appended before this returns success. */
-  async receiveProviderDelivery(providerId, input, ctx = {}) {
-    await this._assertOperational();
-    if (!this._advisoryFeeds || this.advisoryFeedCards().length === 0 || !this._repoId) throw Object.assign(new Error('provider machine ingress is not deployment-configured'), { code: 'provider_ingress_unavailable' });
-    if (ctx && Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider machine ingress context is invalid'), { code: 'provider_delivery_invalid' });
-    const releaseAuthority = this._acquireAuthorityOp();
-    try {
-      const receipt = await this._advisoryFeeds.verify(providerId, input, { signal: ctx.signal });
-      const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
-      return this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key });
-    } finally { releaseAuthority(); }
+    receiveProviderDelivery(providerId, input, ctx = {}) {
+    return runtimeAdmission.receiveProviderDelivery(this, this._recorder, providerId, input, ctx);
   }
 
   /** Exact HTTP-envelope variant for Baton-owned native webhook authenticators. A deployment's
    * fixed HTTPS route supplies providerId; the body and headers cannot select a source. */
-  async receiveProviderWebhook(providerId, input, ctx = {}) {
-    await this._assertOperational();
-    if (!this._advisoryFeeds || this.advisoryFeedCards().length === 0 || !this._repoId || typeof this._advisoryFeeds.verifyWebhook !== 'function') throw Object.assign(new Error('provider machine ingress is not deployment-configured'), { code: 'provider_ingress_unavailable' });
-    if (ctx && Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider machine ingress context is invalid'), { code: 'provider_delivery_invalid' });
-    const releaseAuthority = this._acquireAuthorityOp();
-    try {
-      const receipt = await this._advisoryFeeds.verifyWebhook(providerId, input, { signal: ctx.signal });
-      const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
-      return this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key });
-    } finally { releaseAuthority(); }
+    receiveProviderWebhook(providerId, input, ctx = {}) {
+    return runtimeAdmission.receiveProviderWebhook(this, this._recorder, providerId, input, ctx);
   }
 
   /** Run one deployment-pinned authenticated full poll for a degraded source, durably admit every
@@ -8225,22 +6529,8 @@ export class Coordinator {
   }
 
   /** Invoke an advertised ACI operation through the coordinator-owned registry. */
-  async invokeCapability(name, op, args, ctx = {}) {
-    await this._assertOperational();
-    if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
-    const releaseAuthority = this._acquireAuthorityOp();
-    try {
-      // BU-2-2-6 (blue-team blocker 1): browser-use URLs normalize at the capability
-      // boundary BEFORE the registry's {repoId, actor, idempotencyKey} binding, so the
-      // cache-busting/empty-param pair becomes ONE invocation under one key (a replay, not a
-      // capability_idempotency_conflict). The capability itself normalizes too; this seam is
-      // the wiring that reaches the args ahead of the binding. The result then passes the
-      // #81 (O-5) path-stripping projection like every capability result.
-      const normalized = name === 'browser-use' && typeof args?.url === 'string'
-        ? { ...args, url: normalizeBrowserUseUrl(args.url) }
-        : args;
-      return this._stripCapabilityPaths(await this._capabilityRegistry().invoke(name, op, normalized, ctx));
-    } finally { releaseAuthority(); }
+    invokeCapability(name, op, args, ctx = {}) {
+    return runtimeAdmission.invokeCapability(this, this._recorder, name, op, args, ctx);
   }
 
   /** Resume a bounded ACI operation through the same coordinator-owned registry. */
@@ -8251,10 +6541,8 @@ export class Coordinator {
   }
 
   /** Reverify an ACI claim without granting the capability verification authority. */
-  async reverifyCapability(name, op, claim, args, ctx = {}) {
-    await this._assertOperational();
-    if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
-    const releaseAuthority = this._acquireAuthorityOp(); try { return this._stripCapabilityPaths(await this._capabilityRegistry().reverify(name, op, claim, args, ctx)); } finally { releaseAuthority(); }
+    reverifyCapability(name, op, claim, args, ctx = {}) {
+    return runtimeAdmission.reverifyCapability(this, this._recorder, name, op, claim, args, ctx);
   }
 
   /** Epic #81 (O-5): worker-visible refs carry only {kind, handle, digest, bytes, mediaType} —
@@ -8273,9 +6561,8 @@ export class Coordinator {
     return changed ? { ...result, refs } : result;
   }
 
-  async invokeCapabilityNorthbound(transport, token, name, op, args, ctx = {}) {
-    await this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
-    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().invoke(name, op, args, { ...ctx, transport }); } finally { releaseAuthority(); }
+    invokeCapabilityNorthbound(transport, token, name, op, args, ctx = {}) {
+    return runtimeAdmission.invokeCapabilityNorthbound(this, this._recorder, transport, token, name, op, args, ctx);
   }
 
   async resumeCapabilityNorthbound(transport, token, name, op, ref, cursor, ctx = {}) {
@@ -8283,147 +6570,22 @@ export class Coordinator {
     const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().resume(name, op, ref, cursor, { ...ctx, transport }); } finally { releaseAuthority(); }
   }
 
-  async reverifyCapabilityNorthbound(transport, token, name, op, claim, args, ctx = {}) {
-    await this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
-    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().reverify(name, op, claim, args, { ...ctx, transport }); } finally { releaseAuthority(); }
+    reverifyCapabilityNorthbound(transport, token, name, op, claim, args, ctx = {}) {
+    return runtimeAdmission.reverifyCapabilityNorthbound(this, this._recorder, transport, token, name, op, claim, args, ctx);
   }
 
   /** Record one immutable build-vs-borrow judgment after the Coordinator freshly reverifies the
    * exact dossier and actual-lockfile SBOM. Capability code supplies evidence only; this method is
    * the sole decision authority and never installs, edits, merges, verifies, or publishes code. */
-  async decideReuse(request, ctx = {}) {
-    await this._assertOperational();
-    const releaseAuthority = this._acquireAuthorityOp();
-    try {
-    if (!this._reuseDecisionPolicy || typeof this._resolveEnvironmentRef !== 'function') {
-      const error = new Error('reuse decision authority is not deployment-configured'); error.code = 'reuse_decision_unavailable'; throw error;
-    }
-    const actor = ctx.actor;
-    if (typeof actor !== 'string' || actor.length === 0 || actor.length > 256) {
-      const error = new Error('reuse decision actor is not authorized'); error.code = 'reuse_decision_forbidden'; throw error;
-    }
-    if (typeof ctx.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(ctx.idempotencyKey)) throw Object.assign(new TypeError('reuse decision idempotency key is invalid'), { code: 'invalid_reuse_decision' });
-    if (typeof ctx.repoId !== 'string' || ctx.repoId.length === 0 || !request || typeof request !== 'object' || Array.isArray(request)
-      || Object.hasOwn(request, 'actor')) throw Object.assign(new TypeError('reuse decision request is invalid'), { code: 'invalid_reuse_decision' });
-    if (Object.keys(request).some((key) => !['need', 'choice', 'rationale', 'dossier', 'sbom', 'supersedes', 'budgetTokens'].includes(key))) throw Object.assign(new TypeError('reuse decision request has unknown fields'), { code: 'invalid_reuse_decision' });
-    const need = normalizedDecisionText(request.need, 'need', this._reuseDecisionPolicy.maxNeedBytes);
-    const rationale = normalizedDecisionText(request.rationale, 'rationale', this._reuseDecisionPolicy.maxRationaleBytes);
-    if (!['borrow', 'build'].includes(request.choice)) throw Object.assign(new TypeError('reuse decision choice must be borrow|build'), { code: 'invalid_reuse_decision' });
-    if (!request.dossier || !request.sbom || typeof request.dossier !== 'object' || typeof request.sbom !== 'object'
-      || Object.keys(request.dossier).some((key) => !['claim', 'args'].includes(key)) || Object.keys(request.sbom).some((key) => !['claim', 'args'].includes(key))) throw Object.assign(new TypeError('reuse decision requires exact dossier and SBOM evidence'), { code: 'reuse_evidence_invalid' });
-    const dossierArgs = request.dossier.args; const sbomArgs = request.sbom.args;
-    if (!dossierArgs || dossierArgs.ecosystem !== 'npm' || typeof dossierArgs.package !== 'string' || typeof dossierArgs.version !== 'string'
-      || !/^[a-f0-9]{64}$/.test(dossierArgs.indexEpoch ?? '') || !sbomArgs || typeof sbomArgs.lockfilePath !== 'string') throw Object.assign(new TypeError('reuse decision evidence arguments are invalid'), { code: 'reuse_evidence_invalid' });
-    const coordinate = { ecosystem: 'npm', package: dossierArgs.package, version: dossierArgs.version };
-    if (!(await this._reuseDecisionPolicy.authorize({ actor, repoId: ctx.repoId, choice: request.choice, need, coordinate }))) {
-      const error = new Error('reuse decision actor is not authorized for this subject'); error.code = 'reuse_decision_forbidden'; throw error;
-    }
-    if (request.choice === 'borrow' && this._coordination.reuseRiskGuard(coordinate)?.blocked === true) {
-      throw Object.assign(new Error('exact package coordinate is blocked by an advisory observation'), { code: 'reuse_risk_guarded' });
-    }
-    if (typeof this._coordination.pendingProviderReconciliation === 'function' && this._coordination.pendingProviderReconciliation(ctx.repoId, coordinate).length > 0) {
-      throw Object.assign(new Error('exact package coordinate has an unresolved authenticated provider delivery'), { code: 'reuse_provider_pending' });
-    }
-    const dossierRef = decisionRef(request.dossier.claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
-    const sbomRef = decisionRef(request.sbom.claim?.refs?.[0], 'lockfile-sbom', 'application/vnd.cyclonedx+json');
-    if (request.supersedes != null && (typeof request.supersedes !== 'object' || Array.isArray(request.supersedes)
-      || Object.keys(request.supersedes).some((key) => !['decisionId', 'expectedValidityVersion'].includes(key))
-      || typeof request.supersedes.decisionId !== 'string' || !Number.isSafeInteger(request.supersedes.expectedValidityVersion) || request.supersedes.expectedValidityVersion <= 0)) throw Object.assign(new TypeError('reuse supersession is invalid'), { code: 'invalid_reuse_decision' });
-    const supersedes = request.supersedes == null ? null : { decisionId: request.supersedes.decisionId, expectedValidityVersion: request.supersedes.expectedValidityVersion };
-    const requestDigest = canonicalDigest({ actor, repoId: ctx.repoId, need, choice: request.choice, rationale, coordinate, dossierRef, dossierArgs, sbomRef, sbomArgs, supersedes });
-    const admitted = this._coordination.reuseDecisionAdmission(ctx.idempotencyKey, requestDigest);
-    if (admitted) return admitted;
-    const verifyCtx = { budgetTokens: ctx.budgetTokens, actor };
-    const dossierCheck = await this.reverifyCapability('cartographer-quartermaster', 'reuse.vet', request.dossier.claim, dossierArgs, verifyCtx);
-    if (dossierCheck.status !== 'ok' || dossierCheck.payload?.[0]?.ok !== true || !dossierCheck.payload[0].snapshot) throw Object.assign(new Error('reuse dossier diverged'), { code: 'reuse_evidence_diverged' });
-    const sbomCheck = await this.reverifyCapability('cartographer-quartermaster', 'provenance.sbom', request.sbom.claim, sbomArgs, verifyCtx);
-    if (sbomCheck.status !== 'ok' || sbomCheck.payload?.[0]?.ok !== true || !sbomCheck.payload[0].snapshot) throw Object.assign(new Error('reuse SBOM diverged'), { code: 'reuse_evidence_diverged' });
-    const dossierSnapshot = dossierCheck.payload[0].snapshot; const sbomSnapshot = sbomCheck.payload[0].snapshot;
-    if (dossierSnapshot.indexEpoch !== dossierArgs.indexEpoch) throw Object.assign(new Error('reuse dossier epoch mismatch'), { code: 'reuse_evidence_diverged' });
-    if (sbomSnapshot.lockfile !== sbomArgs.lockfilePath.replace(/^\.\//, '')) throw Object.assign(new Error('reuse SBOM path mismatch'), { code: 'reuse_evidence_diverged' });
-    if (request.choice === 'borrow' && dossierSnapshot.recommendation !== 'borrow_candidate') throw Object.assign(new Error('blocked dossier cannot authorize borrowing'), { code: 'reuse_borrow_blocked' });
-    const envRef = await this._resolveEnvironmentRef({ repoId: ctx.repoId, indexEpoch: dossierArgs.indexEpoch, overlayDigest: dossierSnapshot.overlayDigest, lockfileDigest: sbomSnapshot.lockfileDigest });
-    const subjectDigest = canonicalDigest({ envRef, indexEpoch: dossierArgs.indexEpoch, need, coordinate, policyHash: dossierSnapshot.policyHash });
-    const evidenceProjectionDigest = canonicalDigest({ dossierRef, dossierSnapshot, sbomRef, sbomSnapshot });
-    const decisionRecord = { envRef, indexEpoch: dossierArgs.indexEpoch, need, choice: request.choice, rationale, coordinate, actor, dossierDigest: dossierRef.digest, sbomDigest: sbomRef.digest, subjectDigest, evidenceProjectionDigest, supersedes };
-    const decisionDigest = canonicalDigest(decisionRecord); const id = `reuse-decision:${decisionDigest}`;
-    const decisionContent = { ...decisionRecord, installAuthority: false, mergeAuthority: false, verificationAuthority: false, policyOverride: false };
-    const decisionArtifactDigest = canonicalDigest(decisionContent);
-    const verifiedEvent = this._log.append({
-      worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor, kind: 'knowledge.reuse_evidence_reverified',
-      payload: { requestDigest, decisionDigest, decisionArtifactDigest, evidenceProjectionDigest, dossierDigest: dossierRef.digest, dossierFactDigest: dossierSnapshot.factDigest, policyHash: dossierSnapshot.policyHash, recommendation: dossierSnapshot.recommendation, evidenceExpiresAt: dossierSnapshot.expiresAt, sbomDigest: sbomRef.digest, lockfileDigest: sbomSnapshot.lockfileDigest, indexEpoch: dossierArgs.indexEpoch },
-    });
-    const reverifyEvidence = this._coordMapEvent(verifiedEvent);
-    const evidenceManifest = (artifactId, fresh) => {
-      const prior = this._coordination.artifact(artifactId);
-      return prior ? Object.fromEntries(Object.entries(prior).filter(([key]) => !['createdEvent', 'version', 'supersededBy', 'supersededEvent'].includes(key))) : fresh;
-    };
-    const dossierArtifactId = `capability-evidence:${dossierRef.digest}`; const sbomArtifactId = `capability-evidence:${sbomRef.digest}`;
-    const artifacts = [
-      evidenceManifest(dossierArtifactId, { id: dossierArtifactId, owner: { kind: 'capability-evidence', id: `cartographer-quartermaster:reuse.vet:${dossierRef.digest}` }, kind: dossierRef.kind, mediaType: dossierRef.mediaType, digest: dossierRef.digest, refs: [dossierRef], accepted: true, provenance: [reverifyEvidence] }),
-      evidenceManifest(sbomArtifactId, { id: sbomArtifactId, owner: { kind: 'capability-evidence', id: `cartographer-quartermaster:provenance.sbom:${sbomRef.digest}` }, kind: sbomRef.kind, mediaType: sbomRef.mediaType, digest: sbomRef.digest, refs: [sbomRef], accepted: true, provenance: [reverifyEvidence] }),
-      { id: `reuse-decision-artifact:${decisionArtifactDigest}`, owner: { kind: 'decision', id }, kind: 'reuse-decision', mediaType: 'application/vnd.baton.reuse-decision+json', digest: decisionArtifactDigest, refs: [{ artifactId: dossierArtifactId }, { artifactId: sbomArtifactId }], accepted: true, provenance: [reverifyEvidence], content: decisionContent },
-    ];
-    const prior = supersedes ? this._coordination.reuseDecision(supersedes.decisionId) : null;
-    const knowledgeSnapshot = prior ? this._coordination.snapshot().knowledge : null;
-    const priorNode = prior ? knowledgeSnapshot.nodes.find((node) => node.id === prior.nodeId) : null;
-    const affectedReadEvents = prior && !priorNode?.validTo ? knowledgeSnapshot.reads.filter((read) => read.nodeIds.includes(prior.nodeId)).map((read) => read.eventSeq) : [];
-    return this._coordination.recordReuseDecision({ schemaVersion: 1, id, requestDigest, decisionDigest, decisionArtifactDigest, subjectDigest, ...decisionRecord, dossierRef, sbomRef, dossierSnapshot, sbomSnapshot, reverifyEvidence, artifacts, affectedReadEvents }, { actor, key: ctx.idempotencyKey });
-    } finally { releaseAuthority(); }
+    decideReuse(request, ctx = {}) {
+    return runtimeAdmission.decideReuse(this, this._recorder, request, ctx);
   }
 
   /** Recheck one immutable reuse lineage without accepting caller-supplied advisory facts. TTL is
    * deterministic from the stored dossier; advisory mode forces Quartermaster's official refresh
    * and lets the store atomically install the coordinate fence plus complete live target set. */
-  async recheckReuseDecision(request, ctx = {}) {
-    await this._assertOperational();
-    const releaseAuthority = this._acquireAuthorityOp();
-    try {
-    if (!this._reuseDecisionPolicy?.authorizeRecheck) throw Object.assign(new Error('reuse recheck authority is not deployment-configured'), { code: 'reuse_recheck_unavailable' });
-    const actor = ctx.actor;
-    if (typeof actor !== 'string' || actor.length === 0 || actor.length > 256) throw Object.assign(new Error('reuse recheck actor is not authorized'), { code: 'reuse_recheck_forbidden' });
-    if (typeof ctx.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(ctx.idempotencyKey)
-      || typeof ctx.repoId !== 'string' || !request || typeof request !== 'object' || Array.isArray(request) || Object.hasOwn(request, 'actor')
-      || Object.keys(request).some((key) => !['decisionId', 'expectedValidityVersion', 'trigger', 'budgetTokens'].includes(key))
-      || typeof request.decisionId !== 'string' || !Number.isSafeInteger(request.expectedValidityVersion) || request.expectedValidityVersion <= 0
-      || !['advisory_refresh', 'ttl_expired'].includes(request.trigger) || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0
-      || request.budgetTokens !== ctx.budgetTokens) {
-      throw Object.assign(new TypeError('reuse recheck request is invalid'), { code: 'invalid_reuse_recheck' });
-    }
-    const seed = this._coordination.reuseDecision(request.decisionId);
-    if (!seed) throw Object.assign(new Error('reuse recheck decision was not found'), { code: 'reuse_decision_not_found' });
-    if (seed.envRef?.repoId !== ctx.repoId) throw Object.assign(new Error('reuse recheck repository authority mismatch'), { code: 'reuse_repo_mismatch' });
-    if (!(await this._reuseDecisionPolicy.authorizeRecheck({ actor, repoId: ctx.repoId, trigger: request.trigger, coordinate: seed.coordinate, decisionId: seed.id }))) {
-      throw Object.assign(new Error('reuse recheck actor is not authorized for this subject'), { code: 'reuse_recheck_forbidden' });
-    }
-    const requestDigest = canonicalDigest({ actor, repoId: ctx.repoId, decisionId: seed.id, expectedValidityVersion: request.expectedValidityVersion, trigger: request.trigger });
-    if (request.trigger === 'ttl_expired') {
-      const admitted = this._coordination.reuseTtlAdmission(ctx.idempotencyKey, requestDigest); if (admitted) return admitted;
-      return this._coordination.recordReuseTtlInvalidation({ requestDigest, decisionId: seed.id, expectedValidityVersion: request.expectedValidityVersion }, { actor, key: ctx.idempotencyKey });
-    }
-    const admitted = this._coordination.reuseRiskAdmission(ctx.idempotencyKey, requestDigest); if (admitted) return admitted;
-    const dossierArgs = { indexEpoch: seed.indexEpoch, ecosystem: seed.coordinate.ecosystem, package: seed.coordinate.package, version: seed.coordinate.version, refresh: true };
-    const verifyCtx = { budgetTokens: ctx.budgetTokens, actor };
-    const claim = await this.invokeCapability('cartographer-quartermaster', 'reuse.vet', dossierArgs, verifyCtx);
-    const dossierRef = decisionRef(claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
-    const check = await this.reverifyCapability('cartographer-quartermaster', 'reuse.vet', claim, dossierArgs, verifyCtx);
-    if (check.status !== 'ok' || check.payload?.[0]?.ok !== true || !check.payload[0].snapshot) throw Object.assign(new Error('reuse advisory refresh diverged'), { code: 'reuse_evidence_diverged' });
-    const snapshot = check.payload[0].snapshot; const dossier = claim.payload?.[0];
-    if (!dossier || dossier.factDigest !== snapshot.factDigest || dossier.identity?.ecosystem !== seed.coordinate.ecosystem
-      || dossier.identity?.package !== seed.coordinate.package || dossier.identity?.version !== seed.coordinate.version
-      || !Array.isArray(dossier.advisoryIds) || !Array.isArray(dossier.advisories)) throw Object.assign(new Error('reuse advisory projection is incomplete'), { code: 'reuse_evidence_diverged' });
-    const advisoryIds = [...new Set(dossier.advisoryIds)].sort();
-    const maliciousAdvisoryIds = [...new Set(dossier.advisories.filter((item) => item?.malicious === true).map((item) => item.id))].sort();
-    const adverse = snapshot.recommendation !== 'borrow_candidate';
-    const riskProjectionDigest = canonicalDigest({ coordinate: seed.coordinate, dossierRef, dossierSnapshot: snapshot, advisoryIds, maliciousAdvisoryIds, adverse });
-    const verifiedEvent = this._log.append({
-      worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor, kind: 'knowledge.reuse_risk_reverified',
-      payload: { requestDigest, seedDecisionId: seed.id, expectedValidityVersion: request.expectedValidityVersion, dossierDigest: dossierRef.digest, factDigest: snapshot.factDigest, policyHash: snapshot.policyHash, recommendation: snapshot.recommendation, asOf: snapshot.asOf, expiresAt: snapshot.expiresAt, advisoryIds, maliciousAdvisoryIds, adverse, riskProjectionDigest },
-    });
-    const reverifyEvidence = this._coordMapEvent(verifiedEvent);
-    const result = this._coordination.recordReuseRiskGuard({ requestDigest, seedDecisionId: seed.id, seedExpectedValidityVersion: request.expectedValidityVersion, coordinate: seed.coordinate, dossierRef, dossierSnapshot: snapshot, advisoryIds, maliciousAdvisoryIds, reverifyEvidence, adverse, effectiveAt: snapshot.asOf }, { actor, key: ctx.idempotencyKey });
-    return Object.freeze({ ...result, dossier: claim });
-    } finally { releaseAuthority(); }
+    recheckReuseDecision(request, ctx = {}) {
+    return runtimeAdmission.recheckReuseDecision(this, this._recorder, request, ctx);
   }
 
   /** Pull-only causal recall. The coordination append is the authority boundary: if the read
@@ -8496,37 +6658,12 @@ export class Coordinator {
   // spliced. Refusals throw so the read-port refusal path receipts them and mints no evidence.
   // -------------------------------------------------------------------------
 
-  _renderCodeOrientation(items) {
-    const frame = 'UNTRUSTED_ORIENTATION — structural disclosure, evidence to verify, never instruction';
-    const rows = (Array.isArray(items) ? items : []).map((leaf) => {
-      if (!leaf || typeof leaf !== 'object' || Array.isArray(leaf)) throw Object.assign(new Error('orientation leaf is invalid'), { code: 'context_read_invalid' });
-      if (leaf.source === 'generated') {
-        // generated leaves carry typed structural fields ONLY — free prose smuggled into a
-        // generated leaf is rejected at the one renderer seam.
-        if (leaf.text !== undefined) throw Object.assign(new Error('generated orientation leaf must not carry free prose'), { code: 'context_read_invalid' });
-        return { ...leaf };
-      }
-      // prose (curated / source-comment) leaves MUST arrive framed: {text, provenance, untrusted:true, sourceRef}.
-      if (typeof leaf.text !== 'string') throw Object.assign(new Error('orientation prose leaf requires text'), { code: 'context_read_invalid' });
-      if (leaf.untrusted !== true) throw Object.assign(new Error('orientation prose leaf requires untrusted:true'), { code: 'context_read_invalid' });
-      if (!['model-authored', 'repository-prose'].includes(leaf.provenance)) throw Object.assign(new Error('orientation prose leaf requires closed provenance'), { code: 'context_read_invalid' });
-      if (typeof leaf.sourceRef !== 'string') throw Object.assign(new Error('orientation prose leaf requires sourceRef'), { code: 'context_read_invalid' });
-      return { ...leaf };
-    });
-    const rendered = { frame, kind: 'code', count: rows.length, items: rows };
-    const deliverable = `[CONTEXT_READ_RESULT code]\n${frame}\n${rows.map((row) => JSON.stringify(row)).join('\n')}`;
-    return { rendered, deliverable, truncated: false };
+    _renderCodeOrientation(items) {
+    return runtimeAdmission._renderCodeOrientation(this, this._recorder, items);
   }
 
-  _answerCodeOrient(handle, task, query, runId) {
-    if (!query || typeof query !== 'object' || Array.isArray(query) || typeof query.op !== 'string') {
-      throw Object.assign(new Error('context read code query is invalid'), { code: 'context_read_invalid' });
-    }
-    const scope = this._orientationScope(task, runId);
-    if (query.op === 'code.orient.map') return this._codeOrientationMap(query, scope);
-    if (query.op === 'code.orient.region') return this._codeOrientationRegion(query, scope);
-    if (query.op === 'code.orient.detail') return this._codeOrientationDetail(query, scope);
-    throw Object.assign(new Error(`unknown orientation op "${query.op}"`), { code: 'context_read_invalid' });
+    _answerCodeOrient(handle, task, query, runId) {
+    return runtimeAdmission._answerCodeOrient(this, this._recorder, handle, task, query, runId);
   }
 
   _orientationScope(task, runId) {
@@ -8888,9 +7025,8 @@ export class Coordinator {
     return runtimeObservation.acquireBoardLease(this, this._recorder, fields, opts);
   }
 
-  admitBoardCommand(envelope) {
-    this.tick();
-    return this._coordination.admitBoardCommand(envelope);
+    admitBoardCommand(envelope) {
+    return runtimeAdmission.admitBoardCommand(this, this._recorder, envelope);
   }
 
   // ---- REFLEX-2 boards: worker traffic (claim/report). The claim CAS carries a BOARD-scoped
@@ -8907,59 +7043,8 @@ export class Coordinator {
   // adapters reach requestBoardClaim/submitBoardReport through admitWorkerBoardCommand — the
   // direct store methods confer no transported authority (Decision 3). ----
 
-  admitWorkerBoardCommand(kind, workerId, payload) {
-    this.tick();
-    const key = payload?.idempotencyKey ?? null;
-    const result = (partial) => ({ ...partial, ...(key ? { idempotencyKey: key } : {}) });
-    let handle;
-    try { handle = this._getWorker(workerId); } catch { return result({ ok: false, result: 'worker_not_active' }); }
-    const task = this._tasks.get(handle.taskId);
-    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) {
-      return result({ ok: false, result: 'worker_not_active' });
-    }
-    // Closed frame re-validation (the wire scanner already rejects identity/scope fields; this is
-    // the coordinator-level discipline for a direct adapter event, bd3 A1b). A frame carrying a
-    // caller-named identity field is refused /invalid/ before any state lookup.
-    if (kind === 'claim') {
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-        || Object.keys(payload).sort().join(',') !== 'expectedBoardFence,grantId,idempotencyKey,itemId'
-        || typeof payload.grantId !== 'string' || payload.grantId.length === 0
-        || typeof payload.itemId !== 'string' || payload.itemId.length === 0
-        || !Number.isSafeInteger(payload.expectedBoardFence) || payload.expectedBoardFence < 0
-        || typeof payload.idempotencyKey !== 'string'
-        || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(payload.idempotencyKey)) {
-        return result({ ok: false, result: 'board_claim_invalid' });
-      }
-    } else if (kind === 'report') {
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
-        || Object.keys(payload).sort().join(',') !== 'body,expectedClaimVersion,grantId,idempotencyKey,itemDigest,itemId,itemVersion'
-        || typeof payload.grantId !== 'string' || payload.grantId.length === 0
-        || typeof payload.itemId !== 'string' || payload.itemId.length === 0
-        || !Number.isSafeInteger(payload.itemVersion) || payload.itemVersion <= 0
-        || typeof payload.itemDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(payload.itemDigest)
-        || !Number.isSafeInteger(payload.expectedClaimVersion) || payload.expectedClaimVersion <= 0
-        || typeof payload.body !== 'string' || payload.body.length === 0
-        || typeof payload.idempotencyKey !== 'string'
-        || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(payload.idempotencyKey)) {
-        return result({ ok: false, result: 'board_report_invalid' });
-      }
-    } else {
-      return result({ ok: false, result: 'board_worker_command_invalid' });
-    }
-    const durableTask = this._coordination.task(task.id);
-    if (!durableTask || !Number.isSafeInteger(durableTask.version)) {
-      return result({ ok: false, result: 'worker_not_active' });
-    }
-    const processGeneration = Number.isSafeInteger(handle.processGeneration) ? handle.processGeneration : 0;
-    try {
-      return result(this._coordination.admitWorkerBoardCommand({
-        kind, grantId: payload.grantId, payload, workerId,
-        taskId: task.id, taskVersion: durableTask.version, processGeneration,
-        idempotencyKey: payload.idempotencyKey,
-      }));
-    } catch (error) {
-      return result({ ok: false, result: error?.code ?? 'board_worker_scope_refused' });
-    }
+    admitWorkerBoardCommand(kind, workerId, payload) {
+    return runtimeAdmission.admitWorkerBoardCommand(this, this._recorder, kind, workerId, payload);
   }
 
   /** Decision 2: the waves.send claim-grant mint. The caller names no grantee and no
@@ -9011,19 +7096,8 @@ export class Coordinator {
   // derives principalId/repoId/runId from the worker handle's task and threads them alongside
   // {actor, key}; replRole passes through unaltered (digest-covered) and the store verifies
   // replRole === 'worker:' + auth.principalId, so a worker can only admit into its own layer.
-  admitReplManifest(workerId, fields, opts = {}) {
-    this.tick();
-    const handle = this._getWorker(workerId);
-    const task = this._tasks.get(handle.taskId);
-    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
-    // and its scratch/board traffic from the just-completed turn (a trailing write racing the
-    // turn-completed frame) must not be spuriously refused `task_not_active`.
-    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
-    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Repl manifest admission requires idempotencyKey');
-    return this._coordination.admitReplManifest(fields, {
-      actor: opts.actor ?? 'worker', key: opts.idempotencyKey,
-      principalId: workerId, repoId: this._repoId, runId: task.runId,
-    });
+    admitReplManifest(workerId, fields, opts = {}) {
+    return runtimeAdmission.admitReplManifest(this, this._recorder, workerId, fields, opts);
   }
 
   // KG-2 Part D rule 16: the settle-time orchestrator-admit gate. This entry point accepts no
@@ -9033,21 +7107,8 @@ export class Coordinator {
   // items nor packages carry repoId). The caller supplies the active run-orchestrator lease;
   // ordering (rule 16b) is the caller's responsibility — this call must complete, or be
   // explicitly abandoned, before that run's lease is revoked.
-  admitWorkflowFinding(runId, candidateFindingId, policy, lease, session = null) {
-    this.tick();
-    return this._coordination.admitWorkflowFinding(
-      this._repoId, runId, candidateFindingId, policy,
-      {
-        actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}`,
-        // XB: the admission auth carries the acquiring session so the store's full lease gate
-        // binds admission to the actor that acquired the lease (never a bearer of the digest).
-        ...(session ? {
-          principalId: session.principalId, sessionId: session.sessionId,
-          sessionAuthorityDigest: session.authorityDigest,
-        } : {}),
-      },
-      lease,
-    );
+    admitWorkflowFinding(runId, candidateFindingId, policy, lease, session = null) {
+    return runtimeAdmission.admitWorkflowFinding(this, this._recorder, runId, candidateFindingId, policy, lease, session);
   }
 
   // D2: scratchpad.elevate → the terminal-task elevation wrapper with an explicit note+plan
@@ -9155,13 +7216,8 @@ export class Coordinator {
   // the write's own routing/identity field; Part B rule 4(b)/(c) already refuse a caller whose
   // declared scope and cited manifestDigest don't jointly resolve to its own identity, loudly,
   // by construction — there is nothing left here for a wrapper to force. ----
-  admitReplBinding(fields, opts = {}) {
-    this.tick();
-    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('REPL binding requires idempotencyKey');
-    return this._coordination.admitReplBinding(fields, {
-      actor: opts.actor ?? 'worker', principalId: opts.principalId ?? opts.actor ?? 'worker',
-      key: opts.idempotencyKey,
-    });
+    admitReplBinding(fields, opts = {}) {
+    return runtimeAdmission.admitReplBinding(this, this._recorder, fields, opts);
   }
 
     dropReplBinding(fields, opts = {}) {
@@ -9180,23 +7236,15 @@ export class Coordinator {
     return runtimeObservation.resolveReplCitation(this, this._recorder, runId, citation);
   }
 
-  list() {
-    this._assertReadable();
-    return [...this._workers.values()].map((h) => this._publicHandle(h));
+    list() {
+    return runtimeAdmission.list(this, this._recorder);
   }
 
   /** Current-process resource authority for one already-visible worker coordinate.
    * Durable replay handles intentionally retain provider/worktree/process evidence, but those
    * coordinates are not proof that this Coordinator incarnation can control the resources. */
-  localResourceOwnership(workerId) {
-    this._assertReadable();
-    if (typeof workerId !== 'string' || workerId.length === 0
-      || Buffer.byteLength(workerId) > 256 || !/^[A-Za-z0-9._:-]+$/u.test(workerId)) {
-      throw new TypeError('worker ownership coordinate is invalid');
-    }
-    const handle = this._workers.get(workerId);
-    if (!handle) return null;
-    return Object.freeze({ owned: this._ownsLocalResources(handle) });
+    localResourceOwnership(workerId) {
+    return runtimeAdmission.localResourceOwnership(this, this._recorder, workerId);
   }
 
   /** #201 (row-resume-wiring): the successor incarnation's orphan re-dispatch projection.
@@ -9227,30 +7275,8 @@ export class Coordinator {
   // Command: wait()
   // =========================================================================
 
-  async wait(timeoutMs = 25000) {
-    this._assertReadable();
-    const deadline = Date.now() + timeoutMs;
-
-    // Always yield at least one real macrotask turn so any in-flight microtask-only
-    // background work (e.g. the trust gate, chained purely off resolved promises) has a
-    // chance to fully settle before we snapshot the digest.
-    await this._sleep(0);
-    this._assertReadable();
-    let digest = this._collectDigest();
-
-    // Prose is a wake too: `_collectDigest` records the page's high-water mark and the NEXT call
-    // acks past it, so a page discarded here would be gone for good (Cursor's contract in
-    // log.mjs says a dropped page can drop a worker's unanswered question; 2026-09-14 audit G-17).
-    while (digest.attention.length === 0 && digest.facts.length === 0 && digest.prose.length === 0
-      && Date.now() < deadline) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      await this._sleep(Math.min(this._waitPollMs, remaining));
-      this._assertReadable();
-      digest = this._collectDigest();
-    }
-
-    return digest;
+    wait(timeoutMs = 25000) {
+    return runtimeAdmission.wait(this, this._recorder, timeoutMs);
   }
 
   _sleep(ms) {
@@ -10431,36 +8457,8 @@ export class Coordinator {
    * Returns true when a retry was admitted (the caller must not settle the death), false when the
    * caller owns the settlement.
    */
-  _queueTransientProviderTurnRetry(handle, terminalEvent, workerResult, task) {
-    const code = typedTerminalCode(workerResult?.failure?.code, null);
-    if (code === null || !isTransientProviderFault(code)) return false;
-    if (this._closed || this._drainState !== 'open') return false;
-    if (handle.status !== 'working' || this._stopWaiters.has(handle.id)) return false;
-    // A closed process is not a dropped route: the transport itself is gone and its death cert
-    // owns the settlement (the retry would have nowhere to write).
-    if (handle.processRef && handle.processRef.state === 'closed') return false;
-    if (typeof this._adapters[handle.vendor]?.prompt !== 'function') return false;
-    const attempt = (handle.transientTurnRetries ?? 0) + 1;
-    if (attempt > this._transientTurnRetryLimit) return false;
-    if (this._transientRetryPending?.has(handle.id)) return false;
-    // The re-driven turn is admitted through the SAME gate every other new provider turn passes
-    // (`_admitProviderTurn`: the member's declared budget, its terminal reserve, and the route's
-    // capability) — so the retry RIDES the existing turn budget instead of bypassing it, and a
-    // member with no headroom left is settled by the ordinary provider-failure path rather than
-    // re-driven. The refusal is durable and named (`resource.provider_turn_refused`, phase
-    // `transient_retry`), so a retry that never happened is never invisible.
-    if (!this._admitProviderTurn(handle, task, 'transient_retry').ok) return false;
-    const fault = this._providerFaultOf(workerResult);
-    const route = fault?.detail?.route ?? this._providerRouteOf(handle);
-    this._transientRetryPending ??= new Set();
-    this._transientRetryPending.add(handle.id);
-    const drive = Promise.resolve(this._retryTransientProviderTurn(
-      handle, terminalEvent, workerResult, { code, attempt, route },
-    ))
-      .catch((error) => this._recordOperationFailure('provider.transient_retry_failed', handle, 'transient_retry_failed', error))
-      .finally(() => this._transientRetryPending?.delete(handle.id));
-    void drive;
-    return true;
+    _queueTransientProviderTurnRetry(handle, terminalEvent, workerResult, task) {
+    return runtimeAdmission._queueTransientProviderTurnRetry(this, this._recorder, handle, terminalEvent, workerResult, task);
   }
 
   async _retryTransientProviderTurn(handle, terminalEvent, workerResult, { code, attempt, route }) {
@@ -10995,23 +8993,8 @@ export class Coordinator {
     yield* runtimeRecovery._replay(this, this._recorder);
   }
 
-  _deriveWorkerStatus(taskStatus) {
-    switch (taskStatus) {
-      case 'completed':
-      case 'failed':
-      case 'cancelled':
-        return 'idle';
-      case 'input_required':
-      // Issue #31 §2.1(3), the eighth guard site: without this case `paused` falls through
-      // `default` and renders as 'working' — precisely the "never disguised as working"
-      // violation the spec forbids. From a worker's external-status point of view, "waiting on
-      // something before it can proceed" is `blocked` whether that something is an answer or a
-      // steering decision; WorkerStatus gains no dedicated `paused` value here.
-      case 'paused':
-        return 'blocked';
-      default:
-        return 'working';
-    }
+    _deriveWorkerStatus(taskStatus) {
+    return runtimeAdmission._deriveWorkerStatus(this, this._recorder, taskStatus);
   }
 
   /** Issue #351 lane 4: the unattached-task terminalization sweep as a yielding pass — one

@@ -26,6 +26,7 @@ import test from 'node:test';
 
 import * as runtimeRecovery from '../src/runtime-recovery.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
+import { memberSource } from './seam-member-source.mjs';
 
 const require = createRequire(import.meta.url);
 const { Lang, parse } = require('@ast-grep/napi');
@@ -304,7 +305,10 @@ test('RR6: the coordinator wires the port and the public verbs keep their shape'
   }
   assert.equal(proto.recover.length, 1, 'recover(workerId, opts = {}) keeps its arity');
   assert.equal(proto.resumeOrphans.length, 0, 'resumeOrphans({ liveWorkers = [] } = {}) keeps its arity');
-  const coordText = read(COORD_FILE);
+  // issue #259 slice 11: the constructor — the admission-classified composition root — moved to
+  // runtime-admission.mjs, so the port-wiring lines are read off the member, wherever they live
+  // (memberSource normalizes the module's `coordinator.` receiver back to `this.`).
+  const coordText = memberSource('constructor');
   assert.ok(
     coordText.includes('this._recorder = opts.recorderPort'),
     'the coordinator takes the injected recorder port',
