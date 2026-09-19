@@ -1167,7 +1167,7 @@ test('Phase 60 adversarial: every pre-spawn post-admission failure compensates p
           return admitted;
         };
       }
-      if (phase === 'coordination') f.replay._coordRecord = () => { throw new Error('coordination setup failed'); };
+      if (phase === 'coordination') f.coordination.recordDriver = () => { throw new Error('coordination setup failed'); };
       if (phase === 'runtime') f.replay._runtimeScopes.create = () => { throw new Error('runtime setup failed'); };
 
       try {
