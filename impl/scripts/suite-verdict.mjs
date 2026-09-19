@@ -315,6 +315,10 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
     if (state !== null) return state === 'present' ? null : state;
     return environmentAbsent ? 'absent' : null;
   };
+  // Rows whose settlement was a dangling await earlier in their file. Counted wherever they land —
+  // a listed row lands in the expected-red set, an unlisted one in the unexpected set — so the
+  // headline reports the count against this run's red rows, never inside the expected-red
+  // parenthetical, which enumerates exactly the expected-red set (code + environment).
   let cancelled = 0;
   let passed = 0;
   for (const summary of summaries) {
@@ -380,7 +384,7 @@ export function formatVerdict(verdict) {
   const headline = verdict.green
     ? (verdict.environmentRed.length > 0 ? 'GREEN except environment' : 'GREEN')
     : 'RED';
-  lines.push(`baton suite verdict: ${headline} — ${verdict.passed} passed, ${verdict.expectedRed.length} expected red (${verdict.codeRed.length} code, ${verdict.environmentRed.length} environment-red, ${verdict.cancelled ?? 0} of them cancelled by a dangling await earlier in their file), ${verdict.unexpected.length} unexpected failure(s), ${verdict.stale.length} stale expectation(s), ${verdict.hung.length} hung, ${verdict.stalled.length} stalled lane(s)${skippedNote}`);
+  lines.push(`baton suite verdict: ${headline} — ${verdict.passed} passed, ${verdict.expectedRed.length} expected red (${verdict.codeRed.length} code, ${verdict.environmentRed.length} environment-red), ${verdict.cancelled ?? 0} of this run’s red rows cancelled by a dangling await earlier in their file, ${verdict.unexpected.length} unexpected failure(s), ${verdict.stale.length} stale expectation(s), ${verdict.hung.length} hung, ${verdict.stalled.length} stalled lane(s)${skippedNote}`);
   if (verdict.environment) lines.push(`  ${formatEnvironment(verdict.environment)}`);
   const classes = REASON_CLASSES.filter((klass) => (verdict.expectedRedByClass?.[klass] ?? 0) > 0);
   if (classes.length > 0) {

@@ -55,6 +55,20 @@ test('a test cancelled by a dangling await earlier in its file is a listable red
   assert.equal(unlisted.unexpected.length, 1);
 });
 
+test('the headline counts a cancelled row among this run’s red rows, never inside the expected-red set', () => {
+  const failure = { failureType: 'cancelledByParent', message: 'Promise resolution is still pending but the event loop has already resolved' };
+  // Unlisted: the row is an unexpected failure, so the expected-red parenthetical must not claim it.
+  const unlisted = computeVerdict([{ lane: 'suite', passed: [], failed: [row('test/c.test.mjs', 'C2', failure)] }], { rows: [] });
+  const unlistedLine = formatVerdict(unlisted);
+  assert.match(unlistedLine, /0 expected red \(0 code, 0 environment-red\)/u);
+  assert.match(unlistedLine, /1 of this run’s red rows cancelled by a dangling await earlier in their file/u);
+  // Listed: the same defect in a row the manifest does list keeps its expected-red accounting.
+  const listedRun = computeVerdict([{ lane: 'suite', passed: [], failed: [row('test/c.test.mjs', 'C2', failure)] }], { rows: [listed('test/c.test.mjs', 'C2', '#260')] });
+  const listedLine = formatVerdict(listedRun);
+  assert.match(listedLine, /1 expected red \(1 code, 0 environment-red\)/u);
+  assert.match(listedLine, /1 of this run’s red rows cancelled by a dangling await earlier in their file/u);
+});
+
 test('hangs are never expected red, even when listed', () => {
   const key = rowKey('test/h.test.mjs', 'H1');
   for (const failure of [

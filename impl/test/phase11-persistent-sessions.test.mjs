@@ -1171,7 +1171,7 @@ test('Phase 60 adversarial: every pre-spawn post-admission failure compensates p
       if (phase === 'runtime') f.replay._runtimeScopes.create = () => { throw new Error('runtime setup failed'); };
 
       try {
-        await assert.rejects(f.replay.recover(f.handle.id));
+        await withLiveLoop(() => assert.rejects(f.replay.recover(f.handle.id)));
       } finally {
         f.log.dir = originalLogDir;
       }
