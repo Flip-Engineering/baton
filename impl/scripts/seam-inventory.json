@@ -16,14 +16,10 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 513,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate",
-            "observation:log_append",
-            "observation:story_ingest",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -124,12 +120,11 @@
         {
           "name": "_assertTickable",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:policy_gate",
-            "admission:typed_refusal"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -144,42 +139,39 @@
         {
           "name": "_assertReadable",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:policy_gate"
+            "admission:policy_gate",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_withAuthorityOp",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate",
-            "admission:typed_refusal"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_acquireAuthorityOp",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate",
-            "admission:typed_refusal"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_trackAuthorityPromise",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -228,10 +220,10 @@
         {
           "name": "_fleetDrainOwnsShutdown",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -281,21 +273,21 @@
         {
           "name": "_assertOperational",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:policy_gate"
+            "admission:policy_gate",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "closeAuthority",
           "ordinal": 0,
-          "size": 31,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -330,20 +322,21 @@
         {
           "name": "_drainFailure",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:refusal_name"
+            "admission:refusal_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "reopenAdmission",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -386,7 +379,8 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:predicate_name"
+            "admission:predicate_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -416,25 +410,28 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:predicate_name"
+            "admission:predicate_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_resolveInteractionAuthority",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_refuseInteractionFrameId",
           "ordinal": 0,
-          "size": 15,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:guard_name"
+            "admission:guard_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -451,10 +448,11 @@
         {
           "name": "_resolvePauseAuthority",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -470,10 +468,11 @@
         {
           "name": "_admitPauseRecord",
           "ordinal": 0,
-          "size": 60,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:guard_name"
+            "admission:guard_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -527,31 +526,30 @@
         {
           "name": "captureContribution",
           "ordinal": 0,
-          "size": 52,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:typed_refusal"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "observedNativeSubagents",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate",
-            "observation:record_name"
+            "observation:record_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "checkContribution",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -566,10 +564,10 @@
         {
           "name": "_reservePauseRecord",
           "ordinal": 0,
-          "size": 33,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -585,10 +583,10 @@
         {
           "name": "_withPauseReservation",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -607,6 +605,7 @@
           "size": 4,
           "seam": "effect",
           "evidence": [
+            "delegates:admission",
             "delegates:effect"
           ]
         },
@@ -660,10 +659,11 @@
         {
           "name": "_isAuthorityCheckout",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:predicate_name"
+            "admission:predicate_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -776,10 +776,10 @@
         {
           "name": "_capacityWorkerGone",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -948,37 +948,41 @@
         {
           "name": "_resolveVendor",
           "ordinal": 0,
-          "size": 15,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_admitResolvedVendor",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:guard_name"
+            "admission:guard_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_selectAutoRoute",
           "ordinal": 0,
-          "size": 37,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_configuredCeiling",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -993,10 +997,11 @@
         {
           "name": "_resolveExplicitRoute",
           "ordinal": 0,
-          "size": 44,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1066,10 +1071,10 @@
         {
           "name": "_semanticTargetMatches",
           "ordinal": 0,
-          "size": 26,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1123,29 +1128,30 @@
         {
           "name": "_providerCapabilityRefusal",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:refusal_name"
+            "admission:refusal_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_bindStrictProviderGovernance",
           "ordinal": 0,
-          "size": 25,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:typed_refusal"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_admitProviderTurn",
           "ordinal": 0,
-          "size": 81,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:log_append"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1181,13 +1187,11 @@
         {
           "name": "_admitContextPackCitations",
           "ordinal": 0,
-          "size": 15,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:typed_refusal",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1211,10 +1215,11 @@
         {
           "name": "_derivePendingAttentionItems",
           "ordinal": 0,
-          "size": 60,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1270,10 +1275,11 @@
         {
           "name": "_assertAttentionPushServed",
           "ordinal": 0,
-          "size": 39,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:guard_name"
+            "admission:guard_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1288,11 +1294,10 @@
         {
           "name": "_goalPlanAuth",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:typed_refusal"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1301,9 +1306,7 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1312,9 +1315,7 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1323,21 +1324,17 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "goalPlanStatus",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "observation:coordination_authority",
             "observation:projection_name",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1643,7 +1640,7 @@
           "seam": "admission",
           "evidence": [
             "effect:action_name",
-            "admission:authority_check"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1688,11 +1685,11 @@
         {
           "name": "verificationRuntimeDigest",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate",
-            "observation:projection_name"
+            "observation:projection_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1732,11 +1729,11 @@
         {
           "name": "_normalizeResumeRequest",
           "ordinal": 0,
-          "size": 53,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:typed_refusal",
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1745,7 +1742,7 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1776,7 +1773,7 @@
           "seam": "admission",
           "evidence": [
             "effect:action_name",
-            "admission:authority_check"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1810,10 +1807,11 @@
         {
           "name": "_assertNoCycle",
           "ordinal": 0,
-          "size": 20,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:guard_name"
+            "admission:guard_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1922,20 +1920,20 @@
         {
           "name": "attentionFollow",
           "ordinal": 0,
-          "size": 41,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:typed_refusal"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_attentionScopeAuthorized",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check"
+            "admission:authority_check",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -1970,20 +1968,19 @@
         {
           "name": "guideParticipant",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "send",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2077,7 +2074,7 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2163,19 +2160,20 @@
         {
           "name": "_resolveStopRequests",
           "ordinal": 0,
-          "size": 13,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_safeTurnEpoch",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2413,11 +2411,11 @@
         {
           "name": "_ensureRuntimeScope",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:log_append"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2582,7 +2580,7 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2591,17 +2589,18 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_noteFailure",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:refusal_name",
-            "observation:record_name"
+            "observation:record_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2697,10 +2696,11 @@
         {
           "name": "_normalizeUsage",
           "ordinal": 0,
-          "size": 48,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2756,12 +2756,12 @@
         {
           "name": "_validateTerminalUsageSeal",
           "ordinal": 0,
-          "size": 30,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:typed_refusal",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2884,22 +2884,21 @@
         {
           "name": "_onStopConfirmed",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_sessionPreservationReceipt",
           "ordinal": 0,
-          "size": 39,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate",
             "observation:projection_name",
             "observation:ledger_name",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -2980,11 +2979,11 @@
         {
           "name": "observeStopAbsence",
           "ordinal": 0,
-          "size": 23,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate",
-            "observation:record_name"
+            "observation:record_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3012,7 +3011,7 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3027,11 +3026,11 @@
         {
           "name": "interactionStatus",
           "ordinal": 0,
-          "size": 25,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate",
-            "observation:projection_name"
+            "observation:projection_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3108,63 +3107,55 @@
         {
           "name": "result",
           "ordinal": 0,
-          "size": 59,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "capabilityCards",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "routeCards",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "advisoryFeedCards",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "receiveProviderDelivery",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate",
-            "admission:typed_refusal",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "receiveProviderWebhook",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate",
-            "admission:typed_refusal",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3214,11 +3205,10 @@
         {
           "name": "invokeCapability",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3235,11 +3225,10 @@
         {
           "name": "reverifyCapability",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3254,11 +3243,10 @@
         {
           "name": "invokeCapabilityNorthbound",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3275,39 +3263,29 @@
         {
           "name": "reverifyCapabilityNorthbound",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "decideReuse",
           "ordinal": 0,
-          "size": 80,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate",
-            "admission:typed_refusal",
             "admission:normalize_name",
-            "observation:log_append",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "recheckReuseDecision",
           "ordinal": 0,
-          "size": 50,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:authority_check",
-            "admission:policy_gate",
-            "observation:log_append",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3408,20 +3386,20 @@
         {
           "name": "_renderCodeOrientation",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:typed_refusal",
-            "observation:record_name"
+            "observation:record_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "_answerCodeOrient",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:typed_refusal"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3682,12 +3660,11 @@
         {
           "name": "admitBoardCommand",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3711,12 +3688,11 @@
         {
           "name": "admitWorkerBoardCommand",
           "ordinal": 0,
-          "size": 54,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3772,24 +3748,22 @@
         {
           "name": "admitReplManifest",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:coordination_authority",
             "observation:projection_name",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "admitWorkflowFinding",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3938,12 +3912,11 @@
         {
           "name": "admitReplBinding",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -3987,20 +3960,20 @@
         {
           "name": "list",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate",
-            "observation:read_name"
+            "observation:read_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
           "name": "localResourceOwnership",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -4028,10 +4001,10 @@
         {
           "name": "wait",
           "ordinal": 0,
-          "size": 25,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -4120,10 +4093,10 @@
         {
           "name": "_queueTransientProviderTurnRetry",
           "ordinal": 0,
-          "size": 31,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:policy_gate"
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -4221,11 +4194,12 @@
         {
           "name": "_deriveWorkerStatus",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name",
-            "observation:projection_name"
+            "observation:projection_name",
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -22488,6 +22462,970 @@
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/runtime-admission.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "normalizeDrainPolicy",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "coachingError",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "guidanceSender",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "guidanceSenderLabel",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "normalizedDecisionText",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "bestEffort",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "bestEffortSync",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "cardAcceptsExactModel",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "resolveCardModel",
+          "ordinal": 0,
+          "size": 32,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "defaultAccept",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "constructor",
+          "ordinal": 0,
+          "size": 513,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate",
+            "observation:log_append",
+            "observation:story_ingest",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_assertTickable",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate",
+            "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "_assertReadable",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_withAuthorityOp",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate",
+            "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "_acquireAuthorityOp",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate",
+            "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "_trackAuthorityPromise",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "_fleetDrainOwnsShutdown",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_assertOperational",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "closeAuthority",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_drainFailure",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "reopenAdmission",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_ownsLocalResources",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:predicate_name"
+          ]
+        },
+        {
+          "name": "_hasPendingInteractionAuthority",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:predicate_name"
+          ]
+        },
+        {
+          "name": "_resolveInteractionAuthority",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_refuseInteractionFrameId",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_resolvePauseAuthority",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_admitPauseRecord",
+          "ordinal": 0,
+          "size": 60,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "captureContribution",
+          "ordinal": 0,
+          "size": 52,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "observedNativeSubagents",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "checkContribution",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_reservePauseRecord",
+          "ordinal": 0,
+          "size": 33,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_withPauseReservation",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_isAuthorityCheckout",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:predicate_name"
+          ]
+        },
+        {
+          "name": "_capacityWorkerGone",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_resolveVendor",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_admitResolvedVendor",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_selectAutoRoute",
+          "ordinal": 0,
+          "size": 37,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_configuredCeiling",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_resolveExplicitRoute",
+          "ordinal": 0,
+          "size": 44,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_semanticTargetMatches",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_providerCapabilityRefusal",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "_bindStrictProviderGovernance",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "admission",
+          "evidence": [
+            "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "_admitProviderTurn",
+          "ordinal": 0,
+          "size": 81,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_admitContextPackCitations",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:typed_refusal",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_derivePendingAttentionItems",
+          "ordinal": 0,
+          "size": 60,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_assertAttentionPushServed",
+          "ordinal": 0,
+          "size": 39,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_goalPlanAuth",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "defineGoal",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "proposePlan",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "approvePlan",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "goalPlanStatus",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "observation:projection_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "preserveResult",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "effect:action_name",
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "verificationRuntimeDigest",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "_normalizeResumeRequest",
+          "ordinal": 0,
+          "size": 53,
+          "seam": "admission",
+          "evidence": [
+            "admission:typed_refusal",
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "retryVerification",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "materializeAcceptedResult",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "effect:action_name",
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "_assertNoCycle",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "attentionFollow",
+          "ordinal": 0,
+          "size": 41,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "_attentionScopeAuthorized",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "guideParticipant",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "send",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "prepareSemanticInterrupt",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "_resolveStopRequests",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_safeTurnEpoch",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_ensureRuntimeScope",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_bestEffort",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_bestEffortSync",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_noteFailure",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_normalizeUsage",
+          "ordinal": 0,
+          "size": 48,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_validateTerminalUsageSeal",
+          "ordinal": 0,
+          "size": 30,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:typed_refusal",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_onStopConfirmed",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_sessionPreservationReceipt",
+          "ordinal": 0,
+          "size": 39,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "observeStopAbsence",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "claimInteraction",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check"
+          ]
+        },
+        {
+          "name": "interactionStatus",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "result",
+          "ordinal": 0,
+          "size": 59,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "capabilityCards",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "routeCards",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "advisoryFeedCards",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "receiveProviderDelivery",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate",
+            "admission:typed_refusal",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "receiveProviderWebhook",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate",
+            "admission:typed_refusal",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "invokeCapability",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "reverifyCapability",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "invokeCapabilityNorthbound",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "reverifyCapabilityNorthbound",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "decideReuse",
+          "ordinal": 0,
+          "size": 80,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate",
+            "admission:typed_refusal",
+            "admission:normalize_name",
+            "observation:log_append",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "recheckReuseDecision",
+          "ordinal": 0,
+          "size": 50,
+          "seam": "admission",
+          "evidence": [
+            "admission:authority_check",
+            "admission:policy_gate",
+            "observation:log_append",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_renderCodeOrientation",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "admission",
+          "evidence": [
+            "admission:typed_refusal",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_answerCodeOrient",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "admitBoardCommand",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "admitWorkerBoardCommand",
+          "ordinal": 0,
+          "size": 54,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "admitReplManifest",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:projection_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "admitWorkflowFinding",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "admitReplBinding",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "list",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "localResourceOwnership",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "wait",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_queueTransientProviderTurnRetry",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_deriveWorkerStatus",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:projection_name"
           ]
         }
       ]

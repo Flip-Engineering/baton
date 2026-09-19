@@ -173,6 +173,16 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/runtime-observation.mjs', className: null, receiver: 'coordinator',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Slice 11's module target: the coordinator's admission bucket (89 members — the authority-op
+  // guards, the route/policy admission, the pause/interaction authority, and the constructor, the
+  // corpus's admission-classified composition root) moves to runtime-admission.mjs under the same
+  // convention. The constructor takes (coordinator, opts) — it composes the recorder port, so no
+  // recorder parameter exists for it. The relocated declarations (the authority consts, the
+  // supervisory class, the two error classes) are module-scope members or exports here.
+  Object.freeze({
+    file: 'impl/src/runtime-admission.mjs', className: null, receiver: 'coordinator',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -256,6 +266,9 @@ const AUTHORITY_RULES = Object.freeze([
   // three-line delegate like `_coordMap` — whose only evidence was the coordination authority its
   // body reached — would fall to the surface fallback.
   { seam: 'observation', id: 'observation_port', weight: 3, call: /\bruntimeObservation\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted observation module (runtime-observation.mjs)' },
+  // Slice 11 extends the port rules to the admission bucket: a member whose body is a delegate
+  // into runtime-admission.mjs keeps the admission seam its body had there.
+  { seam: 'admission', id: 'runtime_admission_port', weight: 3, call: /\bruntimeAdmission\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted admission module (runtime-admission.mjs)' },
 
   // Slice 5 extends the rule to the admission bucket: a member whose body is a delegate into
   // coordination-admission.mjs keeps the seam its body had there.
