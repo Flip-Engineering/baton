@@ -103,8 +103,12 @@ test('G-46 (RED): the three operational families route through a receipting wrap
     'stage[operational-catch-silenced]: no fire-and-forget `_beginStop(...).catch(...)` call site is left');
   assert.equal(/this\._cleanupClosedTransport\([^)]*\)\.catch\(/u.test(COORDINATOR_SOURCE), false,
     'stage[operational-catch-silenced]: no fire-and-forget transport cleanup is left');
-  assert.ok(COORDINATOR_SOURCE.includes("this._runTrustGate(handle, wr))")
-    && COORDINATOR_SOURCE.includes('this._recordTrustGateEscape(handle, error)'),
+  // Issue #259 slice 14: the call site's member (`turnCompleted`, the turn_completed arm) lives
+  // in runtime-event-handlers/turn-terminal.mjs — the pin follows it, with the receiver and ctx
+  // spellings the split carries (coordinator./ctx.handle).
+  const TURN_TERMINAL_SOURCE = readFileSync(new URL('../src/runtime-event-handlers/turn-terminal.mjs', import.meta.url), 'utf8');
+  assert.ok(TURN_TERMINAL_SOURCE.includes("coordinator._runTrustGate(ctx.handle, wr))")
+    && TURN_TERMINAL_SOURCE.includes('coordinator._recordTrustGateEscape(ctx.handle, error)'),
   'stage[operational-catch-silenced]: the trust gate call site names its escape handler');
 });
 
