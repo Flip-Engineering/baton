@@ -273,10 +273,20 @@ function gitReadOrNull(args, cwd) {
  * deployment's life because the code running is the code that was loaded, whatever the
  * checkout does afterwards — and the branch it was on (null when detached). */
 export function servedRevision(repoRoot) {
-  const commit = gitReadOrNull(['rev-parse', 'HEAD'], repoRoot);
+  let root;
+  try {
+    root = realpathSync(resolve(repoRoot));
+    const discovered = gitReadOrNull(['rev-parse', '--show-toplevel'], root);
+    if (discovered === null || realpathSync(discovered) !== root) {
+      return Object.freeze({ commit: null, branch: null });
+    }
+  } catch {
+    return Object.freeze({ commit: null, branch: null });
+  }
+  const commit = gitReadOrNull(['rev-parse', 'HEAD'], root);
   return Object.freeze({
     commit: commit !== null && GIT_SHA_40.test(commit) ? commit : null,
-    branch: gitReadOrNull(['symbolic-ref', '--short', 'HEAD'], repoRoot),
+    branch: gitReadOrNull(['symbolic-ref', '--short', 'HEAD'], root),
   });
 }
 
