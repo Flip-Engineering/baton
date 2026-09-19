@@ -58,10 +58,20 @@ Rules:
 - The executor computes the exact prologue-local set by reading every arm's free variables; the
   set is enumerated in the slice doc and pinned (EH2). No local joins the record without an arm
   reading it.
-- If any arm REASSIGNS a prologue local that the tail or a later guard reads, passing a
-  primitive by value would change behavior. The inventory shows arms deriving their own `task`
-  (`this._tasks.get(handle.taskId)` inside the arms), but the executor verifies the no-write-back
-  property mechanically before generating; a finding stops the slice and comes back to design.
+- ~~If any arm REASSIGNS a prologue local~~ **Gate outcome (fired, resolved):** the mechanical
+  census found exactly one write-back — `nativeObservationEvent` (declared at coordinator.mjs:6353,
+  assigned by the `resource.tokens` arm at :6477 and the `default` arm at :7162, read by the tail
+  at :7164–7170; 34 prologue locals otherwise read-only in the arms, no shadowing). The resolution
+  is ctx threading: the key initializes as `nativeObservationEvent: null` in the ctx record, the
+  two arm assignments become `ctx.nativeObservationEvent = …`, and the tail reads
+  `ctx.nativeObservationEvent` — the mutable ctx record this section specifies already carries the
+  pre-move shared-local semantics, and the inverse-transform audit treats the three re-spellings as
+  named glue. The return-channel alternative was rejected: it adds a return-shape convention for
+  two family functions to save one shared mutable key, and the EH pin below makes that key
+  exhaustive, so the mutation surface is pinned smaller than the convention would make it.
+- EH2 pins the write-back surface: `nativeObservationEvent` is the ONLY ctx key an arm function
+  assigns (a spelling scan over the family modules admits `ctx.nativeObservationEvent =` and no
+  other `ctx.<key> =`).
 - Each arm becomes an exported function in its family module:
   `export function processClosed(coordinator, recorder, ctx)` — receiver, port, context. Arms
   with fall-through (grouped cases like `question.answered`/`approval.resolved`/`decision.settled`)
