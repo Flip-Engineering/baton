@@ -7,8 +7,11 @@
 // verdict is green only when
 //   - no test failed that is NOT listed (an unexpected failure is a regression), and
 //   - no listed test passed (a stale expectation must be removed — the spec went green), and
-//   - no test was cancelled / timed out / hung (a hang is never an expected red), and
-//   - no lane stalled (the runner's progress deadline expired with tests still pending).
+//   - no test was cancelled / timed out / hung (a hang is never an expected red).
+//
+// A file that stops reporting is bounded by the runner's own per-file progress deadline (#260):
+// the deadline reaps the file and mints a `fileHung` row, which this verdict reads as a hang, so
+// the file-level bound is the one lane-liveness dimension the verdict observes (#521).
 //
 // Every row carries a reason because an unattributed red is indistinguishable from an abandoned
 // test (2026-09-14 audit S-G2/S-I6): a GitHub issue (`#263`), the audit item that tracks it
@@ -258,7 +261,7 @@ export function formatEnvironment(environment) {
 }
 
 /**
- * @param {Array<{lane: string, passed: Array<{file,name}>, failed: Array<{file,name,failureType,message}>, stalled?: {lastEvent: string|null, idleMs: number}|null}>} summaries
+ * @param {Array<{lane: string, passed: Array<{file,name}>, failed: Array<{file,name,failureType,message}>, skipped?: Array<{file, reason}>}>} summaries
  * @param {{rows: Array<{key, reason}>, converged?: Array<{file, reason}>}} manifest
  * @param {{environment?: object|null}} [options]
  */
@@ -282,7 +285,6 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
   const expectedRed = [];
   const hung = [];
   const stale = [];
-  const stalled = [];
   const skipped = [];
   // Environment rows: a row whose reason class is credential/environment is the row's own
   // declaration that this machine decides its outcome (2026-09-14 audit R-1). It is judged
@@ -359,20 +361,19 @@ export function computeVerdict(summaries, manifest, { environment = null } = {})
           prerequisite: prerequisites.get(key), prerequisiteState: excused,
         });
     }
-    if (summary.stalled) stalled.push({ lane: summary.lane, ...summary.stalled });
   }
-  // A listed row that never ran (renamed, deleted, or in a lane that stalled) is stale too:
-  // the manifest must describe the suite that exists.
-  const unseen = stalled.length === 0 ? [...reasons.keys()].filter((key) => !seen.has(key)) : [];
+  // A listed row that never ran (renamed, deleted, or only ever attempted by a file the runner
+  // reaped) is stale too: the manifest must describe the suite that exists.
+  const unseen = [...reasons.keys()].filter((key) => !seen.has(key));
   const green = unexpected.length === 0 && stale.length === 0 && hung.length === 0
-    && stalled.length === 0 && unseen.length === 0;
+    && unseen.length === 0;
   const byClass = Object.fromEntries(REASON_CLASSES.map((klass) => [klass, 0]));
   for (const row of expectedRed) byClass[row.class] += 1;
   const environmentRed = expectedRed.filter((row) => isEnvironmentReasonClass(row.class));
   const codeRed = expectedRed.filter((row) => !isEnvironmentReasonClass(row.class));
   return Object.freeze({
     green, passed, expectedRed, expectedRedByClass: Object.freeze(byClass), codeRed,
-    environmentRed, environment, unexpected, stale, unseen, hung, stalled, cancelled,
+    environmentRed, environment, unexpected, stale, unseen, hung, cancelled,
     skipped: Object.freeze(skipped),
   });
 }
@@ -384,7 +385,7 @@ export function formatVerdict(verdict) {
   const headline = verdict.green
     ? (verdict.environmentRed.length > 0 ? 'GREEN except environment' : 'GREEN')
     : 'RED';
-  lines.push(`baton suite verdict: ${headline} — ${verdict.passed} passed, ${verdict.expectedRed.length} expected red (${verdict.codeRed.length} code, ${verdict.environmentRed.length} environment-red), ${verdict.cancelled ?? 0} of this run’s red rows cancelled by a dangling await earlier in their file, ${verdict.unexpected.length} unexpected failure(s), ${verdict.stale.length} stale expectation(s), ${verdict.hung.length} hung, ${verdict.stalled.length} stalled lane(s)${skippedNote}`);
+  lines.push(`baton suite verdict: ${headline} — ${verdict.passed} passed, ${verdict.expectedRed.length} expected red (${verdict.codeRed.length} code, ${verdict.environmentRed.length} environment-red), ${verdict.cancelled ?? 0} of this run’s red rows cancelled by a dangling await earlier in their file, ${verdict.unexpected.length} unexpected failure(s), ${verdict.stale.length} stale expectation(s), ${verdict.hung.length} hung${skippedNote}`);
   if (verdict.environment) lines.push(`  ${formatEnvironment(verdict.environment)}`);
   const classes = REASON_CLASSES.filter((klass) => (verdict.expectedRedByClass?.[klass] ?? 0) > 0);
   if (classes.length > 0) {
@@ -401,9 +402,8 @@ export function formatVerdict(verdict) {
   }
   for (const row of verdict.unexpected) lines.push(`  unexpected failure: ${row.key}${row.message ? ` — ${String(row.message).split('\n')[0].slice(0, 160)}` : ''}`);
   for (const key of verdict.stale) lines.push(`  stale expectation (now green — remove it from expected-red-tests.json): ${key}`);
-  for (const key of verdict.unseen) lines.push(`  stale expectation (never ran — renamed or deleted): ${key}`);
+  for (const key of verdict.unseen) lines.push(`  stale expectation (never ran — renamed, deleted, or unreached before its file was reaped): ${key}`);
   for (const row of verdict.hung) lines.push(`  hung (${row.failureType ?? 'pending promise'}): ${row.key}`);
-  for (const row of verdict.stalled) lines.push(`  stalled lane ${row.lane}: no test event for ${row.idleMs} ms after ${row.lastEvent ?? 'the lane started'}`);
   for (const row of skipped) lines.push(`  skipped: ${row.reason}: ${row.file}`);
   return lines.join('\n');
 }
@@ -429,7 +429,6 @@ export function verdictDocument(verdict) {
     stale: [...verdict.stale],
     unseen: [...verdict.unseen],
     hung: verdict.hung.map((row) => row.key),
-    stalled: [...verdict.stalled],
     skipped: (verdict.skipped ?? []).map((row) => ({ file: row.file, reason: row.reason })),
     environment: verdict.environment
       ? { absent: [...verdict.environment.absent], present: [...verdict.environment.present], declared: [...verdict.environment.declared], prerequisites: verdict.environment.prerequisites.map((row) => ({ ...row })) }

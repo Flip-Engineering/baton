@@ -83,13 +83,21 @@ test('hangs are never expected red, even when listed', () => {
   }
 });
 
-test('a stalled lane refuses and suppresses the unseen-row judgement it could not make', () => {
+test('a file the runner reaped at its progress deadline is judged hung, and its unrun rows unseen', () => {
+  // The runner bounds every scheduled file with its own re-arm-on-progress deadline and mints a
+  // `fileHung` row when it expires (run-suite.mjs runFile); the verdict reads that row as a hang.
+  // The file's own deadline is this run's lane-liveness bound (#521).
   const manifest = { rows: [listed('test/late.test.mjs', 'L1', '#260')] };
-  const verdict = computeVerdict([{ lane: 'serial', passed: [], failed: [], stalled: { lastEvent: 'S9', idleMs: 600_000 } }], manifest);
+  const reaped = row('test/late.test.mjs', '(file hung: no test event for 400 ms after start)', { failureType: 'fileHung', message: 'hung' });
+  const verdict = computeVerdict([{ lane: 'suite', passed: [], failed: [reaped] }], manifest);
   assert.equal(verdict.green, false);
-  assert.deepEqual(verdict.stalled, [{ lane: 'serial', lastEvent: 'S9', idleMs: 600_000 }]);
-  assert.deepEqual(verdict.unseen, []);
-  assert.match(formatVerdict(verdict), /stalled lane serial: no test event for 600000 ms after S9/u);
+  assert.deepEqual(verdict.hung.map((entry) => entry.key),
+    ['test/late.test.mjs :: (file hung: no test event for 400 ms after start)']);
+  assert.deepEqual(verdict.unseen, ['test/late.test.mjs :: L1'],
+    'a listed row the reaped file never reached is judged unseen, like any row that never ran');
+  assert.match(formatVerdict(verdict), /1 hung/u);
+  assert.equal(Object.hasOwn(verdictDocument(verdict), 'stalled'), false,
+    'the runner observes no lane-level stall, and the document carries none (#521)');
 });
 
 // ── the reasoned manifest shape (S-G2/S-I6) ─────────────────────────────────────────────────────

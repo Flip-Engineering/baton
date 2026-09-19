@@ -637,7 +637,10 @@ if (legacyPassthrough) {
       if (requestedSignal || spawnError || !groupReaped) {
         finish(1, requestedSignal, spawnError, groupReaped);
       } else {
-        const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), stalled: null, skipped: files.skipped }];
+        // Every lane summary carries the rows its files reported. A file that stops reporting is
+        // named by its own progress deadline (runFile above) as a hung row, which the verdict
+        // reads as the hang dimension (#521).
+        const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), skipped: files.skipped }];
         let rewriteRefused = false;
         if (writeExpectedRedRequested) {
           const failures = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed');

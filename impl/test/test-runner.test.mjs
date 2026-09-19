@@ -25,11 +25,11 @@ function runnerEnv(parent) {
   return env;
 }
 
-function run(file, parent) {
+function run(file, parent, env = {}) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [RUNNER, file], {
       cwd: IMPL,
-      env: runnerEnv(parent),
+      env: { ...runnerEnv(parent), ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -137,6 +137,39 @@ test('TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root',
       processStatus(descendantPid) || `PID ${descendantPid} remained alive after runner close`,
     );
     assert.deepEqual(suiteRoots(parent), []);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('#521: a file that stops reporting is reaped by its own progress deadline and named hung', async () => {
+  // The per-file progress deadline (BATON_SUITE_IDLE_MS, run-suite.mjs runFile) is the runner's ONE
+  // lane-liveness bound: a file that stops emitting is reaped and the verdict reports it as hung.
+  // The reaped file's hung row reddens the verdict through that bound (#521).
+  const { parent, file } = fixture(`
+    import test from 'node:test';
+    test('reports before the file stops reporting', () => {});
+    test('never settles and holds the file open', () => new Promise(() => {}));
+    setInterval(() => {}, 1_000);
+  `);
+  const verdictPath = join(parent, 'verdict.json');
+  try {
+    const result = await run(file, parent, {
+      BATON_SUITE_IDLE_MS: '400',
+      BATON_SUITE_VERDICT_FILE: verdictPath,
+      BATON_HOST_CAPACITY_DISABLED: '1',
+    });
+    assert.equal(result.code, 1, result.stderr || result.stdout);
+    assert.match(result.stdout, /# file .*HUNG\)/u, 'the run names the file its deadline reaped');
+    assert.match(result.stderr, /1 hung/u, 'the verdict counts the reaped file as hung');
+    const document = JSON.parse(readFileSync(verdictPath, 'utf8'));
+    assert.equal(document.green, false);
+    assert.equal(document.hung.length, 1, 'the hung dimension names the file the deadline reaped');
+    const idle = /no test event for (\d+) ms/u.exec(document.hung[0]);
+    assert.ok(idle, `the hung row names the idle it observed: ${document.hung[0]}`);
+    assert.ok(Number(idle[1]) >= 400, `the row names the bound this run configured: ${document.hung[0]}`);
+    assert.equal(Object.hasOwn(document, 'stalled'), false, 'no lane dimension is claimed (#521)');
+    assert.deepEqual(suiteRoots(parent), [], 'the reaped file leaves no fixture root behind');
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }

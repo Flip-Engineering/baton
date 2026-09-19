@@ -88,7 +88,7 @@ test('(c) a real test file still runs: no skip rows for it, and it passes', asyn
 
 test('(d) the verdict primitives carry the skip: green, named per row, in the document', () => {
   const skipped = [{ file: 'test/driver.mjs', reason: 'no test-framework import' }];
-  const verdict = computeVerdict([{ lane: 'suite', passed: [], failed: [], stalled: null, skipped }], { rows: [] });
+  const verdict = computeVerdict([{ lane: 'suite', passed: [], failed: [], skipped }], { rows: [] });
   assert.equal(verdict.green, true, 'a skipped non-test file is not a failure');
   assert.deepEqual(verdict.skipped, skipped);
   assert.match(formatVerdict(verdict), /skipped: no test-framework import: test\/driver\.mjs/u);
