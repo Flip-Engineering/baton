@@ -156,6 +156,15 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/coordination-ledger-writes.mjs', className: null, receiver: 'store',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Slice 9's first-tranche module target: the coordinator effect members the map names first
+  // (§3 rows 6/9/10 — _dispatch, _spawnPlanWave, _resolveRecord) move to runtime-effects.mjs,
+  // which reads the class through its `coordinator` first parameter and records through the
+  // injected recorder port (slice 6) carried as its second. The relocated declarations (the two
+  // error classes, the worktree-failure symbol, normalizeRunId) are module-scope members here.
+  Object.freeze({
+    file: 'impl/src/runtime-effects.mjs', className: null, receiver: 'coordinator',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -231,6 +240,9 @@ const AUTHORITY_RULES = Object.freeze([
   // delegate's evidence collapses to whatever its name suggests — `waitAfter`'s timer is in the
   // module, so the three-line delegate would fall to the surface fallback.
   { seam: 'effect', id: 'ledger_writes_port', weight: 3, call: /\bcoordinationLedgerWrites\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted ledger-writes module (coordination-ledger-writes.mjs)' },
+  // Slice 9 extends the port rules to the coordinator's effect members: a member whose body is a
+  // delegate into runtime-effects.mjs keeps the effect seam its body had there.
+  { seam: 'effect', id: 'effects_port', weight: 3, call: /\bruntimeEffects\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted effects module (runtime-effects.mjs)' },
 
   // Slice 5 extends the rule to the admission bucket: a member whose body is a delegate into
   // coordination-admission.mjs keeps the seam its body had there.

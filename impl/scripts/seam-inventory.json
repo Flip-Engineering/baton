@@ -1175,16 +1175,11 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 297,
+          "size": 3,
           "seam": "effect",
           "evidence": [
-            "effect:adapter_verb",
-            "effect:worktree_authority",
             "effect:action_verb",
-            "admission:policy_gate",
-            "observation:log_append",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "effect:effects_port"
           ]
         },
         {
@@ -1385,16 +1380,12 @@
         {
           "name": "_spawnPlanWave",
           "ordinal": 0,
-          "size": 240,
+          "size": 3,
           "seam": "effect",
           "evidence": [
-            "effect:worktree_authority",
             "effect:action_verb",
             "effect:action_name",
-            "admission:policy_gate",
-            "admission:typed_refusal",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "effect:effects_port"
           ]
         },
         {
@@ -3040,13 +3031,11 @@
         {
           "name": "_resolveRecord",
           "ordinal": 0,
-          "size": 238,
+          "size": 3,
           "seam": "effect",
           "evidence": [
-            "effect:adapter_verb",
-            "admission:policy_gate",
             "admission:normalize_name",
-            "observation:log_append"
+            "effect:effects_port"
           ]
         },
         {
@@ -21035,6 +21024,61 @@
             "effect:action_verb",
             "effect:action_name",
             "observation:store_append"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/runtime-effects.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "normalizeRunId",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_dispatch",
+          "ordinal": 0,
+          "size": 297,
+          "seam": "effect",
+          "evidence": [
+            "effect:adapter_verb",
+            "effect:worktree_authority",
+            "effect:action_verb",
+            "admission:policy_gate",
+            "observation:log_append",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_spawnPlanWave",
+          "ordinal": 0,
+          "size": 240,
+          "seam": "effect",
+          "evidence": [
+            "effect:worktree_authority",
+            "effect:action_verb",
+            "effect:action_name",
+            "admission:policy_gate",
+            "admission:typed_refusal",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_resolveRecord",
+          "ordinal": 0,
+          "size": 238,
+          "seam": "effect",
+          "evidence": [
+            "effect:adapter_verb",
+            "admission:policy_gate",
+            "admission:normalize_name",
+            "observation:log_append"
           ]
         }
       ]
