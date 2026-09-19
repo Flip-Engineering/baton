@@ -19,6 +19,11 @@
 //   • the pre-#310 minimal hand-off ({contract, carriedForward}) keeps folding as ordinary
 //     evidence: isContributionContractBody only claims bodies carrying the new shape's own
 //     keys, so legacy rows are never re-judged.
+//
+// Issue #502 adds the recruit-time half: contributionContractConflict reads the free text a
+// recruiter writes (the recruit objective) for a JSON-ish object that presents itself as a
+// contribution body and names a field the contract does not admit, so a brief whose own example
+// contradicts the shape refuses before any seat is admitted on it.
 
 /** The item lifecycle states — the closed set an item status names. */
 export const CONTRIBUTION_ITEM_STATUSES = Object.freeze(['delivered', 'partial', 'not_delivered']);
@@ -233,6 +238,143 @@ export function validateContributionContract(body) {
     contractRefusal('body.notes', 'type', fields.notes.expectation);
   }
   return body;
+}
+
+/** Every field name the contract admits anywhere — the top-level fields, the sub-schema keys and
+ * the item row's keys — walked from the ONE schema object the validator reads, so the lint below
+ * and validateContributionContract judge the same vocabulary. */
+const CONTRACT_FIELD_NAMES = (() => {
+  const names = new Set();
+  const walk = (node) => {
+    if (node === null || typeof node !== 'object') return;
+    for (const [name, child] of Object.entries(node.fields ?? {})) {
+      names.add(name);
+      walk(child);
+    }
+    walk(node.items);
+  };
+  walk(CONTRIBUTION_CONTRACT_SCHEMA);
+  return Object.freeze([...names]);
+})();
+
+/** The number of the contract's own top-level field names an object names at one level before it
+ * is read as an example OF the contribution body. One shared name (`subject`, `notes`) is an
+ * ordinary word an unrelated payload example may carry; two is the point where the object is
+ * describing this contract's shape, and every field name in it is judged. */
+const CONTRACT_BODY_CLAIM_KEYS = 2;
+
+const BRIEF_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+
+/** The end index of the double-quoted region starting at `start`, backslash escapes honored, or
+ * -1 when the quote never closes. Reading a region whole is what keeps a field name inside a
+ * value (an example embedded in `evidence`, say) from reading as a key of the object around it. */
+function briefQuotedEnd(text, start) {
+  for (let index = start + 1; index < text.length; index += 1) {
+    if (text[index] === '\\') { index += 1; continue; }
+    if (text[index] === '"') return index;
+  }
+  return -1;
+}
+
+/** Whether the position starts a bare key token: the nearest non-space character before it is the
+ * `{` that opens an object or the `,` that separates its entries. */
+function briefBareKeyPosition(text, start) {
+  for (let index = start - 1; index >= 0; index -= 1) {
+    const char = text[index];
+    if (char === ' ' || char === '\t' || char === '\n' || char === '\r') continue;
+    return char === '{' || char === ',';
+  }
+  return false;
+}
+
+/** Whether the position holds optional whitespace followed by the `:` a key's value follows. */
+function briefColonFollows(text, start) {
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === ' ' || char === '\t' || char === '\n' || char === '\r') continue;
+    return char === ':';
+  }
+  return false;
+}
+
+/** The JSON-ish objects a free text carries: one frame per `{…}` span, each holding the key
+ * tokens read at its own level. Both spellings are read — `"findings":` and, directly after `{`
+ * or `,`, `findings:` — because a brief's example is written by hand and carries placeholders
+ * (`<BODY>`, `<one-line summary>`), so it is not JSON. Strings are skipped: a key name inside a
+ * value is a value. */
+function briefObjectFrames(text) {
+  const frames = [];
+  const open = [];
+  const bareKey = /([A-Za-z_][A-Za-z0-9_]*)\s*:/uy;
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (char === '"') {
+      const end = briefQuotedEnd(text, index);
+      if (end === -1) break;
+      const token = text.slice(index + 1, end);
+      if (open.length > 0 && BRIEF_IDENTIFIER.test(token)
+        && briefColonFollows(text, end + 1)) {
+        frames[open[open.length - 1]].keys.push({ name: token, at: index });
+      }
+      index = end + 1;
+      continue;
+    }
+    if (char === '{') {
+      frames.push({ keys: [], parent: open.length > 0 ? open[open.length - 1] : null });
+      open.push(frames.length - 1);
+      index += 1;
+      continue;
+    }
+    if (char === '}') {
+      open.pop();
+      index += 1;
+      continue;
+    }
+    if (open.length > 0 && (char === '_' || (char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z'))) {
+      bareKey.lastIndex = index;
+      const bare = bareKey.exec(text);
+      if (bare !== null && briefBareKeyPosition(text, index)) {
+        frames[open[open.length - 1]].keys.push({ name: bare[1], at: index });
+        index += bare[0].length;
+        continue;
+      }
+    }
+    index += 1;
+  }
+  return frames;
+}
+
+/** Issue #502: the first field name a free text names in a JSON-ish object that presents itself
+ * as a contribution body and that the contract does not admit — the refusal a worker would have
+ * met at publish, read at recruit time. Null when the text holds no such name. The #492 audit
+ * swarm's brief carried a `findings` array beside the contract's own keys; every seat recruited
+ * on it was refused `body.findings: unknown-field`, and one seat hit that refusal thirteen
+ * times. */
+export function contributionContractConflict(text) {
+  if (typeof text !== 'string' || text.length === 0) return null;
+  const frames = briefObjectFrames(text);
+  const claims = frames.map((frame) => {
+    const named = new Set(frame.keys.map((key) => key.name));
+    return CONTRIBUTION_CONTRACT_FIELDS.filter((name) => named.has(name)).length
+      >= CONTRACT_BODY_CLAIM_KEYS;
+  });
+  const judged = frames.map((_frame, index) => {
+    for (let node = index; node !== null; node = frames[node].parent) {
+      if (claims[node]) return true;
+    }
+    return false;
+  });
+  let conflict = null;
+  for (const [index, frame] of frames.entries()) {
+    if (!judged[index]) continue;
+    for (const key of frame.keys) {
+      if (CONTRACT_FIELD_NAMES.includes(key.name)) continue;
+      if (conflict === null || key.at < conflict.at) conflict = key;
+    }
+  }
+  return conflict === null ? null
+    : Object.freeze({ field: conflict.name, admitted: CONTRIBUTION_CONTRACT_FIELDS });
 }
 
 /** The seat's recruit mode gates the contract's commit field (#373): a seat recruited

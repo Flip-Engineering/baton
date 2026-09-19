@@ -1182,3 +1182,44 @@ and bridge help, the brief's grammar section, and the bridge's measured frame-fi
 derive it. Red-first: `impl/test/issue311-situation-projection.test.mjs` pins the projection's
 declaration, every block's shape and honesty rules, the brief rendering, and the slicer parity
 (`view(projection)` is byte-identical to `projectSwarmView(full, projection)`).
+
+## A brief's objective is read against the contribution contract at recruit (issue #502, 2026-09-19)
+
+The #492 audit swarm's operator-written objective told every auditor lane to report its results in
+a `findings` array beside the contract's own keys. The contract carries no `findings` field, so 40
+of that swarm's 46 `swarm.operation_refused` rows were the identical
+`body.findings: unknown-field` refusal: 17 of the 18 finished seats met it at least once, one seat
+thirteen times, and each seat learned the real shape from its own refusal. The worked example
+every brief renders (#310, #371) sits in the brief's `## Contribution contract` section; the
+objective itself met no schema check.
+
+**The recruit path reads the objective.** `contributionContractConflict`
+(`impl/src/contribution-contract.mjs`) scans the recruit's `objective` text before any effect. A
+JSON-ish object that names at least two of the contract's own top-level fields is read as an
+example OF the contribution body, and the first field name in it — or in an object nested inside
+it — that the contract does not admit refuses the recruit
+`swarm_command_invalid {field: 'objective', rule: 'contract-field', offending, admitted,
+correction}`, before the join, before the host admission, and before the deployment's
+`prepareRun`. The message and the `correction` both name where the content belongs: per-item
+detail goes in `items[].evidence`. The refusal lands on the durable `swarm.operation_refused` lane
+like every other recruit refusal, so the recruiter reads it and fixes one brief.
+
+**The vocabulary is the schema's.** `CONTRACT_FIELD_NAMES` walks
+`CONTRIBUTION_CONTRACT_SCHEMA.fields` — the top-level fields, the sub-schema keys and the item
+row's keys — so the lint and `validateContributionContract` judge one vocabulary.
+`CONTRACT_BODY_CLAIM_KEYS` (two top-level names) is the threshold at which an object reads as a
+body example; an object carrying one shared name stays out of the judgment. Quoted string regions
+are read whole, so a field name inside a value stays a value. The runtime's contract validator
+keeps its closed shape: an unknown body field refuses with its `rule` and its admitted vocabulary,
+and this read is what keeps a brief from producing one.
+
+**The recruit's objective is what is read.** The brief's own sections are composed by the runtime
+from the schema and the durable record. The check runs on every recruit of the seat, including a
+re-recruit of a withdrawn one, and applies to every mode.
+
+Red-first: `impl/test/issue502-brief-contract-guard.test.mjs` pins the recorded failing objective,
+the schema-derived vocabulary, the texts the lint leaves alone (the publish envelope line, another
+payload's example, prose, a key name inside a value, the pre-#310 hand-off), the refusal before
+any effect (no membership row, no worker, no `prepareRun` call, the durable refusal row), the
+fixed objective's recruit followed by an admitted publish, and the refusal answer on the native
+bridge.

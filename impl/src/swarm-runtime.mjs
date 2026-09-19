@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
+  contributionContractConflict,
   isContributionContractBody, projectContributionContract, validateContributionContract,
   validateContributionContractMode } from './contribution-contract.mjs';
 import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES,
@@ -7258,6 +7259,31 @@ export class SwarmRuntime {
       }
       if (caller && permissions.some((permission) => !(caller.permissions ?? DEFAULT_PERMISSIONS).includes(permission))) {
         refuse('Delegation cannot grant authority the caller does not hold', 'swarm_permission_required');
+      }
+      // Issue #502: the objective IS the seat's instructions — it becomes the top of every brief
+      // this recruit writes — so a contribution example in it that names a field outside the
+      // contract is read HERE, before any effect, and refused typed. The #492 audit swarm's
+      // operator-written objective named a `findings` array beside the contract's own keys;
+      // nothing read it, and 40 of that swarm's 46 refusals were seats meeting the contract
+      // validator for the first time, 17 seats independently. The refusal names the field, the
+      // admitted vocabulary and where the content belongs, so the recruiter reads what to change
+      // before a seat exists.
+      const objectiveConflict = contributionContractConflict(args.objective);
+      if (objectiveConflict !== null) {
+        refuse(
+          `Swarm recruit objective is invalid: the contribution example it carries names the field`
+          + ` "${objectiveConflict.field}", which the contribution contract does not admit — the`
+          + ` admitted fields are ${objectiveConflict.admitted.join(', ')}, and per-item detail`
+          + ` belongs in items[].evidence`,
+          'swarm_command_invalid',
+          {
+            field: 'objective', rule: 'contract-field', offending: objectiveConflict.field,
+            admitted: Object.freeze([...objectiveConflict.admitted]),
+            correction: `rename or remove "${objectiveConflict.field}" in the objective's`
+              + ` contribution example — the contract admits ${objectiveConflict.admitted.join(', ')},`
+              + ` and per-item detail belongs in items[].evidence`,
+          },
+        );
       }
       // #316 (a): a route its provider degraded is refused BEFORE any effect — no worktree, no
       // credential projection, no process, and no seat dead within seconds — and the refusal names
