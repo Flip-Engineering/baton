@@ -355,6 +355,46 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       from: Object.freeze({ kind: 'root', participantId: null }), sentAt: '2026-09-18T10:05:00.000Z',
     }),
   }),
+  // ── issue #311 (item 2): the peer message's own durable row ───────────────────────────────────
+  // One row per `swarm.notify`, and the row IS the receipt the sender reads back by
+  // `swarm.notifications --receipt`. It carries the whole provenance (who sent it, from which
+  // swarm, to which seat of which swarm, and the instant), the body (head-cited when it spilled),
+  // and how the delivery landed — the same delivery triples a guide's row carries, so a park and
+  // a live delivery cannot be spelled two ways. The row is recorded in the SENDING swarm: that is
+  // the record the sender is entitled to read, and the recipient's own record of the message is
+  // the delivery itself (or the park this runtime lands in the recipient's swarm).
+  'swarm.notification_sent': Object.freeze({
+    summary: Object.freeze('one participant-to-participant message a seat sent — the row its receipt names'),
+    fields: Object.freeze({
+      swarmId: STRING('the sending swarm'),
+      participantId: STRING('the recipient seat the message is addressed to'),
+      toSwarmId: STRING('the swarm the recipient seat belongs to — the sending swarm unless the message crossed swarms'),
+      receiptId: STRING('the receipt identity the sender reads the row back by'),
+      messageId: STRING('the delivery-lane identity, shared with the lane row the message rode, or null when it parked'),
+      actor: STRING('the raw actor of the sender — the namespace the relationship was read from'),
+      from: JSON_VALUE('the sender\'s relationship to its swarm: {kind: root|lead|peer, participantId, swarmId}'),
+      to: JSON_VALUE('the recipient\'s coordinates: {participantId, swarmId}'),
+      sentAt: STRING('the instant the message was sent, ISO 8601 — the instant the delivered frame names too'),
+      priority: STRING('the delivery the sender asked for: next_boundary (the default) or now'),
+      inReplyTo: JSON_VALUE('the ledger seq this message answers, or null when it answers nothing'),
+      delivery: JSON_VALUE('how the message landed: {state: delivered|parked|refused, lane: {seq, kind, ts, messageId}|null, reason?}'),
+      message: STRING('the message text, or its byte-capped head when it spilled'),
+      spilled: Object.freeze({ type: 'boolean', description: 'true when the body rode as a durable spill' }),
+      bytes: Object.freeze({ type: 'integer', description: 'the whole body length in bytes, present only when it spilled' }),
+      digest: STRING('the spilled body\'s sha256, present only when it spilled'),
+      spill: STRING('the durable spill artifact the whole body lives in, present only when it spilled'),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'sibling', toSwarmId: 'swarm-9c31ab77',
+      receiptId: `notify:${'c'.repeat(64)}`, messageId: `message:${'d'.repeat(64)}`,
+      actor: 'swarm-native:impl-a:lane', from: Object.freeze({ kind: 'peer', participantId: 'impl-a', swarmId: 'swarm-40e643e96fd1edcd' }),
+      to: Object.freeze({ participantId: 'sibling', swarmId: 'swarm-9c31ab77' }),
+      sentAt: '2026-09-19T09:00:00.000Z', priority: 'next_boundary', inReplyTo: null,
+      delivery: Object.freeze({ state: 'delivered', lane: Object.freeze({ seq: 77, kind: 'nudge', ts: '2026-09-19T09:00:00.000Z', messageId: `message:${'d'.repeat(64)}` }) }),
+      message: 'My published contract is contribution-abc; the items list the files it touches.',
+      spilled: false, bytes: 0, digest: '', spill: '',
+    }),
+  }),
 });
 
 /** One-paragraph description of a refusal row for agent-facing surfaces: what the runtime records

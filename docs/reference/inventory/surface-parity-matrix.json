@@ -1012,6 +1012,24 @@
       "ledgered": false
     },
     {
+      "name": "swarm.notifications",
+      "category": "observation",
+      "cli": "baton swarm notifications",
+      "mcp": "baton_swarm_notifications",
+      "web": "swarm_notifications",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.notify",
+      "category": "communication",
+      "cli": "baton swarm notify",
+      "mcp": "baton_swarm_notify",
+      "web": "swarm_notify",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
       "name": "swarm.recruit",
       "category": "control",
       "cli": "baton swarm recruit",

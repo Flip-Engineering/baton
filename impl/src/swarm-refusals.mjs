@@ -56,6 +56,12 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // does not hold — or a row that is not guidance, a seat's message, or a contribution — refuses
   // here instead of landing a thread that points at nothing.
   swarm_guidance_reply_target_not_found: row(404, ['runtime'], 'the guidance names a reply target this swarm does not hold'),
+  // Issue #311 (item 2): a peer message names its recipient, and a recipient is a seat of SOME
+  // swarm of the deployment (`swarm.notify --to-swarm-id`). A seat this deployment does not hold
+  // where it was named — or one that has settled and can no longer act — refuses here, before
+  // anything is delivered, so a sender never reads a delivered-looking receipt for a message
+  // nobody could take.
+  swarm_notify_target_not_found: row(404, ['runtime'], 'the peer message names no seat that can act in the swarm it was addressed to'),
 
   // ── 409 conflict/state: the swarm holds a row or version the request disagrees with ──
   swarm_duplicate: row(409, ['fold'], 'the event creates a swarm the deployment already holds'),

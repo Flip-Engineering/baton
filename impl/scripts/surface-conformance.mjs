@@ -232,6 +232,32 @@ function surfaceNameTokens(name) {
   return name.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
 }
 
+// docs/36 §4.1 bans a set of synonym verbs (R-CX-13), and the canonical tree is scanned for them.
+// A name the project chose ON PURPOSE is a recorded exception rather than a synonym — the set is
+// exported so the lint's own test reads THIS table instead of retyping it, and a name can never be
+// excepted in one place and flagged in the other:
+//   • MCP-W1 (mcp-packaging-decisions v1.0) deliberately names the wave progress row
+//     `waves.progress` (the ordinary MCP tool is baton_waves_progress); the run-surface 'progress'
+//     synonym stays banned.
+//   • Issue #311 (item 2) names the swarm family's peer channel `swarm.notify` — the spelling the
+//     issue, the CLI help, the MCP tool and the bridge help all teach — because it is not a synonym
+//     of anything the family has: `swarm.guide` is an authority act inside ONE swarm, while
+//     `swarm.notify` is a message between two participants across the deployment. The run-surface
+//     `notify` synonym (`baton run notify` → run.member.send) stays banned.
+export const C4_RECORDED_EXCEPTIONS = /^(?:waves\.progress|baton waves progress|waves_progress|baton_waves_progress|waves\.progress\(\)|swarm\.notify|baton swarm notify|swarm_notify|baton_swarm_notify|swarm\.notify\(\))$/u;
+
+/** Every canonical operation's names as the banned-token lint scans them: the key plus its five
+ * derived surface spellings, minus the names recorded as deliberate exceptions. */
+export function canonicalNamesForBannedTokenLint() {
+  return CANONICAL_OPERATIONS.flatMap((operation) => [
+    operation.key,
+    operation.names.cli,
+    operation.names.web,
+    operation.names.mcp,
+    operation.names.embedded,
+  ]).filter((name) => !C4_RECORDED_EXCEPTIONS.test(name));
+}
+
 export function checkBannedTokens(names) {
   const violations = [];
   for (const name of names) {
@@ -817,19 +843,17 @@ export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
   }
   // docs/36 §10 C4 (R-CX-13) — the banned-token lint promoted to red at M5. The canonical tree's
   // own names are scanned: a canonical operation that derives a surface name carrying a banned
-  // synonym verb is a red finding. MCP-W1 (mcp-packaging-decisions v1.0) DELIBERATELY names the
-  // wave progress row `waves.progress` (the ordinary MCP tool is baton_waves_progress); that
-  // single verb is a documented exception to the C4 ban (the run-surface 'progress' synonym
-  // stays banned).
-  for (const violation of checkBannedTokens(
-    CANONICAL_OPERATIONS.flatMap((operation) => [
-      operation.key,
-      operation.names.cli,
-      operation.names.web,
-      operation.names.mcp,
-      operation.names.embedded,
-    ]).filter((name) => !/^(waves\.progress|baton waves progress|waves_progress|baton_waves_progress|waves\.progress\(\))$/u.test(name)),
-  )) {
+  // synonym verb is a red finding. The ban retires SYNONYMS (one name per concept), so a name that
+  // IS the concept is a recorded exception rather than a second spelling of an existing verb:
+  //   • MCP-W1 (mcp-packaging-decisions v1.0) DELIBERATELY names the wave progress row
+  //     `waves.progress` (the ordinary MCP tool is baton_waves_progress); the run-surface
+  //     'progress' synonym stays banned.
+  //   • Issue #311 (item 2) names the swarm family's peer channel `swarm.notify` — the spelling the
+  //     issue, the CLI help, the MCP tool and the bridge help all teach — because it is not a
+  //     synonym of anything the family has: `swarm.guide` is an authority act inside ONE swarm,
+  //     while `swarm.notify` is a message between two participants across the deployment. The
+  //     run-surface `notify` synonym (`baton run notify` → run.member.send) stays banned.
+  for (const violation of checkBannedTokens(canonicalNamesForBannedTokenLint())) {
     findings.push(`banned surface verb: ${violation.name} (${violation.verb})`);
   }
   for (const collision of checkWebNameDisjoint()) {

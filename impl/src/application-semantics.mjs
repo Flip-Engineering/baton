@@ -1255,6 +1255,10 @@ const SWARM_OPERATION_EXAMPLES = Object.freeze({
   // that names the branch (the field the wire and the receipt call `target`).
   'swarm.integrate': 'baton swarm integrate SWARM_ID CONTRIBUTION_ID --onto BRANCH',
   'swarm.stop': 'baton swarm stop SWARM_ID reviewer "Work complete"',
+  // Issue #311 (item 2): the peer channel. Both examples name every positional the CLI row
+  // requires, so each compiles to its own operation (doc-truth R5).
+  'swarm.notify': 'baton swarm notify SWARM_ID sibling "Reuse my published contract"',
+  'swarm.notifications': 'baton swarm notifications SWARM_ID --receipt RECEIPT_ID',
 });
 
 // Issue #294: one wake filter axis, exactly as the stream's own filter parser reads it — a
@@ -1295,7 +1299,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: SWARM_COMMAND_DEFINITIONS[row.command].capabilities,
     effect: row.readOnlyHint ? (row.command === 'swarm.watch' ? 'swarm_stream' : 'swarm_read')
       : row.command === 'swarm.recruit' ? 'provider_call'
-      : row.command === 'swarm.guide' ? 'message_send' : 'swarm_update',
+      : row.command === 'swarm.guide' || row.command === 'swarm.notify' ? 'message_send' : 'swarm_update',
     destructive: row.destructiveHint,
     outputView: 'content', helpTopic: row.command,
     authority: 'SwarmRuntime checks current participant membership and per-operation grants.',

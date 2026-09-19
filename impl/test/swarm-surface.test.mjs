@@ -47,6 +47,16 @@ const EXAMPLES = Object.freeze({
     swarmId: 'swarm:one', participantId: 'impl-a', message: 'Prefer the boring design.',
     idempotencyKey: 'ik-guide',
   }),
+  // Issue #311 (item 2): the peer channel — the recipient is named by participant plus the swarm
+  // it belongs to, which is what lets a message reach a sibling in another swarm of the
+  // deployment; the receipt read narrows to one receipt id, one counterpart, or a page.
+  'swarm.notify': Object.freeze({
+    swarmId: 'swarm:one', participantId: 'impl-b', toSwarmId: 'swarm:two',
+    message: 'Reuse the contract I published.', idempotencyKey: 'ik-notify',
+  }),
+  'swarm.notifications': Object.freeze({
+    swarmId: 'swarm:one', receipt: `notify:${'a'.repeat(64)}`, afterSeq: 3,
+  }),
   'swarm.capture': Object.freeze({
     swarmId: 'swarm:one', participantId: 'impl-a', contributionId: 'contribution:1',
   }),
@@ -210,6 +220,15 @@ test('the CLI parses each swarm verb into its exact command args', () => {
     swarmId: 'swarm:one', participantId: 'impl-a', objective: 'Implement X',
     options: { exact: { harness: 'h', model: 'm', effort: 'e' } }, permissions: ['contribute'],
     idempotencyKey: key,
+  });
+  assert.deepEqual(parsed(['swarm', 'notify', 'swarm:one', 'impl-b', 'Reuse the contract.',
+    '--to-swarm-id', 'swarm:two']).args, {
+    swarmId: 'swarm:one', participantId: 'impl-b', toSwarmId: 'swarm:two',
+    message: 'Reuse the contract.', idempotencyKey: key,
+  });
+  assert.deepEqual(parsed(['swarm', 'notifications', 'swarm:one',
+    '--receipt', `notify:${'a'.repeat(64)}`, '--participant-id', 'impl-b', '--after-seq', '3']).args, {
+    swarmId: 'swarm:one', receipt: `notify:${'a'.repeat(64)}`, participantId: 'impl-b', afterSeq: 3,
   });
 
   // The parsed requests are exactly the requests the shared validator admits.

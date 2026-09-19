@@ -101,6 +101,21 @@ const ADMISSION = Object.freeze({
   'target_set.per_ledger_event': { lane: 'target_set.per_ledger_event', class: 'admission', value: 1, unit: 'targets_per_event', graceful: null, enforcedAt: 'coordination-store run stop target-set admission', refusalCode: 'target_set_capacity' },
 });
 
+// Issue #311 (item 2): the swarm layer's peer message — one participant's message to another seat
+// of the deployment (`swarm.notify`). The value is READ from `message.send.body` rather than
+// re-typed: the two lanes are the same policy (a message a session reads inside one frame,
+// spill-admitted up to the durable spill ceiling), and the swarm family's ONE list page is derived
+// from that same body length (`LIST_PAGE_ITEMS`), so a second literal here could silently move
+// this lane off that derivation. The row exists because the registry declares one face per
+// ENFORCEMENT SITE, and this lane is enforced by the swarm runtime's own peer-message admission,
+// never by the coordinator's run-layer send lane.
+const SWARM_PEER = Object.freeze({
+  'swarm.notify.body': { lane: 'swarm.notify.body', class: 'admission',
+    value: ADMISSION['message.send.body'].value, unit: 'bytes', graceful: 'spill-digest-citation',
+    enforcedAt: 'swarm-runtime.mjs _notify (the peer message body admission)',
+    refusalCode: 'spill_body_exceeded' },
+});
+
 // #429: the measured model-profile catalog's refresh window, derived from the provider's OWN
 // published request budget rather than from a preference: Artificial Analysis limits its free tier
 // to 1,000 requests per day, so one request's share of that budget is a day / 1,000 — the smallest
@@ -385,7 +400,7 @@ const REINCARNATION = Object.freeze({
 
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
-export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION });
+export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION });
 
 export const FRAME_LIMITS_VERSION = '1.2.0';
 

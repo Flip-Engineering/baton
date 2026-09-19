@@ -3,6 +3,7 @@ import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS,
   swarmEventAgentRequiredFields, swarmEventFieldExpectation,
   swarmUpdatePayloadSummary, swarmEventFields } from './swarm-event-schemas.mjs';
 import { CONTRIBUTION_NOTE_KIND } from './contribution-contract.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 /** The closed swarm.update event set. Each event kind is a domain change the runtime applies
  * atomically; `swarm.recruit`/`swarm.guide`/`swarm.stop` are NOT expressible here — spawn and
  * worker binding stay on their own explicit lanes. */
@@ -310,6 +311,29 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
+  // Issue #311 (item 2): the peer channel. `swarm.guide` is an authority act in ONE swarm; this is
+  // a message between two PARTICIPANTS, and the recipient may be a seat of any swarm of the
+  // deployment — the issue's own example is a sibling's published contract, and siblings live in
+  // other swarms. `swarmId` is the SENDER's swarm (the bridge token's own scope, exactly as every
+  // other command's is); `toSwarmId` names the RECIPIENT's, defaulting to the sender's. The
+  // provenance and the receipt are the issue's other half: the row the send writes carries who
+  // sent it (participant and swarm), to which seat of which swarm, and when, and
+  // `swarm.notifications` reads that receipt back by its id.
+  'swarm.notify': Object.freeze({
+    args: Object.freeze(['swarmId', 'participantId', 'message', 'toSwarmId', 'priority', 'inReplyTo',
+      'idempotencyKey', 'view']),
+    capabilities: Object.freeze(['control', 'observe']),
+    web: true, mcp: true, mcpStateful: true, reconcilable: true,
+  }),
+  // The receipt read (#311 item 2), the swarm layer's `run.message.receipt`: the sender's own
+  // durable rows, each in the run layer's receipt shape (delivered / read / actedOn / reply /
+  // replies) beside the swarm provenance. `receipt` narrows the read to exactly one receipt id;
+  // `participantId` to one counterpart; `afterSeq` resumes a paged read.
+  'swarm.notifications': Object.freeze({
+    args: Object.freeze(['swarmId', 'receipt', 'participantId', 'afterSeq']),
+    capabilities: Object.freeze(['observe']),
+    web: true, mcp: true, mcpStateful: false, reconcilable: true,
+  }),
   // Identity-keyed: one immutable capture per (swarm, participant, contribution) at the turn
   // boundary. Repeating the call replays that capture; it never mints a second one, and it never
   // ends the author's session.
@@ -432,6 +456,10 @@ export function swarmChangedRow(kind, payload = {}) {
     case 'swarm.guidance_parked':
     case 'swarm.guidance_delivered':
       return row('participants', payload.participantId ?? null);
+    // Issue #311 (item 2): a peer message names the seat it went to, the way a guide names the
+    // seat it steered — the row a receipt hands back is the recipient on every projection.
+    case 'swarm.notification_sent':
+      return row('participants', payload.participantId ?? null);
     default:
       return null;
   }
@@ -474,6 +502,10 @@ export function swarmReceiptNext(command, args = {}, outcome = null) {
     // (the squash sha, the gate verdict, the conflicts) — never a second mutation.
     case 'swarm.integrate':
       return { command: 'swarm.view', args: { swarmId } };
+    // Issue #311 (item 2): a peer message's own durable row IS its receipt, so what follows is
+    // reading it back — the delivered/read state a sender waits on, by the id the answer named.
+    case 'swarm.notify':
+      return { command: 'swarm.notifications', args: { swarmId } };
     case 'swarm.update':
       return args.event === 'swarm.closed'
         ? { command: 'swarm.list', args: {} }
@@ -615,6 +647,11 @@ const SWARM_FIELD_RULES = Object.freeze({
   afterSeq: Object.freeze({ check: isSequence, expectation: 'a non-negative integer' }),
   timeoutMs: Object.freeze({ check: isWait, expectation: 'a positive integer' }),
   idempotencyKey: Object.freeze({ check: isId, expectation: 'an idempotency key' }),
+  toSwarmId: Object.freeze({ check: isId, expectation: 'a swarm identity' }),
+  // The receipt id a notify answered with: the identity the sender reads the row back by. Only
+  // the SHAPE is checked here (an id); the runtime resolves it against the swarm's own rows and a
+  // receipt the swarm does not hold reads as an empty page, never an invented row.
+  receipt: Object.freeze({ check: isId, expectation: 'a notify receipt id' }),
   projection: Object.freeze({
     check: (value) => Object.hasOwn(SWARM_VIEW_PROJECTIONS, value),
     expectation: `one of ${SWARM_VIEW_PROJECTION_NAMES.join(', ')}`,
@@ -668,6 +705,17 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
     optional: Object.freeze(['priority', 'inReplyTo', 'view']),
+  }),
+  // Issue #311 (item 2): the peer message. `toSwarmId` is optional so the common same-swarm case
+  // reads like every other verb; naming it is how a sender addresses a sibling that lives in
+  // another swarm of the deployment (the coordinates the situation projection publishes).
+  'swarm.notify': Object.freeze({
+    required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
+    optional: Object.freeze(['toSwarmId', 'priority', 'inReplyTo', 'view']),
+  }),
+  'swarm.notifications': Object.freeze({
+    required: Object.freeze(['swarmId']),
+    optional: Object.freeze(['receipt', 'participantId', 'afterSeq']),
   }),
   'swarm.capture': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'contributionId']),
@@ -998,6 +1046,22 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA,
       priority: PRIORITY_SCHEMA, inReplyTo: REPLY_TARGET_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['swarmId', 'participantId', 'message']),
+  }),
+  Object.freeze({
+    command: 'swarm.notify',
+    description: `Send one message to another PARTICIPANT, in this swarm or in any other swarm of the deployment — the peer channel the run layer's message.send has and the swarm layer did not (#311). toSwarmId names the recipient's swarm and defaults to this one; a participant that can act in two swarms must be disambiguated by it. The answer carries the message's OWN durable row as its receipt (notify: {receiptId, seq, kind, messageId, from {kind, participantId, swarmId}, to {participantId, swarmId}, sentAt, priority, inReplyTo, state: delivered|parked|refused, lane, reason, message|head, bytes, digest, spill}) — never null — so the sender reads who it went to, when, and how it landed: delivered rides the lane row it rode (lane), parked names the swarm.guidance_parked row a seat whose harness takes no mid-turn delivery composes into its next exec / successor brief, and refused names a lane that took nothing. The message body is admitted under this swarm's peer-message lane: up to ${FRAME_LIMITS['swarm.notify.body'].value} bytes inline, past that as a durable spill cited by head + digest, and past the durable spill ceiling as a coaching refusal. Read the receipt back any time with swarm.notifications --receipt.`,
+    readOnlyHint: false, destructiveHint: false,
+    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA,
+      toSwarmId: ID_SCHEMA, priority: PRIORITY_SCHEMA, inReplyTo: REPLY_TARGET_SCHEMA, view: VIEW_SCHEMA }),
+    required: Object.freeze(['swarmId', 'participantId', 'message']),
+  }),
+  Object.freeze({
+    command: 'swarm.notifications',
+    description: 'Read the peer messages this swarm holds, each in the run layer\'s message-receipt shape: {receiptId, messageId, kind, from {kind, participantId, swarmId}, to {participantId, swarmId}, sentAt, priority, inReplyTo, state, lane, reason, delivered, read, actedOn, reply, replies, message|head, bytes, digest, spill}. `receipt` narrows the read to exactly one notify receipt id — the lookup swarm.notify\'s answer hands back; `participantId` narrows it to one counterpart; `afterSeq` resumes a paged read, and a page past the family\'s list bound is truncated with the cursor to continue from. `read` is the recipient\'s first turn boundary after the row, null until one lands — a receipt is evidence, and the ledger is the only thing that says whether it was taken.',
+    readOnlyHint: true, destructiveHint: false,
+    properties: Object.freeze({ swarmId: ID_SCHEMA, receipt: ID_SCHEMA, participantId: ID_SCHEMA,
+      afterSeq: SEQUENCE_SCHEMA }),
+    required: Object.freeze(['swarmId']),
   }),
   Object.freeze({
     command: 'swarm.capture',

@@ -910,6 +910,9 @@ const COACHING_LANE_FIELD = Object.freeze({
   'decision.option.summary': 'summary',
   'decision.text': 'decision.text',
   'scratchpad.entry.body': 'body',
+  // Issue #311 (item 2): a peer message's body lane names the argument the caller shortens —
+  // `message`, the field `swarm.notify` takes.
+  'swarm.notify.body': 'message',
 });
 const COACHING_CODE_FIELD = Object.freeze({
   spill_body_exceeded: 'objective',

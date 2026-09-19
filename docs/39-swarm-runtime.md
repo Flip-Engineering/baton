@@ -1251,3 +1251,83 @@ payload's example, prose, a key name inside a value, the pre-#310 hand-off), the
 any effect (no membership row, no worker, no `prepareRun` call, the durable refusal row), the
 fixed objective's recruit followed by an admitted publish, and the refusal answer on the native
 bridge.
+
+## A participant can message a sibling in another swarm, and read the receipt back (issue #311 item 2, 2026-09-19)
+
+The run layer has had a participant-to-participant lane since `message.send`: a worker addresses a
+sibling and looks the delivery up later by `message.receipt`. The swarm layer had none. A sibling's
+published contract reached a lane only when the root copied it into that lane's objective, which is
+what the issue measured across twenty lanes on 2026-09-14. `swarm.guide` is not that lane: it is an
+authority act inside one swarm, addressed by that swarm's token scope. `swarm.notify` is the peer
+channel, and it crosses swarm boundaries.
+
+**Two swarms, one command.** `swarmId` is the SENDER's swarm — the token's own scope, exactly as
+every other command spells it, and the swarm the membership and the `communicate` grant are read
+in. `toSwarmId` names the RECIPIENT's swarm and defaults to the sender's, so the same-swarm case
+reads like every other verb and the cross-swarm case names its coordinates. Those coordinates are
+the ones the situation projection already publishes (`situation.siblings`), which is the point:
+what a seat reads as its siblings is exactly what it can address. The recipient resolves through
+`_siblingSeats`, the ONE fold the situation's sibling list is built from, so the two derivations
+cannot drift. A participant id that can act in two swarms refuses `swarm_command_invalid` with
+`rule: 'ambiguous-target'` and the admitted swarm ids rather than picking one; an id no can-act
+seat holds refuses `swarm_notify_target_not_found` naming the seat and the swarm it was looked for
+in.
+
+**The row is the receipt, and it lives in the sending swarm.** `swarm.notify` writes one
+`swarm.notification_sent` driver row carrying who sent it (`from {kind, participantId, swarmId}`),
+to which seat of which swarm (`to {participantId, swarmId}`), when (`sentAt`), the priority, the
+row it answers, the body, and how the delivery landed — the same delivered / parked / refused
+triple a guidance row carries, so a park and a live delivery are never spelled two ways. That row
+IS the receipt the answer carries (`notify: {receiptId, seq, …}`), and `receiptId` is the identity
+`swarm.notifications --receipt` reads it back by. The sender is the party that needs the receipt,
+and its own swarm is the only record it is entitled to read, which is why the row lands there
+rather than beside the recipient. The recipient's own record of the message is the delivery itself,
+and for a seat whose harness takes no mid-turn delivery it is the `swarm.guidance_parked` row
+`_parkGuidance` writes INTO THE RECIPIENT'S SWARM, where that seat's next exec / successor brief
+composes it (#337's park, unchanged).
+
+**Provenance rides the delivered frame.** The text a seat receives is
+`[NOTIFY <receiptId> from=<participantId>@<swarmId> at=<instant> — UNTRUSTED] <body>`, the shape the
+run layer's peer message uses: who sent it, from which swarm, and when, before the body. The
+instant is the store's clock read once, so the frame and the row cannot name two different
+moments. A message that outgrew the lane's body admission carries its head plus the
+`[SPILLED {bytes, digest, spill}]` citation instead of the whole body.
+
+**Read state is derived, never stored.** `swarm.notifications` serves each row in the run layer's
+receipt shape — `delivered`, `read`, `actedOn`, `reply`, `replies`, the body or its spill citation —
+beside the swarm provenance. `read` is the recipient's first turn boundary after the row's own seq:
+`messageReceipt`'s rule (a worker's first `turn_started` marks prior deliveries read), read from
+`lifecycle.turn_started` rows attributed to the recipient's run, worker or task instead of from
+process state, so a resident that restarted still answers it. A receipt nothing has followed yet
+reads `read: null` — recorded absence, never a claim. `replies` names the notifications whose
+`inReplyTo` is this row's seq, and `swarm.notification_sent` joins the kinds `inReplyTo` admits, so
+a thread between two seats reads the way a guidance thread does. The read is scoped to the caller's
+own correspondence — the rows addressed to it and the rows it sent — and an organizer reads the
+swarm's whole correspondence; a page past `view.seat_read.items` is truncated with the cursor to
+continue from, and a receipt id the swarm does not hold reads as an empty page (#304: a read never
+refuses recorded history).
+
+**The body has its own registry face.** `swarm.notify.body` (`impl/src/limits.mjs`) is declared in
+the same block style as every other lane, and its value is READ from `message.send.body` rather
+than re-typed: the two lanes are the same policy (a body a session reads inside one frame,
+spill-admitted up to `spill.body`), and the family's ONE list page derives from that same length,
+so a second literal could move this lane off that derivation. The row exists because the registry
+declares one face per ENFORCEMENT SITE, and this one is enforced in `SwarmRuntime._notify`, not in
+the coordinator's send lane. An over-cap body is admitted as a durable spill (head + digest
+citation); past the spill ceiling the refusal is the coaching error the registry composes, carrying
+`{cap, actual, unit, gracefulPath}` and the lane name, which `web-northbound.mjs` maps to the
+`message` argument the caller shortens.
+
+**`notify` is a recorded C4 exception.** docs/36 §4.1 bans `notify` as a surface verb because
+`baton run notify` was a legacy synonym for `run.member.send`. This verb is not a synonym: there is
+no other spelling of a cross-swarm peer message in the family, and `swarm.guide` answers a
+different question (an authority act in one swarm). The exception is recorded in
+`impl/scripts/surface-conformance.mjs` beside the `waves.progress` one, with the reason, so the
+banned-token lint stays red for every other `notify` spelling — including the run-surface synonym
+it was written for.
+
+Red-first: `impl/test/issue311-swarm-notify.test.mjs` pins the declared family member and its
+closed arguments, the cross-swarm delivery with the provenance in the frame, the receipt the answer
+carries and the durable row it names, the receipt read in the run layer's shape, the derived `read`
+state, the three typed recipient refusals, the spill admission and its coaching refusal, the park
+recorded in the recipient's own swarm, and the read's scoping.

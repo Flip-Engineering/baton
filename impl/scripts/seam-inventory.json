@@ -13579,12 +13579,95 @@
           ]
         },
         {
-          "name": "_situation",
+          "name": "_siblingSeats",
           "ordinal": 0,
-          "size": 80,
+          "size": 12,
           "seam": "admission",
           "evidence": [
             "delegates:admission"
+          ]
+        },
+        {
+          "name": "_situation",
+          "ordinal": 0,
+          "size": 78,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_notifyTarget",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_refuseNotifyTarget",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_notificationReceipt",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_notificationBody",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_notify",
+          "ordinal": 0,
+          "size": 60,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_notificationReadKeys",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_notificationBody",
+          "ordinal": 1,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_notificationsRead",
+          "ordinal": 0,
+          "size": 59,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
           ]
         },
         {
@@ -13901,7 +13984,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1062,
+          "size": 1076,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

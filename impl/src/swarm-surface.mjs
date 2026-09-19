@@ -39,6 +39,8 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.check': 'Record one independent check of a captured contribution.',
   'swarm.integrate': 'Land one accepted contribution on a target branch as ONE squashed commit: the base is the merge-base of the target with the contribution commit, the squash is prepared in a scratch checkout the deployment owns, the gate set derived from the changed paths runs there, and the target fast-forwards only after every gate is green. The receipt carries the landing itself — base, targetHeadBefore, targetHeadAfter, squashSha, changedPaths, gates, regenerated, conflicts, issue and landingComment (the text `gh issue close --body-file` takes verbatim) — and --dry-run performs everything but the fast-forward, leaving the target exactly where it was.',
   'swarm.stop': 'Stop one participant explicitly; the swarm itself stays open. The receipt names the operation row that recorded the stop.',
+  'swarm.notify': 'Send one message to another participant, in this swarm or, with --to-swarm-id, in any other swarm of the deployment. The answer carries the message\'s own durable row as its receipt — who sent it, to which seat of which swarm, when, and how it landed (delivered on the lane it rode, parked in the recipient\'s own swarm for a harness that takes no mid-turn delivery, or refused) — and the way back to it is --receipt.',
+  'swarm.notifications': 'Read the peer messages this swarm holds, each in the run layer\'s receipt shape: the delivery state, whether the recipient has taken a turn since (read), the thread it belongs to, and the body or its digest-cited spill head. Narrows to one --receipt id, one --participant-id counterpart, or a page from --after-seq.',
 });
 
 // Command-specific help detail for the verbs whose results carry projected rows: the shape an agent
@@ -98,6 +100,8 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     // Issue #296: the landing coordinates the usage line names positionally.
     'swarm.integrate': ['swarmId', 'contributionId'],
     'swarm.stop': ['swarmId', 'participantId', 'reason'],
+    'swarm.notify': ['swarmId', 'participantId', 'message'],
+    'swarm.notifications': ['swarmId'],
     'swarm.list': [],
   }[name];
   const flags = SWARM_COMMAND_DEFINITIONS[name].args

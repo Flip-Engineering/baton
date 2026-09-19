@@ -18,7 +18,10 @@ import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES,
 // minting a code outside it is a construction-time error.
 import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
 import { pathInScopes } from './path-scope.mjs';
-import { FRAME_LIMITS } from './limits.mjs';
+// Issue #311 (item 2): the peer message's body lane is a cataloged admission like every other, so
+// its hard refusal is composed by the registry's own ONE helper (never a hand-typed sentence) and
+// carries the same {cap, actual, unit, gracefulPath} triple the run layer's send refusal does.
+import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord, workspaceHolders } from './shared-workspace-custody.mjs';
 import { workspaceChangedPaths, workspaceExists, applySnapshotToWorktree, sweepIntegrationCheckouts } from './worktree.mjs';
@@ -224,11 +227,17 @@ const childrenByParent = (swarm) => {
  * exactly these — the lane receipt a delivery rode is NAMED by `delivery.lane`, never copied in
  * beside it — so the row a guide's receipt names and the rows a reader opens cannot disagree. */
 const GUIDANCE_ROW_KINDS = Object.freeze(['swarm.guidance_sent', 'swarm.guidance_parked', 'swarm.guidance_delivered']);
-/** The ledger kinds a guide may answer with `inReplyTo` (#273): a guidance row, a seat's message
- * (both halves of the lane), or a contribution. A seq outside this set — or one the ledger does
- * not hold — refuses `swarm_guidance_reply_target_not_found`. */
+// Issue #311 (item 2): a peer message may answer another peer message, so the notification's own
+// row joins the rows one reply target may name — a thread between two seats reads the way a
+// guidance thread does, never as a seq that points at nothing.
+const NOTIFICATION_ROW_KIND = 'swarm.notification_sent';
+/** The ledger kinds a guide OR a peer message may answer with `inReplyTo` (#273, #311): a guidance
+ * row, a seat's message (both halves of the lane), a notification, or a contribution. A seq
+ * outside this set — or one the ledger does not hold — refuses
+ * `swarm_guidance_reply_target_not_found`. */
 const GUIDANCE_REPLY_TARGET_KINDS = Object.freeze([...GUIDANCE_ROW_KINDS, 'message.sent', 'message.delivered',
-  'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_integrated']);
+  'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_integrated',
+  NOTIFICATION_ROW_KIND]);
 
 /** WHO one guidance is from, for the swarm's own record (#273): the sender's identity is read by
  * the coordinator's ONE namespace derivation (`guidanceSender`), and this adds the sender's
@@ -240,6 +249,39 @@ function guidanceFromRelationship(swarm, actor) {
   if (sender.kind !== 'seat') return Object.freeze({ kind: 'root', participantId: null });
   return Object.freeze({ kind: childrenByParent(swarm).has(sender.participantId) ? 'lead' : 'peer',
     participantId: sender.participantId });
+}
+
+// ── issue #311 (item 2): the peer message's body admission and its ledger vocabulary ────────────
+/** Cap a string at maxBytes on a UTF-8 scalar boundary, the way the coordinator's own head-cap
+ * helper does — the head a spilled peer message carries inline is never a broken code point. */
+function capBytesToScalar(text, maxBytes) {
+  let out = '';
+  let bytes = 0;
+  for (const ch of String(text)) {
+    const size = Buffer.byteLength(ch);
+    if (bytes + size > maxBytes) return out;
+    out += ch;
+    bytes += size;
+  }
+  return out;
+}
+
+/** The ONE coaching refusal a peer message's body lane draws (Decision 3): the registry composes
+ * the sentence, and the error carries the same {cap, actual, unit, gracefulPath} triple the run
+ * layer's send refusal carries — a caller reads what to change, never a bare TypeError. `field`
+ * names the LANE, so the wire maps it to the argument the caller must shorten. */
+function peerBodyRefusal(row, actual, cap = FRAME_LIMITS['spill.body'].value) {
+  return Object.assign(new Error(composeFrameLimitRefusal(row, actual, cap)), {
+    code: row.refusalCode ?? 'size_exceeded', field: row.lane,
+    cap, actual, unit: row.unit, gracefulPath: frameLimitRefusalPath(row, cap),
+  });
+}
+
+/** The ledger kind of one recorded row, read the way the seat-activity fold reads it (#268): a
+ * driver record carries its own kind in the payload, a domain event carries it as its kind. */
+function ledgerRowKind(event) {
+  return event.kind === 'driver.recorded' || event.kind === 'evidence.mapped'
+    ? event.payload?.kind ?? event.kind : event.kind;
 }
 
 /** The guidance fold (#273): every guidance row the ledger holds, grouped by the seat it is
@@ -1009,6 +1051,9 @@ const COMMAND_PERMISSIONS = Object.freeze({
   'swarm.view': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
   'swarm.guide': 'communicate', 'swarm.capture': 'contribute',
   'swarm.check': 'review', 'swarm.stop': 'stop',
+  // Issue #311 (item 2): a peer message is the same kind of act a guide is — a seat speaking to
+  // another seat — so it takes the same authority, and the receipt read is a plain read.
+  'swarm.notify': 'communicate', 'swarm.notifications': 'read',
   // Issue #296: landing changes the repository itself, so it takes the same authority the other
   // root-side acts take — `organize` — exactly as the contract row declares.
   'swarm.integrate': 'organize',
@@ -5433,6 +5478,22 @@ export class SwarmRuntime {
     if (typeof this.situationGit?.commitsSince !== 'function') return { baseCommit: swarm.baseCommit, commits: null };
     return { baseCommit: swarm.baseCommit, commits: this.situationGit.commitsSince(swarm.baseCommit) };
   }
+  /** Every can-act seat of this repository's OTHER swarms (#311): the #301 overlap row widened to
+   * what a sibling OWNS. ONE fold, read by two consumers — the situation projection publishes
+   * `{swarmId, participantId, scope}` of it, and a peer message resolves its recipient through
+   * the same rows, so a seat a caller can see in its situation is exactly a seat it can notify. */
+  _siblingSeats(swarm) {
+    const rows = [];
+    for (const other of this.store.swarms()) {
+      if (other.swarmId === swarm.swarmId) continue;
+      for (const participant of Object.values(other.participants ?? {})) {
+        if (!this._canAct(participant)) continue;
+        rows.push({ swarmId: other.swarmId, participantId: participant.participantId,
+          scope: participant.scope ?? null, participant });
+      }
+    }
+    return rows;
+  }
 
   /** The deployment-level situation (issue #311): the ONE derivation the view's `situation`
    * projection serves and the recruit brief's situation blocks render. `caller` is the viewing
@@ -5470,15 +5531,13 @@ export class SwarmRuntime {
     // overlap row widened — the seat, its swarm, and its whole declared scope (not only the
     // overlapping paths): what siblings OWN, so knowledge can travel before scopes collide. A
     // published row is subject + a reference (contributionId + seq), never the body.
-    const siblingsAll = [];
+    // The published sibling row is the three fields the situation serves — the participant row the
+    // fold carries is this derivation's own business, never the read's.
+    const siblingsAll = this._siblingSeats(swarm)
+      .map(({ swarmId, participantId, scope }) => ({ swarmId, participantId, scope }));
     const publishedAll = [];
     for (const other of this.store.swarms()) {
       if (other.swarmId === swarm.swarmId) continue;
-      for (const participant of Object.values(other.participants ?? {})) {
-        if (!this._canAct(participant)) continue;
-        siblingsAll.push({ swarmId: other.swarmId, participantId: participant.participantId,
-          scope: participant.scope ?? null });
-      }
       for (const contribution of Object.values(other.contributions ?? {})) {
         if (typeof contribution?.contributionId !== 'string' || !Number.isSafeInteger(contribution?.seq)) continue;
         const body = contribution.body ?? null;
@@ -5525,6 +5584,257 @@ export class SwarmRuntime {
       siblings: siblings.rows, siblingsOmitted: siblings.omitted,
       published: published.rows, publishedOmitted: published.omitted,
       predecessor,
+    };
+  }
+
+  // ── issue #311 (item 2): the peer message and its receipt ─────────────────────────────────────
+  /** The seat one peer message names (#311 item 2). `toSwarmId` states the recipient's swarm; an
+   * omitted one resolves the id in THIS swarm first and then through `_siblingSeats` — the same
+   * rows the situation projection publishes, so the coordinates a caller read there are the
+   * coordinates it may address. An id that two can-act seats hold refuses as a request the caller
+   * must disambiguate, never a coin flip between two seats; an id no can-act seat holds refuses
+   * `swarm_notify_target_not_found` naming the seat and the swarm it was looked for in. */
+  _notifyTarget(swarm, args) {
+    const seatIn = (candidate) => (Object.hasOwn(candidate.participants ?? {}, args.participantId)
+      ? candidate.participants[args.participantId] : null);
+    if (args.toSwarmId !== undefined) {
+      const target = args.toSwarmId === swarm.swarmId ? swarm : this._swarm(args.toSwarmId);
+      const participant = seatIn(target);
+      if (participant === null || !this._canAct(participant)) this._refuseNotifyTarget(args, target.swarmId);
+      return { swarm: target, participant };
+    }
+    const local = seatIn(swarm);
+    if (local !== null && this._canAct(local)) return { swarm, participant: local };
+    const siblings = this._siblingSeats(swarm).filter((row) => row.participantId === args.participantId);
+    if (siblings.length === 0) this._refuseNotifyTarget(args, swarm.swarmId);
+    if (siblings.length > 1) {
+      const swarmIds = siblings.map((row) => row.swarmId).sort(compareCanonicalStrings);
+      refuse(`swarm.notify names participant ${args.participantId}, which can act in ${swarmIds.length} swarms: ${swarmIds.join(', ')}`,
+        'swarm_command_invalid', {
+          field: 'toSwarmId', rule: 'ambiguous-target', participantId: args.participantId, swarmIds,
+          correction: 'name the swarm the recipient belongs to with toSwarmId',
+        });
+    }
+    return { swarm: this._swarm(siblings[0].swarmId), participant: siblings[0].participant };
+  }
+
+  /** The typed refusal one unresolvable peer-message recipient draws: the seat, the swarm it was
+   * looked for in, and the fact that a seat which cannot act cannot take a peer message. */
+  _refuseNotifyTarget(args, swarmId) {
+    refuse(`swarm.notify names no seat that can act in swarm ${swarmId}: ${args.participantId}`,
+      'swarm_notify_target_not_found', {
+        field: 'participantId', participantId: args.participantId, swarmId,
+        rule: 'active-seat-of-the-named-swarm',
+      });
+  }
+
+  /** The notification's durable row as its receipt and as `swarm.notifications` read it (#311
+   * item 2): the run layer's receipt fields (`delivered`, `read`, `actedOn`, `reply`, `replies`,
+   * the body and its spill citation) beside the swarm provenance the issue asks for (who sent it,
+   * from which swarm, to which seat of which swarm, and when). ONE composition, so the answer
+   * `swarm.notify` gives and every later read of the row cannot spell the same facts differently.
+   * `read` is the caller's to derive — it is a fact about the ledger, not about the row. */
+  _notificationReceipt(event, payload, read = null, replies = Object.freeze([])) {
+    const delivery = payload.delivery ?? {};
+    return {
+      receiptId: payload.receiptId, seq: event.seq, kind: payload.kind ?? NOTIFICATION_ROW_KIND,
+      messageId: payload.messageId ?? null,
+      from: clone(payload.from), to: clone(payload.to), sentAt: payload.sentAt,
+      priority: payload.priority ?? SWARM_GUIDANCE_DEFAULT_PRIORITY,
+      inReplyTo: payload.inReplyTo ?? null,
+      state: delivery.state ?? 'delivered', lane: clone(delivery.lane ?? null),
+      reason: delivery.reason ?? null,
+      delivered: delivery.state === 'delivered' ? true : null,
+      read, actedOn: null,
+      reply: replies[0] ?? null, replies,
+      ...(payload.spilled === true
+        ? { body: payload.message, bytes: payload.bytes, digest: payload.digest, spill: payload.spill }
+        : { body: payload.message }),
+    };
+  }
+
+  /** The message one notification row carried, delivered or parked (#311 item 2). ONE body: the
+   * text when it fits the lane, and its byte-capped head beside the durable spill's citation when
+   * it does not — the same head + citation shape the run layer's send frame carries. */
+  _notificationBody(row, message) {
+    const bytes = Buffer.byteLength(message);
+    const cap = FRAME_LIMITS['swarm.notify.body'].value;
+    const ceiling = FRAME_LIMITS['spill.body'].value;
+    if (bytes > ceiling) throw peerBodyRefusal(FRAME_LIMITS['swarm.notify.body'], bytes, ceiling);
+    if (bytes <= cap) return Object.freeze({ head: message, spilled: null });
+    const minted = typeof this.store.mintSpill === 'function'
+      ? this.store.mintSpill({ body: message, lane: row.lane },
+        { actor: row.actor, key: `swarm-notify-spill:${row.receiptId}` }) : null;
+    const spill = minted?.spill ?? null;
+    if (spill === null) throw peerBodyRefusal(FRAME_LIMITS['swarm.notify.body'], bytes, ceiling);
+    return Object.freeze({ head: capBytesToScalar(message, cap), spilled: {
+      bytes, digest: spill.digest, spill: spill.spillId } });
+  }
+
+  /** One peer message, sent and recorded (#311 item 2). The row lands in the SENDING swarm — the
+   * record the sender is entitled to read back — and the message reaches the recipient either on
+   * the live lane or, for a harness that takes no mid-turn delivery, as a durable park in the
+   * RECIPIENT's own swarm, where its next exec / successor brief composes it. */
+  async _notify(args, principal, swarm) {
+    const target = this._notifyTarget(swarm, args);
+    const from = Object.freeze({ ...guidanceFromRelationship(swarm, principal.actor), swarmId: swarm.swarmId });
+    const to = Object.freeze({ participantId: target.participant.participantId, swarmId: target.swarm.swarmId });
+    const priority = args.priority ?? SWARM_GUIDANCE_DEFAULT_PRIORITY;
+    const inReplyTo = this._guidanceReplyTarget(args);
+    const sentAt = typeof this.store._clock === 'function'
+      ? this.store._clock() : new Date().toISOString();
+    const receiptId = `notify:${hash([NOTIFICATION_ROW_KIND, swarm.swarmId, to.swarmId, to.participantId,
+      args.message, args.idempotencyKey])}`;
+    const guidance = { from, priority, inReplyTo };
+    const body = this._notificationBody(args.message, receiptId, principal.actor);
+    const citation = body.spilled === null ? ''
+      : ` [SPILLED ${JSON.stringify({ spilled: true, bytes: body.spilled.bytes,
+        digest: body.spilled.digest, spill: body.spilled.spill })}]`;
+    // The provenance the issue asks for rides the DELIVERED text itself, in the run layer's own
+    // peer-message shape: who sent it, from which swarm, when — before the body a reader judges.
+    const frame = `[NOTIFY ${receiptId} from=${from.participantId ?? 'root'}@${from.swarmId}`
+      + ` at=${sentAt} — UNTRUSTED] ${body.head}${citation}`;
+    const worker = this._workerFor(target.participant, this.coordinator.list());
+    let delivery;
+    let messageId = null;
+    let park = null;
+    if (worker === null) {
+      delivery = { state: 'refused', lane: null, reason: 'seat_unbound' };
+    } else {
+      const cursor = this.store.ledgerHeadSeq();
+      const guided = await this.coordinator.guideParticipant(worker.id, frame,
+        { actor: principal.actor, priority });
+      if (guided?.ok !== true && this._midTurnGuidanceUnsupported(worker)) {
+        // Issue #337's park, in the RECIPIENT's swarm (#311 item 2): a peer message to a seat whose
+        // harness takes no mid-turn delivery is durable where that seat's brief will find it.
+        park = this._parkGuidance(target.swarm.swarmId, target.participant, frame, principal, args, guidance);
+        messageId = park.result?.messageId ?? null;
+        delivery = { state: 'parked', lane: null, reason: 'harness_one_shot' };
+      } else {
+        // The lane receipt is durable coordination log, not process state: the newest nudge/steer
+        // row for this binding past the pre-call cursor is the row THIS delivery wrote.
+        const sent = this.store.eventsView().filter((event) => event.kind === 'message.sent'
+          && ['nudge', 'steer'].includes(event.payload?.kind) && event.payload?.to?.workerId === worker.id
+          && event.seq > cursor).at(-1) ?? null;
+        delivery = guided?.ok === true
+          ? { state: 'delivered', lane: sent === null ? null : { seq: sent.seq,
+            kind: sent.payload?.kind ?? null, ts: sent.ts,
+            messageId: sent.payload?.messageId ?? receiptId } }
+          : { state: 'refused', lane: null, reason: guided?.result ?? guided?.reason ?? 'delivery_refused' };
+        messageId = delivery.lane?.messageId ?? null;
+      }
+    }
+    const payload = { swarmId: swarm.swarmId, participantId: to.participantId, toSwarmId: to.swarmId,
+      receiptId, messageId, actor: principal.actor, from, to, sentAt, priority, inReplyTo, delivery,
+      message: body.head,
+      ...(body.spilled === null ? {} : { spilled: true, ...body.spilled }) };
+    const event = this.store.recordDriver(NOTIFICATION_ROW_KIND, payload,
+      { actor: principal.actor, key: `swarm-notify:${receiptId}` }).event;
+    const write = { kind: NOTIFICATION_ROW_KIND, payload: event.payload,
+      seq: event.seq, ts: event.ts, actor: event.actor };
+    return { participantId: to.participantId, notify: this._notificationReceipt(event, event.payload),
+      writes: [write] };
+  }
+
+  /** One notification row's recipient keys — the run, worker and task coordinates a turn boundary
+   * is attributed by (`_seatActivity`'s own attribution), read from the recipient's participant
+   * row in ITS swarm. A recipient that is gone by read time has no keys, so `read` stays null. */
+  _notificationReadKeys(to) {
+    if (typeof to.swarmId !== 'string' || typeof to.participantId !== 'string') return Object.freeze([]);
+    const other = this.store.swarm(to.swarmId);
+    const participant = other !== null && Object.hasOwn(other.participants ?? {}, to.participantId)
+      ? other.participants[to.participantId] : null;
+    if (participant === null) return Object.freeze([]);
+    const keys = [participant.runId];
+    for (const binding of participant.bindings ?? []) {
+      keys.push(binding.workerId, binding.taskId);
+    }
+    return Object.freeze(keys.filter((key) => typeof key === 'string' && key.length > 0));
+  }
+
+  /** The message one notification row carried, delivered or parked (#311 item 2). ONE body: the
+   * text when it fits the lane, and its byte-capped head beside the durable spill's citation when
+   * it does not — the same head + citation shape the run layer's send frame carries. The spill is
+   * keyed by the receipt id, so a retried send reuses the artifact instead of minting a second. */
+  _notificationBody(message, receiptId, actor) {
+    const bytes = Buffer.byteLength(message);
+    const lane = FRAME_LIMITS['swarm.notify.body'];
+    const ceiling = FRAME_LIMITS['spill.body'].value;
+    if (bytes > ceiling) throw peerBodyRefusal(lane, bytes, ceiling);
+    if (bytes <= lane.value) return Object.freeze({ head: message, spilled: null });
+    const minted = typeof this.store.mintSpill === 'function'
+      ? this.store.mintSpill({ body: message, lane: lane.lane },
+        { actor, key: `swarm-notify-spill:${receiptId}` }) : null;
+    const spill = minted?.spill ?? null;
+    if (spill === null) throw peerBodyRefusal(lane, bytes, ceiling);
+    return Object.freeze({ head: capBytesToScalar(message, lane.value), spilled: {
+      bytes, digest: spill.digest, spill: spill.spillId } });
+  }
+
+  /** `swarm.notifications` (#311 item 2): the peer messages this swarm holds, each in the run
+   * layer's receipt shape. The caller reads its OWN correspondence — the rows addressed to it and
+   * the rows it sent — and an organizer (a caller with no seat) reads the swarm's whole
+   * correspondence. `read` is derived per row from the ledger: the recipient's first turn boundary
+   * after the row's own seq (`messageReceipt`'s `read`, read from durable rows instead of process
+   * state), so a resident that restarted still answers it. The page is bounded by the family's ONE
+   * list ceiling, and a longer list is truncated with the cursor to continue from. */
+  _notificationsRead(swarm, args, caller) {
+    const pageItems = FRAME_LIMITS['view.seat_read.items'].value;
+    const from = Number.isSafeInteger(args.afterSeq) ? args.afterSeq + 1 : null;
+    const window = this.store.eventsView(from ?? undefined);
+    // The window is in seq order, so the LAST `turn_started` per key is the recipient's newest turn
+    // boundary; a row is read when that boundary follows the row's own seq.
+    const turnsByKey = new Map();
+    for (const event of window) {
+      if (ledgerRowKind(event) !== 'lifecycle.turn_started') continue;
+      for (const key of [event.payload?.runId, event.payload?.worker, event.payload?.taskId]) {
+        if (typeof key === 'string' && key.length > 0) turnsByKey.set(key, event.seq);
+      }
+    }
+    const rows = [];
+    const mine = (payload) => caller === null
+      || payload.participantId === caller.participantId
+      || payload.from?.participantId === caller.participantId;
+    for (const event of window) {
+      if (ledgerRowKind(event) !== NOTIFICATION_ROW_KIND) continue;
+      const payload = event.payload ?? {};
+      if (payload.swarmId !== swarm.swarmId || payload.receiptId === undefined) continue;
+      if (args.receipt !== undefined && payload.receiptId !== args.receipt) continue;
+      if (args.participantId !== undefined
+        && payload.participantId !== args.participantId
+        && payload.from?.participantId !== args.participantId) continue;
+      if (!mine(payload)) continue;
+      rows.push(event);
+    }
+    const readOf = (event, payload) => {
+      for (const key of this._notificationReadKeys(payload.to ?? {})) {
+        const turnSeq = turnsByKey.get(key);
+        if (turnSeq !== undefined && turnSeq > event.seq) return true;
+      }
+      return null;
+    };
+    // The replies index is built ONCE over the window (the row sequence it is keyed by is the seq a
+    // reply's `inReplyTo` names), so a page costs one pass, never a pass per row.
+    const repliesBySeq = new Map();
+    for (const candidate of window) {
+      if (ledgerRowKind(candidate) !== NOTIFICATION_ROW_KIND) continue;
+      const replyTo = candidate.payload?.inReplyTo;
+      if (candidate.payload?.swarmId !== swarm.swarmId || !Number.isSafeInteger(replyTo)) continue;
+      if (!repliesBySeq.has(replyTo)) repliesBySeq.set(replyTo, []);
+      repliesBySeq.get(replyTo).push(candidate.payload.receiptId);
+    }
+    const repliesOf = (event) => (repliesBySeq.get(event.seq) ?? []).sort(compareCanonicalStrings);
+    const headSeq = this.store.ledgerHeadSeq();
+    const page = rows.slice(0, pageItems);
+    return {
+      schemaVersion: 1, swarmId: swarm.swarmId,
+      caller: { participantId: caller?.participantId ?? null },
+      at: { seq: headSeq, ts: this.store.observationTime(headSeq) },
+      notifications: page.map((event) => Object.freeze(
+        this._notificationReceipt(event, event.payload, readOf(event, event.payload),
+          Object.freeze(repliesOf(event))))),
+      truncated: rows.length > pageItems,
+      cursor: rows.length > pageItems ? page.at(-1).seq : null,
     };
   }
 
@@ -7820,6 +8130,20 @@ export class SwarmRuntime {
           routes: result.routes ?? null,
           // #490: the withdrawn Run this re-join continued, or null on a first incarnation.
           ...(result.supersedes === null ? {} : { supersedes: result.supersedes }) });
+    }
+    // Issue #311 (item 2): the peer channel. Both arms stand BEFORE the generic participant
+    // lookup below, because a peer message's recipient is a seat of the swarm it names — not
+    // necessarily a seat of THIS one — so it resolves through `_notifyTarget`, and the receipt
+    // read is a read over this swarm's own correspondence that never refuses recorded history
+    // (#304): a receipt id the swarm does not hold answers an empty page, never an invented row.
+    if (command === 'swarm.notify') {
+      const result = await this._once(command, args, principal,
+        async () => this._notify(args, principal, swarm), { context });
+      return this._mutationResult(command, args, result.writes ?? [], principal, context,
+        { participantId: result.participantId, notify: result.notify });
+    }
+    if (command === 'swarm.notifications') {
+      return this._notificationsRead(swarm, args, caller);
     }
     const participant = this._participant(swarm, args.participantId);
     if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId
