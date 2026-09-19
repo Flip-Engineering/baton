@@ -13,12 +13,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CoordinationIntegrityError, CoordinationStore } from '../src/index.mjs';
+import { coordinationReplayFailure, quarantineCoordinationLedgerEvent } from '../src/coordination-store.mjs';
 import { normalizeGoalPlanPolicy } from '../src/goal-plan.mjs';
 import { findTokenShaped, fixtureCeilingBytes } from '../scripts/ledger-extract.mjs';
 
@@ -300,5 +301,169 @@ test('tampered recorded goal bytes still refuse closed instead of folding', () =
     () => new CoordinationStore(directory, { goalPlanPolicy: policyB }),
     (error) => error instanceof CoordinationIntegrityError && error.code === 'goal_plan_integrity',
     'a recorded goal whose bytes no longer match its digest refuses even though the digest names a known policy',
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// Issue #504: the same goal/plan fold, replayed by a store that carries NO goal/plan authority.
+//
+// `baton doctor --check` reported `replay_refused {seq: 5, kind: 'goal.version_defined', code:
+// 'goal_plan_integrity', message: 'goal/plan event is malformed'}` on the primary checkout while
+// that checkout's deployment was serving the same ledger, and the quarantine verb — which
+// re-probes through the same construction — then recorded a durable quarantine for the healthy
+// row. Both probes (`coordinationReplayFailure` and `quarantineCoordinationLedgerEvent` in
+// src/coordination-store.mjs) and the MCP descriptor's open construct the store with NO options
+// at all: `new CoordinationStore(root)`. `_applyGoalPlanEvent` refused the first recorded goal
+// row because such a store carries no live goal/plan authority — the last live-policy read #325
+// left in this fold, whose digest comparisons it had removed. The fixture below is the reported
+// ledger's own head, verbatim: rows 1-5 of the primary deployment's coordination ledger, where
+// seq 5 is the reported row. Every digest in that row recomputes exactly from its own fields
+// (asserted here), so nothing about the row's content was ever at fault.
+const RECORDED_FIXTURE = 'deployment-recorded-goal.jsonl';
+const servedRecordedFixture = () => readFileSync(join(CORPUS_DIR, RECORDED_FIXTURE), 'utf8')
+  .split('\n').filter((line) => line !== '');
+
+/** The recorded fixture laid out as a ledger directory the store opens. */
+function openRecordedFixture(name) {
+  const lines = servedRecordedFixture();
+  const directory = join(root(name), 'corpus');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'events.jsonl'), `${lines.join('\n')}\n`);
+  return { directory, lines };
+}
+
+test('the committed deployment-recorded goal fixture folds under a store with no goal-plan authority (#504)', () => {
+  const { directory, lines } = openRecordedFixture('recorded-fold');
+  for (const [index, line] of lines.entries()) {
+    assert.deepEqual(findTokenShaped(line), [], `${RECORDED_FIXTURE} line ${index + 1} carries a token-shaped value`);
+  }
+  assert.ok(Buffer.byteLength(lines.join('\n')) <= fixtureCeilingBytes(),
+    'the fixture stays bounded by the repository fixture ceiling');
+  const sidecar = JSON.parse(readFileSync(join(CORPUS_DIR, `${RECORDED_FIXTURE}.digest`), 'utf8'));
+  assert.equal(sidecar.schemaVersion, 1, 'the sidecar is the fixture record');
+
+  const reportedRow = lines.map(JSON.parse).find((event) => event.seq === 5);
+  assert.equal(reportedRow.kind, 'goal.version_defined', 'seq 5 is the reported row');
+  const recorded = reportedRow.payload.goal;
+  const core = {
+    schemaVersion: 1, repoId: recorded.repoId, runId: recorded.runId,
+    objective: recorded.objective, definitionOfDone: recorded.definitionOfDone,
+    constraints: recorded.constraints, risk: recorded.risk, budget: recorded.budget,
+    predecessor: recorded.predecessor, policyDigest: recorded.policyDigest,
+  };
+  assert.equal(recorded.digest, canonicalDigest(core), 'the recorded goal digest binds its own recorded content');
+  assert.equal(reportedRow.payload.requestDigest, canonicalDigest({ principalId: recorded.principalId, ...core }));
+  assert.equal(recorded.definedEvent, reportedRow.seq);
+  assert.equal(recorded.definedAt, reportedRow.ts);
+
+  // The probes' own construction: no options at all — no goal/plan authority, no repo identity.
+  const store = new CoordinationStore(directory);
+  const goals = store.snapshot().goalPlan.goals;
+  assert.equal(goals.length, 1, 'the recorded goal folds without a live authority');
+  const folded = goals[0];
+  assert.equal(folded.goalId, recorded.goalId);
+  assert.equal(folded.digest, recorded.digest);
+  assert.equal(folded.runId, recorded.runId);
+  assert.equal(folded.policyDigest, recorded.policyDigest,
+    'the folded goal keeps the policy digest it was recorded under');
+  assert.equal(folded.predecessor, null, 'a root goal, exactly as recorded');
+  assert.deepEqual(folded.budget, recorded.budget);
+  const projection = createHash('sha256').update(JSON.stringify(canonical(store.snapshot().goalPlan))).digest('hex');
+  assert.equal(projection, sidecar.projectionDigest, 'the fixture folds to the projection its sidecar records');
+});
+
+test('the doctor probe reports the recorded fixture clean, and the quarantine verb refuses its row (#504)', async () => {
+  const { directory } = openRecordedFixture('recorded-probe');
+  assert.equal(coordinationReplayFailure(directory), null,
+    'the read-only probe behind `baton doctor` folds the recorded goal and reports no replay refusal');
+  await assert.rejects(
+    quarantineCoordinationLedgerEvent(directory, {
+      seq: 5, reason: 'issue #504 regression check', actor: 'operator:test',
+    }),
+    (error) => error?.code === 'coordination_quarantine_replays_clean',
+    'the quarantine verb refuses a row whose ledger replays clean',
+  );
+  assert.ok(!existsSync(join(directory, 'coordination-quarantine.json')), 'no quarantine entry is written');
+});
+
+test('a tampered deployment-recorded goal still refuses with no authority configured (#504)', () => {
+  const { directory, lines } = openRecordedFixture('recorded-tamper');
+  const rows = lines.map(JSON.parse);
+  const goalRow = rows.find((event) => event.seq === 5);
+  goalRow.payload.goal.budget.tokens += 1;
+  writeFileSync(join(directory, 'events.jsonl'), `${rows.map(JSON.stringify).join('\n')}\n`);
+  assert.throws(
+    () => new CoordinationStore(directory),
+    (error) => error instanceof CoordinationIntegrityError && error.code === 'goal_plan_integrity',
+    'the fold keeps its tamper-evidence without a live authority',
+  );
+});
+
+// Issue #504: a deployment-shaped chain — a run-bound root goal under a policy digest no store
+// here opens with, then its plan and approval — replayed with no authority, with a same-repo
+// policy, and with a foreign-repo policy (the identity check that survives the fix).
+const policyDeploymentShaped = Object.freeze({
+  ...policyA,
+  riskClasses: ['low', 'medium', 'high', 'critical'],
+  limits: Object.freeze({
+    ...policyA.limits,
+    maxTokens: 100_000_000, maxUsd: 1_000, maxWallMin: 480, maxProviderTurns: 2_048,
+    maxItems: 128, maxScopePaths: 128, maxRouteValues: 64,
+  }),
+});
+const digestDeploymentShaped = normalizeGoalPlanPolicy(policyDeploymentShaped).policyDigest;
+
+function writeDeploymentShapedLedger(directory) {
+  const runAuth = (principalId, key) => ({
+    ...auth(principalId, key), runId: 'run-issue504', actor: 'deployment:repo-issue325',
+  });
+  const store = new CoordinationStore(directory, { goalPlanPolicy: policyDeploymentShaped });
+  const goal = store.defineGoal({
+    objective: 'Hold the recorded goal replay shape: a run-bound root goal admitted under the '
+      + "deployment's own budget policy",
+    definitionOfDone: ['node --test passes', 'The recorded goal replays under its own bytes'],
+    constraints: ['Do not claim completion without the deployment verification command.'],
+    risk: 'high',
+    budget: { tokens: 100_000_000, usd: 1_000, wallMin: 480, providerTurns: 2_048 },
+    predecessor: null,
+  }, runAuth('local-owner', 'goal:issue504:1')).goal;
+  assert.equal(goal.policyDigest, digestDeploymentShaped, 'the goal is recorded under the retired deployment-shaped digest');
+  assert.equal(goal.runId, 'run-issue504');
+  const plan = store.proposePlan({
+    goal: ref('goal', goal), predecessor: null,
+    nodes: node(100_000_000, ['node --test passes', 'The recorded goal replays under its own bytes']),
+  }, runAuth('service-planner', 'plan:issue504:1')).plan;
+  store.approvePlan({
+    goal: ref('goal', goal), plan: ref('plan', plan),
+    expectedDisposition: null, disposition: 'approved',
+  }, runAuth('local-owner', 'approval:issue504:1'));
+  store.releaseWriterLease();
+  return { goal, plan };
+}
+
+test('a run-bound root goal recorded under a retired deployment policy replays without a live authority (#504)', () => {
+  const directory = root('deployment-shaped');
+  const { goal, plan } = writeDeploymentShapedLedger(directory);
+  const fold = (options) => {
+    const store = options === null ? new CoordinationStore(directory) : new CoordinationStore(directory, options);
+    const projected = store.snapshot().goalPlan;
+    return {
+      digest: createHash('sha256').update(JSON.stringify(canonical(projected))).digest('hex'),
+      goal: projected.goals[0], plan: projected.plans[0],
+    };
+  };
+  const probed = fold(null);
+  assert.equal(probed.goal.goalId, goal.goalId, 'the run-bound root goal folds without a live authority');
+  assert.equal(probed.goal.policyDigest, digestDeploymentShaped);
+  assert.equal(probed.goal.runId, 'run-issue504');
+  assert.equal(probed.plan.planId, plan.planId, 'its plan folds behind it');
+  const withPolicy = fold({ goalPlanPolicy: policyA });
+  assert.equal(withPolicy.digest, probed.digest, 'a live policy folds the same projection as no authority at all');
+  assert.throws(
+    () => new CoordinationStore(directory, {
+      goalPlanPolicy: { ...policyA, repoId: 'repo-foreign-504' },
+    }),
+    (error) => error instanceof CoordinationIntegrityError && error.code === 'goal_plan_integrity',
+    'a configured authority still refuses a goal recorded for another repository',
   );
 });

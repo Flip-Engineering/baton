@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "projectionDigest": "2706278b03d59d2a4ba70d2e16981459e64879c0a3e3da18951d4a6a46d3bde0",
+  "source": {
+    "generatedBy": "impl/test/issue325-goal-plan-replay.test.mjs issue #504 corpus (the reported ledger's own head)",
+    "ledger": "the primary checkout's coordination ledger, rows 1-5 verbatim (<git-common-dir>/baton/application-v3/state/coordination/events.jsonl)",
+    "reportedRow": 5,
+    "recordedPolicyDigest": "16942f405c5e006ae6ed0ca74c78203bb9f87475aa8ad7165287874833284ba4"
+  },
+  "goal": {
+    "goalId": "goal:d52175d46ae2c88c9606a68acdb9a5c3693c1f3159fd7035d8ac4f3676a284d8",
+    "version": 1,
+    "digest": "7bb41b493d3604d911d37a8fcab7e72705548c47894be85356373ee94ef3de1a",
+    "runId": "run-b5ed81890ce645cb5a6cd3773cccf98a",
+    "policyDigest": "16942f405c5e006ae6ed0ca74c78203bb9f87475aa8ad7165287874833284ba4",
+    "predecessor": null,
+    "principalId": "local-owner",
+    "definedEvent": 5,
+    "definedAt": "2026-07-19T06:16:18.224Z",
+    "budget": {
+      "tokens": 100000000,
+      "usd": 1000,
+      "wallMin": 480,
+      "providerTurns": 2048
+    }
+  }
+}

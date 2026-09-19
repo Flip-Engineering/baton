@@ -2184,7 +2184,15 @@ export function _acceptanceRevocationTargets(store, task, evidenceSeq, integrity
 export function _applyGoalPlanEvent(store, event) {
   const p = event.payload;
   const malformed = (message = 'goal/plan event is malformed') => store._goalPlanFailure(message, 'goal_plan_integrity', true);
-  if (!store._goalPlanPolicy || !p || typeof p !== 'object' || Array.isArray(p) || p.schemaVersion !== 1) malformed();
+  // Issue #504: the goal/plan authority guards ADMISSION — `defineGoal` and its siblings refuse
+  // with `goal_plan_unavailable` when it is absent — and this fold replays recorded goal/plan
+  // rows from their own bytes. A store assembled without the authority (the read-only probe
+  // behind `baton doctor`'s coordination row, the quarantine verb's probe, the MCP descriptor's
+  // open) therefore folds such rows too. #325 dropped this fold's live-policy digest comparisons
+  // and left the authority's presence as its last live-policy read; that read refused the first
+  // goal row of every ledger a probe opened, so doctor reported `replay_refused` at that seq,
+  // `goal_plan_integrity`, while the deployment served the same ledger.
+  if (!p || typeof p !== 'object' || Array.isArray(p) || p.schemaVersion !== 1) malformed();
   try {
     if (event.kind === 'goal.version_defined') {
       if (Object.keys(p).sort().join(',') !== ['goal', 'requestDigest', 'schemaVersion'].sort().join(',') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')) malformed();
@@ -2197,7 +2205,11 @@ export function _applyGoalPlanEvent(store, event) {
       // live policy would no longer admit.
       const recorded = { objective: g.objective, definitionOfDone: g.definitionOfDone, constraints: g.constraints, risk: g.risk, budget: g.budget, predecessor: g.predecessor };
       const core = { schemaVersion: 1, repoId: g.repoId, runId: g.runId, ...recorded, policyDigest: g.policyDigest };
-      if (g.schemaVersion !== 1 || g.repoId !== store._goalPlanPolicy.repoId || !/^[a-f0-9]{64}$/.test(g.policyDigest ?? '')
+      // Issue #504: the deployment identity a recorded goal must belong to comes from the live
+      // authority when one is configured, else from the store's own repoId; a store that knows
+      // neither (the probes) binds no identity and folds the row as recorded.
+      const deploymentRepoId = store._goalPlanPolicy?.repoId ?? store._repoId;
+      if (g.schemaVersion !== 1 || (deploymentRepoId !== null && g.repoId !== deploymentRepoId) || !/^[a-f0-9]{64}$/.test(g.policyDigest ?? '')
         || !validRunId(g.principalId) || g.definedEvent !== event.seq || g.definedAt !== event.ts
         || g.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ principalId: g.principalId, ...core })) malformed();
       const scopeKey = store._goalScopeKey(g.repoId, g.runId); const head = store._goalHeads.get(scopeKey);
