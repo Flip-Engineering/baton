@@ -13,6 +13,7 @@ import { verifyContribution } from './contribution-verification.mjs';
 import { readOnlyNoChangeVerdict } from './referee.mjs';
 import { ContributionService } from './contribution-service.mjs';
 import * as runtimeBriefing from './runtime-briefing.mjs';
+import * as recorderPort from './runtime-recorder-port.mjs';
 import { nativeSubagentView, NATIVE_SETTLEMENT_GAP } from './native-subagent-view.mjs';
 import {
   PROVIDER_FAULT_CODES, isTransientProviderFault, normalizeProviderRoute, readProviderFaultDetail,
@@ -51,7 +52,7 @@ import {
 import { TASK_TOPOLOGY_RELATIONS, normalizeTaskTopologyPolicy } from './task-topology.mjs';
 import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import {
-  createRecoveryAttemptAdmission, createRecoveryAttemptCompletion, recoveryAttemptSeriesId,
+  createRecoveryAttemptAdmission, recoveryAttemptSeriesId,
 } from './recovery-attempt.mjs';
 import {
   attachedToExistingCheckout, isPhysicalWorkspaceId, workspaceAttachmentOf, workspaceCustodyRecord,
@@ -1455,6 +1456,11 @@ export class Coordinator {
       throw new TypeError('Knowledge briefing provider must be a function');
     }
     this._knowledgeBriefingProvider = opts.knowledgeBriefingProvider ?? null;
+    if (opts.recorderPort !== undefined && opts.recorderPort !== null
+      && (typeof opts.recorderPort !== 'object' || typeof opts.recorderPort.log?.append !== 'function')) {
+      throw new TypeError('recorderPort must carry a log with append()');
+    }
+    this._recorder = opts.recorderPort ?? null;
     this._goalPlanAuthority = null;
     if (opts.goalPlanAuthority !== undefined) {
       const authority = opts.goalPlanAuthority;
@@ -7218,20 +7224,7 @@ export class Coordinator {
   }
 
   _completeDurableRecoveryAttempt(attempt, state, actor) {
-    if (!attempt || attempt.state !== 'pending') return attempt ?? null;
-    const completion = createRecoveryAttemptCompletion({
-      attemptId: attempt.attemptId,
-      admissionDigest: attempt.admissionDigest,
-      state,
-      receipt: {
-        schemaVersion: 1,
-        effectStarted: state !== 'not_started',
-        transportDisposition: state,
-      },
-    });
-    return this._coordination.completeRecoveryAttempt(completion, {
-      actor, key: `recovery.attempt.complete:${attempt.attemptId}`,
-    }).attempt;
+    return recorderPort.completeDurableRecoveryAttempt(this._recorder, attempt, state, actor);
   }
 
   async _recover(workerId, opts = {}) {
@@ -10860,27 +10853,7 @@ export class Coordinator {
    * positive deferred outcome — never `worktree_cleanup_failed` — and the stopping handle is
    * released exactly as a completed cleanup would release it. */
   _detachSharedWorkspace(handle, remainingHolders) {
-    const physicalOwnerId = handle.sessionContext?.ownerTaskId ?? null;
-    handle.worktree = null;
-    handle.ownedWorktreeAuthority = false;
-    // The checkout still exists: this handle's resource is not released, and a later stop of the
-    // last holder (or startup reconciliation) closes it through the existing reap chain.
-    handle.physicalWorkspaceCleanupCompleted = false;
-    handle.workspaceCleanupDeferred = 'holders_remain';
-    handle.cleanupPending = handle.runtimeScope?.active === true;
-    handle.cleanupError = null;
-    try {
-      const event = this._log.append({
-        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
-        kind: 'worktree.custody_deferred', actor: 'policy', ...this._routeAttribution(handle),
-        payload: { physicalOwnerId, reason: 'holders_remain', holders: [...remainingHolders] },
-      });
-      this._coordMapEvent(event);
-    } catch { /* The detachment remains authoritative when evidence is unavailable. */ }
-    return Promise.resolve(Object.freeze({
-      ok: true, result: 'workspace_cleanup_deferred', reason: 'holders_remain',
-      physicalOwnerId, holders: Object.freeze([...remainingHolders]),
-    }));
+    return recorderPort.detachSharedWorkspace(this, this._recorder, handle, remainingHolders);
   }
 
 

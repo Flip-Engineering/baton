@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 507,
+          "size": 512,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -1585,12 +1585,10 @@
         {
           "name": "_completeDurableRecoveryAttempt",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
-            "recovery:restart_name",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "recovery:restart_name"
           ]
         },
         {
@@ -2388,12 +2386,11 @@
         {
           "name": "_detachSharedWorkspace",
           "ordinal": 0,
-          "size": 23,
+          "size": 3,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
-            "effect:action_name",
-            "observation:log_append"
+            "effect:action_name"
           ]
         },
         {
