@@ -72,13 +72,14 @@ asserted from prose):
 
 ## 2. The core tool set
 
-**Law (a).** The default ordinary surface advertises exactly **seven tools — one per family —
-each a `verb`-discriminated closed schema** (the docs/36 grammar: `noun.verb` becomes
-`tool {verb, ...}`; H7's depth cap becomes the tool count). No flat `baton_<noun>_<verb>`
-spelling is advertised by default; the migration table (§7) maps every one of them.
+**Law (a).** The default ordinary surface advertises exactly **one tool per family, each a
+`verb`-discriminated closed schema** (the docs/36 grammar: `noun.verb` becomes `tool {verb, ...}`;
+H7's depth cap becomes the tool count). No flat `baton_<noun>_<verb>` spelling is advertised by
+default; the migration table (§7) maps every one of them. Seven families landed with #314; #317
+added the eighth (`baton_services`) without changing the rule — a new family joins the same way.
 
-**Landed (#314 lane 1).** The production wrapper (`production-mcp-convergence.mjs`) advertises
-exactly these seven tools on the ordinary (`application`) surface — the surface both entry scripts
+**Landed (#314 lane 1; #317 added the eighth family).** The production wrapper
+(`production-mcp-convergence.mjs`) advertises exactly these eight tools on the ordinary (`application`) surface — the surface both entry scripts
 serve — and the raw `McpFleetServer` keeps its flat table for embedders and its own pins; rows
 314-a (the name set) and 314-c (the closed schema shape) are green. `advanced`/`combined` are
 untouched (§9). The tables' third column is on the core rows too: each long verb carries its
@@ -103,7 +104,7 @@ branch owns the per-verb closure, so a `swarmId` on a `list` call refuses `inval
 naming the field — the house closed-set teaching pattern (impl/src/mcp-northbound.mjs:1431-1435)
 applied per verb.
 
-The seven tools and their core verb sets. **Receipt** names the answer shape (§5); **wake
+The eight tools and their core verb sets. **Receipt** names the answer shape (§5); **wake
 handoff** names the classes the answer's subscription carries for a long verb and the
 `settleOn` subset whose frame settles the follow-up (class vocabulary:
 impl/src/wake-stream.mjs:121-326, never extended by this design).
@@ -195,20 +196,28 @@ impl/src/surface-capability-resolution.mjs:59-83): `catalog`, `describe`, `invok
 `watch`, `visualize`. This tool IS the progressive disclosure (§3) — `describe` also absorbs
 `baton_help`/`baton_application_help` (a `name` the catalog lists, or a help topic).
 
-**32 core verbs across 7 tools.** Everything else an orchestrator might need is one
+### `baton_services` — 1 verb (#317)
+
+| verb | required fields | receipt | wake handoff |
+|---|---|---|---|
+| `list` | — | the deployment's configured services: models offered, routes derived, subscription usage and reset instant (read; quota-free) | — |
+
+**33 core verbs across 8 tools.** Everything else an orchestrator might need is one
 `baton_surface invoke` away; everything else entirely is the CLI's.
 
 ## 3. Progressive disclosure and the byte budget
 
-**Law (b).** `tools/list` on the default surface carries the seven core tools and nothing else.
-The rest opens through `baton_surface`: `catalog` lists the capability inventory this deployment
+**Law (b).** `tools/list` on the default surface carries the core tools and nothing else. The
+rest opens through `baton_surface`: `catalog` lists the capability inventory this deployment
 profile serves (the landed mechanism), `describe` answers one capability's live schema and
 posture, `invoke` routes it through the authority it already has. A caller that knows a legacy
 spelling gets taught the core verb by the refusal (§8) without a `tools/list` round trip.
 
-**Landed (#314 lane 1).** `tools/list` over the served surface carries the seven tools and nothing
-else (row 314-a green; 314-b measures the served bytes inside the derived budget — 19,707 B
-against 7 × 3,038 = 21,266 B at this table), the 51 non-core flat tools stay reachable through
+**Landed (#314 lane 1; #317 added the eighth tool).** `tools/list` over the served surface carries
+the core tools and nothing else (row 314-a green). The byte budget measured at #314 landing (7
+tools, 19,707 B against 7 × 3,038 = 21,266 B) has not been re-measured against the eighth tool;
+whoever next touches this section should re-run row 314-b's measurement rather than trust this
+stale figure. The 51 non-core flat tools (52 including `baton_services_list`) stay reachable through
 `baton_surface`, and a flat spelling the core folds in refuses with `movedTo` (§8, row 314-g).
 The six unified `baton_surface_*` spellings stay accepted as unadvertised aliases of their core
 verb: the CLI's own MCP client (`configured-mcp-client.mjs`, `baton surface … --mcp`) speaks them,
