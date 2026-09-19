@@ -420,8 +420,10 @@ test('CA6: the pins that read a moved member\'s text resolve it through the live
   assert.ok(gateFiles.includes('coordination-admission.mjs') && gateFiles.includes('coordination-store.mjs'),
     'the gate is a delegate on the class and a body in the module');
 
-  // The file list the scans that read the store's module scope share, stated once.
-  assert.deepEqual([...STORE_MODULE_FILES], ['coordination-store.mjs', 'coordination-ledger.mjs', 'coordination-admission.mjs']);
+  // The file list the scans that read the store's module scope share, stated once. Slice 7 adds
+  // the effect bucket's file (the writer-lease helpers' literals ride it — F1's exec-buffer
+  // exemption follows them there).
+  assert.deepEqual([...STORE_MODULE_FILES], ['coordination-store.mjs', 'coordination-ledger.mjs', 'coordination-admission.mjs', 'coordination-ledger-writes.mjs']);
   assert.equal(read(STORE_FILE).includes('workflow_admit_lease_invalid'), false,
     'the gate body left the store file: a file-keyed scan would now miss it');
   for (const file of ['test/kg-activation-red.test.mjs', 'test/issue286-ceilings.test.mjs', 'test/issue366-run-stop-replay-ceiling.test.mjs']) {

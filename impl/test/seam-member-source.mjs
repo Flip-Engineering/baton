@@ -30,11 +30,13 @@ import { fileURLToPath } from 'node:url';
 import { REPO_ROOT_URL, TARGETS, collectSeamInventory } from '../scripts/seam-inventory.mjs';
 
 /** The files the store's module scope spans (issue #259 slices 4 and 5): the class in
- * `coordination-store.mjs`, the observation bucket in `coordination-ledger.mjs`, and the admission
- * bucket in `coordination-admission.mjs`. A scan that reads the store's own module scope — its
+ * `coordination-store.mjs`, the observation bucket in `coordination-ledger.mjs`, the admission
+ * bucket in `coordination-admission.mjs`, and the effect bucket in
+ * `coordination-ledger-writes.mjs` (slice 7). A scan that reads the store's own module scope — its
  * constants, its bounds, the text of one of its helpers — reads these files. */
 export const STORE_MODULE_FILES = Object.freeze([
   'coordination-store.mjs', 'coordination-ledger.mjs', 'coordination-admission.mjs',
+  'coordination-ledger-writes.mjs',
 ]);
 
 /** The receiver each target's members read their state through, keyed by target file. */
