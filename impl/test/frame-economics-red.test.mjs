@@ -1717,6 +1717,7 @@ const F_EXEMPTIONS = Object.freeze([
   ['coordinator.mjs', /_orientationBound\(\{ modules \}, 2048\)/u, 'uncataloged: orientation-ladder render bound'],
   ['coordinator.mjs', /Buffer\.byteLength\(request\.id\) > 4_096/u, 'uncataloged: request id-class'],
   ['coordinator.mjs', /ack\.reason\.length <= 4096/u, 'uncataloged: ack reason bound'],
+  ['runtime-recovery.mjs', /Buffer\.byteLength\(request\.id\) > 4_096/u, 'uncataloged: request id-class (the line moved here from coordinator.mjs in issue #259 slice 8)'],
   ['coordinator.mjs', /Buffer\.byteLength\(candidate\.reportPath\) <= 4_096/u, 'uncataloged: report path bound'],
   ['coordinator.mjs', /maxPaths > 16_384/u, 'uncataloged: path COUNT'],
   ['coordinator.mjs', /stringField\(opts\.(taskId|idempotencyKey), '(taskId|idempotencyKey)', 4_096\)/u, 'uncataloged: identity fields'],

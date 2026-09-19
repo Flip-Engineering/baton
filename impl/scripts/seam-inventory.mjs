@@ -129,8 +129,14 @@ export const TARGETS = Object.freeze([
   // coordination-ledger.mjs, which reads the class it was moved out of through its `store` first
   // parameter — the same receiver convention the two module targets above use. The relocated
   // primitives the moved bodies read are module-scope functions too, so they are members here.
+  // Slice 8's module target: the coordinator's recovery bucket (42 members — the 43rd,
+  // _completeDurableRecoveryAttempt, moved with slice 6's port) moved to runtime-recovery.mjs,
+  // which reads the class through its `coordinator` first parameter and records through the
+  // injected recorder port (slice 6) carried as its second — the same receiver convention the
+  // module targets above use. The relocated primitives the moved bodies read are module-scope
+  // declarations too, so they are members here.
   Object.freeze({
-    file: 'impl/src/coordination-ledger.mjs', className: null, receiver: 'store',
+    file: 'impl/src/runtime-recovery.mjs', className: null, receiver: 'coordinator',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
 ]);
@@ -192,6 +198,11 @@ const AUTHORITY_RULES = Object.freeze([
   // no counterpart: both of its delegates are reached by the class dispatcher, so transport
   // reachability places them before any rule is consulted.
   { seam: 'observation', id: 'brief_port', weight: 3, call: /\bruntimeBriefing\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted brief seam (runtime-briefing.mjs)' },
+
+  // Slice 8 extends the same rule to the recovery bucket: a member whose body is a delegate into
+  // runtime-recovery.mjs keeps the seam recovery its body had there. The rule is the evidence,
+  // not a name heuristic — exactly as `replay_port` says it for `_load`.
+  { seam: 'recovery', id: 'recovery_port', weight: 3, call: /\bruntimeRecovery\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted recovery module (runtime-recovery.mjs)' },
 
   // Slice 4 extends the same rule to the observation bucket: a member whose body is a delegate into
   // coordination-ledger.mjs keeps the seam its body had there. The rule is the evidence, not a name
