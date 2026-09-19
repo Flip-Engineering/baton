@@ -204,6 +204,7 @@ import { AtlasCodeIndex, CartographerQuartermaster, PublicSupplyChainOracle } fr
 import { connectBaton } from '../src/application-cli.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { collectSeamInventory } from '../scripts/seam-inventory.mjs';
+import { STORE_MODULE_FILES } from './seam-member-source.mjs';
 import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const dirs = [];
@@ -1618,12 +1619,12 @@ const BYTE_PROSE_REGEXES = Object.freeze([
 //     boardBounded :430-432) — RESOLVED (contract v1.2, blue-team blocker 1): the lane is
 //     cataloged as the live admission row board.report.body 4,096, so :416/:14442 and the
 //     schema door :1426 stay ordinary cataloged-lane hits and retire on import.
-// ── the store's module scope, which is two files (issue #259 slice 4) ───────────────────────────
-// The patterns below are the store's own bounds and partitions. Slice 4 moved the members that
-// carry them — and the constants they read — into coordination-ledger.mjs, so a file-keyed entry
-// names BOTH files the store's module scope spans: each pattern is stated once, and exempted in
-// whichever of the two the line ended up in.
-const STORE_MODULE_FILES = Object.freeze(['coordination-store.mjs', 'coordination-ledger.mjs']);
+// ── the store's module scope, which the split spread over three files (issue #259 slices 4-5) ───
+// The patterns below are the store's own bounds and partitions. Slices 4 and 5 moved the members
+// that carry them — and the constants they read — into coordination-ledger.mjs and
+// coordination-admission.mjs, so a file-keyed entry names EVERY file the store's module scope spans
+// (`STORE_MODULE_FILES`): each pattern is stated once, and exempted in whichever of them the line
+// ended up in.
 const STORE_EXEMPTIONS = Object.freeze([
   [/maxBuffer: 4_096/u, 'uncataloged: exec buffer'],
   [/MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384/u, 'uncataloged: scratchpad raw REQUEST ceiling (distinct from the entry lane)'],
