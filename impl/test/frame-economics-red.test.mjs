@@ -1618,6 +1618,28 @@ const BYTE_PROSE_REGEXES = Object.freeze([
 //     boardBounded :430-432) — RESOLVED (contract v1.2, blue-team blocker 1): the lane is
 //     cataloged as the live admission row board.report.body 4,096, so :416/:14442 and the
 //     schema door :1426 stay ordinary cataloged-lane hits and retire on import.
+// ── the store's module scope, which is two files (issue #259 slice 4) ───────────────────────────
+// The patterns below are the store's own bounds and partitions. Slice 4 moved the members that
+// carry them — and the constants they read — into coordination-ledger.mjs, so a file-keyed entry
+// names BOTH files the store's module scope spans: each pattern is stated once, and exempted in
+// whichever of the two the line ended up in.
+const STORE_MODULE_FILES = Object.freeze(['coordination-store.mjs', 'coordination-ledger.mjs']);
+const STORE_EXEMPTIONS = Object.freeze([
+  [/maxBuffer: 4_096/u, 'uncataloged: exec buffer'],
+  [/MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384/u, 'uncataloged: scratchpad raw REQUEST ceiling (distinct from the entry lane)'],
+  [/scratchpadString\(entry\.text, 2_048\)/u, 'deliberate-local: note.text partition inside the capped entry (Decision 2)'],
+  [/scratchpadString\(entry\.context, 2_048\)/u, 'deliberate-local: doubt context partition (Decision 2)'],
+  [/scratchpadString\(entry\.target\.url, 2_048\)/u, 'deliberate-local: link url partition (Decision 2)'],
+  [/Buffer\.byteLength\(parsed\.href\) > 2_048/u, 'deliberate-local: link href partition (Decision 2)'],
+  [/boundedText\(sbom\.lockfile, 2_048\)/u, 'deliberate-local: SBOM lockfile projection bound (Decision 2)'],
+  [/boundedText\(fields\.reason, 8_192\)/u, 'deliberate-local: knowledge maintenance reason (Decision 2)'],
+  [/MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES = 262_144/u, 'uncataloged: snapshot reap ceiling'],
+  [/boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  [/boundedText\(p\.routeKey, 4096\)/u, 'uncataloged: routeKey identity bound'],
+  [/Buffer\.byteLength\((fields\.taskId|p\.taskId|id|fields\.id|request\[name\])\) > 4_096/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  [/branch\.summary\.length > 4_096/u, 'uncataloged: branch summary bound'],
+]);
+
 const F_EXEMPTIONS = Object.freeze([
   ['acp-json-rpc-process.mjs', /maxFrameBytes = options\.maxFrameBytes \?\? 1024 \* 1024/u, 'uncataloged: sibling-transport frame bound'],
   ['adapter.mjs', /maxWireFrameBytes: 1024 \* 1024/u, 'uncataloged: sibling-transport frame bound'],
@@ -1685,19 +1707,11 @@ const F_EXEMPTIONS = Object.freeze([
   ['context-runtime.mjs', /maxBuffer: 4_096/u, 'uncataloged: exec buffer'],
   ['context-runtime.mjs', /16_384/u, 'uncataloged: stderr tail bound'],
   ['context-runtime.mjs', /Math\.min\(policy\.maxArtifactBytes, 1024 \* 1024\)/u, 'uncataloged: artifact policy floor'],
-  ['coordination-store.mjs', /maxBuffer: 4_096/u, 'uncataloged: exec buffer'],
-  ['coordination-store.mjs', /MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384/u, 'uncataloged: scratchpad raw REQUEST ceiling (distinct from the entry lane)'],
-  ['coordination-store.mjs', /scratchpadString\(entry\.text, 2_048\)/u, 'deliberate-local: note.text partition inside the capped entry (Decision 2)'],
-  ['coordination-store.mjs', /scratchpadString\(entry\.context, 2_048\)/u, 'deliberate-local: doubt context partition (Decision 2)'],
-  ['coordination-store.mjs', /scratchpadString\(entry\.target\.url, 2_048\)/u, 'deliberate-local: link url partition (Decision 2)'],
-  ['coordination-store.mjs', /Buffer\.byteLength\(parsed\.href\) > 2_048/u, 'deliberate-local: link href partition (Decision 2)'],
-  ['coordination-store.mjs', /boundedText\(sbom\.lockfile, 2_048\)/u, 'deliberate-local: SBOM lockfile projection bound (Decision 2)'],
-  ['coordination-store.mjs', /boundedText\(fields\.reason, 8_192\)/u, 'deliberate-local: knowledge maintenance reason (Decision 2)'],
-  ['coordination-store.mjs', /MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES = 262_144/u, 'uncataloged: snapshot reap ceiling'],
-  ['coordination-store.mjs', /boundedText\((fields\.parentTask\.id|priorTaskId|task\.reservedWorkerId|event\?\.actor|sessionRequest\.id|context\.ownerTaskId|context\.logicalTaskId|fields\.id|fields\.refines|p\.taskId|p\.priorTaskId|p\.sessionId|request\.taskId|receipt\.deliveryId|p\.target\.taskId|id|fields\.taskId|fields\.semanticReviewTaskId|item\.path|fields\.refines|fields\?\.id|fields\.runId|request\.afterEdgeId|request\.edgeId|request\.winnerId|request\.loserId), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
-  ['coordination-store.mjs', /boundedText\(p\.routeKey, 4096\)/u, 'uncataloged: routeKey identity bound'],
-  ['coordination-store.mjs', /Buffer\.byteLength\((fields\.taskId|p\.taskId|id|fields\.id|request\[name\])\) > 4_096/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
-  ['coordination-store.mjs', /branch\.summary\.length > 4_096/u, 'uncataloged: branch summary bound'],
+  // Issue #259 slice 4: the store's module scope spans two files — the class in
+  // coordination-store.mjs and the observation bucket, with the constants it reads, in
+  // coordination-ledger.mjs. These patterns are the store's own bounds and partitions, so each one
+  // is stated once above and exempted in BOTH files, wherever the split left the line.
+  ...STORE_MODULE_FILES.flatMap((file) => STORE_EXEMPTIONS.map(([pattern, note]) => [file, pattern, note])),
   ['coordinator.mjs', /Buffer\.byteLength\(JSON\.stringify\(result\)\) > 32_768/u, 'uncataloged: route-observation result cap'],
   ['coordinator.mjs', /policy\.maxTargetBytes > 1024 \* 1024/u, 'uncataloged: scratch-oracle policy ceiling'],
   ['coordinator.mjs', /_orientationBound\(\{ modules \}, 2048\)/u, 'uncataloged: orientation-ladder render bound'],

@@ -1590,14 +1590,18 @@ test('R2 PIN: WAITING_ON_KINDS stays the closed five, byte-unchanged and sorted'
 });
 
 test('R3 PIN: SCRATCHPAD_STEP_STATES stays the closed three', () => {
+  // Issue #259 slice 4: the constant moved with the fold that reads it into coordination-ledger.mjs,
+  // so the scan greps both files the store's module scope now spans.
   let out = '';
-  try {
-    out = execFileSync('grep', ['-an', 'SCRATCHPAD_STEP_STATES',
-      fileURLToPath(new URL('../src/coordination-store.mjs', import.meta.url))],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch (error) { out = error?.stdout?.toString?.() ?? ''; }
+  for (const file of ['coordination-store.mjs', 'coordination-ledger.mjs']) {
+    try {
+      out += execFileSync('grep', ['-an', 'SCRATCHPAD_STEP_STATES',
+        fileURLToPath(new URL(`../src/${file}`, import.meta.url))],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch (error) { out += error?.stdout?.toString?.() ?? ''; }
+  }
   assert.ok(out.includes('new Set([\'todo\', \'doing\', \'done\'])'),
-    'stage: step-state-constancy-pin — the closed three statuses (coordination-store.mjs:537) stay byte-unchanged; kills a fold that renames todo/doing/done for the plan task status');
+    'stage: step-state-constancy-pin — the closed three statuses stay byte-unchanged; kills a fold that renames todo/doing/done for the plan task status');
 });
 
 test('R4 PIN: the goal-plan ^plan:[a-f0-9]{64}$ validator still refuses a plan:<hex32> plan-object id', () => {
