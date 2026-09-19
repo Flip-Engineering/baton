@@ -911,8 +911,8 @@ test('SP8 (v2 R33R-3/R33R-6): bridge treeBinding honestly falls back to task_bas
 });
 
 test('SP8 (v2 R33R-3): coordinator terminal observation covers verified, failed, and cancelled tasks', async () => {
-  const { Coordinator } = await import('../src/coordinator.mjs');
-  const source = Coordinator.prototype._settleTerminalScratchpad.toString();
+  const { _settleTerminalScratchpad } = await import('../src/runtime-observation.mjs');
+  const source = _settleTerminalScratchpad.toString();
   for (const status of ['completed', 'failed', 'cancelled']) assert.ok(source.includes(status));
   assert.ok(source.includes('terminalCaptureSha'));
 });

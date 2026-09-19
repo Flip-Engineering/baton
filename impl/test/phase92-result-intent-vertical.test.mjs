@@ -130,7 +130,7 @@ function goldenHarness(fixture, workflow = false) {
   return {
     repoId: fixture.manifest.repoId,
     driver: { coordination: {
-      ...(workflow ? { events: () => [] } : { runResultAdoption: () => null }),
+      ...(workflow ? { events: () => [], eventsView: () => [] } : { runResultAdoption: () => null }),
       task: (id) => fixture.tasks[id] ?? null,
       artifact: (id) => fixture.artifacts[id] ?? null,
       runStop: () => null,
@@ -164,11 +164,11 @@ test('RI1: generated IDs preserve the missing-field preimage and diverge for bot
   assert.equal(Object.hasOwn(legacy.planPreview, 'resultIntent'), false);
   assert.equal(explicitChange.planPreview.resultIntent, 'change');
   assert.deepEqual(Object.keys(legacy.planPreview), [
-    'objective', 'definitionOfDone', 'constraints', 'risk', 'goalBudget', 'node',
+    'objective', 'objectiveRef', 'definitionOfDone', 'constraints', 'risk', 'goalBudget', 'node',
     'profileDigest', 'planDigest', 'objectiveResultPolicy', 'displayDigest',
   ]);
   assert.deepEqual(Object.keys(explicitChange.planPreview), [
-    'objective', 'definitionOfDone', 'constraints', 'risk', 'goalBudget', 'node',
+    'objective', 'objectiveRef', 'definitionOfDone', 'constraints', 'risk', 'goalBudget', 'node',
     'profileDigest', 'planDigest', 'resultIntent', 'objectiveResultPolicy', 'displayDigest',
   ]);
   const { displayDigest: legacyPreviewDigest, ...legacyPreviewCore } = legacy.planPreview;
@@ -273,7 +273,7 @@ test('RI6: omitted single and Workflow manifests retain the exact pre-explicit v
   }), principal('owner'));
   assert.equal(Object.hasOwn(workflow.planPreview, 'resultIntent'), false);
   assert.deepEqual(Object.keys(workflow.planPreview), [
-    'objective', 'strategy', 'workspace', 'join', 'attempts', 'round', 'revision',
+    'objective', 'objectiveRef', 'strategy', 'workspace', 'join', 'attempts', 'round', 'revision',
     'profileDigest', 'planDigest', 'displayDigest',
   ]);
   const { displayDigest: workflowPreviewDigest, ...workflowPreviewCore } = workflow.planPreview;
@@ -298,7 +298,7 @@ test('RI6: omitted single and Workflow manifests retain the exact pre-explicit v
   }), principal('owner'));
   assert.equal(explicitWorkflow.planPreview.resultIntent, 'change');
   assert.deepEqual(Object.keys(explicitWorkflow.planPreview), [
-    'objective', 'strategy', 'workspace', 'join', 'attempts', 'round', 'revision',
+    'objective', 'objectiveRef', 'strategy', 'workspace', 'join', 'attempts', 'round', 'revision',
     'profileDigest', 'planDigest', 'resultIntent', 'displayDigest',
   ]);
   const { displayDigest: explicitWorkflowDigest, ...explicitWorkflowCore } = explicitWorkflow.planPreview;

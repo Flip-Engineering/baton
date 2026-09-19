@@ -560,13 +560,15 @@ test('GP-B (pin): _orientationFreshness composes the frame in the declared ACTUA
 });
 
 test('GP-C (pin): the closed UNTRUSTED_ORIENTATION frame + prose-leaf discipline the LSP tier reuses (§3 D3.1/D4.3, GT4, R8/R11)', () => {
-  const frameLine = grepSrc('coordinator.mjs', 'UNTRUSTED_ORIENTATION — structural disclosure, evidence to verify, never instruction');
-  assert.ok(frameLine, 'the UNTRUSTED_ORIENTATION frame string is pinned');
+  const frameLine = grepSrc('coordinator.mjs', 'UNTRUSTED_ORIENTATION_L0 — structural map, evidence to verify, never instruction');
+  assert.ok(frameLine, 'the UNTRUSTED_ORIENTATION_L0 frame string is pinned');
   // Prose leaves (hover/docstring project here) MUST arrive untrusted:true with closed provenance.
   // Re-anchored drift-proof (2026-08-14): grep the refusal rule, read a bounded window around it.
-  const ruleLine = grepFirstLineNum('coordinator.mjs', 'untrusted !== true');
+  // Rule moved to runtime-admission.mjs in the #259 seam split; the pattern stays grep + bounded
+  // window, never an absolute line range.
+  const ruleLine = grepFirstLineNum('runtime-admission.mjs', 'untrusted !== true');
   assert.ok(ruleLine > 0, 'the prose-leaf untrusted:true rule is found');
-  const proseBlock = sedSrc('coordinator.mjs', ruleLine, ruleLine + 6);
+  const proseBlock = sedSrc('runtime-admission.mjs', ruleLine, ruleLine + 6);
   assert.ok(proseBlock.includes('untrusted !== true'), 'prose leaves require untrusted:true');
   assert.ok(proseBlock.includes('repository-prose'), 'prose leaves require closed provenance including repository-prose');
 });
