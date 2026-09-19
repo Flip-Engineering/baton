@@ -803,6 +803,15 @@
           ]
         },
         {
+          "name": "_releaseCapacityDetached",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "effect:worktree_authority"
+          ]
+        },
+        {
           "name": "_capacityReservationHeld",
           "ordinal": 0,
           "size": 5,
@@ -1159,7 +1168,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 299,
+          "size": 297,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -14989,16 +14998,25 @@
         {
           "name": "_load",
           "ordinal": 0,
-          "size": 29,
+          "size": 30,
           "seam": "observation",
           "evidence": [
             "observation:read_name"
           ]
         },
         {
+          "name": "_reportProgress",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_reportLoadFailure",
           "ordinal": 0,
-          "size": 12,
+          "size": 15,
           "seam": "admission",
           "evidence": [
             "admission:refusal_name",
@@ -15018,7 +15036,7 @@
         {
           "name": "_loadPlan",
           "ordinal": 0,
-          "size": 46,
+          "size": 45,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
