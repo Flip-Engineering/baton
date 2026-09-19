@@ -1460,7 +1460,8 @@ export class Coordinator {
       && (typeof opts.recorderPort !== 'object' || typeof opts.recorderPort.log?.append !== 'function')) {
       throw new TypeError('recorderPort must carry a log with append()');
     }
-    this._recorder = opts.recorderPort ?? null;
+    this._recorder = opts.recorderPort
+      ?? recorderPort.createRecorderPort({ log: this._log, coordination: this._coordination, route: this._route });
     this._goalPlanAuthority = null;
     if (opts.goalPlanAuthority !== undefined) {
       const authority = opts.goalPlanAuthority;
