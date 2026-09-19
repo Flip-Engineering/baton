@@ -15273,7 +15273,7 @@
         {
           "name": "_loadRun",
           "ordinal": 0,
-          "size": 145,
+          "size": 146,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -15294,12 +15294,21 @@
         {
           "name": "_adoptedRows",
           "ordinal": 0,
-          "size": 6,
+          "size": 9,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
             "observation:projection_name",
             "observation:key_name"
+          ]
+        },
+        {
+          "name": "_reverifyAdoptedProviderDeliveries",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
