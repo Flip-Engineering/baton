@@ -120,7 +120,7 @@ class RouteCard {
 
 /** Open the deployment with HOME scoped to the fixture home and return its doctor snapshot.
  * Readiness is frozen at open, so HOME is restored as soon as openBaton resolves. */
-async function doctorOver({ repo, home, routes = null, adapters = null, label }) {
+async function doctorOver({ repo, home, routes = null, adapters = null, ompCredentials = null, label }) {
   const previousHome = process.env.HOME;
   process.env.HOME = home;
   let deployment = null;
@@ -131,6 +131,7 @@ async function doctorOver({ repo, home, routes = null, adapters = null, label })
         deploymentRoot: join(tmpDir(`deployment-${label}`), 'deployment'),
         ...(routes === null ? {} : { routes }),
         ...(adapters === null ? {} : { adapters }),
+        ...(ompCredentials === null ? {} : { ompCredentials }),
         verification: { command: process.execPath, arguments: ['--version'] },
         capacity: {
           estimate: () => ({ bytes: 1, inodes: 1 }),
@@ -320,4 +321,108 @@ test('RT-4: admission reads the observed agent database, never a declaration', a
     `no omp route is ready by declaration, got ${JSON.stringify(rows.map((row) => [row.model, row.state, row.code]))}`);
   assert.equal(rows.every((row) => row.code !== 'route_credentials_unprojected'), true,
     'the superseded projection-only verdict never decides an omp row (#293)');
+});
+
+test('RT-5: an operator-declared provider extends the credential table without touching source (#494)', async () => {
+  const fixture = repository('operator-provider');
+  const home = fixtureHome({ plantOmp: true });
+  const previousHome = process.env.HOME;
+  // The fourth provider omp routes but the shipped table never named: an operator-supplied
+  // prefix with an operator-supplied key file.
+  const probeRoute = { harness: 'omp', model: 'probe/acme-5', effort: 'low' };
+  const probeCard = Object.freeze({
+    ...OMP_CARD,
+    modelSelection: {
+      ...OMP_CARD.modelSelection,
+      configuredDefault: probeRoute.model,
+      available: [probeRoute.model],
+      reasoningEffort: [probeRoute.effort],
+    },
+  });
+  try {
+    process.env.HOME = home;
+
+    // The shipped defaults are unchanged: they resolve the served family, never the operator
+    // prefix, and an operator mapping resolves it.
+    assert.equal(deploymentModule.ompProviderKeyFile('probe/acme-5'), null);
+    assert.equal(deploymentModule.ompProviderKeyFile('probe/acme-5', { probe: 'probe_key.json' }), 'probe_key.json');
+    assert.equal(deploymentModule.ompProviderKeyFile('zai/glm-5.3-flash'), 'glm_key.json');
+
+    // The gate fails closed for the undeclared provider, and the refusal names the declaration
+    // that extends it.
+    const undeclared = deploymentModule.ompRouteReadiness(fixture.repo, 'probe/acme-5', 'low');
+    assert.equal(undeclared.state, 'blocked');
+    assert.equal(undeclared.code, 'route_unavailable');
+    assert.ok(undeclared.summary.includes('providerKeyFiles'),
+      `the refusal must name the operator declaration, got: ${undeclared.summary}`);
+    assert.ok(undeclared.summary.includes('probe'),
+      `the refusal must name the provider prefix, got: ${undeclared.summary}`);
+
+    // With the operator mapping the gate resolves the same way the shipped providers do, and
+    // the ready-when contract documents the operator provider from the same mapping.
+    provisionKey(fixture.repo, 'probe_key.json');
+    const declared = deploymentModule.ompRouteReadiness(fixture.repo, 'probe/acme-5', 'low',
+      { providerKeyFiles: { probe: 'probe_key.json' } });
+    assert.equal(declared.state, 'ready',
+      `got: ${JSON.stringify(declared)}`);
+    const readyWhen = deploymentModule.routeReadinessContract(probeRoute, { probe: 'probe_key.json' });
+    assert.ok(readyWhen.includes('probe_key.json'), `got: ${readyWhen}`);
+
+    // End to end: a doctor over the undeclared provider carries the same typed refusal, and an
+    // open with the operator mapping admits the route ready.
+    rmSync(join(fixture.repo, 'probe_key.json'));
+    const blocked = await doctorOver({
+      repo: fixture.repo, home, label: 'operator-blocked',
+      routes: [probeRoute], adapters: { omp: new RouteCard(probeCard) },
+    });
+    const blockedRows = blocked.routes.filter((route) => route.harness === 'omp');
+    assert.equal(blockedRows.length, 1);
+    assert.equal(blockedRows[0].code, 'route_unavailable');
+    assert.ok(blockedRows[0].summary.includes('providerKeyFiles'),
+      `the doctor row must name the operator declaration, got: ${blockedRows[0].summary}`);
+
+    provisionKey(fixture.repo, 'probe_key.json');
+    // A benign untracked file beside the key: the snapshot the open writes over this dirty
+    // repository must exist as its own tree, carry the benign file, and exclude the key.
+    writeFileSync(join(fixture.repo, 'NOTES.md'), 'operator notes\n');
+    const ready = await doctorOver({
+      repo: fixture.repo, home, label: 'operator-ready',
+      routes: [probeRoute], adapters: { omp: new RouteCard(probeCard) },
+      ompCredentials: { providerKeyFiles: { probe: 'probe_key.json' } },
+    });
+    const readyRows = ready.routes.filter((route) => route.harness === 'omp');
+    assert.equal(readyRows.length, 1);
+    assert.equal(readyRows[0].state, 'ready', `got: ${JSON.stringify(readyRows[0])}`);
+
+    // The operator key file is credential material like the shipped keys: no tree object in the
+    // fixture repository carries it, while the snapshot tree the dirty open wrote does carry
+    // the benign file — the exclusion is real, not a collapsed snapshot.
+    const objects = execFileSync('git', [
+      'cat-file', '--batch-all-objects', '--batch-check=%(objectname) %(objecttype)',
+    ], { cwd: fixture.repo }).toString();
+    const trees = objects.split('\n').filter((row) => row.endsWith(' tree')).map((row) => row.split(' ')[0]);
+    assert.ok(trees.length > 1, 'the fixture repository holds the base and snapshot trees');
+    let snapshotTreeSeen = false;
+    for (const tree of trees) {
+      const body = execFileSync('git', ['ls-tree', tree], { cwd: fixture.repo }).toString();
+      assert.equal(body.includes('probe_key.json'), false, `tree ${tree} carries the operator key file`);
+      if (body.includes('NOTES.md')) snapshotTreeSeen = true;
+    }
+    assert.equal(snapshotTreeSeen, true, 'the effective-tree snapshot itself was written and read back');
+
+    // The declaration is validated: a non-object mapping and a path-carrying file name refuse
+    // the open typed.
+    const advanced = (providerKeyFiles) => ({
+      repo: fixture.repo,
+      advanced: {
+        routes: [probeRoute], adapters: { omp: new RouteCard(probeCard) },
+        ompCredentials: { providerKeyFiles },
+        verification: { command: process.execPath, arguments: ['--version'] },
+      },
+    });
+    await assert.rejects(openBaton(advanced('probe_key.json')), /providerKeyFiles must be one object/);
+    await assert.rejects(openBaton(advanced({ probe: '../escape.json' })), /a single path segment/);
+  } finally {
+    process.env.HOME = previousHome;
+  }
 });
