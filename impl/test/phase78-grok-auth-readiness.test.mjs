@@ -93,6 +93,17 @@ function credential(expiresAt, { refreshable = true } = {}) {
   })}\n`;
 }
 
+/** #439: the pin below covers the readiness truth the GR1 row names — the route rows and the
+ * verdict derived from them. It drops the two sections each doctor/card read samples fresh from
+ * the host, both quantized to a deployment reserve granularity: `workspace` (the volume's free
+ * bytes and inodes, 64MiB and 10k) and `hostCapacity` (free memory and load, 64MiB and whole
+ * cores). A read pair taken while a free count crosses one of those boundaries disagrees on those
+ * sections alone; routes, routeUsage, ready and served stay pinned as one shared document. */
+function withoutCapacityObservations(readiness) {
+  const { workspace: _workspace, hostCapacity: _hostCapacity, ...pinned } = readiness;
+  return pinned;
+}
+
 test('GR1: expired Grok auth is auth-red before spawn with sanitized login guidance', () => {
   const expired = new Date(Date.now() - 60_000).toISOString();
   const { observed, spawned, home } = inspectDeployment({
@@ -116,7 +127,10 @@ test('GR1: expired Grok auth is auth-red before spawn with sanitized login guida
   assert.equal(publicOutput.includes('fixture-access-token'), false);
   assert.equal(publicOutput.includes('fixture-refresh-token'), false);
   assert.equal(publicOutput.includes(home), false, 'doctor and card do not publish credential paths');
-  assert.deepEqual(observed.readiness, observed.doctor);
+  assert.deepEqual(
+    withoutCapacityObservations(observed.readiness), withoutCapacityObservations(observed.doctor),
+    'card and doctor share one auth-red truth',
+  );
 });
 
 test('GR2: near-expiry Grok auth matches the CLI early-invalidation window', () => {

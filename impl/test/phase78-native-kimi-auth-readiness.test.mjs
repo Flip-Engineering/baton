@@ -99,6 +99,17 @@ function credential(expiresAt) {
   })}\n`;
 }
 
+/** #439: the pin below covers the readiness truth the KA1 row names — the route rows and the
+ * verdict derived from them. It drops the two sections each doctor/card read samples fresh from
+ * the host, both quantized to a deployment reserve granularity: `workspace` (the volume's free
+ * bytes and inodes, 64MiB and 10k) and `hostCapacity` (free memory and load, 64MiB and whole
+ * cores). A read pair taken while a free count crosses one of those boundaries disagrees on those
+ * sections alone; routes, routeUsage, ready and served stay pinned as one shared document. */
+function withoutCapacityObservations(readiness) {
+  const { workspace: _workspace, hostCapacity: _hostCapacity, ...pinned } = readiness;
+  return pinned;
+}
+
 test('KA1: an expired native Kimi subscription is auth-red before spawn with an actionable sanitized summary', () => {
   const expiresAt = Math.floor(Date.now() / 1000) - 60;
   const { observed, spawned, home } = inspectDeployment({
@@ -119,7 +130,10 @@ test('KA1: an expired native Kimi subscription is auth-red before spawn with an 
   assert.equal(publicOutput.includes('fixture-access-token'), false);
   assert.equal(publicOutput.includes('fixture-refresh-token'), false);
   assert.equal(publicOutput.includes(home), false, 'doctor and card do not publish the credential path');
-  assert.deepEqual(observed.readiness, observed.doctor, 'card and doctor share one auth-red truth');
+  assert.deepEqual(
+    withoutCapacityObservations(observed.readiness), withoutCapacityObservations(observed.doctor),
+    'card and doctor share one auth-red truth',
+  );
 });
 
 test('KA1b: a native Kimi rejected-refresh tombstone is refresh-required, not malformed metadata', () => {
