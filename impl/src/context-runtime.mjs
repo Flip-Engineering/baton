@@ -242,10 +242,21 @@ function retainedResultSource(repoRoot, gitAuthority, entries, changedPaths, pol
       throw runtimeError('Retained result contains an unsupported changed path',
         'context_result_content_invalid');
     }
-    const content = gitObject(repoRoot, gitAuthority, 'blob', entry.oid,
-      policy.maxArtifactBytes, objectCache);
+    // The per-file ceiling is the policy's own maxArtifactBytes (#500): a blob over it
+    // overflows the cat-file maxBuffer (ENOBUFS) at the read, and the aggregate
+    // projection and item ceilings below bound the retained result as a whole.
+    let content;
+    try {
+      content = gitObject(repoRoot, gitAuthority, 'blob', entry.oid,
+        policy.maxArtifactBytes, objectCache);
+    } catch (error) {
+      if (error?.code === 'context_tree_integrity' && error?.cause?.code === 'ENOBUFS') {
+        throw runtimeError(`Retained result file over the deployment artifact ceiling: ${path}`,
+          'context_result_content_invalid');
+      }
+      throw error;
+    }
     if (content.byteLength === 0
-      || content.byteLength > Math.min(policy.maxArtifactBytes, 2 * 1024 * 1024)
       || content.includes(0)) {
       throw runtimeError('Retained result contains unsupported regular-file content',
         'context_result_content_invalid');
@@ -427,10 +438,20 @@ export function produceRepositoryContextSource(repoRoot, treeSha, scopes, policy
       coverage.excludedUnsupportedTypes += 1;
       continue;
     }
-    const content = gitObject(repoRoot, verifiedGit, 'blob', oid, policy.maxArtifactBytes);
-    if (content.byteLength > Math.min(policy.maxArtifactBytes, 2 * 1024 * 1024)) {
-      coverage.excludedOversizeFiles += 1;
-      continue;
+    // The per-file ceiling is the policy's own maxArtifactBytes (#500): the aggregate
+    // byte and item ceilings below bound the whole projection, so a file the policy
+    // admits is always projected. A blob over the ceiling overflows the cat-file
+    // maxBuffer (ENOBUFS) and refuses typed, naming the path — never a silent drop
+    // beside a complete coverage.
+    let content;
+    try {
+      content = gitObject(repoRoot, verifiedGit, 'blob', oid, policy.maxArtifactBytes);
+    } catch (error) {
+      if (error?.code === 'context_tree_integrity' && error?.cause?.code === 'ENOBUFS') {
+        throw runtimeError(`Repository Context source file over the deployment artifact ceiling: ${path}`,
+          'context_source_oversize');
+      }
+      throw error;
     }
     if (content.includes(0) || content.byteLength === 0) {
       coverage.excludedBinaryOrInvalidText += 1;
