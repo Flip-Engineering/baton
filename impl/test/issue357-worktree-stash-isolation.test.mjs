@@ -2,12 +2,14 @@
 // repository, not one per worktree), so a seat's `git stash` round-trip can push onto the
 // shared stack and another seat's `git stash pop` applies the wrong entry in the wrong tree.
 // The seat's private runtime PATH must therefore project a `git` wrapper that refuses
-// `git stash` in every spelling and forwards everything else to the real git unchanged.
+// `git stash` and forwards everything else to the real git unchanged. Since #520 the
+// refusal is scoped to the lease's own checkout (#447's scope rule): a stash a test runs
+// against its own scratch repository forwards to the real git.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -171,6 +173,54 @@ test('issue357 (c): two projected scopes over two worktrees cannot move each oth
       execFileSync('git', ['worktree', 'remove', '--force', wtB], { cwd: dir, env });
     }
   });
+
+test('issue520 (f): the stash refusal is scoped to the lease\'s own checkout', needsGit, () => {
+  const lane = mkdtempSync(join(tmpdir(), 'baton-520-lane-'));
+  const fixture = mkdtempSync(join(tmpdir(), 'baton-520-fixture-'));
+  initRepo(lane);
+  initRepo(fixture);
+  const isolation = makeIsolation('f');
+  const scope = isolation.create('seat-f', 'codex');
+  try {
+    assert.equal(isolation.projectCheckout('seat-f', lane), true, 'the lease records its checkout');
+
+    // In the recorded checkout the refusal holds for its stated reason: the repository's
+    // shared refs/stash stack.
+    writeFileSync(join(lane, 'dirty.txt'), 'seat-f edits\n');
+    const refused = seatGit(scope, ['stash', 'push', '-u', '-m', 'seat-f'], lane);
+    assert.equal(refused.status, 1, 'git stash push in the checkout is refused');
+    assert.ok(String(refused.stderr ?? '').includes('stash_refused'), 'the refusal is typed');
+
+    // A scratch repository under the test's own temp dir is another repository: the same
+    // spelling forwards to the real git and lands in the fixture's own stash stack, and
+    // the checkout's (nonexistent) stack gains nothing.
+    writeFileSync(join(fixture, 'dirty.txt'), 'fixture work\n');
+    const forwarded = seatGit(scope, ['stash', 'push', '-u', '-m', 'fixture'], fixture);
+    assert.equal(forwarded.status, 0, 'git stash push in a scratch repository forwards');
+    assert.match(stashRef(scope, fixture) ?? '', /^[a-f0-9]{40}$/, 'the fixture repo holds the stash entry');
+    assert.equal(stashRef(scope, lane), null, 'the checkout gained no stash entry');
+
+    // The -C spelling resolves the target the same way: the wrapper reads the target, not
+    // the cwd the wrapper happens to run in.
+    writeFileSync(join(fixture, 'dirty2.txt'), 'more fixture work\n');
+    const viaC = seatGit(scope, ['-C', fixture, 'stash', 'push', '-u', '-m', 'fixture-2'], lane);
+    assert.equal(viaC.status, 0, 'git -C <fixture> stash push forwards');
+
+    // A lease with no recorded checkout keeps the #357 refusal everywhere.
+    const scopeBare = isolation.create('seat-f-bare', 'codex');
+    try {
+      const bare = seatGit(scopeBare, ['stash', 'list'], fixture);
+      assert.equal(bare.status, 1, 'a lease with no recorded checkout refuses stash');
+      assert.ok(String(bare.stderr ?? '').includes('stash_refused'), 'the no-checkout refusal is typed');
+    } finally {
+      isolation.remove('seat-f-bare');
+    }
+  } finally {
+    isolation.remove('seat-f');
+    rmSync(lane, { recursive: true, force: true });
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 test('issue357 (d): runtime.scope_created records the refusing git wrapper', () => {
   const isolation = makeIsolation('d');

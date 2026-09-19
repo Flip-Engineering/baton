@@ -2,7 +2,7 @@
 // a claim of kernel filesystem/network sandboxing; adapter cards describe those separately.
 
 import { randomBytes } from 'node:crypto';
-import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, closeSync, constants as fsConstants, existsSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { projectCredentialTree } from './credential-projection.mjs';
 
@@ -177,6 +177,18 @@ function resolveRealGit(searchPath, excludeDir) {
       accessSync(candidate, fsConstants.X_OK);
       const canonical = realpathSync(candidate);
       if (excluded !== null && (dirname(canonical) === excluded || canonical.startsWith(excluded + sep))) continue;
+      // Issue #520: a projected wrapper (#357) is a shell script answering the name `git`;
+      // real git is a binary. A lease created inside a lane seat sees the seat's own
+      // wrapper leading PATH — resolving it as the real git would run one wrapper behind
+      // another and resurrect the refusal this lease's own wrapper just scoped.
+      const head = Buffer.alloc(2);
+      const fd = openSync(canonical, 'r');
+      try {
+        readSync(fd, head, 0, 2, 0);
+      } finally {
+        closeSync(fd);
+      }
+      if (head.toString('latin1') === '#!') continue;
       return canonical;
     } catch {
       continue;
@@ -185,10 +197,11 @@ function resolveRealGit(searchPath, excludeDir) {
   return null;
 }
 
-// Issue #357: the projected git wrapper. Refuses 'git stash' in every spelling — bare
-// 'stash' and every subcommand (push/save/pop/apply/drop/list/branch), including behind
-// git's global options ('git -C <dir> stash') — and execs the real git for everything
-// else with argv and env intact. Issue #425 adds the writer-coupling observation: every
+// Issue #357: the projected git wrapper. Refuses 'git stash' — bare 'stash' and every
+// subcommand (push/save/pop/apply/drop/list/branch), including behind git's global
+// options ('git -C <dir> stash') — for the checkout the lease was installed for (#520
+// below), and execs the real git for everything else with argv and env intact.
+// Issue #425 adds the writer-coupling observation: every
 // successful commit is reported to the lease's spool (the runtime drains it into
 // worktree.commit_recorded and, when another seat holds the live writer coupling,
 // swarm.coupling_writer_bypassed) — observed, never refused; a failed or no-op commit
@@ -199,12 +212,20 @@ function resolveRealGit(searchPath, excludeDir) {
 // repository's `git rev-parse --show-toplevel` against it — so a temporary repository a test
 // fixture created under the checkout is never attributed to the seat. Another repository is
 // NOT refused: the wrapper stays transparent to git.
+//
+// Issue #520: the stash refusal carries the same checkout scope. The wrapper resolves the
+// stash command's own target — the cwd plus every leading -C — and refuses when the
+// target's `git rev-parse --show-toplevel` equals the recorded checkout's toplevel, the
+// shared refs/stash stack the refusal protects. A stash a test runs against its own
+// scratch repository forwards to the real git with argv and env intact. A lease with no
+// recorded checkout, an unresolvable target, or an explicit --git-dir keeps the #357
+// refusal.
 function renderGitWrapper(realGit, writerFile, commitSpool, checkoutFile) {
   return `#!/bin/sh
 # Baton lane-worktree git wrapper (issue #357): the worktrees of one repository share a
 # single refs/stash stack, so a stash round-trip in one seat can move another seat's
-# uncommitted edits. This wrapper refuses stash in every spelling and forwards every
-# other invocation to the real git with argv and env unchanged.
+# uncommitted edits. This wrapper refuses stash in the lease's own checkout and forwards
+# every other invocation to the real git with argv and env unchanged.
 #
 # Baton writer-coupling honesty (issue #425): every commit through this wrapper is
 # attributed to its seat; a commit made while ANOTHER seat holds the checkout's declared
@@ -214,6 +235,13 @@ function renderGitWrapper(realGit, writerFile, commitSpool, checkoutFile) {
 # made in IS this lease's checkout — the toplevel of the repository the wrapper runs in must
 # equal the toplevel of the checkout recorded on this lease. A fixture repository under the
 # checkout (or any other repository) spools nothing and is never refused.
+#
+# Baton stash scope (issue #520): the refusal covers this lease's own checkout only. The
+# wrapper resolves the stash target — the cwd plus every leading -C — and refuses when the
+# target's "git rev-parse --show-toplevel" equals the recorded checkout's toplevel: the
+# shared refs/stash stack is what the refusal protects. A stash a test runs against its
+# own scratch repository forwards to the real git with argv and env intact. With no
+# recorded checkout, an unresolvable target, or an explicit --git-dir, the wrapper refuses.
 # ${WORKTREE_WRITER_BRIEF_SENTENCE}
 BATON_REAL_GIT=${shSingleQuote(realGit ?? '')}
 BATON_STASH_REFUSAL=${shSingleQuote(STASH_REFUSAL)}
@@ -281,17 +309,56 @@ EOF
     "$_ws" "$_cid" "$_w" "$_sha" "$_at" "$_items" >> "$BATON_COMMIT_SPOOL" 2>/dev/null || true;
   return 0;
 }
-_cmd=""; _skip=0;
+_cmd=""; _skip=0; _pending=''; _gitdir=''; _target=$PWD;
+_baton_chdir() {
+  case "$1" in
+    /*) _cand=$1 ;;
+    *) _cand="$_target/$1" ;;
+  esac;
+  _cand=$(cd "$_cand" 2>/dev/null && pwd -P) || _cand='';
+  _target=$_cand;
+}
 for _arg in "$@"; do
-  if [ "$_skip" = "1" ]; then _skip=0; continue; fi;
+  if [ "$_skip" = "1" ]; then
+    _skip=0;
+    if [ -n "$_pending" ]; then _pending=''; _baton_chdir "$_arg"; fi;
+    continue;
+  fi;
   case "$_arg" in
-    -C|-c|--git-dir|--work-tree|--namespace) _skip=1 ;;
+    -C) _pending=1; _skip=1 ;;
+    -C?*) _baton_chdir "\${_arg#-C}" ;;
+    -c) _skip=1 ;;
+    -c?*) ;;
+    --git-dir) _gitdir=1; _skip=1 ;;
+    --git-dir=*) _gitdir=1 ;;
+    --work-tree) _skip=1 ;;
+    --namespace) _skip=1 ;;
     --) _cmd=""; break ;;
     -*) ;;
     *) _cmd="$_arg"; break ;;
   esac;
 done;
-if [ "$_cmd" = "stash" ]; then printf '%s\\n' "$BATON_STASH_REFUSAL" >&2; exit 1; fi;
+if [ "$_cmd" = "stash" ]; then
+  _refuse=1;
+  _own='';
+  if [ -n "$BATON_CHECKOUT_FILE" ] && [ -f "$BATON_CHECKOUT_FILE" ]; then
+    while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+      case "$_k" in
+        checkout) _own=$_v ;;
+      esac;
+    done < "$BATON_CHECKOUT_FILE";
+  fi;
+  if [ -n "$_own" ] && [ -n "$_target" ] && [ -z "$_gitdir" ]; then
+    _real=$(real_git) || _real='';
+    if [ -n "$_real" ]; then
+      _here='';
+      _here=$(cd "$_target" 2>/dev/null && "$_real" rev-parse --show-toplevel 2>/dev/null) || _here='';
+      _there=$(cd "$_own" 2>/dev/null && "$_real" rev-parse --show-toplevel 2>/dev/null) || _there='';
+      if [ -n "$_here" ] && [ -n "$_there" ] && [ "$_here" != "$_there" ]; then _refuse=0; fi;
+    fi;
+  fi;
+  if [ "$_refuse" = "1" ]; then printf '%s\\n' "$BATON_STASH_REFUSAL" >&2; exit 1; fi;
+fi;
 _real=$(real_git) || { echo "baton:git_unavailable_in_lane_runtime: no real git outside the projected bin dir" >&2; exit 127; };
 if [ "$_cmd" = "commit" ]; then
   "$_real" "$@";
@@ -327,9 +394,10 @@ export class RuntimeIsolation {
     const home = privateDir(join(root, 'home'));
     const tmp = privateDir(join(root, 'tmp'));
     // Issue #357: the seat's private runtime PATH leads with a bin dir holding a git
-    // wrapper that refuses `git stash` in every spelling (lane worktrees of one
-    // repository share a single refs/stash stack) and forwards everything else to the
-    // real git — resolved and pinned here, at lease creation, never looked up by the seat.
+    // wrapper that refuses `git stash` in the lease's own checkout (lane worktrees of one
+    // repository share a single refs/stash stack; #520 scopes the refusal to that
+    // checkout) and forwards everything else to the real git — resolved and pinned here,
+    // at lease creation, never looked up by the seat.
     const bin = privateDir(join(root, 'bin'));
     const wrapperPath = join(bin, 'git');
     // Issue #425: the checkout's live-writer projection and the commit spool live on the
