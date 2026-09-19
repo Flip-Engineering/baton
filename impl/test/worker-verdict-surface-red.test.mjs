@@ -127,6 +127,9 @@ test.after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: tru
 // ---------------------------------------------------------------------------
 
 const APP_SRC = fileURLToPath(new URL('../src/application.mjs', import.meta.url));
+// slice 15: the observation bucket moved to application-observation.mjs — the pins that grep the
+// moved members' own literals read that file (the seam map's application-observation target).
+const APP_OBSERVATION_SRC = fileURLToPath(new URL('../src/application-observation.mjs', import.meta.url));
 
 // application.mjs and coordination-store.mjs carry NUL bytes — every source read below goes through
 // grep -an / sed -n, never a whole-file read, whichever file the seam map places a member in.
@@ -698,10 +701,11 @@ test('B3 (RED): every terminal code REACHABLE on the surface has a corrective or
 });
 
 test('B4 (RED): a forced corrective outside the closed table refuses verdict_surface_corrective_forced and the surface degrades per-record (stage: forced-corrective-refusal-missing)', () => {
-  // Structural half (the typed code is surface-constant in application.mjs — the refusal vocabulary).
+  // Structural half (the typed code is surface-constant in application-observation.mjs since the
+  // observation bucket moved there with slice 15 — the refusal vocabulary).
   assert.ok(
-    grepAn('verdict_surface_corrective_forced', APP_SRC).includes('verdict_surface_corrective_forced'),
-    'stage: forced-corrective-refusal-missing — the typed refusal literal exists in application.mjs (a caller-authored corrective is refused, never absorbed)',
+    grepAn('verdict_surface_corrective_forced', APP_OBSERVATION_SRC).includes('verdict_surface_corrective_forced'),
+    'stage: forced-corrective-refusal-missing — the typed refusal literal exists in application-observation.mjs (a caller-authored corrective is refused, never absorbed)',
   );
   assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: forced-corrective-refusal-missing — projectVerdictSurface(events) is the invented four-field projection');
   // Behavioral half: a caller-authored corrective riding the durable event is the forged record the
@@ -1191,13 +1195,10 @@ test('E1 (PIN): the run.debug scope detail is {digests, counts} in ACTUAL order 
 
 test('E2 (PIN): DEBUG_GATE_CODES is the closed gate enum in ACTUAL order — an added gate code kills this pin (GT1)', () => {
   assert.deepEqual(
-    enumLiteralsUnder(APP_SRC, 'const DEBUG_GATE_CODES'),
+    enumLiteralsUnder(APP_OBSERVATION_SRC, 'const DEBUG_GATE_CODES'),
     ['scope', 'red_green', 'coverage', 'route_mismatch', 'forbidden_effect', 'unknown'],
-    'DEBUG_GATE_CODES is exactly {scope, red_green, coverage, route_mismatch, forbidden_effect, unknown} in ACTUAL source order (application.mjs:945-948)',
+    'DEBUG_GATE_CODES is exactly {scope, red_green, coverage, route_mismatch, forbidden_effect, unknown} in ACTUAL source order (it moved from application.mjs to application-observation.mjs with the observation bucket, issue #259 slice 15)',
   );
-});
-
-test('E3 (PIN): CLOSED_VERIFIER_DIAGNOSTICS is the closed verifier enum in ACTUAL order (fold D1 B3 + #334)', () => {
   assert.deepEqual(
     enumLiteralsUnder(fileURLToPath(new URL('../src/runtime-recovery.mjs', import.meta.url)), 'const CLOSED_VERIFIER_DIAGNOSTICS'),
     [

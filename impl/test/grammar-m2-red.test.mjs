@@ -146,8 +146,9 @@ test('M2-6: candidate_selection serializes as select_candidate wherever the kind
   assert.equal(CANONICAL_ATTENTION_KINDS.includes('approve_plan'), false);
   assert.equal(CANONICAL_ATTENTION_KINDS.includes('select_candidate'), false);
   // The live emitter still uses candidate_selection; the outline/action string serializes it.
-  assert.match(src('application.mjs'), /kind: 'candidate_selection'/u);
-  assert.match(src('application.mjs'), /return \{ kind: 'select_candidate' \}/u);
+  // slice 15: the emitter moved to application-observation.mjs — scan both texts.
+  assert.match(src('application.mjs') + src('application-observation.mjs'), /kind: 'candidate_selection'/u);
+  assert.match(src('application.mjs') + src('application-observation.mjs'), /return \{ kind: 'select_candidate' \}/u);
 });
 
 test('M2-7: the eleven M2 ledger rows are resolved and monotonicity holds', () => {

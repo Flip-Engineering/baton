@@ -298,13 +298,17 @@ test('I407c: a chain within the policy bound reads its full history', async (t) 
 
 test('I407d: the Plan history ceiling carries no second literal', () => {
   const here = dirname(fileURLToPath(import.meta.url));
-  const src = readFileSync(join(here, '../src/application.mjs'), 'utf8');
+  // slice 15: `_workflowPlanHistoryPolicyBound` moved to application-observation.mjs — the walk
+  // is read there; the no-second-literal law spans both texts.
+  const src = readFileSync(join(here, '../src/application.mjs'), 'utf8')
+    + readFileSync(join(here, '../src/application-observation.mjs'), 'utf8');
   assert.equal(src.includes('MAX_WORKFLOW_PLAN_HISTORY'), false,
     'the fixed history literal must be gone');
-  const start = src.indexOf('_workflowPlanHistoryPolicyBound(current) {');
-  assert.notEqual(start, -1, 'the history walk must still exist');
-  const end = src.indexOf('_reconcileRunStops', start);
-  const walk = src.slice(start, end === -1 ? undefined : end);
+  // The walk member is read whole (the module's own body), never a wider region: the ceiling
+  // must derive from maxRounds and must not restate the deployment bound as a literal.
+  const bodyMatch = src.match(/_workflowPlanHistoryPolicyBound\(application, current\) \{[\s\S]*?\n  \}/u);
+  assert.ok(bodyMatch, 'the history walk must still exist');
+  const walk = bodyMatch[0];
   assert.ok(walk.includes('maxRounds'), 'the walk ceiling must derive from maxRounds');
   assert.equal(/\b16\b/.test(walk), false,
     'the walk region must not restate the deployment bound as a literal');

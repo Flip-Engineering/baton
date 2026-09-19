@@ -814,9 +814,10 @@ test('SP6: every driver-facing entry is the closed rule-16 shape', () => {
   assert.equal(view.entries[0].ordinal, 1);
 });
 
-test('SP6 (v2 R33R-6): the historical positive path retains scratchpad when ownership resolves', async () => {
-  const { BatonApplication } = await import('../src/application.mjs');
-  assert.match(BatonApplication.prototype._historicalProfileView.toString(),
+test('SP6 (v2 R33R-6): the historical positive path retains scratchpad when ownership resolves', () => {
+  // slice 15: _historicalProfileView moved to application-observation.mjs — the pin names the
+  // member and reads its source wherever the seam map places it.
+  assert.match(memberSource('_historicalProfileView'),
     /scratchpad/u, 'the resolvable historical profile path must project the additive field');
 });
 

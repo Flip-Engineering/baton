@@ -97,8 +97,10 @@ test('SM-4 read rows: scratchpad projection, decision deadline, and horizon view
     ],
   }, { role: 'worker', workerId: 'w1' });
   assert.deepEqual(projected.scopes, ['worker:w1', 'shared']);
-  const application = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8');
-  assert.match(application, /deadlineAt:\s*interaction\.deadlineAt\s*\?\?\s*null/u);
+  // issue #259 slice 15: projectDecisionAttention moved to application-observation.mjs — read
+  // the member, wherever the split left it, through the seam-map resolver.
+  assert.match(memberSource('projectDecisionAttention'),
+    /deadlineAt:\s*interaction\.deadlineAt\s*\?\?\s*null/u);
   // issue #259 slice 10: workflowHorizon moved to runtime-observation.mjs — read the member,
   // wherever the split left it, through the seam-map resolver.
   const coordinator = memberSource('workflowHorizon');

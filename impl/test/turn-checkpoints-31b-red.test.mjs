@@ -613,8 +613,11 @@ test('F1: wave.mjs classifies a `paused` member as `turn_checkpoint` through pro
 
 test('F2: all three RunView phase ternaries carry an explicit `paused` branch, each checked '
   + 'BEFORE its running/dispatched fallback and each left subordinate to runStop precedence', () => {
-  const source = readFileSync(join(SRC, 'application.mjs'), 'utf8');
-  // `_historicalProfileView` (31-a landed this one), `_buildWorkflowView`, `_buildView`.
+  // slice 15: `_historicalProfileView` and `_buildWorkflowView` moved to
+  // application-observation.mjs; `_buildView` stays. The scan reads both texts — every
+  // branch/fallback pair is inside one member, so the order assertions hold on the join.
+  const source = readFileSync(join(SRC, 'application.mjs'), 'utf8')
+    + readFileSync(join(SRC, 'application-observation.mjs'), 'utf8');
   const branches = [
     ": node?.state === 'paused' ? 'paused'",
     ": attempts.some((attempt) => attempt.state === 'paused') ? 'paused'",
