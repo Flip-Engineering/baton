@@ -284,7 +284,13 @@ test('#473 (a): a swarm.stop whose run stop stalls crosses coordinator_run_stop_
  * resource release drive them), so they are NOT in the swarm set and this file says so out loud
  * instead of leaving them to be discovered by a serve log. */
 const STOP_PATH_LEGS = Object.freeze({
-  'run stop (the leg swarm.stop drives)': Object.freeze(['stopRunTargets']),
+  // Issue #259 slice 12: the leg split admission from effect — the admission prefix
+  // (`_admitRunStopTargets`, in runtime-admission.mjs) raises the invalid/closed refusals, the
+  // effect remainder and its two lifted closures raise the convergence codes. The leg's code set
+  // is unchanged; the roster follows the members.
+  'run stop (the leg swarm.stop drives)': Object.freeze([
+    'stopRunTargets', '_admitRunStopTargets', 'cancelRunStopTarget', 'attemptRunStopTarget',
+  ]),
   kill: Object.freeze(['kill']),
   drain: Object.freeze(['drain', '_drainFailure', '_performDrain', '_beforeDrainDeadline']),
   'terminal resource release': Object.freeze(['releaseTerminalTaskResources']),

@@ -272,11 +272,11 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/application-briefing.mjs': 2,
   'impl/src/coordination-ledger.mjs': 272,
   'impl/src/coordination-admission.mjs': 177,
-  'impl/src/runtime-recovery.mjs': 63,
+  'impl/src/runtime-recovery.mjs': 65,
   'impl/src/coordination-ledger-writes.mjs': 31,
-  'impl/src/runtime-effects.mjs': 4,
-  'impl/src/runtime-observation.mjs': 152,
-  'impl/src/runtime-admission.mjs': 99,
+  'impl/src/runtime-effects.mjs': 10,
+  'impl/src/runtime-observation.mjs': 150,
+  'impl/src/runtime-admission.mjs': 102,
 });
 
 test('SI6: the per-target corpus is pinned, so a dropped TARGETS entry fails even after a regeneration', () => {

@@ -11,6 +11,7 @@ import { GrokAcpCli } from '../src/grok-acp.mjs';
 import { KimiAcpCli } from '../src/kimi-acp.mjs';
 import { PiCli } from '../src/cli-adapters.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
+import { memberSource } from './seam-member-source.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
@@ -822,8 +823,10 @@ test('PL10: a delivery is observed, never stamped, and the durable row rides the
     .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/u.test(line)).join('\n');
   assert.equal(/signaled:\s*true/u.test(lifecycleCode), false,
     'no site may stamp `signaled: true` — the field is set by the delivery observation alone');
-  const coordinatorSource = readFileSync(fileURLToPath(new URL('../src/coordinator.mjs', import.meta.url)), 'utf8');
-  assert.ok(coordinatorSource.includes('reaped.confirmed && reaped.signaled'),
+  // Issue #259 slice 12: the choosing member is `attemptRunStopTarget` (the lifted
+  // stopRunTargets closure), now in runtime-effects.mjs — the pin follows the member wherever
+  // the seam map places it.
+  assert.ok(memberSource('attemptRunStopTarget').includes('reaped.confirmed && reaped.signaled'),
     'the durable recovery_process_reaped row is chosen by the reap\'s own delivery observation');
 });
 

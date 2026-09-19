@@ -9,7 +9,6 @@
 // delegate, and a second hop would be noise.
 
 
-import { createHash } from 'node:crypto';
 import { canonicalDigest } from './coordination-internals.mjs';
 import { ContributionService } from './contribution-service.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
@@ -23,12 +22,14 @@ import { providerGovernanceRoute } from './provider-governance.mjs';
 import * as runtimeBriefing from './runtime-briefing.mjs';
 import { PublicationError, WORKTREE_FAILURE } from './runtime-effects.mjs';
 import {
-  KILL_RULES, REARM_KINDS, TERMINAL_TASK_STATUSES, addSafeTokenCounts, cardSupportsSession,
-  deepFreeze, logicalCallTransition, typedTerminalCode, validLogicalCallId, validLogicalCallPhase,
+  CLOSED_VERIFIER_DIAGNOSTICS, CLOSED_VERIFIER_EXECUTIONS, CLOSED_VERIFIER_OWNERS,
+  CLOSED_VERIFIER_OUTCOMES, KILL_RULES, REARM_KINDS, TERMINAL_TASK_STATUSES, addSafeTokenCounts,
+  boolOrNull, cardSupportsSession, closedExecution, closedVerificationVerdict, deepFreeze,
+  hex64OrNull, intOrNull, logicalCallTransition, noop, typedTerminalCode, validLogicalCallId,
+  validLogicalCallPhase,
 } from './runtime-recovery.mjs';
 import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 import { addUsd } from './usd.mjs';
-import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 
 
@@ -109,98 +110,15 @@ export function projectHorizonScratchpad(capture, viewer) {
   return deepFreeze(result);
 }
 
-export const CLOSED_VERIFIER_OUTCOMES = new Set(['passed', 'candidate_failed', 'inconclusive']);
-
-export const CLOSED_VERIFIER_OWNERS = new Set(['candidate', 'verifier', 'baseline_or_environment']);
-
-export const CLOSED_VERIFIER_EXECUTIONS = new Map([
-  ['completed', 'verification_completed'],
-  ['timed_out', 'verification_timed_out'],
-  ['output_exceeded', 'verification_output_exceeded'],
-  ['unavailable', 'verification_spawn_unavailable'],
-]);
-
-export const CLOSED_VERIFIER_DIAGNOSTICS = new Set([
-  'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
-  'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
-  'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
-  'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
-]);
-
-export const hex64OrNull = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) ? value : null;
-
-export const boolOrNull = (value) => typeof value === 'boolean' ? value : null;
-
-export const intOrNull = (value) => Number.isSafeInteger(value) ? value : null;
-
-export const closedExecution = (value, observedExit = null) => {
-  const state = CLOSED_VERIFIER_EXECUTIONS.has(value?.state)
-    ? value.state : Number.isSafeInteger(observedExit) ? 'completed' : 'unavailable';
-  return Object.freeze({ state, code: CLOSED_VERIFIER_EXECUTIONS.get(state) });
+// Issue #259 slice 12: the closed-verdict family moved to the runtime-recovery base layer (the
+// effect seam's _integrate reads closedVerificationVerdict, and effects must not import this
+// module — observation already imports effects). The surface holds: every moved name is
+// re-exported, so an importer of runtime-observation.mjs resolves the same bindings.
+export {
+  CLOSED_VERIFIER_DIAGNOSTICS, CLOSED_VERIFIER_EXECUTIONS, CLOSED_VERIFIER_OWNERS,
+  CLOSED_VERIFIER_OUTCOMES, boolOrNull, closedExecution, closedVerificationVerdict, hex64OrNull,
+  intOrNull, noop,
 };
-
-export function closedVerificationVerdict(value, verification = {}) {
-  const observed = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const observedExit = intOrNull(observed.observedExit);
-  const reverified = observed.reverified === true;
-  const passed = typeof observed.passed === 'boolean' ? observed.passed
-    : reverified && observedExit === verification.expectExit;
-  const execution = closedExecution(observed.execution, observedExit);
-  const outcome = CLOSED_VERIFIER_OUTCOMES.has(observed.outcome) ? observed.outcome
-    : execution.state !== 'completed' ? 'inconclusive' : passed ? 'passed' : 'candidate_failed';
-  const failureOwnership = CLOSED_VERIFIER_OWNERS.has(observed.failureOwnership)
-    ? observed.failureOwnership : outcome === 'candidate_failed' ? 'candidate'
-      : outcome === 'inconclusive' ? 'verifier' : null;
-  const uncovered = Array.isArray(observed.uncoveredChangedLines) ? observed.uncoveredChangedLines : [];
-  const survived = Array.isArray(observed.survivedMutants) ? observed.survivedMutants : [];
-  const capturedOutputBytes = Number.isSafeInteger(observed.capturedOutputBytes)
-    && observed.capturedOutputBytes >= 0 ? observed.capturedOutputBytes : 0;
-  const emptyDigest = createHash('sha256').update('').digest('hex');
-  const capturedOutputDigest = hex64OrNull(observed.capturedOutputDigest) ?? emptyDigest;
-  const failureCapsule = passed ? null : normalizeVerifierFailureCapsule(
-    observed.failureCapsule,
-    { capturedOutputBytes, capturedOutputDigest },
-  );
-  let diagnosticCode = CLOSED_VERIFIER_DIAGNOSTICS.has(observed.diagnosticCode)
-    ? observed.diagnosticCode : null;
-  if (!diagnosticCode) {
-    diagnosticCode = execution.state !== 'completed' ? execution.code
-      : passed ? 'verification_passed' : 'verification_exit_mismatch';
-  }
-  return Object.freeze({
-    schemaVersion: 1,
-    reverified,
-    observedExit,
-    outputExceeded: observed.outputExceeded === true,
-    hadClaim: observed.hadClaim === true,
-    matchesClaim: observed.matchesClaim !== false,
-    passed,
-    locus: observed.locus === 'fresh_sandbox' ? 'fresh_sandbox' : null,
-    redGreen: boolOrNull(observed.redGreen),
-    baseExit: intOrNull(observed.baseExit),
-    coverageOfChange: boolOrNull(observed.coverageOfChange),
-    uncoveredChangedLineCount: uncovered.length,
-    uncoveredChangedLinesDigest: canonicalDigest(uncovered),
-    mutationStrength: Number.isFinite(observed.mutationStrength)
-      && observed.mutationStrength >= 0 && observed.mutationStrength <= 1 ? observed.mutationStrength : null,
-    mutationPassed: boolOrNull(observed.mutationPassed),
-    survivedMutantCount: survived.length,
-    survivedMutantsDigest: canonicalDigest(survived),
-    capturedOutputBytes,
-    capturedOutputDigest,
-    ...(failureCapsule ? { failureCapsule } : {}),
-    diagnosticCode,
-    durationMs: Number.isFinite(observed.durationMs) && observed.durationMs >= 0
-      ? Math.trunc(observed.durationMs) : null,
-    execution,
-    baseExecution: observed.baseExecution == null ? null : closedExecution(observed.baseExecution),
-    runtimeDigest: hex64OrNull(observed.runtimeDigest),
-    outcome,
-    failureOwnership,
-  });
-}
-
-export function noop() {}
 
 export function globRegex(glob) {
   let re = '^';

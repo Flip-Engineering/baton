@@ -59,8 +59,9 @@ const REEXPORTED = Object.freeze(['DependencyCycleError', 'SupervisedProcesses',
 
 /** The reroute census across the bucket, as generated and verified against the source. The
  * constructor records nothing through the port — it composes it — so its boundary is
- * (coordinator, opts) and it is not counted here. */
-const REROUTE_TOTALS = Object.freeze({ logAppend: 5, mapEvent: 4, coordRecord: 1, coordination: 29 });
+ * (coordinator, opts) and it is not counted here. Slice 12's admission prefixes add their own:
+ * _admitDelivery's two stale_rejected appends and two sealed-Run coordination reads. */
+const REROUTE_TOTALS = Object.freeze({ logAppend: 7, mapEvent: 4, coordRecord: 1, coordination: 31 });
 
 test('RA1: the module imports neither monolith and keeps no implicit receiver outside the relocated classes', () => {
   const root = parseOf(read(MEMBER_FILE));
@@ -211,10 +212,58 @@ test('RA5: the map sees the move', () => {
   const map = JSON.parse(read(MAP_FILE));
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-admission target');
-  assert.equal(target.members.length, 99, 'the module target carries the 89 bodies plus the 10 relocated helper functions');
+  assert.equal(target.members.length, 102,
+    'the module target carries the 89 bodies, the 10 relocated helper functions, and slice 12\'s three admission prefixes');
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegates = coordinatorFile.members.filter((member) => member.evidence.includes('admission:runtime_admission_port'));
   for (const member of delegates) {
     assert.equal(member.seam, 'admission', `${member.name}: the delegate keeps the admission seam`);
+  }
+});
+
+test('RA6: slice 12 — the three tranche-2 admission prefixes are admission-seamed module members that never import effects', () => {
+  const text = read(MEMBER_FILE);
+  const root = parseOf(text);
+  for (const node of root.findAll({ rule: { kind: 'import_statement' } })) {
+    const source = node.field('source').text();
+    assert.ok(!/runtime-effects\.mjs/u.test(source),
+      `admission never imports effects — that direction is the cycle (slice-12 design §6): ${source}`);
+  }
+  const fns = new Map(root.findAll({ rule: { kind: 'function_declaration' } })
+    .map((fn) => [fn.field('name')?.text(), fn]));
+  const EXPECTED = {
+    _admitRunStopTargets: '(coordinator, recorder, targetWorkerIds, actor, opts)',
+    _admitIntegration: '(coordinator, handle, task, opts)',
+    _admitDelivery: '(coordinator, recorder, handle, mode, opts)',
+  };
+  for (const [name, params] of Object.entries(EXPECTED)) {
+    const fn = fns.get(name);
+    assert.ok(fn, `${name}: the admission prefix lives in this module`);
+    assert.equal(fn.field('parameters').text(), params, `${name}: the design's own signature`);
+  }
+  // All three prefixes are sync refusal chains. The run-stop startup-reconciliation WAIT stays
+  // in the effect body at its verbatim position: an async admission prefix would adopt one
+  // settlement hop (the slice-11 lesson), and phase91's P91-12 pins the exact hop count — a stop
+  // must win against a preserved-successor delivery racing it.
+  for (const name of Object.keys(EXPECTED)) {
+    assert.ok(!fns.get(name).text().startsWith('async function'),
+      `${name}: sync — no adopted-promise hop between admission and the act`);
+  }
+  // The prefixes classify admission on their own evidence.
+  const map = JSON.parse(read(MAP_FILE));
+  const byName = new Map(map.files.find((file) => file.file === MEMBER_FILE)
+    .members.map((member) => [member.name, member]));
+  for (const name of Object.keys(EXPECTED)) {
+    assert.equal(byName.get(name)?.seam, 'admission', `${name}: the prefix keeps the admission seam`);
+  }
+  // The refusal throws keep their pre-move codes (the admission half of the no-behavior-change
+  // law); the startup-reconciliation throw rides with the wait in the effect body.
+  assert.ok(fns.get('_admitRunStopTargets').text().includes("'coordinator_run_stop_invalid'")
+    && fns.get('_admitRunStopTargets').text().includes("'coordinator_closed'"),
+  '_admitRunStopTargets throws the exact pre-move codes');
+  for (const code of ['result_not_accepted', 'scratch_oracle_not_integrable', 'independent_oracle_required',
+    'unsupported_strategy', 'integration_unavailable', 'worker_not_quiescent']) {
+    assert.ok(fns.get('_admitIntegration').text().includes(`'${code}'`),
+      `_admitIntegration throws ${code}`);
   }
 });

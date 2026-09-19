@@ -342,17 +342,12 @@
         {
           "name": "stopRunTargets",
           "ordinal": 0,
-          "size": 196,
+          "size": 3,
           "seam": "effect",
           "evidence": [
-            "recovery:reconcile_call",
-            "effect:adapter_verb",
             "effect:action_verb",
-            "effect:timer_arm",
-            "admission:policy_gate",
-            "admission:typed_refusal",
-            "observation:log_append",
-            "observation:key_name"
+            "observation:key_name",
+            "effect:effects_port"
           ]
         },
         {
@@ -1622,15 +1617,11 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 172,
+          "size": 3,
           "seam": "effect",
           "evidence": [
-            "effect:adapter_verb",
-            "effect:worktree_authority",
             "effect:action_verb",
-            "observation:log_append",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "effect:effects_port"
           ]
         },
         {
@@ -2018,15 +2009,11 @@
         {
           "name": "_deliver",
           "ordinal": 0,
-          "size": 182,
+          "size": 3,
           "seam": "effect",
           "evidence": [
-            "effect:adapter_verb",
             "effect:action_verb",
-            "admission:policy_gate",
-            "observation:log_append",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "effect:effects_port"
           ]
         },
         {
@@ -2904,12 +2891,10 @@
         {
           "name": "_finalizeStop",
           "ordinal": 0,
-          "size": 189,
+          "size": 3,
           "seam": "effect",
           "evidence": [
-            "effect:adapter_verb",
-            "admission:policy_gate",
-            "observation:log_append"
+            "effect:effects_port"
           ]
         },
         {
@@ -20143,6 +20128,24 @@
           ]
         },
         {
+          "name": "noop",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "closedVerificationVerdict",
+          "ordinal": 0,
+          "size": 60,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "deepFreeze",
           "ordinal": 0,
           "size": 5,
@@ -21113,6 +21116,77 @@
             "admission:normalize_name",
             "observation:log_append"
           ]
+        },
+        {
+          "name": "stopRunTargets",
+          "ordinal": 0,
+          "size": 54,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "effect:timer_arm",
+            "observation:key_name",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "cancelRunStopTarget",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "attemptRunStopTarget",
+          "ordinal": 0,
+          "size": 113,
+          "seam": "effect",
+          "evidence": [
+            "recovery:reconcile_call",
+            "effect:adapter_verb",
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_integrate",
+          "ordinal": 0,
+          "size": 144,
+          "seam": "effect",
+          "evidence": [
+            "effect:adapter_verb",
+            "effect:worktree_authority",
+            "effect:action_verb",
+            "observation:log_append",
+            "observation:durable_read",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_deliver",
+          "ordinal": 0,
+          "size": 102,
+          "seam": "effect",
+          "evidence": [
+            "effect:adapter_verb",
+            "effect:action_verb",
+            "admission:policy_gate",
+            "observation:log_append",
+            "observation:durable_read",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_finalizeStop",
+          "ordinal": 0,
+          "size": 189,
+          "seam": "effect",
+          "evidence": [
+            "effect:adapter_verb",
+            "admission:policy_gate",
+            "observation:log_append"
+          ]
         }
       ]
     },
@@ -21145,24 +21219,6 @@
           "seam": "observation",
           "evidence": [
             "observation:record_name"
-          ]
-        },
-        {
-          "name": "closedVerificationVerdict",
-          "ordinal": 0,
-          "size": 60,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
-          ]
-        },
-        {
-          "name": "noop",
-          "ordinal": 0,
-          "size": 1,
-          "seam": "surface",
-          "evidence": [
-            "surface:no_authority_touched"
           ]
         },
         {
@@ -23518,6 +23574,38 @@
           "evidence": [
             "admission:normalize_name",
             "observation:projection_name"
+          ]
+        },
+        {
+          "name": "_admitRunStopTargets",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate",
+            "admission:typed_refusal",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_admitIntegration",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_admitDelivery",
+          "ordinal": 0,
+          "size": 96,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate",
+            "observation:log_append"
           ]
         }
       ]

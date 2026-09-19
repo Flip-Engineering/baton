@@ -679,6 +679,7 @@ test('F4: all FOUR pre-existing `nudge` literals stay the BARE prompt lane — t
     assert.ok(!mcp.includes(smuggled), `${smuggled} must not appear as an MCP schema literal`);
   }
   // And the bare lane still logs `control.nudge` — the collision this contract forecloses wiring to.
-  const coordinator = readFileSync(join(SRC, 'coordinator.mjs'), 'utf8');
-  assert.ok(coordinator.includes("mode === 'nudge' ? 'control.nudge'"));
+  // Issue #259 slice 12: the literal's member (`_deliver`) lives in runtime-effects.mjs now; the
+  // pin follows the member wherever the seam map places it.
+  assert.ok(memberSource('_deliver').includes("mode === 'nudge' ? 'control.nudge'"));
 });

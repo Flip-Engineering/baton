@@ -1,12 +1,17 @@
-// runtime-admission.mjs — issue #259, slice 10. The coordinator's observation bucket: the read
-// projections and the write-receipt minters the runtime observes with (seam-map §2/§5). Bodies are
-// the members' own with two explicit boundary parameters — the coordinator receiver and the injected
-// recorder port (slice 6) — and every recording act routes through the port (recorder.log.append,
-// recorder.mapEvent, recorder.recordDriver, recorder.coordination.*). Self-calls to moved members
-// route through the class delegate (coordinator.<member>(...)), so instance-level stubs and fences
-// keep firing. One-way: this module never imports the coordinator; the coordinator imports back the
-// relocated helpers below. _providerBrief is not here: it is already slice 3's briefing-port
-// delegate, and a second hop would be noise.
+// runtime-admission.mjs — issue #259, slice 11. The coordinator's admission bucket: the
+// authority-op guards, the route and policy admission, the pause/interaction authority, the
+// contribution capture/check admission, and the constructor (the corpus's admission-classified
+// composition root). Slice 12 adds the tranche-2 admission prefixes (_admitRunStopTargets,
+// _admitIntegration, _admitDelivery): the refusal chains of the entangled effect members, called
+// first by the effect remainders in runtime-effects.mjs (one-way — this module never imports the
+// effects module). Bodies are the members' own with two explicit boundary parameters — the
+// coordinator receiver and the injected recorder port (slice 6) — and every recording act routes
+// through the port (recorder.log.append, recorder.mapEvent, recorder.recordDriver,
+// recorder.coordination.*). Self-calls to moved members route through the class delegate
+// (coordinator.<member>(...)), so instance-level stubs and fences keep firing. One-way: this
+// module never imports the coordinator; the coordinator imports back the relocated helpers below.
+// _providerBrief is not here: it is already slice 3's briefing-port delegate, and a second hop
+// would be noise.
 
 
 import { spawn } from 'node:child_process';
@@ -25,7 +30,8 @@ import { isTransientProviderFault } from './provider-faults.mjs';
 import { normalizeProviderGovernancePolicy, validateProviderGovernanceCard } from './provider-governance.mjs';
 import * as recorderPort from './runtime-recorder-port.mjs';
 import {
-  KILL_RULES, PUSH_REFUSAL_CODES, RUN_TIMELINE_OPERATIONAL_KINDS, TERMINAL_TASK_STATUSES,
+  IntegrationError, KILL_RULES, ORIENTATION_DELIVERY, PUSH_REFUSAL_CODES,
+  RUN_TIMELINE_OPERATIONAL_KINDS, TERMINAL_TASK_STATUSES,
   canonicalDigest, cardSupportsSession, decisionRef, deepFreeze, typedTerminalCode,
 } from './runtime-recovery.mjs';
 import { resolveEffort } from './route-tuple.mjs';
@@ -2451,3 +2457,152 @@ export function _deriveWorkerStatus(coordinator, recorder, taskStatus) {
     }
   }
 
+export function _admitRunStopTargets(coordinator, recorder, targetWorkerIds, actor, opts) {
+    if (!Array.isArray(targetWorkerIds) || targetWorkerIds.length > coordinator._drainPolicy.maxWorkers
+      || targetWorkerIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(id))
+      || new Set(targetWorkerIds).size !== targetWorkerIds.length
+      || JSON.stringify([...targetWorkerIds].sort()) !== JSON.stringify(targetWorkerIds)
+      || typeof actor !== 'string' || actor.length === 0 || actor.length > 256) {
+      throw Object.assign(new TypeError('Run stop target authority is invalid'), { code: 'coordinator_run_stop_invalid' });
+    }
+    // Terminal resource release stays possible during a fleet drain (#277 G-3): the drain
+    // token is the one authority that admits physical stop convergence past the admission
+    // fence, exactly as it does for the drain's own kill calls.
+    const drainAuthorized = opts.drainToken === coordinator._drainKillToken;
+    if (coordinator._closed || (!drainAuthorized && coordinator._drainState !== 'open')) {
+      throw Object.assign(new Error('coordinator authority is not open'), { code: 'coordinator_closed' });
+    }
+}
+
+export function _admitIntegration(coordinator, handle, task, opts) {
+    if (!task || task.status !== 'completed' || !task.capturedSha) {
+      throw new IntegrationError('integration requires an accepted captured task result', 'result_not_accepted');
+    }
+    if (task.review?.kind === 'oracle' && task.review?.knowledgeTarget?.kind === 'scratch.fact') {
+      throw new IntegrationError('Scratch oracle worktrees are evidence-only and cannot be integrated', 'scratch_oracle_not_integrable');
+    }
+    if (coordinator._requireIndependentOracle) {
+      const oracle = [...coordinator._tasks.values()].find((candidate) =>
+        candidate.review?.parentTaskId === task.id
+        && candidate.review.kind === 'oracle'
+        && candidate.review.independent === true
+        && candidate.status === 'completed');
+      if (!oracle) {
+        throw new IntegrationError('integration requires a completed independent oracle from a different model family', 'independent_oracle_required');
+      }
+    }
+    const strategy = opts.strategy ?? 'ff-only';
+    if (!['ff-only', 'structured'].includes(strategy)) {
+      throw new IntegrationError(`unsupported integration strategy: ${strategy}`, 'unsupported_strategy');
+    }
+    if (!coordinator._worktrees || typeof coordinator._worktrees.integrate !== 'function') {
+      throw new IntegrationError('worktree manager does not implement integration', 'integration_unavailable');
+    }
+    if (strategy === 'structured' && (typeof coordinator._worktrees.stageStructuredIntegration !== 'function'
+      || typeof coordinator._worktrees.finalizeStructuredIntegration !== 'function'
+      || typeof coordinator._worktrees.inspectStructuredIntegration !== 'function'
+      || typeof coordinator._worktrees.removeStructuredIntegration !== 'function')) {
+      throw new IntegrationError('worktree manager does not implement structured integration', 'integration_unavailable');
+    }
+    if (handle.status === 'working' || handle.status === 'blocked' || handle.status === 'stopping' || handle.status === 'pending') {
+      throw new IntegrationError('worker must be idle, dead, exited, or orphaned before integration', 'worker_not_quiescent');
+    }
+
+}
+
+export function _admitDelivery(coordinator, recorder, handle, mode, opts) {
+    const workerId = handle.id;
+    const task = coordinator._tasks.get(handle.taskId);
+    // Plan continuation authority and sealed-Run authority precede the delivery slot's other
+    // observations. In particular, a queued turn that became terminal while waiting cannot
+    // consult a mutable adapter card, emit semantic-target telemetry, or cross any provider or
+    // coordination boundary before it is refused.
+    if (mode === 'turn' && handle.status === 'idle'
+      && task && TERMINAL_TASK_STATUSES.has(task.status) && task.brief?.goalPlan) {
+      return { admitted: false, result: { ok: false, result: 'goal_plan_continuation_not_authorized' } };
+    }
+    if (mode === 'turn' && task?.runId
+      && recorder.coordination.run?.(task.runId)?.status === 'sealed') {
+      throw Object.assign(new Error(`run ${task.runId} is sealed`), {
+        name: 'CoordinationRefusal', code: 'run_sealed',
+      });
+    }
+    if (opts.semanticTarget && !coordinator._semanticTargetMatches(
+      handle, opts.semanticTarget, opts.semanticTargetDigest,
+    )) {
+      recorder.log.append({
+        worker: workerId, harness: coordinator._harnessOf(handle.vendor),
+        turnEpoch: coordinator._safeTurnEpoch(handle), kind: 'control.stale_rejected',
+        actor: opts.actor ?? 'orchestrator',
+        payload: {
+          op: 'send', phase: 'semantic_binding', result: 'semantic_target_drift',
+          ...(opts.controlId ? { controlId: opts.controlId } : {}),
+        },
+      });
+      return { admitted: false, result: { ok: false, result: 'semantic_target_drift' } };
+    }
+    // SC14: delivery-slot acquisition is the authority boundary. A queued continuation cannot
+    // cross a finalized stop, and a terminal task cannot be resurrected by a surviving session.
+    if (handle.status === 'stopping') return { admitted: false, result: { ok: false, result: 'worker_stopping' } };
+    const preservedSuccessor = opts.resumePreservedTurn === true
+      && handle.status === 'interrupted'
+      && handle.sessionPreservation?.state === 'preserved';
+    if (opts.resumePreservedTurn === true && !opts.controlId) {
+      throw new TypeError('preserved-turn successor requires semantic control identity');
+    }
+    if (preservedSuccessor) return { admitted: true, handoff: 'preservedSuccessor' };
+    if (opts.internalKindToken === ORIENTATION_DELIVERY && !['working', 'blocked'].includes(handle.status)) return { admitted: false, result: { ok: false, result: 'worker_not_active' } };
+    const card = coordinator._adapters[handle.vendor]?.card();
+    const reusableFollowUp = mode === 'turn'
+      && handle.status === 'idle'
+      && task && TERMINAL_TASK_STATUSES.has(task.status)
+      && ['native', 'emulated'].includes(card?.sessions?.multiTurn);
+    if (reusableFollowUp && task.brief?.goalPlan) return { admitted: false, result: { ok: false, result: 'goal_plan_continuation_not_authorized' } };
+    if (handle.status === 'idle' && !reusableFollowUp) return { admitted: false, result: { ok: false, result: 'worker_not_active' } };
+    if (handle.status === 'dead' || handle.status === 'exited' || handle.status === 'orphaned'
+      || handle.status === 'interrupted' || handle.status === 'pending') {
+      return { admitted: false, result: { ok: false, result: 'worker_not_active' } };
+    }
+    if (!task || (TERMINAL_TASK_STATUSES.has(task.status) && !reusableFollowUp)) return { admitted: false, result: { ok: false, result: 'task_terminal' } };
+
+    if (reusableFollowUp) return { admitted: true, handoff: 'followUp' };
+
+    // The pause governs BOTH lanes that would start a turn (swarm-a finding 4): a plain `turn`
+    // delivery to a parked member is the same act as a continuation, and a delivery that ignored
+    // the checkpoint orphaned it — the turn ran, the record stayed pending forever, and no act
+    // could ever consume it. `nudgeTurn` holds the record's single-consumer reservation, so a
+    // delivery racing an in-flight act waits for it instead of double-admitting a turn.
+    if (opts.continueParticipant === true || mode === 'turn') {
+      if (task.runId && recorder.coordination.run?.(task.runId)?.status === 'sealed') {
+        return { admitted: false, result: { ok: false, result: 'run_sealed' } };
+      }
+      const pause = coordinator.pausedTurns({ workerId })[0];
+      if (pause) return { admitted: true, handoff: 'nudgeTurn', pause };
+    }
+
+    // C3: pre-check against an externally-supplied fence, BEFORE any delivery attempt —
+    // re-evaluated HERE at delivery-slot acquisition, not at send() entry (SC4b).
+    if (opts.expectedFence !== undefined) {
+      const preCheck = coordinator._fences.check(workerId, { fence: opts.expectedFence });
+      if (!preCheck.ok) {
+        const harness = coordinator._harnessOf(handle.vendor);
+        const recoveryEvent = recorder.log.append({
+          worker: workerId,
+          harness,
+          turnEpoch: coordinator._fences.current(workerId).turnEpoch,
+          kind: 'control.stale_rejected',
+          actor: opts.actor ?? 'orchestrator',
+          payload: {
+            op: 'send', mode, attempted: opts.expectedFence, current: preCheck.current,
+            phase: 'pre_delivery', ...(opts.controlId ? { controlId: opts.controlId } : {}),
+          },
+        });
+        return { admitted: false, result: { ok: false, result: 'stale_fence', current: preCheck.current } };
+      }
+    }
+
+    if (handle.providerGovernance && mode === 'steer' && card?.verbs?.steer === 'emulated') {
+      return { admitted: true, handoff: 'interruptThenGoverned' };
+    }
+    return { admitted: true, handoff: null };
+}

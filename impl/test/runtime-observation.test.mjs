@@ -18,8 +18,12 @@
 //      module; exactly the three a staying member still reads (closedVerificationVerdict, noop,
 //      pathInScope) are imported back.
 //   5. THE MAP SEES THE MOVE — the committed artifact carries the runtime-observation target with
-//      151 members (142 bodies + 9 relocated helpers), every class delegate keeps `observation`,
-//      and the 16 bodies whose evidence thins to admission/surface on the port spelling are named.
+//      150 members (142 bodies + 8 relocated helper functions; slice 12 moved noop and
+//      closedVerificationVerdict to the runtime-recovery base layer, where the effect seam's
+//      _integrate reads the verdict helper without an effects -> observation cycle — this
+//      module's surface holds them as re-exports), every class delegate keeps `observation`,
+//      and the 16 bodies whose evidence thins to admission/surface on the port spelling are
+//      named.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -219,7 +223,8 @@ test('RO5: the map sees the move', () => {
   const map = JSON.parse(read(MAP_FILE));
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-observation target');
-  assert.equal(target.members.length, 152, 'the module target carries the 142 bodies plus the 10 relocated helper functions');
+  assert.equal(target.members.length, 150,
+    'the module target carries the 142 bodies plus 8 relocated helper functions (slice 12 moved noop and closedVerificationVerdict to the runtime-recovery base layer; they stay on this module\'s surface as re-exports)');
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegates = coordinatorFile.members.filter((member) => member.evidence.includes('observation:observation_port'));
   for (const member of delegates) {

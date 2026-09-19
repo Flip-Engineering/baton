@@ -33,6 +33,7 @@ const { Lang, parse } = require('@ast-grep/napi');
 
 const MEMBER_FILE = 'impl/src/runtime-recovery.mjs';
 const COORD_FILE = 'impl/src/coordinator.mjs';
+const OBSERVATION_FILE = 'impl/src/runtime-observation.mjs';
 const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
@@ -46,8 +47,14 @@ const RELOCATED_PRIMITIVES = Object.freeze([
   'replayProviderGovernanceRoute', 'startupReconcilerNext', 'startupReconcilerRecord',
   'throwIfProviderCancelled', 'typedTerminalCode', 'validLogicalCallId', 'validLogicalCallPhase',
   'validWorkspaceOwnerBoundPayload', 'workspaceOwnerExpectation',
+  // slice 12's base-layer relocations (the shared declarations the effect and admission modules
+  // both read; effects may import admission, never the reverse, so these live here)
+  'IntegrationError', 'ORIENTATION_DELIVERY', 'noop', 'closedVerificationVerdict',
 ]);
-const REEXPORTED = Object.freeze(['PUSH_REFUSAL_CODES', 'REARM_KINDS', 'SessionSelectionError']);
+const REEXPORTED = Object.freeze(['PUSH_REFUSAL_CODES', 'REARM_KINDS', 'IntegrationError', 'SessionSelectionError']);
+/** Slice 12: defined here, but read back through runtime-observation.mjs's unchanged surface
+ * (the coordinator's import of them names the observation module, per slice 10's table). */
+const OBSERVATION_REEXPORTED = Object.freeze(['noop', 'closedVerificationVerdict']);
 
 test('RR1: the recovery module imports neither monolith and keeps no implicit receiver', () => {
   const text = read(MEMBER_FILE);
@@ -57,9 +64,10 @@ test('RR1: the recovery module imports neither monolith and keeps no implicit re
   for (const source of importSources) {
     assert.ok(!/coordinator\.mjs|application\.mjs/.test(source), `one-way import violated: ${source}`);
   }
-  // The only `this` accesses in the module live inside the relocated SessionSelectionError
-  // constructor — the same single exemption the store's moved modules pin (CI1). Every moved
-  // member body reads `coordinator` and `recorder` explicitly.
+  // The only `this` accesses in the module live inside the relocated error-class constructors
+  // (SessionSelectionError; slice 12 added IntegrationError) — the same exemption the store's
+  // moved modules pin (CI1). Every moved member body reads `coordinator` and `recorder`
+  // explicitly.
   const thisSites = [];
   const walk = (node, owner) => {
     if (node.kind() === 'function_declaration' || node.kind() === 'class_declaration') {
@@ -71,7 +79,7 @@ test('RR1: the recovery module imports neither monolith and keeps no implicit re
     for (const child of node.children()) walk(child, owner);
   };
   walk(root, '(module scope)');
-  const outside = thisSites.filter((site) => site.owner !== 'SessionSelectionError');
+  const outside = thisSites.filter((site) => !['SessionSelectionError', 'IntegrationError'].includes(site.owner));
   assert.equal(outside.length, 0, `implicit receivers outside the relocated error class: ${outside.map((s) => `${s.owner}.${s.text}`).join(', ')}`);
 });
 
@@ -269,14 +277,36 @@ test('RR4: the relocated primitives moved once and the coordinator export surfac
   const imported = new Set(importBlock[1].split(',').map((name) => name.trim()));
   for (const name of RELOCATED_PRIMITIVES) {
     if (REEXPORTED.includes(name)) continue; // re-exported, not imported
+    if (OBSERVATION_REEXPORTED.includes(name)) continue; // slice 12: read back through runtime-observation's surface
     assert.ok(imported.has(name), `coordinator.mjs must import ${name} back from runtime-recovery.mjs`);
   }
-  // The three names the base exported from coordinator.mjs are re-exported, so every existing
-  // import path still resolves to the same binding.
+  // The names the base exported from coordinator.mjs are re-exported, so every existing
+  // import path still resolves to the same binding (slice 12 added IntegrationError).
   assert.ok(
-    /export \{ PUSH_REFUSAL_CODES, REARM_KINDS, SessionSelectionError \} from '\.\/runtime-recovery\.mjs';/.test(coordText),
-    'coordinator.mjs must re-export the three relocated names its export surface carried',
+    /export \{ PUSH_REFUSAL_CODES, REARM_KINDS, IntegrationError, SessionSelectionError \} from '\.\/runtime-recovery\.mjs';/.test(coordText),
+    'coordinator.mjs must re-export the relocated names its export surface carried',
   );
+});
+
+test('RR7 (slice 12): the base-layer declarations are defined once, and the observation surface holds by identity', async () => {
+  const observation = await import('../src/runtime-observation.mjs');
+  // noop and the closed-verdict family moved here because _integrate's effect remainder reads
+  // closedVerificationVerdict and the acyclic order forbids effects -> observation (observation
+  // already imports effects). runtime-observation re-exports them, so its surface is unchanged.
+  for (const name of OBSERVATION_REEXPORTED) {
+    assert.equal(observation[name], runtimeRecovery[name],
+      `${name}: runtime-observation's surface is the same binding, not a copy`);
+  }
+  const observationText = read(OBSERVATION_FILE);
+  assert.ok(!/export function noop\b/u.test(observationText)
+    && !/export function closedVerificationVerdict\b/u.test(observationText),
+  'the moved declarations are defined in runtime-recovery.mjs only');
+  // The verdict computation itself is intact across the move.
+  const verdict = runtimeRecovery.closedVerificationVerdict(
+    { passed: true, observedExit: 0 }, { expectExit: 0 },
+  );
+  assert.equal(verdict.outcome, 'passed');
+  assert.equal(verdict.execution.state, 'completed');
 });
 
 test('RR5: the map sees the move — every recovery_port delegate is recovery, and the module is a target', () => {

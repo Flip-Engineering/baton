@@ -19,6 +19,7 @@ import { ensureLaneBranchAtHead, normalizeSparseCheckoutIdentity, normalizeSpars
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
+import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
 import { existsSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 
@@ -181,6 +182,115 @@ export class SessionSelectionError extends Error {
     this.code = code;
   }
 }
+
+// Issue #259 slice 12 (runtime-effects tranche 2): the base-layer declarations the effect and
+// admission modules both read. They live here — not in runtime-effects.mjs — because the import
+// rule is one-way (effects may import admission, admission never imports effects), so a shared
+// declaration in effects would be unreachable from admission without a cycle.
+
+export class IntegrationError extends Error {
+  constructor(message, code = 'integration_refused') {
+    super(message);
+    this.name = 'IntegrationError';
+    this.code = code;
+  }
+}
+
+export const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
+
+export function noop() {}
+
+export const CLOSED_VERIFIER_OUTCOMES = new Set(['passed', 'candidate_failed', 'inconclusive']);
+
+export const CLOSED_VERIFIER_OWNERS = new Set(['candidate', 'verifier', 'baseline_or_environment']);
+
+export const CLOSED_VERIFIER_EXECUTIONS = new Map([
+  ['completed', 'verification_completed'],
+  ['timed_out', 'verification_timed_out'],
+  ['output_exceeded', 'verification_output_exceeded'],
+  ['unavailable', 'verification_spawn_unavailable'],
+]);
+
+export const CLOSED_VERIFIER_DIAGNOSTICS = new Set([
+  'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
+  'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
+  'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
+  'verification_passed', 'verification_exit_mismatch', 'verification_not_required',
+]);
+
+export const hex64OrNull = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) ? value : null;
+
+export const boolOrNull = (value) => typeof value === 'boolean' ? value : null;
+
+export const intOrNull = (value) => Number.isSafeInteger(value) ? value : null;
+
+export const closedExecution = (value, observedExit = null) => {
+  const state = CLOSED_VERIFIER_EXECUTIONS.has(value?.state)
+    ? value.state : Number.isSafeInteger(observedExit) ? 'completed' : 'unavailable';
+  return Object.freeze({ state, code: CLOSED_VERIFIER_EXECUTIONS.get(state) });
+};
+
+export function closedVerificationVerdict(value, verification = {}) {
+  const observed = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const observedExit = intOrNull(observed.observedExit);
+  const reverified = observed.reverified === true;
+  const passed = typeof observed.passed === 'boolean' ? observed.passed
+    : reverified && observedExit === verification.expectExit;
+  const execution = closedExecution(observed.execution, observedExit);
+  const outcome = CLOSED_VERIFIER_OUTCOMES.has(observed.outcome) ? observed.outcome
+    : execution.state !== 'completed' ? 'inconclusive' : passed ? 'passed' : 'candidate_failed';
+  const failureOwnership = CLOSED_VERIFIER_OWNERS.has(observed.failureOwnership)
+    ? observed.failureOwnership : outcome === 'candidate_failed' ? 'candidate'
+      : outcome === 'inconclusive' ? 'verifier' : null;
+  const uncovered = Array.isArray(observed.uncoveredChangedLines) ? observed.uncoveredChangedLines : [];
+  const survived = Array.isArray(observed.survivedMutants) ? observed.survivedMutants : [];
+  const capturedOutputBytes = Number.isSafeInteger(observed.capturedOutputBytes)
+    && observed.capturedOutputBytes >= 0 ? observed.capturedOutputBytes : 0;
+  const emptyDigest = createHash('sha256').update('').digest('hex');
+  const capturedOutputDigest = hex64OrNull(observed.capturedOutputDigest) ?? emptyDigest;
+  const failureCapsule = passed ? null : normalizeVerifierFailureCapsule(
+    observed.failureCapsule,
+    { capturedOutputBytes, capturedOutputDigest },
+  );
+  let diagnosticCode = CLOSED_VERIFIER_DIAGNOSTICS.has(observed.diagnosticCode)
+    ? observed.diagnosticCode : null;
+  if (!diagnosticCode) {
+    diagnosticCode = execution.state !== 'completed' ? execution.code
+      : passed ? 'verification_passed' : 'verification_exit_mismatch';
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    reverified,
+    observedExit,
+    outputExceeded: observed.outputExceeded === true,
+    hadClaim: observed.hadClaim === true,
+    matchesClaim: observed.matchesClaim !== false,
+    passed,
+    locus: observed.locus === 'fresh_sandbox' ? 'fresh_sandbox' : null,
+    redGreen: boolOrNull(observed.redGreen),
+    baseExit: intOrNull(observed.baseExit),
+    coverageOfChange: boolOrNull(observed.coverageOfChange),
+    uncoveredChangedLineCount: uncovered.length,
+    uncoveredChangedLinesDigest: canonicalDigest(uncovered),
+    mutationStrength: Number.isFinite(observed.mutationStrength)
+      && observed.mutationStrength >= 0 && observed.mutationStrength <= 1 ? observed.mutationStrength : null,
+    mutationPassed: boolOrNull(observed.mutationPassed),
+    survivedMutantCount: survived.length,
+    survivedMutantsDigest: canonicalDigest(survived),
+    capturedOutputBytes,
+    capturedOutputDigest,
+    ...(failureCapsule ? { failureCapsule } : {}),
+    diagnosticCode,
+    durationMs: Number.isFinite(observed.durationMs) && observed.durationMs >= 0
+      ? Math.trunc(observed.durationMs) : null,
+    execution,
+    baseExecution: observed.baseExecution == null ? null : closedExecution(observed.baseExecution),
+    runtimeDigest: hex64OrNull(observed.runtimeDigest),
+    outcome,
+    failureOwnership,
+  });
+}
+
 
 export const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
