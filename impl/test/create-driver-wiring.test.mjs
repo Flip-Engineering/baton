@@ -328,6 +328,7 @@ const EXERCISED_OPTIONS = Object.freeze({
 // Options the factory reads that no case here exercises yet. Each row is a debt a reader can act
 // on, never a claim that the option is inert: the row names the path that would exercise it.
 const UNEXERCISED_OPTIONS = Object.freeze({
+  recorderPort: 'the observation-layer port the effect and recovery seams share; assembled by createDriver when absent',
   advisoryFeedSources: 'consulted by advisory feed projections, which need a feed card',
   approvalTimeoutMs: 'an interaction deadline, reached only by a pending approval',
   atlas: 'assembled only when the atlas capability is opted in',

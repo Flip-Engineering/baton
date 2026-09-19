@@ -41,6 +41,7 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import { materializeContextCallBrief } from './context-call.mjs';
+import { createRecorderPort } from './runtime-recorder-port.mjs';
 import { openBatonDeployment, DEFAULT_BUDGET } from './application-deployment.mjs';
 
 export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
@@ -1599,9 +1600,10 @@ export function createDriver(opts) {
   // The live-holder provider the worktree authority consults before any destructive effect. It is
   // late-bound: the answer comes from the coordinator this same driver is constructing, and the
   // worktree manager never guesses at custody before that authority exists.
+  const recorderPort = opts.recorderPort ?? createRecorderPort({ log, coordination, route });
   let liveWorkspaceHoldersFor = () => Object.freeze([]);
   const coordinator = new Coordinator({
-    log, fences,
+    log, fences, recorderPort,
     adapters: opts.adapters,
     worktrees: worktreeManager(opts.repoRoot, {
       deploymentBaseSha: opts.deploymentBaseSha,
