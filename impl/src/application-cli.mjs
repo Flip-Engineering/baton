@@ -1511,6 +1511,17 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     parser: 'baton-cli',
     summary: 'Install the Kimi provider credential interactively; credentials are never CLI arguments.',
   }),
+
+  // Issue #505: the repair verb the doctor's coordination remedy names. It is host-local like
+  // the doctor that renders it — the resident is down in exactly the state this verb repairs —
+  // and `--restart` continues into the serve leg the remedy used to spell as a second command.
+  Object.freeze({
+    host: true, token: 'quarantine', verb: 'baton quarantine <SEQ> --reason TEXT [--restart]',
+    argv: Object.freeze(['quarantine', '2', '--reason', 'participant_not_found']),
+    kind: 'quarantine', parser: 'baton-cli',
+    summary: 'Record the coordination fold refusal the startup probe reported (issue #290) so the deployment can start, and optionally host the resident afterward (`--restart`).',
+  }),
+
   Object.freeze({
     host: true, token: 'top', verb: 'baton top', argv: Object.freeze(['top']), kind: 'top',
     parser: 'baton-cli',
@@ -3787,6 +3798,23 @@ export function parseBatonCli(rawArgs) {
     if (configPath !== null && !nonempty(configPath)) throw cliError('CONFIG_MODULE is invalid');
     noRemainder(args);
     return { kind: 'serve', configPath };
+  }
+  // Issue #505: the host repair verb the doctor's coordination remedy names. The parse stays
+  // pure — seq and reason are validated here, never against the filesystem; the entry branch
+  // decides what this checkout's ledger admits.
+  if (args[0] === 'quarantine') {
+    args.shift();
+    const restart = flag(args, '--restart');
+    const reason = take(args, '--reason');
+    const seqToken = args.shift();
+    noRemainder(args);
+    if (!/^\d{1,15}$/u.test(seqToken ?? '') || Number(seqToken) < 1) {
+      throw cliError('quarantine needs the seq the refused startup named; usage: baton quarantine <SEQ> --reason TEXT [--restart]');
+    }
+    if (!nonempty(reason)) {
+      throw cliError('quarantine records why; usage: baton quarantine <SEQ> --reason TEXT [--restart]');
+    }
+    return { kind: 'quarantine', seq: Number(seqToken), reason, restart };
   }
   if (args[0] === 'route') {
     args.shift();

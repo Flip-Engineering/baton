@@ -4,7 +4,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { coordinationReplayFailure } from '../src/coordination-store.mjs';
+import {
+  CoordinationRefusal, coordinationReplayFailure, quarantineCoordinationLedgerEvent,
+} from '../src/coordination-store.mjs';
 import {
   BatonWebClient, batonCliHelp, discoverBatonConnection, inspectBatonConnection,
   parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
@@ -306,6 +308,16 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
   if (outcome.closed.state !== 'closed') process.exitCode = 1;
 }
 
+/** The serve leg both `baton serve` and `baton quarantine --restart` (issue #505) run: open
+ * this checkout's deployment and host it until a trigger ends the process. */
+async function serveCheckout() {
+  const openSignals = admitOpenSignals();
+  let deployment;
+  try { deployment = await openBaton({ repo: process.cwd() }); }
+  finally { openSignals.release(); }
+  await serveDeployment(deployment, openSignals.pendingTrigger());
+}
+
 function unifiedNeedsWebClient(command) {
   if (command.mcpConfig !== null) return false;
   if (command.kind === 'surface_snapshot' || command.kind === 'surface_watch' || command.kind === 'surface_visualize') return true;
@@ -379,8 +391,10 @@ try {
           ...(coordination === null ? {} : { coordination }),
           next: Object.freeze(coordination !== null
             ? [{
+              // Issue #505: the remedy is the verb itself — one runnable command that
+              // records the fold refusal and restarts the resident.
               action: 'quarantine',
-              command: `quarantine coordination seq ${coordination.seq} (the coordination quarantine verb, issue #290) and restart with \`baton serve\``,
+              command: `baton quarantine ${coordination.seq} --reason ${coordination.code} --restart`,
               reason: coordination.remedy,
             }]
             : [{
@@ -424,6 +438,25 @@ try {
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         if (remote.ready !== true) process.exitCode = 1;
       }
+    } else if (parsed.kind === 'quarantine') {
+      // Issue #505: the verb the doctor's coordination remedy names. The resident is down in
+      // exactly this state, so the verb is host-local: it records the fold refusal against
+      // this checkout's ledger (issue #290's standalone repair, which re-probes the real
+      // startup and refuses a seq or a ledger health that does not match), and `--restart`
+      // continues into the serve leg.
+      const coordinationRoot = checkoutCoordinationRoot();
+      if (coordinationRoot === null || !existsSync(join(coordinationRoot, 'events.jsonl'))) {
+        throw new CoordinationRefusal(
+          'this checkout has no coordination ledger to quarantine — `baton quarantine` records '
+          + 'the seq a refused startup reported; `baton doctor` shows that probe',
+          'coordination_quarantine_no_ledger',
+        );
+      }
+      const outcome = await quarantineCoordinationLedgerEvent(coordinationRoot, {
+        seq: parsed.seq, reason: parsed.reason, actor: 'operator:cli',
+      });
+      process.stdout.write(`${JSON.stringify(outcome, null, 2)}\n`);
+      if (parsed.restart) await serveCheckout();
     } else if (parsed.kind === 'top_help') {
       process.stdout.write(`${BATON_TOP_HELP}\n`);
     } else if (parsed.kind === 'top') {
@@ -442,11 +475,7 @@ try {
       });
     } else if (parsed.kind === 'serve') {
       if (parsed.configPath === null) {
-        const openSignals = admitOpenSignals();
-        let deployment;
-        try { deployment = await openBaton({ repo: process.cwd() }); }
-        finally { openSignals.release(); }
-        await serveDeployment(deployment, openSignals.pendingTrigger());
+        await serveCheckout();
       } else {
         const module = await import(pathToFileURL(resolve(parsed.configPath)).href);
         const factory = module.createBatonDeployment ?? module.createBatonWebHost ?? module.default;
@@ -534,12 +563,10 @@ function publishedConnectionRefusal() {
   }
 }
 
-/** Issue #304: the coordination ledger probe behind `baton doctor`'s coordination row. The
- * deployment root mirrors the layout application-deployment.mjs owns (the git common dir's
- * `baton/application-v3/state`); the probe runs only when a ledger is actually there, so a
- * machine with no deployment never has directories created under it. Returns the typed replay
- * refusal a restart would die with, or null when the ledger replays clean (or is absent). */
-function checkoutCoordinationReplayFailure({ cwd = process.cwd() } = {}) {
+/** The deployment coordination root for this checkout: the layout application-deployment.mjs
+ * owns (the git common dir's `baton/application-v3/state`). Null when the checkout is not a git
+ * checkout. */
+function checkoutCoordinationRoot({ cwd = process.cwd() } = {}) {
   let commonDir;
   try {
     commonDir = execFileSync('git', ['-C', cwd, 'rev-parse', '--git-common-dir'], {
@@ -547,7 +574,15 @@ function checkoutCoordinationReplayFailure({ cwd = process.cwd() } = {}) {
     }).trim();
   } catch { return null; }
   if (commonDir.length === 0) return null;
-  const coordinationRoot = join(resolve(cwd, commonDir), 'baton', 'application-v3', 'state', 'coordination');
-  if (!existsSync(join(coordinationRoot, 'events.jsonl'))) return null;
+  return join(resolve(cwd, commonDir), 'baton', 'application-v3', 'state', 'coordination');
+}
+
+/** Issue #304: the coordination ledger probe behind `baton doctor`'s coordination row. The
+ * probe runs only when a ledger is actually there, so a machine with no deployment never has
+ * directories created under it. Returns the typed replay refusal a restart would die with, or
+ * null when the ledger replays clean (or is absent). */
+function checkoutCoordinationReplayFailure({ cwd = process.cwd() } = {}) {
+  const coordinationRoot = checkoutCoordinationRoot({ cwd });
+  if (coordinationRoot === null || !existsSync(join(coordinationRoot, 'events.jsonl'))) return null;
   return coordinationReplayFailure(coordinationRoot);
 }
