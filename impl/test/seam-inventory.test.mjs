@@ -255,3 +255,38 @@ test('SI5 (S-G4): SwarmRuntime is a declared target, mapped across all four seam
     fixture.cleanup();
   }
 });
+
+// Every SI1/SI2 check derives the expected file set from TARGETS itself, so dropping a TARGETS
+// entry and regenerating passes green while the map silently stops covering the dropped class.
+// The per-target corpus is therefore pinned as data, by count: a slice that moves members updates
+// the row for the source AND the destination in the same commit that regenerates the artifact,
+// and a TARGETS edit that loses coverage fails here no matter how many times --write runs.
+const CORPUS_COUNTS = Object.freeze({
+  'impl/src/coordinator.mjs': 424,
+  'impl/src/application.mjs': 236,
+  'impl/src/coordination-store.mjs': 604,
+  'impl/src/swarm-runtime.mjs': 158,
+  'impl/src/coordination-internals.mjs': 122,
+  'impl/src/coordination-replay.mjs': 61,
+  'impl/src/runtime-briefing.mjs': 1,
+  'impl/src/application-briefing.mjs': 2,
+  'impl/src/coordination-ledger.mjs': 272,
+  'impl/src/coordination-admission.mjs': 177,
+  'impl/src/runtime-recovery.mjs': 63,
+  'impl/src/coordination-ledger-writes.mjs': 31,
+  'impl/src/runtime-effects.mjs': 4,
+  'impl/src/runtime-observation.mjs': 152,
+  'impl/src/runtime-admission.mjs': 99,
+});
+
+test('SI6: the per-target corpus is pinned, so a dropped TARGETS entry fails even after a regeneration', () => {
+  const inventory = collectSeamInventory();
+  const fresh = Object.fromEntries(inventory.files.map((file) => [file.file, file.members.length]));
+  assert.deepEqual(fresh, CORPUS_COUNTS,
+    'a corpus row that moved must be updated in this table in the same commit; a missing row means a TARGETS entry was dropped');
+  // The check-mode surface the pin exists for: TARGETS minus one entry regenerates clean against
+  // itself, and only this table names what was lost.
+  const targetFiles = TARGETS.map((target) => target.file);
+  assert.deepEqual(Object.keys(CORPUS_COUNTS).sort(), [...targetFiles].sort(),
+    'every pinned row is a declared target and every declared target is pinned');
+});
