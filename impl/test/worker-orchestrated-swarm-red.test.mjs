@@ -596,7 +596,9 @@ test('P-A10 pin: refusal constancy — the facade capability refusal, the closed
   const authorizeDef = srcAnchor('application.mjs', '^  async _authorize(');
   assert.ok(authz.line > authorizeDef.line, `the authz throw sits in _authorize's tail (after the def :${authorizeDef.line})`);
   assert.ok(authz.text.includes("'application_unauthorized'"), 'facade capability refusal byte-stable');
-  const depth = srcAnchor('coordinator.mjs', 'message_depth_exceeded');
+  // Issue #259 slice 14: the refusal site moved with the message.send arm to
+  // runtime-event-handlers/observation-events.mjs — the pin follows it.
+  const depth = srcAnchor('runtime-event-handlers/observation-events.mjs', 'message_depth_exceeded');
   assert.ok(depth.text.includes("refuse('message_depth_exceeded'"), '#105 boundary refusal site byte-stable');
   const frame = srcAnchor('claude-session.mjs', 'body,inReplyTo');
   assert.ok(frame.text.includes("'body,inReplyTo'"), 'reply frame closed keys byte-stable');
