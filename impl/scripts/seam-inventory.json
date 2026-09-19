@@ -130,7 +130,7 @@
         {
           "name": "_deadlineDue",
           "ordinal": 0,
-          "size": 20,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -362,7 +362,7 @@
         {
           "name": "_localResourceOwnership",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -550,7 +550,7 @@
         {
           "name": "providerSilenceAttention",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -645,7 +645,7 @@
         {
           "name": "_claimLivenessPreflight",
           "ordinal": 0,
-          "size": 65,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -664,7 +664,7 @@
         {
           "name": "_sharedCheckoutCustody",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -673,7 +673,7 @@
         {
           "name": "_captureTrustWorktree",
           "ordinal": 0,
-          "size": 34,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -753,7 +753,7 @@
         {
           "name": "_capacityOwnerIds",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -762,7 +762,7 @@
         {
           "name": "_capacityOwnerHeld",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -846,7 +846,7 @@
         {
           "name": "_drainWaitObserve",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -866,7 +866,7 @@
         {
           "name": "_drainWaitEntry",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -894,7 +894,7 @@
         {
           "name": "_capabilityRegistry",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -923,7 +923,7 @@
         {
           "name": "_poisonDeferral",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -983,7 +983,7 @@
         {
           "name": "_firstSaturatedCandidate",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1002,7 +1002,7 @@
         {
           "name": "_inFlightCount",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1011,7 +1011,7 @@
         {
           "name": "_harnessOf",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1020,7 +1020,7 @@
         {
           "name": "_turnCompletionOf",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1029,7 +1029,7 @@
         {
           "name": "_routeAttribution",
           "ordinal": 0,
-          "size": 19,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1201,7 +1201,7 @@
         {
           "name": "_gateVerdictItemForWorker",
           "ordinal": 0,
-          "size": 58,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1240,7 +1240,7 @@
         {
           "name": "_spillUnavailableItem",
           "ordinal": 0,
-          "size": 20,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1504,7 +1504,7 @@
         {
           "name": "_autoTaskId",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1789,7 +1789,7 @@
         {
           "name": "_allocWorkerId",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1830,17 +1830,16 @@
         {
           "name": "_publicHandle",
           "ordinal": 0,
-          "size": 96,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "admission:policy_gate",
             "surface:transport_dispatch"
           ]
         },
         {
           "name": "_getWorker",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1902,7 +1901,7 @@
         {
           "name": "messageRunId",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2213,7 +2212,7 @@
         {
           "name": "_poisonCoordination",
           "ordinal": 0,
-          "size": 13,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2222,7 +2221,7 @@
         {
           "name": "_poisonIntegration",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2300,7 +2299,7 @@
         {
           "name": "workspaceAttachment",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2309,7 +2308,7 @@
         {
           "name": "predecessorWorkspaceContext",
           "ordinal": 0,
-          "size": 13,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2408,7 +2407,7 @@
         {
           "name": "_removeRuntimeScope",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2515,7 +2514,7 @@
         {
           "name": "watchdogConfig",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2805,7 +2804,7 @@
         {
           "name": "_relativeActionPath",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2824,7 +2823,7 @@
         {
           "name": "_freshTurnProgress",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2946,7 +2945,7 @@
         {
           "name": "abandonedWorkers",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -2955,7 +2954,7 @@
         {
           "name": "abandonedCapacityReservations",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -3002,7 +3001,7 @@
         {
           "name": "_claimInteraction",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -3219,7 +3218,7 @@
         {
           "name": "_stripCapabilityPaths",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -3812,7 +3811,7 @@
         {
           "name": "interactionGeneration",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -3821,7 +3820,7 @@
         {
           "name": "decisionSettleCount",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -3841,7 +3840,7 @@
         {
           "name": "_horizonCacheGet",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -4050,7 +4049,7 @@
         {
           "name": "_providerFaultOf",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -4059,7 +4058,7 @@
         {
           "name": "_providerRouteOf",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -23606,6 +23605,436 @@
             "admission:guard_name",
             "admission:policy_gate",
             "observation:log_append"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/runtime-api.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "canonicalActionPath",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_deadlineDue",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "supervisedProcesses",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_localResourceOwnership",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "providerSilenceAttention",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_claimLivenessPreflight",
+          "ordinal": 0,
+          "size": 65,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_sharedCheckoutCustody",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_captureTrustWorktree",
+          "ordinal": 0,
+          "size": 34,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_capacityOwnerIds",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_capacityOwnerHeld",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "releasedResources",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_drainWaitObserve",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_drainWaitEntry",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_capabilityRegistry",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_poisonDeferral",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_firstSaturatedCandidate",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_inFlightCount",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_harnessOf",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_turnCompletionOf",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_routeAttribution",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_gateVerdictItemForWorker",
+          "ordinal": 0,
+          "size": 58,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_spillUnavailableItem",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_autoTaskId",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_allocWorkerId",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_publicHandle",
+          "ordinal": 0,
+          "size": 96,
+          "seam": "surface",
+          "evidence": [
+            "admission:policy_gate",
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "_getWorker",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "messageRunId",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_poisonCoordination",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_poisonIntegration",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "liveWorkspaceHolders",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "workspaceAttachment",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "predecessorWorkspaceContext",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "unregisterParticipantRuntime",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_removeRuntimeScope",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "watchdogConfig",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_relativeActionPath",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_freshTurnProgress",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "abandonedWorkers",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "abandonedCapacityReservations",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_claimInteraction",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_stripCapabilityPaths",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "interactionGeneration",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "decisionSettleCount",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_horizonCacheGet",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_cursorStateFile",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_providerFaultOf",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_providerRouteOf",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         }
       ]

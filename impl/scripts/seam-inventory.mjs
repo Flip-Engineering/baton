@@ -183,6 +183,16 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/runtime-admission.mjs', className: null, receiver: 'coordinator',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Slice 13's module target: the coordinator's surface bucket (46 members — 45
+  // surface:no_authority_touched helpers plus _publicHandle, the caller-facing handle projection)
+  // moves to runtime-api.mjs with a BARE coordinator receiver (no recorder — no member records).
+  // The surface declaration re-declares _publicHandle module-side so its transport_dispatch
+  // evidence follows it; the other 45 keep the fallback classification they carried on the class.
+  // canonicalActionPath relocates with its only reader (_relativeActionPath) as member 47.
+  Object.freeze({
+    file: 'impl/src/runtime-api.mjs', className: null, receiver: 'coordinator',
+    dispatchers: Object.freeze([]), surface: Object.freeze(['_publicHandle']),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body

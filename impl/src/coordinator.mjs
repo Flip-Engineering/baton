@@ -4,9 +4,9 @@
 // trust gate. See spec/IMPLEMENTATION.md (CLUSTER 1 — CORE) and spec/RECONCILIATION.md
 // (D1/D9/D10/D11), which is authoritative over any conflicting cluster spec.
 
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { basename, dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
+import { join, posix, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { Cursor } from './log.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
@@ -16,19 +16,16 @@ import * as runtimeBriefing from './runtime-briefing.mjs';
 import * as recorderPort from './runtime-recorder-port.mjs';
 import { nativeSubagentView, NATIVE_SETTLEMENT_GAP } from './native-subagent-view.mjs';
 import {
-  PROVIDER_FAULT_CODES, isTransientProviderFault, normalizeProviderRoute, readProviderFaultDetail,
-} from './provider-faults.mjs';
+  PROVIDER_FAULT_CODES, isTransientProviderFault } from './provider-faults.mjs';
 /** The expired-projected-credential class (#346, minted in claude-session.mjs as
  * PROVIDER_AUTH_EXPIRED with the root-side remedy on the crash cert). Owned as a closed
  * string here — provider-faults.mjs stays the quota/socket/generic taxonomy. */
 
 import {
-  attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
-  frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse,
-} from './messages.mjs';
+  attentionItemLine, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
+  frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse } from './messages.mjs';
 import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
-import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { observeAdapterEvents } from './adapter.mjs';
 import {
@@ -55,10 +52,8 @@ import {
   createRecoveryAttemptAdmission, recoveryAttemptSeriesId,
 } from './recovery-attempt.mjs';
 import {
-  attachedToExistingCheckout, isPhysicalWorkspaceId, workspaceAttachmentOf, workspaceCustodyRecord,
-  workspaceHolders,
-} from './shared-workspace-custody.mjs';
-import { normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
+  attachedToExistingCheckout, isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
+import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
 import { HOST_CAPACITY_BYPASS } from './host-capacity.mjs';
 import { MAX_STDERR_TAIL_BYTES } from './cli-adapters.mjs';
 // Issue #459: the supervised gate run takes the host verify lease through the suite runner's OWN
@@ -73,6 +68,9 @@ import * as runtimeRecovery from './runtime-recovery.mjs';
 import * as runtimeEffects from './runtime-effects.mjs';
 import * as runtimeObservation from './runtime-observation.mjs';
 import * as runtimeAdmission from './runtime-admission.mjs';
+import * as runtimeApi from './runtime-api.mjs';
+import { WorkerNotFoundError } from './runtime-api.mjs';
+export { WorkerNotFoundError };
 import {
   coachingError, resolveCardModel, SupervisedProcesses,
 } from './runtime-admission.mjs';
@@ -146,12 +144,6 @@ const STOP_DEADLINE_ATTEMPT_BOUND = 2;
 // Error taxonomy (thrown, not returned) — programmer-error / precondition failures.
 // ---------------------------------------------------------------------------
 
-export class WorkerNotFoundError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'WorkerNotFoundError';
-  }
-}
 
 export class DuplicateTaskIdError extends Error {
   constructor(message) {
@@ -189,17 +181,6 @@ export class ReviewSelectionError extends Error {
 
 
 
-function canonicalActionPath(path) {
-  let existing = resolve(path); const suffix = [];
-  while (!existsSync(existing)) {
-    const parent = dirname(existing);
-    if (parent === existing) return resolve(path);
-    suffix.unshift(basename(existing));
-    existing = parent;
-  }
-  try { return resolve(realpathSync(existing), ...suffix); }
-  catch { return resolve(path); }
-}
 
 // SC13: cancellation is terminal too. No late spawn/delivery/turn continuation may revive it.
 
@@ -643,25 +624,8 @@ export class Coordinator {
    * constant): a pending interaction's `deadlineAt`, a blocking question's bounded deployment
    * default off its own `mintedAt`, a stop waiter's `deadlineAt`, and an unanswered stall cycle's
    * `mintedAt + windowMs`. This is exactly the set `_sweepDeadlines` acts on. */
-  _deadlineDue() {
-    const now = this._now();
-    for (const record of this._pending.values()) {
-      if (record.state !== 'pending') continue;
-      if (record.deadlineAt != null) {
-        if (now >= record.deadlineAt) return true;
-        continue;
-      }
-      if (record.kind === 'question' && record.acknowledged !== true && record.escalated !== true
-        && now >= record.mintedAt + this._watchdog.blockingInteractionTimeoutMs) return true;
-    }
-    for (const waiter of this._stopWaiters.values()) {
-      if (!waiter.finalized && waiter.deadlineAt != null && now >= waiter.deadlineAt) return true;
-    }
-    for (const handle of this._workers.values()) {
-      const stall = handle.stallSeamCycle;
-      if (stall && stall.answered === false && now >= stall.mintedAt + stall.windowMs) return true;
-    }
-    return false;
+    _deadlineDue() {
+    return runtimeApi._deadlineDue(this);
   }
 
     _assertReadable() {
@@ -744,8 +708,8 @@ export class Coordinator {
   /** Issue #459: the pool of out-of-process steps this resident supervises — what the landing's
    * gate run runs through, so the resident's own fence reaches it. A caller that holds no
    * coordinator (a bare fixture host) runs the same worker unsupervised. */
-  supervisedProcesses() {
-    return this._supervised;
+    supervisedProcesses() {
+    return runtimeApi.supervisedProcesses(this);
   }
 
   /** Issue #450: hand this controller the capacity authority's own cleanup settlement. The
@@ -799,26 +763,8 @@ export class Coordinator {
   /** The local-resource holds a handle can still carry, by name. One derivation serves the
    * boolean predicate below and the named wait a stop or drain reports when it cannot converge
    * (#265). Only the holds that are true are returned. */
-  _localResourceOwnership(handle) {
-    if (!handle) return Object.freeze({});
-    const holds = {
-      localAuthority: handle.localAuthority === true,
-      process: (handle.currentIncarnation === true || handle.recoveredProcessAuthority === true)
-        && !!handle.processRef && handle.processRef.state !== 'closed',
-      runtimeScope: handle.runtimeScope?.active === true,
-      worktree: handle.ownedWorktreeAuthority === true && !!handle.worktree,
-      worktreeCreationPending: handle.worktreeCreationPending === true,
-      nativeSpawnPending: handle.nativeSpawnPending === true,
-      recoverySpawnPending: handle.recoverySpawnPending === true,
-      cleanupPending: handle.cleanupPending === true,
-      cleanupAfterVerification: handle.cleanupAfterVerification === true,
-      cleanupPromise: !!handle.cleanupPromise,
-      untrustedTransportReap: !!handle.untrustedTransportReap,
-      recoveryPending: handle.recoveryPending === true,
-      stopWaiter: this._stopWaiters.has(handle.id),
-      fatalStopWaiter: this._fatalStopWaiters.has(handle.id),
-    };
-    return Object.freeze(Object.fromEntries(Object.entries(holds).filter(([, held]) => held)));
+    _localResourceOwnership(handle) {
+    return runtimeApi._localResourceOwnership(this, handle);
   }
 
     _ownsLocalResources(handle) {
@@ -1069,21 +1015,8 @@ export class Coordinator {
    * A trafficked or unobserved worker surfaces nothing — the projection never prose-guesses.
    * Log-derived (findLast over the worker's operational log), so live projection and replay
    * share one shape. */
-  providerSilenceAttention(workerId) {
-    const handle = this._workers.get(workerId);
-    if (!handle || handle.turnInFlight !== true) return null;
-    const observation = this._log.read(workerId).findLast?.(
-      (event) => event.kind === 'lifecycle.transport_liveness',
-    ) ?? null;
-    const payload = observation?.payload ?? null;
-    if (!payload || payload.providerTraffic === true) return null;
-    return {
-      kind: 'provider_silent',
-      workerId,
-      summary: 'no provider traffic observed this turn',
-      note: typeof payload.note === 'string' ? payload.note : null,
-      lastTrafficAt: typeof payload.lastTrafficAt === 'string' ? payload.lastTrafficAt : null,
-    };
+    providerSilenceAttention(workerId) {
+    return runtimeApi.providerSilenceAttention(this, workerId);
   }
 
   /**
@@ -1263,70 +1196,8 @@ export class Coordinator {
    * silent worker's path is untouched). A throw here is NOT a refusal — the caller rolls back and
    * rethrows with the error's own typed code (CP1 error path).
    */
-  async _claimLivenessPreflight(handle, task, record) {
-    // CP2 trigger (brief arm): mirror the gate's would-fire test verbatim (:12530).
-    if (task.brief?.analysis || !task.brief?.requiredEffects?.includes('repository_edit')) {
-      return { ok: true };
-    }
-    // CP2 fidelity law 1: capture with the gate-identical worktree + authority kwargs (:12490-12498).
-    await Promise.resolve(handle.worktreeReady);
-    const captured = await this._captureTrustWorktree(handle, task);
-    const sha = captured && captured.sha;
-    const changedPaths = Array.isArray(captured?.changedPaths) ? captured.changedPaths : [];
-    const inScopeChangedPaths = changedPaths.filter((path) => pathInScope(task.brief.pathScope, path));
-    // CP2 fidelity laws 2-3: baseSha derives sessionContext ?? captured (:12531); the in-scope
-    // filter is the gate's own (:12511). The gate would fire (diffless) when ANY arm of the
-    // five-way test holds (:12532) — only a real in-scope diff lets the claim proceed.
-    const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
-    if (sha && baseSha && sha !== baseSha && changedPaths.length > 0 && inScopeChangedPaths.length > 0) {
-      return { ok: true };
-    }
-    // CP3 + CP4: scan the worker's OWN stream inside the pause epoch for the CLOSED counted set.
-    // Every class is a hub-receipted ok:true, a governance/watchdog-observed worker content event,
-    // or a resolution minted inside the window. Failed receipts, pending interactions, lifecycle
-    // markers, board.claim_result and capability_op (CP7) never count; stale-epoch events never
-    // count (CP4's anti-stale law).
-    //
-    // Epoch spaces: worker-stream events (tool_calls, messages, provider_calls, hub receipts) are
-    // logged at the WIRE epoch, the pause record's `turnEpoch` is the terminal event's wire epoch,
-    // but resolution mints (question.answered/approval.resolved/decision.settled) carry the
-    // COORDINATOR fence epoch (`_safeTurnEpoch`). `wireEpochOffset` is the stable wire→fence
-    // alignment set at the first qualifying wire event, so a resolution's fence epoch equals
-    // `record.turnEpoch + wireEpochOffset` exactly when it was resolved inside the pause's own
-    // asking turn (a stale answer mints `control.stale_rejected`, never a resolution — fencing
-    // keeps the epoch comparison honest on both sides).
-    const epochOffset = handle.wireEpochOffset ?? 0;
-    const inPauseEpoch = (event) => (
-      event.kind === 'question.answered' || event.kind === 'approval.resolved' || event.kind === 'decision.settled'
-        ? event.turnEpoch === record.turnEpoch + epochOffset
-        : event.turnEpoch === record.turnEpoch
-    );
-    const counts = {
-      analysisMessages: 0, approvalsResolved: 0, contextReadOk: 0, decisionsSettled: 0,
-      providerCalls: 0, questionsAnswered: 0, scratchpadWriteOk: 0, toolCalls: 0,
-    };
-    let counted = 0;
-    for (const event of this._log.read(record.worker)) {
-      if (!inPauseEpoch(event) || event.seq > record.mintedEvent) continue;
-      if (event.kind === 'scratchpad.write_result' && event.payload?.ok === true) counts.scratchpadWriteOk += 1;
-      else if (event.kind === 'context.read_result' && event.payload?.ok === true) counts.contextReadOk += 1;
-      else if (event.kind === 'content.tool_call' && event.actor === 'worker') counts.toolCalls += 1;
-      else if (event.kind === 'content.message' && event.actor === 'worker') counts.analysisMessages += 1;
-      else if (event.kind === 'resource.provider_call' && event.actor === 'worker') counts.providerCalls += 1;
-      else if (event.kind === 'question.answered') counts.questionsAnswered += 1;
-      else if (event.kind === 'approval.resolved') counts.approvalsResolved += 1;
-      else if (event.kind === 'decision.settled') counts.decisionsSettled += 1;
-      else continue;
-      counted += 1;
-    }
-    if (counted === 0) return { ok: true };
-    return {
-      ok: false,
-      liveness: counts,
-      reason: 'worker shows read-only liveness inside this pause epoch but no in-scope diff; '
-        + 'nudge the worker to continue and claim the NEXT checkpoint, or wait — '
-        + 'this pause remains claimable',
-    };
+    _claimLivenessPreflight(handle, task, record) {
+    return runtimeApi._claimLivenessPreflight(this, handle, task, record);
   }
 
   /** #435: whether `worktree` IS the checkout the worktree authority owns for `ownerTaskId`
@@ -1339,48 +1210,14 @@ export class Coordinator {
 
   /** Whether this handle works in a checkout it deliberately shares with another live holder — or
    * one it adopted as a shared attachment. Such a checkout is captured live, never committed. */
-  _sharedCheckoutCustody(handle, task) {
-    if (attachedToExistingCheckout(task)) return true;
-    const physicalOwnerId = handle?.sessionContext?.ownerTaskId ?? null;
-    return isPhysicalWorkspaceId(physicalOwnerId)
-      && this.liveWorkspaceHolders(physicalOwnerId).length > 1;
+    _sharedCheckoutCustody(handle, task) {
+    return runtimeApi._sharedCheckoutCustody(this, handle, task);
   }
 
   /** The trust gate's capture call, shared verbatim by the #88 preflight (CP2 fidelity law 1 —
    * gate-identical worktree + authority kwargs, :12490-12498). */
-  _captureTrustWorktree(handle, task, { snapshot = false } = {}) {
-    // A checkout this handle shares with another live holder is captured live through the isolated
-    // index, whatever the caller asked for: the committed capture stages the REAL index and commits
-    // on the shared branch its peers are using. Only a checkout this handle alone works in may use
-    // the mutating primitive, and a resume (a native session continuing its own checkout) keeps it.
-    const live = snapshot || this._sharedCheckoutCustody(handle, task);
-    const capture = live && typeof this._worktrees.snapshot === 'function'
-      ? this._worktrees.snapshot : this._worktrees.capture;
-    const operation = capture.call(this._worktrees, handle.worktree ?? task.worktree, {
-      vendor: handle.vendor,
-      model: handle.modelObserved ?? handle.modelResolved,
-      ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
-      ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
-      ...(live ? { ownerReceiptDigest: task.sessionContext?.ownerReceiptDigest } : {}),
-      ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
-      ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
-      ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
-    });
-    if (!live) return operation;
-    // A live snapshot describes the CHECKOUT it observed: which physical workspace it was, how
-    // many holders were working in it, and the HEAD it showed before the capture. These are
-    // observations of shared state — never an authorship claim over the recorded paths.
-    return Promise.resolve(operation).then((captured) => {
-      const physicalOwnerId = task.sessionContext?.ownerTaskId ?? null;
-      const workspace = workspaceCustodyRecord(
-        physicalOwnerId, this.liveWorkspaceHolders(physicalOwnerId).length,
-      );
-      return {
-        ...captured,
-        ...(workspace ? { workspace } : {}),
-        ...(captured?.observedHead ? { observedHead: captured.observedHead } : {}),
-      };
-    });
+    _captureTrustWorktree(handle, task, { snapshot = false } = {}) {
+    return runtimeApi._captureTrustWorktree(this, handle, task, { snapshot });
   }
 
     _recordDrainDisposition(drainId, actor, workerId, disposition) {
@@ -1691,14 +1528,8 @@ export class Coordinator {
   /** Issue #450: the physical checkout owners a handle's capacity reservation can be keyed by —
    * the same derivation `_removeTaskWorktree` removes a checkout under, so the reservation id and
    * the checkout path always name the same owner. */
-  _capacityOwnerIds(handle, task = null) {
-    const ids = new Set();
-    for (const value of [
-      handle?.sessionContext?.ownerTaskId, task?.sessionContext?.ownerTaskId, task?.id, handle?.taskId,
-    ]) {
-      if (typeof value === 'string' && value.length > 0) ids.add(value);
-    }
-    return Object.freeze([...ids]);
+    _capacityOwnerIds(handle, task = null) {
+    return runtimeApi._capacityOwnerIds(this, handle, task);
   }
 
   /** Issue #450: whether anything still WORKS in this physical owner. A handle that holds local
@@ -1709,16 +1540,8 @@ export class Coordinator {
    * settles it (naming the release) instead of failing. A shared checkout with a live co-holder is
    * held because that co-holder holds resources. ONE liveness test, read by the reservation sweep
    * and by nothing else. */
-  _capacityOwnerHeld(ownerTaskId) {
-    for (const handle of this._workers.values()) {
-      if (!this._capacityOwnerIds(handle, this._tasks.get(handle.taskId)).includes(ownerTaskId)) continue;
-      // A stop in flight still owns what it is about to release; a FINALIZED waiter no longer can
-      // (its cleanup already settled), so it is not a holder.
-      const waiter = this._stopWaiters.get(handle.id) ?? this._fatalStopWaiters.get(handle.id) ?? null;
-      if (waiter && waiter.finalized !== true) return true;
-      if (handle.processRef && handle.processRef.state !== 'closed') return true;
-    }
-    return false;
+    _capacityOwnerHeld(ownerTaskId) {
+    return runtimeApi._capacityOwnerHeld(this, ownerTaskId);
   }
 
   /** Issue #450: a worker this controller watched die and whose holds are all released — the only
@@ -1800,8 +1623,8 @@ export class Coordinator {
    * own (#360) and the ones a gone worker's reservation was released with (`worker_gone`). The
    * deployment narrates them beside the stop's outcome; the durable rows are the
    * `drain.resource_released` records themselves. */
-  releasedResources() {
-    return Object.freeze((this._drainReleased ?? []).map((row) => Object.freeze({ ...row })));
+    releasedResources() {
+    return runtimeApi.releasedResources(this);
   }
 
   /** #360/#428: a drain's retention rides the same coordination vocabulary the startup
@@ -1814,21 +1637,8 @@ export class Coordinator {
   /** #360: first-sight bookkeeping for the drain's wait rows — `since` is when THIS drain first
    * observed the wait, so an operator reads how long a release has been pending. Cheap: no
    * appends, one map per drain epoch, kept across request retries. */
-  _drainWaitObserve(targetWorkerIds) {
-    this._drainWaitSince ??= new Map();
-    const at = Date.now();
-    for (const workerId of targetWorkerIds) {
-      const handle = this._workers.get(workerId);
-      if (!handle) continue;
-      for (const hold of Object.keys(this._localResourceOwnership(handle))) {
-        const key = `${workerId}\0local_resources:${hold}`;
-        if (!this._drainWaitSince.has(key)) this._drainWaitSince.set(key, at);
-      }
-      if (handle.processRef && handle.processRef.state !== 'closed') {
-        const key = `${workerId}\0process:${handle.processRef.state}`;
-        if (!this._drainWaitSince.has(key)) this._drainWaitSince.set(key, at);
-      }
-    }
+    _drainWaitObserve(targetWorkerIds) {
+    return runtimeApi._drainWaitObserve(this, targetWorkerIds);
   }
 
   /** #360: who will release this hold. Live reapers are named for what they are; the drain's
@@ -1841,15 +1651,8 @@ export class Coordinator {
   /** #360: one wait entry, the ONE shape every named wait carries — `{resource, reaper, since}`.
    * `since` is when the wait was first observed; a wait whose first sight is unknown reports now,
    * never a fabricated earlier instant. */
-  _drainWaitEntry(resource, reaper, sinceMs) {
-    const entry = {
-      resource,
-      reaper: reaper ?? null,
-      since: typeof sinceMs === 'number' ? new Date(sinceMs).toISOString() : new Date().toISOString(),
-    };
-    // The host's wait narration joins the entries with `+`; the resource string renders there.
-    Object.defineProperty(entry, 'toString', { value: () => entry.resource, enumerable: false });
-    return Object.freeze(entry);
+    _drainWaitEntry(resource, reaper, sinceMs) {
+    return runtimeApi._drainWaitEntry(this, resource, reaper, sinceMs);
   }
 
   /** #360/#450: the drain's named wait — the shared derivation above, with the same entry objects
@@ -1867,11 +1670,8 @@ export class Coordinator {
     return runtimeRecovery._orphanCapacityWaits(this, this._recorder, targetWorkerIds);
   }
 
-  _capabilityRegistry() {
-    if (this._capabilities) return this._capabilities;
-    const error = new Error('capability registry is unavailable');
-    error.code = 'capability_unavailable';
-    throw error;
+    _capabilityRegistry() {
+    return runtimeApi._capabilityRegistry(this);
   }
 
   /** One admission pass over every dependency-ready pending task. A task whose resolved vendor is
@@ -1905,9 +1705,8 @@ export class Coordinator {
 
   /** A deferral that could not be recorded is a fatal authoritative-write failure: poison the
    * coordinator AND throw the typed refusal, so no caller reads it as a durable wait. */
-  _poisonDeferral(refusal) {
-    this._poisonCoordination(refusal);
-    return refusal;
+    _poisonDeferral(refusal) {
+    return runtimeApi._poisonDeferral(this, refusal);
   }
 
   _sweepDeadlines() {
@@ -1980,14 +1779,8 @@ export class Coordinator {
 
   /** The first capable candidate (registration order) at its configured ceiling. Candidates
    * without one are skipped: absence never defers anything, and the receipt names a real vendor. */
-  _firstSaturatedCandidate(cards, inFlight) {
-    for (const name of Object.keys(cards)) {
-      const ceiling = normalizeConcurrencyCeiling(cards[name].concurrencyCeiling, `${name} concurrencyCeiling`);
-      if (ceiling === null) continue;
-      const active = inFlight[name] ?? 0;
-      if (active >= ceiling) return { vendor: name, ceiling, inFlight: active };
-    }
-    return null;
+    _firstSaturatedCandidate(cards, inFlight) {
+    return runtimeApi._firstSaturatedCandidate(this, cards, inFlight);
   }
 
     _resolveExplicitRoute(requestedHarness, options = {}) {
@@ -2001,17 +1794,12 @@ export class Coordinator {
    * (audit F9: keep-and-document, not a defect). This is an observation; it is never written
    * back into a card, and a card that configures no ceiling never reads it for admission.
    */
-  _inFlightCount(vendor) {
-    let n = 0;
-    for (const h of this._workers.values()) {
-      if (h.vendor === vendor && (h.status === 'working' || h.status === 'stopping' || h.status === 'blocked')) n++;
-    }
-    return n;
+    _inFlightCount(vendor) {
+    return runtimeApi._inFlightCount(this, vendor);
   }
 
-  _harnessOf(vendor) {
-    const card = this._adapters[vendor]?.card();
-    return card ? `${card.harness}@${card.version}` : '';
+    _harnessOf(vendor) {
+    return runtimeApi._harnessOf(this, vendor);
   }
 
   /**
@@ -2021,29 +1809,12 @@ export class Coordinator {
    * migration: no card is required to declare the field.
    * @returns {'claim'|'pausable'}
    */
-  _turnCompletionOf(handle) {
-    if (this._coordination?.hasSwarmParticipantRun?.(handle?.runId)) return 'pausable';
-    return this._adapters[handle?.vendor]?.card()?.turnCompletion ?? 'claim';
+    _turnCompletionOf(handle) {
+    return runtimeApi._turnCompletionOf(this, handle);
   }
 
-  _routeAttribution(handle, task = this._tasks.get(handle.taskId)) {
-    return {
-      taskId: task?.id ?? handle.taskId ?? null,
-      runId: task?.runId ?? handle.runId ?? null,
-      harnessRequested: task?.vendorRequested ?? null,
-      harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
-      modelRequested: handle.modelRequested ?? null,
-      modelResolved: handle.modelResolved ?? null,
-      modelObserved: handle.modelObserved ?? null,
-      effortRequested: handle.effortRequested ?? null,
-      effortResolved: handle.effortResolved ?? null,
-      effortObserved: handle.effortObserved ?? null,
-      workerPolicyRequestDigest: handle.workerPolicyRequest?.schemaVersion
-        ? handle.workerPolicyResolution?.requestDigest ?? null : null,
-      workerPolicyResolutionDigest: handle.workerPolicyResolution?.resolutionDigest ?? null,
-      workerPolicyObservationDigest: handle.workerPolicyObserved?.observationDigest ?? null,
-      routeKey: handle.routeKey ?? task?.routeKey ?? null,
-    };
+    _routeAttribution(handle, task = this._tasks.get(handle.taskId)) {
+    return runtimeApi._routeAttribution(this, handle, task);
   }
 
     _semanticControlBinding(handle, task = this._tasks.get(handle.taskId)) {
@@ -2158,63 +1929,8 @@ export class Coordinator {
    * shape as application.mjs's debugGateRefusal, re-derived from the worker's OWN durable source
    * events (never the run-wide log: a judged worker receives ITS verdict and nobody else's). The
    * sanitizer is reused verbatim (verifier-diagnostics.mjs), never a parallel redaction path. */
-  _gateVerdictItemForWorker(workerId, verdictKinds) {
-    // #286 G-39: the two verdict kinds arrive as the log's own per-kind buckets — the latest
-    // candidate by seq, exactly as the single filtered scan produced it.
-    const others = verdictKinds.errors.filter((event) => event.payload?.['phase'] === 'trust_gate');
-    const reverified = verdictKinds.reverified.filter((event) => event.payload?.accept === false);
-    const event = [...others, ...reverified].reduce(
-      (latest, candidate) => (latest === null || candidate.seq > latest.seq ? candidate : latest), null,
-    );
-    if (!event) return null;
-    const liveCode = event.kind === 'verify.reverified'
-      ? (typeof event.payload?.verdict?.diagnosticCode === 'string'
-        ? event.payload.verdict.diagnosticCode : 'trust_gate_failed')
-      : (typeof event.payload?.code === 'string' ? event.payload.code : 'trust_gate_failed');
-    let gate;
-    if (liveCode === 'worker_path_scope_violation') gate = 'scope';
-    else if (liveCode === 'forbidden_effect_observed') gate = 'forbidden_effect';
-    else if (liveCode === 'verification_red_green_failed') gate = 'red_green';
-    else if (liveCode === 'verification_coverage_failed') gate = 'coverage';
-    else if (liveCode === 'plan_route_mismatch' || liveCode === 'recovery_route_mismatch') gate = 'route_mismatch';
-    else gate = 'unknown';
-    let detail = {};
-    if (gate === 'scope') {
-      const evidence = event.payload?.pathScopeEvidence && typeof event.payload.pathScopeEvidence === 'object'
-        ? event.payload.pathScopeEvidence : {};
-      detail = {
-        digests: {
-          changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
-          inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
-            ? evidence.inScopeChangedPathsDigest : null,
-          outOfScopeChangedPathsDigest: typeof evidence.outOfScopeChangedPathsDigest === 'string'
-            ? evidence.outOfScopeChangedPathsDigest : null,
-        },
-        counts: {
-          changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
-          inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
-            ? evidence.inScopeChangedPathCount : 0,
-          outOfScopeChangedPathCount: Number.isSafeInteger(evidence.outOfScopeChangedPathCount)
-            ? evidence.outOfScopeChangedPathCount : 0,
-        },
-      };
-    } else if (gate === 'red_green' || gate === 'coverage') {
-      const raw = typeof event.payload?.verdict?.failureCapsule?.text === 'string'
-        ? event.payload.verdict.failureCapsule.text
-        : typeof event.payload?.verdict?.output === 'string' ? event.payload.verdict.output : '';
-      detail = { tail: sanitizeVerifierDiagnosticText(raw).text };
-    }
-    const message = typeof event.payload?.message === 'string' && event.payload.message.length > 0
-      ? sanitizeVerifierDiagnosticText(event.payload.message).text : null;
-    return {
-      kind: 'gate_verdict',
-      requestId: `gate:${event.seq}`,
-      workerId: typeof event.worker === 'string' ? event.worker : workerId,
-      gate,
-      code: liveCode,
-      message,
-      detail,
-    };
+    _gateVerdictItemForWorker(workerId, verdictKinds) {
+    return runtimeApi._gateVerdictItemForWorker(this, workerId, verdictKinds);
   }
 
   /** The genuinely-pending, push-qualified items addressed to THIS worker (D3/D5). Derived from
@@ -2243,25 +1959,8 @@ export class Coordinator {
   /** G-25: the stand-in row for a spill the lane could not mint. It costs the block its citation,
    * never the truth about what is missing: `overflowIds` are the items absent from this block and
    * `shedIds` the ones served in short form only. Both sets are still pending and resendable. */
-  _spillUnavailableItem(workerId, { refusal, beyondCap, shed }) {
-    const overflowIds = beyondCap.map((item) => item.requestId);
-    const shedIds = shed.map((item) => item.requestId);
-    return {
-      kind: 'spill_unavailable',
-      requestId: `spill_unavailable:${canonicalDigest([...overflowIds, ...shedIds])}`,
-      workerId,
-      code: refusal?.code ?? 'spill_unavailable',
-      reason: refusal?.reason ?? 'mint_failed',
-      overflowIds,
-      shedIds,
-      count: overflowIds.length + shedIds.length,
-      // The ids come FIRST so the render-side bound can only truncate the explanation, never the
-      // identity of what is missing; the structured sets above are always complete.
-      text: boundedAttentionText(
-        `not in this block (spill lane ${refusal?.reason ?? 'mint_failed'}): ${overflowIds.length > 0 ? overflowIds.join(' ') : 'none'}; `
-        + `short form only: ${shedIds.length > 0 ? shedIds.join(' ') : 'none'}`,
-      ),
-    };
+    _spillUnavailableItem(workerId, { refusal, beyondCap, shed }) {
+    return runtimeApi._spillUnavailableItem(this, workerId, { refusal, beyondCap, shed });
   }
 
   /** Every durable id that could name a push-qualified item for this worker — pending OR resolved
@@ -3046,11 +2745,8 @@ export class Coordinator {
 
   /** Task ids are checked against every id known — live, replayed, or durable — never derived
    * from the shape of earlier ids (#267). */
-  _autoTaskId() {
-    let id;
-    do { id = `task-${++this._taskSeq}`; }
-    while (this._tasks.has(id) || this._replayedIds.tasks.has(id) || Boolean(this._coordination?.task?.(id)));
-    return id;
+    _autoTaskId() {
+    return runtimeApi._autoTaskId(this);
   }
 
     _knownSessionContext(sessionId, vendor) {
@@ -3527,11 +3223,8 @@ export class Coordinator {
   }
 
   /** Worker ids are checked against the live table and every worker the log knows (#267). */
-  _allocWorkerId() {
-    let id;
-    do { id = `w-${++this._workerSeq}`; }
-    while (this._workers.has(id) || this._replayedIds.workers.has(id));
-    return id;
+    _allocWorkerId() {
+    return runtimeApi._allocWorkerId(this);
   }
 
     _assertNoCycle(taskId, deps) {
@@ -3546,107 +3239,12 @@ export class Coordinator {
     return runtimeObservation._taskTopologyProjection(this, this._recorder, taskId);
   }
 
-  _publicHandle(handle, opts = {}) {
-    let fence = null;
-    let turnEpoch = null;
-    if (handle.status !== 'pending') {
-      try {
-        const s = this._fences.current(handle.id);
-        fence = s.fence;
-        turnEpoch = s.turnEpoch;
-      } catch {
-        // not yet registered — leave null
-      }
-    }
-    return {
-      id: handle.id,
-      vendor: handle.vendor,
-      modelRequested: handle.modelRequested ?? null,
-      modelResolved: handle.modelResolved ?? null,
-      modelObserved: handle.modelObserved ?? null,
-      harnessRequested: this._tasks.get(handle.taskId)?.vendorRequested ?? null,
-      harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
-      effortRequested: handle.effortRequested ?? null,
-      effortResolved: handle.effortResolved ?? null,
-      effortObserved: handle.effortObserved ?? null,
-      workerPolicy: this._workerPolicyProjection(handle),
-      routeKey: handle.routeKey ?? null,
-      modelMismatch: handle.modelMismatch ?? null,
-      effortMismatch: handle.effortMismatch ?? null,
-      modelPolicy: handle.modelPolicy ?? null,
-      sessionRequest: handle.sessionRequest ?? { mode: 'new' },
-      sessionRef: handle.sessionRef ?? null,
-      sessionContext: handle.sessionContext ?? null,
-      lineage: handle.lineage ?? null,
-      topology: this._taskTopologyProjection(handle.taskId),
-      runtimeScope: handle.runtimeScope ?? null,
-      processRef: handle.processRef ? { ...handle.processRef } : null,
-      review: this._tasks.get(handle.taskId)?.review ?? null,
-      taskId: handle.taskId,
-      runId: this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null,
-      worktree: handle.worktree,
-      ...(handle.worktreeObservation ? { worktreeObservation: { ...handle.worktreeObservation } } : {}),
-      // A detach is a positive outcome: this says the checkout was deliberately left to its
-      // remaining holders instead of being destroyed with this handle's stop.
-      workspaceCleanupDeferred: handle.workspaceCleanupDeferred ?? null,
-      fence,
-      turnEpoch,
-      status: handle.recoveryPending === true && opts.exposeRecovery !== true ? 'orphaned' : handle.status,
-      // Issue #10 D6: the spawn-pending UNION (worktreeCreationPending || nativeSpawnPending ||
-      // recoverySpawnPending) the local-authority check (_ownsLocalResources :2014-2015) trusts.
-      // spawnWindow is the window the union is in, precedence worktree > spawn > recovery — the
-      // windows are sequential in practice (a slide never passes through null). LIVE-STATE only:
-      // a restart reconstructs all three false, and the member reads `orphaned` via the
-      // recoveryPending mask above.
-      spawnPending: handle.worktreeCreationPending === true || handle.nativeSpawnPending === true
-        || handle.recoverySpawnPending === true,
-      spawnWindow: handle.worktreeCreationPending === true ? 'worktree'
-        : handle.nativeSpawnPending === true ? 'spawn'
-          : handle.recoverySpawnPending === true ? 'recovery' : null,
-      pendingApprovalId: handle.pendingApprovalId,
-      pendingQuestionId: handle.pendingQuestionId,
-      pendingDecisionId: handle.pendingDecisionId ?? null,
-      budgetUsed: { ...handle.budgetUsed },
-      providerGovernance: handle.providerGovernance ?? null,
-      providerPolicyDigest: handle.providerPolicyDigest ?? null,
-      providerTurn: handle.providerTurn ? {
-        admissionSeq: handle.providerTurn.admissionSeq,
-        phase: handle.providerTurn.phase,
-        usage: { ...handle.providerTurn.usage },
-        providerCalls: handle.providerTurn.providerCalls,
-        toolCalls: handle.providerTurn.toolCalls,
-        violation: handle.providerTurn.violation,
-        sealed: handle.providerTurn.sealed,
-      } : null,
-      activeProviderTurns: handle.status === 'working' || handle.status === 'blocked' ? 1 : 0,
-      controllableAttached: handle.status === 'interrupted'
-        && handle.sessionPreservation?.state === 'preserved',
-      terminalCause: handle.terminalCause ? { ...handle.terminalCause } : null,
-      // #295 item 5: a retained checkout and the reason its checkpoint could not be written stay
-      // on the worker's own row after death, so the work a dead member produced is never an
-      // unnamed directory. #265 item 2: the observed native children the kill settled ride here
-      // too, with the named gap that says why their terminal frame can no longer arrive.
-      preservationFailure: handle.preservationFailure ? { ...handle.preservationFailure } : null,
-      nativeChildSettlement: handle.nativeChildSettlement ? { ...handle.nativeChildSettlement } : null,
-      providerQuotaBlock: handle.providerQuotaBlock ? { ...handle.providerQuotaBlock } : null,
-      sessionPreservationCapable: Boolean(handle.sessionRef)
-        && ['native', 'emulated'].includes(
-          this._adapters[handle.vendor]?.card()?.sessions?.multiTurn,
-        ),
-      sessionPreservation: handle.sessionPreservation
-        ? { ...handle.sessionPreservation } : null,
-      semanticControlBinding: this._semanticControlBinding(handle),
-      providerTerminalSeal: handle.providerTerminalSeal ?? null,
-      providerPolicyHardExceeded: handle.providerPolicyHardExceeded === true,
-      providerTelemetryFailed: handle.providerTelemetryFailed === true,
-      createdAt: handle.createdAt,
-    };
+    _publicHandle(handle, opts = {}) {
+    return runtimeApi._publicHandle(this, handle, opts);
   }
 
-  _getWorker(workerId) {
-    const h = this._workers.get(workerId);
-    if (!h) throw new WorkerNotFoundError(`unknown worker "${workerId}"`);
-    return h;
+    _getWorker(workerId) {
+    return runtimeApi._getWorker(this, workerId);
   }
 
   // =========================================================================
@@ -3858,23 +3456,8 @@ export class Coordinator {
    * rung permits — resolve a message's target run for authorization ONLY, never projected.
    * Unknown → null; a worker-targeted message whose worker handle is gone resolves to NO run
    * (resolve-to-null ≡ forbidden, never a leak — FP-05 pins the row). */
-  messageRunId(messageId) {
-    const record = this._messages.get(messageId);
-    if (!record) return null;
-    if (typeof record.target?.runId === 'string') return record.target.runId;
-    if (typeof record.target?.workerId === 'string') {
-      const handle = this._workers.get(record.target.workerId);
-      // A worker handle that is gone is NOT a live target: resolve-to-null (Decision 4 note(b))
-      // — the message's run is not a valid authorization scope, so resolve-to-null ≡ unknown ≡
-      // forbidden (FP-05 pins the row). "Gone" = never registered, reaped (dead/exited), or
-      // stopping WITHOUT ever having engaged a turn (wireEpochOffset is set on the first
-      // turn_started). A worker that engaged remains a live target while stopping, so its run
-      // stays a valid authorization scope (FP-04's C3 identity row serves the honest receipt).
-      if (!handle || ['dead', 'exited'].includes(handle.status)
-        || (handle.status === 'stopping' && handle.wireEpochOffset === undefined)) return null;
-      return this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null;
-    }
-    return null;
+    messageRunId(messageId) {
+    return runtimeApi.messageRunId(this, messageId);
   }
 
   // -------------------------------------------------------------------------
@@ -4625,33 +4208,12 @@ export class Coordinator {
     return runtimeObservation._coordRecord(this, this._recorder, kind, payload, key, actor);
   }
 
-  _poisonCoordination(err) {
-    if (!this._fatalError) {
-      const fatal = new Error(`authoritative coordination mutation failed: ${err?.message ?? err}`, { cause: err });
-      fatal.name = 'CoordinationWriteIntegrityError';
-      fatal.code = 'coordination_write_unavailable';
-      this._fatalError = fatal;
-      for (const handle of this._workers.values()) {
-        if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) handle.spawnAbort.abort({ reason: 'coordination_write_unavailable' });
-        if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) handle.recoverySpawnAbort.abort({ reason: 'coordination_write_unavailable' });
-      }
-    }
-    return this._fatalError;
+    _poisonCoordination(err) {
+    return runtimeApi._poisonCoordination(this, err);
   }
 
-  _poisonIntegration(err, strategy = 'structured') {
-    if (!this._fatalError) {
-      const fatal = new Error(`${strategy} integration crossed its Git effect boundary before final validation completed: ${err?.message ?? err}`, { cause: err });
-      fatal.name = 'IntegrationWriteIntegrityError';
-      fatal.code = strategy === 'structured'
-        ? 'structured_post_effect_inconsistent' : 'integration_post_effect_inconsistent';
-      this._fatalError = fatal;
-      for (const handle of this._workers.values()) {
-        if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) handle.spawnAbort.abort({ reason: fatal.code });
-        if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) handle.recoverySpawnAbort.abort({ reason: fatal.code });
-      }
-    }
-    return this._fatalError;
+    _poisonIntegration(err, strategy = 'structured') {
+    return runtimeApi._poisonIntegration(this, err, strategy);
   }
 
     _createCoordinationRefinement(handle, prior, relation) {
@@ -4684,32 +4246,21 @@ export class Coordinator {
   /** Every other live handle deliberately working in one physical checkout. Custody comes from
    * the controller's own handles — never from swarm membership, and never from the owner receipt,
    * which stays a single-controller Git lease. */
-  liveWorkspaceHolders(physicalOwnerId, { excludeHandleId = null } = {}) {
-    return workspaceHolders(this._workers.values(), physicalOwnerId, { excludeHandleId });
+    liveWorkspaceHolders(physicalOwnerId, { excludeHandleId = null } = {}) {
+    return runtimeApi.liveWorkspaceHolders(this, physicalOwnerId, { excludeHandleId });
   }
 
   /** The live shared-checkout attachment one worker may hand to a fresh participant, or null when
    * that holder is absent, unbound, closing, or working in a checkout of its own. */
-  workspaceAttachment(workerId) {
-    if (typeof workerId !== 'string' || workerId.length === 0) return null;
-    return workspaceAttachmentOf(this._workers.values(), workerId);
+    workspaceAttachment(workerId) {
+    return runtimeApi.workspaceAttachment(this, workerId);
   }
 
   /** The session context of the worker whose checkout is identified by workspaceId, regardless
    * of its liveness — for the resume-from workspace carry (#385). Returns the context and the
    * live holder ids, or null when no worker ever held that workspace. */
-  predecessorWorkspaceContext(workspaceId) {
-    if (typeof workspaceId !== 'string' || workspaceId.length === 0) return null;
-    const allHandles = [...this._workers.values()];
-    let context = null;
-    for (const handle of allHandles) {
-      if (handle.sessionContext?.ownerTaskId !== workspaceId) continue;
-      context = handle.sessionContext;
-      break;
-    }
-    if (!context) return null;
-    const holders = workspaceHolders(allHandles, workspaceId);
-    return { sessionContext: context, holders };
+    predecessorWorkspaceContext(workspaceId) {
+    return runtimeApi.predecessorWorkspaceContext(this, workspaceId);
   }
 
   /** Whether this handle's checkout is exactly usable under its own session context — the
@@ -4915,8 +4466,8 @@ export class Coordinator {
     return runtimeObservation.registerParticipantRuntime(this, this._recorder, runId, extension);
   }
 
-  unregisterParticipantRuntime(runId) {
-    this._participantRuntimes?.delete(runId);
+    unregisterParticipantRuntime(runId) {
+    return runtimeApi.unregisterParticipantRuntime(this, runId);
   }
 
   /** Issue #447: the seat's lease. `checkout` is a checkout the caller already knows the seat
@@ -4926,22 +4477,8 @@ export class Coordinator {
     return runtimeAdmission._ensureRuntimeScope(this, this._recorder, handle, checkout);
   }
 
-  _removeRuntimeScope(handle) {
-    if (!handle || !this._runtimeScopes || typeof this._runtimeScopes.remove !== 'function') return true;
-    // Confirmed close may converge an installed untrusted-transport cleanup with an ordinary stop
-    // waiter. They share worktree cleanup through handle.cleanupPromise; make the synchronous
-    // runtime half equally exact-once once its lease has already been released.
-    if (handle.runtimeLease == null && handle.runtimeScope?.active === false) return true;
-    try { this._runtimeScopes.remove(handle.id); } catch {
-      handle.cleanupPending = true;
-      handle.cleanupError = 'runtime_cleanup_failed';
-      return false;
-    }
-    handle.runtimeLease = null;
-    if (handle.runtimeScope) handle.runtimeScope = { ...handle.runtimeScope, active: false };
-    if (!handle.cleanupPromise) handle.cleanupPending = false;
-    handle.cleanupError = null;
-    return true;
+    _removeRuntimeScope(handle) {
+    return runtimeApi._removeRuntimeScope(this, handle);
   }
 
   _scheduleUntrustedTransportReap(handle, adapter, opts = {}) {
@@ -4988,12 +4525,8 @@ export class Coordinator {
 
   /** D1/SW-12 runtime disclosure: the resolved watchdog config, byte-stable and readable on the
    * run status surface — {stallMs, basis, rearmKinds}. */
-  watchdogConfig() {
-    return Object.freeze({
-      stallMs: this._watchdog.stallMs,
-      basis: 'no_progress_evidence',
-      rearmKinds: [...REARM_KINDS],
-    });
+    watchdogConfig() {
+    return runtimeApi.watchdogConfig(this);
   }
 
   /** D4 rung 2: arm the stall-seam cycle on a claim (control.steer / control.nudge). The answer
@@ -5182,12 +4715,8 @@ export class Coordinator {
     return runtimeObservation._clearBudgetStop(this, this._recorder, handle);
   }
 
-  _relativeActionPath(handle, path) {
-    if (typeof path !== 'string' || path.length === 0) return null;
-    if (!isAbsolute(path)) return path.replace(/^\.\//, '');
-    if (!handle.worktree) return path;
-    const rel = relative(canonicalActionPath(handle.worktree), canonicalActionPath(path));
-    return rel.startsWith('..') || isAbsolute(rel) ? path : rel;
+    _relativeActionPath(handle, path) {
+    return runtimeApi._relativeActionPath(this, handle, path);
   }
 
     _observeWatchdogEvent(handle, event) {
@@ -5197,11 +4726,8 @@ export class Coordinator {
   /** Issue #305: a fresh per-turn progress accumulator. Counts run for the whole turn as
    * this incarnation observed it; the title/path/commit lists are bounded sliding windows
    * (last rows win) so a long turn cannot grow the row it checkpoints with. */
-  _freshTurnProgress(turnEpoch) {
-    return {
-      turnEpoch, toolCalls: 0, fileEdits: 0,
-      toolTitles: [], editedPaths: [], commits: [], rowsSinceCheckpoint: 0,
-    };
+    _freshTurnProgress(turnEpoch) {
+    return runtimeApi._freshTurnProgress(this, turnEpoch);
   }
 
   /** Issue #305: mid-turn progress checkpoints, derived from the worker's OWN activity.
@@ -5461,13 +4987,8 @@ export class Coordinator {
    * `host.stopped.abandoned` all read this derivation, never a second sink). Each row names the
    * bounded attempt the stop reached and the liveness it observed; `holds` says what the worker
    * kept, which is exactly what the stop did NOT release. */
-  abandonedWorkers() {
-    return Object.freeze([...this._workers.values()]
-      .filter((handle) => handle.stopAbandoned)
-      .map((handle) => Object.freeze({
-        workerId: handle.id, attempt: handle.stopAbandoned.attempts,
-        alive: handle.stopAbandoned.alive, holds: Object.freeze([...handle.stopAbandoned.holds]),
-      })));
+    abandonedWorkers() {
+    return runtimeApi.abandonedWorkers(this);
   }
 
   /** Issue #472: the capacity reservations the stop's ABANDONED workers still hold — the quota
@@ -5476,17 +4997,8 @@ export class Coordinator {
    * `orphanedCapacityReservations()` publishes, so the deployment's capacity quiescence reads ONE
    * derivation: a reservation named here is not unreleased authority — the abandonment IS the
    * release — and leaving it counted would keep the stop from ever minting its outcome. */
-  abandonedCapacityReservations() {
-    const rows = [];
-    for (const handle of this._workers.values()) {
-      if (!handle.stopAbandoned) continue;
-      for (const ownerTaskId of this._capacityOwnerIds(handle, this._tasks.get(handle.taskId) ?? null)) {
-        rows.push(Object.freeze({
-          workerId: handle.id, taskId: handle.taskId, ownerTaskId, resource: `worker:${ownerTaskId}`,
-        }));
-      }
-    }
-    return Object.freeze(rows);
+    abandonedCapacityReservations() {
+    return runtimeApi.abandonedCapacityReservations(this);
   }
 
   /** Issue #467: the resident's own absence observation, handed back to the seat whose stop is
@@ -5518,16 +5030,8 @@ export class Coordinator {
     return runtimeAdmission.claimInteraction(this, this._recorder, requestId, opts);
   }
 
-  async _claimInteraction(requestId, opts = {}) {
-    if (typeof requestId !== 'string' || requestId.length === 0) return { ok: false, result: 'not_found' };
-    const record = this._pending.get(requestId);
-    if (!record) return { ok: false, result: 'not_found' };
-    if (record.state !== 'pending') return { ok: false, result: 'already_resolved' };
-    const actor = opts.actor ?? 'orchestrator';
-    record.acknowledged = true;
-    record.acknowledgedAt = this._now();
-    record.acknowledgedBy = actor;
-    return { ok: true, result: 'acknowledged', requestId, kind: record.kind };
+    _claimInteraction(requestId, opts = {}) {
+    return runtimeApi._claimInteraction(this, requestId, opts);
   }
 
   /** Bounded ownership projection used by run-centric application answer routing. */
@@ -5813,16 +5317,8 @@ export class Coordinator {
    * host artifact paths are internal-only. The projection is applied at the coordinator capability
    * boundary (what workers/tests read); internal consumers (cartographer _inner, reuse decisionRef)
    * read the raw capability result with its path via the registry, never through this boundary. */
-  _stripCapabilityPaths(result) {
-    if (!result || typeof result !== 'object' || !Array.isArray(result.refs) || result.refs.length === 0) return result;
-    let changed = false;
-    const refs = result.refs.map((ref) => {
-      if (!ref || typeof ref !== 'object' || !Object.hasOwn(ref, 'path')) return ref;
-      changed = true;
-      const { path, ...projected } = ref;
-      return projected;
-    });
-    return changed ? { ...result, refs } : result;
+    _stripCapabilityPaths(result) {
+    return runtimeApi._stripCapabilityPaths(this, result);
   }
 
     invokeCapabilityNorthbound(transport, token, name, op, args, ctx = {}) {
@@ -6418,9 +5914,13 @@ export class Coordinator {
     return runtimeObservation._bumpDecisionSettleCount(this, this._recorder, runId);
   }
 
-  interactionGeneration(taskId) { return this._interactionGeneration.get(taskId) ?? 0; }
+    interactionGeneration(taskId) {
+    return runtimeApi.interactionGeneration(this, taskId);
+  }
 
-  decisionSettleCount(runId) { return this._decisionSettleCount.get(runId) ?? 0; }
+    decisionSettleCount(runId) {
+    return runtimeApi.decisionSettleCount(this, runId);
+  }
 
   /**
    * Bidirectional v2 rule 5: bounded disposition tombstones from durable decision.settled /
@@ -6436,14 +5936,8 @@ export class Coordinator {
    * from queryKnowledge/queryKnowledgeEdges/boardSnapshot/binding projections, never a partial
    * invalidation. The same (scope, fence) discipline as BoardProjection/the REPL binding
    * projection, generalized to three horizons. */
-  _horizonCacheGet(kind, scopeIdentity, fenceTuple, compute) {
-    const cacheKey = `${kind}:${scopeIdentity}`;
-    const fenceKey = JSON.stringify(fenceTuple);
-    const cached = this._horizonCache.get(cacheKey);
-    if (cached && cached.fenceKey === fenceKey) return cached.value;
-    const value = compute();
-    this._horizonCache.set(cacheKey, { fenceKey, fenceTuple, value, computedAt: this._now() });
-    return value;
+    _horizonCacheGet(kind, scopeIdentity, fenceTuple, compute) {
+    return runtimeApi._horizonCacheGet(this, kind, scopeIdentity, fenceTuple, compute);
   }
 
   /** Rule 2: task horizon fence = (boardFence(board), bindingFence(worker:<workerId>),
@@ -6547,8 +6041,8 @@ export class Coordinator {
     return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
   }
 
-  _cursorStateFile(workerId) {
-    return join(this._log.dir, '.cursors', `${workerId}.floor`);
+    _cursorStateFile(workerId) {
+    return runtimeApi._cursorStateFile(this, workerId);
   }
 
   _ensureCursor(workerId) {
@@ -7689,20 +7183,13 @@ export class Coordinator {
    * (`{code, message, detail}`) or a crash cert, which the adapter types identically (`code` and
    * the bounded `detail` at the top level). Shape-validation only — the coordinator never re-reads
    * provider prose (#267) and never invents a reset instant. */
-  _providerFaultOf(workerResult) {
-    const code = typedTerminalCode(workerResult?.failure?.code ?? workerResult?.code, null);
-    if (code === null) return null;
-    const detail = readProviderFaultDetail(workerResult?.failure?.detail ?? workerResult?.detail);
-    return Object.freeze({ code, detail });
+    _providerFaultOf(workerResult) {
+    return runtimeApi._providerFaultOf(this, workerResult);
   }
 
   /** The exact route this member speaks on, in the deployment's own vocabulary. */
-  _providerRouteOf(handle) {
-    return normalizeProviderRoute({
-      harness: handle?.vendor ? this._harnessOf(handle.vendor) : null,
-      model: handle?.modelResolved ?? handle?.modelRequested ?? null,
-      effort: handle?.effortResolved ?? handle?.effortRequested ?? null,
-    });
+    _providerRouteOf(handle) {
+    return runtimeApi._providerRouteOf(this, handle);
   }
 
   /** #295 item 4: a quota refusal is a fact about the ROUTE, so it is recorded on the
