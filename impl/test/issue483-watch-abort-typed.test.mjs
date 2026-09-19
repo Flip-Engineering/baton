@@ -39,6 +39,7 @@ import { parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
 import { openBatonWebConnection } from '../src/mcp-web-bridge.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SWARM_REFUSAL_CODES } from '../src/swarm-refusals.mjs';
+import { memberSource } from './seam-member-source.mjs';
 
 // The red-before HEAD has no rendering leg: the rows below show their own red then, instead of the
 // file failing to link before any of them runs.
@@ -402,14 +403,16 @@ function raisedCodes(rawSource) {
   return codes;
 }
 
-const storeSource = readFileSync(new URL('../src/coordination-store.mjs', import.meta.url), 'utf8');
 const runtimeSource = readFileSync(new URL('../src/swarm-runtime.mjs', import.meta.url), 'utf8');
 const cliSource = readFileSync(new URL('../src/application-cli.mjs', import.meta.url), 'utf8');
 
 test('#483 (c): the store\'s wait-abort code is a row of the ONE refusal set, raised by the runtime, and every reason it mints is rendered', () => {
-  const waitAfter = classMember(storeSource, 'waitAfter');
+  // Issue #259 slice 7 moved waitAfter out of coordination-store.mjs into
+  // coordination-ledger-writes.mjs; memberSource resolves it wherever the seam inventory says it
+  // now lives, so a future move needs no matching edit here.
+  const waitAfter = memberSource('waitAfter');
   assert.ok(waitAfter !== null && waitAfter.length > 0,
-    'impl/src/coordination-store.mjs still declares the wait the bounded watch holds (a rename must update this pin)');
+    'the store\'s wait the bounded watch holds is still a named member of one of STORE_MODULE_FILES (a rename must update this pin)');
   const abortCodes = [...new Set([...waitAfter.matchAll(/code: '([a-z][a-z0-9_]*)'/gu)].map((match) => match[1]))].sort();
   assert.deepEqual(abortCodes, ['coordination_wait_aborted'],
     `the store's wait-abort vocabulary is exactly this one code; a new code here must be classified in SWARM_REFUSAL_CODES and in the #473 pin's own table: ${JSON.stringify(abortCodes)}`);
@@ -422,8 +425,10 @@ test('#483 (c): the store\'s wait-abort code is a row of the ONE refusal set, ra
   assert.ok(raisedCodes(runtimeSource).has(abortCodes[0]),
     'and the runtime really calls refuse() with it — the raisedBy claim is read from the code, never asserted');
 
-  // The reasons the store can mint, read from its own fold.
-  const fold = classMember(storeSource, '_foldIncarnationLifecycle');
+  // The reasons the store can mint, read from its own fold. Also moved out of
+  // coordination-store.mjs (into coordination-ledger.mjs, issue #259 slice 4); memberSource
+  // resolves it the same way as waitAfter above.
+  const fold = memberSource('_foldIncarnationLifecycle');
   assert.ok(fold !== null && fold.length > 0,
     'the store folds the deployment\'s own host.* rows (the departure the wait crosses with)');
   const minted = new Set([...fold.matchAll(/reason: '([a-z_]+)'/gu)].map((match) => match[1]));

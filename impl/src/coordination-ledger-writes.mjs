@@ -80,6 +80,15 @@ function validRoutePolicy(policy) {
     && Number.isFinite(policy.defaultPriorSuccessRate) && policy.defaultPriorSuccessRate > 0 && policy.defaultPriorSuccessRate < 1;
 }
 
+// projection of the ledger (`_artifacts`, `_knowledgeNodes` and `_knowledgeReads` each grow only by
+// an appended event, so none can exceed the ledger's event count) — the ledger is the physical
+// resource, and a second literal ceiling on top of it refused operations the ledger had already
+// accepted, including on replay, where it made a self-written ledger unloadable.
+const REPRESENTATION_POLICY_FIELDS = [
+  'maxArgumentBytes', 'maxEvidenceRefs', 'maxGraphBatchBytes', 'maxReceiptBytes',
+  'maxResultBytes', 'maxResultItems', 'maxResultRefs', 'maxSourceRefBytes', 'maxSourceRefs', 'repoId', 'schemaVersion',
+];
+
 function validRepresentationPolicy(policy) {
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)
     || Object.keys(policy).sort().join(',') !== [...REPRESENTATION_POLICY_FIELDS].sort().join(',')
