@@ -422,7 +422,10 @@ test('442-c1: a faulted route reads degraded with its reason and reset, and refu
   assert.equal(degraded.resetAt, future, 'and the instant the provider said it comes back');
   assert.equal(degraded.quota.state, 'exhausted', 'the quota axis reads the same fault');
   assert.equal(degraded.quota.resetAt, future);
-  assert.equal(usageRowFor(doctor.routeUsage, READY_ROUTE).state, 'ready', 'a route nothing faulted stays ready');
+  // #523: the quota scope is (provider ?? model segment ?? harness), never effort — DEGRADED_ROUTE
+  // and READY_ROUTE are the same harness and model at two efforts, so they share ONE scope and a
+  // fault on either degrades both. A genuinely unrelated scope is untouched (covered by 523-b/523-c).
+  assert.equal(usageRowFor(doctor.routeUsage, READY_ROUTE).state, 'degraded', 'a sibling effort of the same scope shares the fault');
   // The #341 route table a seat's brief renders marks the same fact: state degraded, the quota axis
   // exhausted, and the instant the provider said the route comes back.
   const line = renderRouteUsageLines(doctor.routeUsage)

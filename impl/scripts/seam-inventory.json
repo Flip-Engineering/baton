@@ -13018,7 +13018,7 @@
         {
           "name": "_routeDegradeFor",
           "ordinal": 0,
-          "size": 25,
+          "size": 22,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -22619,7 +22619,7 @@
         {
           "name": "_foldProviderDegrade",
           "ordinal": 0,
-          "size": 54,
+          "size": 48,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -22628,7 +22628,7 @@
         {
           "name": "_recordProviderDegrade",
           "ordinal": 0,
-          "size": 18,
+          "size": 16,
           "seam": "observation",
           "evidence": [
             "observation:log_append",

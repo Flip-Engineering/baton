@@ -1,4 +1,4 @@
-// issue523-quota-scope-red.test.mjs — Issue #523: a provider quota block or degrade is a fact
+// issue523-quota-scope.test.mjs — Issue #523: a provider quota block or degrade is a fact
 // about the SUBSCRIPTION (the API service account), never about the (harness, model, effort)
 // triple.
 //

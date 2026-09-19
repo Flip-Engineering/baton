@@ -462,26 +462,6 @@
       "reason": "#460"
     },
     {
-      "key": "test/issue523-quota-scope-red.test.mjs :: 523-a: routeQuotaScope is the subscription axis — provider, else model segment, else harness; effort is never read",
-      "reason": "#523"
-    },
-    {
-      "key": "test/issue523-quota-scope-red.test.mjs :: 523-b: a quota block recorded on one effort reads live for every route of the scope, and never for another subscription",
-      "reason": "#523"
-    },
-    {
-      "key": "test/issue523-quota-scope-red.test.mjs :: 523-c: every route of an exhausted subscription reads blocked, a recruit on any sibling refuses pre-effect, another subscription stays ready",
-      "reason": "#523"
-    },
-    {
-      "key": "test/issue523-quota-scope-red.test.mjs :: 523-d: a provider.degraded episode degrades every route of its scope and a success on any member retires it",
-      "reason": "#523"
-    },
-    {
-      "key": "test/issue523-quota-scope-red.test.mjs :: 523-e: same-class deaths at two efforts of one model fold to ONE episode, and the episode names its scope",
-      "reason": "#523"
-    },
-    {
       "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
       "reason": "#24"
     },
