@@ -104,9 +104,10 @@ baton swarm stop my-first-swarm worker-1 "landed"
 
 | Harness / provider | Where the credential goes |
 |---|---|
-| omp → GLM | `glm_key.json` at the deployment root |
-| omp → DeepSeek | `deepseek_key.json` at the deployment root |
-| omp → Kimi | `kimi_key.json` at the deployment root, or `baton credentials install kimi` |
+| omp → GLM | `glm_key.json` at the deployment root (shipped default) |
+| omp → DeepSeek | `deepseek_key.json` at the deployment root (shipped default) |
+| omp → Kimi | `kimi_key.json` at the deployment root, or `baton credentials install kimi` (shipped default) |
+| omp → any other provider its own config supports | declared per deployment through the `openBaton` option `advanced.ompCredentials.providerKeyFiles` — a provider prefix mapped to the key file name at the deployment root; the route's refusal names this option |
 | Claude Code | the harness's own OAuth login |
 | Codex, Grok, native Kimi | the harness's own login |
 | Muse | the OS keyring (`muse login`), with a file as a fallback |

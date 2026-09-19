@@ -370,7 +370,12 @@ const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([
   '.env', '.env.local', '.env.development', '.env.test', '.env.production',
 ]);
 
-function repositorySnapshot(repoRoot, stateRoot) {
+function repositorySnapshot(repoRoot, stateRoot, providerKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FILES) {
+  // #494: an operator-declared provider's key file is credential material like the shipped
+  // keys — the effective table's own files join the exclusion.
+  const credentialPaths = Object.freeze([
+    ...SNAPSHOT_CREDENTIAL_PATHS, ...new Set(Object.values(providerKeyFiles)),
+  ]);
   const head = git(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
   // Issue #351 lane 3: `normal` (not `all`). The row feeds ONE boolean — is the effective
   // tree dirty — and `normal` answers it identically (an untracked directory is one `??`
@@ -380,7 +385,7 @@ function repositorySnapshot(repoRoot, stateRoot) {
   const dirty = git(['status', '--porcelain=v1', '--untracked-files=normal'], repoRoot, {
     encoding: 'utf8',
   }).trim().length > 0;
-  const trackedCredentials = git(['ls-files', '-z', '--', ...SNAPSHOT_CREDENTIAL_PATHS], repoRoot)
+  const trackedCredentials = git(['ls-files', '-z', '--', ...credentialPaths], repoRoot)
     .toString('utf8').split('\0').filter(Boolean);
   if (!dirty && trackedCredentials.length === 0) {
     return Object.freeze({ sha: head, source: 'head' });
@@ -405,7 +410,7 @@ function repositorySnapshot(repoRoot, stateRoot) {
   try {
     git(['read-tree', head], repoRoot, { gitEnv, stdio: 'ignore' });
     git(['add', '-A', '--', '.'], repoRoot, { gitEnv, stdio: 'ignore' });
-    git(['update-index', '--force-remove', '--', ...SNAPSHOT_CREDENTIAL_PATHS], repoRoot, {
+    git(['update-index', '--force-remove', '--', ...credentialPaths], repoRoot, {
       gitEnv, stdio: 'ignore',
     });
     const tree = git(['write-tree'], repoRoot, { encoding: 'utf8', gitEnv }).trim();
@@ -1125,14 +1130,37 @@ const OMP_HOME_ROOT = '.omp';
 const OMP_AGENT_DATABASE = `${OMP_HOME_ROOT}/agent/agent.db`;
 const OMP_AGENT_CONFIG = `${OMP_HOME_ROOT}/agent/config.yml`;
 const OMP_AGENT_MODELS = `${OMP_HOME_ROOT}/agent/models.yml`;
-// The route provider a provider/model id names, and the repository key file its deployment
-// provisioning contract requires. A provider absent from this table has no deployment
-// credential story and fails closed.
-const OMP_PROVIDER_KEY_FILES = Object.freeze({
+// #494: the SHIPPED provider→key-file defaults — the route provider a provider/model id names,
+// and the repository key file its deployment provisioning contract requires. A provider absent
+// from the effective table has no deployment credential story and fails closed; the deployment
+// opener extends the table (advanced.ompCredentials.providerKeyFiles, provider prefix →
+// repository root file name), so an operator declares a fourth provider without editing this
+// file.
+const DEFAULT_OMP_PROVIDER_KEY_FILES = Object.freeze({
   deepseek: 'deepseek_key.json',
   zai: 'glm_key.json',
   'kimi-code': 'kimi_key.json',
 });
+
+/** The ONE normalization for an operator-declared provider table: each key is the model-id
+ * prefix before the first `/` (so it can never carry one), and each value is one file name at
+ * the repository root. Anything else refuses the open typed. */
+function normalizeOmpProviderKeyFiles(value) {
+  if (!record(value)) {
+    throw deploymentError('advanced ompCredentials.providerKeyFiles must be one object mapping provider prefix to key file name');
+  }
+  for (const [provider, file] of Object.entries(value)) {
+    if (typeof provider !== 'string' || provider.length === 0 || provider.length > 128
+      || provider.includes('/') || /[\u0000-\u001f\u007f]/u.test(provider)) {
+      throw deploymentError(`advanced ompCredentials.providerKeyFiles.${provider} must be one provider prefix (the model-id segment before the first "/")`);
+    }
+    if (typeof file !== 'string' || file.length === 0 || file.length > 255
+      || file === '.' || file === '..' || file.includes('/') || file.includes('\\') || file.includes('\0')) {
+      throw deploymentError(`advanced ompCredentials.providerKeyFiles.${provider} must be one file name at the repository root (a single path segment)`);
+    }
+  }
+  return Object.freeze({ ...value });
+}
 
 /** The omp agent database — the one fact registration, the credential projection and the omp
  * route readiness derivation all resolve. */
@@ -1140,18 +1168,18 @@ function ompAgentDatabasePath() { return join(homedir(), OMP_AGENT_DATABASE); }
 
 function ompAgentConfigured() { return existingRegular(ompAgentDatabasePath()); }
 
-export function ompProviderKeyFile(model) {
+export function ompProviderKeyFile(model, providerKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FILES) {
   const separator = model.indexOf('/');
   const provider = separator === -1 ? '' : model.slice(0, separator);
-  return OMP_PROVIDER_KEY_FILES[provider] ?? null;
+  return providerKeyFiles[provider] ?? null;
 }
 
 /** The facts an omp route's ready-when cell documents, declared once: the agent database every
  * omp route needs and the route provider's repository key file. */
-function ompRouteReadinessFacts(model) {
+function ompRouteReadinessFacts(model, providerKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FILES) {
   return Object.freeze({
     agentDatabase: `~/${OMP_AGENT_DATABASE}`,
-    keyFile: ompProviderKeyFile(model),
+    keyFile: ompProviderKeyFile(model, providerKeyFiles),
   });
 }
 
@@ -1211,11 +1239,13 @@ export function ompModelCatalog({ catalogRead = defaultOmpCatalogRead, now = Dat
 }
 
 /** The one omp route gate: the adapter's own agent database, the route provider's repo key
- * file, AND (#342) the harness catalog defining the model and its effort. Blocked rows name the
- * missing file or the models/efforts the catalog does define; contents of key files are never
- * read or surfaced. */
-export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead = null } = {}) {
-  const facts = ompRouteReadinessFacts(model);
+ * file, AND (#342) the harness catalog defining the model and its effort. #494: the key-file
+ * table is the deployment's EFFECTIVE table — the shipped defaults extended by
+ * advanced.ompCredentials.providerKeyFiles — and a provider it does not name is refused with
+ * the declaration that extends it. Blocked rows name the missing file or the models/efforts
+ * the catalog does define; contents of key files are never read or surfaced. */
+export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead = null, providerKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FILES } = {}) {
+  const facts = ompRouteReadinessFacts(model, providerKeyFiles);
   if (!ompAgentConfigured()) {
     return Object.freeze({
       state: 'blocked', code: 'omp_agent_unconfigured',
@@ -1223,9 +1253,10 @@ export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead 
     });
   }
   if (facts.keyFile === null) {
+    const provider = model.slice(0, Math.max(0, model.indexOf('/')));
     return Object.freeze({
       state: 'blocked', code: 'route_unavailable',
-      summary: `omp route ${model} names no provider with a registered deployment credential file.`,
+      summary: `omp route ${model} names no provider with a declared deployment credential file; declare one for ${provider} with advanced.ompCredentials.providerKeyFiles (provider prefix → repository root file name), then reopen Baton.`,
     });
   }
   if (!existingRegular(join(repoRoot, facts.keyFile))) {
@@ -1266,17 +1297,20 @@ export function ompRouteReadiness(repoRoot, model, effort = null, { catalogRead 
 }
 
 /** The ready-when cell the generated fleet-routes table documents — rendered from the very facts
- * ompRouteReadiness resolves, so the documented contract cannot drift from the gate. */
-function ompRouteReadyWhen(model) {
-  const facts = ompRouteReadinessFacts(model);
+ * ompRouteReadiness resolves (over the same effective provider table), so the documented
+ * contract cannot drift from the gate. */
+function ompRouteReadyWhen(model, providerKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FILES) {
+  const facts = ompRouteReadinessFacts(model, providerKeyFiles);
   return facts.keyFile === null
-    ? `\`${facts.agentDatabase}\` present and a registered provider credential file`
+    ? `\`${facts.agentDatabase}\` present and a declared provider credential file`
     : `\`${facts.agentDatabase}\` present, repo \`${facts.keyFile}\` present, and \`omp models --json\` defining the model and effort`;
 }
 
 /** The ready-when contract each registered route family documents — the same facts the gates
- * above and deploymentReadiness enforce, so the generated fleet-routes table cannot drift. */
-export function routeReadinessContract(route) {
+ * above and deploymentReadiness enforce, so the generated fleet-routes table cannot drift. The
+ * provider table defaults to the shipped one; the deployment opener passes its effective table
+ * so an operator-declared provider's cell names the operator's own file. */
+export function routeReadinessContract(route, providerKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FILES) {
   switch (route.harness) {
     case 'codex': return '`~/.codex/auth.json` present';
     case 'muse': return 'a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`)';
@@ -1286,7 +1320,7 @@ export function routeReadinessContract(route) {
       return route.provider === 'kimi'
         ? 'the private kimi-through-claude credential present'
         : 'bounded version + auth status probes';
-    case 'omp': return ompRouteReadyWhen(route.model);
+    case 'omp': return ompRouteReadyWhen(route.model, providerKeyFiles);
     default: return 'the deployment readiness derivation reports ready';
   }
 }
@@ -1929,6 +1963,7 @@ function deploymentReadiness(
   nativeGrokAuthentication = null,
   adapterAuthentication = new Map(),
   additionalRouteStates = [],
+  ompProviderKeyFiles = DEFAULT_OMP_PROVIDER_KEY_FILES,
 ) {
   const cards = Object.entries(adapters).map(([name, adapter]) => Object.freeze({
     name, card: adapter.card(),
@@ -2054,7 +2089,7 @@ function deploymentReadiness(
         });
       }
     } else if (route.harness === 'omp') {
-      const ompGate = ompRouteReadiness(repoRoot, route.model, route.effort, { catalogRead: projection.ompCatalogRead ?? null });
+      const ompGate = ompRouteReadiness(repoRoot, route.model, route.effort, { catalogRead: projection.ompCatalogRead ?? null, providerKeyFiles: ompProviderKeyFiles });
       if (ompGate.state === 'blocked') {
         return Object.freeze({
           ...publicFields, state: 'blocked', code: ompGate.code, summary: ompGate.summary, runtime,
@@ -5686,6 +5721,21 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const preflight = preflightDeployment(repository.root, verification);
   const toolchainProjection = dependencyProjection(repository.root, repository.repoId);
   const usesBuiltInAdapters = advanced.adapters === undefined;
+  // #494: the omp credential declarations — the catalog reader shim and the operator-declared
+  // provider key-file table, merged over the shipped defaults. The effective table is decided
+  // once at the open, so the readiness gates, the ready-when contract, and the snapshot's
+  // credential exclusion all read ONE table.
+  const rawOmpCredentials = advanced.ompCredentials ?? {};
+  closed(rawOmpCredentials, ['catalogRead', 'providerKeyFiles'], 'advanced ompCredentials');
+  if (rawOmpCredentials.catalogRead !== undefined && typeof rawOmpCredentials.catalogRead !== 'function') {
+    throw deploymentError('advanced ompCredentials.catalogRead must be a function');
+  }
+  const ompProviderKeyFiles = rawOmpCredentials.providerKeyFiles === undefined
+    ? DEFAULT_OMP_PROVIDER_KEY_FILES
+    : Object.freeze({
+      ...DEFAULT_OMP_PROVIDER_KEY_FILES,
+      ...normalizeOmpProviderKeyFiles(rawOmpCredentials.providerKeyFiles),
+    });
   const nativeKimiAuthentication = usesBuiltInAdapters
     && routes.some((route) => route.harness === 'kimi-code')
     ? kimiAuthenticationState(join(homedir(), '.kimi-code')) : null;
@@ -5705,7 +5755,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // #328: root-side credential materialisations live OUTSIDE runtimeRoot, whose owner
   // (the worker RuntimeIsolation) reconciles away every entry that is not a live worker.
   const credentialRoot = privateDirectory(join(deploymentRoot, 'credentials'));
-  const snapshot = repositorySnapshot(repository.root, stateRoot);
+  const snapshot = repositorySnapshot(repository.root, stateRoot, ompProviderKeyFiles);
   const rawClaudeCredentials = advanced.claudeCredentials ?? {};
   closed(rawClaudeCredentials, [
     'cmd', 'cmdArgs', 'credentialPath', 'fileProbe', 'fileRead', 'keychainMtime', 'keychainRead',
@@ -5857,11 +5907,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // #342: the omp catalog reader — the host's `omp models --json` for a built-in-adapter
   // deployment, an explicit advanced.ompCredentials.catalogRead shim otherwise, never a
   // host exec for a fixture deployment.
-  const rawOmpCredentials = advanced.ompCredentials ?? {};
-  closed(rawOmpCredentials, ['catalogRead'], 'advanced ompCredentials');
-  if (rawOmpCredentials.catalogRead !== undefined && typeof rawOmpCredentials.catalogRead !== 'function') {
-    throw deploymentError('advanced ompCredentials.catalogRead must be a function');
-  }
   const ompCatalogRead = routes.some((route) => route.harness === 'omp')
     ? (rawOmpCredentials.catalogRead ?? (usesBuiltInAdapters ? defaultOmpCatalogRead : null))
     : null;
@@ -5940,7 +5985,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const readiness = deploymentReadiness(
     preflight, repository.root, routes, adapters, projection,
     nativeKimiAuthentication, nativeGrokAuthentication,
-    adapterAuthentication, additionalRouteStates,
+    adapterAuthentication, additionalRouteStates, ompProviderKeyFiles,
   );
   // Issue #35: doctor observes workspace capacity FRESH at each read (statfs is cheap and disk
   // state moves), never once at open — an open-time probe would also consume the advanced
