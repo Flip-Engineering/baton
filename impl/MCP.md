@@ -321,6 +321,7 @@ that owns the runs, never over a borrowed bridge session.
 | `baton_waves {verb: start|list|progress|send|stop}` | `ordinary` | `baton_waves` | destructive |
 | `baton_knowledge {verb: search|seed}` | `ordinary` | `baton_knowledge` | effectful |
 | `baton_wakes {verb: subscribe|since|unsubscribe}` | `ordinary` | `baton_wakes` | effectful |
+| `baton_services {verb: list}` | `ordinary` | `baton_services` | idempotent |
 | `baton_surface {verb: catalog|describe|invoke|snapshot|watch|visualize}` | `ordinary` | `baton_surface` | destructive |
 
 <!-- END GENERATED: mcp-tool-inventory -->

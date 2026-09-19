@@ -5,7 +5,8 @@
 // HEAD, each on its own assertion that names the missing law (never an import failure, never a
 // dangling await — #460):
 //
-//   314-a  tools/list on the ordinary agent surface is exactly the seven core verb-tools — today
+//   314-a  tools/list on the ordinary agent surface is exactly the core verb-tools — one per
+//          family (seven at landing; #317 added the eighth, baton_services) — today
 //          it is 58 flat tools (measured: 52 ordinary rows of mcp-northbound.mjs
 //          ORDINARY_APPLICATION_TOOL_DEFINITIONS plus the six baton_surface_* the production
 //          wrapper merges), 64,629 bytes of schema on the wire.
@@ -208,6 +209,16 @@ const CORE = Object.freeze([
         fields: { subscriptionId: ID_SCHEMA } },
     },
   },
+  // Issue #317 (docs/50): the provider-services family joins the designed core — the eighth
+  // family, one read verb over the deployment's declared services.
+  {
+    name: 'baton_services',
+    description: 'Provider services (issue #317): list the deployment’s configured API services — the models each offers, the routes derived from them, and subscription-window usage with its reset instant.',
+    verbs: {
+      list: { requires: [], mutation: false, long: false,
+        fields: { provider: { type: 'string', minLength: 1, maxLength: 128 } } },
+    },
+  },
   {
     name: 'baton_surface',
     description: 'Progressive disclosure: catalog the capabilities this deployment profile serves, describe one (schema and posture), invoke it through its existing authority; snapshot, watch (bounded composite), visualize.',
@@ -293,6 +304,7 @@ const MIGRATION = Object.freeze({
   baton_runs: { tool: 'baton_run', verb: 'list' },
   baton_scratchpad_elevate: { surface: 'scratchpad.elevate (descriptor kernel profile)' },
   baton_scratchpad_settle: { surface: 'scratchpad.settle (descriptor kernel profile)' },
+  baton_services_list: { tool: 'baton_services', verb: 'list' },
   baton_swarm_capture: { tool: 'baton_swarm', verb: 'capture' },
   baton_swarm_check: { tool: 'baton_swarm', verb: 'check' },
   baton_swarm_create: { tool: 'baton_swarm', verb: 'create' },
@@ -408,7 +420,7 @@ function attachmentStub() {
 
 // ── the rows ──────────────────────────────────────────────────────────────────────────────────
 
-test('314-a RED: tools/list on the ordinary agent surface is exactly the seven core verb-tools (docs/49 §2)', async (t) => {
+test('314-a RED: tools/list on the ordinary agent surface is exactly the core verb-tools — one per family (docs/49 §2; #317 added baton_services)', async (t) => {
   const tools = await toolList(t);
   const names = tools.map((tool) => tool.name).sort();
   assert.deepEqual(names, [...CORE_NAMES].sort(),
@@ -590,7 +602,7 @@ test('314-f RED: the migration table covers every tool MCP.md documents and the 
   // Guard clauses (green at authoring): completeness of docs/49 §7 against MCP.md, and every
   // core verb is the target of at least one migration row. §7 maps the LEGACY spellings; a core
   // tool is its own target (docs/49 §2), so the documented set the guard judges is the union of
-  // the two — MCP.md names the seven core tools because that is the surface it leads with, and
+  // the two — MCP.md names the core tools because that is the surface it leads with, and
   // it names a flat spelling only while §7 has a row for it.
   for (const name of documented) {
     if (CORE_NAMES.includes(name)) continue;

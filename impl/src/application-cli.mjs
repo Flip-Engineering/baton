@@ -1556,7 +1556,14 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
   Object.freeze({
     token: 'evidence', verb: 'baton evidence search', argv: Object.freeze(['evidence', 'search']),
     kind: 'command', parser: 'baton-cli',
-    summary: 'Search the deployment\u2019s evidence and contributions by swarm, participant, kind, path or free text.',
+    summary: 'Search the deployment’s evidence and contributions by swarm, participant, kind, path or free text.',
+  }),
+  // Issue #317 (docs/50): the provider-services read — the configured API services, their models,
+  // the routes derived from them, and subscription-window usage with its reset instant.
+  Object.freeze({
+    token: 'services', verb: 'baton services list', argv: Object.freeze(['services', 'list']),
+    kind: 'command', parser: 'baton-cli',
+    summary: 'List the deployment’s configured provider services: models, derived routes, and subscription-window usage with its reset instant.',
   }),
   Object.freeze({
     token: 'deployment', verb: 'baton deployment watch (or wakes-since/reincarnate)',
@@ -2262,6 +2269,25 @@ function parseEvidenceCli(args, idempotencyKey) {
   }
   noRemainder(args);
   return { kind: 'command', name: 'evidence.search', args: values, idempotencyKey };
+}
+// `baton services list [--provider PROVIDER]` (issue #317, docs/50): the deployment's configured
+// provider services. ONE canonical operation (`services.list`, impl/src/provider-services.mjs) —
+// this parser only shapes the argv; the answer is the deployment's own derivation.
+function parseServicesCli(args, idempotencyKey) {
+  if (args[0] !== 'services') return null;
+  args.shift();
+  if (args[0] !== 'list') {
+    throw cliError('services requires the list verb: baton services list [--provider PROVIDER]', 'cli_command_unavailable');
+  }
+  args.shift();
+  const values = {};
+  const provider = take(args, '--provider');
+  if (provider !== null) {
+    if (!nonempty(provider)) throw cliError('services list --provider is invalid');
+    values.provider = provider;
+  }
+  noRemainder(args);
+  return { kind: 'command', name: 'services.list', args: values, idempotencyKey };
 }
 // ── Issue #441: the recruit's reading leg ───────────────────────────────────────────────────────
 //
@@ -3917,6 +3943,7 @@ export function parseBatonCli(rawArgs) {
   }
   if (args[0] === 'swarm') return parseSwarmCli(args, idempotencyKey);
   if (args[0] === 'evidence') return parseEvidenceCli(args, idempotencyKey);
+  if (args[0] === 'services') return parseServicesCli(args, idempotencyKey);
   if (args[0] === 'deployment') {
     args.shift();
     const verb = args.shift();

@@ -2,7 +2,8 @@
 // §8, §10).
 //
 // ONE verb-discriminated closed tool per family — baton_deployment, baton_run, baton_swarm,
-// baton_waves, baton_knowledge, baton_wakes, baton_surface. Every verb's argument schema is
+// baton_waves, baton_knowledge, baton_wakes, baton_services (#317), baton_surface. Every verb's
+// argument schema is
 // DERIVED from the table that already owns it: the ordinary application tool table
 // (mcp-northbound.mjs ORDINARY_APPLICATION_TOOL_DEFINITIONS) for the run/deployment/waves/
 // knowledge/wakes families, the swarm command contract (swarm-contract.mjs
@@ -216,6 +217,20 @@ const CORE_TABLE = Object.freeze([
         verb: 'unsubscribe', requires: Object.freeze(['subscriptionId']),
         dispatch: Object.freeze([Object.freeze({ tool: 'baton_wakes_unsubscribe' })]),
         replaces: Object.freeze(['baton_wakes_unsubscribe']),
+      }),
+    ]),
+  }),
+  // Issue #317 (docs/50): the provider-services family — ONE read verb over the deployment's
+  // declared services. The per-verb schema derives from the flat baton_services_list row like
+  // every other dispatch-projected verb.
+  Object.freeze({
+    name: 'baton_services',
+    description: 'Provider services (issue #317): list the deployment’s configured API services — the models each offers, the routes derived from them, and subscription-window usage with its reset instant.',
+    verbs: Object.freeze([
+      Object.freeze({
+        verb: 'list', requires: Object.freeze([]),
+        dispatch: Object.freeze([Object.freeze({ tool: 'baton_services_list' })]),
+        replaces: Object.freeze(['baton_services_list']),
       }),
     ]),
   }),

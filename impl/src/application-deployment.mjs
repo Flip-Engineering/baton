@@ -13,10 +13,14 @@ import { bindBaton } from './application-client.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { BatonWebClient } from './application-cli.mjs';
 import { BatonWebHost, STOP_STAGES } from './application-host.mjs';
-import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
+import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli, loadProviderCredentialFile } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
 import { PROVIDER_FAULT_CODES, parseProviderResetAt, providerFaultWindowMs, providerOfRoute } from './provider-faults.mjs';
+import {
+  deriveServiceUsage, fetchServiceModels, normalizeProviderServices, normalizeServiceClients,
+  resolveServiceCredentialValue, serviceCredentialReference, serviceForRoute, serviceStateOf,
+} from './provider-services.mjs';
 import { ProviderQuotaAuthority, routeQuotaKey } from './route-quota.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
 import { matchProviderRefusal, PROVIDER_RESET_AT_FROM_TEXT } from './adapter.mjs';
@@ -1349,6 +1353,22 @@ export function defaultMuseKeychainRead() {
   };
 }
 
+// #317 (docs/50 D1): the DEFAULT keychain seam for a declared service credential of kind
+// `keychain` — the same bounded /usr/bin/security exec the muse and claude seams use, but the
+// item coordinate is the declaration's own (service, account). A non-zero exit is "unreadable"
+// (null), never a throw; on a non-macOS host no item is readable.
+export function defaultServiceKeychainRead() {
+  if (process.platform !== 'darwin') return () => null;
+  return (service, account = null) => {
+    try {
+      return execFileSync('/usr/bin/security', [
+        'find-generic-password', '-s', service,
+        ...(typeof account === 'string' && account.length > 0 ? ['-a', account] : []), '-w',
+      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch { return null; }
+  };
+}
+
 /** Bounded, symlink-refusing read of the operator's muse auth.json: `{ ok, parsed }`. */
 function readMuseAuthFile(path) {
   let descriptor;
@@ -2592,11 +2612,31 @@ function readyRouteAlternatives(readiness, quota, record) {
 
 /** The refusal a recruit/run on a blocked route draws BEFORE any effect: it names the route, the
  * typed class, the instant the provider's own answer stated (or that the provider stated none), and
- * the routes that ARE ready. */
-function providerRouteRefusal(block, readiness, quota, record) {
+ * the routes that ARE ready. #317 (docs/50 D5): when the blocked route resolves to a declared
+ * service, the refusal also names the service — and when the provider's answer carried no instant,
+ * the reset the SERVICE record derives from its declared window at the observation
+ * (`resetSource: 'declared_window'`), so the refusal never names a vaguer fact than the
+ * deployment holds. */
+function providerRouteRefusal(block, readiness, quota, record, services = null) {
   const { harness, model, effort } = block.route;
+  const service = services === null ? null : serviceForRoute(services, block.route);
+  let serviceReset = null;
+  if (service !== null && service.usage !== null
+    && (block.resetAt === null || block.resetAt === undefined)) {
+    const observedAtMs = typeof block.observedAt === 'number' ? block.observedAt
+      : Date.parse(block.observedAt ?? '');
+    if (Number.isFinite(observedAtMs)) {
+      serviceReset = Object.freeze({
+        resetAt: new Date(observedAtMs + service.usage.windowMs).toISOString(),
+        resetSource: 'declared_window',
+      });
+    }
+  }
   const window = block.resetAt
-    ? `until ${block.resetAt}` : 'until a later turn on it succeeds';
+    ? `until ${block.resetAt}`
+    : serviceReset !== null
+      ? `until ${serviceReset.resetAt} (service ${service.provider}'s declared window from the observed block)`
+      : 'until a later turn on it succeeds';
   const ready = readyRouteAlternatives(readiness, quota, record);
   return Object.assign(new Error(
     `route ${harness}/${model}@${effort} is blocked (${block.code}) ${window}; `
@@ -2609,24 +2649,31 @@ function providerRouteRefusal(block, readiness, quota, record) {
     route: Object.freeze({ harness, model, effort }),
     resetAt: block.resetAt ?? null,
     readyRoutes: ready,
+    ...(service === null ? {} : {
+      service: Object.freeze({
+        provider: service.provider,
+        resetAt: block.resetAt ?? serviceReset?.resetAt ?? null,
+        resetSource: block.resetAt ? 'provider' : serviceReset?.resetSource ?? null,
+      }),
+    }),
   });
 }
 
-function assertRouteQuotaClear(options, readiness, quota, refusals = null) {
+function assertRouteQuotaClear(options, readiness, quota, refusals = null, services = null) {
   const block = routeQuotaBlockOf(options, readiness, quota);
-  if (block) throw providerRouteRefusal(block, readiness, quota, refusalRecordOf(refusals));
+  if (block) throw providerRouteRefusal(block, readiness, quota, refusalRecordOf(refusals), services);
 }
 
 /** #341 part 2: the same pre-effect refusal for a route its provider refused, read from the
  * deployment's own ledger. Derived from the same index the readiness rows publish, so the row a
  * caller sees blocked is the one the next recruit is refused by. */
-function assertRouteRefusalClear(options, readiness, refusals) {
+function assertRouteRefusalClear(options, readiness, refusals, services = null) {
   if (typeof refusals !== 'function') return;
   const route = requestedReadiness(options, readiness?.routes ?? []);
   if (!route) return;
   const record = refusalRecordOf(refusals);
   const block = record.live.get(routeQuotaKey({ harness: route.harness, model: route.model, effort: route.effort }));
-  if (block) throw providerRouteRefusal(block, readiness, null, record);
+  if (block) throw providerRouteRefusal(block, readiness, null, record, services);
 }
 
 /** #346: the same pre-effect refusal for a route whose credential cannot outlive the lane. The
@@ -2647,11 +2694,11 @@ function assertRouteCredentialLifetimeClear(options, readiness, lifetime, refusa
  * then (#346) the credential's remaining lifetime — bound to this deployment's rows, quota
  * authority and ledger, so a blocked route refuses identically however the run arrives (embedded
  * recruit or resident run.start), and there is never a second derivation to drift. */
-export function routeAdmissionGate(readiness, routeQuota, refusals = null, credentialLifetime = null) {
+export function routeAdmissionGate(readiness, routeQuota, refusals = null, credentialLifetime = null, services = null) {
   return (options) => {
     assertRouteReady(options, readiness);
-    assertRouteQuotaClear(options, readiness, routeQuota, refusals);
-    assertRouteRefusalClear(options, readiness, refusals);
+    assertRouteQuotaClear(options, readiness, routeQuota, refusals, services);
+    assertRouteRefusalClear(options, readiness, refusals, services);
     assertRouteCredentialLifetimeClear(options, readiness, credentialLifetime, refusals);
   };
 }
@@ -3012,6 +3059,11 @@ class BatonDeployment {
   // refusal index, from the same ledger) — the fact the route usage rows publish and the
   // pre-effect recruit refusal reads.
   #routeDegrades = null;
+  // #317 (docs/50): the declared provider services and the seams the model-list read rides.
+  // Empty for a deployment with no services section — and every consumer below then changes
+  // nothing it publishes (D7: additive only).
+  #services = [];
+  #serviceClients = null;
   // #346: the credential-lifetime layer — the live claude credential facts and the lane horizon
   // every admission judges them against (null when the deployment has no claude credential
   // authority, in which case no route is judged on a lifetime nobody can read).
@@ -3074,6 +3126,8 @@ class BatonDeployment {
     this.#routeQuota = deployment.routeQuota ?? null;
     this.#routeRefusals = deployment.refusals ?? null;
     this.#routeDegrades = deployment.degrades ?? null;
+    this.#services = deployment.services ?? [];
+    this.#serviceClients = deployment.serviceClients ?? null;
     this.#adapters = deployment.adapters ?? {};
     this.#routes = deployment.routes ?? [];
     this.#profiles = deployment.modelProfiles ?? null;
@@ -3164,8 +3218,8 @@ class BatonDeployment {
    * instant the provider (or the credential) stated, and the routes that ARE ready. */
   #assertRouteReady(options) {
     assertRouteReady(options, this.#readiness);
-    assertRouteQuotaClear(options, this.#readiness, this.#routeQuota, this.#routeRefusals);
-    assertRouteRefusalClear(options, this.#readiness, this.#routeRefusals);
+    assertRouteQuotaClear(options, this.#readiness, this.#routeQuota, this.#routeRefusals, this.#services);
+    assertRouteRefusalClear(options, this.#readiness, this.#routeRefusals, this.#services);
     assertRouteCredentialLifetimeClear(options, this.#readiness, this.#credentialLifetime, this.#routeRefusals);
   }
 
@@ -3237,6 +3291,13 @@ class BatonDeployment {
       // (DP5's closed pin) and serialized doctor output unchanged.
       const live = this.#composeLive(row);
       const composed = profiles === null ? { ...row } : { ...row, profile: profiles.get(key) ?? null };
+      // #317 (docs/50 D6): the route's service attribution — the provider-service record the
+      // route resolves to. Present only when this deployment declares services, so a deployment
+      // without the section serializes byte-identically to before (D7).
+      if (this.#services.length > 0) {
+        const registryRoute = this.#routes.find((candidate) => routeQuotaKey(candidate) === key);
+        composed.service = this.#serviceForRoute(registryRoute ?? row)?.provider ?? null;
+      }
       Object.defineProperty(composed, 'liveness', { value: live.liveness, enumerable: false });
       Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
       // #341 part 2: the last refusal THIS deployment's ledger holds for the route — published by
@@ -3281,6 +3342,10 @@ class BatonDeployment {
     const routeUsage = this.#routeUsageRows(routes, profiles);
     const base = {
       ...this.#readiness, ready, routes, routeUsage,
+      // #317 (docs/50 D5): the services section rides the doctor beside routeUsage — present only
+      // when the deployment declares services, so the composed document's shape is unchanged for
+      // a deployment without the section (D7).
+      ...(this.#services.length > 0 ? { services: this.#serviceRows(routes, routeUsage) } : {}),
       ...(workspace ? { workspace } : {}),
       ...(hostCapacity ? { hostCapacity } : {}),
       ...(served ? { served } : {}),
@@ -3316,6 +3381,161 @@ class BatonDeployment {
    * derivation — so the rows a recruit compares and a seat's brief renders ARE the rows the doctor
    * publishes, and the usage row and the readiness row can never disagree. */
   routeUsageRows() { return this.doctorReadiness().routeUsage; }
+
+  /** #317 (docs/50 D2): the declared service one REGISTRY route resolves to, or null. The
+   * registry record carries the explicit `provider` field the public route shape drops; the
+   * resolution is providerOfRoute's segment otherwise. */
+  #serviceForRoute(route) {
+    return serviceForRoute(this.#services, route);
+  }
+
+  /** #317 (docs/50 D2/D5/D6): the service rows — ONE derivation the doctor's services section,
+   * the deployment summary and the services.list verb all read. Member routes resolve off the
+   * registry (never a second route table); the state aggregates the members' OWN published
+   * verdicts; the usage axis is the deployment's accounting against the declaration, with reset
+   * instants from the members' observed provider facts before any declaration-derived one. */
+  #serviceRows(doctorRoutes, usageRows) {
+    if (this.#services.length === 0) return Object.freeze([]);
+    const now = this.#residentOptions.now();
+    const serviceByRouteKey = new Map();
+    for (const route of this.#routes) {
+      const key = routeQuotaKey(route);
+      const service = this.#serviceForRoute(route);
+      if (key !== null && service !== null) serviceByRouteKey.set(key, service);
+    }
+    const doctorByKey = new Map();
+    for (const row of doctorRoutes ?? []) {
+      const key = routeQuotaKey(row);
+      if (key !== null) doctorByKey.set(key, row);
+    }
+    const usageByKey = new Map();
+    for (const row of usageRows ?? []) {
+      const key = routeQuotaKey(row.route);
+      if (key !== null) usageByKey.set(key, row);
+    }
+    // One log pass: the token observations attributed to each service's member routes, in log
+    // order — the same attribution the route usage rows use, windowed per service at the read.
+    const observationsByService = new Map(this.#services.map((service) => [service.provider, []]));
+    const log = this.#driver?.log ?? null;
+    if (log) {
+      for (const worker of log.workers()) {
+        for (const ev of log.byKind(worker, 'resource.tokens')) {
+          const key = routeQuotaKey({
+            harness: ev.harnessResolved, model: ev.modelResolved, effort: ev.effortResolved,
+          });
+          const service = (key !== null ? serviceByRouteKey.get(key) : null)
+            ?? this.#serviceForRoute({
+              harness: ev.harnessResolved, model: ev.modelResolved, effort: ev.effortResolved,
+            });
+          if (service === null) continue;
+          const payload = ev.payload ?? {};
+          observationsByService.get(service.provider).push({
+            ts: ev.ts,
+            tokens: payload.tokens, usd: payload.usd,
+            accounting: payload.accounting, counterId: payload.counterId,
+            source: payload.source, rateLimits: payload.rateLimits,
+          });
+        }
+      }
+    }
+    return Object.freeze(this.#services.map((service) => {
+      const members = this.#routes.filter((route) => this.#serviceForRoute(route) === service);
+      // The service's live reset fact: the NEWEST observed member block wins (the quota
+      // authority's own newest-observation rule), carrying the provider's stated instant when
+      // it stated one and the observation instant either way.
+      let reset = null;
+      for (const route of members) {
+        const key = routeQuotaKey(route);
+        const usageRow = key === null ? null : usageByKey.get(key) ?? null;
+        if (usageRow === null || (usageRow.state !== 'blocked' && usageRow.state !== 'degraded')) continue;
+        const doctorRow = key === null ? null : doctorByKey.get(key) ?? null;
+        const observedAtText = doctorRow?.quotaBlockedSince ?? usageRow.degraded?.since ?? null;
+        const observedAt = typeof observedAtText === 'string' ? Date.parse(observedAtText) : Number.NaN;
+        const candidate = {
+          resetAt: usageRow.resetAt ?? null,
+          observedAt: Number.isFinite(observedAt) ? observedAt : null,
+        };
+        if (reset === null
+          || (candidate.observedAt !== null && (reset.observedAt === null || candidate.observedAt > reset.observedAt))) {
+          reset = candidate;
+        }
+      }
+      return Object.freeze({
+        provider: service.provider,
+        baseUrl: service.baseUrl,
+        harnesses: service.harnesses,
+        credential: serviceCredentialReference(service),
+        models: service.models,
+        routes: Object.freeze(members.map(publicRoute)),
+        state: serviceStateOf(members.map((route) => {
+          const key = routeQuotaKey(route);
+          // Every registry route has a usage row in this derivation (routeUsageRows maps the same
+          // #routes list); a missing key reads ready, matching the route's own default verdict.
+          return key === null ? 'ready' : usageByKey.get(key)?.state ?? 'ready';
+        })),
+        usage: deriveServiceUsage(service, {
+          observations: observationsByService.get(service.provider),
+          reset, now,
+        }),
+      });
+    }));
+  }
+
+  /** #317: the deployment summary's service rows — the SAME derivation the doctor publishes
+   * (null for a deployment that declares no services, so the summary's shape does not move). */
+  serviceRows() { return this.doctorReadiness().services ?? null; }
+
+  /** #317 (docs/50 D3/D4): the services.list verb. The rows are the doctor's OWN derivation;
+   * each service's model list is then pulled live from its endpoint where the credential
+   * resolves, and degrades to the declaration — naming the typed cause — where the pull cannot
+   * answer. The credential value never leaves this call frame; the row publishes whether the
+   * reference resolved, never the value. */
+  async servicesList(filters = {}) {
+    const rows = (this.doctorReadiness().services ?? [])
+      .filter((row) => filters.provider === null || filters.provider === undefined
+        || row.provider === filters.provider);
+    const clients = this.#serviceClients;
+    const listed = await Promise.all(rows.map(async (row) => {
+      const service = this.#services.find((entry) => entry.provider === row.provider);
+      const declared = row.models ?? Object.freeze([]);
+      let credentialState = 'unresolved';
+      let credentialValue = null;
+      try {
+        credentialValue = resolveServiceCredentialValue(service, {
+          env: this.#residentOptions.env,
+          readCredentialFile: clients?.readCredentialFile ?? undefined,
+          keychainRead: clients?.keychainRead ?? undefined,
+        });
+        credentialState = credentialValue === null ? 'absent' : 'resolved';
+      } catch (cause) {
+        return Object.freeze({
+          ...row, models: declared, modelsSource: 'declaration', credentialState: 'unreadable',
+          modelsRefusal: Object.freeze({
+            code: 'service_credential_absent', status: null, cause: cause?.code ?? 'unreadable',
+          }),
+        });
+      }
+      try {
+        const answer = await fetchServiceModels(service, {
+          fetchImpl: clients?.fetchImpl ?? undefined,
+          credential: credentialValue,
+          timeoutMs: clients?.timeoutMs ?? null,
+        });
+        return Object.freeze({
+          ...row, models: answer.models, modelsSource: 'endpoint', credentialState,
+        });
+      } catch (cause) {
+        return Object.freeze({
+          ...row, models: declared, modelsSource: 'declaration', credentialState,
+          modelsRefusal: Object.freeze({
+            code: cause?.code ?? 'service_models_unavailable',
+            status: cause?.detail?.status ?? null, cause: cause?.detail?.cause ?? null,
+          }),
+        });
+      }
+    }));
+    return Object.freeze({ schemaVersion: 1, services: Object.freeze(listed) });
+  }
 
   /** #47 spawn/preflight gate: consult the liveness cache and probe only on stale or absent
    * (never probe per call). Static readiness stays the substrate (assertRouteReady first). */
@@ -3405,6 +3625,12 @@ class BatonDeployment {
       }
       return Object.freeze({
         route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
+        // #317 (docs/50 D6/D7): the route's service attribution, present only when this deployment
+        // declares services — a deployment without the section publishes the same row shape as
+        // before.
+        ...(this.#services.length > 0
+          ? { service: this.#serviceForRoute(route)?.provider ?? null }
+          : {}),
         // #429: the measured profile the route comparison reads — the SAME row the doctor publishes
         // for this route (one read of the cache per doctor read), present only when this deployment
         // has a profile authority at all.
@@ -5673,7 +5899,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -5740,6 +5966,18 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       ...DEFAULT_OMP_PROVIDER_KEY_FILES,
       ...normalizeOmpProviderKeyFiles(rawOmpCredentials.providerKeyFiles),
     });
+  // #317 (docs/50 D1): the provider-service declarations — one provider-keyed record, validated
+  // at open beside its seam section (the model-list read's fetch/keychain/credential-file
+  // readers, the modelProfiles pattern). Both are resolved ONCE here, so the doctor, the
+  // deployment summary, services.list and the pre-effect refusal read ONE table.
+  const providerServices = normalizeProviderServices(advanced.services ?? {});
+  const rawServiceClients = normalizeServiceClients(advanced.serviceClients ?? {});
+  const serviceClients = Object.freeze({
+    fetchImpl: rawServiceClients.fetchImpl ?? defaultModelProfileFetch,
+    keychainRead: rawServiceClients.keychainRead ?? defaultServiceKeychainRead(),
+    readCredentialFile: rawServiceClients.readCredentialFile ?? loadProviderCredentialFile,
+    timeoutMs: rawServiceClients.timeoutMs ?? residentOptions.commandTimeoutMs,
+  });
   const nativeKimiAuthentication = usesBuiltInAdapters
     && routes.some((route) => route.harness === 'kimi-code')
     ? kimiAuthenticationState(join(homedir(), '.kimi-code')) : null;
@@ -6280,6 +6518,16 @@ export async function openBatonDeployment(rawOptions, createDriver) {
           enumerable: false,
           get: () => (opened === null ? null : opened.routeUsageRows()),
         });
+        // #317 (docs/50 D5): the service rows ride the summary the same late-bound way — but
+        // ENUMERABLE, so swarm.view's deployment slice carries them, and only when the
+        // deployment declares services, so a deployment without the section keeps its serialized
+        // shape (D7).
+        if (providerServices.length > 0) {
+          Object.defineProperty(summary, 'services', {
+            enumerable: true,
+            get: () => (opened === null ? null : opened.serviceRows()),
+          });
+        }
         return Object.freeze(summary);
       },
       // Issue #324: run admission consults route readiness pre-effect through the same gate
@@ -6293,7 +6541,15 @@ export async function openBatonDeployment(rawOptions, createDriver) {
         // before goal/plan records — and the read clears with a failed handoff (admission reopens).
         const refusal = reincarnationAuthority.refusal();
         if (refusal !== null) throw reincarnationError(refusal.code, refusal.message, refusal.detail);
-        return routeAdmissionGate(readiness, routeQuota, routeRefusals, claudeCredentialLifetime)(options);
+        return routeAdmissionGate(readiness, routeQuota, routeRefusals, claudeCredentialLifetime, providerServices)(options);
+      },
+      // #317 (docs/50 D3): the services.list authority — the deployment's own derivation, consulted
+      // per call through the same late-bound `opened` pattern the summary's routeUsage getter uses,
+      // so the verb can never serve an open-time snapshot.
+      providerServices: {
+        list: (filters) => (opened === null
+          ? Object.freeze({ schemaVersion: 1, services: Object.freeze([]) })
+          : opened.servicesList(filters)),
       },
     });
     await application.ready;
@@ -6303,6 +6559,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       startupElapsedMs: Date.now() - openStartedAtMs,
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
       refusals: routeRefusals, degrades: routeDegrades,
+      services: providerServices, serviceClients,
       hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,
       reincarnationWaitMs: residentOptions.reincarnationWaitMs,
       reincarnationAuthority,

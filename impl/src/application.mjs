@@ -44,6 +44,7 @@ import {
 // #259 slice 3). The dispatcher keeps the same member names on this class.
 import * as applicationBriefing from './application-briefing.mjs';
 import { searchDeploymentEvidence, validateEvidenceSearchArgs } from './evidence-search.mjs';
+import { validateServicesListArgs } from './provider-services.mjs';
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
@@ -292,6 +293,9 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.answer': Object.freeze({ args: Object.freeze(['runId', 'requestId', 'answer']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.feedback': Object.freeze({ args: Object.freeze(['runId', 'role', 'feedback']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'evidence.search': Object.freeze({ args: Object.freeze(['swarmId', 'query', 'participantId', 'kind', 'path', 'afterSeq']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  // #317 (docs/50): the provider-services read — the configured services, their models and the
+  // routes derived from them, with subscription-window usage where declared or observed.
+  'services.list': Object.freeze({ args: Object.freeze(['provider']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.stop': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -2446,6 +2450,17 @@ export function validateApplicationCommandArgs(name, args) {
     }
     return true;
   }
+  // #317 (docs/50): the services.list field contract is the canonical operation's OWN validator
+  // (provider-services.mjs, SERVICES_LIST_FILTERS) — the same one-contract posture as
+  // evidence.search above, so every surface validates identically.
+  if (name === 'services.list') {
+    try {
+      validateServicesListArgs(args);
+    } catch (cause) {
+      throw applicationError(cause.message, 'application_services_list_invalid', cause.detail ?? null);
+    }
+    return true;
+  }
   exactObject(args, definition.args, 'application_command_invalid', name);
   if (name === 'run.start') normalizeIntent(args.intent);
   if (name === 'run.status' && !validId(args.runId)) {
@@ -3074,7 +3089,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -3114,6 +3129,14 @@ export class BatonApplication {
     this.routeAdmission = typeof options.routeAdmission === 'function' ? options.routeAdmission : null;
     if (this.routeAdmission === null && options.routeAdmission !== undefined) {
       throw applicationError('application route admission must be a function', 'application_config_invalid');
+    }
+    // #317 (docs/50): the deployment's provider-services authority — the `list` the services.list
+    // verb serves. Null when the application is constructed bare: the verb then answers an honest
+    // empty list (a bare application configures no provider services).
+    this.providerServices = options.providerServices !== undefined
+        && typeof options.providerServices?.list === 'function' ? options.providerServices : null;
+    if (this.providerServices === null && options.providerServices !== undefined) {
+      throw applicationError('application provider services authority must carry a list function', 'application_config_invalid');
     }
     this.context = null;
     if (options.context !== undefined) {
@@ -4024,6 +4047,17 @@ export class BatonApplication {
   evidenceSearch(args) {
     this._assertOpen();
     return searchDeploymentEvidence(this.driver.coordination, args);
+  }
+
+  /** #317 (docs/50): the configured provider services — the deployment's authority when one is
+   * wired, an honest empty list for a bare application (it configures no provider services). */
+  async servicesList(args = {}) {
+    this._assertOpen();
+    const filters = validateServicesListArgs(args);
+    if (this.providerServices === null) {
+      return deepFreeze({ schemaVersion: 1, services: [] });
+    }
+    return this.providerServices.list(filters);
   }
 
   async _swarmCommand(name, args, principal, context) {
@@ -14027,6 +14061,7 @@ export class BatonApplication {
     // single-swarm knowledge lane — which refuses a request that names no swarm at all, leaving the
     // deployment-wide form (the CLI's default, the MCP tool's optional swarmId) unreachable.
     if (name === 'evidence.search') return this.evidenceSearch(args);
+    if (name === 'services.list') return this.servicesList(args);
     if (name === 'run.message.send') return this.messageSend(args, principal);
     if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);

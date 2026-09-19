@@ -1757,10 +1757,6 @@
       "reason": "#102"
     },
     {
-      "key": "test/wave-observability-red.test.mjs :: A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)",
-      "reason": "#460"
-    },
-    {
       "key": "test/worker-verdict-surface-red.test.mjs :: C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing)",
       "reason": "#79"
     },
@@ -2461,6 +2457,10 @@
     {
       "file": "test/wave-index-memo-229-red.test.mjs",
       "reason": "#229"
+    },
+    {
+      "file": "test/wave-observability-red.test.mjs",
+      "reason": "#460"
     },
     {
       "file": "test/wave-settle-error-surfacing-red.test.mjs",

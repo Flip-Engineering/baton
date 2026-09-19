@@ -1755,6 +1755,8 @@ const F_EXEMPTIONS = Object.freeze([
   ['mcp-web-bridge.mjs', /maxMessageBytes: options\.maxMessageBytes \?\? 256 \* 1024/u, 'uncataloged: bridge message bound'],
   ['npm-proposal-resolver.mjs', /header\.length > 8192/u, 'uncataloged: HTTP header bound'],
   ['process-lifecycle.mjs', /maxBuffer: 4_096/u, 'uncataloged: exec buffer'],
+  ['provider-services.mjs', /boundedText\(value, 2048, 'advanced services baseUrl'\)/u, 'uncataloged: service baseUrl shape bound (#317)'],
+  ['provider-services.mjs', /boundedText\(value\.path, 4096, /u, 'uncataloged: service credential path identity bound (#317)'],
   ['program-ir/context-derivation.mjs', /maxBytes: 4096/u, 'uncataloged: program-IR schema bound'],
   ['recipes.mjs', /DESCRIPTOR_MAX_BYTES = 8 \* 1024/u, 'uncataloged: recipe descriptor bound'],
   ['recipes.mjs', /TASK_MAX_BYTES = 2 \* 1024/u, 'uncataloged: recipe task bound'],

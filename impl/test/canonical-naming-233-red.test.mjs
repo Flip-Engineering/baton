@@ -177,7 +177,8 @@ test('CLOSED SET: MCP application dispatch names equal exactly the ONE derivatio
     // docs/39: the swarm family has no retained legacy transport — its dispatch spelling is the
     // ordinary baton_swarm_* row, never a minted fleet_swarm_* twin. evidence.search (#318) is
     // the swarm domain's retrieval verb and takes the same ordinary baton_* spelling.
-    expected.add(name.startsWith('swarm.') || name === 'evidence.search'
+    // services.list (#317, docs/50) takes it too — one flat baton_services_list row, no fleet twin.
+    expected.add(name.startsWith('swarm.') || name === 'evidence.search' || name === 'services.list'
       ? deriveSurfaceNames(name).mcp : mcp);
   }
   assert.deepEqual(dispatch, [...expected].sort(), 'no extra literals, none missing');
@@ -189,7 +190,7 @@ test('CLOSED SET: MCP application dispatch names equal exactly the ONE derivatio
   for (const [name, definition] of Object.entries(APPLICATION_COMMAND_DEFINITIONS)) {
     if (!definition.mcp) continue;
     const { canonical, mcp: twin } = canonicalAndTransportNames(name);
-    const mcp = name.startsWith('swarm.') || name === 'evidence.search'
+    const mcp = name.startsWith('swarm.') || name === 'evidence.search' || name === 'services.list'
       ? deriveSurfaceNames(name).mcp : twin;
     const advertised = combined.has(mcp)
       || RETAINED_MCP_LEGACY_TOOLS.some(([tool, command]) => command === name && combined.has(tool));

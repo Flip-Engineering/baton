@@ -922,6 +922,15 @@
       "ledgered": false
     },
     {
+      "name": "services.list",
+      "category": "observation",
+      "cli": "baton services list",
+      "mcp": "baton_services_list",
+      "web": "services_list",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
       "name": "surface.catalog",
       "category": "observation",
       "cli": "baton surface catalog",

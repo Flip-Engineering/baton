@@ -972,6 +972,20 @@ const cli = {
       ],
     },
     'application.help': { aliasFor: 'application' },
+    services: {
+      usage: [
+        'baton services list [--provider PROVIDER]',
+      ],
+      sections: [
+        {
+          title: 'provider services',
+          lines: [
+            'baton services list answers the deployment\u2019s configured provider services: the models each offers (pulled from the service\u2019s model-list endpoint where one answers, else the declaration), the routes derived from them, and subscription-window usage with its reset instant where declared or observed.',
+            'Services are declared in the deployment configuration\u2019s advanced.services section; see docs/50-provider-services.md.',
+          ],
+        },
+      ],
+    },
     explore: {
       commandIds: ['explore.objective'],
       paragraphs: [
@@ -1292,6 +1306,19 @@ const CANONICAL_OPERATION_SPECS = [
       afterSeq: { type: 'integer', minimum: 0 },
     }, []),
     authority: 'The deployment reads the coordination ledger under the caller principal; the participant bridge additionally checks current swarm membership and read grants.',
+  }],
+  // Issue #317 (docs/50): the provider-services read. ONE canonical operation — every surface
+  // derives its spelling from THIS row (`baton services list` / baton_services_list), and the
+  // field contract is the operation's own (provider-services.mjs, SERVICES_LIST_FILTERS): the
+  // provider filter is optional and an absent filter answers every configured service.
+  ['services.list', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli', 'mcp', 'web'], effect: 'deployment_read',
+    capabilities: ['observe'], outputView: 'index', helpTopic: 'services',
+    example: 'baton services list --provider zai',
+    inputSchema: objectSchema({
+      provider: { type: 'string', minLength: 1, maxLength: 128 },
+    }, []),
+    authority: 'The deployment reads its own service declarations, route readiness and usage accounting; the model list is pulled live from the service endpoint where one answers.',
   }],
   ...SWARM_COMMAND_ROWS.map((row) => [row.command, {
     example: SWARM_OPERATION_EXAMPLES[row.command],

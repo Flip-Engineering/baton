@@ -4204,7 +4204,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 151,
+          "size": 159,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call"
@@ -4425,6 +4425,15 @@
           "name": "evidenceSearch",
           "ordinal": 0,
           "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "servicesList",
+          "ordinal": 0,
+          "size": 8,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -6184,7 +6193,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 223,
+          "size": 224,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",

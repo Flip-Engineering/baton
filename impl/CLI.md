@@ -47,6 +47,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.stop` | `ordinary` | `baton run stop` | `baton run stop RUN_ID` |
 | `run.view` | `ordinary` | `baton run view` | `baton run view RUN_ID` |
 | `run.watch` | `ordinary` | `baton run watch` | `baton run watch RUN_ID` |
+| `services.list` | `ordinary` | `baton services list` | `baton services list --provider zai` |
 | `swarm.capture` | `ordinary` | `baton swarm capture` | `baton swarm capture SWARM_ID reviewer CONTRIBUTION_ID` |
 | `swarm.check` | `ordinary` | `baton swarm check` | `baton swarm check SWARM_ID reviewer CONTRIBUTION_ID CHECK_ID` |
 | `swarm.create` | `ordinary` | `baton swarm create` | `baton swarm create "Ship the release"` |
@@ -94,6 +95,7 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 | `baton explore OBJECTIVE` | `explore objective` | The single-route read-only evidence preset. |
 | `baton swarm` | `swarm list` | Create, staff, guide and read living swarms (`baton help swarm`). |
 | `baton evidence search` | `evidence search` | Search the deployment’s evidence and contributions by swarm, participant, kind, path or free text. |
+| `baton services list` | `services list` | List the deployment’s configured provider services: models, derived routes, and subscription-window usage with its reset instant. |
 | `baton deployment watch (or wakes-since/reincarnate)` | `deployment watch --follow` | Attach to the deployment wake stream and print one JSON frame per coordination row; `wakes-since` reads one bounded page instead; reincarnate the RUNNING resident onto a commit in place. |
 | `baton waves` | `waves list` | Run, compile, start, stop and inspect workflow waves. |
 | `baton runs list` | `runs list` | List the Runs this authenticated connection may observe. |

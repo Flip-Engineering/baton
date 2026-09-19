@@ -15,6 +15,7 @@ import {
 import { compileWavefile } from './workflow-dsl.mjs';
 import { SWARM_MCP_TOOL_DEFINITIONS } from './swarm-surface.mjs';
 import { EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
+import { SERVICES_LIST_INPUT_SCHEMA } from './provider-services.mjs';
 
 // Issue #233 (canonical naming unification): every mcp-flagged application definition is
 // admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
@@ -28,7 +29,10 @@ const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([name, definition]) => definition.mcp && !name.startsWith('swarm.')
     // evidence.search (#318) rides the ordinary baton_* transport like the swarm family — the
     // fleet_* twin would exist only as an unadvertised alias.
-    && name !== 'evidence.search')
+    && name !== 'evidence.search'
+    // services.list (#317, docs/50): the same posture — the ordinary baton_services_list row is
+    // the only flat spelling; a fleet_* twin would exist only as an unadvertised alias.
+    && name !== 'services.list')
   .flatMap(([name, definition]) => {
     const { canonical, mcp } = canonicalAndTransportNames(name);
     return [[mcp, name, definition], [canonical, name, definition]];
@@ -64,6 +68,8 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_waves_attach', 'waves.attach'],
     ['baton_evidence_search', 'evidence.search'],
     ['evidence.search', 'evidence.search'],
+    ['baton_services_list', 'services.list'],
+    ['services.list', 'services.list'],
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
     ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [[tool.name, tool.command], [tool.command, tool.command]]),
   ].map(([tool, name]) => [tool, name]),
@@ -136,6 +142,11 @@ const CAPABILITY = Object.freeze({
   // `_authority` computes `[undefined]` and refuses a fully-capable principal with `forbidden`.
   ...Object.fromEntries([deriveSurfaceNames('evidence.search').mcp, 'evidence.search']
     .map((tool) => [tool, canonicalOperationForCommand('evidence.search').capabilities])),
+  // Issue #317 (docs/50): services.list is advertised from its own tool row (like evidence.search
+  // above — excluded from MCP_APPLICATION_ENTRIES, so no derived row reaches it); register BOTH
+  // spellings from the canonical operation's capability classes.
+  ...Object.fromEntries([deriveSurfaceNames('services.list').mcp, 'services.list']
+    .map((tool) => [tool, canonicalOperationForCommand('services.list').capabilities])),
   baton_context_eval: ['observe'],
   baton_decision_answer: ['approve', 'observe'],
   // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface wave ergonomics, doctor, and
@@ -1067,6 +1078,21 @@ const EVIDENCE_SEARCH_TOOL_DEFINITIONS = Object.freeze([Object.freeze((() => ({
   }),
 }))())]);
 
+// Issue #317 (docs/50): the provider-services read as an ordinary tool. ONE schema — the
+// canonical operation's own (provider-services.mjs) — so the advertised wire shape can never
+// drift from the operation every surface serves. The canonical dot twin derives below like
+// every other tool.
+const SERVICES_LIST_TOOL_DEFINITIONS = Object.freeze([Object.freeze((() => ({
+  name: deriveSurfaceNames('services.list').mcp,
+  _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+  execution: Object.freeze({ taskSupport: 'forbidden' }),
+  description: 'List the deployment’s configured provider services: the models each offers (pulled live from the service’s model-list endpoint where one answers, else the declaration), the routes derived from them, and subscription-window usage with its reset instant where declared or observed.',
+  inputSchema: schema({ ...repo, ...SERVICES_LIST_INPUT_SCHEMA.properties }, ['repoId']),
+  annotations: Object.freeze({
+    readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+  }),
+}))())]);
+
 // 2026-09-14 audit (U-F7): an alias pair carries DISTINCT descriptions, so a model can tell the
 // canonical spelling from the retained one instead of seeing two identically-described tools. The
 // note derives from the sibling table (one declaration), never retyped per tool.
@@ -1093,6 +1119,7 @@ export const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.map(withSpellingNote),
   ...SWARM_APPLICATION_TOOL_DEFINITIONS,
   ...EVIDENCE_SEARCH_TOOL_DEFINITIONS,
+  ...SERVICES_LIST_TOOL_DEFINITIONS,
   ...WAKE_TOOL_DEFINITIONS,
   ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => {
     const base = LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.legacyTool);
