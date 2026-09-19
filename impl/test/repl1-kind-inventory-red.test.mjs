@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
+import { memberSource } from './seam-member-source.mjs';
 
 function bareStore(t) {
   const root = mkdtempSync(join(tmpdir(), 'baton-repl1-kinds-'));
@@ -23,7 +24,11 @@ function bareStore(t) {
   return store;
 }
 
-const applySource = CoordinationStore.prototype._apply.toString();
+// Issue #259 slice 4: the fold's body is in coordination-ledger.mjs now, and the class keeps a
+// three-line delegate. The scan names the MEMBER and reads its live source — the delegate and the
+// body together, with the module's `store` receiver normalized back to `this.` — so the fold it
+// audits is the fold that runs, wherever the split put it.
+const applySource = memberSource('_apply');
 
 function foldedKinds() {
   const kinds = new Set();

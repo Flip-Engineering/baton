@@ -93,6 +93,7 @@ import { FRAME_LIMITS } from '../src/limits.mjs';
 import {
   MAX_SCRATCHPAD_SHARED_ENTRIES, MAX_SCRATCHPAD_WORKER_ENTRIES,
 } from '../src/coordination-store.mjs';
+import { memberSource } from './seam-member-source.mjs';
 
 // ---------------------------------------------------------------------------
 // Constants (closed, byte-stable — the fixture's stand-in for the operator's
@@ -350,6 +351,16 @@ function grepLines(file, pattern) {
   } catch {
     return [];
   }
+}
+
+/** The same read as `grepLines`, over source text already in hand: the member a moved body lives
+ * in, read by name through the live seam map (issue #259 slice 4), where a file grep would find
+ * only the delegate. `pattern` is an ERE, as `grepLines` takes it. */
+function grepSourceLines(text, pattern) {
+  const regex = new RegExp(pattern, 'u');
+  return text.split('\n')
+    .map((line, index) => ({ line: index + 1, text: line }))
+    .filter((row) => regex.test(row.text));
 }
 
 // The blueteam-158 §3.1/§3.5 comment-flip fold: a STRUCTURAL grep must pin CODE, never a comment.
@@ -1000,11 +1011,16 @@ test('P-A4 PIN: the kernel _byKey replay binding has NO scope term — the two-s
   // read the replay terms by their `!==` co-occurrence instead. The `!==` form is the _byKey
   // binding discriminator (`prior.payload?.scope !==` is 0 at HEAD; the REPL binding replay at
   // coordination-store.mjs:15606/15703 uses the `:` form and must not trip the absence check).
-  const replayTerms = grepLines('coordination-store.mjs', 'prior\\.payload\\?\\.(runId|taskId|workerId|contentDigest) !==');
+  // Issue #259 slice 4: the kernel's body is in coordination-ledger.mjs now, and the class keeps a
+  // three-line delegate. Both pins below read the MEMBER's live source — delegate and body, with the
+  // module's `store` receiver normalized back to `this.` — so the envelope they audit is the
+  // envelope that runs, wherever the split put it.
+  const writeSource = memberSource('writeScratchpad');
+  const replayTerms = grepSourceLines(writeSource, 'prior\\.payload\\?\\.(runId|taskId|workerId|contentDigest) !==');
   assert.ok(replayTerms.length >= 2
     && ['runId', 'taskId', 'workerId', 'contentDigest'].every((term) => replayTerms.some((row) => row.text.includes(`prior.payload?.${term} !==`))),
     'the writeScratchpad _byKey binding carries the replay terms');
-  assert.equal(grepLines('coordination-store.mjs', 'prior\\.payload\\?\\.scope !==').length, 0,
+  assert.equal(grepSourceLines(writeSource, 'prior\\.payload\\?\\.scope !==').length, 0,
     'the kernel _byKey replay binding has no scope term — the two-scope verb is disambiguated by the SURFACE namespacing (H3.1, OQ2), never by amending the closed writeScratchpad envelope (G9/G10)');
 });
 
@@ -1041,10 +1057,11 @@ test('P-A7 PIN: the kernel bounds sit at the declared constants — the surface 
   assert.equal(bodyRow.value, 8192, 'scratchpad.entry.body stays 8192 B (limits.mjs:71)');
   assert.equal(bodyRow.refusalCode, 'scratchpad_entry_exceeded', 'the body limit refusal is the single typed code the surface must expose verbatim (OQ4)');
   // Bluetema §4 law fold: the `14100-14120` window is a line-range absolute anchor — drop it for a
-  // presence check with a RELATIVE order bound (the refusal sites sit at 14107/14240, both below the
-  // writeScratchpad def; the two anchors may move together, the order may not invert).
-  const writeStart = srcAnchor('coordination-store.mjs', 'writeScratchpad\\(fields, auth\\)');
-  const partitionRefusal = grepLines('coordination-store.mjs', "'scratchpad_partition_exhausted'");
-  assert.ok(partitionRefusal.length > 0 && partitionRefusal.some((row) => row.line > writeStart.line),
-    'the worker-partition cap refusal code sits below the writeScratchpad seam — the code the surface must expose for the 129th worker append (A7-3)');
+  // presence check inside the seam itself. The worker-partition refusal is raised BY the write path,
+  // so the member's own source is the window that must carry it (issue #259 slice 4: the body moved
+  // to coordination-ledger.mjs, so a file-keyed scan would read a three-line delegate).
+  const writeSource = memberSource('writeScratchpad');
+  const partitionRefusal = grepSourceLines(writeSource, "'scratchpad_partition_exhausted'");
+  assert.ok(partitionRefusal.length > 0,
+    'the worker-partition cap refusal code sits inside the writeScratchpad seam — the code the surface must expose for the 129th worker append (A7-3)');
 });

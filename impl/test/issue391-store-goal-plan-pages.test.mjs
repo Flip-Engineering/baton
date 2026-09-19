@@ -316,13 +316,20 @@ test('(c) the store and the application share ONE page derivation', () => {
     'application.mjs re-exports the shared page derivation for its own readers');
   assert.equal(/function goalPlanPage\(/u.test(application), false,
     'application.mjs defines no page derivation of its own');
-  // And the store accessors read it from the same module rather than cutting pages by hand.
-  for (const name of ['coordination-store.mjs', 'coordination-internals.mjs']) {
-    assert.match(readSource(name), /import \{[^}]*goalPlanPage[^}]*\} from '\.\/goal-plan\.mjs';/su,
+  // And every module that derives a page reads it from the shared module rather than cutting pages
+  // by hand. Issue #259 slice 4 moved the store's page-deriving member into coordination-ledger.mjs,
+  // so the store itself may no longer name `goalPlanPage` at all: the claim is about the modules
+  // that CALL it — one derivation, imported, wherever the split put its readers.
+  for (const name of ['coordination-store.mjs', 'coordination-internals.mjs', 'coordination-ledger.mjs']) {
+    const source = readSource(name);
+    if (!/goalPlanPage\(/u.test(source)) continue;
+    assert.match(source, /import \{[^}]*goalPlanPage[^}]*\} from '\.\/goal-plan\.mjs';/su,
       `${name}: the page derivation comes from the shared module`);
-    assert.match(readSource(name), /goalPlanPage\(/u,
-      `${name}: every page comes from the one shared derivation`);
   }
+  assert.match(readSource('coordination-ledger.mjs'), /goalPlanPage\(/u,
+    'coordination-ledger.mjs: the moved page derivation still reads the one shared derivation');
+  assert.equal(/function goalPlanPage\(/u.test(readSource('coordination-store.mjs')), false,
+    'coordination-store.mjs cuts no pages of its own');
 });
 
 test('(d) no count refusal survives, and the byte ceiling is named as one', () => {
@@ -337,7 +344,8 @@ test('(d) no count refusal survives, and the byte ceiling is named as one', () =
   const application = readSource('application.mjs');
   assert.deepEqual(codeLinesWith(application, 'goal_plan_status_oversize'), [],
     'no application readsite raises or catches the count refusal any more');
-  const storeLines = codeLinesWith(readSource('coordination-store.mjs'), 'goal_plan_status_oversize');
+  const storeLines = ['coordination-store.mjs', 'coordination-ledger.mjs']
+    .flatMap((name) => codeLinesWith(readSource(name), 'goal_plan_status_oversize'));
   assert.equal(storeLines.length, 1, 'the store keeps exactly one goal_plan_status_oversize site');
   assert.match(storeLines[0], /maxStatusBytes/u,
     'and it is the single-row BYTE ceiling the policy keeps, not a row count');
