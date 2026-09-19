@@ -308,6 +308,19 @@ inbox and answers with `swarm guide`, `swarm capture`, `swarm check` or `swarm s
 reads state files and never polls. Both directions ride the resident: the swarm must live in the
 published resident (`baton serve`), not in a private in-process deployment.
 
+**The deployment-scope pull is a CLI verb (#507, 2026-09-19).** `baton deployment
+wakes-since [--since SEQ] [--wake-class CLASS,...] [--swarm SWARM_ID,...]
+[--participant PARTICIPANT_ID,...]` answers ONE bounded page of the deployment wake stream as
+JSON, without holding an attachment; it is the pull form the MCP `baton_wakes_since` tool reads,
+reached from the operator's shell. The page is `baton.wake_page` — the same `cursor`, `swarms`,
+`frames` and typed `lagged` marker an attachment delivers — and its `cursor` rides again as
+`continuationCursor`: a caller resumes by passing that value back as `--since`, with no gap and
+no duplicate. The page is bounded by the stream's replay limit (`view.wake_replay.items` rows),
+and a page that outran it carries the typed `lagged` marker. `--after SEQ` is a working spelling
+of the `--since` axis, `--kinds`/`--swarms`/`--participants` are working spellings of the other
+three. `baton deployment watch` without `--follow` refuses `cli_command_unavailable` and names
+this verb.
+
 **Incarnation changes wake too (#306, 2026-09-18).** `incarnation_changed` is a deployment-scope wake class keyed on `host.reincarnated {from: {incarnation, commit}, to: {incarnation, commit}, predecessorExited}`; it is not terminal — the watcher's act is to re-read the view, because the rows and the attachment it held came from the predecessor incarnation. The handoff's own rows (`host.reincarnation_requested`, `host.successor_started`, `host.successor_published`, `host.publication_withdrawn`, `host.reincarnation_failed`) are durable and readable on the deployment ledger like the #351 stop rows.
 
 ### A stop that cannot converge names its wait (issue #265, 2026-09-14)

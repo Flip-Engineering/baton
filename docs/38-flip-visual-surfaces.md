@@ -92,7 +92,8 @@ The four views are:
   route/scope plus attention edges.
 - **Timeline:** the wake stream, consumed through ONE attachment per resident and classified
   by the closed wake-class table (`WAKE_CLASS_TABLE` in `impl/src/wake-stream.mjs`), plus the
-  bounded run event tail with explicit fact/prose provenance.
+  bounded run event tail with explicit fact/prose provenance. A script that wants one page of
+  the same frames runs `baton deployment wakes-since --since SEQ`.
 - **Telemetry:** route readiness, scheduler lanes, worker counts, budget pressure, and transport
   degradation (unchanged by the swarm-family work).
 `baton top` is explicitly human output. Ordinary Baton commands retain machine-clean JSON on

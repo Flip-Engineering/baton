@@ -300,8 +300,10 @@ headless mode for a host without a resident.
   client's to keep or `unsubscribe`.
 - **Retired from MCP:** `baton_run_attention_watch` and `baton_swarm_watch` — blocking reads an
   agent must never hold a turn on. `baton_wakes subscribe` with a `swarms`/`kinds` filter is the
-  same information as a feed, and `baton_wakes since` is the bounded pull. The CLI's
-  `baton swarm watch --follow` is unchanged. `run.view` carries no `waitMs` on the core schema;
+  same information as a feed, and `baton_wakes since` is the bounded pull. The CLI keeps both
+  legs of the same stream: `baton swarm watch --follow`, unchanged, and
+  `baton deployment wakes-since` (#507), which prints one bounded page of the same frames.
+  `run.view` carries no `waitMs` on the core schema;
   the change-aware read is a subscription plus a re-view.
 - `baton_surface watch` stays: it is the bounded composite notification loop for an operator
   client, not a per-operation block.

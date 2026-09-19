@@ -1559,9 +1559,9 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     summary: 'Search the deployment\u2019s evidence and contributions by swarm, participant, kind, path or free text.',
   }),
   Object.freeze({
-    token: 'deployment', verb: 'baton deployment watch (or reincarnate <commit-ish>)',
+    token: 'deployment', verb: 'baton deployment watch (or wakes-since/reincarnate)',
     argv: Object.freeze(['deployment', 'watch', '--follow']), kind: 'wake_watch', parser: 'baton-cli',
-    summary: 'Attach to the deployment wake stream and print one JSON frame per coordination row, or reincarnate the RUNNING resident onto a commit in place.',
+    summary: 'Attach to the deployment wake stream and print one JSON frame per coordination row; `wakes-since` reads one bounded page instead; reincarnate the RUNNING resident onto a commit in place.',
   }),
   Object.freeze({
     token: 'waves', verb: 'baton waves', argv: Object.freeze(['waves', 'list']), kind: 'command',
@@ -2822,11 +2822,14 @@ function parseSwarmCli(args, idempotencyKey) {
 // The topics are named inline because this function is reached while the module is still evaluating
 // (the help constant below it), where a later `const` is not yet initialized.
 function wakeWatchHelpBlocks(topic) {
-  if (topic !== 'swarm' && topic !== 'swarm.watch' && topic !== 'deployment.watch') return null;
+  if (topic !== 'swarm' && topic !== 'swarm.watch' && topic !== 'deployment'
+    && topic !== 'deployment.watch' && topic !== 'deployment.wakes-since') return null;
   return [
     [
       'wake stream:',
       '  baton deployment watch --follow [--wake-class CLASS,...] [--since SEQ]',
+      '  baton deployment wakes-since [--since SEQ] [--wake-class CLASS,...]',
+      '    [--swarm SWARM_ID,...] [--participant PARTICIPANT_ID,...]',
       '  baton swarm watch SWARM_ID --follow [--wake-class CLASS,...] [--since SEQ]',
       '  baton swarm watch SWARM_ID [--timeout-ms MS] [--wake-class CLASS,...]',
       '  One JSON frame per line. --wake-class watches named wake classes (--kinds stays a working',
@@ -2839,6 +2842,11 @@ function wakeWatchHelpBlocks(topic) {
       '  The BOUNDED swarm watch accepts the same --wake-class: it answers when a row of that class',
       '  lands (naming the class it woke on) or at its --timeout-ms deadline, and resumes with',
       '  --after-seq — --since is the stream cursor and belongs to --follow.',
+      '  wakes-since is the stream\'s PULL form: ONE bounded page of the frames matching the same',
+      '  --wake-class axis (plus --swarm/--participant filters), answered without an attachment and',
+      '  printed as JSON. It is the page the MCP baton_wakes_since tool reads; the page\'s `cursor`',
+      '  rides again as `continuationCursor`, so a caller resumes by passing it back as --since',
+      '  (`--after SEQ` is a working spelling of the same axis).',
     ].join('\n'),
     `wake classes (the closed set --wake-class admits):\n${wakeClassHelpLines().map((line) => `  ${line}`).join('\n')}`,
   ];
@@ -2904,11 +2912,75 @@ function parseDeploymentWatch(args, idempotencyKey) {
   const wakes = parseWakeCliFlags(args);
   noRemainder(args);
   if (!follow) {
-    throw cliError('deployment watch requires --follow; a bounded read is baton_wakes_since over MCP', 'cli_command_unavailable');
+    throw cliError('deployment watch requires --follow; the bounded read is baton deployment wakes-since [--since SEQ]', 'cli_command_unavailable');
   }
   return {
     kind: 'wake_watch', swarms: null, kinds: wakes.kinds, since: wakes.since,
     follow: true, stopOnClosedWake: false, idempotencyKey,
+  };
+}
+
+/** Issue #507: the admitted `--` vocabulary of the bounded deployment read, ONE list serving the
+ * parse and the closed-argv refusal (#431 shape) alike. `--wake-class`/`--since` are the wake
+ * stream's own taught spellings (the watch verbs take them too); `--kinds`, `--swarms` and
+ * `--participants` are the MCP `baton_wakes_since` tool's parameter names, and `--after` is the
+ * same cursor axis spelled the way issue #507 names it. All of them ride the stream's ONE filter
+ * parser (`parseWakeFilter`), so an unknown class refuses with the closed set. */
+const WAKE_PAGE_CLI_FLAGS = Object.freeze([
+  '--wake-class', '--kinds', '--swarm', '--swarms', '--participant', '--participants', '--since', '--after',
+]);
+
+const WAKE_PAGE_CLI_USAGE = 'baton deployment wakes-since [--since SEQ] [--wake-class CLASS,...] '
+  + '[--swarm SWARM_ID,...] [--participant PARTICIPANT_ID,...]';
+
+/** The closed argv (#431 shape): a token that begins with `--` and is not in the verb's
+ * vocabulary refuses naming the token, the admitted flags and the usage line, so a typo can never
+ * be eaten as a filter value. */
+function assertWakePageArgvClosed(args) {
+  const offending = args.find((token) => token.startsWith('--') && !WAKE_PAGE_CLI_FLAGS.includes(token));
+  if (offending === undefined) return;
+  const error = cliError(
+    `deployment wakes-since: ${offending} is not an admitted flag;`
+      + ` admitted flags: ${WAKE_PAGE_CLI_FLAGS.join(', ')}; usage: ${WAKE_PAGE_CLI_USAGE}`,
+  );
+  error.detail = { field: offending, rule: 'closed-set', admitted: [...WAKE_PAGE_CLI_FLAGS], usage: WAKE_PAGE_CLI_USAGE };
+  throw error;
+}
+
+/** Issue #507: `baton deployment wakes-since` — the deployment wake stream's PULL form as a real
+ * CLI verb. `baton deployment watch --follow` holds one attachment; this verb answers ONE bounded
+ * page of the same frames (the resident's `GET /v1/wakes` under `Accept: application/json`, the
+ * transport the MCP `baton_wakes_since` tool rides) after the `--since` coordination cursor, in
+ * the filter vocabulary both surfaces share. */
+function parseDeploymentWakesSince(args, idempotencyKey) {
+  assertWakePageArgvClosed(args);
+  const axis = (names) => names.flatMap((name) => takeAll(args, name))
+    .flatMap((value) => `${value}`.split(','))
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  const since = take(args, '--since');
+  const after = take(args, '--after');
+  if (since !== null && after !== null) {
+    throw cliError('deployment wakes-since takes one cursor: --since SEQ (or --after SEQ, the same axis)');
+  }
+  let filter;
+  try {
+    filter = parseWakeFilter({
+      kinds: axis(['--wake-class', '--kinds']),
+      swarms: axis(['--swarm', '--swarms']),
+      participants: axis(['--participant', '--participants']),
+      since: since ?? after,
+    });
+  } catch (cause) {
+    throw cliError(cause.message ?? 'wake filter is invalid', typeof cause?.code === 'string' ? cause.code : 'cli_invalid');
+  }
+  noRemainder(args);
+  return {
+    kind: 'wake_page',
+    kinds: filter.kinds === null ? null : [...filter.kinds].sort(),
+    swarms: filter.swarms === null ? null : [...filter.swarms].sort(),
+    participants: filter.participants === null ? null : [...filter.participants].sort(),
+    since: filter.since, idempotencyKey,
   };
 }
 /** Issue #365: the ONE option set every CLI follow leg admits — the wake watch, the run stream
@@ -3040,6 +3112,23 @@ export async function followWakes(parsed, client, options = {}) {
   // page consumer still sees one page per coordination row (#272).
   if (frames === 0) await options.onFollowPage?.(endedRow);
   return endedRow;
+}
+
+/** Issue #507: the CLI leg of the bounded pull — ONE page from the resident's wake stream (the
+ * same page the MCP `baton_wakes_since` tool bounds and the watch attachment replays), annotated
+ * with the continuation cursor this file's list reads name: `continuationCursor`, the coordination
+ * seq the caller passes back as `--since` to continue with no gap and no duplicate. The page is
+ * bounded by the stream's own replay limit, and a page that outran it carries the stream's typed
+ * `lagged` marker — never a silent hole. */
+export async function readDeploymentWakePage(parsed, client) {
+  const page = await client.wakesSince({
+    kinds: parsed.kinds ?? null, swarms: parsed.swarms ?? null,
+    participants: parsed.participants ?? null, since: parsed.since ?? null,
+  });
+  return Object.freeze({
+    ...page,
+    continuationCursor: Number.isSafeInteger(page?.cursor) ? String(page.cursor) : null,
+  });
 }
 
 /** The durable verdict row one check wrote, or null while it is still running. The runtime composes
@@ -3842,8 +3931,9 @@ export function parseBatonCli(rawArgs) {
         args: { target }, idempotencyKey,
       };
     }
+    if (verb === 'wakes-since') return parseDeploymentWakesSince(args, idempotencyKey);
     if (verb !== 'watch') {
-      throw cliError('deployment requires the watch or reincarnate verb: baton deployment watch --follow, or baton deployment reincarnate <commit-ish>', 'cli_command_unavailable');
+      throw cliError('deployment requires the watch, wakes-since or reincarnate verb: baton deployment watch --follow, baton deployment wakes-since [--since SEQ], or baton deployment reincarnate <commit-ish>', 'cli_command_unavailable');
     }
     return parseDeploymentWatch(args, idempotencyKey);
   }
@@ -5455,6 +5545,7 @@ export async function runBatonCli(parsed, client, options = {}) {
     }, client, options ?? {});
   }
   if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
+  if (parsed.kind === 'wake_page') return readDeploymentWakePage(parsed, client);
   if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_watch_filtered') return watchSwarmFiltered(parsed, client);
   if (parsed.kind === 'stream') {
