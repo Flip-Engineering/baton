@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { memberSource } from './seam-member-source.mjs';
+
 import {
   APPLICATION_SEMANTIC_REGISTRY,
   SURFACING_MATRIX_KEYS,
@@ -97,7 +99,9 @@ test('SM-4 read rows: scratchpad projection, decision deadline, and horizon view
   assert.deepEqual(projected.scopes, ['worker:w1', 'shared']);
   const application = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8');
   assert.match(application, /deadlineAt:\s*interaction\.deadlineAt\s*\?\?\s*null/u);
-  const coordinator = readFileSync(new URL('../src/coordinator.mjs', import.meta.url), 'utf8');
+  // issue #259 slice 10: workflowHorizon moved to runtime-observation.mjs — read the member,
+  // wherever the split left it, through the seam-map resolver.
+  const coordinator = memberSource('workflowHorizon');
   assert.match(coordinator, /viewer !== 'orchestrator' && !ownedWorkerIds\.includes\(viewer\)/u);
 });
 

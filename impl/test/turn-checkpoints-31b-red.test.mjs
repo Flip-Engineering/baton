@@ -21,6 +21,7 @@
 //
 // Clocks are fixed (FIXED_NOW) in every fixture — no wall-clock time bombs.
 
+import { memberSource } from './seam-member-source.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -547,7 +548,9 @@ test('E1: a stall watchdog fired while the task is `paused` performs NO action �
 
 test('E2: the load-bearing guard still reads `task.status !== \'working\'` verbatim — a source pin '
   + 'against a future refactor silently narrowing it to an allowlist (rule 11)', () => {
-  const source = readFileSync(join(SRC, 'coordinator.mjs'), 'utf8');
+  // issue #259 slice 10: the guard's member moved to runtime-observation.mjs — the pin reads
+  // the member, wherever it lives, through the seam-map resolver.
+  const source = memberSource('_armWatchdog');
   assert.ok(
     source.includes("if (!task || task.status !== 'working' || handle.watchdogActions?.has('stall')) return;"),
     'the stall guard must stay a single negated string comparison',
