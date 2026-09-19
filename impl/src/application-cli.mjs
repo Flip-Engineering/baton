@@ -3168,6 +3168,29 @@ export function swarmCheckVerdict(view, parsed) {
     && review.reason.startsWith(`Check ${parsed.checkId}:`)) ?? null;
 }
 
+/** Issue #522: whether the host-capacity `verify` lease one check runs under says the check is
+ * still the resident's work. A check holds that lease — the same lease the suite runner takes,
+ * under the holder template `check:<contributionId>:<checkId>` — for its whole verdict, so a
+ * holder still waiting in the verify queue, or a verify lease held at all, means the verification
+ * this caller waits on is still running. They are read from the deployment rows the swarm view
+ * publishes (`deployment.hostCapacity`, the resident's own non-mutating host-capacity observation).
+ *
+ * A deployment that publishes no host-capacity observation (`null`: host admission disabled, or a
+ * bare application) runs its checks without a lease it can report, so there is no lease state to
+ * read and the answer is `true`: the check's own verdict, or the typed refusal a re-dispatched
+ * check answers with, is what ends that wait. A probe that cannot be read at all is a different
+ * fact and yields `false`: the caller's pending receipt is the answer for a check whose progress
+ * it cannot observe. */
+export function swarmCheckVerifyLeaseHeld(view, contributionId, checkId) {
+  const capacity = view?.deployment?.hostCapacity ?? null;
+  if (capacity === null || typeof capacity !== 'object' || Array.isArray(capacity)) return true;
+  const queued = (Array.isArray(capacity.queue) ? capacity.queue : [])
+    .some((row) => row?.kind === 'verify' && row?.holder === `check:${contributionId}:${checkId}`);
+  if (queued) return true;
+  const held = capacity.used?.leases?.verify;
+  return Number.isSafeInteger(held) && held > 0;
+}
+
 const LIVE_RUNTIME_STATES = new Set(['pending', 'working', 'blocked', 'idle', 'stopping']);
 
 /** One wake line: what changed (the matched event), the organization truth an orchestrator acts
@@ -5024,19 +5047,33 @@ export class BatonWebClient {
       repoId: this.repoId, ...(runId ? { runId } : {}), origin: this.origin,
       ...(declaredFrame ? { frame: declaredFrame } : {}),
     };
+    // Issue #522: a check runs a genuine verification — minutes of suite work — under the same
+    // host-capacity `verify` lease the suite runner takes, held until the verdict lands. The flat
+    // command bound below is a fixed 90 seconds, while a verification's length is decided by the
+    // suite it runs, so the wait is re-armed on the check's own progress: while the verify lease
+    // is queued for this check or held, the resident is still working on it and the caller keeps
+    // waiting. Each round re-issues the same identity-keyed request, which the resident answers
+    // from the check it is already running, so a round that finds the check settled returns its
+    // verdict. When the lease is gone the check is no longer the resident's work, and the pending
+    // receipt is the answer.
     let body;
-    try {
-      body = await this._json('/v1/commands', {
-        method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
-      }, this._requestTimeoutForCommand(name, args), waitSignal);
-    } catch (error) {
-      // A caller's own stop is not "the command outlived its bound": skip the pending-receipt
-      // probe (it would make a SIGINT'd follow read as a pending command) and surface the wait
-      // refusal the leg translates into its ended row.
-      if (waitSignal?.aborted) throw error;
-      const pending = await this._pendingReceiptOrNull(name, args, envelope, error);
-      if (pending !== null) throw pending;
-      throw error;
+    for (;;) {
+      try {
+        body = await this._json('/v1/commands', {
+          method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
+        }, this._requestTimeoutForCommand(name, args), waitSignal);
+        break;
+      } catch (error) {
+        // A caller's own stop is not "the command outlived its bound": skip the pending-receipt
+        // probe (it would make a SIGINT'd follow read as a pending command) and surface the wait
+        // refusal the leg translates into its ended row.
+        if (waitSignal?.aborted) throw error;
+        const pending = await this._pendingReceiptOrNull(name, args, envelope, error);
+        if (pending === null) throw error;
+        if (name !== 'swarm.check' || !await this._swarmCheckVerifyLeaseHeld(args, waitSignal)) {
+          throw pending;
+        }
+      }
     }
     if (body.status !== 'admitted') return body.result ?? body;
     return this.reconcile(envelope.commandId, { name, args }, waitSignal);
@@ -5062,6 +5099,28 @@ export class BatonWebClient {
       },
       retryable: false,
     });
+  }
+
+  /** Issue #522: one round's progress observation for a check that outlived this caller's bound.
+   * A check holds its host-capacity `verify` lease for the whole verdict, so the swarm view's
+   * deployment rows (`deployment.hostCapacity`) answer whether that lease is still queued for the
+   * check or held. A probe that cannot be read reports no progress: the caller's pending receipt
+   * is then the honest answer. The probe is a plain read of the swarm's own view, so it mints no
+   * receipt and carries no caller key. */
+  async _swarmCheckVerifyLeaseHeld(args, waitSignal) {
+    const envelope = {
+      schemaVersion: 1, commandId: randomUUID(), idempotencyKey: randomUUID(),
+      command: 'swarm_view', args: { swarmId: args.swarmId },
+      repoId: this.repoId, origin: this.origin,
+    };
+    let body;
+    try {
+      body = await this._json('/v1/commands', {
+        method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
+      }, this.requestTimeoutMs, waitSignal);
+    } catch { return false; }
+    if (body.status === 'admitted') return false;
+    return swarmCheckVerifyLeaseHeld(body.result ?? body, args.contributionId, args.checkId);
   }
 
   /** One live probe: does the deployment answer at all? Any HTTP answer — including a refusal —

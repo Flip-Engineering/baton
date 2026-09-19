@@ -62,9 +62,15 @@ test('R-5: a command that outlives the request bound returns the pending receipt
   assert.match(error.detail.observe.command, /baton swarm check swarm-288 reviewer contribution-288 check-288 --follow/u);
   assert.match(error.detail.observe.row, /reviews\["contribution-288"\]/u);
   assert.match(error.detail.observe.row, /Check check-288/u);
+  // #522 migration: a check's receipt is now minted only when the check's own progress cannot be
+  // observed either, so the leg reads the verify lease (the swarm view) before it surrenders. That
+  // read is the third request and it is NOT a liveness probe: the deployment is probed once, and
+  // only after the bound elapsed. Here it cannot be read either — this fixture answers no command
+  // but the aborted one — so the receipt is the answer.
   assert.deepEqual(requested, [
     'https://resident.baton.test/v1/commands',
     'https://resident.baton.test/healthz',
+    'https://resident.baton.test/v1/commands',
   ], 'liveness is probed once, and only after the bound elapsed');
 });
 
