@@ -125,6 +125,14 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/application-briefing.mjs', className: null, receiver: 'application',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Slice 4's module target: the store's observation bucket (241 members) moved to
+  // coordination-ledger.mjs, which reads the class it was moved out of through its `store` first
+  // parameter — the same receiver convention the two module targets above use. The relocated
+  // primitives the moved bodies read are module-scope functions too, so they are members here.
+  Object.freeze({
+    file: 'impl/src/coordination-ledger.mjs', className: null, receiver: 'store',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -185,6 +193,12 @@ const AUTHORITY_RULES = Object.freeze([
   // reachability places them before any rule is consulted.
   { seam: 'observation', id: 'brief_port', weight: 3, call: /\bruntimeBriefing\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted brief seam (runtime-briefing.mjs)' },
 
+  // Slice 4 extends the same rule to the observation bucket: a member whose body is a delegate into
+  // coordination-ledger.mjs keeps the seam its body had there. The rule is the evidence, not a name
+  // heuristic — `_apply`, `_append`, `writeScratchpad` and the rest classify as observation because
+  // the call says where their bodies went, exactly as `replay_port` says it for `_load`.
+  { seam: 'observation', id: 'ledger_port', weight: 3, call: /\bcoordinationLedger\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted observation module (coordination-ledger.mjs)' },
+
   // ── the swarm family (issue #284 item S-G4) ─────────────────────────────────
   // SwarmRuntime speaks its own refusal and replay dialects, and both are evidence a name rule
   // cannot see: the gates (`_permit`, `_caller`, `_participant`, `_worker`, `_sharedWorkspace`)
@@ -227,14 +241,16 @@ if (new Set(AUTHORITY_RULES.map((rule) => rule.id)).size !== AUTHORITY_RULES.len
 
 /** Every member of one declared target, in source order: the class's top-level methods when
  * `className` names a class, or the module's top-level function declarations when `className` is
- * null (an extracted module has no class to read the members off — issue #259 slice 2). */
+ * null (an extracted module has no class to read the members off — issue #259 slice 2). A moved
+ * member that yielded keeps yielding: a module target reads `generator_function_declaration` too,
+ * or the one member whose body is a generator would leave the map at the moment it moved. */
 export function collectMembers(source, className) {
   const root = parse(Lang.JavaScript, source).root();
   const nodes = [];
   if (className === null) {
     for (const statement of root.children()) {
       const declaration = statement.kind() === 'export_statement' ? statement.field('declaration') : statement;
-      if (declaration?.kind() === 'function_declaration') nodes.push(declaration);
+      if (declaration?.kind() === 'function_declaration' || declaration?.kind() === 'generator_function_declaration') nodes.push(declaration);
     }
   } else {
     const declaration = root

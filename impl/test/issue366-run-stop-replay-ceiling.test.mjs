@@ -32,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
+import { memberSource } from './seam-member-source.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 
 const REPO_ID = 'repo-366-target-set';
@@ -282,8 +283,16 @@ test('a fleet drain target set is not a projection of this ledger: the store kee
 
 const STORE_SOURCE = readFileSync(new URL('../src/coordination-store.mjs', import.meta.url), 'utf8');
 
-/** The source of one site, from its member header to the next member's header. */
+/** The source of one site. A site named by its member resolves through the live seam map — the class
+ * delegate and, for a member the split moved, the body in the module that holds it (issue #259
+ * slice 4 moved the run-stop target helpers into coordination-ledger.mjs). A site named by a literal
+ * header still reads the store file, for the module-scope helpers the map does not carry. */
 function siteSource(open, next) {
+  if (!open.includes('(')) {
+    const source = memberSource(open);
+    assert.notEqual(source, '', `the live map still carries the member ${open}`);
+    return source;
+  }
   const start = STORE_SOURCE.indexOf(open);
   assert.notEqual(start, -1, `the store still carries ${open}`);
   const end = STORE_SOURCE.indexOf(next, start + open.length);
@@ -292,21 +301,18 @@ function siteSource(open, next) {
 }
 
 // The three sites the brief names: the fleet-drain admission, the run-stop target helpers
-// (`_runStopContextTargets` + `_runStopTargets`), and the run-stop admission.
-const SITES = [
-  ['_validateFleetDrainAdmission(p, event, integrity = false) {', '\n  _validateFleetDrainCompletion('],
-  ['_runStopContextTargets(targetRunIds) {', '\n  _validSessionPreservationReceipt('],
-  ['_validateRunStopAdmission(p, event, integrity = false) {', '\n  _validateRunStopCompletion('],
-];
+// (`_runStopContextTargets` + `_runStopTargets`), and the run-stop admission — by member name, so a
+// moved member's text is read where it lives.
+const SITES = ['_validateFleetDrainAdmission', '_runStopContextTargets', '_validateRunStopAdmission'];
 
 test('the target-set literals are gone from the three sites, and the ONE helper is judged at admission only', () => {
-  for (const [open, next] of SITES) {
-    const source = siteSource(open, next);
+  for (const name of SITES) {
+    const source = siteSource(name);
     assert.equal(source.includes('100_000'), false,
-      `${open} still carries a literal target-set ceiling: the ledger is the physical resource`);
+      `${name} still carries a literal target-set ceiling: the ledger is the physical resource`);
   }
-  const fleetDrain = siteSource(SITES[0][0], SITES[0][1]);
-  const runStop = siteSource(SITES[2][0], SITES[2][1]);
+  const fleetDrain = siteSource(SITES[0]);
+  const runStop = siteSource(SITES[2]);
   assert.match(runStop, /if \(!integrity\) \{?\s*\n?\s*assertTargetSetAdmissible\(/u,
     'the run-stop admission judges its target set through the ONE helper, under `!integrity`: the '
     + 'fold applies no ceiling, so a recorded row is never re-judged for size on replay');
@@ -315,8 +321,9 @@ test('the target-set literals are gone from the three sites, and the ONE helper 
     + 'live fleet, not a projection of this ledger');
   assert.match(fleetDrain, /_drainPolicy\.maxWorkers/u,
     'and the site names the bound that does apply to a drain (the deployment\'s own drain policy)');
-  // The fold path itself: the target helpers state why they carry no ceiling at all.
-  const targetHelpers = siteSource(SITES[1][0], SITES[1][1]);
+  // The fold path itself: the target helpers state why they carry no ceiling at all — both of them,
+  // the window this pin always read (from `_runStopContextTargets` through `_runStopTargets`).
+  const targetHelpers = [siteSource('_runStopContextTargets'), siteSource('_runStopTargets')].join('\n');
   assert.equal(/run stop target set exceeds capacity|run stop Context target set exceeds capacity/u
     .test(targetHelpers), false,
   'the helpers reached from the fold carry no capacity refusal');

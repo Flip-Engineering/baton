@@ -32,6 +32,7 @@ import {
   projectScratchpadView,
 } from '../src/application.mjs';
 import { createScratchpadEntry } from '../src/messages.mjs';
+import { memberSource } from './seam-member-source.mjs';
 
 // ---------------------------------------------------------------------------
 // Fixed clocks + shared coordinates
@@ -430,7 +431,9 @@ function settleTaskWith(store, entries, { selected = null, worker = workerA, tas
 // ===========================================================================
 
 test('SP4: exactly three scratchpad kinds are folded and there is no scratchpad.read', () => {
-  const applySource = CoordinationStore.prototype._apply.toString();
+  // Issue #259 slice 4: the fold is a delegate on the class and a body in coordination-ledger.mjs —
+  // the scan names the member and reads its live source, so it audits the fold that runs.
+  const applySource = memberSource('_apply');
   const folded = new Set();
   for (const match of applySource.matchAll(/event\.kind === '([^']+)'/gu)) folded.add(match[1]);
   for (const match of applySource.matchAll(/\[([^\]]*)\]\.includes\(event\.kind\)/gu)) {
@@ -502,7 +505,7 @@ test('SP4: snapshot().scratchpad exists and is empty on a fresh store, then comp
 });
 
 test('SP4: the batch allowlist carries exactly the four scratchpad transaction kinds', () => {
-  const appendBatchSource = CoordinationStore.prototype._appendBatch.toString();
+  const appendBatchSource = memberSource('_appendBatch');
   for (const kind of [
     'scratchpad_task_settlement', 'scratchpad_link_citation',
     'scratchpad_workflow_settlement', 'scratchpad_stop_cleanup',
