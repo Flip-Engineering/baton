@@ -83,10 +83,11 @@
         {
           "name": "providerFaultDeathFor",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:key_name"
+            "observation:key_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -320,13 +321,10 @@
         {
           "name": "drain",
           "ordinal": 0,
-          "size": 104,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "admission:typed_refusal",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -367,13 +365,10 @@
         {
           "name": "releaseTerminalTaskResources",
           "ordinal": 0,
-          "size": 104,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:typed_refusal",
-            "observation:log_append",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -445,11 +440,12 @@
         {
           "name": "_pendingInteractionFor",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:read_name",
-            "observation:key_name"
+            "observation:key_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -483,47 +479,49 @@
         {
           "name": "pausedTurnStatus",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:projection_name"
+            "observation:projection_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "pausedTurns",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "workerActivity",
           "ordinal": 0,
-          "size": 42,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "lastToolRows",
           "ordinal": 0,
-          "size": 26,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
-            "observation:key_name"
+            "observation:key_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_contributionOperations",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -577,10 +575,11 @@
         {
           "name": "_pausedActTargets",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:key_name"
+            "observation:key_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -595,12 +594,11 @@
         {
           "name": "_expirePreNudgeScratchClaims",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -626,28 +624,28 @@
         {
           "name": "waitTurn",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
           "name": "claimTurn",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_claimReservedTurn",
           "ordinal": 0,
-          "size": 51,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -689,31 +687,29 @@
         {
           "name": "_recordDrainDisposition",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_mirrorDrainDispositions",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_cancelPendingForDrain",
           "ordinal": 0,
-          "size": 38,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -743,12 +739,11 @@
         {
           "name": "_settledDrainHolder",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -827,10 +822,11 @@
         {
           "name": "_recordDrainReleases",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -845,10 +841,11 @@
         {
           "name": "_recordDrainCustodyRetained",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -922,11 +919,10 @@
         {
           "name": "_deferTaskDispatch",
           "ordinal": 0,
-          "size": 23,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -1042,20 +1038,19 @@
         {
           "name": "_semanticControlBinding",
           "ordinal": 0,
-          "size": 25,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_exactProcesslessPreservationAuthority",
           "ordinal": 0,
-          "size": 71,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -1080,10 +1075,10 @@
         {
           "name": "_failWorkerPolicyObservation",
           "ordinal": 0,
-          "size": 30,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -1109,19 +1104,20 @@
         {
           "name": "_failWorktreeAuthority",
           "ordinal": 0,
-          "size": 25,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_providerRoutePolicy",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:projection_name"
+            "observation:projection_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -1165,11 +1161,11 @@
         {
           "name": "_releaseProviderTurnAdmission",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "admission:validation_vocabulary",
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -1224,21 +1220,21 @@
         {
           "name": "_mintAttentionSpill",
           "ordinal": 0,
-          "size": 27,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_pendingAttentionPush",
           "ordinal": 0,
-          "size": 35,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:read_name"
+            "observation:read_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -1253,20 +1249,22 @@
         {
           "name": "_knownAttentionIds",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:read_name"
+            "observation:read_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_attentionReceipt",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -1281,10 +1279,10 @@
         {
           "name": "_onSpawnRefused",
           "ordinal": 0,
-          "size": 42,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -1416,20 +1414,19 @@
         {
           "name": "_seedCoordinationTasks",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_seedCoordinationTasksPasses",
           "ordinal": 0,
-          "size": 60,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -1524,10 +1521,11 @@
         {
           "name": "_knownSessionContext",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:read_name"
+            "observation:read_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -1608,10 +1606,10 @@
         {
           "name": "_failPreservedReattachment",
           "ordinal": 0,
-          "size": 32,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -1669,10 +1667,11 @@
         {
           "name": "inspectPreservedResult",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:read_name"
+            "observation:read_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -1764,11 +1763,10 @@
         {
           "name": "_completeRetryCancelled",
           "ordinal": 0,
-          "size": 31,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -1794,11 +1792,10 @@
         {
           "name": "requestPublication",
           "ordinal": 0,
-          "size": 43,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -1822,23 +1819,23 @@
         {
           "name": "_workerPolicyProjection",
           "ordinal": 0,
-          "size": 13,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_taskTopologyProjection",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:projection_name",
             "observation:ledger_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -1863,20 +1860,20 @@
         {
           "name": "_activeMessageMember",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:read_name"
+            "observation:read_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_messagePeers",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -1905,11 +1902,12 @@
         {
           "name": "messageReceipt",
           "ordinal": 0,
-          "size": 31,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -1943,30 +1941,30 @@
         {
           "name": "_isReviewAuthority",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "admission:predicate_name",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_attentionPage",
           "ordinal": 0,
-          "size": 36,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_mintMemberTerminal",
           "ordinal": 0,
-          "size": 29,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -1991,10 +1989,10 @@
         {
           "name": "_send",
           "ordinal": 0,
-          "size": 30,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -2066,11 +2064,11 @@
         {
           "name": "_rejectContradictoryAdmission",
           "ordinal": 0,
-          "size": 13,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "admission:validation_vocabulary",
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -2085,10 +2083,10 @@
         {
           "name": "_prepareSemanticInterrupt",
           "ordinal": 0,
-          "size": 41,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -2134,10 +2132,11 @@
         {
           "name": "_observeEmergencyTerminal",
           "ordinal": 0,
-          "size": 51,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2182,52 +2181,48 @@
         {
           "name": "_coordTransition",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_settlePlanNodeBudget",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:projection_name",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_coordMap",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_coordMapEvent",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_coordRecord",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -2251,11 +2246,10 @@
         {
           "name": "_createCoordinationRefinement",
           "ordinal": 0,
-          "size": 29,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -2281,23 +2275,21 @@
         {
           "name": "_expireScratchClaims",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_expireBoardClaims",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -2371,10 +2363,10 @@
         {
           "name": "_releaseRetainedCheckout",
           "ordinal": 0,
-          "size": 26,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -2402,10 +2394,11 @@
         {
           "name": "registerParticipantRuntime",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2480,28 +2473,29 @@
         {
           "name": "_clearWatchdog",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_armWatchdog",
           "ordinal": 0,
-          "size": 28,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_resetWatchdogTurn",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
@@ -2510,25 +2504,27 @@
           "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_applyWatchdogAction",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_mintStallDeclared",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2543,19 +2539,20 @@
         {
           "name": "_armStallCycle",
           "ordinal": 0,
-          "size": 22,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_expireStallCycle",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2572,10 +2569,11 @@
         {
           "name": "_expireStallCycleSafely",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2612,18 +2610,19 @@
           "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_recordOperationFailure",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "admission:refusal_name",
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2638,19 +2637,20 @@
         {
           "name": "_cleanupTransportInBackground",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_recordTrustGateEscape",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2668,29 +2668,30 @@
         {
           "name": "_clearStall",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_observeStallSeam",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_scheduleScopeOrientation",
           "ordinal": 0,
-          "size": 50,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -2714,41 +2715,42 @@
         {
           "name": "_recordProviderGovernanceViolation",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_recordProviderTelemetryInvalid",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_recordProviderTurnUsage",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_recordUsage",
           "ordinal": 0,
-          "size": 76,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
             "observation:record_name",
-            "observation:route_observation"
+            "observation:route_observation",
+            "observation:observation_port"
           ]
         },
         {
@@ -2765,10 +2767,10 @@
         {
           "name": "_failTerminalProviderGovernance",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -2786,28 +2788,31 @@
         {
           "name": "_observeLogicalProviderCall",
           "ordinal": 0,
-          "size": 31,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_observeLogicalToolCall",
           "ordinal": 0,
-          "size": 31,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_clearBudgetStop",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2822,11 +2827,11 @@
         {
           "name": "_observeWatchdogEvent",
           "ordinal": 0,
-          "size": 73,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2841,29 +2846,30 @@
         {
           "name": "_observeTurnProgress",
           "ordinal": 0,
-          "size": 53,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_wireAck",
           "ordinal": 0,
-          "size": 20,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_observeKillAbsence",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -2938,19 +2944,19 @@
         {
           "name": "_attestAbsentStop",
           "ordinal": 0,
-          "size": 37,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_abandonStopWorker",
           "ordinal": 0,
-          "size": 29,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
@@ -3063,39 +3069,40 @@
         {
           "name": "_expireQuestion",
           "ordinal": 0,
-          "size": 25,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_mintInteractionExpired",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_cancelNativeQuestion",
           "ordinal": 0,
-          "size": 32,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_supersedeDecision",
           "ordinal": 0,
-          "size": 34,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -3174,15 +3181,12 @@
         {
           "name": "readProviderStatus",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "admission:typed_refusal",
-            "observation:coordination_authority",
             "observation:projection_name",
             "observation:read_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3309,108 +3313,96 @@
         {
           "name": "recallKnowledge",
           "ordinal": 0,
-          "size": 20,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "serveKnowledge",
           "ordinal": 0,
-          "size": 17,
+          "size": 6,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "claimScratch",
           "ordinal": 0,
-          "size": 19,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "postScratchFact",
           "ordinal": 0,
-          "size": 19,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "writeScratchpad",
           "ordinal": 0,
-          "size": 55,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_settleTerminalScratchpad",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "settleWorkflowScratchpad",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "contextRead",
           "ordinal": 0,
-          "size": 66,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_answerContextRead",
           "ordinal": 0,
-          "size": 98,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:typed_refusal",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_renderContextRead",
           "ordinal": 0,
-          "size": 48,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -3610,13 +3602,11 @@
         {
           "name": "_recordOrientationRating",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:typed_refusal",
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3643,11 +3633,10 @@
         {
           "name": "_runHorizonNodeIds",
           "ordinal": 0,
-          "size": 20,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3674,22 +3663,20 @@
         {
           "name": "readScratch",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:read_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "acquireBoardLease",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3706,21 +3693,19 @@
         {
           "name": "requestBoardClaim",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "submitBoardReport",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3737,12 +3722,11 @@
         {
           "name": "mintMemberBoardGrant",
           "ordinal": 0,
-          "size": 23,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3751,8 +3735,7 @@
           "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3761,19 +3744,17 @@
           "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "recordWorkerGeneration",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3814,60 +3795,59 @@
         {
           "name": "elevateTaskScratchpad",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "promoteWorkflowFinding",
           "ordinal": 0,
-          "size": 24,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_settlementMemberTask",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "settlementLease",
           "ordinal": 0,
-          "size": 93,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_bumpInteractionGeneration",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_bumpDecisionSettleCount",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -3891,11 +3871,12 @@
         {
           "name": "decisionSettledProjection",
           "ordinal": 0,
-          "size": 55,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -3910,55 +3891,48 @@
         {
           "name": "taskHorizon",
           "ordinal": 0,
-          "size": 22,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "workflowHorizon",
           "ordinal": 0,
-          "size": 39,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "projectHorizon",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:record_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "boardFence",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "boardSnapshot",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:coordination_authority",
             "observation:projection_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -3975,46 +3949,39 @@
         {
           "name": "dropReplBinding",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "bindingFence",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "replBindingSnapshot",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
-            "observation:coordination_authority",
             "observation:projection_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
           "name": "resolveReplCitation",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "admission:policy_gate",
             "admission:normalize_name",
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -4051,12 +4018,11 @@
         {
           "name": "_lastDeathCertEvidence",
           "ordinal": 0,
-          "size": 35,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
             "observation:projection_name",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         },
         {
@@ -4100,11 +4066,12 @@
         {
           "name": "_collectDigest",
           "ordinal": 0,
-          "size": 61,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
-            "observation:read_name"
+            "observation:read_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -4143,11 +4110,11 @@
         {
           "name": "_recordProviderQuotaBlock",
           "ordinal": 0,
-          "size": 24,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
@@ -4172,58 +4139,59 @@
         {
           "name": "_settleTransportDeath",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_mintProviderFaultDeath",
           "ordinal": 0,
-          "size": 99,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_foldProviderDegrade",
           "ordinal": 0,
-          "size": 54,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:observation_port"
           ]
         },
         {
           "name": "_recordProviderDegrade",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_settleObservedNativeChildren",
           "ordinal": 0,
-          "size": 27,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:log_append",
-            "observation:record_name"
+            "observation:record_name",
+            "observation:observation_port"
           ]
         },
         {
           "name": "_failProviderResult",
           "ordinal": 0,
-          "size": 35,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "delegates:observation",
-            "delegates:effect"
+            "observation:observation_port"
           ]
         },
         {
@@ -4263,11 +4231,10 @@
         {
           "name": "_terminalizeUnattachedCoordinationTasks",
           "ordinal": 0,
-          "size": 35,
+          "size": 3,
           "seam": "observation",
           "evidence": [
-            "observation:coordination_authority",
-            "observation:durable_read"
+            "observation:observation_port"
           ]
         }
       ]
@@ -21079,6 +21046,1448 @@
             "admission:policy_gate",
             "admission:normalize_name",
             "observation:log_append"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/runtime-observation.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "permissionsForWaveRole",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "settlementCandidacyTitle",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "projectHorizonScratchpad",
+          "ordinal": 0,
+          "size": 55,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "closedVerificationVerdict",
+          "ordinal": 0,
+          "size": 60,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "noop",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "globRegex",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "pathInScope",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "workerEditedPathsOf",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "workerToolTitleOf",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "workerObservedCommitsOf",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "providerFaultDeathFor",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "drain",
+          "ordinal": 0,
+          "size": 104,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "admission:typed_refusal",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "releaseTerminalTaskResources",
+          "ordinal": 0,
+          "size": 104,
+          "seam": "observation",
+          "evidence": [
+            "admission:typed_refusal",
+            "observation:log_append",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_pendingInteractionFor",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "pausedTurnStatus",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "pausedTurns",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "workerActivity",
+          "ordinal": 0,
+          "size": 42,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "lastToolRows",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_contributionOperations",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_pausedActTargets",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_expirePreNudgeScratchClaims",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "waitTurn",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "claimTurn",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_claimReservedTurn",
+          "ordinal": 0,
+          "size": 51,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_recordDrainDisposition",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_mirrorDrainDispositions",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_cancelPendingForDrain",
+          "ordinal": 0,
+          "size": 38,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_settledDrainHolder",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_recordDrainReleases",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordDrainCustodyRetained",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_deferTaskDispatch",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_semanticControlBinding",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_exactProcesslessPreservationAuthority",
+          "ordinal": 0,
+          "size": 71,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_failWorkerPolicyObservation",
+          "ordinal": 0,
+          "size": 30,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_failWorktreeAuthority",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_providerRoutePolicy",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "_releaseProviderTurnAdmission",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_mintAttentionSpill",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_pendingAttentionPush",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_knownAttentionIds",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_attentionReceipt",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_onSpawnRefused",
+          "ordinal": 0,
+          "size": 42,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_seedCoordinationTasks",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_seedCoordinationTasksPasses",
+          "ordinal": 0,
+          "size": 60,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_knownSessionContext",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_failPreservedReattachment",
+          "ordinal": 0,
+          "size": 32,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "inspectPreservedResult",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_completeRetryCancelled",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "requestPublication",
+          "ordinal": 0,
+          "size": 43,
+          "seam": "observation",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_workerPolicyProjection",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_taskTopologyProjection",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_activeMessageMember",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_messagePeers",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "messageReceipt",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_isReviewAuthority",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "admission",
+          "evidence": [
+            "admission:predicate_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_attentionPage",
+          "ordinal": 0,
+          "size": 36,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_mintMemberTerminal",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_send",
+          "ordinal": 0,
+          "size": 30,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_rejectContradictoryAdmission",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_prepareSemanticInterrupt",
+          "ordinal": 0,
+          "size": 41,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_observeEmergencyTerminal",
+          "ordinal": 0,
+          "size": 51,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_coordTransition",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_settlePlanNodeBudget",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_coordMap",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_coordMapEvent",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_coordRecord",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_createCoordinationRefinement",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_expireScratchClaims",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_expireBoardClaims",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_releaseRetainedCheckout",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "registerParticipantRuntime",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_clearWatchdog",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_armWatchdog",
+          "ordinal": 0,
+          "size": 28,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_resetWatchdogTurn",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_touchWatchdog",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_applyWatchdogAction",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_mintStallDeclared",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_armStallCycle",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_expireStallCycle",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_expireStallCycleSafely",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "recordedFailures",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordOperationFailure",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "observation",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_cleanupTransportInBackground",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_recordTrustGateEscape",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_clearStall",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_observeStallSeam",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_scheduleScopeOrientation",
+          "ordinal": 0,
+          "size": 50,
+          "seam": "observation",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_recordProviderGovernanceViolation",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordProviderTelemetryInvalid",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordProviderTurnUsage",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordUsage",
+          "ordinal": 0,
+          "size": 76,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name",
+            "observation:route_observation"
+          ]
+        },
+        {
+          "name": "_failTerminalProviderGovernance",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_observeLogicalProviderCall",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_observeLogicalToolCall",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_clearBudgetStop",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_observeWatchdogEvent",
+          "ordinal": 0,
+          "size": 73,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_observeTurnProgress",
+          "ordinal": 0,
+          "size": 53,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_wireAck",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_observeKillAbsence",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_attestAbsentStop",
+          "ordinal": 0,
+          "size": 37,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_abandonStopWorker",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_expireQuestion",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_mintInteractionExpired",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_cancelNativeQuestion",
+          "ordinal": 0,
+          "size": 32,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_supersedeDecision",
+          "ordinal": 0,
+          "size": 34,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "readProviderStatus",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "admission:typed_refusal",
+            "observation:projection_name",
+            "observation:read_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "recallKnowledge",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "serveKnowledge",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "claimScratch",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "postScratchFact",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "writeScratchpad",
+          "ordinal": 0,
+          "size": 55,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_settleTerminalScratchpad",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "settleWorkflowScratchpad",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "contextRead",
+          "ordinal": 0,
+          "size": 66,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_answerContextRead",
+          "ordinal": 0,
+          "size": 98,
+          "seam": "admission",
+          "evidence": [
+            "admission:typed_refusal",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_renderContextRead",
+          "ordinal": 0,
+          "size": 48,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordOrientationRating",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "admission",
+          "evidence": [
+            "admission:typed_refusal",
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_runHorizonNodeIds",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "readScratch",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "acquireBoardLease",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "requestBoardClaim",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "submitBoardReport",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "mintMemberBoardGrant",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_waveRoleOf",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_waveIdOf",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "recordWorkerGeneration",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "elevateTaskScratchpad",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "promoteWorkflowFinding",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_settlementMemberTask",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "settlementLease",
+          "ordinal": 0,
+          "size": 93,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_bumpInteractionGeneration",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_bumpDecisionSettleCount",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "decisionSettledProjection",
+          "ordinal": 0,
+          "size": 55,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "taskHorizon",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "workflowHorizon",
+          "ordinal": 0,
+          "size": 39,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "projectHorizon",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "boardFence",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "boardSnapshot",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:projection_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "dropReplBinding",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "bindingFence",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "replBindingSnapshot",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:projection_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "resolveReplCitation",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "admission:normalize_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_lastDeathCertEvidence",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_collectDigest",
+          "ordinal": 0,
+          "size": 61,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_recordProviderQuotaBlock",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_settleTransportDeath",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_mintProviderFaultDeath",
+          "ordinal": 0,
+          "size": 99,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_foldProviderDegrade",
+          "ordinal": 0,
+          "size": 54,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_recordProviderDegrade",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_settleObservedNativeChildren",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_failProviderResult",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_terminalizeUnattachedCoordinationTasks",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
           ]
         }
       ]

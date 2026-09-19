@@ -165,6 +165,14 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/runtime-effects.mjs', className: null, receiver: 'coordinator',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Slice 10's module target: the coordinator's observation bucket (142 members — the read
+  // projections and the write-receipt minters) moves to runtime-observation.mjs under the same
+  // convention; the relocated helpers (noop, pathInScope, closedVerificationVerdict and the rest)
+  // are module-scope members here.
+  Object.freeze({
+    file: 'impl/src/runtime-observation.mjs', className: null, receiver: 'coordinator',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -243,6 +251,11 @@ const AUTHORITY_RULES = Object.freeze([
   // Slice 9 extends the port rules to the coordinator's effect members: a member whose body is a
   // delegate into runtime-effects.mjs keeps the effect seam its body had there.
   { seam: 'effect', id: 'effects_port', weight: 3, call: /\bruntimeEffects\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted effects module (runtime-effects.mjs)' },
+  // Slice 10 extends the port rules to the observation bucket: a member whose body is a delegate
+  // into runtime-observation.mjs keeps the observation seam its body had there. Without the rule a
+  // three-line delegate like `_coordMap` — whose only evidence was the coordination authority its
+  // body reached — would fall to the surface fallback.
+  { seam: 'observation', id: 'observation_port', weight: 3, call: /\bruntimeObservation\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted observation module (runtime-observation.mjs)' },
 
   // Slice 5 extends the rule to the admission bucket: a member whose body is a delegate into
   // coordination-admission.mjs keeps the seam its body had there.

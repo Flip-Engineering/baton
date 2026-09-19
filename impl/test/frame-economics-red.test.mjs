@@ -1714,6 +1714,7 @@ const F_EXEMPTIONS = Object.freeze([
   // is stated once above and exempted in BOTH files, wherever the split left the line.
   ...STORE_MODULE_FILES.flatMap((file) => STORE_EXEMPTIONS.map(([pattern, note]) => [file, pattern, note])),
   ['coordinator.mjs', /Buffer\.byteLength\(JSON\.stringify\(result\)\) > 32_768/u, 'uncataloged: route-observation result cap'],
+  ['runtime-observation.mjs', /Buffer\.byteLength\(JSON\.stringify\(result\)\) > 32_768/u, 'uncataloged: route-observation result cap (the line moved here from coordinator.mjs in issue #259 slice 10)'],
   ['coordinator.mjs', /policy\.maxTargetBytes > 1024 \* 1024/u, 'uncataloged: scratch-oracle policy ceiling'],
   ['coordinator.mjs', /_orientationBound\(\{ modules \}, 2048\)/u, 'uncataloged: orientation-ladder render bound'],
   ['coordinator.mjs', /Buffer\.byteLength\(request\.id\) > 4_096/u, 'uncataloged: request id-class'],
