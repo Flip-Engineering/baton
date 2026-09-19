@@ -208,3 +208,21 @@ The `runtime-effects.test.mjs` / `runtime-admission.test.mjs` RE-series continue
 - The `_handleEvent` family split is untouched; the map schedules it last.
 - The slice-8/9/10 async-delegate hop retrofit is a separate follow-up.
 - The `application-*` buckets are outside this swarm's brief scope pending the root's decision.
+
+## 8. Execution errata (recorded at slice-12 execution; the landed truth is seam-slice-12.md)
+
+Two sections of this design were corrected by the executor's findings, each with a red/green
+gate behind it:
+
+- §3.1: `_admitRunStopTargets` is SYNC. An async prefix adds one adopted-promise settlement hop
+  before the convergence loop, and phase91 P91-12 fails on exactly that hop (red with async,
+  green with sync, green at the clean baseline). The startup-reconciliation wait and its
+  `coordinator_run_stop_incomplete` throw stay in the effect body at their verbatim position;
+  the admission prefix covers the validation and authority checks only.
+- §2: `closedVerificationVerdict` could not stay an import from `runtime-observation.mjs` —
+  `_integrate` reads it, and effects → observation would close a cycle with observation's
+  existing import of effects. The closed-verdict family (the function and its eight-name
+  closure) moved to `runtime-recovery.mjs` beside `noop`; `runtime-observation.mjs` re-exports
+  it, and RR7 pins the identity. The corpus rows read: coordinator 424, admission 102, effects
+  10, observation 150, recovery 65 (total 2 415 — the §5 total stands; the two rows moved with
+  the family).
