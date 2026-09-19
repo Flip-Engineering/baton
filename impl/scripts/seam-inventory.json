@@ -4247,10 +4247,11 @@
         {
           "name": "_resolveSemanticControlTarget",
           "ordinal": 0,
-          "size": 37,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4275,10 +4276,11 @@
         {
           "name": "_normalizeRunControlOutcome",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4373,10 +4375,11 @@
         {
           "name": "_resolveIntent",
           "ordinal": 0,
-          "size": 40,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4411,10 +4414,11 @@
         {
           "name": "_admitWorkspaceAttachment",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:guard_name"
+            "admission:guard_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4523,11 +4527,11 @@
         {
           "name": "_resolveSpillObjective",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name",
-            "observation:durable_read"
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4542,11 +4546,11 @@
         {
           "name": "_isWorkflowRun",
           "ordinal": 0,
-          "size": 15,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:predicate_name",
-            "observation:durable_read"
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4646,7 +4650,8 @@
           "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4738,32 +4743,31 @@
         {
           "name": "_validateSemanticEvidence",
           "ordinal": 0,
-          "size": 32,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
             "admission:validation_vocabulary",
             "observation:projection_name",
-            "observation:durable_read"
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_parseSemanticReview",
           "ordinal": 0,
-          "size": 80,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_semanticReview",
           "ordinal": 0,
-          "size": 54,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:typed_refusal",
-            "observation:durable_read"
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4787,10 +4791,11 @@
         {
           "name": "_assertRunMutable",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:guard_name"
+            "admission:guard_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -4847,21 +4852,22 @@
         {
           "name": "_admitRecursiveRun",
           "ordinal": 0,
-          "size": 20,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:durable_read"
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_assertRouteAdmission",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -5070,10 +5076,11 @@
         {
           "name": "_runViewOversizeRefusal",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:refusal_name"
+            "admission:refusal_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -5233,20 +5240,22 @@
         {
           "name": "_workflowRevisionEligibility",
           "ordinal": 0,
-          "size": 60,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_validateWorkflowRevisionPlan",
           "ordinal": 0,
-          "size": 47,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -5498,21 +5507,23 @@
         {
           "name": "_validateContextMapPlan",
           "ordinal": 0,
-          "size": 24,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_validateContextEffectPlan",
           "ordinal": 0,
-          "size": 44,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -5593,20 +5604,21 @@
         {
           "name": "_resolveContextEvalRunTarget",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_resolveContextEvalManifestTarget",
           "ordinal": 0,
-          "size": 34,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name",
-            "observation:durable_read"
+            "admission:application_admission_port"
           ]
         },
         {
@@ -5622,11 +5634,11 @@
         {
           "name": "admitContextPackage",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
-            "observation:durable_read"
+            "admission:application_admission_port"
           ]
         },
         {
@@ -5751,10 +5763,11 @@
         {
           "name": "_selectedSemanticItem",
           "ordinal": 0,
-          "size": 23,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -5991,10 +6004,11 @@
         {
           "name": "_resolveWorkflowSpec",
           "ordinal": 0,
-          "size": 15,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -6095,37 +6109,41 @@
         {
           "name": "_normalizeWaveStart",
           "ordinal": 0,
-          "size": 35,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeWaveProgress",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeWaveList",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeWaveMemberAction",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -6261,84 +6279,93 @@
         {
           "name": "_normalizeMessageSend",
           "ordinal": 0,
-          "size": 31,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeMessageReceipt",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name",
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeAttentionWatch",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeScratchpadRead",
           "ordinal": 0,
-          "size": 13,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeScratchpadAppend",
           "ordinal": 0,
-          "size": 26,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeScratchpadElevate",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeBoardPost",
           "ordinal": 0,
-          "size": 53,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeBoardRead",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
           "name": "_normalizeKnowledgeSeed",
           "ordinal": 0,
-          "size": 41,
+          "size": 3,
           "seam": "admission",
           "evidence": [
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "admission:application_admission_port"
           ]
         },
         {
@@ -25910,6 +25937,459 @@
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/application-admission.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "contentDigest",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "normalizeRouteSelector",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "normalizeIntent",
+          "ordinal": 0,
+          "size": 80,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "normalizeWorkflowComposition",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "workflowFeedbackBodySetDigest",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "routeEqual",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "formatRequestedRoute",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "projectRouteTeachingRow",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "compareRouteTeachingRow",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "routeNotAllowedRefusal",
+          "ordinal": 0,
+          "size": 50,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "explicitResultIntentIdentity",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "semanticSourceSlice",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_resolveSemanticControlTarget",
+          "ordinal": 0,
+          "size": 37,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeRunControlOutcome",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_resolveIntent",
+          "ordinal": 0,
+          "size": 40,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_admitWorkspaceAttachment",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_resolveSpillObjective",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_isWorkflowRun",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "admission",
+          "evidence": [
+            "admission:predicate_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "resolveCompletedResultExport",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_validateSemanticEvidence",
+          "ordinal": 0,
+          "size": 32,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:validation_vocabulary",
+            "observation:projection_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_parseSemanticReview",
+          "ordinal": 0,
+          "size": 80,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_semanticReview",
+          "ordinal": 0,
+          "size": 54,
+          "seam": "admission",
+          "evidence": [
+            "admission:typed_refusal",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_assertRunMutable",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_admitRecursiveRun",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_assertRouteAdmission",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_runViewOversizeRefusal",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "_workflowRevisionEligibility",
+          "ordinal": 0,
+          "size": 60,
+          "seam": "admission",
+          "evidence": [
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateWorkflowRevisionPlan",
+          "ordinal": 0,
+          "size": 47,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateContextMapPlan",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_validateContextEffectPlan",
+          "ordinal": 0,
+          "size": 44,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
+          "name": "_resolveContextEvalRunTarget",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_resolveContextEvalManifestTarget",
+          "ordinal": 0,
+          "size": 34,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "admitContextPackage",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_selectedSemanticItem",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_resolveWorkflowSpec",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeWaveStart",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeWaveProgress",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeWaveList",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeWaveMemberAction",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeMessageSend",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeMessageReceipt",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_normalizeAttentionWatch",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeScratchpadRead",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeScratchpadAppend",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeScratchpadElevate",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeBoardPost",
+          "ordinal": 0,
+          "size": 53,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeBoardRead",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
+          "name": "_normalizeKnowledgeSeed",
+          "ordinal": 0,
+          "size": 41,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
           ]
         }
       ]

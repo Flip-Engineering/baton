@@ -1689,6 +1689,9 @@ const F_EXEMPTIONS = Object.freeze([
   ['application-observation.mjs', /Math\.max\(256, Math\.min\(4_096, bounds\.maxBytes - 16_384\)\)/u, 'uncataloged: semantic-bounds arithmetic'],
   ['application-observation.mjs', /validText\((ref\.id|node\.taskId|taskId|integrationTaskId|worker|rawRequest\.actionId|pending\.requestId|checkpoint\.requestId|attention\.requestId|requestId|request\.inputs\.query|action\.target\?\.requestId|action\.target\?\.pauseId|handle\.sessionRef\?\.id), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
   ['application-observation.mjs', /validText\(worker, 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  // slice 16: the admission bucket moved to application-admission.mjs — same rule.
+  ['application-admission.mjs', /validText\((ref\.id|node\.taskId|taskId|integrationTaskId|worker|rawRequest\.actionId|pending\.requestId|checkpoint\.requestId|attention\.requestId|requestId|request\.inputs\.query|action\.target\?\.requestId|action\.target\?\.pauseId|handle\.sessionRef\?\.id), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
+  ['application-admission.mjs', /validText\((report\.summary|finding\.claim|finding\.requiredCorrection), 8_192\)/u, 'uncataloged: review report per-field caps'],
   ['atlas-representation-producer.mjs', /Buffer\.byteLength\(value\.handle\) > 4_096/u, 'uncataloged: representation handle bound'],
   ['atlas-representation-producer.mjs', /policy\.maxArgumentBytes > 1024 \* 1024/u, 'uncataloged: representation policy ceiling'],
   ['cairn-run-scorecard.mjs', /maxTaskTypeBytes > 4_096/u, 'uncataloged: route-advice policy ceiling'],

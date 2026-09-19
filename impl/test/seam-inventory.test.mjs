@@ -279,6 +279,7 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/runtime-admission.mjs': 102,
   'impl/src/runtime-api.mjs': 47,
   'impl/src/application-observation.mjs': 174,
+  'impl/src/application-admission.mjs': 48,
   'impl/src/runtime-event-handlers/dispatcher.mjs': 1,
   'impl/src/runtime-event-handlers/process-lifecycle.mjs': 4,
   'impl/src/runtime-event-handlers/turn-terminal.mjs': 3,

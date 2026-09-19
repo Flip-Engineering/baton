@@ -83,11 +83,14 @@ test('G36-R3: a grown pinned count is refused as an added copy', () => {
 });
 
 test('G36-R4: a swept file and a vanished file are refused as stale exemptions', () => {
+  // slice 16: application.mjs's copy moved with _admitWorkspaceAttachment to
+  // application-admission.mjs and imports the shared predicate, so application.mjs left the pin.
+  // The swept-entry law is exercised against index.mjs, which is still pinned.
   const swept = checkCustodyPredicateLiteral({
-    sources: censusTree({ 'impl/src/application.mjs': 'import { isPhysicalWorkspaceId } from \'./shared-workspace-custody.mjs\';\n' }),
+    sources: censusTree({ 'impl/src/index.mjs': 'import { isPhysicalWorkspaceId } from \'./shared-workspace-custody.mjs\';\n' }),
   });
   assert.equal(swept.length, 1, 'the swept entry is the one finding');
-  assert.match(swept[0], /application\.mjs/u);
+  assert.match(swept[0], /index\.mjs/u);
   assert.match(swept[0], /stale/u, 'a swept file must be removed from the exemption list');
 
   const vanished = censusTree();

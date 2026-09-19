@@ -225,7 +225,8 @@ const CUSTODY_PREDICATE_DEFINITION_OCCURRENCES = 1;
  * comment above). Exported so the rule's own test can build a tree that mirrors it and perturb
  * exactly one file. */
 export const CUSTODY_PREDICATE_PENDING = Object.freeze({
-  'impl/src/application.mjs': Object.freeze({ occurrences: 1, reason: 'workspace admission; outside this change\'s write authority' }),
+  // slice 16: the one application.mjs copy moved with _admitWorkspaceAttachment to
+  // application-admission.mjs and imports the shared predicate — no inline copy remains there.
   'impl/src/index.mjs': Object.freeze({ occurrences: 4, reason: 'controller wiring; outside this change\'s write authority' }),
   'impl/src/swarm-state.mjs': Object.freeze({ occurrences: 1, reason: 'the swarm workspace shape; outside this change\'s write authority' }),
   'impl/src/worktree.mjs': Object.freeze({ occurrences: 9, reason: 'the destruction authority itself; outside this change\'s write authority' }),

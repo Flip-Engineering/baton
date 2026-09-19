@@ -211,6 +211,16 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/application-observation.mjs', className: null, receiver: 'application',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // Slice 16's module target: the application's admission bucket (36 members — the authority-op
+  // guards, the route and policy admission, the argument normalizers) moves to
+  // application-admission.mjs under the same bare application receiver. The slice-15 exports its
+  // bodies share import from application-observation.mjs (one-way: admission reads the
+  // observation helpers, never the reverse); the helper declarations slice 15 left in
+  // application.mjs and that the admission bodies read are module-scope members here.
+  Object.freeze({
+    file: 'impl/src/application-admission.mjs', className: null, receiver: 'application',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -302,6 +312,9 @@ const AUTHORITY_RULES = Object.freeze([
   // Slice 15 extends the port rules to the application's observation bucket: a member whose body
   // is a delegate into application-observation.mjs keeps the observation seam its body had there.
   { seam: 'observation', id: 'application_observation_port', weight: 3, call: /\bapplicationObservation\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted application observation module (application-observation.mjs)' },
+  // Slice 16 extends the port rules to the application's admission bucket: a member whose body
+  // is a delegate into application-admission.mjs keeps the admission seam its body had there.
+  { seam: 'admission', id: 'application_admission_port', weight: 3, call: /\bapplicationAdmission\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted application admission module (application-admission.mjs)' },
   // Slice 5 extends the rule to the admission bucket: a member whose body is a delegate into
   // coordination-admission.mjs keeps the seam its body had there.
   { seam: 'admission', id: 'admission_port', weight: 3, call: /\bcoordinationAdmission\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted admission module (coordination-admission.mjs)' },
