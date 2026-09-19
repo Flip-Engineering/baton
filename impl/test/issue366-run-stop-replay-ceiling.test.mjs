@@ -32,7 +32,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
-import { memberSource } from './seam-member-source.mjs';
+import { memberSource, STORE_MODULE_FILES } from './seam-member-source.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 
 const REPO_ID = 'repo-366-target-set';
@@ -281,23 +281,26 @@ test('a fleet drain target set is not a projection of this ledger: the store kee
 // (c) the literals are gone, and ONE helper reads ONE registry row
 // ===========================================================================
 
-const STORE_SOURCE = readFileSync(new URL('../src/coordination-store.mjs', import.meta.url), 'utf8');
-
 /** The source of one site. A site named by its member resolves through the live seam map — the class
  * delegate and, for a member the split moved, the body in the module that holds it (issue #259
- * slice 4 moved the run-stop target helpers into coordination-ledger.mjs). A site named by a literal
- * header still reads the store file, for the module-scope helpers the map does not carry. */
+ * slices 4-5 moved the run-stop target helpers and the target-set helper out of the class). A site
+ * named by a literal header reads the file of the store's module scope that carries it. */
 function siteSource(open, next) {
   if (!open.includes('(')) {
     const source = memberSource(open);
     assert.notEqual(source, '', `the live map still carries the member ${open}`);
     return source;
   }
-  const start = STORE_SOURCE.indexOf(open);
-  assert.notEqual(start, -1, `the store still carries ${open}`);
-  const end = STORE_SOURCE.indexOf(next, start + open.length);
-  assert.ok(end > start, `the site bounded by ${next} is intact`);
-  return STORE_SOURCE.slice(start, end);
+  for (const file of STORE_MODULE_FILES) {
+    const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
+    const start = source.indexOf(open);
+    if (start === -1) continue;
+    if (next === undefined) return source.slice(start);
+    const end = source.indexOf(next, start + open.length);
+    assert.ok(end > start, `the site bounded by ${next} is intact`);
+    return source.slice(start, end);
+  }
+  return assert.fail(`no store module still carries ${open}`);
 }
 
 // The three sites the brief names: the fleet-drain admission, the run-stop target helpers
@@ -341,7 +344,9 @@ test('the surviving bound is ONE declared registry row whose derivation is the l
   assert.equal(row.graceful ?? null, null);
   assert.equal(row.refusalCode, 'target_set_capacity');
   assert.equal(typeof row.enforcedAt, 'string', 'the row names its enforcement seam');
-  const helper = siteSource('function assertTargetSetAdmissible(', '\nexport class CoordinationStore');
+  // The helper is a module-scope function of the store's module scope, so the live map carries it by
+  // name — the same lookup the member sites above use (issue #259 slice 5 moved it with the bucket).
+  const helper = siteSource('assertTargetSetAdmissible');
   assert.match(helper, /FRAME_LIMITS\['target_set\.per_ledger_event'\]/u,
     'the helper reads the row by name — the store re-declares no bound of its own');
   assert.equal(helper.includes('100_000'), false, 'the helper carries no literal bound');

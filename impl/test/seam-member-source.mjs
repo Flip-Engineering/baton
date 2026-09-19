@@ -22,11 +22,20 @@
 //
 // A name that is not a member — a module-scope function such as `assertTargetSetAdmissible` — has no
 // window and is reported as an empty result, so a caller that also wants plain file text can fall
-// back to it rather than silently scanning nothing.
+// back to it rather than silently scanning nothing. `STORE_MODULE_FILES` is that fallback's file
+// list: the files the store's module scope spans.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { REPO_ROOT_URL, TARGETS, collectSeamInventory } from '../scripts/seam-inventory.mjs';
+
+/** The files the store's module scope spans (issue #259 slices 4 and 5): the class in
+ * `coordination-store.mjs`, the observation bucket in `coordination-ledger.mjs`, and the admission
+ * bucket in `coordination-admission.mjs`. A scan that reads the store's own module scope — its
+ * constants, its bounds, the text of one of its helpers — reads these files. */
+export const STORE_MODULE_FILES = Object.freeze([
+  'coordination-store.mjs', 'coordination-ledger.mjs', 'coordination-admission.mjs',
+]);
 
 /** The receiver each target's members read their state through, keyed by target file. */
 const RECEIVERS = new Map(TARGETS.map((target) => [target.file, target.receiver ?? 'this']));

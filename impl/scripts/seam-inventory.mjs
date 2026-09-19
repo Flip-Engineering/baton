@@ -129,6 +129,16 @@ export const TARGETS = Object.freeze([
   // coordination-ledger.mjs, which reads the class it was moved out of through its `store` first
   // parameter — the same receiver convention the two module targets above use. The relocated
   // primitives the moved bodies read are module-scope functions too, so they are members here.
+  Object.freeze({
+    file: 'impl/src/coordination-ledger.mjs', className: null, receiver: 'store',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
+  // Slice 5's module target: the store's admission bucket (172 members) moved to
+  // coordination-admission.mjs under the same receiver convention.
+  Object.freeze({
+    file: 'impl/src/coordination-admission.mjs', className: null, receiver: 'store',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
   // Slice 8's module target: the coordinator's recovery bucket (42 members — the 43rd,
   // _completeDurableRecoveryAttempt, moved with slice 6's port) moved to runtime-recovery.mjs,
   // which reads the class through its `coordinator` first parameter and records through the
@@ -209,6 +219,10 @@ const AUTHORITY_RULES = Object.freeze([
   // heuristic — `_apply`, `_append`, `writeScratchpad` and the rest classify as observation because
   // the call says where their bodies went, exactly as `replay_port` says it for `_load`.
   { seam: 'observation', id: 'ledger_port', weight: 3, call: /\bcoordinationLedger\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted observation module (coordination-ledger.mjs)' },
+
+  // Slice 5 extends the rule to the admission bucket: a member whose body is a delegate into
+  // coordination-admission.mjs keeps the seam its body had there.
+  { seam: 'admission', id: 'admission_port', weight: 3, call: /\bcoordinationAdmission\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted admission module (coordination-admission.mjs)' },
 
   // ── the swarm family (issue #284 item S-G4) ─────────────────────────────────
   // SwarmRuntime speaks its own refusal and replay dialects, and both are evidence a name rule

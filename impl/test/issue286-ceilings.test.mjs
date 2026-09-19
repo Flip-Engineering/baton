@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
+import { STORE_MODULE_FILES } from './seam-member-source.mjs';
 
 const STORE_CLOCK_ISO = '2026-09-14T00:00:00.000Z';
 const repoId = 'repo-286-ceilings';
@@ -54,12 +55,18 @@ const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(ca
 const noteEntry = (text) => ({ kind: 'note', text });
 
 test('CEIL1: the acceptance-revocation scan ceilings are gone, not merely raised', () => {
-  const source = readFileSync(new URL('../src/coordination-store.mjs', import.meta.url), 'utf8');
+  // Issue #259 slices 4-5: the revocation scan's members — and the guards that once capped it —
+  // moved out of the class, so the scan reads every file the store's module scope spans.
+  const sources = STORE_MODULE_FILES.map((file) => [
+    file, readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8'),
+  ]);
   for (const removed of ['ACCEPTANCE_REVOCATION_LIMITS', 'acceptance_revocation_oversize']) {
-    assert.equal(source.includes(removed), false,
-      `${removed} is still a control mechanism in the store: the revocation scan is bounded by the ledger it reads`);
+    for (const [file, source] of sources) {
+      assert.equal(source.includes(removed), false,
+        `${removed} is still a control mechanism in ${file}: the revocation scan is bounded by the ledger it reads`);
+    }
   }
-  assert.match(source, /No state ceiling|No target ceiling|no payload ceiling/u,
+  assert.ok(sources.some(([, source]) => /No state ceiling|No target ceiling|no payload ceiling/u.test(source)),
     'the store states WHY the scan needs no second ceiling');
 });
 

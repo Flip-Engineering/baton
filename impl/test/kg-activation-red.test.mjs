@@ -31,6 +31,7 @@ import { Log } from '../src/log.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { bindBaton, createDriver } from '../src/index.mjs';
 import { createWave } from '../src/wave.mjs';
+import { STORE_MODULE_FILES } from './seam-member-source.mjs';
 
 const repoId = 'repo-kg-activation';
 const dirs = [];
@@ -366,8 +367,13 @@ test('KG-A4: workflowHorizon carries knowledgeDigest; it moves on admit and hold
 // ============================================================
 
 test('KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)', () => {
-  const storeSrc = readFileSync(join('impl', 'src', 'coordination-store.mjs'), 'utf8');
+  // Issue #259 slices 4-5: the store's module scope spans three files now — the class, the
+  // observation bucket and the admission bucket — and the admit gate's own body moved into the
+  // admission module. The gate is still one body reached through one delegate.
+  const storeSrc = STORE_MODULE_FILES
+    .map((file) => readFileSync(join('impl', 'src', file), 'utf8')).join('\n');
   const coordSrc = readFileSync(join('impl', 'src', 'coordinator.mjs'), 'utf8');
+  const admissionSrc = readFileSync(join('impl', 'src', 'coordination-admission.mjs'), 'utf8');
 
   // The lease binding check + each refusal class are still present, unchanged, in the gate.
   assert.match(storeSrc, /leaseRecord\.status !== 'active'[\s\S]*?workflow_admit_lease_invalid/u, 'the active-lease binding is the gate authority');
@@ -390,12 +396,12 @@ test('KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no a
   f.store.releaseWriterLease();
 
   // NO auto-admit path exists: admitWorkflowFinding is reachable ONLY from the gate's own callers
-  // (the store definition + the single orchestrator wrapper). No other src surface calls it.
+  // (the store delegate, its body in the admission module, and the single orchestrator wrapper).
   const srcDir = join('impl', 'src');
   const offenders = [];
   for (const name of readdirSync(srcDir)) {
     if (!name.endsWith('.mjs')) continue;
-    if (name === 'coordination-store.mjs' || name === 'coordinator.mjs') continue;
+    if (STORE_MODULE_FILES.includes(name) || name === 'coordinator.mjs') continue;
     const text = readFileSync(join(srcDir, name), 'utf8');
     if (/\badmitWorkflowFinding\b/u.test(text)) offenders.push(name);
   }
@@ -404,8 +410,10 @@ test('KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no a
   // second call site exists (no auto-admit). Comments and the def are excluded; only call expressions count.
   const coordCallSites = coordSrc.match(/\.admitWorkflowFinding\(/gu) ?? [];
   assert.equal(coordCallSites.length, 1, 'the coordinator calls the gate from exactly one wrapper (no auto-admit path)');
-  const storeDefs = storeSrc.match(/^[ \t]{2}admitWorkflowFinding\(repoId,/mu) ?? [];
-  assert.equal(storeDefs.length, 1, 'exactly one admit gate definition owns promotion in the store');
+  assert.equal((admissionSrc.match(/^export function admitWorkflowFinding\(/gmu) ?? []).length, 1,
+    'exactly one admit gate body owns promotion');
+  assert.equal((storeSrc.match(/^[ \t]{2}admitWorkflowFinding\(repoId,/gmu) ?? []).length, 1,
+    'and exactly one delegate on the class forwards it');
 });
 
 // ============================================================
