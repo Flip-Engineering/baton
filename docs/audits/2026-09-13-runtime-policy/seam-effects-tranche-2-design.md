@@ -168,7 +168,10 @@ and pinned, and the token-level inverse-transform audit of slice 10 covers the v
 No new target: `runtime-effects.mjs` and `runtime-admission.mjs` are already declared with
 `receiver: 'coordinator'`, and the existing port rules (`effect:effects_port`,
 `admission:runtime_admission_port`) match the new call sites without change. The delegates keep
-their members' seams.
+their members' seams. One expected evidence note: the three split effect bodies call
+`runtimeAdmission._admit*(` first, so they carry `admission:runtime_admission_port` evidence
+module-side alongside their own effect evidence — the census records it, and their seam stays
+`effect` on the adapter/process authority they drive.
 
 Member arithmetic: the coordinator keeps 424 members (the four bodies become delegates);
 `runtime-effects.mjs` gains the four bodies plus the two lifted `stopRunTargets` closures (10
@@ -185,9 +188,11 @@ The `runtime-effects.test.mjs` / `runtime-admission.test.mjs` RE-series continue
   async-ness preserved at all three stations;
 - the reroute census per member, counted and pinned as in RE3;
 - the `_admitDelivery` descriptor union as a closed set;
-- one-way imports: no `runtime-admission` import in `runtime-effects.mjs`, no `runtime-effects`
-  import in `runtime-admission.mjs`, and the three relocated declarations each defined exactly
-  once;
+- one-way imports: `runtime-effects.mjs` imports `runtime-admission.mjs` to call the admission
+  prefixes first (the admitted → act → record reading stays inside the effect body);
+  `runtime-admission.mjs` never imports `runtime-effects.mjs` — that direction is the cycle this
+  design's §2 placement exists to prevent — and the three relocated declarations are each defined
+  exactly once;
 - the inverse-transform audit proving the effect bodies otherwise identical to the pre-move text;
 - behavior: the phase11 integration suite (the `IntegrationError` codes and the poisoned-write
   path), the stop/convergence suites for `stopRunTargets` and `_finalizeStop`, and the delivery
