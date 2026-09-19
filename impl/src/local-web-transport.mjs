@@ -36,6 +36,8 @@ function ownerSocketFailure(error, elapsedMs) {
 }
 
 function validateSocket(path, ownerUid) {
+  // sockaddr_un.sun_path is 104 bytes including the NUL terminator on Darwin (108 on Linux),
+  // so 103 bytes is the portable ceiling for a Unix socket path.
   if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')
     || Buffer.byteLength(path) > 103) {
     throw localError('local Baton socket path is invalid');

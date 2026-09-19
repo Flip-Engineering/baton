@@ -825,6 +825,8 @@ export function discoverBatonConnection({
         observed: `transport ${observedValue(profile.transport ?? null)}`,
       });
     }
+    // sockaddr_un.sun_path is 104 bytes including the NUL terminator on Darwin (108 on Linux),
+    // so 103 bytes is the portable ceiling for a Unix socket path.
     if (!isAbsolute(profile.socketPath) || profile.socketPath.includes('\0')
       || Buffer.byteLength(profile.socketPath) > 103) {
       throw cliCauseRefusal('user_profile_socket_path_invalid', { observed: observedValue(profile.socketPath ?? null) });
@@ -1168,6 +1170,8 @@ export function inspectBatonConnection({
     exactKeys(profile, resident
       ? residentProfileKeys(profile)
       : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
+    // sockaddr_un.sun_path is 104 bytes including the NUL terminator on Darwin (108 on Linux),
+    // so 103 bytes is the portable ceiling for a Unix socket path.
     if (profile.schemaVersion !== repository.schemaVersion || !nonempty(profile.url)
       || !nonempty(profile.origin) || !nonempty(profile.tokenFile)
       || (resident && (!residentProfileOwnerValid(profile)

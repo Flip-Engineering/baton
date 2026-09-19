@@ -289,6 +289,8 @@ function socketRoot(ownerUid) {
   const uid = ownerUid === null ? 'owner' : String(ownerUid);
   const preferred = join(tmpdir(), `baton-${uid}`);
   const root = privateDirectory(preferred, ownerUid);
+  // sockaddr_un.sun_path is 104 bytes including the NUL terminator on Darwin (108 on Linux),
+  // so 103 bytes is the portable ceiling; fall back to /tmp when the tmpdir root is deeper.
   if (Buffer.byteLength(join(root, 'x'.repeat(48))) > 103) {
     return privateDirectory(`/tmp/baton-${uid}`, ownerUid);
   }
@@ -331,6 +333,8 @@ export class ResidentAuthority {
     this.socketRoot = socketRoot(ownerUid);
     this.socketPath = join(this.socketRoot,
       `${digest(repoId).slice(0, 16)}-${digest(this.incarnation).slice(0, 12)}.sock`);
+    // sockaddr_un.sun_path is 104 bytes including the NUL terminator on Darwin (108 on Linux),
+    // so 103 bytes is the portable ceiling for a Unix socket path.
     if (Buffer.byteLength(this.socketPath) > 103) {
       this.lease.release();
       throw residentError('resident socket coordinate is too long');

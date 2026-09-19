@@ -361,6 +361,8 @@ export class BatonWebHost {
       || (tcp && (typeof options.listen.host !== 'string' || options.listen.host.length === 0
         || !Number.isSafeInteger(options.listen.port) || options.listen.port < 0
         || options.listen.port > 65_535))
+      // sockaddr_un.sun_path is 104 bytes including the NUL terminator on Darwin (108 on
+      // Linux), so 103 bytes is the portable ceiling for a Unix socket path.
       || (local && (typeof options.listen.path !== 'string' || options.listen.path.length === 0
         || Buffer.byteLength(options.listen.path) > 103 || options.listen.path.includes('\0')))
       || !Number.isSafeInteger(options.webDrainMs) || options.webDrainMs <= 0) {
