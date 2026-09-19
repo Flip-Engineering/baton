@@ -6092,6 +6092,34 @@ export class SwarmRuntime {
     return lines;
   }
 
+  /** Issue #503: the `## Collaboration` block one recruited seat's brief carries — the bridge
+   * verbs the seat HOLDS, each with the ONE situated purpose line its registry row teaches.
+   * Derived from the SAME tables the dispatch admits and the Swarm section teaches
+   * (`SWARM_KNOWLEDGE_COMMANDS` from swarm-contract.mjs plus the seat reads below), filtered
+   * to the seat's own grant — a seat is never taught a verb its bridge would refuse. A seat
+   * whose grant admits no collaboration verb renders no block, never an empty one. */
+  _briefCollaborationLines(granted) {
+    const permissions = Array.isArray(granted) ? granted : DEFAULT_PERMISSIONS;
+    const lines = [];
+    for (const name of SWARM_KNOWLEDGE_COMMAND_NAMES) {
+      const row = SWARM_KNOWLEDGE_COMMANDS[name];
+      if (!permissions.includes(row.permission)) continue;
+      lines.push(`- ${name} [${row.permission}] — ${row.situation}.`);
+    }
+    for (const name of SWARM_SEAT_READ_COMMAND_NAMES) {
+      const row = SWARM_SEAT_READ_COMMANDS[name];
+      if (!permissions.includes(row.permission)) continue;
+      lines.push(`- ${name} [${row.permission}] — ${row.situation}.`);
+    }
+    if (lines.length === 0) return [];
+    return [
+      'The bridge verbs you hold — each with the ONE situation it is for. Call them on your'
+      + ' bridge; the permission that admits each is named, and a verb outside your grant refuses'
+      + ' instead of working.',
+      ...lines,
+    ];
+  }
+
   /** The brief one seat is recruited with (#318 deliverables 3 and 4): the recruiter's objective
    * verbatim, then the swarm situation — the peers and their scopes, the contracts published so
    * far, the commits landed on the target since the base — then, for a seat admitted onto a
@@ -6305,6 +6333,13 @@ export class SwarmRuntime {
     // brief renders no block — the section is absent, never empty (the Context package rule).
     const claimLines = this._briefClaimLines(swarm, args.participantId, recruitedScope);
     if (claimLines.length > 0) blocks.push(['## Claims', ...claimLines].join('\n'));
+    // Issue #503: the bridge verbs this seat holds, each with the ONE situated purpose its
+    // registry row teaches — a bare verb name never taught 21 workers when to reach for a
+    // board, a scratchpad, a seeded fact, or a search (#310's rule: teach by derivation,
+    // never by naming a field). Filtered to the seat's own grant, so the brief never teaches
+    // a call the bridge would refuse.
+    const collaborationLines = this._briefCollaborationLines(args.permissions);
+    if (collaborationLines.length > 0) blocks.push(['## Collaboration', ...collaborationLines].join('\n'));
     // Issue #310 + #371 + #373: the expected contribution shape rides every brief as one
     // worked example the validator admits, with the closed sets derived from the schema the
     // validator reads. A seat recruited read_only — or granted no contribute authority —

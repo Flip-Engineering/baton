@@ -13740,9 +13740,18 @@
           ]
         },
         {
+          "name": "_briefCollaborationLines",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 283,
+          "size": 290,
           "seam": "admission",
           "evidence": [
             "delegates:admission",

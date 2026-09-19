@@ -16,8 +16,8 @@
 //   373-a  a read_only recruit starts a read-only run and its brief renders the read-only
 //          frames (contract example commit-null, the refusal taught by name, no change-mode
 //          mutation authority in the rendered dispatch block);
-//   373-b  a change recruit is byte-identical to today's brief — no forced intent, no mode on
-//          the join;
+//   373-b  a change recruit teaches the held verbs (#503's ## Collaboration block), then the
+//          contract example — no forced intent, no mode on the join;
 //   373-c  a bad mode refuses closed-set naming the admitted values, and the bridge per-command
 //          help lists the set;
 //   373-d  a read_only seat's contribution carrying a commit refuses
@@ -31,8 +31,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { CoordinationStore } from '../src/coordination-store.mjs';
-import { SwarmRuntime } from '../src/swarm-runtime.mjs';
-import { validateSwarmCommand } from '../src/swarm-contract.mjs';
+import { SWARM_SEAT_READ_COMMANDS, SWARM_SEAT_READ_COMMAND_NAMES, SwarmRuntime } from '../src/swarm-runtime.mjs';
+import {
+  SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES, validateSwarmCommand,
+} from '../src/swarm-contract.mjs';
 import {
   CONTRIBUTION_CONTRACT_EXAMPLE, contributionContractExample,
   contributionContractBriefSection,
@@ -116,15 +118,28 @@ test('#373 (a) a read_only recruit starts a read-only run and its brief renders 
   assert.match(rendered, /read_only_no_change/, 'the read-only acceptance is rendered instead');
 });
 
-test('#373 (b) a change recruit is byte-identical to today\'s brief', async (t) => {
+test('#373 (b) a change recruit teaches the held verbs, then the contract example', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Change lane' });
   const objective = 'Implement the parser change';
   await f.call('recruit', { participantId: 'builder', objective });
 
+  // Issue #503: the change brief carries the ## Collaboration block — the bridge verbs the
+  // seat holds, each with the ONE situated purpose its registry row teaches. The verb lines
+  // are derived here from the SAME tables, so the pin holds the composition order without
+  // re-spelling a purpose.
+  const collaboration = ['## Collaboration',
+    'The bridge verbs you hold — each with the ONE situation it is for. Call them on your'
+    + ' bridge; the permission that admits each is named, and a verb outside your grant refuses'
+    + ' instead of working.',
+    ...[...SWARM_KNOWLEDGE_COMMAND_NAMES, ...SWARM_SEAT_READ_COMMAND_NAMES].map((name) => {
+      const row = Object.hasOwn(SWARM_KNOWLEDGE_COMMANDS, name)
+        ? SWARM_KNOWLEDGE_COMMANDS[name] : SWARM_SEAT_READ_COMMANDS[name];
+      return `- ${name} [${row.permission}] — ${row.situation}.`;
+    })].join('\n');
   const brief = f.store.swarm('baton').participants.builder.brief;
-  assert.equal(brief, `${objective}\n\n${contributionContractBriefSection()}`,
-    'the change brief composes exactly as before');
+  assert.equal(brief, `${objective}\n\n${collaboration}\n\n${contributionContractBriefSection()}`,
+    'the change brief teaches the held verbs, then the contract example');
   const started = f.started.at(-1);
   assert.equal('resultIntent' in (started?.options ?? {}), false,
     'no result intent is forced onto a change recruit');

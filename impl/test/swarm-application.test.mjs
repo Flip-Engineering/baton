@@ -19,7 +19,7 @@ const policy = Object.freeze({
   capabilityClasses: ['code', 'test'],
   limits: Object.freeze({
     maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
-    maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
+    maxTextBytes: 8192, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
     maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024,
     maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
   }),
