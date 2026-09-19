@@ -119,7 +119,7 @@ test('AS5: response bytes, cumulative advisory count, outage, timeout, and cance
 
 test('AS6: constructor defaults preserve vet compatibility while validating scanner ceilings', async () => {
   const oracle = new PublicSupplyChainOracle({ fetch: async (url) => String(url).includes('api.osv.dev') ? response({ vulns: [] }) : response({ versionKey: { system: 'NPM', name: 'pkg', version: '1.0.0' }, advisoryKeys: [] }), artifactRoot: root('compat') });
-  assert.deepEqual(oracle.card().ceilings, { maxScanComponents: 256, maxBatchSize: 100, maxScanAdvisories: 1_000, maxResponseBytes: 1_048_576, maxTransactionBytes: 262_144, perResponseTimeoutMs: 5_000, maxScanWallMs: 30_000 });
+  assert.deepEqual(oracle.card().ceilings, { maxScanComponents: 5_000, maxBatchSize: 100, maxScanAdvisories: 1_000, maxResponseBytes: 1_048_576, maxTransactionBytes: 262_144, perResponseTimeoutMs: 5_000, maxScanWallMs: 30_000 });
   const narrowed = new PublicSupplyChainOracle({ fetch: async () => response({ results: [] }), artifactRoot: root('narrowed'), maxScanComponents: 4 }); assert.equal(narrowed.card().ceilings.maxBatchSize, 4);
   const vetted = await oracle.vet({ ecosystem: 'npm', package: 'pkg', version: '1.0.0' }); assert.deepEqual(vetted.requested, coordinate('pkg'));
   assert.throws(() => new PublicSupplyChainOracle({ fetch: async () => response({}), artifactRoot: root('bad-batch'), maxScanComponents: 1, maxBatchSize: 2 }), /maxBatchSize/);

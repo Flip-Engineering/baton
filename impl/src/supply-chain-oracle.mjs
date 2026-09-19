@@ -60,7 +60,13 @@ const boundedRead = (path, expectedBytes, ceiling) => {
 
 export class PublicSupplyChainOracle {
   constructor(opts = {}) {
-    const maxScanComponents = opts.maxScanComponents ?? 256;
+    // Default sized to an ordinary application lockfile: a single-package npm
+    // package-lock commonly carries on the order of 1,000-3,000 components, so the
+    // previous 256 refused real input (#499). The count bounds worst-case scan memory
+    // (each coordinate is bounded text, about a kilobyte, so 5,000 components is a
+    // few megabytes of manifest); the scan's time cost is bounded separately by
+    // maxScanWallMs, which refuses a scan that cannot finish as oracle_timeout.
+    const maxScanComponents = opts.maxScanComponents ?? 5_000;
     const maxBatchSize = opts.maxBatchSize ?? Math.min(100, maxScanComponents);
     const maxScanAdvisories = opts.maxScanAdvisories ?? (opts.maxAdvisories ?? 1_000);
     const maxScanWallMs = opts.maxScanWallMs ?? 30_000;
