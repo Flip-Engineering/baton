@@ -4250,7 +4250,13 @@ export function _planBudgetFailure(store, message, code, integrity = false) {
   store._goalPlanFailure(message, code, integrity);
 }
 
-export function _derivePlanBudgetSettlement(store, taskId, integrity = false) {
+/** Issue #518: the ledger-anchored half of a plan-budget settlement — the dispatch the node
+ * was bound by, its task, the terminal transition the settlement is for, and the wall time
+ * between them. Every field here re-derives from rows the coordination ledger itself carries.
+ * The operational log is a SEPARATE store (the worker's own event file) that a cold replay
+ * does not carry, so it is not part of this anchor: the derivation below reads it when it is
+ * wired, and the replay validator never requires it. */
+function _planBudgetLedgerAnchor(store, taskId, integrity = false) {
   const dispatch = store._planTaskLinks.get(taskId); const task = store._tasks.get(taskId);
   const terminalEvent = task?.acceptanceRevocation?.priorTerminalEvent ?? task?.terminalEvent;
   const terminal = Number.isSafeInteger(terminalEvent) ? store._events[terminalEvent - 1] : null;
@@ -4258,14 +4264,50 @@ export function _derivePlanBudgetSettlement(store, taskId, integrity = false) {
     || !TERMINAL.has(terminal.payload?.to) || terminal.seq <= dispatch.eventSeq) {
     store._planBudgetFailure('plan node budget settlement requires one exact terminal plan task', 'plan_budget_not_terminal', integrity);
   }
-  const initial = clone(dispatch.nodeBudget); const claimed = task.claimedEvent ? store._events[task.claimedEvent - 1] : null;
+  const claimed = task.claimedEvent ? store._events[task.claimedEvent - 1] : null;
   const started = claimed && claimed.seq < terminal.seq ? claimed : store._events[dispatch.eventSeq - 1];
   const wallMin = Math.ceil(Math.max(0, Date.parse(terminal.ts) - Date.parse(started.ts)) / 60_000 * 1_000_000) / 1_000_000;
   const evidenceSeq = terminal.payload?.evidence?.coordinationSeq;
   const mapped = Number.isSafeInteger(evidenceSeq) && evidenceSeq < terminal.seq ? store._events[evidenceSeq - 1] : null;
-  const source = mapped?.kind === 'evidence.mapped' ? store._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
-  const mappedExact = mapped?.kind === 'evidence.mapped' && mapped.payload.worker === (task.assignee ?? mapped.payload.worker)
-    && source && digest(source) === mapped.payload.digest && source.kind === mapped.payload.kind;
+  const assignee = task.assignee ?? task.reservedWorkerId ?? null;
+  return {
+    dispatch, task, terminal, wallMin, initial: clone(dispatch.nodeBudget), assignee,
+    mapped: mapped?.kind === 'evidence.mapped' && mapped.payload?.worker === (task.assignee ?? mapped.payload?.worker) ? mapped : null,
+  };
+}
+
+/** The USD released/overrun arithmetic in nanos, or null when the amounts are not
+ * representable at that scale. One definition: the live derivation needs it to decide whether
+ * recorded usd consumption is exact, and both lanes need it to recompute the dimensions. */
+function _planBudgetUsdDimension(initial, consumed) {
+  const initialNanos = usdToNanos(initial.usd); const consumedNanos = usdToNanos(consumed.usd);
+  if (initialNanos === null || consumedNanos === null) return null;
+  const released = usdFromNanos(Math.max(0, initialNanos - consumedNanos));
+  const overrun = usdFromNanos(Math.max(0, consumedNanos - initialNanos));
+  return released === null || overrun === null ? null : { released, held: 0, overrun };
+}
+
+/** The released/held/overrun dimension of one settlement. The live derivation feeds it the
+ * consumption it measured from the operational rows; the replay validator feeds it the
+ * consumption the row recorded. Both lanes must produce the recorded dimensions, so a replay
+ * recomputes the arithmetic instead of trusting it. */
+function _planBudgetDimensions(initial, consumed, availability) {
+  const dimension = (key) => {
+    if (availability[key] !== 'exact') return { released: null, held: initial[key], overrun: null };
+    if (key === 'usd') {
+      return _planBudgetUsdDimension(initial, consumed)
+        ?? { released: null, held: initial.usd, overrun: null };
+    }
+    return { released: Math.max(0, initial[key] - consumed[key]), held: 0, overrun: Math.max(0, consumed[key] - initial[key]) };
+  };
+  return Object.fromEntries(Object.keys(initial).map((key) => [key, dimension(key)]));
+}
+
+export function _derivePlanBudgetSettlement(store, taskId, integrity = false) {
+  const anchor = _planBudgetLedgerAnchor(store, taskId, integrity);
+  const { dispatch, terminal, mapped } = anchor;
+  const source = mapped ? store._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
+  const mappedExact = mapped !== null && Boolean(source) && digest(source) === mapped.payload.digest && source.kind === mapped.payload.kind;
   let rows = null;
   if (mappedExact && store._operationalRangeRead) {
     // Issue #504: the evidence ceiling is the live authority's; a store that carries no
@@ -4280,21 +4322,15 @@ export function _derivePlanBudgetSettlement(store, taskId, integrity = false) {
       store._planBudgetFailure('plan node operational settlement prefix is incomplete', 'plan_budget_evidence_invalid', integrity);
     }
   }
+  const initial = anchor.initial;
   const usageRows = rows?.filter((event) => event.kind === 'resource.tokens' && event.actor === 'worker') ?? [];
   const tokenUsageValid = usageRows.every((event) => Number.isFinite(event.payload?.tokens) && event.payload.tokens >= 0);
   const usdNanoRows = usageRows.map((event) => usdToNanos(event.payload?.usd));
   const totalUsdNanos = usdNanoRows.reduce((sum, value) => value === null ? Number.NaN : sum + value, 0);
   const projectedUsd = Number.isSafeInteger(totalUsdNanos) ? usdFromNanos(totalUsdNanos) : null;
-  const initialUsdNanos = usdToNanos(initial.usd);
-  const releasedUsd = projectedUsd === null || initialUsdNanos === null
-    ? null
-    : usdFromNanos(Math.max(0, initialUsdNanos - totalUsdNanos));
-  const overrunUsd = projectedUsd === null || initialUsdNanos === null
-    ? null
-    : usdFromNanos(Math.max(0, totalUsdNanos - initialUsdNanos));
-  const usdUsageValid = projectedUsd !== null && releasedUsd !== null && overrunUsd !== null;
   const seal = rows?.findLast((event) => event.payload?.usageSeal && typeof event.payload.usageSeal === 'object')?.payload?.usageSeal ?? null;
-  const tokensExact = tokenUsageValid && seal?.tokens === 'reported'; const usdExact = usdUsageValid && seal?.usd === 'reported';
+  const tokensExact = tokenUsageValid && seal?.tokens === 'reported';
+  const usdExact = projectedUsd !== null && _planBudgetUsdDimension(initial, { usd: projectedUsd }) !== null && seal?.usd === 'reported';
   const tokens = tokensExact ? usageRows.reduce((sum, event) => sum + event.payload.tokens, 0) : null;
   const usd = usdExact ? projectedUsd : null;
   const providerTurns = rows ? rows.filter((event) => event.kind === 'lifecycle.turn_started' && event.actor === 'orchestrator').length : null;
@@ -4302,22 +4338,16 @@ export function _derivePlanBudgetSettlement(store, taskId, integrity = false) {
     tokens: tokensExact ? 'exact' : 'unavailable', usd: usdExact ? 'exact' : 'unavailable',
     wallMin: 'exact', providerTurns: rows ? 'exact' : 'unavailable',
   };
-  const consumed = { tokens, usd, wallMin, providerTurns };
-  const dimension = (key) => {
-    if (availability[key] !== 'exact') return { released: null, held: initial[key], overrun: null };
-    if (key !== 'usd') return { released: Math.max(0, initial[key] - consumed[key]), held: 0, overrun: Math.max(0, consumed[key] - initial[key]) };
-    return { released: releasedUsd, held: 0, overrun: overrunUsd };
-  };
-  const dimensions = Object.fromEntries(Object.keys(initial).map((key) => [key, dimension(key)]));
+  const consumed = { tokens, usd, wallMin: anchor.wallMin, providerTurns };
+  const dimensions = _planBudgetDimensions(initial, consumed, availability);
+  const slice = (key) => Object.fromEntries(Object.keys(initial).map((name) => [name, dimensions[name][key]]));
   return {
     schemaVersion: 1, taskId, binding: clone(dispatch.binding), terminalEvent: terminal.seq, terminalStatus: terminal.payload.to,
     initial, consumed,
-    released: Object.fromEntries(Object.entries(dimensions).map(([key, value]) => [key, value.released])),
-    held: Object.fromEntries(Object.entries(dimensions).map(([key, value]) => [key, value.held])),
-    overrun: Object.fromEntries(Object.entries(dimensions).map(([key, value]) => [key, value.overrun])),
+    released: slice('released'), held: slice('held'), overrun: slice('overrun'),
     availability,
     operational: {
-      worker: mappedExact ? mapped.payload.worker : task.assignee ?? task.reservedWorkerId ?? null,
+      worker: mappedExact ? mapped.payload.worker : anchor.assignee,
       throughSeq: rows ? mapped.payload.workerSeq : null,
       prefixDigest: rows ? canonicalDigest(rows) : null,
     },
@@ -4325,15 +4355,71 @@ export function _derivePlanBudgetSettlement(store, taskId, integrity = false) {
 }
 
 export function _validatePlanBudgetSettlement(store, p, event, integrity = false) {
+  const fail = (message) => store._planBudgetFailure(message, 'plan_budget_settlement_integrity', integrity);
   const core = Object.fromEntries(Object.entries(p ?? {}).filter(([key]) => key !== 'receiptDigest'));
-  const expected = store._derivePlanBudgetSettlement(p?.taskId, integrity);
-  if (!p || Object.keys(p).sort().join(',') !== [...Object.keys(expected), 'receiptDigest'].sort().join(',')
-    || event?.actor !== 'policy' || !validRunId(event?.idempotencyKey)
-    || p.receiptDigest !== canonicalDigest(core) || canonicalDigest(core) !== canonicalDigest(expected)
-    || store._planBudgetSettlements.has(p.taskId)) {
-    store._planBudgetFailure('plan node budget settlement is malformed or duplicated', 'plan_budget_settlement_integrity', integrity);
+  // Issue #518: replay judges a recorded settlement by what the row carries and by the ledger
+  // rows it cites, never by the live operational log — the probe behind `baton doctor`
+  // constructs the store with no operational resolver at all, so re-deriving consumption from
+  // that log refuses a deployment's own healthy history (the #325 class, #504's residual).
+  if (!p || typeof p !== 'object' || Array.isArray(p) || event?.actor !== 'policy' || !validRunId(event?.idempotencyKey)
+    || p.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(p.receiptDigest ?? '')
+    || p.receiptDigest !== canonicalDigest(core) || store._planBudgetSettlements.has(p.taskId)) fail('plan node budget settlement is malformed or duplicated');
+  const anchor = _planBudgetLedgerAnchor(store, p.taskId, integrity);
+  const settlementFields = ['availability', 'binding', 'consumed', 'held', 'initial', 'operational', 'overrun', 'released', 'receiptDigest', 'schemaVersion', 'taskId', 'terminalEvent', 'terminalStatus'];
+  if (Object.keys(p).sort().join(',') !== settlementFields.sort().join(',')
+    || canonicalDigest(p.binding) !== canonicalDigest(anchor.dispatch.binding)
+    || p.terminalEvent !== anchor.terminal.seq || p.terminalStatus !== anchor.terminal.payload.to
+    || canonicalDigest(p.initial) !== canonicalDigest(anchor.initial)) fail('plan node budget settlement does not match its recorded dispatch');
+  const dimensionKeys = Object.keys(anchor.initial).sort();
+  const blockShape = (block) => block !== null && typeof block === 'object' && !Array.isArray(block)
+    && Object.keys(block).sort().join(',') === dimensionKeys.join(',');
+  if (!blockShape(p.consumed) || !blockShape(p.availability) || !blockShape(p.released) || !blockShape(p.held) || !blockShape(p.overrun)) {
+    fail('plan node budget settlement consumption is malformed');
   }
-  return expected;
+  // A recorded consumption is what a live derivation can record: null exactly when the
+  // dimension was unavailable, otherwise a representable non-negative amount.
+  const recorded = (key) => {
+    const value = p.consumed[key];
+    if (p.availability[key] === 'unavailable') return value === null;
+    if (p.availability[key] !== 'exact' || typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+    if (key === 'wallMin') return true;
+    if (key === 'usd') return usdFromNanos(usdToNanos(value)) === value;
+    return Number.isSafeInteger(value);
+  };
+  for (const key of dimensionKeys) if (!recorded(key)) fail('plan node budget settlement consumption is malformed');
+  // The wall time is the ledger's own: the recorded start and terminal rows are both replayed.
+  if (p.availability.wallMin !== 'exact' || p.consumed.wallMin !== anchor.wallMin) fail('plan node budget settlement wall time changed');
+  // The operational ROWS are not carried by a cold replay; the row's own operational claim is
+  // judged against the evidence mapping the ledger carries, and stays internally consistent.
+  const operationalKeys = ['prefixDigest', 'throughSeq', 'worker'];
+  if (p.operational === null || typeof p.operational !== 'object' || Array.isArray(p.operational)
+    || Object.keys(p.operational).sort().join(',') !== operationalKeys.sort().join(',')) {
+    fail('plan node budget settlement operational evidence is malformed');
+  }
+  const { worker, throughSeq, prefixDigest } = p.operational;
+  const rowsClaimed = throughSeq !== null;
+  if (rowsClaimed && (anchor.mapped === null || !Number.isSafeInteger(throughSeq) || throughSeq <= 0
+    || throughSeq !== anchor.mapped.payload.workerSeq || worker !== anchor.mapped.payload.worker
+    || !/^[a-f0-9]{64}$/.test(prefixDigest ?? ''))) fail('plan node budget settlement operational evidence changed');
+  // A null throughSeq means no rows were read: the worker is then the recorded assignee, or
+  // the mapped evidence worker a store with a resolver but no range read records.
+  if (!rowsClaimed && (prefixDigest !== null
+    || !(worker === anchor.assignee || (anchor.mapped !== null && worker === anchor.mapped.payload.worker)))) {
+    fail('plan node budget settlement operational evidence changed');
+  }
+  // Provider turns come from the rows; tokens and USD can only be exact over rows as well.
+  if ((p.availability.providerTurns === 'exact') !== rowsClaimed
+    || (p.availability.tokens === 'exact' && !rowsClaimed) || (p.availability.usd === 'exact' && !rowsClaimed)) {
+    fail('plan node budget settlement availability is malformed');
+  }
+  // The arithmetic is recomputed from the recorded consumption and the ledger's own initial
+  // budget and wall time, so a rewritten total still refuses even with a recomputed receipt.
+  const dimensions = _planBudgetDimensions(anchor.initial, p.consumed, p.availability);
+  for (const key of dimensionKeys) {
+    if (p.released[key] !== dimensions[key].released || p.held[key] !== dimensions[key].held
+      || p.overrun[key] !== dimensions[key].overrun) fail('plan node budget settlement arithmetic changed');
+  }
+  return core;
 }
 
 export function _contextRetrySelection(store, callId, integrity = false) {

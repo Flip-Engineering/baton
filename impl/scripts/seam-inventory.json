@@ -15681,7 +15681,7 @@
         {
           "name": "_validateGoalPlanDispatchPair",
           "ordinal": 0,
-          "size": 195,
+          "size": 200,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -19225,9 +19225,36 @@
           ]
         },
         {
+          "name": "_planBudgetLedgerAnchor",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_planBudgetUsdDimension",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_planBudgetDimensions",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_derivePlanBudgetSettlement",
           "ordinal": 0,
-          "size": 73,
+          "size": 50,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name",
@@ -19237,7 +19264,7 @@
         {
           "name": "_validatePlanBudgetSettlement",
           "ordinal": 0,
-          "size": 11,
+          "size": 67,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",

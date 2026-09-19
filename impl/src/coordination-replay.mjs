@@ -1878,8 +1878,13 @@ export function _validateGoalPlanDispatchPair(store, dispatchEvent, taskEvent, i
   const planRecovery = recoveryClaimEvent !== null;
   const authorityFields = ['principalId', 'repoId', 'runId'];
   const bindingFields = ['schemaVersion', 'goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'approvalDigest', 'policyDigest', 'dispatchVersion'];
+  // Issue #504/#518: the deployment identity a recorded dispatch must belong to comes from the
+  // live authority when one is configured, else from the store's own repoId; a store that knows
+  // neither (the probes) binds no identity and validates the row as recorded — the recorded
+  // goal and plan below still have to agree with the recorded authority repoId.
+  const deploymentRepoId = store._goalPlanPolicy?.repoId ?? store._repoId;
   if (!p || !task || !p.authority || Object.keys(p.authority).sort().join(',') !== authorityFields.sort().join(',')
-    || !validRunId(p.authority.principalId) || p.authority.repoId !== store._goalPlanPolicy?.repoId
+    || !validRunId(p.authority.principalId) || (deploymentRepoId !== null && p.authority.repoId !== deploymentRepoId)
     || !(p.authority.runId === null || validRunId(p.authority.runId))
     || !p.binding || Object.keys(p.binding).sort().join(',') !== bindingFields.sort().join(',')) fail('goal/plan dispatch authority or binding is malformed');
 
