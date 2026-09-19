@@ -41,7 +41,6 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import { materializeContextCallBrief } from './context-call.mjs';
-import { createRecorderPort } from './runtime-recorder-port.mjs';
 import { openBatonDeployment, DEFAULT_BUDGET } from './application-deployment.mjs';
 
 export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
@@ -1600,7 +1599,11 @@ export function createDriver(opts) {
   // The live-holder provider the worktree authority consults before any destructive effect. It is
   // late-bound: the answer comes from the coordinator this same driver is constructing, and the
   // worktree manager never guesses at custody before that authority exists.
-  const recorderPort = opts.recorderPort ?? createRecorderPort({ log, coordination, route });
+  // The recorder port's DEFAULT is composed by the Coordinator constructor (over its own wrapped
+  // log/coordination/route — the closed-checking log facade and the poisoning coordination proxy),
+  // never here from the raw authorities: a port composed over the raw store would bypass the
+  // proxy's coordination_write_unavailable poisoning (issue #259 slice 9, phase11 CK8/CK9).
+  const recorderPort = opts.recorderPort ?? undefined;
   let liveWorkspaceHoldersFor = () => Object.freeze([]);
   const coordinator = new Coordinator({
     log, fences, recorderPort,

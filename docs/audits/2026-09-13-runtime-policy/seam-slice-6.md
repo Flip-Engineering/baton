@@ -54,18 +54,20 @@ The two consumers demonstrate both halves of the port:
 
 ## 3. Wiring
 
-The port is assembled at two sites:
+The port is assembled at one site, with one pass-through:
 
-- **`createDriver`** (`impl/src/index.mjs`): builds the port from the log, coordination store, and
-  route that the factory already holds, and passes it to the Coordinator constructor as
-  `opts.recorderPort`. An injected `opts.recorderPort` is passed through.
-- **Coordinator constructor** (`impl/src/coordinator.mjs`): validates the option when present,
-  assigns `this._recorder`. When no option is supplied (bare `new Coordinator(opts)` without
-  `createDriver`), the constructor builds its own port from `this._log`, `this._coordination`, and
-  `this._route`, so delegates never reach a null recorder.
+- **Coordinator constructor** (`impl/src/coordinator.mjs`): validates `opts.recorderPort` when
+  present and assigns `this._recorder`. When the option is absent, the constructor builds the port
+  from `this._log`, `this._coordination`, and `this._route` — the coordinator's OWN wrapped
+  authorities: the closed-checking log facade and the poisoning coordination proxy.
+- **`createDriver`** (`impl/src/index.mjs`) passes `opts.recorderPort` through. Slice 6's first
+  wiring assembled the default port in the factory from the RAW log and store, which diverged from
+  the constructor path: port-routed mutator calls would have bypassed the coordination proxy's
+  `coordination_write_unavailable` poisoning. Slice 9 moved the default composition into the
+  constructor (phase11's CK8/CK9 caught the divergence; `RE4b` pins the facade identity).
 
-This follows the `knowledgeBriefingProvider` pattern from slice 3: `createDriver` assembles the
-authority, the constructor validates and falls back.
+This follows the `knowledgeBriefingProvider` pattern from slice 3: the composition root validates
+and carries the option; the consumer composes the default.
 
 ## 4. The map
 
