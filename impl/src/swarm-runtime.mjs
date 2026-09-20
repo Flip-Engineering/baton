@@ -7450,6 +7450,15 @@ export class SwarmRuntime {
       let contributionStatus = null;
       let externalJoin = null;
       if (args.event === 'swarm.contribution_recorded') {
+        // Issue #528: a payload naming NONE of contributionId, body or refs gives the runtime
+        // nothing to record and nothing to mint an identity from other than the caller's own
+        // idempotency key — the fold would admit it (a caller-named contributionId with nothing
+        // else stays a deliberate, valid marker contribution), but minting one for a payload with
+        // no content of any kind is not a contribution, it is an empty call.
+        if (payload.contributionId === undefined
+          && (payload.body === undefined || payload.body === null) && payload.refs === undefined) {
+          refuse('swarm.contribution_recorded needs a contributionId, a body, or refs — an empty payload names nothing to record', 'swarm_payload_invalid');
+        }
         if (!payload.participantId && !caller) {
           const participantId = `external-${hash([args.swarmId, principal.principalId]).slice(0, 32)}`;
           if (!Object.hasOwn(swarm.participants, participantId)) {
