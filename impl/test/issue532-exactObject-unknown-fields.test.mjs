@@ -1,0 +1,54 @@
+// Issue #532: exactObject accepts unknown fields for forward compatibility.
+//
+// The closed-field check refused objects carrying fields beyond the declared set.
+// Both implementations (goal-plan.mjs, application-observation.mjs) now check only
+// that all required fields are present; unknown fields pass through silently.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { exactObject } from '../src/application-observation.mjs';
+
+test('exactObject accepts an object with all required fields plus extra unknown fields', () => {
+  assert.doesNotThrow(() => exactObject(
+    { a: 1, b: 2, extra: 'hello', another: true },
+    ['a', 'b'],
+    'test_code',
+    'test object',
+  ));
+});
+
+test('exactObject accepts an object with exactly the required fields', () => {
+  assert.doesNotThrow(() => exactObject(
+    { a: 1, b: 2 },
+    ['a', 'b'],
+    'test_code',
+    'test object',
+  ));
+});
+
+test('exactObject refuses an object missing a required field', () => {
+  assert.throws(
+    () => exactObject({ a: 1 }, ['a', 'b'], 'test_code', 'test object'),
+    (err) => err.code === 'test_code' && /missing required field/.test(err.message),
+  );
+});
+
+test('exactObject refuses null', () => {
+  assert.throws(
+    () => exactObject(null, ['a'], 'test_code', 'test object'),
+    (err) => err.code === 'test_code',
+  );
+});
+
+test('exactObject refuses an array', () => {
+  assert.throws(
+    () => exactObject([1, 2], ['a'], 'test_code', 'test object'),
+    (err) => err.code === 'test_code',
+  );
+});
+
+test('exactObject refuses a primitive', () => {
+  assert.throws(
+    () => exactObject('hello', ['a'], 'test_code', 'test object'),
+    (err) => err.code === 'test_code',
+  );
+});

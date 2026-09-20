@@ -77,8 +77,9 @@ export const GOAL_PLAN_CEILINGS = Object.freeze({
   statusBytes: 64 * FRAME_LIMITS['spill.body'].value,
 });
 function exactObject(value, fields, code = 'goal_plan_invalid') {
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).sort().join(',') !== [...fields].sort().join(',')) fail('goal/plan object has unknown or missing fields', code);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('goal/plan object has missing required field(s)', code);
+  const keys = Object.keys(value);
+  for (const f of fields) { if (!keys.includes(f)) fail('goal/plan object has missing required field(s)', code); }
 }
 const SECRET_SHAPED_TEXT = Object.freeze([
   /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u,

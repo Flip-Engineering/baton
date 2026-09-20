@@ -286,9 +286,12 @@ export function deepFreeze(value) {
   return Object.freeze(value);
 }
 export function exactObject(value, fields, code, label) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).sort().join('\0') !== [...fields].sort().join('\0')) {
-    throw applicationError(`${label} has unknown or missing fields`, code);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw applicationError(`${label} has missing required field(s)`, code);
+  }
+  const keys = Object.keys(value);
+  for (const f of fields) {
+    if (!keys.includes(f)) throw applicationError(`${label} has missing required field(s)`, code);
   }
 }
 export function validId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value); }
