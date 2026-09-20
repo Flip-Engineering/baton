@@ -61,10 +61,6 @@ const OUTPUT_MEDIA = 'application/vnd.baton.context-value+json';
 const EVIDENCE_MEDIA = 'application/vnd.baton.context-cell-evidence+json';
 const CALL_EVIDENCE_MEDIA = 'application/vnd.baton.context-call-evidence+json';
 
-export const CONTEXT_EFFECT_CALL_LIMITS = Object.freeze({
-  maxItems: MAX_ITEMS, maxTextBytes: MAX_TEXT_BYTES,
-});
-
 // Issue #390: the contextCall view's state set is CLOSED and declared here — the one home the
 // projection reads from, never a second table. `stopping` is the distinct state between a Run
 // stop ADMISSION and the completed-stop receipt; `stopped` means the receipt was observed.
