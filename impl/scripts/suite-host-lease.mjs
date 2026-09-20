@@ -133,6 +133,21 @@ export function formatSuiteDegradedWarning(error) {
   return `baton test runner: proceeding WITHOUT a host verify lease (${shortfall}) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend`;
 }
 
+/** Issue #512: the terminal row a refused admission prints, beside the authority's own message.
+ * It names the stage the run stopped at (`admission`), the refusal's typed code, the dimension
+ * and the numbers the admission wait was spent on, and that the run produced no verdict — the
+ * one line that keeps a refusal from reading like a suite that ran and found failures. A refusal
+ * that carried no shortfall dimension says so rather than naming one it never observed. */
+export function formatSuiteAdmissionRefusal(error) {
+  const code = typeof error?.code === 'string' && error.code.length > 0
+    ? error.code
+    : (typeof error?.name === 'string' && error.name.length > 0 ? error.name : 'untyped');
+  const shortfall = error?.shortfall
+    ? `waiting on ${error.shortfall.dimension}: ${error.shortfall.observed} ${error.shortfall.unit} observed, ${error.shortfall.required} required`
+    : 'the refusal named no shortfall dimension';
+  return `baton test runner: refused at admission (${code}) — ${shortfall}; no lane ran and no verdict was produced`;
+}
+
 /** The runner's pre-lane plan line (#424): the selection it expanded and the lane width it
  * resolved — one line printed BEFORE admission and before any lane, so a reader sees what is
  * about to run even when the host queues this verdict, degrades it, or refuses it. */

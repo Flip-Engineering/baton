@@ -278,6 +278,10 @@ test('HC-6: run-suite.mjs defaults its parallelism from the derivation; BATON_SU
   // derivation's answer for this machine.
   const env = { ...process.env };
   delete env.BATON_SUITE_PARALLELISM;
+  // Issue #512: the row's subject is the derivation, so it stages the operator bypass — on a
+  // loaded host the child's verify lease is refused (exit 1 before any lane) and this row would
+  // read that refusal as a fixture failure.
+  env.BATON_HOST_CAPACITY_DISABLED = '1';
   const child = spawn(process.execPath, [runner, 'test/adapter-card-contract.test.mjs'], {
     cwd: implRoot, env, stdio: ['ignore', 'ignore', 'pipe'],
   });

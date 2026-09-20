@@ -51,8 +51,8 @@ const { defaultSuiteParallelism } = await import(new URL('../src/host-capacity.m
 // names its lease, and only the parent's own token digest (BATON_SUITE_VERIFY_LEASE, published to
 // this run's children below) nests a runner; the inherited BATON_TEST_SUITE_ROOT never does.
 const {
-  acquireSuiteVerifyLease, formatSuiteDegradedWarning, formatSuitePlan, SUITE_VERIFY_LEASE_ENV,
-  suiteLeaseTokenDigest, suiteQueueTimeoutDecision,
+  acquireSuiteVerifyLease, formatSuiteAdmissionRefusal, formatSuiteDegradedWarning,
+  formatSuitePlan, SUITE_VERIFY_LEASE_ENV, suiteLeaseTokenDigest, suiteQueueTimeoutDecision,
 } = await import(new URL('./suite-host-lease.mjs', import.meta.url).href);
 
 /** The machine-local prerequisites this run observed, named by the readiness declaration. */
@@ -615,6 +615,8 @@ if (legacyPassthrough) {
   // names a limit no wait could cure — a host that cannot fund a suite runs degraded with a
   // warning instead of bricking (suiteQueueTimeoutDecision) — and the lease releases at the
   // verdict whichever way it ends. A bypassed run acquires nothing.
+  // Issue #512: a refusal is terminal and names itself — the authority's message, then one row
+  // naming the stage, the typed code, the dimension the wait was spent on, and the missing verdict.
   let suiteLease = null;
   try {
     suiteLease = await acquireSuiteVerifyLease();
@@ -625,6 +627,7 @@ if (legacyPassthrough) {
       suiteLease = { token: null, release: async () => false };
     } else {
       process.stderr.write(`baton test runner: ${error?.message ?? error}\n`);
+      process.stderr.write(`${formatSuiteAdmissionRefusal(error)}\n`);
       finish(1, null, null, true);
     }
   }
