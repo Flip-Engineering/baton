@@ -3212,13 +3212,59 @@ export class WebNorthbound {
         body: { ok: false, error: { code: cause.code ?? 'invalid_wake_filter', message: cause.message, detail: cause.detail ?? null } },
       }, origin);
     }
+    // Issue #529: the bounded read's own bound — ONE call that returns when a frame lands or at
+    // the deadline, for a caller that can neither hold an attachment nor poll. The bound rides the
+    // JSON read only (an attachment has no deadline, and answering one would be silence), and it
+    // draws the ONE web wait ceiling every other held request draws (`web.wait_ceiling_ms`): past
+    // it the caller re-arms its own rounds, which is exactly what the CLI's bounded deployment
+    // watch does with the cursor each answer carries.
+    let waitMs = null;
+    const rawWaitMs = url.searchParams.get('timeoutMs');
+    if (rawWaitMs !== null) {
+      const waitRefusal = (code, message, rule) => ({
+        status: 400,
+        body: {
+          ok: false,
+          error: { code, message, field: 'timeoutMs', detail: { field: 'timeoutMs', rule } },
+        },
+      });
+      waitMs = Number(rawWaitMs);
+      if (!Number.isSafeInteger(waitMs) || waitMs <= 0) {
+        return this._write(res, waitRefusal('wake_wait_invalid',
+          `timeoutMs ${rawWaitMs} is not a bounded wait: it must be a positive integer of milliseconds`,
+          'positive-integer'), origin);
+      }
+      if (waitMs > WEB_WAIT_CEILING_ROW.value) {
+        return this._write(res, {
+          status: 400,
+          body: {
+            ok: false,
+            error: {
+              code: webWaitCeilingRefusalCode('wakes'), field: 'timeoutMs',
+              message: composeWebWaitCeilingRefusal(waitMs),
+              detail: { field: 'timeoutMs', rule: 'web-wait-ceiling', ceilingMs: WEB_WAIT_CEILING_ROW.value },
+            },
+          },
+        }, origin);
+      }
+      if (!`${req.headers.accept ?? ''}`.includes('application/json')) {
+        return this._write(res, waitRefusal('wake_wait_invalid',
+          'timeoutMs bounds the JSON read only; the attachment form is `baton deployment watch --follow`, which has no deadline',
+          'attachment-has-no-deadline'), origin);
+      }
+    }
     // The pull form: a consumer that cannot hold an attachment (the MCP `baton_wakes_since` tool)
     // asks for one bounded page instead of a stream. SSE stays the default; the page carries the
     // same frames, the same cursor, and the same typed lag marker as an attachment would.
     if (`${req.headers.accept ?? ''}`.includes('application/json')) {
+      const waitAbort = new AbortController();
+      if (waitMs !== null) res.on?.('close', () => waitAbort.abort());
       let page;
-      try { page = this.wakes.since(filter); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      try {
+        page = waitMs === null
+          ? this.wakes.since(filter)
+          : await this.wakes.wait(filter, { timeoutMs: waitMs, signal: waitAbort.signal });
+      } catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       try { this._audit('wake_page_read', ctx, { since: filter.since, cursor: page.cursor, frames: page.frames.length }); }
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, result(200, { ok: true, wakes: page }), origin);

@@ -321,6 +321,20 @@ of the `--since` axis, `--kinds`/`--swarms`/`--participants` are working spellin
 three. `baton deployment watch` without `--follow` refuses `cli_command_unavailable` and names
 this verb.
 
+**The deployment-scope wait is the root's own wake (#529, 2026-09-20).** `baton deployment
+watch --timeout-ms MS [--wake-class CLASS,...] [--since SEQ]` holds ONE bounded wait on the same
+stream: it answers when a row of the named class lands, or at its deadline (default 30000 ms). The
+answer is `baton.wake_wait` — the page's own `cursor`, `swarms`, `frames` and typed `lagged` marker
+plus the `reason` that settled it (`event` or `timeout`) — and a caller re-arms by passing that
+`cursor` back as `--since`, with no gap and no duplicate. The wait holds on the resident:
+`GET /v1/wakes?…&timeoutMs=N` serves the stream's bounded read under the ONE web wait ceiling
+(`web.wait_ceiling_ms`, 30 s), an over-long or malformed bound refuses `wake_wait_invalid` /
+`wakes_wait_timeout_exceeds_web_ceiling` by name, and the CLI holds a longer `--timeout-ms` in
+rounds of that ceiling, each round re-armed from the answer's cursor. It is the deployment-scope
+sibling of the bounded swarm watch: the root agent's turn holds one call and is woken by its
+answer. `--follow` and `--timeout-ms` are the verb's two forms and are exclusive; the bare verb
+keeps the #507 refusal that names `wakes-since`.
+
 **Incarnation changes wake too (#306, 2026-09-18).** `incarnation_changed` is a deployment-scope wake class keyed on `host.reincarnated {from: {incarnation, commit}, to: {incarnation, commit}, predecessorExited}`; it is not terminal — the watcher's act is to re-read the view, because the rows and the attachment it held came from the predecessor incarnation. The handoff's own rows (`host.reincarnation_requested`, `host.successor_started`, `host.successor_published`, `host.publication_withdrawn`, `host.reincarnation_failed`) are durable and readable on the deployment ledger like the #351 stop rows.
 
 ### A stop that cannot converge names its wait (issue #265, 2026-09-14)

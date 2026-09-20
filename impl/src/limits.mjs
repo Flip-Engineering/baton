@@ -435,8 +435,9 @@ export const MODEL_PROFILE_STALENESS_ROW = FRAME_LIMITS['model_profile.catalog_s
 
 /** Issue #394: the ONE derivation of the web wait-ceiling refusal code, scoped by the arm that
  * draws it — 'application' for the application `run.wait` arm (whose token is pinned
- * byte-identical by the blind-waits suite) and 'coordinator' for the legacy coordinator `wait`
- * arm. One family, one ceiling: a caller branches on the suffix and neither arm may re-spell it. */
+ * byte-identical by the blind-waits suite), 'coordinator' for the legacy coordinator `wait` arm,
+ * and 'wakes' for the deployment wake stream's bounded read (#529). One family, one ceiling: a
+ * caller branches on the suffix and no arm may re-spell it. */
 export function webWaitCeilingRefusalCode(scope) {
   return `${scope}_wait_timeout_exceeds_web_ceiling`;
 }
