@@ -106,8 +106,11 @@ const DEPENDENCY_PROJECTION_LIMITS = Object.freeze({
   maxDepth: 256,
 });
 
-const MAX_KIMI_CREDENTIAL_METADATA_BYTES = 64 * 1024;
-const MAX_GROK_CREDENTIAL_METADATA_BYTES = 64 * 1024;
+// Issue #500: credential file bounds read the registry's credential.file row (Decision 8
+// no-re-declare law). Every credential family's file-size and field-length guard draws this
+// ONE declared value; the registry is the source (limits.mjs credential.file substrate row).
+const MAX_KIMI_CREDENTIAL_METADATA_BYTES = FRAME_LIMITS['credential.file'].value;
+const MAX_GROK_CREDENTIAL_METADATA_BYTES = FRAME_LIMITS['credential.file'].value;
 const GROK_AUTH_EARLY_INVALIDATION_MS = 5 * 60 * 1000;
 const KIMI_TOKEN_WIRE_FIELDS = Object.freeze([
   'access_token', 'refresh_token', 'expires_at', 'scope', 'token_type', 'expires_in',
@@ -1435,7 +1438,8 @@ export function routeReadinessContract(route, providerKeyFiles = DEFAULT_OMP_PRO
 /** Muse resolves its config under $XDG_CONFIG_HOME (else ~/.config), like the harness itself. */
 function museAuthPath() { return join(userConfigRoot(), 'muse', 'auth.json'); }
 
-const MAX_MUSE_AUTH_FILE_BYTES = 64 * 1024;
+// Issue #500: the muse auth file bound reads the registry's credential.file row (limits.mjs).
+const MAX_MUSE_AUTH_FILE_BYTES = FRAME_LIMITS['credential.file'].value;
 
 const MUSE_LOGIN_REMEDY = 'run `muse login` (the OS keyring; on a keyring-less host, `TBH_CREDENTIAL_BACKEND=file muse login`), then reopen Baton.';
 

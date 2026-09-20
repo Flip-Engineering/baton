@@ -6,7 +6,10 @@ import {
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
 
-const FILE_MAX_BYTES = 16 * 1024;
+import { FRAME_LIMITS } from './limits.mjs';
+
+// Issue #500: the file bound reads the registry's credential.file row (limits.mjs).
+const FILE_MAX_BYTES = FRAME_LIMITS['credential.file'].value;
 const PROMPT_MAX_BYTES = 12 * 1024;
 
 function setupError(code) {
