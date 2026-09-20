@@ -2285,19 +2285,43 @@ export class BatonApplication {
     } catch { return null; }
   }
 
-  /** Admit one deliberate shared-checkout attachment for a recruited Run, or refuse its shape.
-   * The attachment is a live observation the swarm already resolved (which checkout, whose native
-   * session handed it over, and how many holders were in it) — never caller-supplied coordinates. */
+  /** Admit one deliberate checkout attachment for a recruited Run, or refuse its shape naming the
+   * field that failed (#517). The attachment is resolved by the swarm — which checkout, whose
+   * native session handed it over, and how many holders were in it — never caller-supplied
+   * coordinates. Two shapes reach here: a SHARED live checkout (`holderCount` >= 1, the source
+   * seat's own handle) and a RETAINED checkout carried to a `--resume-from` successor, where the
+   * predecessor is dead and nobody holds it yet, so `holderCount` is exactly 0. The rest of the
+   * shape is shared, and both carry the session context of the checkout they name. */
   _admitWorkspaceAttachment(runId, workspace) {
     const fields = ['holderCount', 'sessionContext', 'workspaceId'];
-    if (!workspace || typeof workspace !== 'object' || Array.isArray(workspace)
-      || Object.keys(workspace).sort().join(',') !== fields.sort().join(',')
-      || !/^ws-[a-f0-9]{32}$/u.test(workspace.workspaceId ?? '')
-      || !Number.isSafeInteger(workspace.holderCount) || workspace.holderCount < 1
-      || !workspace.sessionContext || typeof workspace.sessionContext !== 'object'
-      || Array.isArray(workspace.sessionContext)
-      || workspace.sessionContext.ownerTaskId !== workspace.workspaceId) {
-      throw applicationError('shared workspace attachment is invalid', 'application_workspace_attachment_invalid');
+    const sessionContext = workspace?.sessionContext;
+    // Every failure names its field, the shape observed and the rule it broke, so the refusal
+    // teaches at the caller (the web lane carries a coded application refusal's own message and
+    // detail byte-identically — the #335/#336 rule).
+    const shape = [
+      ['workspace', workspace && typeof workspace === 'object' && !Array.isArray(workspace)
+        && Object.keys(workspace).sort().join(',') === fields.sort().join(','),
+      'must carry exactly holderCount, sessionContext and workspaceId'],
+      ['workspaceId', /^ws-[a-f0-9]{32}$/u.test(workspace?.workspaceId ?? ''),
+        'must be a physical workspace id (ws- followed by 32 hex digits)'],
+      ['sessionContext', Boolean(sessionContext) && typeof sessionContext === 'object'
+        && !Array.isArray(sessionContext) && sessionContext.ownerTaskId === workspace?.workspaceId,
+      'must be an object whose ownerTaskId names the attached workspace'],
+      ['holderCount', Number.isSafeInteger(workspace?.holderCount) && workspace.holderCount >= 0,
+        'must be a whole holder count of 0 (a retained checkout carried to a successor) or more'],
+    ];
+    const failed = shape.find(([, ok]) => !ok);
+    if (failed) {
+      const [field, , rule] = failed;
+      const observed = field === 'workspaceId' ? workspace?.workspaceId ?? null
+        : field === 'sessionContext' ? sessionContext?.ownerTaskId ?? null
+          : field === 'holderCount' ? workspace?.holderCount ?? null
+            : Object.keys(workspace ?? {}).sort();
+      throw applicationError(
+        `shared workspace attachment is invalid: ${field} ${rule} (observed ${JSON.stringify(observed)})`,
+        'application_workspace_attachment_invalid',
+        { field, observed, rule, workspaceId: workspace?.workspaceId ?? null },
+      );
     }
     if (this._workspaceAttachments.has(runId)) {
       throw applicationError('this Run already has a shared workspace attachment', 'application_workspace_attachment_conflict');

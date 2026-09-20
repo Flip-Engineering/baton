@@ -4411,7 +4411,7 @@
         {
           "name": "_admitWorkspaceAttachment",
           "ordinal": 0,
-          "size": 18,
+          "size": 38,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
