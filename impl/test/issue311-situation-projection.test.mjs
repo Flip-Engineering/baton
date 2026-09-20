@@ -196,6 +196,9 @@ test('311-g: a successor\'s situation names its predecessor — last checkpoint 
     payload: { contributionId: 'c-lead', participantId: 'lead', body: contractBody('Lead contract', ['carry the guard forward']) } });
   await f.call('capture', { swarmId: 's-one', participantId: 'lead', contributionId: 'c-lead' });
   await f.call('recruit', { swarmId: 's-one', participantId: 'successor', objective: 'Continue the lane', resumeFrom: 'lead' });
+  // #525: the recruit lands the recovery question; the answer starts the successor, whose worker
+  // identity the scoped reads below stand on.
+  await f.call('guide', { swarmId: 's-one', participantId: 'successor', message: 'Continue the lane.' });
 
   const asSuccessor = (await f.call('view', { swarmId: 's-one' }, f.asParticipant('s-one', 'successor'))).situation;
   assert.ok(asSuccessor.predecessor !== null, 'the viewing seat is a successor — its predecessor is named');

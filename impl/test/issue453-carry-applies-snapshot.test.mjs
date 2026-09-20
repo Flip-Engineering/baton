@@ -218,6 +218,9 @@ test('453-a: a snapshot holding an untracked new file reaches the successor chec
   const bravo = await w.call('recruit', {
     swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
   });
+  // #525: the carry is performed when the orchestrator's answer starts the seat, not at the
+  // recruit that recorded the question.
+  await w.call('guide', { swarmId: SWARM, participantId: 'bravo', message: 'Continue the lane.' });
   const successorCheckout = workerOf(w, bravo.runId).worktree;
 
   assert.equal(readFileSync(join(successorCheckout, CARRIED), 'utf8'), CARRIED_BODY,
@@ -246,6 +249,7 @@ test('453-a2: a pre-#453 snapshot row names no paths — the carry derives them 
   const bravo = await w.call('recruit', {
     swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
   });
+  await w.call('guide', { swarmId: SWARM, participantId: 'bravo', message: 'Continue the lane.' });
   const successorCheckout = workerOf(w, bravo.runId).worktree;
 
   assert.equal(readFileSync(join(successorCheckout, CARRIED), 'utf8'), CARRIED_BODY,
@@ -271,6 +275,7 @@ test('453-bound: a predecessor whose checkout still exists is carried as `bound`
   await w.call('recruit', {
     swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
   });
+  await w.call('guide', { swarmId: SWARM, participantId: 'bravo', message: 'Continue the lane.' });
 
   const carried = rowsOf(w.store, 'workspace.carried_from');
   assert.equal(carried.length, 1, 'ONE carry row');
@@ -296,10 +301,13 @@ test('453-b: a snapshot that cannot apply refuses typed — no row, no successor
   execFileSync('git', ['commit', '-qm', 'target moved past the predecessor base'], { cwd: w.repo });
   moved.sha = git(w.repo, ['rev-parse', 'HEAD']);
 
+  // #525: the recruit records the question; the apply that cannot run refuses the ANSWER that
+  // would start the seat, so the seat stays decision-pending rather than withdrawn.
+  await w.call('recruit', {
+    swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
+  });
   await assert.rejects(
-    w.call('recruit', {
-      swarmId: SWARM, participantId: 'bravo', objective: 'continue alpha', resumeFrom: 'alpha',
-    }),
+    w.call('guide', { swarmId: SWARM, participantId: 'bravo', message: 'Continue the lane.' }),
     (error) => {
       assert.equal(error.code, 'swarm_workspace_carry_failed',
         `the refusal is typed, never a silent successor: ${error.message}`);
@@ -318,10 +326,9 @@ test('453-b: a snapshot that cannot apply refuses typed — no row, no successor
   assert.equal(readFileSync(join(checkout.dir, CARRIED), 'utf8'),
     'the target already carries this path\n', 'nothing was half-applied into the successor checkout');
   const bravo = w.store.swarm(SWARM).participants.bravo;
-  assert.equal(bravo?.status, 'left', 'the refused seat is withdrawn, not left working');
-  assert.equal(bravo.leftReason, 'recruit_refused',
-    'and its identity may re-join once the root decides how to resume');
-  assert.equal(w.stopped.length, 1, 'the run the refusal withdrew is stopped');
+  assert.equal(bravo?.status, 'active', 'the seat the answer could not start stays decision-pending');
+  assert.equal(bravo?.resumeDecision?.requested?.predecessor, 'alpha',
+    'its question is still open for the next answer');
 });
 
 // ——————————————————————————————————————————————————————————————————

@@ -265,7 +265,7 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/coordinator.mjs': 424,
   'impl/src/application.mjs': 237,
   'impl/src/coordination-store.mjs': 604,
-  'impl/src/swarm-runtime.mjs': 158,
+  'impl/src/swarm-runtime.mjs': 160,
   'impl/src/coordination-internals.mjs': 122,
   'impl/src/coordination-replay.mjs': 61,
   'impl/src/runtime-briefing.mjs': 1,

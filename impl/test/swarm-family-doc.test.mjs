@@ -88,14 +88,17 @@ test('S-G1: the attention vocabulary is read from the runtime mint sites, in sou
   // (minted beside the contribution rows). #443 adds the death's ANSWER, minted in the same loop
   // right after the fault it answers: reroute_proposed when the decision has a candidate route to
   // name, reroute_no_candidate when the window is closed everywhere — the two arms of ONE row.
+  // #525 adds the recovered seat's own row (resume_decision_required), minted in the same loop
+  // after the re-route arms: a seat whose `resume_decision_requested` has no answer yet.
   // The list below is the mint order the extractor reads.
-  assert.equal(kinds.length, 24, 'the runtime mints twenty-four attention kinds');
+  assert.equal(kinds.length, 25, 'the runtime mints twenty-five attention kinds');
   assert.deepEqual(kinds, [
     'worker_lost_on_restart',
     'participant_runtime_dead',
     'provider_fault',
     'reroute_proposed',
     'reroute_no_candidate',
+    'resume_decision_required',
     'member_left_session_live',
     'delegation_orphaned',
     'assignment_holder_gone',

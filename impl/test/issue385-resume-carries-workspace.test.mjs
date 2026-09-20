@@ -21,6 +21,7 @@ import test from 'node:test';
 
 import { BatonApplication, MockAdapter, createBrief, createDriver } from '../src/index.mjs';
 import { SWARM_EVENT_KINDS, foldSwarmEvent, validateSwarmEvent } from '../src/swarm-state.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 
 const repoId = 'repo-issue385-carry';
@@ -32,7 +33,10 @@ const policy = Object.freeze({
   capabilityClasses: ['code', 'test'],
   limits: Object.freeze({
     maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
-    maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
+    // The goal text bound a deployment gives a recruit objective IS the run.objective lane
+    // (application-deployment.mjs): a recruit's objective is its whole composed brief, so the
+    // fixture sizes it the same way rather than to a narrow literal.
+    maxTextBytes: FRAME_LIMITS['run.objective'].value, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
     maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024,
     maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
   }),
@@ -210,6 +214,11 @@ test('385-c: a successor of a LIVE predecessor starts in a fresh workspace and c
   // a fresh workspace, no workspace.carried_from row, never a refusal.
   const bravo = await recruit(app, { swarmId: 'held', participantId: 'bravo', objective: 'Continue alongside',
     resumeFrom: 'alpha', key: 'recruit:held:bravo-held' });
+  // #525: the answer starts the seat; the recruit recorded the recovery question.
+  await command(app, 'swarm.guide', {
+    swarmId: 'held', participantId: 'bravo', message: 'Continue the lane.',
+    idempotencyKey: 'guide:held:bravo-held',
+  });
   const bravoWorker = await working(driver, bravo.runId);
   assert.notEqual(bravoWorker.sessionContext?.ownerTaskId, alphaWorker.sessionContext.ownerTaskId,
     'a live predecessor keeps its own checkout; the successor starts fresh');
@@ -317,6 +326,10 @@ test('385-a: a resume-from successor binds to the predecessor\'s same workspace 
   await second.call('recruit', {
     swarmId: 'carry', participantId: 'bravo', objective: 'Continue from alpha',
     resumeFrom: 'alpha',
+  });
+  // #525: the carry and the binding happen when the orchestrator's answer starts the seat.
+  await second.call('guide', {
+    swarmId: 'carry', participantId: 'bravo', message: 'Continue the lane.',
   });
   const bravoParticipant = second.driver.coordination.swarm('carry').participants.bravo;
   assert.equal(bravoParticipant.workspaceId, alphaWorkspaceId,

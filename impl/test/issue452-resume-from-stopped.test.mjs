@@ -149,6 +149,11 @@ function fixture(t) {
       participantId, objective: `Continue the lane as ${participantId}`,
       ...(resumeFrom === undefined ? {} : { resumeFrom }),
     }),
+    // #525: a resume-from recruit lands the recovery question; the guide is the orchestrator's
+    // answer, and it is the act that starts the successor and performs its carry.
+    answer: (participantId) => call('guide', {
+      participantId, message: `Continue the lane as ${participantId}`,
+    }),
     refusal: (participantId, resumeFrom) => call('recruit', {
       participantId, objective: `Continue the lane as ${participantId}`, resumeFrom,
     }).then(() => null, (error) => error),
@@ -190,6 +195,7 @@ test('452-a: a root-stopped seat whose checkout is retained is a resumable prede
   assert.ok(existsSync(checkout.worktree), 'the #428-retained checkout is still on disk and still named on the row');
 
   await f.recruit('bravo', 'alpha');
+  await f.answer('bravo');
 
   const bravo = f.seat('bravo');
   assert.equal(bravo.resumeFrom, 'alpha');
@@ -223,6 +229,7 @@ test('452-a2: a root-stopped seat whose checkout is gone but whose lane branch h
   assert.equal(existsSync(checkout.worktree), false, 'the checkout was cleaned');
 
   await f.recruit('charlie', 'alpha');
+  await f.answer('charlie');
 
   const charlie = f.seat('charlie');
   assert.equal(charlie.resumeFrom, 'alpha');
@@ -285,6 +292,7 @@ test('452-c: a seat the root settled as completed is resumable the same way as o
   assert.ok(existsSync(checkout.worktree), 'its checkout is still on disk');
 
   await f.recruit('builder-2', 'builder');
+  await f.answer('builder-2');
   const successor = f.seat('builder-2');
   assert.equal(successor.workspaceId, checkout.workspaceId, 'the successor binds to the completed seat\'s checkout');
   const carried = f.carriedFrom('builder-2');

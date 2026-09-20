@@ -13,7 +13,7 @@ import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionCo
   isContributionContractBody, projectContributionContract, validateContributionContract,
   validateContributionContractMode } from './contribution-contract.mjs';
 import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES,
-  SWARM_POLICY_FIELDS } from './swarm-state.mjs';
+  SWARM_POLICY_FIELDS, SWARM_RESUME_CONTINUATION_MODES, resumeDecisionPending } from './swarm-state.mjs';
 // Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
 // minting a code outside it is a construction-time error.
 import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
@@ -452,7 +452,12 @@ function swarmCreatePolicy(policy) {
       field: 'policy.reroutePreferApi', rule: 'field-predicate', expectation: 'a boolean',
     });
   }
-  if (policy.rerouteOnProviderFault === undefined && policy.reroutePreferApi === undefined) {
+  if (policy.resumeContinuation !== undefined && !SWARM_RESUME_CONTINUATION_MODES.includes(policy.resumeContinuation)) {
+    refuse(`resumeContinuation must be one of: ${SWARM_RESUME_CONTINUATION_MODES.join(', ')}`, 'swarm_command_invalid', {
+      field: 'policy.resumeContinuation', rule: 'closed-set', admitted: [...SWARM_RESUME_CONTINUATION_MODES],
+    });
+  }
+  if (policy.rerouteOnProviderFault === undefined && policy.reroutePreferApi === undefined && policy.resumeContinuation === undefined) {
     refuse('swarm.create policy names no policy field to declare', 'swarm_command_invalid', {
       field: 'policy', rule: 'required-field',
       expectation: `at least one of: ${SWARM_POLICY_FIELDS.join(', ')}`,
@@ -461,6 +466,7 @@ function swarmCreatePolicy(policy) {
   return Object.freeze({
     ...(policy.rerouteOnProviderFault === undefined ? {} : { rerouteOnProviderFault: policy.rerouteOnProviderFault }),
     ...(policy.reroutePreferApi === undefined ? {} : { reroutePreferApi: policy.reroutePreferApi }),
+    ...(policy.resumeContinuation === undefined ? {} : { resumeContinuation: policy.resumeContinuation }),
   });
 }
 
@@ -2253,7 +2259,7 @@ export class SwarmRuntime {
       },
       // Issue #273: the guide's own row rides `extra`, and the step that follows depends on how it
       // landed — so the ONE `next` derivation reads the outcome, never a second switch here.
-      next: swarmReceiptNext(command, args, extra.guide ?? null),
+      next: swarmReceiptNext(command, args, extra.guide ?? extra.resumeDecision ?? null),
       ...extra,
     };
     if (_mutationView(args)) envelope.view = this.inspect(this._swarm(args.swarmId), principal, context);
@@ -3016,9 +3022,11 @@ export class SwarmRuntime {
   _policyOf(swarm) {
     const policy = swarm?.policy ?? null;
     const mode = policy?.rerouteOnProviderFault ?? null;
+    const resumeMode = policy?.resumeContinuation ?? null;
     return Object.freeze({
       rerouteOnProviderFault: SWARM_REROUTE_MODES.includes(mode) ? mode : 'manual',
       reroutePreferApi: policy?.reroutePreferApi === true,
+      resumeContinuation: SWARM_RESUME_CONTINUATION_MODES.includes(resumeMode) ? resumeMode : 'manual',
     });
   }
 
@@ -4052,6 +4060,15 @@ export class SwarmRuntime {
           organization.push({ kind: 'reroute_no_candidate', ...common,
             next: `wait until ${reroute.resetAt ?? 'the provider\'s window reopens'} or add a route` });
         }
+      }
+      const resumeDecision = row.resumeDecision ?? null;
+      if (resumeDecisionPending(row)) {
+        organization.push({ kind: 'resume_decision_required', participantId: row.participantId,
+          predecessor: resumeDecision.requested.predecessor,
+          carry: resumeDecision.requested.carry, since: resumeDecision.requested.at,
+          ...responsibleFor(row),
+          next: { continue: { command: 'swarm.guide', swarmId: swarm.swarmId, participantId: row.participantId },
+            stop: { command: 'swarm.stop', swarmId: swarm.swarmId, participantId: row.participantId } } });
       }
       if (row.status !== 'active' && row.runtime.live) {
         organization.push({ kind: 'member_left_session_live', participantId: row.participantId, workerId: row.runtime.workerId,
@@ -6241,6 +6258,224 @@ export class SwarmRuntime {
     };
   }
 
+  _parkGuidanceWithReason(swarmId, participant, message, principal, args, guidance, reason) {
+    const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
+      message, args.idempotencyKey])}`;
+    const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
+      guidance, { state: 'parked', lane: null, reason }), message };
+    const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
+      { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
+    const event = recorded.event;
+    return {
+      participantId: participant.participantId,
+      result: { ok: true, result: 'parked', reason, messageId },
+      guide: this._guideReceipt(event, event.payload),
+      writes: [{ kind: 'swarm.guidance_parked', payload: event.payload,
+        seq: event.seq, ts: event.ts, actor: event.actor }],
+    };
+  }
+
+  /** Issue #525 D3: the deferred half of a resume-from recruit, performed when the seat's
+   * orchestrator answers its question with a guide. Everything the recruit would have done after
+   * the join happens here, under the guide's own operation — the host admission, the run start,
+   * the binding, the scope claim, the context-package attach and the physical workspace carry —
+   * and the answer's own text composes into the first brief through the #337 park seam (D6).
+   * Every refusal here leaves the seat decision-pending: nothing about the recovery is settled
+   * until the work is real, so a later guide can answer the same question again. */
+  async _performDeferredStart(swarm, participant, principal, args, writes, context) {
+    const currentSwarm = this._swarm(swarm.swarmId);
+    const seatRow = currentSwarm.participants[participant.participantId];
+    const runId = seatRow.runId;
+    const request = seatRow.resumeDecision?.requested ?? null;
+    const plan = request?.plan ?? null;
+    // The recruit's admitted Run-start selection and its context package, recorded with the
+    // question (D3); a request row from before the plan field existed starts on the defaults.
+    const runOptions = plan?.options ?? {};
+    const contextPackage = plan?.contextPackage ?? null;
+    const predecessor = seatRow.resumeFrom
+      ? this._inheritancePredecessor(currentSwarm, seatRow.resumeFrom) : null;
+    let predecessorWs = null;
+    let workspace = null;
+    if (predecessor) {
+      // The carry decision is re-derived from the world as it is NOW — the answer may come long
+      // after the recruit — and resolves under the SAME refusals the recruit-time plan used.
+      predecessorWs = this._predecessorWorkspace(currentSwarm, predecessor.participantId);
+      if (predecessorWs && !predecessorWs.predecessorLive) {
+        if (predecessorWs.exists && predecessorWs.liveHolders.length === 0) {
+          workspace = {
+            workspaceId: predecessorWs.workspaceId,
+            sessionContext: predecessorWs.sessionContext,
+            holderCount: 0,
+          };
+        } else if (predecessorWs.liveHolders.length > 0) {
+          refuse('Predecessor workspace is held by a live worker', 'swarm_workspace_unavailable', {
+            reason: 'predecessor_workspace_held',
+            workspaceId: predecessorWs.workspaceId,
+            holders: predecessorWs.liveHolders.map((h) => h.id ?? h),
+          });
+        } else if (predecessorWs.carry?.how === 'skipped' && predecessorWs.carry.content) {
+          refuse('Predecessor workspace cannot be carried into the successor',
+            'swarm_workspace_carry_failed', {
+              predecessor: predecessor.participantId, snapshotSha: predecessorWs.snapshotSha,
+              reason: predecessorWs.carry.reason,
+            });
+        }
+      }
+    }
+    // #297 × #525 D7: the seat takes the host slot at the moment it REALLY starts. The recruit
+    // held none, so the answer takes the one today's recruit would have taken, with the same
+    // queue rows and the same timeout refusal.
+    const operationKey = this._operationKey('swarm.guide', args, principal);
+    let workerLease = null;
+    let queuedRow = null;
+    if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
+      let admitted;
+      try {
+        admitted = await this.hostCapacity.acquire('worker', {
+          holder: `participant:${args.swarmId}:${participant.participantId}`,
+          onQueued: (row) => {
+            queuedRow = row;
+            try {
+              this.store.recordDriver('swarm.admission_queued', {
+                swarmId: args.swarmId, participantId: participant.participantId, command: 'swarm.guide',
+                authority: 'host', leaseKind: 'worker', position: row.position, ahead: row.ahead,
+                shortfall: row.shortfall ?? null,
+              }, { actor: principal.actor, key: `${operationKey}:queued` });
+            } catch { /* a raced operation row is evidence, never admission-critical */ }
+          },
+        });
+      } catch (error) {
+        if (error?.code === 'host_capacity_queue_timeout') {
+          try {
+            this.store.recordDriver('swarm.admission_timeout', {
+              swarmId: args.swarmId, participantId: participant.participantId, command: 'swarm.guide',
+              authority: 'host', leaseKind: 'worker', code: error.code,
+              position: error.queuePosition ?? queuedRow?.position ?? null,
+              ahead: error.queueAhead ?? queuedRow?.ahead ?? null,
+              shortfall: error.shortfall ?? queuedRow?.shortfall ?? null,
+              waitMs: error.waitMs ?? null, bypass: error.bypass ?? null,
+            }, { actor: principal.actor, key: `${operationKey}:timeout` });
+          } catch { /* evidence row only */ }
+        }
+        throw error;
+      }
+      workerLease = admitted.token;
+      if (queuedRow) {
+        try {
+          this.store.recordDriver('swarm.admission_admitted', {
+            swarmId: args.swarmId, participantId: participant.participantId, command: 'swarm.guide',
+            authority: 'host', leaseKind: 'worker', position: queuedRow.position, ahead: queuedRow.ahead,
+            queuedAt: admitted.queuedAt ?? null,
+          }, { actor: principal.actor, key: `${operationKey}:admitted` });
+        } catch { /* evidence row only */ }
+      }
+    }
+    try {
+      const parkedDeliveries = this._undeliveredParkedGuidance(
+        [participant.participantId, seatRow.resumeFrom ?? null]);
+      const briefLedger = this.store.eventsView();
+      const baseFacts = this._baseBehind();
+      const recruitedScope = seatRow.scope ?? null;
+      const recruitArgs = { objective: seatRow.role, participantId: participant.participantId,
+        swarmId: swarm.swarmId, resumeFrom: seatRow.resumeFrom, permissions: seatRow.permissions,
+        // The composer reads the recruit's own options: the `## Context package` section renders
+        // from them, so the answer's brief carries the package the recruit named (#455). The
+        // package travels beside the Run-start selection (a deployment's `prepareRun` never sees
+        // it), so it is merged back for the composer alone.
+        options: contextPackage === null ? runOptions
+          : { ...runOptions, contextPackage },
+        mode: seatRow.mode ?? undefined };
+      const brief = this._composeRecruitBrief(currentSwarm, recruitArgs, null, predecessor,
+        parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
+      await this.startRun({ runId, objective: brief, options: runOptions,
+        swarmId: swarm.swarmId, participantId: participant.participantId,
+        sharedContext: Object.values(currentSwarm.context ?? {}),
+        ...(workspace ? { workspace } : {}) }, principal, context);
+      const worker = this.coordinator.list().find((row) => row.runId === runId);
+      if (!worker) refuse('Deferred start admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
+      const checkout = typeof this.coordinator.workspaceAttachment === 'function'
+        ? this.coordinator.workspaceAttachment(worker.id) : null;
+      writes.push(this._write('swarm.participant_bound', {
+        swarmId: swarm.swarmId, participantId: participant.participantId,
+        workerId: worker.id, taskId: worker.taskId,
+        ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
+        brief,
+      }, principal, `swarm-binding:${hash([swarm.swarmId, participant.participantId, worker.id])}`));
+      if (recruitedScope !== null && recruitedScope.length > 0) {
+        writes.push(this._write('swarm.claim_updated', {
+          swarmId: swarm.swarmId, claimId: scopeClaimId(participant.participantId),
+          participantId: participant.participantId, paths: [...recruitedScope], status: 'active',
+        }, principal, `swarm-scope-claim:${hash([swarm.swarmId, participant.participantId, worker.id])}`));
+      }
+      // Issue #441: the recruiter's package binds to the run this answer started — the same
+      // pointer, the same scope and the same key the recruit's own attach would have written.
+      if (contextPackage !== null) {
+        this.store.attachContextPackage({
+          packageDigest: contextPackage.digest, runId,
+          scope: `worker:${participant.participantId}`,
+        }, {
+          actor: principal.actor,
+          key: `package.attach:${contextPackage.digest}:${runId}:worker:${participant.participantId}`,
+        });
+      }
+      // Issue #425: the new lease learns the checkout's live writer before its seat can act.
+      this._settleCheckoutWriterState();
+      if (predecessorWs && predecessor && !predecessorWs.predecessorLive) {
+        const carriedWorkspaceId = checkout?.workspaceId ?? predecessorWs.workspaceId;
+        let carry = predecessorWs.carry;
+        if (carry.how === 'applied') {
+          carry = this._applyWorkspaceCarry(carry, {
+            repoRoot: this._repositoryRoot(checkout?.sessionContext?.repoRoot,
+              worker.sessionContext?.repoRoot),
+            targetDir: checkout?.sessionContext?.worktree
+              ?? worker.sessionContext?.worktree ?? worker.worktree ?? null,
+            baseSha: predecessorWs.baseSha,
+          });
+        }
+        if (carry.how === 'skipped' && carry.content) {
+          // #453: the work would be lost, exactly as the recruit-time refusal says — the seat is
+          // not handed a successor checkout that silently dropped the predecessor's changes.
+          refuse('Predecessor snapshot cannot be carried into the successor workspace',
+            'swarm_workspace_carry_failed', {
+              predecessor: predecessor.participantId, snapshotSha: predecessorWs.snapshotSha,
+              reason: carry.reason,
+            });
+        }
+        writes.push(this._write('workspace.carried_from', {
+          swarmId: swarm.swarmId, participantId: participant.participantId,
+          workspaceId: carriedWorkspaceId, predecessor: predecessor.participantId,
+          paths: [...carry.paths], snapshotSha: predecessorWs.snapshotSha, how: carry.how,
+          ...(carry.reason === null ? {} : { reason: carry.reason }),
+        }, principal, `workspace-carried:${hash([swarm.swarmId, participant.participantId, carriedWorkspaceId])}`));
+      }
+      // Issue #337: the parked guidance this brief composed is delivered now, after the run
+      // admitted the seat — a refused start never marks guidance its seat never received.
+      for (const row of parkedDeliveries) {
+        const deliveredWrite = this.store.recordDriver('swarm.guidance_delivered', {
+          swarmId: swarm.swarmId, participantId: row.participantId, messageId: row.messageId,
+          deliveredTo: participant.participantId, actor: row.actor, from: row.from,
+        }, { actor: principal.actor,
+          key: `swarm-guidance-delivered:${row.messageId}:${participant.participantId}` });
+        const deliveredEvent = deliveredWrite.event;
+        writes.push({ kind: 'swarm.guidance_delivered', payload: deliveredEvent.payload,
+          seq: deliveredEvent.seq, ts: deliveredEvent.ts, actor: deliveredEvent.actor });
+        try {
+          this.store.recordMessage('message.delivered', {
+            messageId: row.messageId, kind: 'nudge', participantId: participant.participantId,
+          }, { actor: principal.actor,
+            key: `message.delivered:${row.messageId}:${participant.participantId}` });
+        } catch { /* the wake row is evidence, never delivery-critical */ }
+      }
+    } catch (error) {
+      // The seat never took the host slot it was just admitted to: hand it back before the
+      // refusal crosses, so a failed answer pins no capacity a retry would wait behind.
+      if (workerLease !== null) {
+        try { await this.hostCapacity.release(workerLease); } catch { /* the refusal stands */ }
+      }
+      throw error;
+    }
+  }
+
   /** Record the delivered half of one guide (#273): the swarm.guidance_sent row is the row the
    * receipt names. A lane that took the message writes `delivered` and NAMES the lane receipt it
    * rode (the paused-turn lane writes none — the turn itself carries the guidance, and the row
@@ -6709,6 +6944,29 @@ export class SwarmRuntime {
         `This resident serves ${baseAdvisory.served}, ${baseAdvisory.count} commits behind`
           + ` ${baseAdvisory.target.ref ?? 'its target'}; your base is the served commit.`,
       ].join('\n'));
+    }
+    // Issue #525 D6: EVERY resume-from successor reads the recovery in one section — who it
+    // continues, how that seat's turn ended, what it carries, the objective it is picking up, and
+    // the standing rule that the orchestrator's answer decides whether any of it continues. The
+    // `## Re-routed` section above keeps the fault mechanics; this one is the recovery itself.
+    if (predecessor) {
+      const recovery = [`## Recovery from ${predecessor.participantId}`];
+      const predRow = (swarm.participants ?? {})[predecessor.participantId] ?? null;
+      const leftReason = predRow?.leftReason ?? null;
+      const interruptionClass = leftReason === 'stopped' ? 'stopped'
+        : leftReason === 'completed' ? 'completed'
+        : predRow?.fault ? 'provider_fault'
+        : predRow?.status === 'active' ? 'runtime_lost' : (leftReason ?? 'unknown');
+      recovery.push(`- Predecessor: ${predecessor.participantId} (${interruptionClass})`);
+      if (predRow?.role) recovery.push(`- Predecessor objective: ${predRow.role}`);
+      recovery.push(...this._carryBriefLines(predecessorWorkspace?.workspaceId, predecessorWorkspace?.carry));
+      recovery.push(predecessor.lastCheckpoint
+        ? `- Last checkpoint: ${predecessor.lastCheckpoint.sha} (retained ref ${predecessor.lastCheckpoint.ref})`
+        : '- Last checkpoint: none was recorded for this predecessor.');
+      recovery.push('- First reading: this section and your orchestrator\'s answer to this seat'
+        + ' (`swarm.guide`) — the predecessor objective above is a proposal that answer ratifies,'
+        + ' supersedes or retires.');
+      blocks.push(recovery.join('\n'));
     }
     if (predecessor) {
       const inheritance = [
@@ -7883,7 +8141,14 @@ export class SwarmRuntime {
         // #306 lane B: the stale-base facts, read ONCE here so the line the brief is composed with
         // and the advisory the receipt carries are the same read of the deployment's own row.
         const baseFacts = this._baseBehind();
-        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
+        // Issue #525 D1/D5/D7: under `manual` (the default) a resume-from recruit records the
+        // recovery and the question and stops before the brief, the host lease and the run — the
+        // orchestrator's answer performs the deferred half (docs/52 D3). Read BEFORE the host
+        // admission, so a seat whose answer never comes never held a lease.
+        const pendDecision = predecessor !== null
+          && this._policyOf(currentSwarm).resumeContinuation === 'manual';
+        const brief = pendDecision ? null
+          : this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
         // whose work would be starved is not started: while the derived host budget has no room,
         // the request waits IN ORDER as a visible queue entry and its typed queued row is
@@ -7892,7 +8157,7 @@ export class SwarmRuntime {
         // replay-safe the same way the rest of the effect is: the operation key keys every row.
         let workerLease = null;
         let queuedRow = null;
-        if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
+        if (!pendDecision && this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
           const operationKey = this._operationKey(command, args, principal);
           let admitted;
           try {
@@ -7941,6 +8206,28 @@ export class SwarmRuntime {
             } catch { /* evidence row only */ }
           }
         }
+        // Issue #525 D4: a resume-from recruit whose caller is NOT a seated member writes
+        // parentId as the predecessor's nearest living ancestor, so the question pages the
+        // sub-orchestrator that recruited the seat rather than the root.
+        let joinParentId;
+        if (caller) {
+          joinParentId = caller.participantId;
+        } else if (predecessor && args.resumeFrom) {
+          const predecessorRow = currentSwarm.participants[args.resumeFrom] ?? null;
+          if (predecessorRow) {
+            let ancestor = predecessorRow.parentId
+              ? (currentSwarm.participants[predecessorRow.parentId] ?? null) : null;
+            while (ancestor && ancestor.status !== 'active') {
+              ancestor = ancestor.parentId
+                ? (currentSwarm.participants[ancestor.parentId] ?? null) : null;
+            }
+            joinParentId = ancestor?.participantId ?? null;
+          } else {
+            joinParentId = null;
+          }
+        } else {
+          joinParentId = null;
+        }
         // Membership precedes dispatch, so even a fast first native turn has the continuing
         // participant protocol. The underlying Run remains the existing execution authority.
         // A resumed seat re-joins under the RESUME request's own key: the original join key
@@ -7948,7 +8235,7 @@ export class SwarmRuntime {
         // folding, leaving the withdrawn row withdrawn.
         const writes = [this._write('swarm.participant_joined', {
           swarmId: args.swarmId, participantId: args.participantId, role: args.objective,
-          runId, permissions, ...(caller ? { parentId: caller.participantId } : {}),
+          runId, permissions, ...(joinParentId !== null ? { parentId: joinParentId } : {}),
           ...(recruitedRoute ? { route: recruitedRoute } : {}),
           ...(recruitedScope ? { scope: recruitedScope } : {}),
           // #373: the join carries the seat's contribution mode. A change recruit writes no
@@ -7957,10 +8244,32 @@ export class SwarmRuntime {
           ...(args.mode === 'read_only' ? { mode: args.mode } : {}),
           ...(workspace ? { workspaceId: workspace.workspaceId } : {}),
           ...(predecessor ? { resumeFrom: args.resumeFrom } : {}),
-          brief,
+          ...(pendDecision ? {} : { brief }),
         }, principal, resuming
           ? `swarm-participant-resume:${this._operationKey(command, args, principal)}`
           : `swarm-participant:${hash([args.swarmId, args.participantId])}`)];
+        if (pendDecision) {
+          const carryPlan = predecessorWs
+            ? { how: predecessorWs.exists && predecessorWs.liveHolders.length === 0 ? 'bound' : (predecessorWs.carry?.how ?? null),
+                workspaceId: predecessorWs.workspaceId ?? null, snapshotSha: predecessorWs.snapshotSha ?? null }
+            : { how: null, workspaceId: null, snapshotSha: null };
+          const operationKey = this._operationKey(command, args, principal);
+          writes.push(this._write('swarm.resume_decision_requested', {
+            swarmId: args.swarmId, participantId: args.participantId,
+            predecessor: args.resumeFrom, carry: carryPlan,
+            // D3: the deferred half's own plan — the admitted Run-start selection and the context
+            // package the successor was recruited with — so the answer starts the SAME run this
+            // recruit would have started, however long the question waits for it.
+            plan: { options: { ...runOptions },
+              contextPackage: contextPackage === null ? null
+                : { digest: contextPackage.digest, docs: contextPackage.docs.map((row) => ({ ...row })) } },
+            at: new Date().toISOString(),
+          }, principal, `swarm-resume-decision:${operationKey}`));
+          return { writes, participantId: args.participantId, runId, swarmId: args.swarmId,
+            result: { ok: true, result: 'decision_pending' },
+            resumeDecision: { state: 'pending', predecessor: args.resumeFrom, carry: carryPlan },
+            routeSelection, routeProbe, scopeOverlap };
+        }
         // A recruit whose effect refuses AFTER this join rolls the join back (#308): the seat is
         // withdrawn durably — `swarm.participant_left {reason: 'recruit_refused', code, runId}`,
         // which #490 folds as the withdrawn Run's settlement — so the swarm never keeps a phantom
@@ -8134,6 +8443,9 @@ export class SwarmRuntime {
           scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null,
           baseBehind: result.baseBehind ?? null, advisory: result.advisory ?? null,
           routes: result.routes ?? null,
+          // Issue #525 D1: a resume-from recruit that stopped at the question carries the pending
+          // decision, so the ONE `next` derivation answers with BOTH acts that settle it.
+          ...(result.resumeDecision === undefined ? {} : { resumeDecision: result.resumeDecision }),
           // #490: the withdrawn Run this re-join continued, or null on a first incarnation.
           ...(result.supersedes === null ? {} : { supersedes: result.supersedes }) });
     }
@@ -8156,10 +8468,16 @@ export class SwarmRuntime {
       && !(caller.permissions ?? []).includes('review')) {
       refuse('Capturing another participant requires review authority', 'swarm_permission_required');
     }
+    // Issue #525 D3: a guide to a decision-pending seat is the answer — it bypasses
+    // the worker lookup and performs the deferred start inside the guide handler.
+    const decisionPending = participant.resumeDecision?.requested != null
+      && participant.resumeDecision?.answered == null
+      && participant.status === 'active';
     // Issue #353: a stop of a seat with no live runtime still settles — the seat may be
     // unbound (joined, never bound) — so the worker lookup below must not refuse the stop;
     // the stop path resolves its worker null-tolerantly instead (_workerFor).
-    const worker = command === 'swarm.stop' ? null : this._worker(participant);
+    const worker = (command === 'swarm.stop' || (command === 'swarm.guide' && decisionPending))
+      ? null : this._worker(participant);
     if (command === 'swarm.capture') {
       const existing = swarm.contributions[args.contributionId];
       if (existing && existing.participantId !== participant.participantId) {
@@ -8307,6 +8625,30 @@ export class SwarmRuntime {
       }
       this._recordOperationCompleted(command, args, principal, context);
       return this._mutationResult(command, args, writes, principal, context, { ...clone(checked) });
+    }
+    if (command === 'swarm.guide' && decisionPending) {
+      const result = await this._once(command, args, principal, async () => {
+        const guidance = {
+          from: guidanceFromRelationship(this._swarm(args.swarmId), principal.actor),
+          priority: args.priority ?? SWARM_GUIDANCE_DEFAULT_PRIORITY,
+          inReplyTo: this._guidanceReplyTarget(args),
+        };
+        const parked = this._parkGuidanceWithReason(args.swarmId, participant, args.message,
+          principal, args, guidance, 'awaiting_resume_decision');
+        const writes = [...(parked.writes ?? [])];
+        await this._performDeferredStart(swarm, participant, principal, args, writes, context);
+        // The answered row lands WITH the start it settled: a deferred start that refuses leaves
+        // the seat decision-pending, so the question stays open and a later guide answers it.
+        writes.push(this._write('swarm.resume_decision_answered', {
+          swarmId: args.swarmId, participantId: participant.participantId,
+          predecessor: participant.resumeFrom,
+          guidance: { seq: parked.guide.seq, messageId: parked.guide.messageId },
+          at: new Date().toISOString(),
+        }, principal, `swarm-resume-decision-answered:${this._operationKey(command, args, principal)}`));
+        return { ...parked, writes };
+      }, { context });
+      return this._mutationResult(command, args, result.writes ?? [], principal, context,
+        { participantId: result.participantId, result: result.result, guide: result.guide });
     }
     if (command === 'swarm.guide') {
       const result = await this._once(command, args, principal, async () => {

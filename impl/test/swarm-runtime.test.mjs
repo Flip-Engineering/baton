@@ -438,6 +438,9 @@ test('a resume-from successor brief carries parked guidance and marks it deliver
   const second = await f.call('guide', { participantId: 'otelder', message: 'And the error codes.' }, root);
 
   await f.call('recruit', { participantId: 'successor', objective: 'Continue as successor', resumeFrom: 'otelder' });
+  // #525: the successor's brief is composed when the orchestrator's answer starts the seat, so the
+  // parked guidance reaches it through the #337 seam one delivery later.
+  await f.call('guide', { participantId: 'successor', message: 'Continue the lane.' }, root);
   const brief = f.store.swarm('baton').participants.successor.brief;
   assert.match(brief, /Parked guidance for otelder/);
   assert.ok(brief.includes('Hold the API shape.'), 'first parked message composes into the successor brief');
@@ -446,8 +449,12 @@ test('a resume-from successor brief carries parked guidance and marks it deliver
   assert.ok(brief.includes(String(first.guide.seq)), 'delivery cites the parked seq');
   assert.ok(brief.includes('the root orchestrator'), 'parked guidance is attributed to the root');
 
-  const delivered = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
-    && event.payload?.kind === 'swarm.guidance_delivered');
+  // The parked guidance rows this row owns: otelder's two. The successor's own ANSWER parks a
+  // guidance too, and the deferred start marks it delivered beside these (docs/52 D3/D6).
+  const deliveredOf = (messageIds) => f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
+    && event.payload?.kind === 'swarm.guidance_delivered'
+    && messageIds.includes(event.payload.messageId));
+  const delivered = deliveredOf([first.guide.messageId, second.guide.messageId]);
   assert.equal(delivered.length, 2, 'each parked message is marked delivered exactly once');
   assert.deepEqual(delivered.map((event) => event.payload.messageId).sort(),
     [first.guide.messageId, second.guide.messageId].sort());
@@ -463,8 +470,9 @@ test('a resume-from successor brief carries parked guidance and marks it deliver
     'the delivery names the seat whose brief carried the message');
 
   await f.call('recruit', { participantId: 'third', objective: 'Continue as third', resumeFrom: 'otelder' });
+  await f.call('guide', { participantId: 'third', message: 'Continue the lane.' }, root);
   const thirdBrief = f.store.swarm('baton').participants.third.brief;
   assert.equal(thirdBrief.includes('Hold the API shape.'), false, 'delivered guidance never composes twice');
-  assert.equal(f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
-    && event.payload?.kind === 'swarm.guidance_delivered').length, 2);
+  assert.equal(deliveredOf([first.guide.messageId, second.guide.messageId]).length, 2,
+    'a second successor never re-marks a delivery the first one recorded');
 });

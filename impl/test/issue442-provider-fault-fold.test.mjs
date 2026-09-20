@@ -247,15 +247,20 @@ test('442-a2: the fault-settled seat is still resumable — the attention row\'s
   const recruited = await seat.call('recruit', {
     swarmId: 'sw', participantId: 'beta', objective: "continue alpha's lane", resumeFrom: 'alpha',
   });
-  assert.equal(recruited.admission?.state, 'admitted',
-    'a resume of the faulted predecessor is admitted, so the row\'s next act is reachable');
+  assert.equal(recruited.resumeDecision?.state, 'pending',
+    'a resume of the faulted predecessor lands the continuation question (docs/52 D1)');
+  // The question's answer starts the successor (#525 D3): the faulted lane's own next act, one
+  // guide later.
+  await seat.call('guide', { swarmId: 'sw', participantId: 'beta', message: "Continue alpha's lane." });
   const brief = seat.driver.coordination.swarm('sw').participants.beta.brief;
   const situation = brief.split('## Swarm situation')[1] ?? '';
   assert.equal(situation.includes('- alpha'), false,
     'the faulted seat rides into no later recruit brief as a live peer (#350\'s rule)');
   const beta = participantRow(await seat.call('view', { swarmId: 'sw' }), 'beta');
   assert.equal(typeof beta.runtime.workerId === 'string', true, 'the successor bound a worker of its own');
+  assert.match(brief, /## Recovery from alpha/, 'and its first brief names the recovery (docs/52 D6)');
 });
+
 
 test('442-b1: the bounded watch returns ON the fault row, and that row derives the dead wake class', async (t) => {
   const f = world('b1');

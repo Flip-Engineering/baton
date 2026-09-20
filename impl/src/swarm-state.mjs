@@ -55,6 +55,11 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   // Issue #443: the PERFORMED re-route — the successor an `auto` swarm bound on the first
   // candidate, recorded by the runtime from the recruit it really ran, never caller-submittable.
   'swarm.rerouted',
+  // Issue #525: the resume-continuation decision — a resume-from recruit under the default
+  // `resumeContinuation: 'manual'` policy records the question, and the orchestrator's guide
+  // records the answer. Both are runtime-recorded, never caller-submittable.
+  'swarm.resume_decision_requested',
+  'swarm.resume_decision_answered',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
@@ -101,7 +106,18 @@ export const SWARM_REROUTE_EXCLUDED_REASONS = Object.freeze(['excluded_window_cl
 export const SWARM_ROUTE_BILLING_BASES = Object.freeze(['api', 'subscription']);
 /** The fields a `swarm.policy_updated` row may carry — the closed vocabulary a misspelled policy
  * field refuses against, so a policy nobody reads never lands in the durable record. */
-export const SWARM_POLICY_FIELDS = Object.freeze(['rerouteOnProviderFault', 'reroutePreferApi']);
+export const SWARM_POLICY_FIELDS = Object.freeze(['rerouteOnProviderFault', 'reroutePreferApi', 'resumeContinuation']);
+export const SWARM_RESUME_CONTINUATION_MODES = Object.freeze(['manual', 'auto']);
+
+/** Issue #525 D7: a seat is decision-pending exactly when its `resumeDecision.requested` has no
+ * answer and the seat has not left — read from the folded row, never a stored flag. The
+ * attention row, the guide's answer branch and the deferred start all read this ONE derivation,
+ * so they can never disagree about which seats wait on an orchestrator. */
+export function resumeDecisionPending(participant) {
+  const decision = participant?.resumeDecision ?? null;
+  return decision !== null && decision.requested != null && decision.answered == null
+    && participant.status === 'active';
+}
 
 // The remedy note a departed-seat group refusal carries (#395). A named constant, not an inline
 // literal: the fold-admission audit classifies an integrity(...) call by its LAST literal
@@ -765,7 +781,10 @@ export function validateSwarmEvent(kind, payload) {
     if (p.reroutePreferApi !== undefined && typeof p.reroutePreferApi !== 'boolean') {
       refuse('reroutePreferApi must be a boolean', 'invalid_payload');
     }
-    if (p.rerouteOnProviderFault === undefined && p.reroutePreferApi === undefined) {
+    if (p.resumeContinuation !== undefined && !SWARM_RESUME_CONTINUATION_MODES.includes(p.resumeContinuation)) {
+      refuse(`resumeContinuation must be one of: ${SWARM_RESUME_CONTINUATION_MODES.join(', ')}`, 'invalid_payload');
+    }
+    if (p.rerouteOnProviderFault === undefined && p.reroutePreferApi === undefined && p.resumeContinuation === undefined) {
       refuse('swarm.policy_updated names no policy field to change', 'invalid_payload');
     }
     return;
@@ -827,6 +846,43 @@ export function validateSwarmEvent(kind, payload) {
     validRerouteRoute(p.to, 'swarm.rerouted to');
     if (!Number.isSafeInteger(p.proposalSeq) || p.proposalSeq < 0) {
       refuse('swarm.rerouted requires proposalSeq — the seq of the proposal it answers', 'invalid_payload');
+    }
+    return;
+  }
+
+  if (kind === 'swarm.resume_decision_requested') {
+    if (!isNonEmptyString(p.participantId)) refuse('swarm.resume_decision_requested requires participantId', 'invalid_payload');
+    if (!isNonEmptyString(p.predecessor)) refuse('swarm.resume_decision_requested requires predecessor', 'invalid_payload');
+    if (p.carry === undefined || p.carry === null || typeof p.carry !== 'object' || Array.isArray(p.carry)) {
+      refuse('swarm.resume_decision_requested requires carry', 'invalid_payload');
+    }
+    // Issue #525 D3: the deferred half of the recruit — the run's admitted options and the
+    // context package the successor was recruited with — is recorded WITH the question, because
+    // the answer performs the start long after the recruit's own arguments are gone. Absent on a
+    // row recorded before this field existed, and the deferred start then runs on the defaults.
+    if (p.plan !== undefined && p.plan !== null) {
+      if (typeof p.plan !== 'object' || Array.isArray(p.plan)) {
+        refuse('swarm.resume_decision_requested plan must be an object or null', 'invalid_payload');
+      }
+      if (p.plan.options !== undefined && p.plan.options !== null
+        && (typeof p.plan.options !== 'object' || Array.isArray(p.plan.options))) {
+        refuse('swarm.resume_decision_requested plan.options must be an object or null', 'invalid_payload');
+      }
+      const contextPackage = p.plan.contextPackage ?? null;
+      if (contextPackage !== null
+        && (typeof contextPackage !== 'object' || Array.isArray(contextPackage)
+          || !isNonEmptyString(contextPackage.digest))) {
+        refuse('swarm.resume_decision_requested plan.contextPackage must name a digest', 'invalid_payload');
+      }
+    }
+    return;
+  }
+
+  if (kind === 'swarm.resume_decision_answered') {
+    if (!isNonEmptyString(p.participantId)) refuse('swarm.resume_decision_answered requires participantId', 'invalid_payload');
+    if (!isNonEmptyString(p.predecessor)) refuse('swarm.resume_decision_answered requires predecessor', 'invalid_payload');
+    if (p.guidance === undefined || p.guidance === null || typeof p.guidance !== 'object') {
+      refuse('swarm.resume_decision_answered requires guidance', 'invalid_payload');
     }
     return;
   }
@@ -1280,6 +1336,10 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       // recorded nothing, which left the exclusive-writer guard with no identity to compare.
       workspaceId: participant.workspaceId ?? p.workspaceId ?? null,
       bindings: Object.freeze([...participant.bindings, binding]),
+      ...(p.brief !== undefined && p.brief !== null ? {
+        brief: p.brief,
+        ...participantBriefReach(p.brief, meta.seq),
+      } : {}),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const parts = new Map(Object.entries(swarm.participants));
@@ -1956,6 +2016,7 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       ...(swarm.policy ?? {}),
       ...(p.rerouteOnProviderFault === undefined ? {} : { rerouteOnProviderFault: p.rerouteOnProviderFault }),
       ...(p.reroutePreferApi === undefined ? {} : { reroutePreferApi: p.reroutePreferApi }),
+      ...(p.resumeContinuation === undefined ? {} : { resumeContinuation: p.resumeContinuation }),
     });
     swarms.set(p.swarmId, Object.freeze({
       ...swarm, policy, actor: meta.actor, seq: meta.seq, ts: meta.ts,
@@ -2032,6 +2093,57 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     });
     const parts = new Map(Object.entries(swarm.participants));
     parts.set(p.carriedFrom, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
+    return;
+  }
+
+  if (kind === 'swarm.resume_decision_requested') {
+    const participant = ownGet(swarm.participants, p.participantId);
+    if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    const updatedParticipant = Object.freeze({
+      ...participant,
+      resumeDecision: Object.freeze({
+        requested: Object.freeze({
+          predecessor: p.predecessor,
+          carry: Object.freeze({ how: p.carry.how ?? null, workspaceId: p.carry.workspaceId ?? null, snapshotSha: p.carry.snapshotSha ?? null }),
+          plan: p.plan === undefined || p.plan === null ? null : Object.freeze({
+            options: Object.freeze({ ...(p.plan.options ?? {}) }),
+            contextPackage: p.plan.contextPackage === undefined || p.plan.contextPackage === null
+              ? null
+              : Object.freeze({ digest: p.plan.contextPackage.digest,
+                docs: Object.freeze([...(p.plan.contextPackage.docs ?? [])]) }),
+          }),
+          at: p.at ?? meta.ts,
+          seq: meta.seq, ts: meta.ts,
+        }),
+        answered: null,
+      }),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    });
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
+    return;
+  }
+
+  if (kind === 'swarm.resume_decision_answered') {
+    const participant = ownGet(swarm.participants, p.participantId);
+    if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    const existing = participant.resumeDecision ?? null;
+    const updatedParticipant = Object.freeze({
+      ...participant,
+      resumeDecision: existing === null ? null : Object.freeze({
+        ...existing,
+        answered: Object.freeze({
+          guidance: Object.freeze({ seq: p.guidance.seq, messageId: p.guidance.messageId ?? null }),
+          at: p.at ?? meta.ts,
+          seq: meta.seq, ts: meta.ts,
+        }),
+      }),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    });
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, updatedParticipant);
     swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
     return;
   }

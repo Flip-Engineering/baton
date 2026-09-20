@@ -259,6 +259,9 @@ test('a resumeFrom successor inherits checkpoint, contracts and carriedForward w
   await swarm.capture('alpha', 'contribution-alpha-handoff');
 
   const bravo = await delegated.recruit('bravo', 'Continue A from alpha', { ...selection, resumeFrom: 'alpha' });
+  // #525: the recruit lands the recovery question; the recruiting seat's guide answers it, and the
+  // start composes the brief these assertions read.
+  await delegated.guide('bravo', 'Continue A from alpha');
   // #464 (third half): the scoped read carries the successor's brief text.
   const view = await swarm.view({ participantId: 'bravo' });
   const bravoRow = view.participants.find((row) => row.participantId === 'bravo');

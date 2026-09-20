@@ -55,7 +55,7 @@ function swarmWithParticipant(swarmId = 'sw1', participantId = 'p1') {
 // ── SWARM_EVENT_KINDS ────────────────────────────────────────────────────────
 
 describe('SWARM_EVENT_KINDS', () => {
-  test('contains all 23 event kinds', () => {
+  test('contains all 25 event kinds', () => {
     const expected = [
       'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound',
       'swarm.participant_left', 'swarm.group_updated', 'swarm.work_updated',
@@ -66,6 +66,9 @@ describe('SWARM_EVENT_KINDS', () => {
       'swarm.policy_updated', 'swarm.reroute_proposed', 'swarm.rerouted',
       // Issue #385: workspace carry on resume-from.
       'workspace.carried_from',
+      // Issue #525: the resume-continuation decision — the question a resume-from recruit records
+      // and the answer the orchestrator's guide records.
+      'swarm.resume_decision_requested', 'swarm.resume_decision_answered',
       // Issues #422/#423: the joint coupling, claim and work-proposal families.
       'swarm.claim_updated', 'swarm.proposal_updated',
       'swarm.context_updated',

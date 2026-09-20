@@ -232,6 +232,9 @@ test('#332: a completed seat still serves --resume-from', async (t) => {
 
   const resumed = await f.call('recruit', { participantId: 'builder-2', objective: 'Continue', resumeFrom: 'builder' });
   assert.equal(resumed.participantId, 'builder-2');
+  // #525: the recruit lands the recovery question; the answer starts the successor and composes
+  // the brief the inheritance is read from.
+  await f.call('guide', { participantId: 'builder-2', message: 'Continue the lane.' });
   const brief = f.store.swarm('done').participants['builder-2'].brief;
   assert.ok(brief.includes('Last checkpoint: none was recorded'), 'the successor inherits the empty checkpoint line');
   assert.equal(rowOf(await f.call('view'), 'builder').runtime.state, 'completed');
