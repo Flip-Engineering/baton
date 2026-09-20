@@ -16,7 +16,7 @@ const HTML = `<!doctype html>
     <section class="intent-panel" aria-labelledby="intent-title">
       <header class="section-head"><p class="rail">New Run</p><h2 id="intent-title">Name the outcome</h2><p>Baton supplies the execution policy. You choose the objective and an allowed exact route.</p></header>
       <form id="run-form" class="intent-form">
-        <label class="wide">Objective<textarea id="objective" name="objective" required rows="5" maxlength="4096" placeholder="What must be true when this Run is finished?"></textarea></label>
+        <label class="wide">Objective<textarea id="objective" name="objective" required rows="5" maxlength="1048576" placeholder="What must be true when this Run is finished?"></textarea></label>
         <label>Result intent<select id="result-intent" name="resultIntent" required><option value="change">Change</option><option value="read_only_evidence">Evidence only</option></select></label>
         <label>Deployment profile<select id="profile" name="profile" required><option value="">Loading profiles…</option></select></label>
         <label>Exact harness / model @ effort<select id="route" name="route" required><option value="">Choose a profile first</option></select></label>
