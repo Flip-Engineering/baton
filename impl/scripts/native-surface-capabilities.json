@@ -40,15 +40,8 @@
     {"name":"run.retry_verification","canonicalKey":"run.retry","reason":"legacy application command name retained as internal dispatch alias"}
   ],
   "registryCliExceptions": [
-    {"key":"context.eval","classification":"not_live_on_cli","reason":"context algebra is currently exposed through embedded/MCP objects; the semantic row inherited the broad default surface set"},
-    {"key":"context.map","classification":"not_live_on_cli","reason":"context algebra is currently exposed through embedded/MCP objects; the semantic row inherited the broad default surface set"},
-    {"key":"context.reduce","classification":"not_live_on_cli","reason":"context algebra is currently exposed through embedded/MCP objects; the semantic row inherited the broad default surface set"},
-    {"key":"context.retry","classification":"not_live_on_cli","reason":"context algebra is currently exposed through embedded/MCP objects; the semantic row inherited the broad default surface set"},
-    {"key":"decision.list","classification":"not_live_on_cli","reason":"decision listing is represented through run views/attention on CLI; there is no distinct decision.list parser verb"},
-    {"key":"deployment.shutdown","classification":"not_live_on_cli","reason":"resident shutdown is host/application authority and has no direct CLI parser verb"},
-    {"key":"run.attention.list","classification":"represented_by_other_cli_operation","reason":"CLI exposes run.attention.watch, which subsumes bounded attention listing and continuation"},
+    {"key":"deployment.reincarnate","classification":"represented_by_other_cli_operation","reason":"CLI dispatches reincarnate through the deployment subcommand parser (baton deployment reincarnate <commit-ish>) and baton serve --reincarnate"},
     {"key":"run.member.interrupt","classification":"represented_by_other_cli_operation","reason":"CLI run interrupt accepts a recipient selector rather than a distinct member-interrupt verb"},
-    {"key":"run.scratchpad","classification":"represented_by_other_cli_operation","reason":"CLI exposes concrete run scratchpad read/elevate operations rather than the generic compatibility operation"},
     {"key":"run.scratchpad.append","classification":"not_live_on_cli","reason":"scratchpad append remains an internal/worker-oriented capability; no operator CLI parser verb exists"}
   ]
 }
