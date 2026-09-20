@@ -32,6 +32,20 @@ test('S-G2/S-I6: every committed row carries a classifiable reason, and the mani
   assert.equal(readFileSync(MANIFEST, 'utf8'), canonical, 'the committed manifest is canonically sorted');
 });
 
+test('S-C1: every committed credential row names the registry route it depends on (#417)', () => {
+  // docs/42-suite-legitimacy.md: an environment-class row carries the registry route key it
+  // depends on, so the verdict judges it against that prerequisite's observed state instead of the
+  // global absent list. The runner already refuses a NEW credential row without one
+  // (run-suite.mjs --expected-red-reason credential); this pins the rows already committed.
+  const credentialRows = manifest.rows.filter((row) => reasonClassOf(row.reason) === 'credential');
+  assert.ok(credentialRows.length > 0, 'the credential class is represented in the manifest');
+  for (const row of credentialRows) {
+    assert.equal(typeof row.prerequisite, 'string',
+      `${row.key} names the registry route it depends on instead of joining the global absent list`);
+    assert.ok(row.prerequisite.trim().length > 0, `${row.key} names a non-empty prerequisite`);
+  }
+});
+
 test('S-N1: the swarm slice is represented in the manifest, with tracked reasons', () => {
   const swarmRows = manifest.rows.filter((row) => /swarm/iu.test(row.key));
   assert.ok(swarmRows.length > 0, 'the swarm slice\'s known gaps are listed, not only documented elsewhere');

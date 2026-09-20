@@ -259,15 +259,18 @@
     },
     {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P8 (PIN): S2 — the coaching branch refuses secret-shaped summary/message (application_workflow_feedback_invalid)",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/feedback-forge-hardening-red.test.mjs :: R1 (RED): forged verdict with no gate referent refuses typed gate-unbound (stage: expect_typed_refusal)",
@@ -987,7 +990,8 @@
     },
     {
       "key": "test/phase78-bound-run-group-red.test.mjs :: RG5: the repository deployment forwards startMany and close drains all active group workers",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF10: default route inventory retains configured Claude routes for explicit readiness without mutating an isolated home",
@@ -1000,7 +1004,8 @@
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF3: exact route cards are self-described and multi-route start has no effort fallback",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF6: deployment close joins callers, drains ownership, and remains idempotent",
@@ -1014,43 +1019,53 @@
     },
     {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-1: deployment workflow compiles one durable multi-node Plan and starts no provider before approval",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-3: an over-capacity Workflow wave refuses all candidates before task, worktree, or provider effects",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-4: whole-Workflow stop reaps an active Wave and leaves no owned process or worktree",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-5: operator-selected join preserves and selects a verified survivor after a sibling failure",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-6: role-addressed member stop is durable, exact, and leaves a sibling Attempt running",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-7: a post-ledger Wave launch failure compensates every admitted member before rejection",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase80-application-revision-red.test.mjs :: AR80-1: selected Candidate feedback proposes one successor Plan pre-effect and replays both rounds",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase80-application-revision-red.test.mjs :: AR80-2: a second feedback round appends Plan v3 and replays from its durable definition",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase80-application-revision-red.test.mjs :: AR80-3: repeated feedback and explicit contradiction pause recursion without a Plan effect",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase80-application-revision-red.test.mjs :: AR80-4: the bound deployment round ceiling pauses without exposing a caller loop knob",
-      "reason": "credential"
+      "reason": "credential",
+      "prerequisite": "codex/gpt-5.6-sol"
     },
     {
       "key": "test/phase80-revision-restart-stop-red.test.mjs :: AR80-RS2: a working revision lost across restart exposes exact typed recovery and forbids redelivery",
