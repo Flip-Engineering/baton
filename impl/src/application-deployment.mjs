@@ -731,13 +731,15 @@ function claudeCredentialFacts(probe) {
   return Object.freeze({ ...credential, refreshable: credential.refreshable === true });
 }
 
-/** #346: the credential block a route reads when it cannot outlive its own credential — the
- * deployment has NO refresh path for it and its `expiresAt` falls inside the lane's horizon.
- * Derived on every read from the same two published facts (expiresAt, refreshable) on the
- * deployment's own clock, so the doctor row and the pre-effect admission refusal cannot
- * disagree (the #341 one-derivation rule). */
+/** #346/#348: the credential block a route reads when it cannot outlive its own credential — the
+ * credential cannot renew itself and its `expiresAt` falls inside the lane's horizon. Derived on
+ * every read from the same published facts (expiresAt, refreshable) on the deployment's own
+ * clock, so the doctor row and the pre-effect admission refusal cannot disagree (the #341
+ * one-derivation rule). The FACTS decide, never the family: a route that publishes its own
+ * projection (#348's kimi-code file snapshot) is judged exactly as the claude-code route whose
+ * facts the deployment's live credential authority reads. */
 function credentialHorizonBlock(route, credential, lifetime) {
-  if (!lifetime || !route || route.harness !== 'claude-code' || !credential) return null;
+  if (!lifetime || !route || !credential) return null;
   if (credential.refreshable === true) return null;
   const expiresAt = credential.expiresAt;
   if (!Number.isSafeInteger(expiresAt)) return null;
@@ -746,13 +748,21 @@ function credentialHorizonBlock(route, credential, lifetime) {
   const now = lifetime.now();
   if (expiresAt > now + horizonMs) return null;
   const publicRouteFields = publicRoute(route);
+  // The mechanism rides the summary whenever the credential record names one (#348) — the
+  // operator reads HOW the credential was projected, not only that it runs out; the claude arm
+  // publishes no mechanism on its facts and its summary stays exactly as it reads today.
+  const mechanism = typeof credential.mechanism === 'string' && credential.mechanism.length > 0
+    ? ` [credential mechanism: ${credential.mechanism}`
+      + (Number.isSafeInteger(credential.ttlSeconds) && credential.ttlSeconds > 0
+        ? `, ${credential.ttlSeconds} s lifetime` : '') + ']'
+    : '';
   return Object.freeze({
     state: 'blocked', code: 'credential_expires_before_horizon',
     route: publicRouteFields, expiresAt, horizonMs,
     observedAt: new Date(now).toISOString(),
     summary: `route ${publicRouteFields.harness}/${publicRouteFields.model}@${publicRouteFields.effort} cannot `
-      + `outlive its credential: the access token expires at ${new Date(expiresAt).toISOString()} and the `
-      + `deployment has no refresh path for it, while a lane's horizon is ${horizonMs} ms — provision a `
+      + `outlive its credential${mechanism}: the access token expires at ${new Date(expiresAt).toISOString()} `
+      + `and the deployment has no refresh path for it, while a lane's horizon is ${horizonMs} ms — provision a `
       + 'refresh path (a refresh token the deployment refresh runtime can spend) or pick a route that is ready.',
   });
 }
@@ -832,15 +842,23 @@ function kimiAuthenticationState(kimiRoot, nowMs = Date.now()) {
     }
     const refreshable = record(value) && typeof value.refresh_token === 'string'
       && value.refresh_token.length > 0;
+    // Issue #348 item 3: the access token's OWN declared lifetime (`expires_in`, in seconds) — the
+    // fact the route's projection rule publishes as `ttlSeconds`, read from the credential file
+    // beside its expiry instant, never a constant of this issue's own.
+    const ttlSeconds = record(value) && Number.isSafeInteger(value.expires_in) && value.expires_in > 0
+      ? value.expires_in : null;
     if ((expiresAt * 1000) <= nowMs) {
       const code = 'authentication_refresh_required';
       return Object.freeze({
         state: 'blocked', code, credentialState: 'expired',
-        expiresAt: expiresAt * 1000, refreshable,
+        expiresAt: expiresAt * 1000, refreshable, ttlSeconds,
         summary: kimiAuthenticationSummary(code, { expiresAtMs: expiresAt * 1000, refreshable }),
       });
     }
-    return Object.freeze({ state: 'ready', credentialState: 'available', expiresAt: expiresAt * 1000, refreshable });
+    return Object.freeze({
+      state: 'ready', credentialState: 'available',
+      expiresAt: expiresAt * 1000, refreshable, ttlSeconds,
+    });
   } catch {
     const code = 'authentication_metadata_invalid';
     return Object.freeze({ state: 'blocked', code, credentialState: 'invalid', summary: kimiAuthenticationSummary(code) });
@@ -862,6 +880,26 @@ function kimiHarnessAvailability(searchPath = process.env.PATH ?? '') {
   return Object.freeze({
     state: present ? 'present' : 'absent',
     paths: Object.freeze(['~/.kimi-code/bin/kimi', 'kimi on PATH']),
+  });
+}
+
+/** Issue #348 item 3: the projection rule a kimi-code route records — the mechanism the
+ * deployment materialises the credential with (a snapshot of `KIMI_CREDENTIAL_FILES` copied into
+ * the worker's private root, one copy per lease, which the deployment never re-writes from a
+ * refreshed pair), the access token's own declared lifetime, and whether the projected copy can
+ * renew the access token itself. `refreshable` is the fact the #346 horizon judgement reads: a
+ * snapshot that carries a refresh token lets the seat's own CLI roll the access token over inside
+ * its private copy, so the token's lifetime does not bound the lane; a snapshot without one
+ * cannot outlive the token, and a lane whose horizon is longer is refused pre-effect. Derived
+ * from the authentication record readiness already publishes — never a second read of the file. */
+function kimiCredentialProjection(authentication) {
+  if (!authentication) return null;
+  return Object.freeze({
+    mechanism: 'file_snapshot',
+    ttlSeconds: Number.isSafeInteger(authentication.ttlSeconds) && authentication.ttlSeconds > 0
+      ? authentication.ttlSeconds : null,
+    refreshable: authentication.refreshable === true,
+    expiresAt: Number.isSafeInteger(authentication.expiresAt) ? authentication.expiresAt : null,
   });
 }
 
@@ -2090,7 +2128,13 @@ function deploymentReadiness(
         });
       }
     }
+    // Issue #348 item 3: the projection rule this route's credential is materialised with — the
+    // fact block a reader judges the lane's lifespan against. Null for every other family here;
+    // the row that carries it publishes the mechanism, the token's declared lifetime and whether
+    // the projected copy can renew it, and the #346 horizon judgement reads exactly these facts.
+    let credentialProjection = null;
     if (route.harness === 'kimi-code' && nativeKimiAuthentication) {
+      credentialProjection = kimiCredentialProjection(nativeKimiAuthentication);
       // Issue #348: the HARNESS is checked before the credential, the way the grok row's own gate
       // does. A host with no `kimi` executable cannot run the login the credential remedy names,
       // so a credential verdict there describes a remedy nobody can execute; the paths probed ride
@@ -2121,6 +2165,7 @@ function deploymentReadiness(
           code: nativeKimiAuthentication.code,
           summary: nativeKimiAuthentication.summary,
           runtime,
+          ...(credentialProjection === null ? {} : { credential: credentialProjection }),
         });
       }
     }
@@ -2210,6 +2255,7 @@ function deploymentReadiness(
     return Object.freeze({
       ...publicFields, state: 'ready',
       summary: 'The exact route passed static deployment readiness.', runtime,
+      ...(credentialProjection === null ? {} : { credential: credentialProjection }),
     });
   });
   const allRouteStates = Object.freeze([...routeStates, ...additionalRouteStates]);
@@ -2783,15 +2829,27 @@ function assertRouteRefusalClear(options, readiness, refusals, services = null) 
   if (block) throw providerRouteRefusal(block, readiness, null, record, services);
 }
 
-/** #346: the same pre-effect refusal for a route whose credential cannot outlive the lane. The
- * block is derived from the SAME published facts (expiresAt, refreshable) the doctor row carries,
- * on the deployment's own clock, so a route a caller sees blocked is the one the next recruit is
- * refused by. */
+/** #346/#348: the credential facts ONE route's admission is judged against: the route's OWN
+ * published projection when it carries one — the kimi-code row records its snapshot rule at
+ * readiness time — and otherwise the live facts the deployment's credential authority reads for
+ * the family it owns (claude-code's cached credential, whose facts ride the doctor row rather
+ * than the static one). A route that publishes no facts is judged on none. */
+function routeCredentialFacts(route, lifetime) {
+  if (!lifetime || !route) return null;
+  if (record(route.credential)) return route.credential;
+  return route.harness === 'claude-code' && typeof lifetime.credential === 'function'
+    ? lifetime.credential() : null;
+}
+
+/** #346/#348: the same pre-effect refusal for a route whose credential cannot outlive the lane.
+ * The block is derived from the SAME published facts (expiresAt, refreshable) the doctor row
+ * carries, on the deployment's own clock, so a route a caller sees blocked is the one the next
+ * recruit is refused by. */
 function assertRouteCredentialLifetimeClear(options, readiness, lifetime, refusals = null) {
   if (!lifetime) return;
   const route = requestedReadiness(options, readiness?.routes ?? []);
   if (!route) return;
-  const block = credentialHorizonBlock(route, lifetime.credential(), lifetime);
+  const block = credentialHorizonBlock(route, routeCredentialFacts(route, lifetime), lifetime);
   if (block) throw credentialLifetimeRefusal(block, readiness, null, refusalRecordOf(refusals));
 }
 
@@ -3171,9 +3229,9 @@ class BatonDeployment {
   // nothing it publishes (D7: additive only).
   #services = [];
   #serviceClients = null;
-  // #346: the credential-lifetime layer — the live claude credential facts and the lane horizon
-  // every admission judges them against (null when the deployment has no claude credential
-  // authority, in which case no route is judged on a lifetime nobody can read).
+  // #346/#348: the credential-lifetime layer — the lane horizon every admission judges a
+  // credential against, beside the live claude facts it reads for the one family the deployment
+  // owns (a route that publishes its own facts, the kimi-code projection, is judged from those).
   #credentialLifetime = null;
   // Issue #351: the resident's stop records (bounded rows on its own ledger) and the per-incarnation
   // idempotency token that keeps a repeated stop from minting a second set.
@@ -3224,7 +3282,7 @@ class BatonDeployment {
     this.#residentOptions = deployment.residentOptions;
     this.#workspaceProbe = deployment.workspaceProbe ?? null;
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
-    this.#credentialLifetime = deployment.claudeCredentialLifetime ?? null;
+    this.#credentialLifetime = deployment.credentialLifetime ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
     this.#hostCapacityProbe = deployment.hostCapacityProbe ?? null;
     // #495: the authority this resident watches after admission — the post-admission half of the
@@ -6544,11 +6602,17 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       ...claudeCredentialCache.metadata(), refreshable: claudeCredentialCache.refreshable(),
     })
     : null;
-  const claudeCredentialLifetime = claudeCredentialCache ? Object.freeze({
+  // #346/#348: the credential-lifetime authority readiness publishes and every pre-effect
+  // admission reads. Built for EVERY deployment, because the horizon and the clock are the
+  // deployment's own facts and a route may publish its OWN credential facts (#348's kimi-code
+  // snapshot rule), which need no claude credential to judge. `credential()` answers the live
+  // claude facts — null where this deployment has no claude credential authority, in which case
+  // no claude-code route is judged on a lifetime nobody can read.
+  const credentialLifetime = Object.freeze({
     credential: () => claudeCredentialFacts(claudeCredentialProbe),
     now: residentOptions.now,
     horizonMs: laneHorizonMs,
-  }) : null;
+  });
   // #47 liveness controller: wraps the adapter listeners (the coordinator's single-slot onEvent)
   // so it observes probe turns and worker-turn refresh-token death without disturbing the
   // coordinator's own handling.
@@ -6694,7 +6758,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
         // before goal/plan records — and the read clears with a failed handoff (admission reopens).
         const refusal = reincarnationAuthority.refusal();
         if (refusal !== null) throw reincarnationError(refusal.code, refusal.message, refusal.detail);
-        return routeAdmissionGate(readiness, routeQuota, routeRefusals, claudeCredentialLifetime, providerServices)(options);
+        return routeAdmissionGate(readiness, routeQuota, routeRefusals, credentialLifetime, providerServices)(options);
       },
       // #317 (docs/50 D3): the services.list authority — the deployment's own derivation, consulted
       // per call through the same late-bound `opened` pattern the summary's routeUsage getter uses,
@@ -6719,7 +6783,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       reincarnationHandoff,
       liveness: livenessController,
       claudeCredentialProbe,
-      claudeCredentialLifetime,
+      credentialLifetime,
       claudeCredentialCache,
       grokCredentialProbe,
       grokCredentialCache,

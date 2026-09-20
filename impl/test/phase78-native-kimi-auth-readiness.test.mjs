@@ -9,9 +9,14 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { MockAdapter, openBaton } from '../src/index.mjs';
+import { DEFAULT_BUDGET, laneHorizonMs } from '../src/application-deployment.mjs';
 
 const MODULE_URL = pathToFileURL(join(import.meta.dirname, '..', 'src', 'index.mjs')).href;
 const ROUTE = Object.freeze({ harness: 'kimi-code', model: 'kimi-code/k3', effort: 'max' });
+
+/** #346/#348's horizon is DERIVED from the deployment's own wall envelope (DEFAULT_BUDGET.wallMin)
+ * — the battery pins the derivation, never a number of its own. */
+const HORIZON_MS = DEFAULT_BUDGET.wallMin * 60_000;
 
 function repository(root) {
   const repo = join(root, 'repo');
@@ -88,10 +93,10 @@ function inspectDeployment({ credential, attemptRun = false }) {
   }
 }
 
-function credential(expiresAt) {
+function credential(expiresAt, { refreshToken = true } = {}) {
   return `${JSON.stringify({
     access_token: 'fixture-access-token-must-never-be-public',
-    refresh_token: 'fixture-refresh-token-must-never-be-public',
+    refresh_token: refreshToken ? 'fixture-refresh-token-must-never-be-public' : '',
     expires_at: expiresAt,
     expires_in: 3600,
     scope: 'fixture',
@@ -213,6 +218,54 @@ test('KA3: bounded, owner-readable, unexpired native Kimi metadata preserves sta
   assert.equal(route?.state, 'ready');
   assert.equal(route?.runtime?.authentication?.state, 'available');
   assert.equal(spawned, false, 'static readiness never launches a provider');
+});
+
+// ── Issue #348 item 3: the projection rule rides the route, and a seat that cannot outlive the ──
+// ── token is refused before any effect ──────────────────────────────────────────────────────────
+
+test('KA5: a ready native Kimi route records the projection rule its credential is materialised with', () => {
+  const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+  const { observed } = inspectDeployment({ credential: credential(expiresAt) });
+  const route = observed.doctor.routes.find((candidate) => candidate.harness === 'kimi-code');
+  const usage = observed.doctor.routeUsage.find((candidate) => candidate.route.harness === 'kimi-code');
+  const cardRow = observed.readiness.routes.find((candidate) => candidate.harness === 'kimi-code');
+
+  assert.equal(route?.state, 'ready');
+  assert.deepEqual(route?.credential, {
+    mechanism: 'file_snapshot',
+    ttlSeconds: 3600,
+    refreshable: true,
+    expiresAt: expiresAt * 1000,
+  }, 'the route publishes the mechanism, the token\'s declared lifetime, whether the projected copy can renew it, and the instant it expires');
+  assert.deepEqual(cardRow?.credential, route?.credential, 'the route card carries the same rule');
+  assert.deepEqual(usage?.credential, route?.credential, 'and so does the usage row a recruit compares');
+  assert.equal(JSON.stringify(observed).includes('fixture-access-token'), false);
+  assert.equal(JSON.stringify(observed).includes('fixture-refresh-token'), false);
+});
+
+test('KA6: a snapshot with no refresh token that expires inside the lane horizon is refused before any effect', () => {
+  // The access token is live (readiness admits it) but one hour of declared life cannot cover a
+  // lane whose horizon IS the deployment wall envelope (480 min), and a snapshot with no refresh
+  // token has nothing to renew it with: the seat would die mid-lane.
+  const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+  const { observed, spawned } = inspectDeployment({
+    credential: credential(expiresAt, { refreshToken: false }),
+    attemptRun: true,
+  });
+  const route = observed.doctor.routes.find((candidate) => candidate.harness === 'kimi-code');
+
+  assert.equal(route?.state, 'blocked');
+  assert.equal(route?.code, 'credential_expires_before_horizon');
+  assert.equal(route?.credential.refreshable, false, 'the deployment has no refresh path for this snapshot');
+  assert.equal(route?.credential.mechanism, 'file_snapshot');
+  assert.equal(route?.credentialHorizonMs, HORIZON_MS, 'and the horizon it judged it against');
+  assert.equal(laneHorizonMs(), HORIZON_MS, 'the horizon IS the deployment wall envelope');
+  assert.match(route?.summary ?? '', /file_snapshot/u, 'the summary names the projection mechanism');
+  assert.equal(observed.runError?.code, 'credential_expires_before_horizon',
+    'a recruit on the route is refused pre-effect');
+  assert.match(observed.runError?.message ?? '', new RegExp(String(HORIZON_MS), 'u'),
+    'and the refusal names the horizon');
+  assert.equal(spawned, false, 'the refusal precedes every provider effect');
 });
 
 test('KA4: a provider Authentication required spawn refusal projects one typed remediable Run cause', async (t) => {
