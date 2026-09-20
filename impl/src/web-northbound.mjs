@@ -1109,11 +1109,26 @@ function validateEnvelope(envelope) {
       // instead of the anonymous application_command_arguments_invalid collapse. An untyped
       // route-shape ValidationError (no code) keeps the collapse (W8-1; phase12 :196/:510 pins).
       if (typeof cause?.code === 'string') {
-        const field = applicationArgField(APPLICATION_COMMAND[envelope.command], envelope.args);
+        // Issue #485: the cause's OWN field wins over the arm's own derivation. The validator
+        // knows which argument failed — a swarm contract refusal names a nested path such as
+        // `payload.body`, and #484's closed-set refusal names the argument the closed set judges
+        // (`priority`) — while `applicationArgField` re-derives the field from the request shape
+        // and returns the first declared argument the caller happened to omit (`view` on a publish
+        // envelope, `inReplyTo` on a guide), which names an argument the caller never touched. The
+        // derivation stays as the fallback for a cause that minted no field of its own. Both
+        // readings ride `safeFieldName` exactly as the arm's own key closures do (#160 R4): a
+        // caller-supplied marker is never echoed back.
+        const causeField = safeFieldName(cause?.detail?.field) ?? safeFieldName(cause?.field);
+        const field = causeField ?? applicationArgField(APPLICATION_COMMAND[envelope.command], envelope.args);
         return {
           code: cause.code,
           message: typeof cause?.message === 'string' ? cause.message : cause.code,
           ...(field == null ? {} : { field }),
+          // The cause's own detail crosses with it when it minted one (#485): it is the teaching
+          // (#474/#481) — the rule, the admitted form, the remedy — and it was the one thing a web
+          // caller could not read back. The `detail` key is added only when present, so a refusal
+          // minted without one keeps its byte-stable shape.
+          ...(isRecord(cause?.detail) ? { detail: cause.detail } : {}),
         };
       }
       return 'application_command_arguments_invalid';
@@ -1914,9 +1929,10 @@ export class WebNorthbound {
         try { this._audit('command_invalid', ctx, { reason: validation }); } catch { return error(503, 'temporarily_unavailable'); }
         return error(400, 'invalid_command', validation);
       }
-      const { code, field, message } = validation;
+      // Issue #485: the cause's own `detail` rides the refusal when it minted one.
+      const { code, field, message, detail } = validation;
       try { this._audit('command_invalid', ctx, { reason: code }); } catch { return error(503, 'temporarily_unavailable'); }
-      return error(400, code, message, field);
+      return error(400, code, message, field, detail == null ? {} : { detail });
     }
     const authorizationFailure = this._authorize(ctx, envelope);
     if (authorizationFailure) {
@@ -2704,7 +2720,8 @@ export class WebNorthbound {
       if (validation) {
         return this._write(res, typeof validation === 'string'
           ? error(400, 'invalid_command', validation)
-          : error(400, validation.code, validation.message, validation.field), origin);
+          : error(400, validation.code, validation.message, validation.field,
+            validation.detail == null ? {} : { detail: validation.detail }), origin);
       }
       if (!Array.isArray(principal.capabilities) || !principal.capabilities.includes('observe')) {
         return this._write(res, error(403, 'forbidden',

@@ -192,17 +192,18 @@ test('#481 (a): a JSON-string body refuses typed with the remedy, on the lane th
   }, 'the refusal names the field, the rule, the admitted form and the one-line remedy');
   assert.match(direct?.message ?? '', REMEDY, 'and the remedy rides the refusal message');
   // The served web transport (the lane the incident's rows crossed) crosses the same code and the
-  // same message. Its pre-dispatch argument arm re-derives `field` from the request shape (the
-  // arm's own long-standing rule, web-northbound.mjs), so the contract's own field is asserted on
-  // the lane above, where it is minted.
+  // same message. Issue #485 closed the gap this row used to record: the pre-dispatch argument arm
+  // carried the cause's own `field` and `detail` instead of re-deriving the field from the request
+  // shape, so the contract's teaching crosses the wire intact.
   const response = await publish(f, payload);
   assert.equal(response.status, 400, 'a body that is not the report is a request fault, not a dead resident');
   assert.equal(response.body.error.code, 'swarm_command_invalid', 'the contract code crosses as itself');
+  assert.equal(response.body.error.field, 'payload.body',
+    'and the field the contract\'s check named, never the first declared argument the caller omitted');
+  assert.deepEqual(response.body.error.detail, direct?.detail,
+    'the contract\'s own teaching crosses with it — the rule, the admitted form and the remedy');
   assert.match(response.body.error.message, REMEDY, 'with the remedy on the message a web caller reads');
   assert.match(response.body.error.message, /the contribution report object/u, 'and the admitted form');
-  // (No `retryable`/`detail` on this lane: the pre-dispatch argument arm composes `{code, message,
-  // field}` only — the same arm shape every coded argument refusal crosses with. The contract's own
-  // detail is asserted on the lane above, where it is minted.)
   // Nothing landed: the defect is refused BEFORE the note translation and before any fold row.
   assert.deepEqual(Object.keys(f.coordination.swarm(SWARM_ID).contributions), [],
     'no contribution row lands for a refused body');

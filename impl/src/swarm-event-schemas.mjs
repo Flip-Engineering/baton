@@ -144,8 +144,11 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
   'swarm.contribution_recorded': KIND('publish a finding or work product attributed to its author', {
     contributionId: STRING('the contribution identity', { required: true, ...AUTO('minted for you when omitted') }),
     participantId: STRING('the author', { required: true, ...AUTO('your own participant identity; contributions must name their actual author') }),
-    body: JSON_VALUE('the finding itself: arbitrary JSON, or pass the whole payload as plain text',
-      { expectation: 'any JSON value — or pass the whole payload as plain text',
+    // Issue #485 (#481's contract half): the report OBJECT, or plain text. A string that is its
+    // own JSON document is the report serialized once too often and refuses — the runtime would
+    // otherwise fold a reader that can only enumerate character by character.
+    body: JSON_VALUE('the finding itself: the report object, or plain text',
+      { expectation: 'the report object, or plain text — a string holding a JSON document is refused as the report encoded twice',
         example: 'the discovery lane needs per-event payload schemas' }),
     workId: STRING('the work this contribution advances', { example: 'work-discovery' }),
     refs: STRING_ARRAY('related identities (work, contributions, artifacts)', { example: ['work-discovery'] }),
