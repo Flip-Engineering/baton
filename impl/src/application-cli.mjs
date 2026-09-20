@@ -8,7 +8,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TextDecoder } from 'node:util';
-import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalRunPhase } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalOperationForCommand, canonicalRunPhase } from './application-semantics.mjs';
 import { parseBatonTopCli } from './baton-top.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
@@ -749,6 +749,7 @@ export function deploymentCheckoutRoot({ cwd = process.cwd() } = {}) {
 export function discoverBatonConnection({
   cwd = process.cwd(), env = process.env, home = env.HOME,
   ownerUid = typeof process.getuid === 'function' ? process.getuid() : null,
+  tolerateRegistryDrift = false,
 } = {}) {
   const present = CONNECTION_ENV.filter((name) => nonempty(env[name]));
   if (present.length > 0) {
@@ -791,7 +792,9 @@ export function discoverBatonConnection({
     }
     // The drift case names BOTH registry digests and the remedy (F9): this is the refusal a
     // `git pull` produces, and the one `baton doctor` must never hide.
-    if (repository.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest) throw residentAuthorityRefusal(repository);
+    // Issue #515: tolerateRegistryDrift skips this check so read-only commands can reach the
+    // resident despite a checkout that moved ahead by one commit.
+    if (!tolerateRegistryDrift && repository.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest) throw residentAuthorityRefusal(repository);
     if (!Number.isFinite(Date.parse(repository.startedAt))) {
       throw cliCauseRefusal('repository_selector_started_at_invalid', {
         observed: `startedAt ${observedValue(repository.startedAt ?? null)}`,
@@ -864,6 +867,9 @@ export function discoverBatonConnection({
     ...(resident ? {
       transport: 'local', socketPath: profile.socketPath,
       deploymentId: repository.deploymentId, incarnation: repository.incarnation,
+      registryDrift: repository.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
+        ? Object.freeze({ selectorDigest: repository.registryDigest, cliDigest: APPLICATION_SEMANTIC_REGISTRY.digest })
+        : null,
     } : {}),
   });
 }
@@ -5283,6 +5289,7 @@ export class BatonWebClient {
 export async function connectBaton({
   repo = process.cwd(),
   advanced = {},
+  tolerateRegistryDrift = false,
 } = {}) {
   if (!nonempty(repo) || repo.includes('\0') || !record(advanced)
     || Object.keys(advanced).some((key) => ![
@@ -5296,6 +5303,7 @@ export async function connectBaton({
     home: advanced.home ?? env.HOME,
     ownerUid: advanced.ownerUid
       ?? (typeof process.getuid === 'function' ? process.getuid() : null),
+    tolerateRegistryDrift,
   });
   if (connection.authority === 'repository-user-profile') {
     const local = repositoryIdentityFromMetadata(resolve(repo));
@@ -5355,7 +5363,7 @@ export async function connectBaton({
       detail: { required: requiredCommands, missing: missingCommands },
     });
   }
-  if (agentExperience?.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest) {
+  if (!tolerateRegistryDrift && agentExperience?.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest) {
     throw cliCauseRefusal('served_registry_digest_drift', {
       observed: `the resident serves ${observedValue(agentExperience?.registryDigest ?? null)} but this CLI carries ${APPLICATION_SEMANTIC_REGISTRY.digest}`,
       detail: {
@@ -5367,7 +5375,7 @@ export async function connectBaton({
   // Decision 7: the limits registry digest verifies exactly like the semantic registry's — a
   // server that publishes limitsRegistryDigest must match; an older server that omits it is
   // not rejected (the frame-economics handshake is additive).
-  if (agentExperience?.limitsRegistryDigest !== undefined
+  if (!tolerateRegistryDrift && agentExperience?.limitsRegistryDigest !== undefined
     && agentExperience.limitsRegistryDigest !== FRAME_LIMITS_DIGEST) {
     throw cliCauseRefusal('served_limits_digest_drift', {
       observed: `the resident serves ${observedValue(agentExperience.limitsRegistryDigest)} but this CLI carries ${FRAME_LIMITS_DIGEST}`,
@@ -5820,6 +5828,18 @@ export async function runBatonCli(parsed, client, options = {}) {
     });
   }
   throw cliError('unsupported CLI operation');
+}
+
+/** Issue #515: true when a parsed CLI dispatch is read-only and can tolerate registry digest drift.
+ * The classification uses the canonical operation's effect: effects ending in `_read` or `_stream`
+ * are reads. The follow, stream, wake_watch and route kinds are reads by construction. */
+export function isReadOnlyCliDispatch(parsed) {
+  if (parsed.kind === 'follow' || parsed.kind === 'stream'
+    || parsed.kind === 'wake_watch' || parsed.kind === 'route') return true;
+  if (parsed.kind !== 'command') return false;
+  const operation = canonicalOperationForCommand(parsed.name);
+  if (operation === null) return false;
+  return operation.effect.endsWith('_read') || operation.effect.endsWith('_stream');
 }
 
 /** The resident selector refusal. Protocol drift — a resident published by another commit — is

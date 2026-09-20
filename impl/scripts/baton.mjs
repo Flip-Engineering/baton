@@ -9,7 +9,7 @@ import {
 } from '../src/coordination-store.mjs';
 import {
   BatonWebClient, batonCliHelp, discoverBatonConnection, inspectBatonConnection,
-  parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
+  isReadOnlyCliDispatch, parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
 } from '../src/application-cli.mjs';
 import { BATON_TOP_HELP, runBatonTop } from '../src/baton-top.mjs';
 import { reincarnationProcessAlive } from '../src/application-deployment.mjs';
@@ -405,7 +405,7 @@ try {
         process.stdout.write(`${JSON.stringify(projected, null, 2)}\n`);
         if ((parsed.check && local.state !== 'configured') || coordination !== null) process.exitCode = 1;
       } else {
-        const remote = await clientFor(discoverBatonConnection()).doctor();
+        const remote = await clientFor(discoverBatonConnection({ tolerateRegistryDrift: true })).doctor();
         // Issue #476: a resident that is STOPPING is not merely `not_ready` — it is a state with a
         // reason and a wait, and #467 keeps this transport's reads open so the operator can read
         // it. The stopping section the deployment already puts on its own card (`state`, `at`, the
@@ -463,7 +463,7 @@ try {
       // docs/38 — `baton top` is the operator seat: explicit human output through the existing
       // authenticated resident client (surfaceSnapshot seam); ordinary commands keep machine-clean
       // JSON, so no JSON projection is appended here.
-      const connection = discoverBatonConnection();
+      const connection = discoverBatonConnection({ tolerateRegistryDrift: true });
       await runBatonTop(parsed, {
         client: clientFor(connection),
         stdout: process.stdout,
@@ -496,7 +496,7 @@ try {
         }
       }
     } else {
-      const connection = discoverBatonConnection();
+      const connection = discoverBatonConnection({ tolerateRegistryDrift: isReadOnlyCliDispatch(parsed) });
       const client = clientFor(connection);
       let followPages = 0;
       const streaming = parsed.kind === 'follow' || parsed.kind === 'wake_watch' || (parsed.kind === 'stream' && parsed.follow);
