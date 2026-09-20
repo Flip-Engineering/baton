@@ -103,6 +103,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_capture_base_unreachable: row(409, ['runtime'], 'the captured revision and the deployment target share no common ancestor'),
   contribution_commit_unresolved: row(409, ['runtime'], 'the contribution names a commit that does not resolve on its lane branch yet'),
   route_degraded: row(409, ['runtime'], 'the named route\'s provider degraded it (one fault class took several seats inside one window); recruits pause on it until a probe succeeds'),
+  // Issue #531: every route the recruit's selection names is ineligible (quota exhausted, blocked,
+  // or a mix), so the recruit refuses before the host-capacity queue rather than waiting 120s to
+  // fail on a route that serves no recruits.
+  route_exhausted: row(409, ['runtime'], 'every route the selection names is ineligible (quota exhausted or blocked), so the recruit cannot be admitted'),
   // Issue #490: the recruit's own Run conflict. The deployment mints a Run's Goal under the fixed
   // key `application:<runId>:goal:v1` (application.mjs `start`), so a recruit naming a Run whose
   // Goal is already bound to another request — the withdrawn attempt's Run the seat id still

@@ -2779,6 +2779,42 @@ export class SwarmRuntime {
     });
   }
 
+  /** Issue #531: whether ALL routes a recruit's selection names are ineligible — quota exhausted,
+   * blocked, or a mix that includes degraded routes the `_routeDegradeFor` check did not catch
+   * because not ALL were degraded. Returns null when at least one named route is usable; returns
+   * the first ineligible row's facts when every considered route is ineligible. Called BEFORE
+   * `hostCapacity.acquire`, so a recruit to an exhausted route refuses immediately rather than
+   * waiting in the capacity queue. */
+  _routeExhaustedFor(args) {
+    const rows = this._routeUsageRows();
+    if (rows === null || rows.length === 0) return null;
+    const options = args.options ?? {};
+    const named = swarmRouteShape(options.exact);
+    const exact = named !== null && named.effort !== null ? named : null;
+    const selector = exact ?? named ?? options;
+    const axes = ['harness', 'model', 'effort']
+      .filter((axis) => typeof selector[axis] === 'string' && selector[axis].length > 0);
+    if (axes.length === 0) return null;
+    const considered = this._routesForSelection(rows, selector, axes);
+    if (considered.length === 0) return null;
+    if (considered.some((row) => this._routeEligible(row))) return null;
+    const representative = considered[0];
+    const reason = representative?.quota?.state === 'exhausted' ? 'quota_exhausted'
+      : representative?.state === 'blocked' ? 'blocked' : 'ineligible';
+    return Object.freeze({
+      route: Object.freeze({ ...representative.route }),
+      reason,
+      state: representative.state ?? null,
+      code: representative.code ?? null,
+      resetAt: representative.resetAt ?? representative.quota?.resetAt ?? null,
+      considered: Object.freeze(considered.map((row) => Object.freeze({
+        route: Object.freeze({ ...row.route }),
+        state: row.state ?? null, code: row.code ?? null,
+        resetAt: row.resetAt ?? null, quota: row.quota ?? null,
+      }))),
+    });
+  }
+
   /** #456/#475: the probe state of the degrade a recruit is about to land on, or null when the route
    * is not degraded. `clearsAt` is the instant the route's episode clears — the provider's own reset
    * when it named one, else the probe instant its fault's own window derives — and `probeAfter` is
@@ -6322,6 +6358,29 @@ export class SwarmRuntime {
         }
       }
     }
+    // Issue #531: a deferred start whose named routes are ALL ineligible (quota exhausted, blocked,
+    // or a mix) refuses before the host-capacity queue, the same way the recruit path's own check
+    // does — the seat's plan carries the route selection, and a route that cannot serve recruits
+    // at the moment the answer arrives wastes the queue position and the seat's own deadline.
+    {
+      const exhaustion = this._routeExhaustedFor({ options: runOptions });
+      if (exhaustion) {
+        const ready = this._readyRouteLabels();
+        refuse(
+          `route ${this._routeLabel(exhaustion.route)} is ${exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
+          + (exhaustion.resetAt ? ` (resets at ${exhaustion.resetAt})` : '')
+          + ': every route the selection names is ineligible, so the deferred start cannot be admitted'
+          + (ready.length > 0 ? `; routes ready now: ${ready.join(', ')}` : '; no route is ready'),
+          'route_exhausted',
+          {
+            route: exhaustion.route, reason: exhaustion.reason,
+            code: exhaustion.code, resetAt: exhaustion.resetAt,
+            considered: exhaustion.considered,
+            ready: Object.freeze(ready),
+          },
+        );
+      }
+    }
     // #297 × #525 D7: the seat takes the host slot at the moment it REALLY starts. The recruit
     // held none, so the answer takes the one today's recruit would have taken, with the same
     // queue rows and the same timeout refusal.
@@ -7943,6 +8002,29 @@ export class SwarmRuntime {
       // is pinned to the probed one, so the seats the probe's verdict speaks for are the seats that
       // ran there. Nothing degrades-less moves: a recruit that is not a probe keeps the selection.
       const probeRoute = degrade && probe.admits ? probe.route : null;
+      // Issue #531: a recruit whose named routes are ALL ineligible (quota exhausted, blocked, or a
+      // mix that includes degraded routes the degrade check above did not catch because not ALL were
+      // degraded) refuses BEFORE the host-capacity queue. A probe override is a usable route — its
+      // admission overrides the ineligibility — so the check is skipped when the recruit is a probe.
+      if (!probeRoute) {
+        const exhaustion = this._routeExhaustedFor(args);
+        if (exhaustion) {
+          const ready = this._readyRouteLabels();
+          refuse(
+            `route ${this._routeLabel(exhaustion.route)} is ${exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
+            + (exhaustion.resetAt ? ` (resets at ${exhaustion.resetAt})` : '')
+            + ': every route the selection names is ineligible, so the recruit cannot be admitted'
+            + (ready.length > 0 ? `; routes ready now: ${ready.join(', ')}` : '; no route is ready'),
+            'route_exhausted',
+            {
+              route: exhaustion.route, reason: exhaustion.reason,
+              code: exhaustion.code, resetAt: exhaustion.resetAt,
+              considered: exhaustion.considered,
+              ready: Object.freeze(ready),
+            },
+          );
+        }
+      }
       const admittedOptions = routeSelection?.options
         // A probe pins this recruit to ONE route, so the loose selectors it may have matched are
         // consumed by that choice exactly as the comparison's own resolution consumes them (#474).

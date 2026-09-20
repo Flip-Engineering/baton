@@ -203,19 +203,23 @@ test('RECRUIT-341-B: an exact recruit on a refused route refuses through the dep
   ], gate);
   await fixture.call('create', { purpose: 'refused exact recruit' });
 
+  // Issue #531: the runtime's own route_exhausted precheck fires before the deployment gate's
+  // admission — a recruit to an exact route that is ineligible refuses at the runtime level,
+  // naming the ready alternative, before hostCapacity.acquire or prepareRun is ever reached.
   await assert.rejects(
     fixture.call('recruit', {
       participantId: 'lane-b', objective: 'work', options: { exact: ROUTE_QUOTA },
     }),
-    (error) => error?.code === QUOTA_CODE
-      && error?.state === 'blocked'
-      && error?.resetAt === RESET_AT
-      && error?.readyRoutes?.includes(routeLabel(ROUTE_READY)) === true
+    (error) => error?.code === 'route_exhausted'
+      && error?.detail?.reason === 'quota_exhausted'
+      && error?.detail?.resetAt === RESET_AT
+      && error?.detail?.ready?.includes(routeLabel(ROUTE_READY)) === true
       && error.message.includes(routeLabel(ROUTE_READY)),
-    'the refused exact route is refused by admission, naming the route that is ready',
+    'the refused exact route is refused by the runtime precheck, naming the route that is ready',
   );
-  assert.deepEqual(fixture.seen[0].options.exact, ROUTE_QUOTA,
-    'the runtime delegates route admission: the exact selection reaches the gate untouched');
+  // The runtime precheck fires before prepareRun, so the deployment gate is never reached.
+  assert.equal(fixture.seen.length, 0,
+    'the runtime precheck fires before the deployment gate — prepareRun is never called');
 
   const view = await fixture.call('view', {});
   assert.equal(view.participants.find((row) => row.participantId === 'lane-b'), undefined,
