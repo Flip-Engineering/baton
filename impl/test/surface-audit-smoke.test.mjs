@@ -4,8 +4,11 @@
 // evolution does not break them while a broken extractor (empty section, lost dialect) does.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 
 import { collectSurfaceInventory, renderSurfaceAudit } from '../scripts/surface-audit.mjs';
+
+const AUDIT_SCRIPT = new URL('../scripts/control-surface-audit.mjs', import.meta.url);
 
 test('SA1: every inventory dimension extracts non-empty', () => {
   const inventory = collectSurfaceInventory();
@@ -52,4 +55,15 @@ test('SA3: the renderer emits every section as markdown', () => {
     'Run phase string literals', 'Synonym density']) {
     assert.ok(rendered.includes(`### ${heading}`), `section ${heading} renders`);
   }
+});
+
+// Issue #519: `npm run test:surfaces` runs control-surface-audit.mjs as its second step, and that
+// step was red at HEAD — the `registryCliExceptions` table had drifted from the live registry in
+// both directions (eight rows whose semantic row had stopped declaring `cli` at all, and one row
+// whose operation the CLI dispatches through a transport the WIRE CARD omits). The audit is the
+// contract, so the row drives it rather than re-deriving its three checks here.
+test('SA4: the control-surface audit passes (issue #519)', () => {
+  const result = spawnSync(process.execPath, [AUDIT_SCRIPT.pathname], { encoding: 'utf8' });
+  assert.equal(result.status, 0, `control-surface-audit refused:\n${result.stderr}`);
+  assert.match(result.stdout, /cliSurfaceExceptions/, 'the audit renders its own exception table');
 });

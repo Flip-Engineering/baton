@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
-import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
+import { CLI_WEB_COMMANDS, cliDispatchCommandNames, parseBatonCli } from '../src/application-cli.mjs';
 import { mcpCombinedToolNames, mcpDispatchToolNames } from '../src/mcp-northbound.mjs';
 import { servedCliOrdinaryKeys } from './render-surface-docs.mjs';
 import {
@@ -78,6 +78,12 @@ for (const command of APPLICATION_SEMANTIC_REGISTRY.cli.commands) {
 for (const row of native.cliNative) {
   if (row.canonicalKey) servedCliSet.add(row.canonicalKey);
 }
+// Issue #519: "served" is the CLI's own DISPATCH authority — the transports `command()` gates on
+// (application-cli.mjs `cliDispatchCommandNames`, the CLI_DISPATCH_TRANSPORTS derivation) — unioned
+// with the WIRE CARD projection above. Keyed on the card alone, a registry CLI row the CLI really
+// dispatches but the card deliberately omits (`deployment.reincarnate`, admitted by #306 lane W)
+// read as "no served implementation", and the third check below fired on a row that was served.
+for (const name of cliDispatchCommandNames()) servedCliSet.add(name);
 const exceptionKeys = new Set(native.registryCliExceptions.map((row) => row.key));
 for (const key of exceptionKeys) {
   if (!registryCli.includes(key)) throw new Error(`control-surface-audit: stale registry CLI exception is not declared on CLI: ${key}`);

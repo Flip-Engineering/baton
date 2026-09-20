@@ -40,8 +40,6 @@
     {"name":"run.retry_verification","canonicalKey":"run.retry","reason":"legacy application command name retained as internal dispatch alias"}
   ],
   "registryCliExceptions": [
-    {"key":"deployment.reincarnate","classification":"represented_by_other_cli_operation","reason":"CLI dispatches reincarnate through the deployment subcommand parser (baton deployment reincarnate <commit-ish>) and baton serve --reincarnate"},
-    {"key":"run.member.interrupt","classification":"represented_by_other_cli_operation","reason":"CLI run interrupt accepts a recipient selector rather than a distinct member-interrupt verb"},
-    {"key":"run.scratchpad.append","classification":"not_live_on_cli","reason":"scratchpad append remains an internal/worker-oriented capability; no operator CLI parser verb exists"}
+    {"key":"run.member.interrupt","classification":"represented_by_other_cli_operation","reason":"CLI run interrupt accepts a recipient selector rather than a distinct member-interrupt verb"}
   ]
 }
