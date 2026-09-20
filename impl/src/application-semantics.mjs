@@ -2268,7 +2268,6 @@ const authorityProjection = {
     transportHidden: entry.transportHidden, liveMethod: entry.liveMethod,
     authority: entry.authority,
     names: entry.names, flagAliases: entry.flagAliases,
-    transportHidden: entry.transportHidden,
   })),
 };
 const presentationProjection = {

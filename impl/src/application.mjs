@@ -3852,7 +3852,6 @@ export class BatonApplication {
       integration: clone(view.integration),
       verification: clone(view.verification),
       semanticReview: clone(view.semanticReview),
-      integration: clone(view.integration),
       artifacts: clone(view.evidence),
       stop: view.stop ? {
         state: view.stop.state,
