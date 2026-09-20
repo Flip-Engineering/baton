@@ -142,6 +142,26 @@ const kimiOmpRoutes = () => KIMI_OMP_EFFORTS.map((effort) => Object.freeze({
   harness: 'omp', model: 'kimi-code/k3', effort,
   aaSlug: 'kimi-k3', billing: 'subscription', openRouterId: 'moonshotai/kimi-k3',
 }));
+// opencode-go rides omp as its own provider (the operator's separate opencode-go
+// subscription, declared in omp's own provider config). Route ids are provider/model
+// paths under the opencode-go prefix, so readiness, quota and the member catalog read
+// them as that provider. Efforts are the shared omp low/high/max ladder. Billing is
+// subscription for every row: the opencode-go plan is flat, including for models the
+// direct-provider routes settle per token. Measured-profile declarations mirror the
+// direct-provider sibling for the same underlying model; glm-5.3 declares none because
+// this deployment maps no catalog slug or join id to it, so its routes carry nulls.
+const OPENCODE_GO_EFFORTS = Object.freeze(['low', 'high', 'max']);
+const OPENCODE_GO_MODELS = Object.freeze([
+  { model: 'opencode-go/glm-5.3', aaSlug: null, openRouterId: null },
+  { model: 'opencode-go/glm-5.3-flash', aaSlug: 'glm-5-3-flash', openRouterId: 'z-ai/glm-5.3-flash' },
+  { model: 'opencode-go/deepseek-v4-pro', aaSlug: 'deepseek-v4-pro', openRouterId: 'deepseek/deepseek-v4-pro' },
+  { model: 'opencode-go/kimi-k3', aaSlug: 'kimi-k3', openRouterId: 'moonshotai/kimi-k3' },
+]);
+const opencodeGoRoutes = () => OPENCODE_GO_MODELS.flatMap(({ model, aaSlug, openRouterId }) => (
+  OPENCODE_GO_EFFORTS.map((effort) => Object.freeze({
+    harness: 'omp', model, effort, aaSlug, billing: 'subscription', openRouterId,
+  }))
+));
 const DEEPSEEK_FLASH_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const DEEPSEEK_PRO_EFFORTS = Object.freeze(['low', 'medium']);
 const deepseekRoutes = () => [
@@ -194,6 +214,7 @@ const DEFAULT_ROUTES = Object.freeze([
   ...deepseekRoutes(),
   ...glmRoutes(),
   ...kimiOmpRoutes(),
+  ...opencodeGoRoutes(),
 ]);
 
 function deploymentError(message) {
@@ -375,7 +396,7 @@ function servedRow(repoRoot, served) {
 }
 
 const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([
-  'glm_key.json', 'deepseek_key.json', 'kimi_key.json',
+  'glm_key.json', 'deepseek_key.json', 'kimi_key.json', 'opencode_go_key.json',
   // #429/#444: a stray copy of the Artificial Analysis or Design Arena key at the repository root is
   // credential material like the provider keys above — never in a deployment snapshot (`aa_key` and
   // `designarena_key` are the file names adapter.mjs declares under the operator's config root;
@@ -1154,6 +1175,7 @@ const DEFAULT_OMP_PROVIDER_KEY_FILES = Object.freeze({
   deepseek: 'deepseek_key.json',
   zai: 'glm_key.json',
   'kimi-code': 'kimi_key.json',
+  'opencode-go': 'opencode_go_key.json',
 });
 
 /** The ONE normalization for an operator-declared provider table: each key is the model-id
