@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { compareCanonicalStrings } from './canonical-order.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const json = (value) => JSON.parse(JSON.stringify(value));
@@ -43,7 +44,7 @@ function validCost(cost) {
 function validResult(value, op) {
   const cursorPresent = record(value) && Object.hasOwn(value, 'cursor');
   return record(value) && value.op === op && ACI_STATUSES.has(value.status)
-    && typeof value.summary === 'string' && Buffer.byteLength(value.summary) <= 2_048 && !value.summary.includes('\0')
+    && typeof value.summary === 'string' && Buffer.byteLength(value.summary) <= FRAME_LIMITS['message.send.body'].value && !value.summary.includes('\0')
     && Array.isArray(value.payload) && Array.isArray(value.refs) && value.refs.length <= 256 && value.refs.every(validRef)
     && validCost(value.cost) && record(value.provenance) && jsonValue(value)
     && (value.status === 'needs_resume'
