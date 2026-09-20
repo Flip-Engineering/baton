@@ -154,7 +154,9 @@ export class AtlasStructuralDelta {
   constructor(opts = {}) {
     if (typeof opts.artifactRoot !== 'string' || opts.artifactRoot.length === 0) throw new TypeError('Atlas artifactRoot required');
     this.artifactRoot = opts.artifactRoot;
-    this.maxSourceBytes = opts.maxSourceBytes ?? 2 * 1024 * 1024;
+    // Issue #500: 16 MiB — the ledger event ceiling used by coordination rows, result
+    // bodies and wire frames. A source file the ledger could hold is always diffed.
+    this.maxSourceBytes = opts.maxSourceBytes ?? 16 * 1024 * 1024;
     this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
     if (!Number.isSafeInteger(this.maxArtifactBytes) || this.maxArtifactBytes <= 0) throw new TypeError('Atlas maxArtifactBytes must be a positive safe integer');
     this.availability = opts.availability ?? Object.freeze({ status: 'available', reason: 'language_ceiling_satisfied' });
@@ -182,7 +184,8 @@ export class AtlasStructuralDelta {
     if (!LANGUAGE[language]) throw Object.assign(new Error(`unsupported Atlas language ${language}`), { code: 'unsupported_language' });
     const before = readFileSync(beforePath);
     const after = readFileSync(afterPath);
-    if (before.includes(0) || after.includes(0) || before.length > this.maxSourceBytes || after.length > this.maxSourceBytes) throw Object.assign(new Error('source is binary or exceeds Atlas limit'), { code: 'invalid_source' });
+    if (before.includes(0) || after.includes(0)) throw Object.assign(new Error('source is binary'), { code: 'invalid_source' });
+    if (before.length > this.maxSourceBytes || after.length > this.maxSourceBytes) throw Object.assign(new Error(`source exceeds the ${this.maxSourceBytes}-byte source ceiling`), { code: 'invalid_source' });
     const beforeText = before.toString('utf8'); const afterText = after.toString('utf8');
     const beforeDigest = sha(before); const afterDigest = sha(after);
     this.record?.({ kind: 'capability.op.started', actor: ctx.actor ?? 'orchestrator', op, beforeDigest, afterDigest });

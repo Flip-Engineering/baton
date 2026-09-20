@@ -132,7 +132,8 @@ function scan(root, opts, ctx) {
       const language = LANGUAGE[extname(entry.name).toLowerCase()];
       if (!language) continue;
       const bytes = readSourceBounded(full, opts.maxSourceBytes);
-      if (bytes === null || bytes.includes(0)) continue;
+      if (bytes === null) { opts.record?.({ kind: 'atlas.source.skipped', path: slash(rel), reason: 'exceeds_source_ceiling', ceiling: opts.maxSourceBytes }); continue; }
+      if (bytes.includes(0)) continue;
       files.push(extractFile(slash(rel), bytes, ...language));
       if (files.length > opts.maxFiles) throw typed(`Atlas file ceiling ${opts.maxFiles} exceeded`, 'index_too_large');
     }
@@ -249,7 +250,9 @@ export class AtlasCodeIndex {
     if (typeof opts.artifactRoot !== 'string' || !opts.artifactRoot) throw new TypeError('Atlas artifactRoot required');
     this.artifactRoot = opts.artifactRoot;
     this.indexRoot = join(opts.artifactRoot, 'indexes'); this.resultRoot = join(opts.artifactRoot, 'results');
-    this.maxSourceBytes = opts.maxSourceBytes ?? 2 * 1024 * 1024; this.maxFiles = opts.maxFiles ?? 20000;
+    // Issue #500: 16 MiB — the ledger event ceiling used by coordination rows, result
+    // bodies and wire frames. A source file the ledger could hold is always indexed.
+    this.maxSourceBytes = opts.maxSourceBytes ?? 16 * 1024 * 1024; this.maxFiles = opts.maxFiles ?? 20000;
     this.maxResults = opts.maxResults ?? 100000; this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
     for (const key of ['maxSourceBytes', 'maxFiles', 'maxResults', 'maxArtifactBytes']) if (!Number.isSafeInteger(this[key]) || this[key] <= 0) throw new TypeError(`Atlas ${key} must be a positive safe integer`);
     this.repoId = opts.repoId ?? null;
