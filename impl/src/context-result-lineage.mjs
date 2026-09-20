@@ -89,9 +89,11 @@ function deepFreeze(value) {
 }
 
 function bounded(value, label) {
-  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')
-    || Buffer.byteLength(value) > 512) {
-    throw resultLineageError(`${label} is invalid`);
+  if (typeof value !== 'string') throw resultLineageError(`${label} must be a string`);
+  if (value.includes('\0')) throw resultLineageError(`${label} must not contain NUL`);
+  if (value.length === 0) throw resultLineageError(`${label} must be non-empty`);
+  if (Buffer.byteLength(value) > 512) {
+    throw resultLineageError(`${label} must be at most 512 bytes`);
   }
   return value;
 }
@@ -129,7 +131,7 @@ function sourceArtifacts(call, sourceOutputValue, sourceEvidenceValue) {
     || stable(sourceEvidence.sourceBranches) !== stable(sourceOutput.sourceBranches)
     || sourceEvidence.sourceItems !== sourceOutput.sourceItems
     || sourceEvidence.selectedSourceItems !== sourceOutput.selectedSourceItems) {
-    throw resultLineageError('Context map source artifacts are invalid');
+    throw resultLineageError('Context map source artifacts must have schemaVersion 1 output with array items, schemaVersion 2 evidence for the same cell with zero providerEffects, and matching branches, counts, and chunks');
   }
   const outputRef = artifactRef(
     call.source.outputRef, 'context_value',
@@ -180,7 +182,7 @@ function acceptedChild(value, partition, cleanupDigest) {
     || !Array.isArray(value.artifacts) || !value.resourceRelease
     || typeof value.resourceRelease !== 'object' || Array.isArray(value.resourceRelease)
     || !DIGEST.test(value.resourceRelease.releaseDigest ?? '')) {
-    throw resultLineageError('Context map accepted child is invalid');
+    throw resultLineageError('Context map accepted child must have schemaVersion 1, state accepted, the partition id, digest, and index, 64-hex node, artifact, and cleanup digests, a 40-hex resultSha, positive integer taskVersion and terminalEvent, an artifacts array, and a resourceRelease with a digest');
   }
   for (const [candidate, label] of [
     [value.nodeKey, 'Context map child node'], [value.taskId, 'Context map child task'],
@@ -197,11 +199,11 @@ function acceptedChild(value, partition, cleanupDigest) {
 function build(value) {
   exact(value, BUILD_FIELDS, 'Context map result lineage input');
   if (!DIGEST.test(value.planDigest ?? '') || !DIGEST.test(value.cleanupDigest ?? '')) {
-    throw resultLineageError('Context map result lineage authority is invalid');
+    throw resultLineageError('Context map result lineage authority must carry 64-hex planDigest and cleanupDigest values');
   }
   const call = normalizeContextMapCall(value.call);
   if (call.schemaVersion !== 2 || stable(call) !== stable(value.call)) {
-    throw resultLineageError('Context map result lineage call is invalid');
+    throw resultLineageError('Context map result lineage call must be a schemaVersion 2 map call that normalizes to itself');
   }
   const { sourceOutput, sourceEvidence, evidenceRef } = sourceArtifacts(
     call, value.sourceOutput, value.sourceEvidence,

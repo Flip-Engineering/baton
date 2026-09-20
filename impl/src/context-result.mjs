@@ -83,8 +83,12 @@ function deepFreeze(value) {
 }
 
 function bounded(value, label, maximum = 512) {
-  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')
-    || Buffer.byteLength(value) > maximum) throw resultError(`${label} is invalid`);
+  if (typeof value !== 'string') throw resultError(`${label} must be a string`);
+  if (value.includes('\0')) throw resultError(`${label} must not contain NUL`);
+  if (value.length === 0) throw resultError(`${label} must be non-empty`);
+  if (Buffer.byteLength(value) > maximum) {
+    throw resultError(`${label} must be at most ${maximum} bytes`);
+  }
   return value;
 }
 
@@ -92,19 +96,21 @@ function safePath(value) {
   bounded(value, 'Context result changed path', 4_096);
   if (/[\u0000-\u001f\u007f]/u.test(value) || value.startsWith('/') || value.includes('\\')
     || value.split('/').some((part) => part.length === 0 || part === '.' || part === '..')) {
-    throw resultError('Context result changed path is invalid');
+    throw resultError('Context result changed path must be a relative path with no control characters, no backslashes, and no empty, dot, or dot-dot segments');
   }
   return value;
 }
 
 export function normalizeContextResultPathScope(value) {
   if (!Array.isArray(value) || value.length === 0 || value.length > 1_024) {
-    throw resultError('Context result path scope is invalid');
+    throw resultError('Context result path scope must be a non-empty array of at most 1024 patterns');
   }
   const scopes = value.map((scope) => {
     bounded(scope, 'Context result path scope', 4_096);
     try { pathScopeRegex(scope); }
-    catch { throw resultError('Context result path scope is invalid'); }
+    catch {
+      throw resultError('Context result path scope must match the path-scope pattern: a relative glob with no leading slash, no backslashes, and no dot-dot segments');
+    }
     return scope;
   });
   return deepFreeze([...new Set(scopes)].sort());
@@ -121,7 +127,7 @@ function normalizeSourceRef(value) {
     || !DIGEST.test(value.digest ?? '') || !match || match[1] !== value.digest
     || !Number.isSafeInteger(value.itemCount) || value.itemCount <= 0
     || value.itemCount > 1_000_000) {
-    throw resultError('Context result source ref is invalid');
+    throw resultError('Context result source ref must have kind context_source, mediaType application/json, a ctx:sha256 ref matching its digest, and a positive integer itemCount of at most 1000000');
   }
   return { ...value };
 }
@@ -143,7 +149,7 @@ function normalizeResult(value, resultSourceDigest) {
     || value.retainedResultRef !== `refs/baton/results/${value.resultSha}`
     || !Array.isArray(value.changedPaths) || value.changedPaths.length === 0
     || value.changedPaths.length > 100_000 || !DIGEST.test(value.sourcePolicyDigest ?? '')) {
-    throw resultError('Context retained result identity is invalid');
+    throw resultError('Context retained result must have kind retained_commit_projection, 40-hex baseSha and resultSha that differ, a retainedResultRef of refs/baton/results/<resultSha>, 1..100000 changedPaths, and a 64-hex sourcePolicyDigest');
   }
   const changedPaths = value.changedPaths.map(safePath);
   const sortedPaths = [...changedPaths].sort();
@@ -180,7 +186,7 @@ function capsuleCore(value) {
     || !Number.isSafeInteger(value.terminalEvent) || value.terminalEvent <= 0
     || !DIGEST.test(value.childDigest ?? '') || !DIGEST.test(value.artifactDigest ?? '')
     || !DIGEST.test(value.cleanupDigest ?? '')) {
-    throw resultError('Context result authority is invalid');
+    throw resultError('Context provider result must have a context-call callId, a context partition or unit id, a taskId, positive integer taskVersion and terminalEvent, and 64-hex childDigest, artifactDigest, and cleanupDigest');
   }
   const sourceRef = normalizeSourceRef(value.sourceRef);
   const resultSourceDigest = digest(sourceRef);
@@ -227,7 +233,7 @@ export function validateContextProviderResultCapsule(value) {
   exact(value, CAPSULE_FIELDS, 'Context provider result capsule');
   if (value.schemaVersion !== 1 || value.kind !== 'baton.context_provider_result'
     || !DIGEST.test(value.capsuleDigest ?? '') || !CAPSULE_ID.test(value.capsuleId ?? '')) {
-    throw resultError('Context provider result capsule header is invalid');
+    throw resultError('Context provider result capsule header must have schemaVersion 1, kind baton.context_provider_result, a 64-hex capsuleDigest, and a capsuleId of context-result:<capsuleDigest>');
   }
   const rebuilt = contextProviderResultCapsule(Object.fromEntries(
     CAPSULE_INPUT_FIELDS.map((field) => [field, value[field]]),
@@ -249,7 +255,7 @@ function normalizeCapsuleArtifactRef(value, capsule) {
     || !DIGEST.test(value.digest ?? '') || !match || match[1] !== value.digest
     || !Number.isSafeInteger(value.bytes) || value.bytes <= 0
     || value.digest !== digest(capsule)) {
-    throw resultError('Context provider result artifact ref is invalid');
+    throw resultError('Context provider result artifact ref must have kind context_provider_result, mediaType application/vnd.baton.context-provider-result+json, an art:sha256 handle matching its digest, positive integer bytes, and a digest of the capsule');
   }
   return { ...value };
 }
@@ -276,7 +282,7 @@ export function validateContextProviderResultReference(value, capsuleValue) {
     || !UNIT_ID.test(value.unitId ?? '') || !DIGEST.test(value.childDigest ?? '')
     || !CAPSULE_ID.test(value.capsuleId ?? '') || !DIGEST.test(value.capsuleDigest ?? '')
     || !DIGEST.test(value.resultSourceDigest ?? '') || !DIGEST.test(value.resultRefDigest ?? '')) {
-    throw resultError('Context provider result ref header is invalid');
+    throw resultError('Context provider result ref header must have schemaVersion 1, kind baton.context_provider_result_ref, a context unit id, and 64-hex childDigest, capsuleId digest, capsuleDigest, resultSourceDigest, and resultRefDigest');
   }
   const capsule = validateContextProviderResultCapsule(capsuleValue);
   const rebuilt = contextProviderResultReference(capsule, value.capsuleRef);
