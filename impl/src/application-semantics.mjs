@@ -1871,7 +1871,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton run board post RUN_ID --board BOARD --title TEXT',
     inputSchema: objectSchema({
-      runId: id, board: safeBoardId, title: { type: 'string', minLength: 1, maxLength: 160 },
+      runId: id, board: safeBoardId, title: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.title'].value },
       detail: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.detail'].value }, owner: safeBoardId, evidence: { type: 'array', maxItems: 8, items: evidenceRef },
     }, ['runId', 'board', 'title']),
   }],

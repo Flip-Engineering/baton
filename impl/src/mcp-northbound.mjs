@@ -1749,7 +1749,7 @@ function validateArguments(name, args, maxWaitMs = null) {
   // authority; this only rejects obviously-malformed calls before an orchestrator-lease lookup.
   if (name === 'baton_board_post') {
     if (!nonempty(args.board) || !/^[A-Za-z0-9_.:-]{1,128}$/.test(args.board)) return 'invalid_board';
-    if (!nonempty(args.title) || Buffer.byteLength(args.title) > 160) return 'invalid_board_title';
+    if (!nonempty(args.title) || Buffer.byteLength(args.title) > FRAME_LIMITS['board.title'].value) return 'invalid_board_title';
     if (Object.hasOwn(args, 'detail') && args.detail !== null && (!nonempty(args.detail) || Buffer.byteLength(args.detail) > FRAME_LIMITS['board.detail'].value)) return 'invalid_board_detail';
     if (Object.hasOwn(args, 'owner') && args.owner !== null && !/^[A-Za-z0-9_.:-]{1,128}$/.test(args.owner ?? '')) return 'invalid_board_owner';
     if (Object.hasOwn(args, 'evidence') && (!Array.isArray(args.evidence) || args.evidence.length > 8)) return 'invalid_board_evidence';
@@ -1757,7 +1757,7 @@ function validateArguments(name, args, maxWaitMs = null) {
   }
   if (name === 'baton_board_retitle') {
     if (!nonempty(args.itemId)) return 'invalid_board_item_id';
-    if (!nonempty(args.title) || Buffer.byteLength(args.title) > 160) return 'invalid_board_title';
+    if (!nonempty(args.title) || Buffer.byteLength(args.title) > FRAME_LIMITS['board.title'].value) return 'invalid_board_title';
     if (Object.hasOwn(args, 'detail') && args.detail !== null && (!nonempty(args.detail) || Buffer.byteLength(args.detail) > FRAME_LIMITS['board.detail'].value)) return 'invalid_board_detail';
     if (!Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0) return 'invalid_board_fence';
   }
