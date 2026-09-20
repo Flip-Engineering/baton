@@ -123,10 +123,13 @@ function normalizeBudget(value, policy, label) {
   exactObject(value, ['tokens', 'usd', 'wallMin', 'providerTurns']);
   const usdNanos = usdToNanos(value.usd);
   const canonicalUsd = usdNanos === null ? null : usdFromNanos(usdNanos);
-  if (!Number.isSafeInteger(value.tokens) || value.tokens <= 0 || value.tokens > policy.limits.maxTokens
-    || canonicalUsd === null || usdNanos > usdToNanos(policy.limits.maxUsd)
-    || !Number.isSafeInteger(value.wallMin) || value.wallMin <= 0 || value.wallMin > policy.limits.maxWallMin
-    || !Number.isSafeInteger(value.providerTurns) || value.providerTurns <= 0 || value.providerTurns > policy.limits.maxProviderTurns) {
+  // Issue #530 / #258: budget fields are type-validated (positive integers, valid USD) but
+  // NOT refused when they exceed the policy ceiling — the ceiling produces a runtime
+  // notification, never a fatal normalisation refusal.
+  if (!Number.isSafeInteger(value.tokens) || value.tokens <= 0
+    || canonicalUsd === null
+    || !Number.isSafeInteger(value.wallMin) || value.wallMin <= 0
+    || !Number.isSafeInteger(value.providerTurns) || value.providerTurns <= 0) {
     fail(`${label} budget is invalid`, 'plan_budget_exceeded');
   }
   return { tokens: value.tokens, usd: canonicalUsd, wallMin: value.wallMin, providerTurns: value.providerTurns };
@@ -159,6 +162,9 @@ export function normalizeGoalPlanPolicy(value) {
   const canonicalMaxUsd = maxUsdNanos === null ? null : usdFromNanos(maxUsdNanos);
   if (integerLimits.some((key) => !Number.isSafeInteger(raw.limits[key]) || raw.limits[key] <= 0)
     || canonicalMaxUsd === null
+    // 1M versions / 100K nodes: structural ceilings for the coordination store's
+    // index and DAG validation — beyond these the topological sort and version
+    // history scan exceed the per-request time budget.
     || raw.limits.maxGoalVersions > 1_000_000 || raw.limits.maxPlanVersions > 1_000_000
     || raw.limits.maxNodes > 100_000 || raw.limits.maxDepsPerNode > 100_000
     || raw.limits.maxTextBytes > GOAL_PLAN_CEILINGS.textBytes || raw.limits.maxGoalBytes > GOAL_PLAN_CEILINGS.goalBytes
