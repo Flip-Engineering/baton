@@ -691,3 +691,15 @@ test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each ap
     assert.equal(sh('git', ['branch', '--list', 'baton/t1'], dir), 'baton/t1', 'an unproven bare branch is retained');
   }
 });
+
+// #412: workspace separation is not git-ref isolation — the branch a worker worktree creates
+// is visible from the main checkout and from every other worktree of the same repository.
+test('#412: createFromBase branch is visible from the main checkout (shared ref namespace)', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const result = await createFromBase(dir, 'ref-visible', baseSha);
+  t.after(() => rmSync(result.dir, { recursive: true, force: true }));
+  const branches = sh('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads/baton/'], dir);
+  assert.ok(branches.includes('baton/ref-visible'),
+    'the worker branch appears in the main checkout ref namespace');
+});

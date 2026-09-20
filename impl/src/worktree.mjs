@@ -1384,6 +1384,11 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
   const sparsePaths = normalizeSparsePaths(opts.sparsePaths ?? []);
   const sparseIdentity = sparseCheckoutIdentity(sparsePaths);
+  // #412: the branch `baton/<taskId>` lives in the repository's shared ref namespace
+  // (`refs/heads/baton/<taskId>`). Every worktree of the same repository — and the main
+  // checkout — can see it. Workspace separation (isolated working trees, confined paths) is
+  // not git-ref isolation: a concurrent `git branch -l` or `git for-each-ref` from any
+  // worktree lists this branch, and `refs/stash` is likewise shared (#447).
   const branch = `baton/${taskId}`;
   if (opts.toolchainProjection) {
     const collisions = trackedProjectionPathsAtCommit(repoRoot, baseSha, opts.toolchainProjection.targetPaths());
