@@ -3942,6 +3942,15 @@
           ]
         },
         {
+          "name": "_replCiteInOwnRun",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:observation_port"
+          ]
+        },
+        {
           "name": "list",
           "ordinal": 0,
           "size": 3,
@@ -22583,6 +22592,16 @@
           "evidence": [
             "admission:policy_gate",
             "admission:normalize_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_replCiteInOwnRun",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
             "observation:durable_read"
           ]
         },
