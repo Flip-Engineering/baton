@@ -69,12 +69,14 @@ import { WAKE_CLASSES } from './wake-stream.mjs';
 import { SWARM_PERMISSIONS, validateSwarmKnowledgeCommand, validateSwarmSeatReadCommand,
   swarmSeatReadCommand, SWARM_SEAT_READ_COMMAND_NAMES, SWARM_SEAT_READ_COMMANDS } from './swarm-runtime.mjs';
 import { canonicalOperationForCommand } from './application-semantics.mjs';
+// Issue #496: the shared ID validator (Decision 8 — the 256-byte bound and character class are
+// declared once in application-observation.mjs and read here, never re-declared).
+import { validId } from './application-observation.mjs';
 // Issue #457: the page walk the resident/MCP leg already serves (#343) — the ONE derivation a
 // seat's over-bound `participants`/`contributions` read is paged with, never a second pager.
 import { pageSwarmViewForBridge } from './web-northbound.mjs';
 import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
 export { SWARM_COMMANDS, validateSwarmCommandArgs, SWARM_KNOWLEDGE_COMMAND_NAMES, SWARM_SEAT_READ_COMMAND_NAMES };
-const isId = (value) => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value);
 
 // ── the bridge ───────────────────────────────────────────────────────────────────────────────────
 
@@ -104,7 +106,7 @@ const bridgeError = (message, code, detail = {}) => Object.assign(new Error(mess
 const digestToken = (token) => createHash('sha256').update(token, 'utf8').digest('hex');
 
 function scopeIdentity(field, value) {
-  if (!isId(value)) {
+  if (!validId(value)) {
     throw bridgeError(`Swarm bridge scope requires a usable ${field}`, 'swarm_bridge_scope_invalid', { field });
   }
   return value;
