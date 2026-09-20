@@ -86,8 +86,9 @@ export function projectHorizonScratchpad(capture, viewer) {
   };
   let rows = slices.flatMap((slice) => slice.entries).sort((left, right) =>
     right.createdEvent - left.createdEvent || (left.entryId < right.entryId ? -1 : left.entryId > right.entryId ? 1 : 0));
-  let truncated = rows.length > 64;
-  rows = rows.slice(0, 64);
+  const scratchpadItemCap = FRAME_LIMITS['view.scratchpad.items'].value;
+  let truncated = rows.length > scratchpadItemCap;
+  rows = rows.slice(0, scratchpadItemCap);
   const project = (row) => ({
     schemaVersion: 1, entryId: row.entryId, entryDigest: row.entryDigest,
     contentDigest: row.contentDigest, runId: row.runId, scope: row.scope,
@@ -104,7 +105,8 @@ export function projectHorizonScratchpad(capture, viewer) {
       ? { createdEvent: entries.at(-1).createdEvent, entryId: entries.at(-1).entryId } : null,
   });
   let result = build();
-  while (Buffer.byteLength(JSON.stringify(result)) > 32_768 && entries.length > 0) {
+  const scratchpadByteCap = FRAME_LIMITS['view.scratchpad.bytes'].value;
+  while (Buffer.byteLength(JSON.stringify(result)) > scratchpadByteCap && entries.length > 0) {
     entries = entries.slice(0, -1); truncated = true; result = build();
   }
   return deepFreeze(result);
