@@ -5,6 +5,7 @@ import {
   UNIFIED_SURFACE_CATEGORIES,
   assertUnifiedCapabilityCoverage,
 } from './surface-capability-catalog.mjs';
+import { WEB_WAIT_CEILING_ROW } from './limits.mjs';
 import {
   assertSurfaceCapabilityNameClosure,
   completeUnifiedCapabilityCatalog,
@@ -142,7 +143,7 @@ export function parseUnifiedSurfaceCli(argv) {
     const afterCursor = integer(take(args, '--after-cursor'), 'afterCursor');
     const attentionCursor = integer(take(args, '--attention-cursor'), 'attentionCursor');
     const kindRaw = take(args, '--kind');
-    const timeoutMs = integer(take(args, '--timeout'), 'timeoutMs', { minimum: 1, maximum: 30_000 });
+    const timeoutMs = integer(take(args, '--timeout'), 'timeoutMs', { minimum: 1, maximum: WEB_WAIT_CEILING_ROW.value });
     const mcpConfig = take(args, '--mcp-config');
     noRemainder(args);
     return Object.freeze({
@@ -165,7 +166,7 @@ export function parseUnifiedSurfaceCli(argv) {
     const afterCursor = integer(take(args, '--after-cursor'), 'afterCursor');
     const attentionCursor = integer(take(args, '--attention-cursor'), 'attentionCursor');
     const kindRaw = take(args, '--kind');
-    const timeoutMs = integer(take(args, '--timeout'), 'timeoutMs', { minimum: 1, maximum: 30_000 });
+    const timeoutMs = integer(take(args, '--timeout'), 'timeoutMs', { minimum: 1, maximum: WEB_WAIT_CEILING_ROW.value });
     const mcpConfig = take(args, '--mcp-config');
     noRemainder(args);
     return Object.freeze({

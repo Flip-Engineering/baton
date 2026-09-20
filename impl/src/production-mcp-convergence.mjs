@@ -26,6 +26,7 @@ import {
   projectLiveMcpCapability,
   projectLiveMcpCatalog,
 } from './surface-live-mcp.mjs';
+import { WEB_WAIT_CEILING_ROW } from './limits.mjs';
 import {
   auditMcpMetaCompletion,
   auditMcpMetaFailure,
@@ -305,7 +306,7 @@ function validateWatchArgs(args, target) {
   if (args.kind !== undefined && !safeId(args.kind)) {
     throw new BatonControlError('surface_watch_invalid', 'surface watch kind is invalid', { field: 'kind' });
   }
-  const maximum = Math.min(30_000, Number.isSafeInteger(target.maxWaitMs) ? target.maxWaitMs : 30_000);
+  const maximum = Math.min(WEB_WAIT_CEILING_ROW.value, Number.isSafeInteger(target.maxWaitMs) ? target.maxWaitMs : WEB_WAIT_CEILING_ROW.value);
   const timeoutMs = args.timeoutMs ?? maximum;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > maximum) {
     throw new BatonControlError('surface_watch_invalid', `timeoutMs must be between 1 and ${maximum}`, {
@@ -399,7 +400,7 @@ function validateVisualizeArgs(args, target) {
   if (args.kind !== undefined && !safeId(args.kind)) {
     throw new BatonControlError('surface_visualization_invalid', 'visualization kind is invalid', { field: 'kind' });
   }
-  const maximum = Math.min(30_000, Number.isSafeInteger(target.maxWaitMs) ? target.maxWaitMs : 30_000);
+  const maximum = Math.min(WEB_WAIT_CEILING_ROW.value, Number.isSafeInteger(target.maxWaitMs) ? target.maxWaitMs : WEB_WAIT_CEILING_ROW.value);
   if (args.timeoutMs !== undefined && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs < 1 || args.timeoutMs > maximum)) {
     throw new BatonControlError('surface_visualization_invalid', `timeoutMs must be between 1 and ${maximum}`, { field: 'timeoutMs' });
   }
