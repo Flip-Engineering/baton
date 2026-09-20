@@ -1814,7 +1814,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run', idempotent: false,
     example: 'baton run message send RUN_ID --kind inform --body TEXT',
     inputSchema: objectSchema({
-      runId: id, workerId: id, kind: { type: 'string', enum: ['inform', 'query', 'steer'] },
+      runId: id, workerId: id, kind: { type: 'string', enum: ['inform', 'query', 'nudge', 'steer'] },
       body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['message.send.body'].value },
     }, ['kind', 'body']),
   }],

@@ -3506,7 +3506,8 @@ export function createLocalAuthenticatedWebServer(northbound) {
  * may compare against — 2026-09-14 audit, U-N4: the gate's facade admitted the web bus's wider
  * ADMITTED-name table (kernel rows included) where production admits exactly these. */
 export function webCardCommandNames() {
-  return [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES, ...WORKFLOW_WEB_ENTRIES]
+  return [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES, ...WORKFLOW_WEB_ENTRIES,
+    ...DEPLOYMENT_WEB_ENTRIES, ...CONTEXT_PACKAGE_WEB_ENTRIES]
     .map(([, name]) => name);
 }
 export { validateEnvelope as validateWebCommandEnvelope };

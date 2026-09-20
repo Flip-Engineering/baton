@@ -1649,7 +1649,15 @@ function validateArguments(name, args, maxWaitMs = null) {
       // never reaches this catch from run.start's objective (that byte law lives at the start()
       // admission seam, handled by the stateful sink's laneCraftedToolError).
       if (typeof cause?.code === 'string' && COACHING_REFUSAL_CODES.has(cause.code)) {
-        return { code: cause.code, message: typeof cause?.message === 'string' ? cause.message : cause.code };
+        return {
+          code: cause.code, message: typeof cause?.message === 'string' ? cause.message : cause.code,
+          // Issue #150: carry the coaching triple so the dispatch site can construct the detail.
+          ...(cause?.cap != null ? { cap: cause.cap } : {}),
+          ...(cause?.actual != null ? { actual: cause.actual } : {}),
+          unit: cause?.unit ?? 'bytes',
+          gracefulPath: cause?.gracefulPath ?? null,
+          ...(cause?.field != null ? { field: cause.field } : {}),
+        };
       }
       return { code: 'invalid_run_command', message: 'arguments do not satisfy the command contract for this tool' };
     }
@@ -2250,6 +2258,17 @@ export class McpFleetServer {
       // a named application-validator refusal or a wave-member pointer must ride the wire.
       const refusalCode = typeof invalid === 'string' ? invalid : invalid.code;
       try { this._audit('tool_invalid', params.name, args, refusalCode); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+      // Issue #150: when the structured refusal carries coaching fields (cap, actual, unit,
+      // gracefulPath), construct the detail so the coaching payload survives the MCP wire.
+      if (typeof invalid !== 'string' && COACHING_REFUSAL_CODES.has(invalid.code)) {
+        return protocolResult(id, toolError(invalid.code, invalid.message, {
+          ...(invalid.field != null ? { field: invalid.field } : {}),
+          ...(invalid.cap != null ? { cap: invalid.cap } : {}),
+          ...(invalid.actual != null ? { actual: invalid.actual } : {}),
+          unit: invalid.unit ?? 'bytes',
+          gracefulPath: invalid.gracefulPath ?? null,
+        }));
+      }
       return protocolResult(id, typeof invalid === 'string'
         ? toolError(invalid)
         : toolError(invalid.code, invalid.message, null, invalid.field));

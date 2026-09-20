@@ -3277,6 +3277,36 @@ export function resolveReplCitation(coordinator, recorder, runId, citation) {
     return recorder.coordination.resolveReplCitation(runId, citation);
   }
 
+// Issue #143: the in-caller-run cite projection (R10). Derives the runId from the caller's
+// task and resolves the citation in that run only. A citation that does not resolve in the
+// caller's own run (whether it exists in another run or not at all) is refused with
+// repl_citation_out_of_run — the run boundary prevents cross-run data exfiltration.
+export function _replCiteInOwnRun(coordinator, recorder, taskId, citation) {
+    coordinator._assertReadable();
+    const task = recorder.coordination.task(taskId);
+    if (!task) {
+      throw Object.assign(new Error(`unknown task ${taskId}`), {
+        name: 'CoordinationRefusal', code: 'repl_citation_out_of_run',
+      });
+    }
+    const ownRunId = task.runId;
+    if (!ownRunId) {
+      throw Object.assign(new Error('task has no runId'), {
+        name: 'CoordinationRefusal', code: 'repl_citation_out_of_run',
+      });
+    }
+    try {
+      return recorder.coordination.resolveReplCitation(ownRunId, citation);
+    } catch (error) {
+      if (error?.code === 'repl_binding_citation_not_found') {
+        throw Object.assign(new Error('REPL citation does not resolve in the caller\'s own run'), {
+          name: 'CoordinationRefusal', code: 'repl_citation_out_of_run',
+        });
+      }
+      throw error;
+    }
+  }
+
 export function _lastDeathCertEvidence(coordinator, recorder, row) {
     if (row?.status === 'retry_pending' && typeof recorder.coordination?.events === 'function') {
       const events = recorder.coordination.events();

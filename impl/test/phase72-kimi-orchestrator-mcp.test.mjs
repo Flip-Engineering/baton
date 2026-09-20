@@ -458,15 +458,16 @@ test('KC8: project Kimi MCP entry contains no credential and allowlists only sem
   const entry = kimiBatonMcpEntry({
     projectRoot: '/repo', nodePath: '/node', bridgePath: '/repo/impl/scripts/mcp-web.mjs',
   });
-  assert.deepEqual(entry, {
-    command: '/node', args: ['/repo/impl/scripts/mcp-web.mjs'], cwd: '/repo', enabled: true,
-    startupTimeoutMs: 30_000, toolTimeoutMs: 180_000,
-    enabledTools: ['baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
-      'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-      'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
-      'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
-      'baton_run_member_stop', 'baton_application_help'],
-  });
+  assert.equal(entry.command, '/node');
+  assert.deepEqual(entry.args, ['/repo/impl/scripts/mcp-web.mjs']);
+  assert.equal(entry.cwd, '/repo');
+  assert.equal(entry.enabled, true);
+  assert.equal(entry.startupTimeoutMs, 30_000);
+  assert.equal(entry.toolTimeoutMs, 180_000);
+  assert.deepEqual(entry.enabledTools, [
+    'baton_deployment', 'baton_run', 'baton_swarm', 'baton_waves',
+    'baton_knowledge', 'baton_wakes', 'baton_services', 'baton_surface',
+  ]);
   assert.equal(Object.hasOwn(entry, 'env'), false);
   assert.equal(JSON.stringify(entry).includes('token'), false);
 
@@ -578,8 +579,9 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
     {
       jsonrpc: '2.0', id: 3, method: 'tools/call', params: {
-        name: 'baton_run_start',
+        name: 'baton_run',
         arguments: {
+          verb: 'start',
           intent: {
             runId: 'run-packaged-kimi', objective: 'Prove the packaged Kimi orchestrator bridge',
             profile: 'standard',
@@ -615,24 +617,20 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
   const responses = stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(responses.map((entry) => entry.id), [1, 2, 3]);
   assert.deepEqual(responses[1].result.tools.map((tool) => tool.name), [
-    'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
-    'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-    'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
-    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
-    'baton_deployment_doctor', 'baton_decision_answer',
-    'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
-    // Facade-projection epic (#87+#48): the six workflow-surface tools join the packaged bridge.
-    'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
-    'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
-    'baton_run_member_stop', 'baton_application_help',
+    'baton_deployment', 'baton_run', 'baton_swarm', 'baton_waves',
+    'baton_knowledge', 'baton_wakes', 'baton_services', 'baton_surface',
   ]);
   assert.equal(responses[2].result.isError, false);
   assert.match(responses[2].result.content[0].text, /run-packaged-kimi/u);
   assert.equal(responses[2].result.content[0].text.includes('internalStartRecord'), false);
-  assert.match(responses[2].result.content[0].text, /approve-plan-1/u);
-  assert.deepEqual(applicationCalls.map(({ name }) => name), ['run.start', 'run.inspect']);
-  assert.deepEqual(applicationCalls[1].args, { runId: 'run-packaged-kimi', depth: 'outline' });
+  // The core tool baton_run {verb:'start'} returns a mutation receipt with a next pointer
+  // and wake subscription — the outline is a follow-up call, not inlined.
+  const startResult = JSON.parse(responses[2].result.content[0].text);
+  assert.equal(startResult.command, 'run.start');
+  assert.ok(startResult.receipt, 'the start result carries a receipt');
+  assert.ok(startResult.next, 'the start result carries a next pointer');
+  // The core tool dispatches run.start; the follow-up run.inspect is a next pointer, not inlined.
+  assert.deepEqual(applicationCalls.map(({ name }) => name), ['run.start']);
   assert.equal(JSON.stringify(applicationCalls).includes(credential.token), false);
   assert.equal(stdout.includes(credential.token), false);
   assert.equal(stderr.includes(credential.token), false);

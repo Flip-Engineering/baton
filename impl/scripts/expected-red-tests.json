@@ -1385,10 +1385,6 @@
       "reason": "#69"
     },
     {
-      "key": "test/repl-realization-red.test.mjs :: G2 (RED): the repl.cite read server-derives the runId from the caller's task — a foreign-run citation refuses repl_citation_out_of_run (stage: repl-cite-run-boundary-missing)",
-      "reason": "#69"
-    },
-    {
       "key": "test/repl-realization-red.test.mjs :: G4 (RED): the baton_repl_cite PORT refuses a caller-supplied foreign runId whose citation resolves there (stage: repl-cite-run-boundary-missing)",
       "reason": "#69"
     },

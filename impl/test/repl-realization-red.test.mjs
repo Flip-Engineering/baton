@@ -1071,15 +1071,9 @@ test('G2 (RED): the repl.cite read server-derives the runId from the caller\'s t
   f.store.admitReplBinding({
     scope: 'shared', name: 'result', cellId: cellA.cellId, manifestDigest: manifest.manifestDigest,
   }, replAuth('orchestrator', 'g2:bind'));
-  const { coordinator } = setupCoord({ dir: f.root, store: f.store, log: f.log, adapter: new ScriptableAdapter() });
-  assert.equal(typeof coordinator._replCiteInOwnRun, 'function', 'the in-caller-run cite projection exists (stage: repl-cite-run-boundary-missing)');
-  // F1: the positive path binds to the fixture's REAL task (task-g2 → run-repl23), so a correct
-  // task-derived implementation can go green — a phantom taskId forced runId=null and was green
-  // only via the single-run fallback the row exists to kill.
-  const own = coordinator._replCiteInOwnRun(f.task.id, 'repl:shared:result@1');
-  assert.equal(own.cellId, cellA.cellId, 'a citation in the caller\'s own run resolves (R10)');
-  // F1: a TRUE foreign-run negative — a citation that RESOLVES in a different run (preconditioned
-  // below) must refuse from the caller's own run: the cross-run read escape (issue #143).
+  // Issue #143 fixture fix: create the foreign-run cell and binding BEFORE the coordinator is
+  // set up, because the coordinator's startup reconstruction advances the task version and
+  // makes the context session stale for further cell admissions.
   const runForeign = 'run-g2-foreign';
   const foreignCell = completedCell(f, session, 'authority-g2-foreign');
   const foreignMan = admitManifest(f, {
@@ -1090,6 +1084,15 @@ test('G2 (RED): the repl.cite read server-derives the runId from the caller\'s t
   }, replAuth('orchestrator', 'g2:foreign'));
   assert.equal(f.store.resolveReplCitation(runForeign, 'repl:shared:foreign@1').cellId, foreignCell.cellId,
     'precondition: the citation RESOLVES in the foreign run — the only reason to refuse is the run boundary');
+  const { coordinator } = setupCoord({ dir: f.root, store: f.store, log: f.log, adapter: new ScriptableAdapter() });
+  assert.equal(typeof coordinator._replCiteInOwnRun, 'function', 'the in-caller-run cite projection exists (stage: repl-cite-run-boundary-missing)');
+  // F1: the positive path binds to the fixture's REAL task (task-g2 → run-repl23), so a correct
+  // task-derived implementation can go green — a phantom taskId forced runId=null and was green
+  // only via the single-run fallback the row exists to kill.
+  const own = coordinator._replCiteInOwnRun(f.task.id, 'repl:shared:result@1');
+  assert.equal(own.cellId, cellA.cellId, 'a citation in the caller\'s own run resolves (R10)');
+  // F1: a TRUE foreign-run negative — a citation that RESOLVES in a different run (preconditioned
+  // above) must refuse from the caller's own run: the cross-run read escape (issue #143).
   const foreign = (() => {
     try { coordinator._replCiteInOwnRun(f.task.id, 'repl:shared:foreign@1'); return null; }
     catch (e) { return e; }

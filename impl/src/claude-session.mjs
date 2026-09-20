@@ -166,7 +166,7 @@ export function scanForMessageSend(text) {
       || Object.keys(parsed.to).length !== 1
       || !['workerId', 'runId'].includes(Object.keys(parsed.to)[0])
       || typeof Object.values(parsed.to)[0] !== 'string' || Object.values(parsed.to)[0].length === 0
-      || (parsed.kind !== undefined && !['inform', 'query', 'steer', 'brief', 'result'].includes(parsed.kind))
+      || (parsed.kind !== undefined && !['inform', 'query', 'nudge', 'steer', 'brief', 'result'].includes(parsed.kind))
       || (parsed.budget !== undefined && !Number.isSafeInteger(parsed.budget))) return null;
   }
   return parsed;

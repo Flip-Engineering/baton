@@ -342,6 +342,52 @@ test('U-E18: the bridge doctor mirrors the resident\'s live readiness, ready or 
 });
 
 // ---------------------------------------------------------------------------
+// Issue #479: baton_deployment_doctor over the bridge includes the stopping
+// section from the client's doctor result. A resident that is stopping says so
+// on every doctor read; the MCP projection carries that section verbatim.
+// ---------------------------------------------------------------------------
+
+test('Issue #479: baton_deployment_doctor carries the stopping section when the resident is draining', async (t) => {
+  const STOPPING = Object.freeze({
+    state: 'stopping', since: '2026-09-18T00:00:30.000Z',
+    waits: [{ on: 'worker', ids: ['w-1'], at: '2026-09-18T00:00:30.000Z' }],
+    abandoned: [],
+  });
+  const card = { repoId: REPO_ID, commands: WIRE_CARD, agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
+  for (const [label, stopping, expectedReady] of [
+    ['a resident that is not stopping has stopping: null', null, true],
+    ['a stopping resident carries the stopping section verbatim', STOPPING, false],
+  ]) {
+    const resident = {
+      ready: expectedReady,
+      deployment: {
+        schemaVersion: 1, repoId: REPO_ID,
+        routes: [{ harness: 'mock', model: 'model-a', effort: 'low', state: expectedReady ? 'ready' : 'draining' }],
+        workspace: { state: expectedReady ? 'ready' : 'draining' },
+      },
+      stopping,
+    };
+    const client = {
+      repoId: REPO_ID,
+      async session() { return SESSION; },
+      async doctor() { return { ...resident, routes: resident.deployment.routes, application: card }; },
+      async command(name, args, key) { return { ok: true, command: name }; },
+    };
+    const facade = new BatonWebApplicationFacade(client, card, SESSION);
+    const mcp = server(t, { application: facade });
+    await ready(mcp);
+    const response = await request(mcp, `d479-${expectedReady}`, 'tools/call', { name: 'baton_deployment_doctor', arguments: { repoId: REPO_ID } });
+    assert.equal(response.result.isError, false);
+    const readiness = response.result.structuredContent;
+    assert.equal(Object.hasOwn(readiness, 'stopping'), true,
+      `${label}: the stopping field is always present (null, never absent)`);
+    assert.deepEqual(readiness.stopping, stopping,
+      `${label}: the stopping section is the client's own, carried verbatim`);
+    assert.equal(readiness.ready, expectedReady);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // #287 U-E17 through the REAL dispatch path: the northbound mints one dispatch
 // identity per tool call and hands it to the run.act authority read and to the
 // command that follows, so the facade attests ONCE per tool call. RED at the

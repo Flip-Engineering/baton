@@ -20,7 +20,7 @@ export const ATTENTION_TYPES = Object.freeze(['approval', 'question', 'blocked',
 export const WORKER_MESSAGE_GUIDANCE = [
   '## Collaboration messages',
   'You may initiate messages to known active peers in your run or wave. Emit a standalone assistant text frame:',
-  'MESSAGE_SEND: {"to":{"workerId":"<peer worker id>"},"kind":"query","body":"<message>"}',
+  'MESSAGE_SEND: {"to":{"workerId":"<peer worker id>"},"kind":"nudge","body":"<message>"}',
   'Use {"runId":"<member run id>"} as the destination to address its active members. The hub checks current membership.',
   'A MESSAGE_RESULT returns the messageId, target and bodyDigest. Reply to a received message with:',
   'MESSAGE_SEND: {"inReplyTo":"message:<received id>","body":"<reply>"}',

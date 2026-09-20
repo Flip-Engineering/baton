@@ -3271,8 +3271,8 @@ export class Coordinator {
       budgetError.code = 'message_budget_invalid';
       throw budgetError;
     }
-    if (!['inform', 'query', 'steer', 'brief', 'result'].includes(kind)) {
-      throw new TypeError('message kind must be inform|query|steer|brief|result');
+    if (!['inform', 'query', 'nudge', 'steer', 'brief', 'result'].includes(kind)) {
+      throw new TypeError('message kind must be inform|query|nudge|steer|brief|result');
     }
     if (typeof body !== 'string' || body.length === 0) {
       throw new TypeError('message body is required (non-empty string)');
@@ -5978,6 +5978,12 @@ export class Coordinator {
 
     resolveReplCitation(runId, citation) {
     return runtimeObservation.resolveReplCitation(this, this._recorder, runId, citation);
+  }
+
+  // Issue #143: the in-caller-run cite projection (R10). Server-derives the runId from the
+  // caller's task — a caller-supplied runId is never trusted.
+    _replCiteInOwnRun(taskId, citation) {
+    return runtimeObservation._replCiteInOwnRun(this, this._recorder, taskId, citation);
   }
 
     list() {
