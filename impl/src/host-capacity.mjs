@@ -64,6 +64,12 @@ const REAPER_LABEL = 'host capacity lease reaper gate';
 // typed row before its transport times out as an error.
 const DEFAULT_ADMISSION_WAIT_MS = 120_000;
 const DEFAULT_POLL_MS = 250;
+// #495: how often a resident's post-admission watch asks whether the host still funds the verify
+// leases it admitted. This number is a check cadence: the derivation alone decides whether the host
+// is exhausted. It is slower than the admission poll on purpose — each check pays for one platform
+// memory report, and available memory moves on the scale of the allocations a suite makes — so a
+// check per few seconds observes the condition while costing a fraction of the work it guards.
+const DEFAULT_SHED_POLL_MS = 5_000;
 
 function fsyncDirectory(path) {
   let fd;
@@ -298,6 +304,11 @@ export function hostCapacityShortfall(kind, capacity, used) {
 /** The operator's documented bypass, named by every capacity refusal (#329). */
 export const HOST_CAPACITY_BYPASS = 'BATON_HOST_CAPACITY_DISABLED=1';
 
+/** #495: the ONE row kind the post-admission shed records — what was shed (the lease kind, holder,
+ * residentId and acquiredAt) and why (the memory shortfall's observed and required numbers). The
+ * resident that watches the authority writes it on its own ledger. */
+export const HOST_CAPACITY_SHED_ROW = 'host.capacity_shed';
+
 /** #333: the verify state of ONE swarm participant, derived from the authority's visible
  * queue and the holders of live verify leases — the projection the swarm view's participant
  * row carries as `verify {state, position, ahead, holderAlive}` (the holder liveness is #506's).
@@ -434,16 +445,28 @@ function listRecords(dir, label, fields) {
 // ── the authority ────────────────────────────────────────────────────────────────────────────────
 
 export class HostCapacityAuthority {
+  // #495: the exhaustion episode's own state. `#exhaustionSeen` is what the PREVIOUS observation
+  // read (the condition must persist across one observation before it sheds — a single platform
+  // reading is a sighting, never a shed); `#exhaustionActed` is whether this episode already spent
+  // its ONE shed; a check that finds room again closes the episode. `#exhaustionWatch` is the
+  // resident's watch timer and `#exhaustionWatchInFlight` keeps one check in flight at a time.
+  #exhaustionSeen = false;
+  #exhaustionActed = false;
+  #exhaustionWatch = null;
+  #exhaustionWatchInFlight = false;
+
   constructor({
     root = defaultHostCapacityRoot(), residentId = `resident-${process.pid}`,
     observation = hostCapacityObservation, liveness = livePid,
     now = Date.now, pollMs = DEFAULT_POLL_MS, waitMs = DEFAULT_ADMISSION_WAIT_MS,
+    shedPollMs = DEFAULT_SHED_POLL_MS,
   } = {}) {
     if (typeof root !== 'string' || root.length === 0 || !isAbsolute(root)) throw new TypeError('host capacity lease root must be one absolute path');
     if (typeof residentId !== 'string' || residentId.length === 0 || Buffer.byteLength(residentId) > 128) throw new TypeError('host capacity resident id must be one bounded non-empty string');
     if (typeof observation !== 'function' || typeof liveness !== 'function' || typeof now !== 'function') throw new TypeError('host capacity dependencies must be functions');
     if (!Number.isSafeInteger(pollMs) || pollMs <= 0) throw new TypeError('host capacity poll interval must be a positive safe integer');
     if (!Number.isSafeInteger(waitMs) || waitMs <= 0) throw new TypeError('host capacity admission wait must be a positive safe integer');
+    if (!Number.isSafeInteger(shedPollMs) || shedPollMs <= 0) throw new TypeError('host capacity shed poll interval must be a positive safe integer');
     this.root = root;
     this.residentId = residentId;
     this.observation = observation;
@@ -451,6 +474,7 @@ export class HostCapacityAuthority {
     this.now = now;
     this.pollMs = pollMs;
     this.waitMs = waitMs;
+    this.shedPollMs = shedPollMs;
     this.ownerId = randomBytes(16).toString('hex');
     this.leasesDir = join(root, 'leases');
     this.queueDir = join(root, 'queue');
@@ -799,5 +823,111 @@ export class HostCapacityAuthority {
       if (released > 0) fsyncDirectory(this.leasesDir);
       return released;
     });
+  }
+
+  // ── post-admission shedding (#495) ─────────────────────────────────────────────────────────────
+
+  /** The newest admitted verify lease by `acquiredAt`, ties broken by nonce DESCENDING — the
+   * reverse of the queue's own same-instant order, so the lease that arrived LAST is the one that
+   * yields. Only verify leases are candidates: a worker holds no slot, so removing a worker's
+   * record returns nothing to the budget (see deriveHostCapacity). Null when none is admitted. */
+  #newestVerifyLease() {
+    let newest = null;
+    for (const record of listRecords(this.leasesDir, 'host capacity lease', LEASE_FIELDS)) {
+      if (record.kind !== 'verify') continue;
+      if (newest === null || record.acquiredAt > newest.acquiredAt
+        || (record.acquiredAt === newest.acquiredAt && record.nonce > newest.nonce)) {
+        newest = record;
+      }
+    }
+    return newest;
+  }
+
+  /** #495: the post-admission half of the capacity rule. Admission judges a request BEFORE it
+   * starts; nothing judged the leases already admitted, so a host that loses the memory to fund the
+   * verify runs it admitted went on counting them and no reader learned that the host can no longer
+   * pay for what it holds. This is that reading, on the SAME observation and the SAME derivation
+   * admission refuses on.
+   *
+   * The host is GENUINELY exhausted when `hostCapacityShortfall` refuses the verify kind on the
+   * `memory` dimension — `availableBytes` below the `suiteBytes` share every admitted verify was
+   * measured against — while verify leases are admitted, and seen on two consecutive observations.
+   * One reading records a sighting; the second sheds the newest admitted verify lease's record and
+   * answers ONE typed row naming what was shed and the observed and required numbers; the next
+   * `observe`/`observeNow` reads the freed budget.
+   *
+   * Bounded by construction: ONE shed per exhaustion episode. The memory an admitted lease's
+   * process holds is not returned by removing its record, so a host that stays exhausted is not
+   * stripped lease by lease — further sheds would only make the ledger describe a host that funds
+   * nothing while its suites run. An observation with room again closes the episode, and a later
+   * exhaustion sheds the newest lease admitted at that time. A `load` shortfall — the host at or
+   * above its own core count — records no exhaustion: a shed admits nothing there.
+   *
+   * Runs under the host mutex: the dead-holder sweep runs first, so a crashed resident's lease is
+   * reclaimed and leaves the candidate set; the removal is an exact-name `rmSync({ force: true })`
+   * — the module's own pattern — so a release racing the shed is a no-op on both sides. */
+  async shedIfExhausted() {
+    return this._mutex(() => {
+      this.#sweep();
+      const capacity = deriveHostCapacity(hostCapacityObservation(this.observation()));
+      const used = this.#usedBudget(capacity);
+      const shortfall = used.leases.verify > 0 ? hostCapacityShortfall('verify', capacity, used) : null;
+      if (shortfall === null || shortfall.dimension !== 'memory') {
+        // Room again (or nothing admitted to shed): the episode is over.
+        this.#exhaustionSeen = false;
+        this.#exhaustionActed = false;
+        return null;
+      }
+      if (this.#exhaustionActed || !this.#exhaustionSeen) {
+        this.#exhaustionSeen = true;
+        return null;
+      }
+      const shed = this.#newestVerifyLease();
+      if (shed === null) return null;
+      rmSync(join(this.leasesDir, shed.name), { force: true });
+      fsyncDirectory(this.leasesDir);
+      this.#exhaustionActed = true;
+      return Object.freeze({
+        kind: HOST_CAPACITY_SHED_ROW,
+        leaseKind: shed.kind,
+        holder: shed.holder,
+        residentId: shed.residentId,
+        acquiredAt: shed.acquiredAt,
+        shortfall,
+        at: new Date(this.now()).toISOString(),
+      });
+    });
+  }
+
+  /** #495: the resident's post-admission watch — a bounded interval that asks
+   * `shedIfExhausted()` every `shedPollMs` and hands each shed row to `onShed`, which the resident
+   * records on its own ledger. Bounded like every other wait here: the timer does not keep the
+   * process alive (`unref`), one check is in flight at a time, and the check itself yields (it
+   * takes the host mutex and returns a promise). A handler that throws leaves the watch running.
+   * Idempotent: a second call returns the timer already running. */
+  watchExhaustion(onShed) {
+    if (typeof onShed !== 'function') throw new TypeError('host capacity exhaustion watch requires a shed row handler');
+    if (this.#exhaustionWatch !== null) return this.#exhaustionWatch;
+    const timer = setInterval(() => {
+      if (this.#exhaustionWatchInFlight) return;
+      this.#exhaustionWatchInFlight = true;
+      this.shedIfExhausted().then((row) => {
+        this.#exhaustionWatchInFlight = false;
+        if (row === null) return;
+        try { onShed(row); } catch { /* a failing handler leaves the watch running */ }
+      }, () => { this.#exhaustionWatchInFlight = false; });
+    }, this.shedPollMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.#exhaustionWatch = timer;
+    return timer;
+  }
+
+  /** #495: stop the watch (a closing resident calls this). True when one was running, false when
+   * none was — the same shape `release` answers with. */
+  stopExhaustionWatch() {
+    if (this.#exhaustionWatch === null) return false;
+    clearInterval(this.#exhaustionWatch);
+    this.#exhaustionWatch = null;
+    return true;
   }
 }

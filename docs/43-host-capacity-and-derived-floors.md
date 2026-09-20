@@ -151,6 +151,40 @@ row by calling `this.hostCapacity.observeParticipantVerify(
 `verify` — null when the seat holds and waits on nothing. This lane does not touch
 swarm-runtime.mjs.
 
+## 3d. Post-admission shedding (#495)
+
+Admission judges a request before it starts, which leaves the leases already admitted unjudged: a
+host that loses the memory to fund the verify runs it admitted goes on counting them, and no reader
+learns that the host can no longer pay for what it holds. `HostCapacityAuthority.shedIfExhausted()`
+is that reading, on the same observation and the same derivation admission refuses on.
+`hostCapacityShortfall` names the verify kind's `memory` dimension when `availableBytes` is below
+the `suiteBytes` share every admitted verify was measured against — that reading, with at least one
+verify lease admitted and seen on two consecutive observations, sheds the NEWEST admitted verify
+lease. Newest is by `acquiredAt`, same-instant ties broken by nonce descending, so the lease that
+arrived last yields first. The method answers one row:
+
+    host.capacity_shed {leaseKind, holder, residentId, acquiredAt, shortfall, at}
+
+`shortfall` carries the numbers that justified the shed (`{dimension: 'memory', observed:
+availableBytes, required: suiteBytes, unit: 'bytes'}`). The lease directory is host-wide, so the
+lease shed may belong to another resident, and the row names whose it was. The lease record is gone
+when the method returns, so the next `observe`/`observeNow` reads the freed budget.
+
+The shed is bounded to ONE per exhaustion episode. Removing an admitted lease's record returns
+accounting only: the memory its process holds stays held, so further sheds on a host that stays
+exhausted would describe a host funding nothing while its suites run. An observation with room again
+closes the episode, and a later exhaustion sheds the newest lease admitted at that time. A `load`
+shortfall — a host at or above its own core count — is not exhaustion, since a shed admits nothing
+there. The removal is an exact-name `rmSync({ force: true })` under the host mutex, so a release
+racing the shed is a no-op on both sides.
+
+A resident wires it with `watchExhaustion(onShed)` and `stopExhaustionWatch()`: a bounded, unref'd
+interval (`shedPollMs`, 5000 ms by default — protocol timing, since the derivation alone decides
+whether the host is exhausted) that asks the authority each interval and hands every shed row to the
+caller. `baton serve` starts the watch once the resident is serving
+(`BatonDeployment#startOrdinaryHost`), stops it where the incarnation withdraws, and records each row
+through the deployment's own `driver.recorded` lane.
+
 ## 4. The derived workspace floor (#307)
 
 The floor beneath a reservation wave is a record, not a constant:

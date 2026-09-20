@@ -3227,6 +3227,9 @@ class BatonDeployment {
     this.#credentialLifetime = deployment.claudeCredentialLifetime ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
     this.#hostCapacityProbe = deployment.hostCapacityProbe ?? null;
+    // #495: the authority this resident watches after admission — the post-admission half of the
+    // capacity rule (see `#watchHostExhaustion`). Null on a host the suite left unwired.
+    this.#hostCapacity = deployment.hostCapacity ?? null;
     this.#contextSourceAdmit = typeof deployment.contextSourceAdmit === "function" ? deployment.contextSourceAdmit : null;
     this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
@@ -4109,6 +4112,11 @@ class BatonDeployment {
         }, 'reincarnation:successor_published');
         this.#watchPredecessorExit(handoff, authority);
       }
+      // #495: this incarnation is serving — the publication is out and the self-check above passed
+      // — so its post-admission watch over the host capacity authority starts here, and the stop
+      // path's withdrawal takes it down. A handoff that never published returned above without
+      // reaching this line, so an incumbent that goes on serving keeps the watch it already had.
+      this.#watchHostExhaustion();
       return published;
     } catch (error) {
       try { await server.batonShutdown({ drainMs: options.webDrainMs }); } catch {}
@@ -4157,6 +4165,32 @@ class BatonDeployment {
    * `driver.recorded` rows. */
   #reincarnationRecord(kind, payload, key) {
     return this.#stopRecord(kind, payload, key, 'host.reincarnation');
+  }
+
+  /** #495: the post-admission watch over this deployment's host capacity authority — the resident
+   * wiring of the authority's own `watchExhaustion`. Started once the resident is really SERVING (a
+   * handoff that never published returns before it, and the incumbent goes on serving), it hands
+   * every shed row to `#recordCapacityShed`; stopped at this incarnation's withdrawal. A deployment
+   * built without an authority — the suite's unwired hosts — watches nothing. */
+  #watchHostExhaustion() {
+    if (this.#hostCapacity === null || typeof this.#hostCapacity.watchExhaustion !== 'function') return null;
+    return this.#hostCapacity.watchExhaustion((row) => { this.#recordCapacityShed(row); });
+  }
+
+  #stopHostExhaustionWatch() {
+    if (this.#hostCapacity === null || typeof this.#hostCapacity.stopExhaustionWatch !== 'function') return false;
+    return this.#hostCapacity.stopExhaustionWatch();
+  }
+
+  /** #495: ONE durable row per shed, through the same `driver.recorded` lane every other
+   * deployment-owned row rides: `host.capacity_shed {leaseKind, holder, residentId, acquiredAt,
+   * shortfall, at}` — what the authority shed and the numbers that justified it. A shed is an
+   * OBSERVATION of this resident, so each row carries its own key (the #384 startup-refusal rule);
+   * a ledger that cannot take it returns null with the shed itself standing, since the lease is
+   * already released and the freed budget is what the next observation reads. */
+  #recordCapacityShed(row) {
+    const { kind, ...payload } = row;
+    return this.#stopRecord(kind, payload, `capacity_shed:${randomBytes(8).toString('hex')}`, 'host.capacity');
   }
 
   /** Issue #351: enter one stage of this stop. The stage that was IN PROGRESS is closed with the
@@ -5915,6 +5949,10 @@ class BatonDeployment {
           this.#markStopStage(STOP_STAGES.incarnationExit);
         }
         this.#sayStopTail();
+        // #495: the post-admission watch ends with this incarnation. Every path that keeps serving
+        // returned above (the #306r re-publish), so reaching here means the resident is withdrawing
+        // and has no budget of its own left to watch.
+        this.#stopHostExhaustionWatch();
         // #461: …and then the old lets go of the successor's PROCESS handle (with its pipes): from
         // here nothing this incarnation still holds keeps its event loop alive, so the process ends
         // by itself — exit 0, no signal — while the successor goes on serving. The incarnation is
