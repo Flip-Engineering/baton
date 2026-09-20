@@ -69,25 +69,25 @@ function exact(value, fields, label, code = 'context_map_invalid') {
 }
 
 function text(value, label, maxBytes = MAX_TEXT_BYTES) {
-  if (typeof value !== 'string' || value.includes('\0')) {
-    throw contextMapError(`${label} is invalid`);
-  }
+  if (typeof value !== 'string') throw contextMapError(`${label} must be a string`);
+  if (value.includes('\0')) throw contextMapError(`${label} must not contain NUL`);
   const normalized = value.normalize('NFKC').trim();
-  if (normalized.length === 0 || Buffer.byteLength(normalized) > maxBytes) {
-    throw contextMapError(`${label} is invalid`);
+  if (normalized.length === 0) throw contextMapError(`${label} must be non-empty after normalization`);
+  if (Buffer.byteLength(normalized) > maxBytes) {
+    throw contextMapError(`${label} must be at most ${maxBytes} bytes`);
   }
   return normalized;
 }
 
 function safeId(value, label) {
   const normalized = text(value, label, 512);
-  if (!SAFE_ID.test(normalized)) throw contextMapError(`${label} is invalid`);
+  if (!SAFE_ID.test(normalized)) throw contextMapError(`${label} must match ${SAFE_ID}`);
   return normalized;
 }
 
 function sha(value, label, pattern = DIGEST) {
   if (typeof value !== 'string' || !pattern.test(value)) {
-    throw contextMapError(`${label} is invalid`);
+    throw contextMapError(`${label} must be a hex digest matching ${pattern}`);
   }
   return value;
 }
@@ -98,7 +98,7 @@ function artifactRef(value, kind, mediaType) {
   if (value.kind !== kind || value.mediaType !== mediaType
     || value.handle !== `art:sha256:${artifactDigest}`
     || !Number.isSafeInteger(value.bytes) || value.bytes <= 0) {
-    throw contextMapError(`Context map ${kind} ref is invalid`);
+    throw contextMapError(`Context map ${kind} ref must have matching kind, mediaType, handle and positive integer bytes`);
   }
   return deepFreeze({
     kind, mediaType, handle: value.handle, digest: artifactDigest, bytes: value.bytes,
@@ -109,7 +109,7 @@ function planRef(value) {
   exact(value, ['digest', 'planId', 'version'], 'Context map predecessor Plan');
   if (!PLAN_ID.test(value.planId ?? '')
     || !Number.isSafeInteger(value.version) || value.version <= 0) {
-    throw contextMapError('Context map predecessor Plan is invalid');
+    throw contextMapError('Context map predecessor Plan must have a valid planId, positive integer version');
   }
   return deepFreeze({
     planId: value.planId, version: value.version,
@@ -163,7 +163,7 @@ function partitionCore(source, programDigest, value, schemaVersion) {
     ? [...baseFields, 'partitionDigest', 'partitionId'] : baseFields;
   exact(value, fields, 'Context map partition');
   if (!Number.isSafeInteger(value.index) || value.index < 0) {
-    throw contextMapError('Context map partition index is invalid');
+    throw contextMapError('Context map partition index must be a non-negative integer');
   }
   return {
     sourceCellId: source.cellId,
@@ -200,7 +200,7 @@ function normalizeCall(value) {
   exact(value, hasDerived ? MAP_DERIVED_FIELDS : MAP_FIELDS, 'Context map call');
   if (![1, 2].includes(value.schemaVersion) || value.kind !== 'baton.context_map_call'
     || value.generation !== 1) {
-    throw contextMapError('Context map call header is invalid');
+    throw contextMapError('Context map call must have schemaVersion 1 or 2, kind baton.context_map_call, and generation 1');
   }
   const source = normalizeSource(value.source, value.schemaVersion);
   const role = safeId(value.role, 'Context map role');
@@ -281,7 +281,7 @@ export function materializeContextMapBrief(briefValue, referenceRead, maxBytes) 
     || !Object.hasOwn(briefValue, 'contextCall') || Object.hasOwn(briefValue, 'contextInput')
     || typeof referenceRead !== 'function'
     || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
-    throw contextMapError('Context map physical Brief authority is invalid',
+    throw contextMapError('Context map physical Brief must have a contextCall object, no contextInput, a referenceRead function, and positive integer maxBytes',
       'context_map_attachment_invalid');
   }
   const binding = normalizeContextMapNodeBinding(briefValue.contextCall);
@@ -367,7 +367,7 @@ export function normalizeContextMapNodeBinding(value) {
       || value.generation !== 1 || !CALL_ID.test(value.callId ?? '')
       || !DIGEST.test(value.callDigest ?? '')
       || value.callId !== `context-call:${value.callDigest}`) {
-      throw contextMapError('Context map node binding header is invalid',
+      throw contextMapError('Context map node binding must have schemaVersion 1 or 2, kind context_map_child, generation 1, and valid callId/callDigest',
         'context_map_binding_invalid');
     }
     const source = normalizeSource(value.source, value.schemaVersion);
@@ -389,7 +389,7 @@ export function normalizeContextMapNodeBinding(value) {
     });
   } catch (error) {
     if (error?.code === 'context_map_binding_invalid') throw error;
-    throw contextMapError(error?.message ?? 'Context map node binding is invalid',
+    throw contextMapError(error?.message ?? 'Context map node binding must be a valid context_map_child',
       'context_map_binding_invalid');
   }
 }

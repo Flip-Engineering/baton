@@ -162,22 +162,26 @@ function exact(value, fields, label) {
 }
 
 function text(value, label, maxBytes = MAX_TEXT_BYTES) {
-  if (typeof value !== 'string' || value.includes('\0')) throw callError(`${label} is invalid`);
+  if (typeof value !== 'string') throw callError(`${label} must be a string`);
+  if (value.includes('\0')) throw callError(`${label} must not contain NUL`);
   const normalized = value.normalize('NFKC').trim();
-  if (normalized.length === 0 || Buffer.byteLength(normalized) > maxBytes) {
-    throw callError(`${label} is invalid`);
+  if (normalized.length === 0) throw callError(`${label} must be non-empty after normalization`);
+  if (Buffer.byteLength(normalized) > maxBytes) {
+    throw callError(`${label} must be at most ${maxBytes} bytes`);
   }
   return normalized;
 }
 
 function safeId(value, label) {
   const normalized = text(value, label, 512);
-  if (!SAFE_ID.test(normalized)) throw callError(`${label} is invalid`);
+  if (!SAFE_ID.test(normalized)) throw callError(`${label} must match ${SAFE_ID}`);
   return normalized;
 }
 
 function sha(value, label, pattern = DIGEST) {
-  if (typeof value !== 'string' || !pattern.test(value)) throw callError(`${label} is invalid`);
+  if (typeof value !== 'string' || !pattern.test(value)) {
+    throw callError(`${label} must be a hex digest matching ${pattern}`);
+  }
   return value;
 }
 
@@ -187,7 +191,7 @@ function artifact(value, kind, mediaType) {
   if (value.kind !== kind || value.mediaType !== mediaType
     || value.handle !== `art:sha256:${artifactDigest}`
     || !Number.isSafeInteger(value.bytes) || value.bytes <= 0) {
-    throw callError(`Context ${kind} ref is invalid`);
+    throw callError(`Context ${kind} ref must have matching kind, mediaType, handle and positive integer bytes`);
   }
   return freeze({
     kind, mediaType, handle: value.handle, digest: artifactDigest, bytes: value.bytes,
@@ -198,7 +202,7 @@ function plan(value) {
   exact(value, ['digest', 'planId', 'version'], 'Context predecessor Plan');
   if (!PLAN_ID.test(value.planId ?? '')
     || !Number.isSafeInteger(value.version) || value.version <= 0) {
-    throw callError('Context predecessor Plan is invalid');
+    throw callError('Context predecessor Plan must have a valid planId, positive integer version');
   }
   return freeze({
     planId: value.planId, version: value.version,
@@ -218,7 +222,7 @@ function normalizeAuthority(value, derived = false) {
     runId: safeId(value.contextPrincipal.runId, 'Context Run'),
   };
   if (contextPrincipal.actor !== 'deployment:context') {
-    throw callError('Context service actor is invalid');
+    throw callError('Context service actor must be deployment:context');
   }
   const requester = {
     principalId: safeId(value.requester.principalId, 'Context requester principal'),
@@ -244,7 +248,7 @@ function normalizeAuthority(value, derived = false) {
 
 function itemCount(value) {
   if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_ITEMS) {
-    throw callError('Context source item count is invalid');
+    throw callError(`Context source item count must be a positive integer at most ${MAX_ITEMS}`);
   }
   return value;
 }
@@ -268,7 +272,7 @@ function normalizeSource(value) {
     const callDigest = sha(value.callDigest, 'Context source call digest');
     if (!CALL_ID.test(value.id ?? '') || value.id !== `context-call:${callDigest}`
       || !Number.isSafeInteger(value.generation) || value.generation <= 0) {
-      throw callError('Context call source identity is invalid');
+      throw callError('Context call source must have a valid callId, positive generation, and matching call digest');
     }
     return freeze({
       kind: 'call', id: value.id, callDigest, generation: value.generation,
@@ -282,14 +286,14 @@ function normalizeSource(value) {
       outputLineageDigest: sha(value.outputLineageDigest, 'Context source lineage'),
     });
   }
-  throw callError('Context source kind is invalid');
+  throw callError('Context source kind must be one of: cell, call');
 }
 
 function normalizeInput(value, source) {
   exact(value, INPUT_FIELDS, 'Context unit input');
   if (!Number.isSafeInteger(value.index) || value.index < 0
     || value.index >= source.itemCount) {
-    throw callError('Context unit input index is invalid');
+    throw callError(`Context unit input index must be a non-negative integer below the source item count (${source.itemCount})`);
   }
   return freeze({
     index: value.index,
@@ -304,7 +308,7 @@ function normalizeUnit(value, { operator, source, role, instructionDigest }) {
   exact(value, derived ? DERIVED_UNIT_FIELDS : UNIT_FIELDS, 'Context effect unit');
   if (!Number.isSafeInteger(value.index) || value.index < 0 || value.index >= MAX_ITEMS
     || !Array.isArray(value.inputs) || value.inputs.length === 0
-    || value.inputs.length > MAX_ITEMS) throw callError('Context effect unit index or input set is invalid');
+    || value.inputs.length > MAX_ITEMS) throw callError(`Context effect unit must have a valid index (0..${MAX_ITEMS - 1}) and 1..${MAX_ITEMS} inputs`);
   const inputs = value.inputs.map((input) => normalizeInput(input, source));
   if (inputs.some((entry, index) => index > 0 && inputs[index - 1].index >= entry.index)
     || new Set(inputs.map((entry) => entry.index)).size !== inputs.length) {
@@ -353,7 +357,7 @@ function validateOperator(operator, source, units) {
     }
     return;
   }
-  throw callError('Context effect operator is invalid');
+  throw callError('Context effect operator must be one of: map, reduce');
 }
 
 function normalizeInheritedChild(value) {
@@ -371,7 +375,7 @@ function normalizeRetryPredecessor(value, generation, inheritedChildren, units) 
   if (value.callId !== `context-call:${callDigest}`
     || !Number.isSafeInteger(value.generation) || value.generation !== generation - 1
     || !Array.isArray(value.inheritedChildren) || !Array.isArray(value.retryUnitIds)) {
-    throw callError('Context retry predecessor identity is invalid');
+    throw callError('Context retry predecessor must have a valid callId, generation one less than current, and array children and retryUnitIds');
   }
   const predecessorInherited = value.inheritedChildren.map(normalizeInheritedChild);
   const retryUnitIds = value.retryUnitIds.map((unitId) => (
@@ -392,7 +396,7 @@ function normalizeRetryPredecessor(value, generation, inheritedChildren, units) 
       !== digest(inheritedUnitIds)
     || digest(allUnitIds.filter((unitId) => retryUnitIds.includes(unitId)))
       !== digest(retryUnitIds)) {
-    throw callError('Context retry unit inheritance is invalid');
+    throw callError('Context retry unit inheritance must partition all units into inherited and retried sets with no overlap');
   }
   const core = {
     callId: value.callId, callDigest, generation: value.generation,
@@ -414,7 +418,7 @@ function normalize(value) {
   if (value.schemaVersion !== 1 || value.kind !== 'baton.context_effect_call'
     || !Number.isSafeInteger(value.generation) || value.generation <= 0
     || value.generation > MAX_ITEMS || !Array.isArray(value.inheritedChildren)) {
-    throw callError('Context effect call generation is invalid');
+    throw callError(`Context effect call must have schemaVersion 1, kind baton.context_effect_call, generation 1..${MAX_ITEMS}, and an array of inheritedChildren`);
   }
   const operator = value.operator;
   const authorityInput = normalizeAuthority(value.authority, derived);
@@ -423,7 +427,7 @@ function normalize(value) {
   const instruction = text(value.instruction, 'Context instruction');
   const instructionDigest = digest(instruction);
   if (!Array.isArray(value.units) || value.units.length === 0 || value.units.length > MAX_ITEMS) {
-    throw callError('Context effect unit set is invalid');
+    throw callError(`Context effect unit set must be a non-empty array of at most ${MAX_ITEMS} units`);
   }
   const unitsCarryDerivedFields = value.units.map((unit) => (
     ['inputSetDigest', 'lineageDigest', 'unitDigest', 'unitId'].some((field) => (
@@ -447,7 +451,7 @@ function normalize(value) {
   let executionUnitIds;
   if (value.generation === 1) {
     if (value.predecessorCall !== null || inheritedChildren.length !== 0) {
-      throw callError('Context effect call generation is invalid');
+      throw callError('Context effect call at generation 1 must have null predecessorCall and empty inheritedChildren');
     }
     executionUnitIds = units.map((unit) => unit.unitId);
   } else {
@@ -506,7 +510,7 @@ export function normalizeContextEffectNodeBinding(value) {
     || !Number.isSafeInteger(candidate.generation) || candidate.generation <= 0
     || candidate.generation > MAX_ITEMS
     || !CALL_ID.test(candidate.callId ?? '') || !REQUEST_ID.test(candidate.requestId ?? '')) {
-    throw callError('Context effect Plan binding header is invalid');
+    throw callError('Context effect Plan binding must have schemaVersion 1, kind context_effect_child, operator map or reduce, positive generation, and valid callId/requestId');
   }
   const source = normalizeSource(candidate.source);
   const logicalRole = safeId(candidate.logicalRole, 'Context effect logical role');
@@ -610,7 +614,7 @@ function materializeContextEffectBrief(briefValue, referenceRead, maxBytes) {
     || !Object.hasOwn(briefValue, 'contextCall') || Object.hasOwn(briefValue, 'contextInput')
     || typeof referenceRead !== 'function'
     || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
-    throw callError('Context effect physical Brief authority is invalid',
+    throw callError('Context effect physical Brief must have a contextCall object, no contextInput, a referenceRead function, and positive integer maxBytes',
       'context_call_attachment_invalid');
   }
   const binding = normalizeContextEffectNodeBinding(briefValue.contextCall);
