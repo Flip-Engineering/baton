@@ -645,12 +645,22 @@ const KIMI_THROUGH_CLAUDE_ROUTE = Object.freeze({
   aaSlug: 'kimi-k3', billing: 'subscription', openRouterId: 'moonshotai/kimi-k3',
 });
 
-function kimiAuthenticationSummary(code) {
+/** Issue #348: the kimi remedy is composed from the facts the host actually shows — when the
+ * stored access token expired and whether a refresh token sits beside it — so a blocked row
+ * says what to run rather than only that something is wrong. `facts` is null for a credential
+ * whose file is absent or unreadable, where neither fact exists to state. */
+function kimiAuthenticationSummary(code, facts = null) {
+  const expiry = Number.isSafeInteger(facts?.expiresAtMs)
+    ? ` The stored access token expired at ${new Date(facts.expiresAtMs).toISOString()}.` : '';
+  const refresh = facts === null ? ''
+    : facts.refreshable === true
+      ? ' A refresh token is present in the credential file.'
+      : ' No refresh token is present in the credential file.';
   if (code === 'authentication_refresh_required') {
-    return 'Kimi authentication has expired. Run the ordinary `kimi` login flow to refresh authentication, then reopen Baton.';
+    return `Kimi authentication has expired.${expiry}${refresh} Run the ordinary \`kimi\` login flow to refresh authentication, then reopen Baton.`;
   }
   if (code === 'authentication_metadata_invalid') {
-    return 'Kimi authentication metadata could not be validated. Run the ordinary `kimi` login flow to refresh authentication, then reopen Baton.';
+    return `Kimi authentication metadata could not be validated.${refresh} Run the ordinary \`kimi\` login flow to refresh authentication, then reopen Baton.`;
   }
   return 'Kimi authentication is absent. Run the ordinary `kimi` login flow, then reopen Baton.';
 }
@@ -805,7 +815,8 @@ function kimiAuthenticationState(kimiRoot, nowMs = Date.now()) {
     if (revokedTombstone) {
       const code = 'authentication_refresh_required';
       return Object.freeze({
-        state: 'blocked', code, credentialState: 'revoked', summary: kimiAuthenticationSummary(code),
+        state: 'blocked', code, credentialState: 'revoked', refreshable: false,
+        summary: kimiAuthenticationSummary(code, { expiresAtMs: null, refreshable: false }),
       });
     }
     const accessTokenPresent = record(value)
@@ -819,17 +830,39 @@ function kimiAuthenticationState(kimiRoot, nowMs = Date.now()) {
       || expiresAt > Math.floor(Number.MAX_SAFE_INTEGER / 1000)) {
       throw new Error('credential metadata schema refused');
     }
+    const refreshable = record(value) && typeof value.refresh_token === 'string'
+      && value.refresh_token.length > 0;
     if ((expiresAt * 1000) <= nowMs) {
       const code = 'authentication_refresh_required';
-      return Object.freeze({ state: 'blocked', code, credentialState: 'expired', summary: kimiAuthenticationSummary(code) });
+      return Object.freeze({
+        state: 'blocked', code, credentialState: 'expired',
+        expiresAt: expiresAt * 1000, refreshable,
+        summary: kimiAuthenticationSummary(code, { expiresAtMs: expiresAt * 1000, refreshable }),
+      });
     }
-    return Object.freeze({ state: 'ready', credentialState: 'available' });
+    return Object.freeze({ state: 'ready', credentialState: 'available', expiresAt: expiresAt * 1000, refreshable });
   } catch {
     const code = 'authentication_metadata_invalid';
     return Object.freeze({ state: 'blocked', code, credentialState: 'invalid', summary: kimiAuthenticationSummary(code) });
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+/** Issue #348: the kimi-code harness as THIS host presents it, asked the way the command
+ * resolution asks it (`<home>/.kimi-code/bin/kimi`, else `kimi` on PATH). A host with no
+ * executable cannot run the login the credential remedy names, so readiness checks this before
+ * the credential and reports the paths it probed — spelled home-relative, because a readiness row
+ * never publishes this host's absolute paths. */
+function kimiHarnessAvailability(searchPath = process.env.PATH ?? '') {
+  const preferred = join(homedir(), '.kimi-code', 'bin', 'kimi');
+  const onPath = String(searchPath).split(':').filter((entry) => entry.length > 0)
+    .some((entry) => existingRegular(join(entry, 'kimi')));
+  const present = existingRegular(preferred) || onPath;
+  return Object.freeze({
+    state: present ? 'present' : 'absent',
+    paths: Object.freeze(['~/.kimi-code/bin/kimi', 'kimi on PATH']),
+  });
 }
 
 function grokAuthenticationSummary(code) {
@@ -2058,6 +2091,22 @@ function deploymentReadiness(
       }
     }
     if (route.harness === 'kimi-code' && nativeKimiAuthentication) {
+      // Issue #348: the HARNESS is checked before the credential, the way the grok row's own gate
+      // does. A host with no `kimi` executable cannot run the login the credential remedy names,
+      // so a credential verdict there describes a remedy nobody can execute; the paths probed ride
+      // the summary, and the credential state is reported only for a harness this host has. The
+      // native facts gate this arm exactly as they gate the credential it carries — a route built
+      // from a caller-supplied adapter answers for its own harness (#327) and is never judged
+      // against this host's binary paths.
+      const harness = kimiHarnessAvailability();
+      if (harness.state === 'absent') {
+        return Object.freeze({
+          ...publicFields, state: 'blocked', code: 'harness_unavailable',
+          summary: `The Kimi Code executable was not found (probed ${harness.paths.join(', ')}). `
+            + 'Install the Kimi Code CLI, then reopen Baton.',
+          runtime,
+        });
+      }
       runtime = Object.freeze({
         ...runtime,
         authentication: Object.freeze({
