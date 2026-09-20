@@ -25,6 +25,22 @@ const DEFAULT_INPUT = Object.freeze({
   maxEvidenceCoordinates: 100_000,
 });
 
+/** The ceiling each integer policy field is validated against in normalizeContextProgramPolicy.
+ * CONTEXT_REFERENCE_READ_POLICY in context-program.mjs derives from this table; do not hand-copy
+ * these values elsewhere. */
+export const NORMALIZER_CEILING = Object.freeze({
+  maxManifestBranches: 4_096,
+  maxProgramBytes: 1024 * 1_024,
+  maxProgramNodes: 4_096,
+  maxProgramDepth: 128,
+  maxResultItems: 100_000,
+  maxJoinComparisons: 100_000_000,
+  maxCellsPerSession: 16_384,
+  maxTextBytes: 1024 * 1_024,
+  maxArtifactBytes: 1024 * 1_024 * 1_024,
+  maxEvidenceCoordinates: 1_000_000,
+});
+
 function policyError(message) {
   return Object.assign(new TypeError(message), { code: 'context_policy_invalid' });
 }
@@ -60,16 +76,16 @@ export function normalizeContextProgramPolicy(value = DEFAULT_INPUT) {
     || value.stateMode !== 'stateless'
     || value.recursionDepth !== 1
     || integerFields.some((field) => !Number.isSafeInteger(value[field]) || value[field] <= 0)
-    || value.maxManifestBranches > 4_096
-    || value.maxProgramBytes > 1024 * 1_024
-    || value.maxProgramNodes > 4_096
-    || value.maxProgramDepth > 128
-    || value.maxResultItems > 100_000
-    || value.maxJoinComparisons > 100_000_000
-    || value.maxCellsPerSession > 16_384
-    || value.maxTextBytes > 1024 * 1_024
-    || value.maxArtifactBytes > 1024 * 1_024 * 1_024
-    || value.maxEvidenceCoordinates > 1_000_000
+    || value.maxManifestBranches > NORMALIZER_CEILING.maxManifestBranches
+    || value.maxProgramBytes > NORMALIZER_CEILING.maxProgramBytes
+    || value.maxProgramNodes > NORMALIZER_CEILING.maxProgramNodes
+    || value.maxProgramDepth > NORMALIZER_CEILING.maxProgramDepth
+    || value.maxResultItems > NORMALIZER_CEILING.maxResultItems
+    || value.maxJoinComparisons > NORMALIZER_CEILING.maxJoinComparisons
+    || value.maxCellsPerSession > NORMALIZER_CEILING.maxCellsPerSession
+    || value.maxTextBytes > NORMALIZER_CEILING.maxTextBytes
+    || value.maxArtifactBytes > NORMALIZER_CEILING.maxArtifactBytes
+    || value.maxEvidenceCoordinates > NORMALIZER_CEILING.maxEvidenceCoordinates
     || value.maxEvidenceCoordinates < value.maxResultItems) {
     throw policyError('Context Program policy values are invalid or unbounded');
   }

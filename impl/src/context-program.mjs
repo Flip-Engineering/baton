@@ -6,7 +6,7 @@ import { join, resolve, sep } from 'node:path';
 
 import { compareCanonicalStrings, foldCanonicalCase } from './canonical-order.mjs';
 import {
-  DEFAULT_CONTEXT_PROGRAM_POLICY, normalizeContextProgramPolicy,
+  DEFAULT_CONTEXT_PROGRAM_POLICY, NORMALIZER_CEILING, normalizeContextProgramPolicy,
 } from './context-program-policy.mjs';
 import { buildPureContextOutputLineage } from './context-lineage.mjs';
 import { validateContextProviderResultCapsule } from './context-result.mjs';
@@ -85,16 +85,7 @@ const { policyDigest: ignoredReferencePolicyDigest, ...referencePolicyBody }
 void ignoredReferencePolicyDigest;
 const CONTEXT_REFERENCE_READ_POLICY = normalizeContextProgramPolicy({
   ...referencePolicyBody,
-  maxManifestBranches: 4_096,
-  maxProgramBytes: 1024 * 1_024,
-  maxProgramNodes: 4_096,
-  maxProgramDepth: 128,
-  maxResultItems: 100_000,
-  maxJoinComparisons: 100_000_000,
-  maxCellsPerSession: 16_384,
-  maxTextBytes: 1024 * 1_024,
-  maxArtifactBytes: 1024 * 1_024 * 1_024,
-  maxEvidenceCoordinates: 1_000_000,
+  ...NORMALIZER_CEILING,
 });
 
 function typed(message, code) {
