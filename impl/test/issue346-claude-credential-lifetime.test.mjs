@@ -256,7 +256,13 @@ test('LIFETIME-346-B: a route whose credential expires before the horizon with n
   assert.equal(row.credentialExpiresAt, expiresAt, 'the row names the instant it judged');
   assert.equal(row.credentialHorizonMs, HORIZON_MS, 'and the horizon it judged it against');
   assert.match(row.summary, new RegExp(iso(expiresAt).replaceAll('.', '\\.')));
-  assert.equal(usageRow(doctor, CLAUDE_ROUTE).state, 'blocked', 'the usage row carries the same verdict');
+  // #523: the usage row's `state` reports the SUBSCRIPTION's provider-level facts, so a deployment
+  // readiness block — this credential cannot outlive the lane's horizon — rides the doctor row and
+  // the pre-effect refusal above, while the usage row publishes the credential facts it judged.
+  const usage = usageRow(doctor, CLAUDE_ROUTE);
+  assert.equal(usage.state, 'ready', 'a credential block is not a provider-level block');
+  assert.equal(usage.credential.refreshable, false, 'the usage row carries the credential it judged');
+  assert.equal(usage.credential.expiresAt, expiresAt);
   assert.equal(routeRow(doctor, CODEX_ROUTE).state, 'ready', 'the other route is untouched');
   assert.equal(doctor.ready, true, 'one ready route keeps the fleet usable');
 

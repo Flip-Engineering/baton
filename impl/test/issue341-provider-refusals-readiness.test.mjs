@@ -30,8 +30,12 @@ import { PROVIDER_FAULT_CODES } from '../src/provider-faults.mjs';
 const QUOTA_CODE = PROVIDER_FAULT_CODES.quota;
 const AUTH_CODE = 'provider_auth_expired';
 
-const ROUTE_A = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
-const ROUTE_B = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' });
+// #523 (docs/51): the quota scope is the subscription — the route's explicit `provider`, else the
+// model's provider segment, else the harness. Both routes are one model at two efforts, so each
+// carries its own provider: a quota fault on one subscription leaves the other route ready, which
+// is the "other route is untouched" truth this file pins.
+const ROUTE_A = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high', provider: 'codex-personal' });
+const ROUTE_B = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh', provider: 'codex-work' });
 const CLAUDE_ROUTE = Object.freeze({ harness: 'claude-code', model: 'claude-opus-4-6', effort: 'high' });
 
 // The provider texts themselves: codex's observed quota refusal (with the instant it names), the

@@ -934,11 +934,11 @@
       "reason": "U-E7"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: an observe-only remote session refuses mutation locally before any Web command",
       "reason": "#289"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web listener with pure stdio",
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session",
       "reason": "#289"
     },
     {
@@ -974,11 +974,11 @@
       "reason": "#289"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session",
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
       "reason": "#289"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: an observe-only remote session refuses mutation locally before any Web command",
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web listener with pure stdio",
       "reason": "#289"
     },
     {
@@ -1127,10 +1127,6 @@
     {
       "key": "test/phase87-semantic-action-authority.test.mjs :: SA4: Web client and MCP bridge preflight use the exact remote semantic mutation scope",
       "reason": "#227"
-    },
-    {
-      "key": "test/phase92-result-intent-vertical.test.mjs :: RI6: omitted single and Workflow manifests retain the exact pre-explicit v1 bytes",
-      "reason": "#210"
     },
     {
       "key": "test/phase92-route-discovery-red.test.mjs :: P92-RD1: CLI-observed Claude login is ready without a credentials file and Kimi-through-Claude is explicitly unconfigured",

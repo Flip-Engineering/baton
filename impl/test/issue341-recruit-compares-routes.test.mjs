@@ -44,6 +44,13 @@ const ROUTE_READY = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effo
 const ROUTE_QUOTA = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' });
 const ROUTE_AUTH = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'low' });
 const RESET_AT = new Date(Math.floor(Date.now() / 1000) * 1000 + 6 * 60 * 60 * 1000).toISOString();
+/** #523 (docs/51): the quota scope is the subscription — the route's explicit `provider`, else the
+ * model's provider segment, else the harness. A deployment fixture whose routes are one model at
+ * several efforts on ONE subscription blocks them together, so the two routes the readiness rows
+ * compare carry their own providers: a refusal on one subscription never takes the other down.
+ * (The constants above stay three-axis shapes: they are also `options.exact` selectors, which admit
+ * exactly {harness, model, effort}.) */
+const SUBSCRIBED = (route, provider) => Object.freeze({ ...route, provider });
 
 const routeLabel = (route) => `${route.harness}/${route.model}@${route.effort}`;
 
@@ -317,7 +324,8 @@ const doctorRow = (doctor, route) => doctor.routes.find((row) => row.harness ===
   && row.model === route.model && row.effort === route.effort);
 
 test('RECRUIT-341-B2: the deployment run lane refuses the refused route pre-effect, naming the ready alternative', async (t) => {
-  const { deployment, driverOptions, adapters } = await openDeployment(t, 'run-lane', [ROUTE_READY, ROUTE_QUOTA]);
+  const { deployment, driverOptions, adapters } = await openDeployment(t, 'run-lane',
+    [SUBSCRIBED(ROUTE_READY, 'codex-personal'), SUBSCRIBED(ROUTE_QUOTA, 'codex-work')]);
   const log = new Log(driverOptions.logDir);
   appendCrash(log, 'fixture-run-lane', ROUTE_QUOTA, codexQuotaText(RESET_AT));
 
