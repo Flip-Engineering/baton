@@ -111,7 +111,7 @@ test('S333-2: the bypass never touches the lease directory', async (t) => {
     'an unparseable pin falls back to the default, never to unbounded');
 });
 
-test('S333-3: the participant-row derivation reads verify {state, position, ahead} from the holder name', async (t) => {
+test('S333-3: the participant-row derivation reads verify {state, position, ahead, holderAlive} from the holder name', async (t) => {
   const root = leaseRoot(t);
   const authority = new HostCapacityAuthority({
     root, residentId: 's333-deploy', observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 }),
@@ -138,7 +138,7 @@ test('S333-3: the participant-row derivation reads verify {state, position, ahea
   const pending = waiter.acquire('verify', { holder: 'participant:baton:seat2' });
   await new Promise((resolve) => { setTimeout(resolve, 120); });
   assert.deepEqual(await authority.observeParticipantVerify('participant:baton:seat2'),
-    { state: 'queued', position: 1, ahead: 0 });
+    { state: 'queued', position: 1, ahead: 0, holderAlive: true });
   await authority.release(held.token);
   await pending.then((outcome) => waiter.release(outcome.token));
   assert.equal(await authority.observeParticipantVerify('participant:baton:seat2'), null,

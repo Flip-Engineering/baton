@@ -300,7 +300,8 @@ export const HOST_CAPACITY_BYPASS = 'BATON_HOST_CAPACITY_DISABLED=1';
 
 /** #333: the verify state of ONE swarm participant, derived from the authority's visible
  * queue and the holders of live verify leases — the projection the swarm view's participant
- * row carries as `verify {state, position, ahead}`. The holder name is the lease holder the
+ * row carries as `verify {state, position, ahead, holderAlive}` (the holder liveness is #506's).
+ * The holder name is the lease holder the
  * runtime mints per seat (`participant:<swarmId>:<participantId>`): a queue entry under that
  * name reads `{state: 'queued', position, ahead}` (the entry's own place when it carries one,
  * else its FIFO index), a live verify lease under it reads `{state: 'admitted'}` (position
@@ -319,6 +320,7 @@ export function projectParticipantVerify(queue, verifyHolders, holder) {
       state: 'queued',
       position: Number.isSafeInteger(found?.position) ? found.position : index + 1,
       ahead: Number.isSafeInteger(found?.ahead) ? found.ahead : index,
+      holderAlive: found?.holderAlive === true,
     });
   }
   const holders = Array.isArray(verifyHolders) ? verifyHolders
@@ -610,6 +612,11 @@ export class HostCapacityAuthority {
       residentId: record.residentId,
       holder: record.holder,
       enqueuedAt: record.enqueuedAt,
+      // Issue #506: the holder's own liveness on every visible row, so a dead front-of-queue
+      // holder never reads like a live queued request on the view or the doctor. The mutating
+      // read swept proved-dead entries before this point; this per-row fact is what makes the
+      // non-mutating read truthful in between sweeps.
+      holderAlive: this.liveness(record.pid),
     })));
   }
 
