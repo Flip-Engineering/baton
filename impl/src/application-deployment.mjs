@@ -2769,7 +2769,22 @@ function readyRouteAlternatives(readiness, quota, record) {
  * service, the refusal also names the service — and when the provider's answer carried no instant,
  * the reset the SERVICE record derives from its declared window at the observation
  * (`resetSource: 'declared_window'`), so the refusal never names a vaguer fact than the
- * deployment holds. */
+ * deployment holds. #491: a declaration that names its window SHAPE has that shape read beside the
+ * derived instant, so a rolling boundary is never read as a fixed one. */
+
+/** #491: the declared window shape in one phrase a refusal can read (`rolling 5 h`,
+ * `fixed-clock 24 h`), or null when the declaration names no shape — the text then stays exactly
+ * as it reads today. The period is the declared window itself, formatted from the declaration,
+ * never a second number. */
+function declaredWindowPhrase(usage) {
+  if (usage.windowKind === undefined) return null;
+  const periodMs = usage.windowMs;
+  const period = periodMs % 3_600_000 === 0 ? `${periodMs / 3_600_000} h`
+    : periodMs % 60_000 === 0 ? `${periodMs / 60_000} min`
+    : `${periodMs} ms`;
+  return `${usage.windowKind === 'rolling' ? 'rolling' : 'fixed-clock'} ${period}`;
+}
+
 function providerRouteRefusal(block, readiness, quota, record, services = null) {
   const { harness, model, effort } = block.route;
   const service = services === null ? null : serviceForRoute(services, block.route);
@@ -2782,13 +2797,20 @@ function providerRouteRefusal(block, readiness, quota, record, services = null) 
       serviceReset = Object.freeze({
         resetAt: new Date(observedAtMs + service.usage.windowMs).toISOString(),
         resetSource: 'declared_window',
+        // #491: the declared shape rides the derived reset, so the text below and the machine
+        // reader learn the boundary kind from the ONE declaration.
+        window: Object.freeze({
+          kind: service.usage.windowKind ?? 'unknown', periodMs: service.usage.windowMs,
+        }),
       });
     }
   }
+  const declaredShape = serviceReset === null ? null : declaredWindowPhrase(service.usage);
   const window = block.resetAt
     ? `until ${block.resetAt}`
     : serviceReset !== null
-      ? `until ${serviceReset.resetAt} (service ${service.provider}'s declared window from the observed block)`
+      ? `until ${serviceReset.resetAt} (service ${service.provider}'s declared`
+        + `${declaredShape === null ? '' : ` ${declaredShape}`} window from the observed block)`
       : 'until a later turn on it succeeds';
   const ready = readyRouteAlternatives(readiness, quota, record);
   return Object.assign(new Error(
@@ -2807,6 +2829,13 @@ function providerRouteRefusal(block, readiness, quota, record, services = null) 
         provider: service.provider,
         resetAt: block.resetAt ?? serviceReset?.resetAt ?? null,
         resetSource: block.resetAt ? 'provider' : serviceReset?.resetSource ?? null,
+        // #491: the declared shape rides the refusal beside the instant it qualifies — absent when
+        // the service declares no usage window at all.
+        ...(service.usage === null ? {} : {
+          window: Object.freeze({
+            kind: service.usage.windowKind ?? 'unknown', periodMs: service.usage.windowMs,
+          }),
+        }),
       }),
     }),
   });
@@ -3787,9 +3816,23 @@ class BatonDeployment {
       const quotaRefused = code === PROVIDER_FAULT_CODES.quota
         || quotaBlock?.code === PROVIDER_FAULT_CODES.quota
         || degraded?.reason === PROVIDER_FAULT_CODES.quota;
+      // #491: the declared window SHAPE rides the quota axis beside the instant it qualifies, so a
+      // route row reads "rolling, ~5 h from the observation" instead of one bare timestamp. Present
+      // only when this route resolves to a declaration with a usage window — a deployment without
+      // the services section publishes the same `quota` shape it always has.
+      const declaredUsage = this.#services.length > 0 ? this.#serviceForRoute(route)?.usage ?? null : null;
+      const quotaWindow = declaredUsage === null ? null : Object.freeze({
+        kind: declaredUsage.windowKind ?? 'unknown', periodMs: declaredUsage.windowMs,
+      });
       const quota = quotaRefused
-        ? Object.freeze({ state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt })
-        : Object.freeze({ state: 'ok', resetAt: null });
+        ? Object.freeze({
+          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt,
+          ...(quotaWindow === null ? {} : { window: quotaWindow }),
+        })
+        : Object.freeze({
+          state: 'ok', resetAt: null,
+          ...(quotaWindow === null ? {} : { window: quotaWindow }),
+        });
       const occupancy = this.#occupancyFor(route);
       let ceiling = occupancy.concurrencyCeiling;
       if (ceiling === null) {

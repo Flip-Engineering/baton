@@ -65,7 +65,7 @@ advanced.services = {
     credential: { kind: 'file', path: 'glm_key.json', jsonPointer: '/glm_key' },
     harnesses:  ['omp'],                              // the harnesses that can speak to it
     models:     ['glm-5.3-flash'],                    // optional declaration (D4's fallback)
-    usage:      { windowMs: 18000000, quotaTokens: 1000000 },  // optional subscription declaration
+    usage:      { windowMs: 18000000, quotaTokens: 1000000, windowKind: 'rolling' },  // optional declaration
   },
 }
 ```
@@ -81,7 +81,11 @@ secret value. Validation is the deployment's own pattern: `closed()` field admis
 predicates, and `deploymentError` (`deployment_config_invalid`) on any violation, all at open
 (provider-services.mjs `normalizeProviderServices`). `usage.windowMs` and `usage.quotaTokens` are
 positive safe integers — the operator's declaration of a window the provider does not expose by
-API, which is exactly what the issue admits. Nothing here assumes a window or a quota.
+API, which is exactly what the issue admits. `usage.windowKind` is optional and closed on
+`USAGE_WINDOW_KINDS`: `rolling` for a window that clears a period after the call that counted
+against it, `fixed_clock` for a window that clears on the provider's calendar boundary (#491). A
+declaration that names no kind keeps the record it has always published; the derived row then reads
+`unknown`. Nothing here assumes a window, a quota or a window shape.
 
 The section is reachable from a serve config module (`baton serve CONFIG_MODULE` imports a
 factory, impl/scripts/baton.mjs:480), so an operator may keep it in a dedicated file.
@@ -134,9 +138,9 @@ doctor's own reads.
 **D5 — Usage visibility is declared-or-observed accounting.** For a service with a `usage`
 declaration, the service row carries:
 
-```
 usage: {
   windowMs, quotaTokens,           // the declaration
+  quotaWindow,                     // { kind, periodMs }: the declared window shape (#491)
   usedTokens, remainingTokens,     // Baton's own accounting (below)
   resetAt, resetSource,            // see below
   observed,                        // the provider's own rate-limit fact, when one was observed
@@ -153,6 +157,11 @@ usage: {
   the observation: `observedAt + windowMs`, published with `resetSource: 'declared_window'` so a
   reader can tell it from the provider's own word (`resetSource: 'provider'`). With neither, the
   row says `resetAt: null` — never an invented instant.
+- `quotaWindow` names the shape of the window that instant belongs to: `{ kind, periodMs }` with
+  `kind` from `USAGE_WINDOW_KINDS`, or `unknown` when the declaration names none (#491). A rolling
+  boundary can move when the route is used inside its own window; a fixed-clock boundary does not.
+  The route's usage row carries the same shape beside its reset instant, so a route comparison
+  reads the boundary kind without a second lookup.
 - `observed` surfaces the newest `rateLimit` fact a member route's `resource.tokens` rows carry
   (`usedPercent`, `windowDurationMins`, `resetsAt` — the codex app-server lane), when one exists.
   A service whose provider reports by API shows the provider's own numbers; a subscription service

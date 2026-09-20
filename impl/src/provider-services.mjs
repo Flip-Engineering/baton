@@ -3,8 +3,8 @@
 // A service is one API provider the deployment is configured to speak to: its provider segment
 // (the identity `providerOfRoute` derives off a route's model id), its base URL, a credential
 // REFERENCE (env/file/keychain — never a value), the harnesses that can speak to it, an optional
-// declared model list, and an optional usage-rate declaration (subscription window and quota) for
-// a provider that exposes neither by API.
+// declared model list, and an optional usage-rate declaration (subscription window shape, window
+// length and quota) for a provider that exposes neither by API.
 //
 // This module owns the pure domain, once, for every consumer:
 //
@@ -28,6 +28,13 @@ import { providerOfRoute } from './provider-faults.mjs';
 
 /** The credential reference kinds a service entry admits — a reference, never a value. */
 export const SERVICE_CREDENTIAL_KINDS = Object.freeze(['env', 'file', 'keychain']);
+
+/** The window SHAPES an operator may declare for a subscription's usage window (issue #491). A
+ * rolling window clears a fixed period after the call that counted against it, so use during the
+ * window moves the boundary; a fixed-clock window clears on the provider's own calendar boundary.
+ * The shape is a DECLARATION — the operator states it from the provider's documentation — and its
+ * absence stays `unknown`, never guessed from one observation. */
+export const USAGE_WINDOW_KINDS = Object.freeze(['rolling', 'fixed_clock']);
 
 const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
@@ -106,13 +113,21 @@ function normalizeCredential(value, provider) {
 
 function normalizeUsage(value, provider) {
   const label = `advanced services ${provider} usage`;
-  closed(value, ['windowMs', 'quotaTokens'], label);
+  closed(value, ['windowMs', 'quotaTokens', 'windowKind'], label);
   for (const field of ['windowMs', 'quotaTokens']) {
     if (!Number.isSafeInteger(value[field]) || value[field] <= 0) {
       throw configError(`${label} ${field} must be a positive safe integer`);
     }
   }
-  return Object.freeze({ windowMs: value.windowMs, quotaTokens: value.quotaTokens });
+  // #491: the shape is optional and additive — a declaration that names none keeps the record it
+  // has always published, and the derived row then reads `unknown` rather than an invented shape.
+  if (value.windowKind !== undefined && !USAGE_WINDOW_KINDS.includes(value.windowKind)) {
+    throw configError(`${label} windowKind must be one of: ${USAGE_WINDOW_KINDS.join(', ')}`);
+  }
+  return Object.freeze({
+    windowMs: value.windowMs, quotaTokens: value.quotaTokens,
+    ...(value.windowKind === undefined ? {} : { windowKind: value.windowKind }),
+  });
 }
 
 /**
@@ -329,6 +344,11 @@ export async function fetchServiceModels(service, {
  * quota, and the reset instant: the provider's own word (`resetSource: 'provider'`) when one was
  * observed, the declaration-derived `observedAt + windowMs` (`resetSource: 'declared_window'`)
  * when a block was observed with no instant, or null when nothing names one.
+ *
+ * #491: `quotaWindow` carries the declared window SHAPE beside that instant — `{kind, periodMs}`
+ * with `kind` from USAGE_WINDOW_KINDS, or `unknown` for a declaration that names none — so a
+ * reader judges a rolling boundary (use inside the window can move it) differently from a fixed
+ * clock reset. Null when the service declares no usage at all.
  */
 export function deriveServiceUsage(service, { observations = [], reset = null, now = Date.now } = {}) {
   const declared = service.usage ?? null;
@@ -377,6 +397,8 @@ export function deriveServiceUsage(service, { observations = [], reset = null, n
     remainingTokens,
     resetAt,
     resetSource,
+    quotaWindow: declared === null ? null
+      : Object.freeze({ kind: declared.windowKind ?? 'unknown', periodMs: declared.windowMs }),
     observed: observed === null ? null : Object.freeze({
       ...(record(observed.primary) ? {
         primary: Object.freeze({

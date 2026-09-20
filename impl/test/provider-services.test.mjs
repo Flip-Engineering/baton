@@ -30,7 +30,7 @@ import { openBatonDeployment, routeAdmissionGate } from '../src/application-depl
 import { Log } from '../src/log.mjs';
 import { ProviderQuotaAuthority } from '../src/route-quota.mjs';
 import {
-  deriveServiceUsage, fetchServiceModels, normalizeProviderServices, normalizeServiceClients,
+  USAGE_WINDOW_KINDS, deriveServiceUsage, fetchServiceModels, normalizeProviderServices, normalizeServiceClients,
   serviceCredentialReference, serviceForRoute, serviceStateOf, validateServicesListArgs,
 } from '../src/provider-services.mjs';
 
@@ -537,6 +537,89 @@ test('317-D6: a provider-stated reset stays the provider\u2019s word on the serv
       assert.equal(error?.service?.provider, 'zai');
       assert.equal(error?.service?.resetAt, resetAt);
       assert.equal(error?.service?.resetSource, 'provider');
+      return true;
+    },
+  );
+});
+
+// ── #491: the declared window SHAPE, beside the reset instant it qualifies ────────────────────
+
+test('491-D1: a declaration may name its window shape from the closed set, and an unknown shape refuses', () => {
+  const declared = normalizeProviderServices({
+    zai: serviceFixture({ usage: { windowMs: WINDOW_MS, quotaTokens: QUOTA_TOKENS, windowKind: 'rolling' } }),
+  })[0];
+  assert.equal(declared.usage.windowKind, 'rolling', 'the declared shape is published with the declaration');
+  assert.deepEqual(USAGE_WINDOW_KINDS, ['rolling', 'fixed_clock']);
+  const undeclared = normalizeProviderServices({ zai: serviceFixture() })[0];
+  assert.deepEqual(undeclared.usage, { windowMs: WINDOW_MS, quotaTokens: QUOTA_TOKENS },
+    'a declaration that names no shape keeps the record it has always published');
+  assert.throws(
+    () => normalizeProviderServices({
+      zai: serviceFixture({ usage: { windowMs: WINDOW_MS, quotaTokens: QUOTA_TOKENS, windowKind: 'hourly' } }),
+    }),
+    (error) => {
+      assert.equal(error?.code, 'deployment_config_invalid');
+      assert.match(error.message, /windowKind must be one of: rolling, fixed_clock/u,
+        'the refusal names the closed set it judged');
+      return true;
+    },
+  );
+});
+
+test('491-D5: the derived usage row carries the declared shape, or unknown when nothing is declared', () => {
+  const rolling = normalizeProviderServices({
+    zai: serviceFixture({ usage: { windowMs: WINDOW_MS, quotaTokens: QUOTA_TOKENS, windowKind: 'rolling' } }),
+  })[0];
+  const withShape = deriveServiceUsage(rolling, { now: 1_760_000_000_000 });
+  assert.deepEqual(withShape.quotaWindow, { kind: 'rolling', periodMs: WINDOW_MS },
+    'the declared shape and its period ride the usage row');
+  const plain = deriveServiceUsage(normalizeProviderServices({ zai: serviceFixture() })[0],
+    { now: 1_760_000_000_000 });
+  assert.deepEqual(plain.quotaWindow, { kind: 'unknown', periodMs: WINDOW_MS },
+    'a declaration that names no shape reads unknown — never a guessed one');
+  assert.equal(deriveServiceUsage(normalizeProviderServices({
+    deepseek: {
+      baseUrl: 'https://deepseek.example.invalid',
+      credential: { kind: 'env', name: 'BATON_317_FIXTURE_TOKEN' },
+      harnesses: ['omp'],
+    },
+  })[0], { now: 1_760_000_000_000 }), null, 'no usage declaration, no usage row');
+});
+
+test('491-D5/D6: the doctor row, the route row and the refusal read the declared shape beside the reset', async (t) => {
+  const { deployment, driverOptions } = await openDeployment(t, 'window-shape', [ZAI_ROUTE, DEEPSEEK_ROUTE], {
+    resident: { env: { ...process.env, BATON_317_FIXTURE_TOKEN: 'fixture-token' } },
+    services: {
+      zai: serviceFixture({
+        usage: { windowMs: WINDOW_MS, quotaTokens: QUOTA_TOKENS, windowKind: 'rolling' },
+      }),
+    },
+    serviceClients: { fetchImpl: async () => { throw new Error('never called'); }, timeoutMs: 1000 },
+  });
+  const log = new Log(driverOptions.logDir);
+  // The provider names its window but no instant: the reset is the declaration's derivation, and
+  // the shape says whether that boundary can move when the route is used again.
+  appendQuotaCrash(log, 'w-quota', ZAI_ROUTE, 'Usage limit reached for 5 hour. Your quota will recover after the window.');
+
+  const doctor = await deployment.doctor();
+  const zai = doctor.services.find((service) => service.provider === 'zai');
+  assert.deepEqual(zai.usage.quotaWindow, { kind: 'rolling', periodMs: WINDOW_MS },
+    'the service row reads the declared shape');
+  const usageRow = doctor.routeUsage.find((row) => row.route.model === ZAI_ROUTE.model);
+  assert.deepEqual(usageRow.quota.window, { kind: 'rolling', periodMs: WINDOW_MS },
+    'the route row carries the shape beside the reset it qualifies');
+  assert.equal(usageRow.quota.state, 'exhausted');
+  const deepseekRow = doctor.routeUsage.find((row) => row.route.model === DEEPSEEK_ROUTE.model);
+  assert.equal(deepseekRow.quota.window, undefined,
+    'a route resolving to no declared usage window keeps the quota shape it always had');
+
+  await assert.rejects(
+    deployment.run('do the work', { exact: ZAI_ROUTE }),
+    (error) => {
+      assert.deepEqual(error?.service?.window, { kind: 'rolling', periodMs: WINDOW_MS },
+        'the refusal carries the shape a machine reader acts on');
+      assert.match(error.message, /declared rolling 5 h window from the observed block/u,
+        'and its text reads the boundary kind, not one bare timestamp');
       return true;
     },
   );
