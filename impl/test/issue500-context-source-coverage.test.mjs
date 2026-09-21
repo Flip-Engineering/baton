@@ -73,3 +73,38 @@ test('500-b: a file over the policy artifact ceiling refuses typed, naming the f
     return true;
   });
 });
+
+test('500-c: a multi-byte character that cannot fit in a 1-byte chunk refuses typed', (t) => {
+  const { policyDigest, ...defaults } = DEFAULT_CONTEXT_PROGRAM_POLICY;
+  void policyDigest;
+  const policy = normalizeContextProgramPolicy({ ...defaults, maxTextBytes: 1 });
+  const { root, treeSha } = repository(t, 'multibyte-chunk', {
+    'src/emoji.txt': 'a\u{1F600}b\n',
+  });
+  assert.throws(() => produceRepositoryContextSource(root, treeSha, ['**'], policy), (error) => {
+    assert.equal(error.code, 'context_source_oversize',
+      'a chunk that cannot project a multi-byte character refuses typed');
+    return true;
+  });
+});
+
+test('500-d: a chunk boundary does not split a surrogate pair', (t) => {
+  const { policyDigest, ...defaults } = DEFAULT_CONTEXT_PROGRAM_POLICY;
+  void policyDigest;
+  const policy = normalizeContextProgramPolicy({ ...defaults, maxTextBytes: 4 });
+  const { root, treeSha } = repository(t, 'surrogate-boundary', {
+    'src/emoji.txt': 'a\u{1F600}b\n',
+  });
+  const produced = produceRepositoryContextSource(root, treeSha, ['**'], policy);
+  const chunks = produced.items.filter((item) => item.path === 'src/emoji.txt')
+    .sort((a, b) => a.chunk - b.chunk);
+  const reassembled = chunks.map((c) => c.text).join('');
+  assert.equal(reassembled, 'a\u{1F600}b\n',
+    'the projected text reassembles with no surrogate-pair corruption');
+  for (const chunk of chunks) {
+    assert.ok(!/[\uD800-\uDBFF]$/u.test(chunk.text),
+      `chunk ${chunk.chunk} must not end with a lone high surrogate`);
+    assert.ok(!/^[\uDC00-\uDFFF]/u.test(chunk.text),
+      `chunk ${chunk.chunk} must not start with a lone low surrogate`);
+  }
+});

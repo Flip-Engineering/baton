@@ -471,7 +471,12 @@ export function produceRepositoryContextSource(repoRoot, treeSha, scopes, policy
     for (let offset = 0, byteOffset = 0, chunk = 0; offset < text.length; chunk += 1) {
       let end = Math.min(text.length, offset + chunkBytes);
       while (end > offset && Buffer.byteLength(text.slice(offset, end)) > chunkBytes) end -= 1;
-      if (end <= offset) break;
+      if (end < text.length && end > offset
+        && /[\uD800-\uDBFF]/u.test(text[end - 1]) && /[\uDC00-\uDFFF]/u.test(text[end])) end -= 1;
+      if (end <= offset) {
+        throw runtimeError('Repository Context source text cannot be projected safely',
+          'context_source_oversize');
+      }
       const selected = text.slice(offset, end);
       offset = end;
       const selectedBytes = Buffer.byteLength(selected);
