@@ -2003,8 +2003,17 @@ export class McpFleetServer {
     // (the resident bridge facade) is handed it here, late-bound to whatever sink the driver
     // attaches, so the handoff and the explicit verb share ONE session sink.
     if (typeof this.application?.attachWakeDelivery === 'function') {
-      this.application.attachWakeDelivery((frame) => this.notify(WAKE_NOTIFICATION_METHOD, frame));
+      this.application.attachWakeDelivery((frame) => this._wakeNotificationSink(frame));
     }
+    // Issue #529 (docs/54 §4): the wake subscription this session takes from its own bridge
+    // configuration. The deployment declares that configuration as part of the seat's bridge
+    // environment and the entry that knows the session's environment passes what it read; the
+    // server itself reads no global. Null means this session takes no auto-subscription.
+    this.autoWake = opts.autoWake === undefined || opts.autoWake === null ? null : clone(opts.autoWake);
+    if (this.autoWake !== null && !record(this.autoWake)) {
+      throw new TypeError('MCP auto wake configuration must be an object');
+    }
+    this.autoWakeReceipt = null;
     this.lifecycle = 'new';
     const surfaceTools = this.surface === 'application' ? ORDINARY_APPLICATION_TOOL_DEFINITIONS
       : this.surface === 'advanced' ? ADVANCED_TOOL_DEFINITIONS : TOOL_DEFINITIONS;
@@ -2053,6 +2062,9 @@ export class McpFleetServer {
       // unowned bridge application exactly as for an owned one (the connection is the session's).
       try { this.application?.closeWakes?.(); }
       catch { /* the transport is closing; the attachment dies with the process either way */ }
+      // Issue #529 (docs/54 §4): the auto-subscription lives on that same plane, so the session's
+      // close releases it with everything else the plane held.
+      this.autoWakeReceipt = null;
       if (this.application === null || !this.applicationOwned) {
         return Object.freeze({ schemaVersion: 1, state: 'transport_closed', applicationOwned: false });
       }
@@ -2091,6 +2103,48 @@ export class McpFleetServer {
   attachNotificationSink(sink) {
     if (sink !== null && typeof sink !== 'function') throw new TypeError('MCP notification sink must be a function');
     this.notificationSink = sink;
+  }
+
+  /** Issue #294/#529: the ONE sink a wake frame reaches this session's client through — an
+   * explicit subscription, a long verb's handoff, and the auto-subscription all deliver here. The
+   * frame's kind is the only discriminator: the session's own reincarnation fact (#314 lane 3)
+   * carries its own notification method, every wake row carries the wake method. */
+  _wakeNotificationSink(frame) {
+    return this.notify(frame?.kind === 'baton.resident_reincarnated'
+      ? RESIDENT_REINCARNATED_NOTIFICATION_METHOD
+      : WAKE_NOTIFICATION_METHOD, frame);
+  }
+
+  /** Issue #529 (docs/54 §4): the auto-subscription is taken at the connection, through the same
+   * facade entry the explicit `baton_wakes_subscribe` verb calls — opened by the server instead of
+   * the model, so matching frames arrive with no tool call. Only a session that holds `observe`
+   * reads the stream (the verb's own authority), and a stream that cannot be attached never costs
+   * the session its handshake: the greeting names the state instead. Returns the greeting sentence
+   * this session's initialize carries, empty when the session takes no auto-subscription. */
+  async _autoSubscribeWake() {
+    if (this.autoWake === null) return '';
+    if (!Array.isArray(this.principal.capabilities)
+      || !this.principal.capabilities.includes('observe')) return '';
+    if (this.notificationSink === null) {
+      return ' Auto wake subscription unavailable: this transport cannot deliver server notifications.';
+    }
+    if (typeof this.application?.wakeSubscribe !== 'function') {
+      return ' Auto wake subscription unavailable: this connection serves no wake stream.';
+    }
+    let receipt;
+    try {
+      receipt = await this.application.wakeSubscribe(
+        clone(this.autoWake), (frame) => this._wakeNotificationSink(frame));
+    } catch (cause) {
+      const code = typeof cause?.code === 'string' && cause.code.length > 0
+        ? cause.code : 'wake_stream_unavailable';
+      return ` Auto wake subscription unavailable: ${code}.`;
+    }
+    this.autoWakeReceipt = receipt;
+    const swarms = Array.isArray(receipt?.swarms) ? receipt.swarms : [];
+    return ` Auto-subscribed to the wake stream${swarms.length === 0 ? '' : ` for swarm ${swarms.join(', ')}`}`
+      + ` as ${receipt.subscriptionId}; every matching row arrives as a notification.`
+      + ' Narrow it with baton_wakes_subscribe, or stop it with baton_wakes_unsubscribe.';
   }
 
   _authority(name, args) {
@@ -2168,6 +2222,10 @@ export class McpFleetServer {
       if (id === undefined || !record(params) || !nonempty(params.protocolVersion) || !record(params.capabilities)
         || !record(params.clientInfo) || !nonempty(params.clientInfo.name) || !nonempty(params.clientInfo.version)) return protocolError(id, -32602, 'Invalid params');
       this.lifecycle = 'initializing';
+      // Issue #529 (docs/54 §4): the session's auto-subscription is taken HERE — at the connection,
+      // before the greeting is composed — so the greeting can name what it opened beside the escape
+      // hatch. The handshake stays a success whatever the stream answers.
+      const wakeSentence = await this._autoSubscribeWake();
       // Epic #103 (D6a): one bounded trailing sentence composed per initialize from the family
       // head — the pack is data, not a gate (initialize succeeds identically with or without it),
       // and an absent pack degrades to the honest-empty line, never a fabricated digest (D5b).
@@ -2190,7 +2248,7 @@ export class McpFleetServer {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'baton', version: '0.1.0' },
-        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.${repoSentence} ${briefingSentence}`,
+        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.${repoSentence}${wakeSentence} ${briefingSentence}`,
       });
     }
     if (method === 'notifications/initialized') {
@@ -2973,12 +3031,7 @@ export class McpFleetServer {
       // The session's one delivery sink carries both vocabularies: a deployment wake row under the
       // wake method, and the session's own reincarnation fact (#314 lane 3) under its own method —
       // the frame's kind is the only discriminator, so the session never restates the method.
-      value = await this.application.wakeSubscribe(clone(args), (frame) => this.notify(
-        frame?.kind === 'baton.resident_reincarnated'
-          ? RESIDENT_REINCARNATED_NOTIFICATION_METHOD
-          : WAKE_NOTIFICATION_METHOD,
-        frame,
-      ));
+      value = await this.application.wakeSubscribe(clone(args), (frame) => this._wakeNotificationSink(frame));
     }
     else if (name === 'baton_wakes_unsubscribe') {
       if (typeof this.application?.wakeUnsubscribe !== 'function') throw wakeStreamUnavailable('stop');

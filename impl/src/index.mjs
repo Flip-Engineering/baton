@@ -179,7 +179,7 @@ export {
 } from './mcp-descriptor.mjs';
 export {
   BatonWebApplicationFacade, connectBatonWebApplication, createBatonWebMcpServer,
-  kimiBatonAcpMcpServer, kimiBatonMcpEntry,
+  kimiBatonAcpMcpServer, kimiBatonMcpEntry, wakeAutoSubscription,
 } from './mcp-web-bridge.mjs';
 export { AtlasStructuralDelta } from './atlas-structural.mjs';
 export { AtlasStructuralRewrite } from './atlas-rewrite.mjs';
