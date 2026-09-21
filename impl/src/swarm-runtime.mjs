@@ -54,6 +54,7 @@ import { landContribution } from './worktree.mjs';
 // redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
 // a tail nobody else's bound describes.
 import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
+import { wakeClassFor } from './wake-stream.mjs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -6920,6 +6921,42 @@ export class SwarmRuntime {
           // The sender label is the coordinator's ONE namespace derivation (#273), read through
           // the shared `guidanceSender` — never a second mapper with the same namespaces.
           situation.push(`- [from ${guidanceSender(row.actor).label} · seq ${row.seq} · ts ${row.ts} · ${row.messageId}]: ${row.message}`);
+        }
+      }
+    }
+    // Issue #529: wake events since the predecessor's last observation compose into the
+    // successor's brief. The seat reads what happened while it was absent through the same
+    // mechanism parked guidance uses: durable ledger rows composed at recruitment time. The
+    // wakeClassFor derivation (wake-stream.mjs) maps each ledger row to its wake class; the
+    // brief renders swarm-scoped events whose swarmId matches, newest first under the situation
+    // byte budget.
+    if (predecessor !== null) {
+      const sinceSeq = predecessor.lastCheckpoint?.seq ?? 0;
+      const swarmId = swarm.swarmId;
+      const ledgerEvents = ledger ?? this.store.eventsView();
+      const wakeLines = [];
+      for (const event of ledgerEvents) {
+        if (event.seq <= sinceSeq) continue;
+        const classRow = wakeClassFor(event);
+        if (classRow === null) continue;
+        const payload = event.payload ?? {};
+        const eventSwarmId = typeof payload.swarmId === 'string' ? payload.swarmId : null;
+        if (classRow.scope === 'swarm' && eventSwarmId !== swarmId) continue;
+        if (classRow.scope !== 'swarm') continue;
+        const participantLabel = typeof payload.participantId === 'string' ? payload.participantId : '';
+        const contributionLabel = typeof payload.contributionId === 'string' ? ` ${payload.contributionId}` : '';
+        wakeLines.push(`- [seq ${event.seq} · ${classRow.wakeClass} · ts ${event.ts ?? ''}${contributionLabel}]: ${participantLabel}${participantLabel ? ' — ' : ''}${classRow.summary}`);
+      }
+      if (wakeLines.length > 0) {
+        const reversed = [...wakeLines].reverse();
+        const { lines, taken } = takeSituationBlocks(
+          reversed.map((line) => [line]), situationsBudget.value);
+        situation.push(`Recent wake events (since seq ${sinceSeq}, newest first):`);
+        for (const line of lines) situation.push(line);
+        if (taken < reversed.length) {
+          situation.push(`- ${reversed.length - taken} further wake event${reversed.length - taken === 1 ? '' : 's'} not shown`
+            + ` (this block is bounded by ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
+            + ' read them with baton deployment wakes-since)');
         }
       }
     }

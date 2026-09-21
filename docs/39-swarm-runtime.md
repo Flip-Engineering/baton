@@ -323,6 +323,18 @@ this verb.
 
 **Incarnation changes wake too (#306, 2026-09-18).** `incarnation_changed` is a deployment-scope wake class keyed on `host.reincarnated {from: {incarnation, commit}, to: {incarnation, commit}, predecessorExited}`; it is not terminal — the watcher's act is to re-read the view, because the rows and the attachment it held came from the predecessor incarnation. The handoff's own rows (`host.reincarnation_requested`, `host.successor_started`, `host.successor_published`, `host.publication_withdrawn`, `host.reincarnation_failed`) are durable and readable on the deployment ledger like the #351 stop rows.
 
+**A resume-from successor receives wake events in its brief (#529, 2026-09-20).** When a seat is
+recruited with `--resume-from`, the brief's `## Swarm situation` section carries a
+"Recent wake events" block listing the swarm-scoped wake events that occurred since the
+predecessor's last checkpoint seq. Each line names the wake class, ledger seq, timestamp, and
+the participant the event concerns. The block uses the same `wakeClassFor` derivation the wake
+stream uses (the `WAKE_CLASS_TABLE` in `wake-stream.mjs`), filtered to events whose `swarmId`
+matches the seat's swarm, and bounded by the situation byte budget (`brief.situation.bytes`),
+newest first with the remainder counted. A first recruit (no predecessor) carries no wake events
+block — its situation section already shows the current fold state. The mechanism is the same as
+parked guidance (#337): durable ledger rows composed at recruitment time, received by the seat
+without any verb. See `docs/54-native-wake.md` for the full design.
+
 ### A stop that cannot converge names its wait (issue #265, 2026-09-14)
 
 `swarm stop`, a Run stop and the deployment drain poll the same convergence predicates until a
