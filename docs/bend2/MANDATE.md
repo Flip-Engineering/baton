@@ -57,6 +57,14 @@ split below is the mandate, not an assignment list.
   contribution lands red-first, through review and integrate, never by hand; orchestration
   gives a seat whole scope and full authority, never a slice; prose is plain technical English.
   Each development law traces to the document or ruling it comes from.
+- Approval. No law is written into `laws.bend` as law until the operator has approved it. The
+  laws pillar delivers its candidates as a document on the branch
+  (`docs/bend2/laws-proposed.md`): one row per candidate law, its kind (runtime or
+  development), its statement, and its trace. The root presents that document to the operator;
+  the operator approves, edits, or rejects each row; only approved rows enter `laws.bend`, each
+  carrying the operator's decision. The same applies to the baton2 architecture's deletions and
+  merges (part 2): they are presented to the operator for approval before the rewrite plan
+  builds on them.
 
 ### 4. Rewrite plan
 - The end state is a Baton written entirely in Bend2: no JavaScript, no Node runtime, no
