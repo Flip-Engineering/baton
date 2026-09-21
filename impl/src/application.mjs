@@ -1046,6 +1046,19 @@ function selectExactRouteCard(routeCards, route) {
   return matches.length === 1 ? { name: matches[0][0], card: matches[0][1] } : null;
 }
 
+/** Issue #408: the canonical evidence-search operation's OWN validator (evidence-search.mjs) is
+ * the field contract, and this is the ONE mapping from its refusal to the application's typed
+ * code. The dispatch-time validator and the `evidence.search` port both call it, so an embedded
+ * caller, the Web envelope and the MCP tool refuse with the same code, the same field and the
+ * same expectation — a search is never validated by two different contracts. */
+function normalizeEvidenceSearchFilters(args) {
+  try {
+    return validateEvidenceSearchArgs(args);
+  } catch (cause) {
+    throw applicationError(cause.message, 'application_evidence_search_invalid', cause.detail ?? null);
+  }
+}
+
 export function validateApplicationCommandArgs(name, args) {
   if (Object.hasOwn(SWARM_COMMAND_DEFINITIONS, name)) return validateSwarmCommand(name, args);
   const definition = APPLICATION_COMMAND_DEFINITIONS[name];
@@ -1246,11 +1259,7 @@ export function validateApplicationCommandArgs(name, args) {
   // validates through this function, and mcp-northbound collapses the same refusal into
   // invalid_run_command. One contract, decided here for every surface.
   if (name === 'evidence.search') {
-    try {
-      validateEvidenceSearchArgs(args);
-    } catch (cause) {
-      throw applicationError(cause.message, 'application_evidence_search_invalid', cause.detail ?? null);
-    }
+    normalizeEvidenceSearchFilters(args);
     return true;
   }
   // #317 (docs/50): the services.list field contract is the canonical operation's OWN validator
@@ -2335,10 +2344,27 @@ export class BatonApplication {
   /** The deployment-wide evidence search (#312): knowledge AND contributions, filtered by swarm,
    * participant, kind, path and free text, cursored by the ledger's own seq — the one operation the
    * CLI, the MCP tool and the embedded port all serve. The participant bridge keeps its own
-   * membership-bound lane (SwarmRuntime), because a bridge token IS swarm-scoped. */
-  evidenceSearch(args) {
+   * membership-bound lane (SwarmRuntime), because a bridge token IS swarm-scoped.
+   *
+   * Issue #408: this read passes the same gates its sibling ports pass — the field contract is the
+   * canonical operation's own validator (one refusal mapping, shared with the dispatch-time
+   * validator), the principal is validated, and the authorization seam decides — instead of the raw
+   * args reaching the search with neither a principal nor an authorization. The reach is
+   * deployment-wide (no run scope), so the authorization names no run and carries the filters'
+   * bounded digest in its subject. */
+  async evidenceSearch(rawArgs, rawPrincipal) {
     this._assertOpen();
-    return searchDeploymentEvidence(this.driver.coordination, args);
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'evidence search principal');
+    const filters = normalizeEvidenceSearchFilters(rawArgs);
+    await this._authorize('evidence.search', principal, null, {
+      operation: 'evidence.search',
+      swarmId: filters.swarmId, participantId: filters.participantId, kind: filters.kind,
+      afterSeq: filters.afterSeq,
+      pathDigest: filters.path === null ? null : digest(filters.path),
+      queryDigest: filters.query === null ? null : digest(filters.query),
+    });
+    return searchDeploymentEvidence(this.driver.coordination, filters);
   }
 
   /** #317 (docs/50): the configured provider services — the deployment's authority when one is
@@ -8132,7 +8158,9 @@ export class BatonApplication {
     // a scope, so the deployment dispatch serves it here instead of the swarm runtime's
     // single-swarm knowledge lane — which refuses a request that names no swarm at all, leaving the
     // deployment-wide form (the CLI's default, the MCP tool's optional swarmId) unreachable.
-    if (name === 'evidence.search') return this.evidenceSearch(args);
+    // Issue #408: the port carries the caller's normalized principal, so the read draws the same
+    // principal validation and authorization every sibling branch below threads.
+    if (name === 'evidence.search') return this.evidenceSearch(args, principal);
     if (name === 'services.list') return this.servicesList(args);
     if (name === 'run.message.send') return this.messageSend(args, principal);
     if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
