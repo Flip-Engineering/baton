@@ -1822,6 +1822,10 @@
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
       "reason": "#87"
+    },
+    {
+      "key": "test/issue408-evidence-search-gates.test.mjs :: 408-d: a forged principal refuses before the seam decides",
+      "reason": "#535"
     }
   ],
   "converged": [
