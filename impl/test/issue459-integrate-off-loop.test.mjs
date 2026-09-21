@@ -174,7 +174,7 @@ async function world(t, { gate = {} } = {}) {
   // host may well be saturated). `blockVerifyBudget` fills the lane when a row wants it taken.
   const G = 1024 ** 3;
   const hostCapacity = new HostCapacityAuthority({
-    root: capacityRoot, residentId: 'issue459-resident', pollMs: 10, waitMs: 1_500,
+    root: capacityRoot, residentId: 'issue459-resident', pollMs: 10,
     observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 0 }),
   });
   const runtime = new SwarmRuntime({
@@ -427,44 +427,39 @@ function blockVerifyBudget(root, t, holder = 'seat-busy') {
   return holder;
 }
 
-test('459f: a gate run that cannot take the host verify lease refuses integrate_gates_busy', needsGit, async (t) => {
+test('459f: a gate run behind the host verify lease waits in the queue and lands once the lease frees — never refused for waiting (#541)', needsGit, async (t) => {
   // The landing's gate run honours the operator bypass (BATON_HOST_CAPACITY_DISABLED=1) exactly as
   // a seat's suite does — under it nothing is acquired and nothing can be busy. This row pins the
-  // STAGED authority's refusal, so the ambient bypass a parallel gate runner pins must not win here.
+  // STAGED authority's queue, so the ambient bypass a parallel gate runner pins must not win here.
   const bypass = process.env.BATON_HOST_CAPACITY_DISABLED;
   delete process.env.BATON_HOST_CAPACITY_DISABLED;
   t.after(() => { if (bypass !== undefined) process.env.BATON_HOST_CAPACITY_DISABLED = bypass; });
   const w = await world(t, { gate: { sleepMs: 0, green: true } });
-  // A host whose verdict lane is already taken, with one request QUEUED ahead of anything this
-  // landing asks for: the wait behind that request is what the refusal names.
+  // A host whose verdict lane is already taken: the landing queues behind it, visibly, and no gate
+  // run is spawned until the lane frees.
   blockVerifyBudget(w.capacityRoot, t, 'participant:swarm-wave15-20260918:seat-busy');
-  const HOLDER_AHEAD = 'participant:swarm-wave15-20260918:seat-queued';
-  mkdirSync(join(w.capacityRoot, 'queue'), { recursive: true, mode: 0o700 });
-  const queued = join(w.capacityRoot, 'queue',
-    `queue-${new Date(Date.now() - 60_000).toISOString()}-cccccccccccccccccccccccccccccccc.json`);
-  writeFileSync(queued, `${JSON.stringify({
-    schemaVersion: 1, kind: 'verify', holder: HOLDER_AHEAD,
-    nonce: 'cccccccccccccccccccccccccccccccc', pid: process.pid,
-    residentId: 'issue459-queued', enqueuedAt: new Date(Date.now() - 60_000).toISOString(),
-  })}\n`, { mode: 0o600 });
-  t.after(() => rmSync(queued, { force: true }));
+  const nonce = createHash('sha256').update(`459:${process.pid}:${w.capacityRoot}`).digest('hex').slice(0, 32);
+  const blockerPath = join(w.capacityRoot, 'leases', `lease-verify-${nonce}.json`);
   const headBefore = git(w.repo, 'rev-parse', 'master');
 
-  const error = await w.integration().then(() => null, (thrown) => thrown);
+  const landing = w.integration();
+  const queueEntries = () => (existsSync(join(w.capacityRoot, 'queue'))
+    ? readdirSync(join(w.capacityRoot, 'queue')).filter((name) => name.endsWith('.json')) : []);
+  // The landing prepares its scratch checkout, then asks the authority and waits as one visible
+  // queue entry. Nothing is spawned and nothing moves while the lane is held.
+  while (queueEntries().length === 0) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(queueEntries().length, 1, 'the landing waits as one visible queue entry');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(existsSync(w.markerPath), false, 'no gate run was spawned while the lane was held');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved while waiting');
 
-  assert.ok(error, 'the landing refuses instead of blocking on the lease');
-  assert.equal(error.code, 'integrate_gates_busy', 'typed, in the family\'s ONE closed set');
-  assert.equal(error.detail.leaseKind, 'verify');
-  assert.equal(error.detail.holder, HOLDER_AHEAD, 'the refusal names the holder the wait was behind');
-  assert.equal(typeof error.detail.holderId, 'string', 'and the holder this gate run would have taken');
-  assert.equal(typeof error.detail.waitMs, 'number', 'with the bound it spent');
-  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
-  assert.equal(existsSync(w.markerPath), false, 'no gate run was ever spawned');
-  assert.deepEqual(w.leftoverCheckouts(), [], 'and the scratch checkout is gone');
-  const failures = w.failureRows();
-  assert.equal(failures.length, 1, 'the refusal is durable for the caller that is gone');
-  assert.equal(failures[0].code, 'integrate_gates_busy');
-  assert.equal(failures[0].detail.holder, HOLDER_AHEAD);
+  // The lane frees; the queued landing is admitted, runs its gates, and lands.
+  rmSync(blockerPath, { force: true });
+  const answer = await landing;
+  assert.equal(answer.integration.dryRun, false);
+  assert.equal(git(w.repo, 'rev-parse', 'master'), answer.integration.squashSha, 'the landing lands once admitted');
+  assert.equal(existsSync(w.markerPath), true, 'the gate run ran');
+  assert.deepEqual(w.failureRows(), [], 'nothing was refused');
 });
 
 // ── (g) a gate run killed at its deadline leaves a failure row and no scratch ────────────────────

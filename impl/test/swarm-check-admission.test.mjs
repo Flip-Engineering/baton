@@ -99,9 +99,10 @@ test('#269 item 2: a check that waits on the host authority reads queued on the 
   const gate = new Promise((resolve) => { releaseCheck = resolve; });
   const hostCapacity = {
     observeNow: () => ({
+      // #541: load is not a shortfall dimension; a check waits on the budget another verdict holds.
       capacity: { saturated: true, cores: 4, load1m: 9, memoryTight: false,
         suiteCores: 3, suiteBytes: 100, coreShareBytes: 10, usableCores: 3, usableBytes: 1000, availableBytes: 500 },
-      used: { cores: 0, bytes: 0, leases: { verify: 0, worker: 0 } },
+      used: { cores: 3, bytes: 100, leases: { verify: 1, worker: 0 } },
       queue: [{ position: 1, ahead: 0, kind: 'verify', holder: 'check:c1:k1', residentId: 'r', enqueuedAt: 't' }],
     }),
   };
@@ -124,7 +125,7 @@ test('#269 item 2: a check that waits on the host authority reads queued on the 
     assert.equal(admission.position, 1);
     assert.equal(admission.ahead, 0);
     assert.deepEqual(admission.shortfall,
-      { dimension: 'load', observed: 9, required: 4, unit: 'load1m' });
+      { dimension: 'budget', observed: 0, required: 3, unit: 'cores' });
     const queued = waiting.attention.find((row) => row.kind === 'check_queued');
     assert.ok(queued, 'the waiting check mints a check_queued attention row');
     assert.equal(queued.contributionId, 'c1');

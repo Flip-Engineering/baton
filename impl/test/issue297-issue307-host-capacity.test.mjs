@@ -74,12 +74,12 @@ test('HC-1: every host admission threshold is a derivation from the measurement,
     'the derivation never collapses below one lane');
 });
 
-test('HC-2: two residents share one host lease directory; a worker holds no slot, only a saturated host queues (FIFO, visible position, in-order drainage), and a verify charges the suite budget', async (t) => {
+test('HC-2: two residents share one host lease directory; a worker holds no slot and is admitted at any load (#541), and a verify charges the suite budget (FIFO, visible position, in-order drainage)', async (t) => {
   const root = leaseRoot(t);
   const host = { load1m: 1 };
   const observation = () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: host.load1m });
   const mk = (residentId) => new HostCapacityAuthority({
-    root, residentId, observation, pollMs: 15, waitMs: 5_000,
+    root, residentId, observation, pollMs: 15,
   });
   const first = mk('deployment-a');
   const second = mk('deployment-b');
@@ -95,29 +95,17 @@ test('HC-2: two residents share one host lease directory; a worker holds no slot
   assert.deepEqual({ cores: shared.used.cores, bytes: shared.used.bytes }, { cores: 0, bytes: 0 }, 'a worker charges no budget');
   assert.equal(shared.roomForWorker, true, 'a sixth worker has room on a 4-core host');
 
-  // Only the host's own load reading queues a worker; the queued row names that dimension.
+  // #541: load is not an admission condition for a worker. At load 9 on 4 cores a sixth
+  // worker is admitted at once, and nothing enters the queue.
   host.load1m = 9;
   let queuedRow = null;
-  const queuedAcquire = second.acquire('worker', {
+  const admitted = await second.acquire('worker', {
     holder: 'p6', onQueued: (row) => { queuedRow = row; },
   });
-  await new Promise((resolve) => { setTimeout(resolve, 150); });
-  assert.deepEqual(queuedRow, {
-    position: 1, ahead: 0, running: 0, workerLeases: 5,
-    shortfall: { dimension: 'load', observed: 9, required: 4, unit: 'load1m' },
-  },
-    'the queued request reports its visible place in the host queue and the load it waits on');
-
-  const snapshot = await second.observe();
-  assert.equal(snapshot.queue.length, 1, 'the queue is visible to every resident');
-  assert.equal(snapshot.queue[0].position, 1);
-  assert.equal(snapshot.queue[0].ahead, 0);
-  assert.equal(snapshot.queue[0].holder, 'p6');
-
-  // FIFO drainage: the load falls, and exactly the queued head is admitted.
+  assert.equal(queuedRow, null, 'a worker never queues on load');
+  assert.equal(admitted.token.holder, 'p6');
+  assert.equal((await first.observe()).queue.length, 0, 'the queue stays empty');
   host.load1m = 1;
-  const admitted = await queuedAcquire;
-  assert.equal((await first.observe()).queue.length, 0, 'the drained head left the queue');
 
   // A verify charges the whole verdict budget: it admits beside six workers (they hold
   // nothing), a second verify queues behind it on budget, a worker still admits beside it,
@@ -138,11 +126,11 @@ test('HC-2: two residents share one host lease directory; a worker holds no slot
   assert.deepEqual((await first.observe()).used.leases, { verify: 0, worker: 0 });
 });
 
-test('HC-3: a proved-dead holder\'s lease returns to the budget, and a bounded wait refuses pre-effect naming the queue', async (t) => {
+test('HC-3: a proved-dead holder\'s lease returns to the budget', async (t) => {
   const root = leaseRoot(t);
   const observation = () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 });
   const authority = new HostCapacityAuthority({
-    root, residentId: 'resident-live', observation, pollMs: 15, waitMs: 200,
+    root, residentId: 'resident-live', observation, pollMs: 15,
   });
   const deadLease = {
     schemaVersion: 1, kind: 'worker', holder: 'p-dead', nonce: '0'.repeat(32), pid: 2_147_483_647,
@@ -158,23 +146,6 @@ test('HC-3: a proved-dead holder\'s lease returns to the budget, and a bounded w
   assert.equal(await authority.release({ kind: 'worker', nonce: 'f'.repeat(32), residentId: 'resident-live', holder: 'x', pid: 1 }), false,
     'a release naming a lease this resident does not own is a no-op');
 
-  // A saturated host queues; the bounded wait ends in a typed pre-effect refusal with the facts.
-  const loaded = new HostCapacityAuthority({
-    root, residentId: 'resident-loaded',
-    observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 9 }),
-    pollMs: 15, waitMs: 150,
-  });
-  let queued = null;
-  await assert.rejects(
-    loaded.acquire('verify', { holder: 'check-x', onQueued: (row) => { queued = row; } }),
-    (error) => error.code === 'host_capacity_queue_timeout' && error.queuePosition === 1,
-  );
-  assert.deepEqual(queued, {
-    position: 1, ahead: 0, running: 0, workerLeases: 0,
-    // #329: a saturated host names load as the dimension, with the observed and required numbers.
-    shortfall: { dimension: 'load', observed: 9, required: 4, unit: 'load1m' },
-  },
-    'the typed queued row is reported even when the wait is refused at the deadline');
 });
 
 // ── #297.2: recruit reports a typed admission row ───────────────────────────────────────────────
@@ -208,12 +179,12 @@ function swarmFixture(t, { hostCapacity = null } = {}) {
   return { store, runtime, workers, call };
 }
 
-test('HC-4: swarm.recruit reports a typed admission row; a recruit holds no slot, and a seat the load queues records the durable queue row and starts only when admitted', async (t) => {
+test('HC-4: swarm.recruit reports a typed admission row; a recruit holds no slot and is admitted at any load (#541)', async (t) => {
   const root = leaseRoot(t);
   const host = { load1m: 1 };
   const observation = () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: host.load1m });
   const authority = new HostCapacityAuthority({
-    root, residentId: 'deployment-x', observation, pollMs: 15, waitMs: 5_000,
+    root, residentId: 'deployment-x', observation, pollMs: 15,
   });
   const f = swarmFixture(t, { hostCapacity: authority });
   await f.call('create', { purpose: 'Recruit by host capacity' });
@@ -228,29 +199,15 @@ test('HC-4: swarm.recruit reports a typed admission row; a recruit holds no slot
   await f.call('recruit', { participantId: 'p4', objective: 'Four' });
   assert.equal(f.workers.length, 4, 'four seats on four cores: no derived slot count refused one');
 
-  // Only the host's load queues a recruit; the queued row is durable and the seat does not start.
+  // #541: load is not an admission condition for a recruit. At load 9 the fifth seat starts at
+  // once, and no queued row is ever recorded.
   host.load1m = 9;
-  const queuedRecruit = f.call('recruit', { participantId: 'p5', objective: 'Five' });
-  await new Promise((resolve) => { setTimeout(resolve, 150); });
-  assert.equal(f.workers.length, 4, 'the queued seat has NOT started starved work');
+  const fifth = await f.call('recruit', { participantId: 'p5', objective: 'Five' });
+  assert.deepEqual(fifth.admission, { state: 'admitted', authority: 'host' });
+  assert.equal(f.workers.length, 5, 'the seat started at once');
   const queuedRows = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
     && event.payload.kind === 'swarm.admission_queued');
-  assert.equal(queuedRows.length, 1, 'the queued recruit recorded exactly one durable queued row');
-  assert.equal(queuedRows[0].payload.position, 1);
-  assert.equal(queuedRows[0].payload.ahead, 0);
-  assert.equal(queuedRows[0].payload.participantId, 'p5');
-  assert.equal(queuedRows[0].payload.leaseKind, 'worker');
-  assert.equal(queuedRows[0].payload.shortfall.dimension, 'load');
-
-  host.load1m = 1;
-  const fifth = await queuedRecruit;
-  assert.equal(fifth.admission.state, 'admitted');
-  assert.equal(fifth.admission.position, 1, 'the drained recruit reports admitted with its wait facts');
-  assert.ok('queuedAt' in fifth.admission, 'the drained recruit carries its queue facts');
-  const admittedRows = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
-    && event.payload.kind === 'swarm.admission_admitted');
-  assert.equal(admittedRows.length, 1, 'the queue-to-admit timeline is durable');
-  assert.equal(f.workers.length, 5, 'the queued seat started only when the host admitted it');
+  assert.equal(queuedRows.length, 0, 'no recruit queued on load');
 });
 
 test('HC-5: without a host authority the runtime is honestly unwired — admission names it, nothing queues', async (t) => {
@@ -484,7 +441,7 @@ test('HC-11 (#329): darwin available memory derives from vm_stat (free + inactiv
   assert.equal(capped, 10, 'available never exceeds total');
 });
 
-test('HC-12 (#329, revised 2026-09-18): a staged observation names its own numbers; a verify is judged against the suite share, a worker against load alone and never against a budget', () => {
+test('HC-12 (#329, revised #541): a staged observation names its own numbers; a verify is judged against the suite share, a worker against nothing', () => {
   const staged = hostCapacityObservation({ cores: 10, totalBytes: 16 * G, freeBytes: 15 * G, load1m: 1 });
   assert.equal(staged.availableBytes, 15 * G, 'a staged observation without availableBytes reads it as freeBytes — never the real machine');
   // The captured Mac: 0.10 GB free, ~3.9 GB available, 10 cores / 16 GB.
@@ -500,7 +457,7 @@ test('HC-12 (#329, revised 2026-09-18): a staged observation names its own numbe
   assert.deepEqual(shortfall, { dimension: 'memory', observed: Math.floor(3.9 * G), required: mac.suiteBytes, unit: 'bytes' });
   assert.equal(hostCapacityShortfall('worker', mac, none), null, 'a worker fits');
   const loaded = deriveHostCapacity(hostCapacityObservation({ cores: 10, totalBytes: 16 * G, freeBytes: 15 * G, load1m: 12 }));
-  assert.equal(hostCapacityShortfall('worker', loaded, none).dimension, 'load');
+  assert.equal(hostCapacityShortfall('worker', loaded, none), null, '#541: load is not a shortfall dimension');
   assert.equal(hostCapacityShortfall('worker', mac, { cores: 0, bytes: 0, leases: { verify: 0, worker: 9 } }), null,
     'nine live workers on a 10-core host hold no budget: the tenth fits');
   const verifyHeld = { cores: mac.suiteCores, bytes: mac.suiteBytes, leases: { verify: 1, worker: 0 } };
@@ -512,68 +469,3 @@ test('HC-12 (#329, revised 2026-09-18): a staged observation names its own numbe
     'a second verify waits on the cores the first verdict holds — the one budget that remains');
 });
 
-test('HC-13 (#329): the authority admits a worker on the captured Mac while a verify queues, and the timeout names the dimension, the numbers and the bypass', async (t) => {
-  const root = leaseRoot(t);
-  const observation = () => ({ cores: 10, totalBytes: 16 * G, freeBytes: Math.floor(0.1 * G), availableBytes: Math.floor(3.9 * G), load1m: 1.5 });
-  const authority = new HostCapacityAuthority({ root, residentId: 'mac', observation, pollMs: 10, waitMs: 80 });
-  const worker = await authority.acquire('worker', { holder: 'participant:s:p1' });
-  assert.ok(worker.token, 'a worker lease is admitted with ~4 GB available');
-  const observed = await authority.observe();
-  assert.equal(observed.roomForWorker, true);
-  assert.equal(observed.roomForVerify, false);
-  let queued = null;
-  await assert.rejects(
-    authority.acquire('verify', { holder: 'verdict', onQueued: (row) => { queued = row; } }),
-    (error) => {
-      assert.equal(error.code, 'host_capacity_queue_timeout');
-      assert.equal(error.leaseKind, 'verify');
-      assert.equal(error.shortfall.dimension, 'memory');
-      assert.equal(error.shortfall.observed, Math.floor(3.9 * G));
-      assert.equal(error.shortfall.required, 9 * Math.floor((16 * G) / 10));
-      assert.equal(error.bypass, HOST_CAPACITY_BYPASS);
-      assert.match(error.message, /waiting on memory: \d+ bytes observed, \d+ required/u);
-      assert.match(error.message, /BATON_HOST_CAPACITY_DISABLED=1/u);
-      return true;
-    },
-  );
-  assert.equal(queued.shortfall.dimension, 'memory', 'the queued row already names the dimension');
-  assert.equal(authority.observeNow().queue.length, 0,
-    'a spent wait withdraws its own queue record — no phantom entry survives the refusal (read without the sweep)');
-  authority.release(worker.token);
-});
-
-test('HC-14 (#329): a recruit the host cannot admit is visible on swarm.view — recruit_queued while waiting, recruit_queue_timeout after, with the seat, the dimension and the bypass — and both ride the wake classes', async (t) => {
-  assert.ok(WAKE_CLASSES.includes('queued'), 'the queue-to-admit timeline is a wake class');
-  const root = leaseRoot(t);
-  // A saturated host (load 9 on 4 cores): every recruit queues on load and times out. Memory
-  // never gates a worker — it holds no derived share.
-  const observation = () => ({ cores: 4, totalBytes: 8 * G, freeBytes: 1 * G, availableBytes: 1 * G, load1m: 9 });
-  const authority = new HostCapacityAuthority({ root, residentId: 'tight', observation, pollMs: 10, waitMs: 120 });
-  const f = swarmFixture(t, { hostCapacity: authority });
-  await f.call('create', { purpose: 'Recruit on a tight host' });
-  const pending = f.call('recruit', { participantId: 'starved', objective: 'Cannot start' });
-  await new Promise((resolve) => { setTimeout(resolve, 40); });
-  const waiting = await f.call('view', {});
-  const queuedRow = waiting.attention.find((row) => row.kind === 'recruit_queued');
-  assert.ok(queuedRow, 'while queued, the view names the seat that waits');
-  assert.equal(queuedRow.participantId, 'starved');
-  assert.equal(queuedRow.shortfall.dimension, 'load');
-  assert.equal(waiting.admission.find((row) => row.participantId === 'starved').state, 'queued');
-  await assert.rejects(pending, (error) => error.code === 'host_capacity_queue_timeout');
-  assert.equal(authority.observeNow().queue.length, 0, 'the refused recruit left no queue record behind');
-  const timeoutRows = f.store.eventsView().filter((event) => event.kind === 'driver.recorded' && event.payload.kind === 'swarm.admission_timeout');
-  assert.equal(timeoutRows.length, 1, 'the spent wait is recorded against the seat');
-  assert.equal(timeoutRows[0].payload.participantId, 'starved');
-  assert.equal(timeoutRows[0].payload.shortfall.dimension, 'load');
-  assert.equal(timeoutRows[0].payload.bypass, HOST_CAPACITY_BYPASS);
-  const after = await f.call('view', {});
-  const timeoutRow = after.attention.find((row) => row.kind === 'recruit_queue_timeout');
-  assert.ok(timeoutRow, 'after the wait, the view says the host refused this seat');
-  assert.equal(timeoutRow.participantId, 'starved');
-  assert.equal(timeoutRow.code, 'host_capacity_queue_timeout');
-  assert.equal(timeoutRow.shortfall.dimension, 'load');
-  assert.equal(timeoutRow.bypass, HOST_CAPACITY_BYPASS);
-  assert.deepEqual(timeoutRow.next, { command: 'swarm.recruit', swarmId: 'baton', participantId: 'starved' });
-  assert.equal(after.admission.find((row) => row.participantId === 'starved').state, 'timed_out');
-  assert.equal(f.workers.length, 0, 'no starved work ever started');
-});

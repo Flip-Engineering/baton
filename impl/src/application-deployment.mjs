@@ -597,9 +597,8 @@ function normalizeCapacity(value) {
   if (value.hostCapacity !== undefined) {
     const raw = value.hostCapacity;
     if (!record(raw)) throw deploymentError('advanced capacity hostCapacity must be one object');
-    closed(raw, ['observation', 'pollMs', 'root', 'waitMs'], 'advanced capacity hostCapacity');
+    closed(raw, ['observation', 'pollMs', 'root'], 'advanced capacity hostCapacity');
     if (raw.root !== undefined && (typeof raw.root !== 'string' || raw.root.length === 0)) throw deploymentError('advanced capacity hostCapacity.root must be one non-empty string');
-    if (raw.waitMs !== undefined && (!Number.isSafeInteger(raw.waitMs) || raw.waitMs <= 0)) throw deploymentError('advanced capacity hostCapacity.waitMs must be a positive safe integer');
     if (raw.pollMs !== undefined && (!Number.isSafeInteger(raw.pollMs) || raw.pollMs <= 0)) throw deploymentError('advanced capacity hostCapacity.pollMs must be a positive safe integer');
     if (raw.observation !== undefined && typeof raw.observation !== 'function') throw deploymentError('advanced capacity hostCapacity.observation must be a function when provided');
     hostCapacity = Object.freeze({ ...raw });
@@ -6561,7 +6560,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     || process.env.BATON_HOST_CAPACITY_DISABLED === '1';
   const hostCapacityAuthority = hostAdmissionDisabled ? null : new HostCapacityAuthority({
     ...(capacity?.hostCapacity?.root ? { root: capacity.hostCapacity.root } : {}),
-    ...(capacity?.hostCapacity?.waitMs !== undefined ? { waitMs: capacity.hostCapacity.waitMs } : {}),
     ...(capacity?.hostCapacity?.pollMs !== undefined ? { pollMs: capacity.hostCapacity.pollMs } : {}),
     ...(capacity?.hostCapacity?.observation !== undefined ? { observation: capacity.hostCapacity.observation } : {}),
     residentId: `deployment-${repository.repoId}`,

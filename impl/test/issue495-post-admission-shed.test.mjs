@@ -75,7 +75,7 @@ function leaseFiles(root) {
 function authority(root, host, extra = {}) {
   return new HostCapacityAuthority({
     root, residentId: 'deployment-s495', observation: stagedObservation(host),
-    now: () => NOW, pollMs: 10, waitMs: 200, ...extra,
+    now: () => NOW, pollMs: 10, ...extra,
   });
 }
 
@@ -277,7 +277,7 @@ export const createBatonDeployment = () => openBaton({ repo: process.cwd(), adva
   verification: { command: 'node', arguments: ['--test'] },
   resident: { env: ${JSON.stringify(env)}, home: ${JSON.stringify(home)}, webDrainMs: 2_000, sessionTtlMs: 60_000 },
   capacity: { hostCapacity: {
-    root: ${JSON.stringify(leaseRootPath)}, pollMs: 25, waitMs: 200,
+    root: ${JSON.stringify(leaseRootPath)}, pollMs: 25,
     observation: ${stagedHostLiteral(EXHAUSTED_BYTES)},
   } },
 } });

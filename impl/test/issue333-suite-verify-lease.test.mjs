@@ -23,8 +23,8 @@ import {
   deriveHostCapacity, hostCapacityObservation, HostCapacityAuthority, projectParticipantVerify,
 } from '../src/host-capacity.mjs';
 import {
-  acquireSuiteVerifyLease, DEFAULT_SUITE_LEASE_WAIT_MS, formatSuiteQueueRow, suiteLeaseDisabled,
-  suiteLeaseNested, SUITE_VERIFY_LEASE_ENV, suiteLeaseWaitMs, suiteQueueTimeoutDecision,
+  acquireSuiteVerifyLease, formatSuiteDegradedWarning, formatSuiteQueueRow, suiteLeaseDisabled,
+  suiteLeaseNested, SUITE_VERIFY_LEASE_ENV,
 } from '../scripts/suite-host-lease.mjs';
 
 const G = 1024 ** 3;
@@ -37,42 +37,60 @@ function leaseRoot(t) {
   return root;
 }
 
-// A host with no room for a verify lease: saturated, so the queued row is deterministic
-// regardless of the machine the suite runs on.
-const saturated = () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 9 });
+// A host with no room for a verify lease: another resident's verdict holds the whole budget,
+// so the queued row is deterministic regardless of the machine the suite runs on. #541: the
+// wait is not bounded — the runner waits behind that verdict and is admitted when it releases.
+const roomy = () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 9 });
 
-test('S333-1: a staged authority with no room queues the suite lease and prints the #329 row', async (t) => {
+test('S333-1: a staged authority with no room queues the suite lease, prints the #329 row, and admits it when the verdict ahead releases', async (t) => {
   const root = leaseRoot(t);
-  const authority = new HostCapacityAuthority({
-    root, residentId: 's333-suite', observation: saturated, pollMs: 10, waitMs: 120,
-  });
+  const blocker = new HostCapacityAuthority({ root, residentId: 's333-blocker', observation: roomy, pollMs: 10 });
+  const held = await blocker.acquire('verify', { holder: 'other-verdict' });
+  const authority = new HostCapacityAuthority({ root, residentId: 's333-suite', observation: roomy, pollMs: 10 });
   const printed = [];
   let queued = null;
-  await assert.rejects(
-    acquireSuiteVerifyLease({
-      // A bare env: the unit stages the authority itself, so no ambient suite bypass may win.
-      env: {},
-      authority, holder: 'run-suite:1',
-      log: (line) => { printed.push(line); },
-      onQueued: (row) => { queued = row; },
-    }),
-    (error) => error.code === 'host_capacity_queue_timeout',
-  );
+  const pending = acquireSuiteVerifyLease({
+    // A bare env: the unit stages the authority itself, so no ambient suite bypass may win.
+    env: {},
+    authority, holder: 'run-suite:1',
+    log: (line) => { printed.push(line); },
+    onQueued: (row) => { queued = row; },
+  });
+  await new Promise((resolveWait) => { setTimeout(resolveWait, 120); });
   assert.deepEqual(queued, {
-    position: 1, ahead: 0, running: 0, workerLeases: 0,
-    shortfall: { dimension: 'load', observed: 9, required: 4, unit: 'load1m' },
-  }, 'the queued row is the #329 shape: position, ahead, shortfall with the numbers');
+    position: 1, ahead: 0, running: 1, workerLeases: 0,
+    shortfall: { dimension: 'budget', observed: 0, required: 3, unit: 'cores' },
+  }, 'the queued row is the #329 shape: position, ahead, shortfall with the numbers — load 9 on 4 cores is not a dimension (#541)');
   assert.equal(printed.length, 1, 'the row is printed once, while waiting');
   assert.equal(printed[0], formatSuiteQueueRow(queued), 'the printed line is the formatter\'s row');
   assert.equal(formatSuiteQueueRow({ position: 2, ahead: 1, shortfall: null }),
     'baton test runner: host capacity queued this verify request at position 2 (1 ahead) (operator bypass: BATON_HOST_CAPACITY_DISABLED=1)');
-  assert.match(printed[0], /host capacity queued this verify request at position 1 \(0 ahead\)/u);
-  assert.match(printed[0], /waiting on load: 9 load1m observed, 4 required/u);
-  assert.match(printed[0], /BATON_HOST_CAPACITY_DISABLED=1/u);
-  assert.equal(readdirSync(join(root, 'queue')).filter((name) => name.endsWith('.json')).length, 0,
-    'a spent suite wait withdraws its own queue record');
-  assert.equal(readdirSync(join(root, 'leases')).filter((name) => name.endsWith('.json')).length, 0,
-    'a refused suite run holds no lease');
+  assert.match(printed[0], /waiting on budget: 0 cores observed, 3 required/u);
+  await blocker.release(held.token);
+  const lease = await pending;
+  assert.ok(lease.token, 'the suite lease is admitted when the verdict ahead releases — never refused for waiting');
+  assert.equal(lease.degraded, null);
+  assert.equal(await lease.release(), true);
+  assert.equal((await authority.observe()).queue.length, 0, 'the drained request left the queue');
+});
+
+test('S333-1b: a host that cannot fund a suite answers degraded at once — no wait, no queue row', async (t) => {
+  const root = leaseRoot(t);
+  // 4 cores / 32 GB: a suite is entitled to 3 shares (24 GB); 1 GB available cannot fund it.
+  const tight = () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 1 * G, load1m: 1 });
+  const authority = new HostCapacityAuthority({ root, residentId: 's333-tight', observation: tight, pollMs: 10 });
+  const printed = [];
+  const before = Date.now();
+  const lease = await acquireSuiteVerifyLease({
+    env: {}, authority, holder: 'run-suite:2', log: (line) => { printed.push(line); },
+  });
+  assert.ok(Date.now() - before < 1_000, 'the answer is immediate');
+  assert.equal(lease.token, null, 'no lease: the host cannot fund one');
+  assert.deepEqual(lease.degraded, { dimension: 'memory', observed: 1 * G, required: 24 * G, unit: 'bytes' });
+  assert.equal(printed.length, 0, 'nothing was queued, so no queue row printed');
+  assert.match(formatSuiteDegradedWarning(lease.degraded), /proceeding WITHOUT a host verify lease \(memory: /u);
+  assert.equal(await lease.release(), false, 'there is no lease to release');
+  assert.equal((await authority.observe()).queue.length, 0);
 });
 
 test('S333-2: the bypass never touches the lease directory', async (t) => {
@@ -103,19 +121,13 @@ test('S333-2: the bypass never touches the lease directory', async (t) => {
   assert.equal(nested.disabled, true);
   assert.equal(nested.nested, true);
   assert.equal(existsSync(untouched), false, 'a nested run touches no lease directory either');
-  assert.equal(suiteLeaseWaitMs({}), DEFAULT_SUITE_LEASE_WAIT_MS,
-    'the runner\'s own wait defaults short — verify leases are held for minutes, so a longer wait only delays the same decision');
-  assert.equal(suiteLeaseWaitMs({ BATON_HOST_CAPACITY_WAIT_MS: '60000' }), 60000,
-    'the operator extends the wait when queuing behind a known-finishing holder');
-  assert.equal(suiteLeaseWaitMs({ BATON_HOST_CAPACITY_WAIT_MS: 'soon' }), DEFAULT_SUITE_LEASE_WAIT_MS,
-    'an unparseable pin falls back to the default, never to unbounded');
 });
 
 test('S333-3: the participant-row derivation reads verify {state, position, ahead, holderAlive} from the holder name', async (t) => {
   const root = leaseRoot(t);
   const authority = new HostCapacityAuthority({
     root, residentId: 's333-deploy', observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 }),
-    pollMs: 10, waitMs: 5_000,
+    pollMs: 10,
   });
   const holder = 'participant:baton:seat1';
   assert.equal(await authority.observeParticipantVerify(holder), null,
@@ -133,7 +145,7 @@ test('S333-3: the participant-row derivation reads verify {state, position, ahea
   // other seat queues behind it with a visible place.
   const waiter = new HostCapacityAuthority({
     root, residentId: 's333-worker', observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 }),
-    pollMs: 10, waitMs: 5_000,
+    pollMs: 10,
   });
   const pending = waiter.acquire('verify', { holder: 'participant:baton:seat2' });
   await new Promise((resolve) => { setTimeout(resolve, 120); });
@@ -173,12 +185,12 @@ function runRunner(t, { file, env }) {
     child.once('error', (error) => resolveClose({ code: null, signal: null, error }));
     child.once('close', (code, signal) => resolveClose({ code, signal, error: null }));
   });
-  return { done: done.then((terminal) => ({ ...terminal, stdout, stderr })) };
+  return { done: done.then((terminal) => ({ ...terminal, stdout, stderr })), stderrSoFar: () => stderr };
 }
 
-test('S333-4: a staged authority with no room queues run-suite, which prints the row', async (t) => {
+test('S333-4: run-suite queues behind a live verdict, prints the row, and runs once the verdict releases (#541: never refused for waiting)', async (t) => {
   const root = leaseRoot(t);
-  blockVerifyBudget(root, t);
+  const blocker = blockVerifyBudget(root, t);
   const parent = mkdtempSync(join(tmpdir(), 'baton-s333-tmp-'));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
   const env = { ...process.env };
@@ -189,53 +201,35 @@ test('S333-4: a staged authority with no room queues run-suite, which prints the
   // #424: the suite child's parent token would nest the runner this test spawns as a top-level
   // one; drop it with the root marker.
   delete env[SUITE_VERIFY_LEASE_ENV];
-  const { done } = runRunner(t, { file: 'test/suite-verdict.test.mjs', env: {
-    ...env, BATON_HOST_CAPACITY_ROOT: root, BATON_HOST_CAPACITY_WAIT_MS: '1500',
-    BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: parent,
+  const { done, stderrSoFar } = runRunner(t, { file: 'test/suite-verdict.test.mjs', env: {
+    ...env, BATON_HOST_CAPACITY_ROOT: root, BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: parent,
   } });
+  // A host that can fund a suite queues behind the blocker and prints the row; a host that
+  // cannot fund one answers degraded at once (no queue). Either way nothing is refused.
+  const live = deriveHostCapacity(hostCapacityObservation());
+  const queuedRow = /host capacity queued this verify request at position 1 \(0 ahead\)/u;
+  const degradedRow = /proceeding WITHOUT a host verify lease/u;
+  while (!queuedRow.test(stderrSoFar()) && !degradedRow.test(stderrSoFar())) {
+    await new Promise((resolveWait) => { setTimeout(resolveWait, 25); });
+  }
+  if (!live.memoryTight) {
+    assert.match(stderrSoFar(), /waiting on budget: [\d.]+ cores observed/u,
+      'the row names the budget the runner waits on — never load (#541)');
+    // The verdict ahead releases; the runner is admitted and runs its lane.
+    rmSync(join(root, 'leases', `lease-verify-${blocker.nonce}.json`), { force: true });
+  }
   const terminal = await done;
   assert.equal(terminal.signal, null);
-  assert.match(terminal.stderr, /host capacity queued this verify request at position 1 \(0 ahead\)/u,
-    'the runner prints the queued row while it waits');
-  assert.match(terminal.stderr, /waiting on (budget|memory|load): [\d.]+ (cores|bytes|load1m) observed/u,
-    'the row names the dimension the runner waits on (load reads fractional)');
-  // The spent wait's outcome follows the live host's own gating dimension (the shortfall
-  // order is load, then memory, then budget): a host its own measurement gates refuses
-  // before lanes, while a host that cannot fund a suite's share runs degraded with a
-  // warning instead of bricking — both after printing the same queued row.
-  const live = deriveHostCapacity(hostCapacityObservation());
-  if (!live.saturated && live.memoryTight) {
-    assert.match(terminal.stderr, /waiting on memory/u);
-    assert.match(terminal.stderr, /proceeding WITHOUT a host verify lease/u,
-      'a standing memory limit degrades visibly instead of bricking the suite');
-    assert.match(terminal.stderr, /concurrent suites here will contend/u);
-    assert.equal(terminal.code, 0, 'the degraded run still judges its file');
-    assert.match(terminal.stdout, /^# file test\/suite-verdict\.test\.mjs/mu, 'the lane ran');
-  } else {
-    assert.equal(terminal.code, 1, 'a runner the host cannot admit refuses instead of running starved');
-    assert.match(terminal.stderr, /admission wait is spent/u, 'the spent wait names itself');
-    assert.doesNotMatch(terminal.stdout, /^# file /mu, 'no lane started: admission refuses pre-effect');
+  if (live.memoryTight) {
+    assert.match(terminal.stderr, degradedRow, 'a host that cannot fund a suite answered degraded at once');
+    assert.doesNotMatch(terminal.stderr, queuedRow, 'and never queued');
   }
+  assert.equal(terminal.code, 0, 'the run proceeded once admitted');
+  assert.match(terminal.stdout, /^# file test\/suite-verdict\.test\.mjs/mu, 'the lane ran');
+  assert.doesNotMatch(terminal.stderr, /admission wait is spent|refused at admission/u, 'nothing was refused for waiting');
   const queued = existsSync(join(root, 'queue'))
     ? readdirSync(join(root, 'queue')).filter((name) => name.endsWith('.json')) : [];
-  assert.equal(queued.length, 0, 'the spent wait withdrew its queue entry either way');
-  assert.equal(readdirSync(join(root, 'leases')).filter((name) => name.endsWith('.json')).length, 1,
-    'the run disturbed no other lease');
-});
-
-test('S333-8: the spent-wait decision refuses when waiting could help and degrades only on a standing memory limit', () => {
-  const timeout = (shortfall) => ({ code: 'host_capacity_queue_timeout', shortfall });
-  assert.equal(suiteQueueTimeoutDecision(timeout({ dimension: 'budget' })), 'refuse',
-    'another lease holds the lane: waiting can admit, so a spent wait refuses');
-  assert.equal(suiteQueueTimeoutDecision(timeout({ dimension: 'load' })), 'refuse',
-    'an oversubscribed host: waiting can admit, so a spent wait refuses');
-  assert.equal(suiteQueueTimeoutDecision(timeout({ dimension: 'memory' })), 'proceed-degraded',
-    'a host that cannot fund a suite: no wait would admit, so the run degrades visibly');
-  assert.equal(suiteQueueTimeoutDecision(timeout(null)), 'refuse', 'an unnamed shortfall fails closed');
-  assert.equal(suiteQueueTimeoutDecision(timeout(undefined)), 'refuse');
-  assert.equal(suiteQueueTimeoutDecision({ code: 'host_capacity_unavailable' }), 'refuse',
-    'only the queue-timeout refusal degrades');
-  assert.equal(suiteQueueTimeoutDecision(null), 'refuse');
+  assert.equal(queued.length, 0, 'the admitted request left the queue');
 });
 
 test('S333-5: a bypassed run-suite run never touches the lease directory', async (t) => {
@@ -267,8 +261,7 @@ test('S333-7: a nested runner stays unwired — the suite\'s self-checks never q
   const { done } = runRunner(t, { file: 'test/suite-verdict.test.mjs', env: {
     ...process.env, BATON_TEST_SUITE_ROOT: join(tmpParent, 'suite-root'),
     [SUITE_VERIFY_LEASE_ENV]: randomBytes(32).toString('hex'),
-    BATON_HOST_CAPACITY_ROOT: root, BATON_HOST_CAPACITY_WAIT_MS: '1500',
-    BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: tmpParent,
+    BATON_HOST_CAPACITY_ROOT: root, BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: tmpParent,
   } });
   const terminal = await done;
   assert.equal(terminal.signal, null);
@@ -284,7 +277,7 @@ test('S333-6: the deployment summary\'s hostCapacity.used.leases.verify counts w
   const root = leaseRoot(t);
   const authority = new HostCapacityAuthority({
     root, residentId: 's333-deploy', observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 }),
-    pollMs: 10, waitMs: 5_000,
+    pollMs: 10,
   });
   // The deployment summary carries observeNow(): a worker's suite (a verify lease held under
   // the participant holder name) must read as a verify lease there.

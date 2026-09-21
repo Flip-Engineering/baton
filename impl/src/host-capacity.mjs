@@ -14,8 +14,8 @@
 //   admission     `verify` (a full-suite verdict) and `worker` (a recruited participant's
 //                 dispatch) ask `acquire()`; the request is admitted when the derived budget has
 //                 room, and otherwise QUEUED in order with a visible {position, ahead} until
-//                 capacity returns — admission is never refused for being busy; only the caller's
-//                 own bounded wait ends in a typed refusal that names the queue
+//                 capacity returns — admission is never refused, for being busy or for having
+//                 waited (#541); a worker is never queued at all
 //
 // The lease directory is a concurrency substrate, so it uses the ONE published-owner protocol the
 // per-repo worktree capacity ledger proved (worktree-capacity.mjs): an owner record published by
@@ -57,12 +57,6 @@ const LOCK_POLL_MS = 5;
 const LOCK_WAIT_MS = 5_000;
 const LOCK_LABEL = 'host capacity lease lock';
 const REAPER_LABEL = 'host capacity lease reaper gate';
-// The bounded wait ONE acquire may hold before it refuses pre-effect naming the queue. It is
-// protocol timing (the caller's patience), not an admission threshold: admission itself never
-// refuses for capacity, and this deadline only stops a caller that cannot wait any longer. It
-// rides the resident command deadline's order of magnitude, so a queued recruit refuses as a
-// typed row before its transport times out as an error.
-const DEFAULT_ADMISSION_WAIT_MS = 120_000;
 const DEFAULT_POLL_MS = 250;
 // #495: how often a resident's post-admission watch asks whether the host still funds the verify
 // leases it admitted. This number is a check cadence: the derivation alone decides whether the host
@@ -272,10 +266,14 @@ function budgetFits(kind, capacity, used) {
     && used.bytes + weight.bytes <= capacity.usableBytes;
 }
 
-/** Whether ONE more lease of this kind is admissible right now: not saturated, not tight for
- * this kind, and within the budget the admitted leases leave. */
+/** Whether ONE more lease of this kind is admissible right now. A worker is always admissible:
+ * it holds no slot, its footprint is not known before it runs, and the host's own scheduler is
+ * the throttle (#541: a load-average threshold is a cutoff on agent control flow, removed). A
+ * verify is admissible when the host's measured memory funds one more and the budget the
+ * admitted verifies leave has room for it. */
 function roomFor(kind, capacity, used) {
-  return !capacity.saturated && !memoryTightFor(kind, capacity) && budgetFits(kind, capacity, used);
+  if (kind !== 'verify') return true;
+  return !memoryTightFor(kind, capacity) && budgetFits(kind, capacity, used);
 }
 
 /** #329: WHY a request of this kind does not fit right now — the ONE dimension an operator can
@@ -286,9 +284,6 @@ function roomFor(kind, capacity, used) {
  * ever wait on `load`. */
 export function hostCapacityShortfall(kind, capacity, used) {
   const weight = leaseWeight(kind, capacity);
-  if (capacity.saturated) {
-    return Object.freeze({ dimension: 'load', observed: capacity.load1m, required: capacity.cores, unit: 'load1m' });
-  }
   if (memoryTightFor(kind, capacity)) {
     return Object.freeze({ dimension: 'memory', observed: capacity.availableBytes, required: weight.bytes, unit: 'bytes' });
   }
@@ -458,14 +453,13 @@ export class HostCapacityAuthority {
   constructor({
     root = defaultHostCapacityRoot(), residentId = `resident-${process.pid}`,
     observation = hostCapacityObservation, liveness = livePid,
-    now = Date.now, pollMs = DEFAULT_POLL_MS, waitMs = DEFAULT_ADMISSION_WAIT_MS,
+    now = Date.now, pollMs = DEFAULT_POLL_MS,
     shedPollMs = DEFAULT_SHED_POLL_MS,
   } = {}) {
     if (typeof root !== 'string' || root.length === 0 || !isAbsolute(root)) throw new TypeError('host capacity lease root must be one absolute path');
     if (typeof residentId !== 'string' || residentId.length === 0 || Buffer.byteLength(residentId) > 128) throw new TypeError('host capacity resident id must be one bounded non-empty string');
     if (typeof observation !== 'function' || typeof liveness !== 'function' || typeof now !== 'function') throw new TypeError('host capacity dependencies must be functions');
     if (!Number.isSafeInteger(pollMs) || pollMs <= 0) throw new TypeError('host capacity poll interval must be a positive safe integer');
-    if (!Number.isSafeInteger(waitMs) || waitMs <= 0) throw new TypeError('host capacity admission wait must be a positive safe integer');
     if (!Number.isSafeInteger(shedPollMs) || shedPollMs <= 0) throw new TypeError('host capacity shed poll interval must be a positive safe integer');
     this.root = root;
     this.residentId = residentId;
@@ -473,7 +467,6 @@ export class HostCapacityAuthority {
     this.liveness = liveness;
     this.now = now;
     this.pollMs = pollMs;
-    this.waitMs = waitMs;
     this.shedPollMs = shedPollMs;
     this.ownerId = randomBytes(16).toString('hex');
     this.leasesDir = join(root, 'leases');
@@ -705,15 +698,14 @@ export class HostCapacityAuthority {
 
   /** Admit one unit of heavy work. Resolves with `{token}` once the derived budget admits the
    * request; while it does not, the request waits IN ORDER as a visible queue entry and
-   * `onQueued` is called once with {position, ahead}. The wait is bounded by `waitMs`; exceeding
-   * it refuses BEFORE ANY EFFECT with the queue facts attached, so the caller's retry (or its
-   * operator) sees exactly what it waits behind. */
+   * `onQueued` is called once with {position, ahead}. The wait is not bounded: a request that
+   * cannot be admitted now is admitted when the requests ahead of it release, and is never
+   * refused for having waited (#541). A worker never queues (see roomFor). */
   async acquire(kind, { holder = '', onQueued = null } = {}) {
     if (!HOST_CAPACITY_LEASE_KINDS.includes(kind)) throw new TypeError(`host capacity lease kind must be one of ${HOST_CAPACITY_LEASE_KINDS.join(', ')}`);
-    if (typeof holder !== 'string' || Buffer.byteLength(holder) > 256) throw new TypeError('host capacity lease holder must be one bounded string');
+    if (typeof holder !== 'string') throw new TypeError('host capacity lease holder must be a string');
     if (onQueued !== null && typeof onQueued !== 'function') throw new TypeError('host capacity onQueued must be a function');
     this.#ensureRoot();
-    const deadline = performance.now() + this.waitMs;
     const nonce = randomBytes(16).toString('hex');
     let queuedAt = null;
     let reportedQueue = false;
@@ -726,8 +718,15 @@ export class HostCapacityAuthority {
         const mine = entries.find((record) => record.nonce === nonce) ?? null;
         const ahead = mine ? entries.indexOf(mine) : entries.length;
         const head = mine === null || ahead === 0;
-        // A verify is judged against the suite's measured cost; a worker holds no slot and is
-        // judged by load alone (see deriveHostCapacity).
+        // #541: a host whose memory cannot fund one full suite is a standing property of the
+        // host, not a queue. It answers at once — no lease, the shortfall named — and the caller
+        // proceeds without the exclusion a lease would buy. Nothing waits on a limit no wait
+        // could cure.
+        if (kind === 'verify' && mine === null && memoryTightFor(kind, capacity)) {
+          return Object.freeze({ degraded: hostCapacityShortfall(kind, capacity, used) });
+        }
+        // A verify is judged against the suite's measured cost and the budget the admitted
+        // verifies leave; a worker holds no slot and is always admitted (see roomFor).
         if (head && roomFor(kind, capacity, used)) {
           const lease = {
             schemaVersion: 1, kind, holder, nonce, pid: process.pid,
@@ -754,6 +753,7 @@ export class HostCapacityAuthority {
           },
         });
       });
+      if (outcome.degraded) return Object.freeze({ token: null, degraded: outcome.degraded });
       if (outcome.admitted) {
         return Object.freeze({
           token: outcome.admitted,
@@ -764,28 +764,7 @@ export class HostCapacityAuthority {
         reportedQueue = true;
         if (onQueued) onQueued(Object.freeze(outcome.queued));
       }
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) {
-        // #329: "no capacity effect was applied" must be true of the queue too — a spent wait
-        // withdraws its own queue record, so a refused recruit never leaves a phantom entry that
-        // every later reader (observeNow, the doctor) counts ahead of the next request.
-        await this._mutex(() => {
-          rmSync(join(this.queueDir, queueName({ enqueuedAt: new Date(queuedAt).toISOString(), nonce })), { force: true });
-        });
-        const shortfall = outcome.queued.shortfall;
-        const why = shortfall
-          ? `; waiting on ${shortfall.dimension}: ${shortfall.observed} ${shortfall.unit} observed, ${shortfall.required} required`
-          : '';
-        throw typed(
-          `host capacity queued this ${kind} request at position ${outcome.queued.position} (${outcome.queued.ahead} ahead) and the ${this.waitMs}ms admission wait is spent${why}; no capacity effect was applied (operator bypass: ${HOST_CAPACITY_BYPASS})`,
-          'host_capacity_queue_timeout',
-          {
-            queuePosition: outcome.queued.position, queueAhead: outcome.queued.ahead,
-            shortfall, bypass: HOST_CAPACITY_BYPASS, leaseKind: kind, waitMs: this.waitMs,
-          },
-        );
-      }
-      await new Promise((resolve) => { setTimeout(resolve, Math.min(this.pollMs, remaining)); });
+      await new Promise((resolve) => { setTimeout(resolve, this.pollMs); });
     }
   }
 
