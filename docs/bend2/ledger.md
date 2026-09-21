@@ -25,8 +25,9 @@ not:
 
 - `node_modules/.bend` — the repository already ignores `node_modules/`, so the install never
   reaches a workspace capture. The lanes of this evaluation use it.
-- `.bend/` at the worktree root with the `.gitignore` lines for `.bend/` and `.scratch/` — the
-  lines this branch carries.
+- `.bend/` at the worktree root with the `.gitignore` lines for `.bend/` and `.scratch/`; those
+  lines ride contribution-d2f1daf5 rather than this branch, because a changed `.gitignore` selects a
+  wide gate set at landing time.
 - An untracked toolchain tree with no ignore line does not work on this host: the capture's
   untracked-file walk feeds `git add` a 61 MB toolchain (plus a 32 MB source archive), and the host
   kills it under memory pressure (`git add` exits 137), which blocks the capture, the check and the
@@ -65,3 +66,11 @@ that substitution, measured by real recruit calls:
    expected-red row covered it. The same correction landed on `master` as `d943c960`, from the
    backlog lane, together with the `issue144` GP-D re-anchor whose frozen line windows had put that
    row red as well.
+
+3. **A landing with a wide gate set can hit the gate run's deadline.** The landing table derives its
+   gate set from the paths a contribution would change, and for a contribution whose set carries
+   `README.md` or `.gitignore` that set is 76 test files. The gate run then answers
+   `suite-timed-out` with no test verdict at all, so the landing neither passes nor names a failing
+   row. Two refusals of this evaluation's own contributions were that timeout, and the root filed it
+   as issue #546 with the wide default set and the deadline named. A document whose name no test
+   mentions lands in a short gate run.
