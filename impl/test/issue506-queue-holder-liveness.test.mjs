@@ -45,7 +45,7 @@ function authorityOver(root, liveness) {
   return new HostCapacityAuthority({
     root, residentId: 'issue506', liveness,
     observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 1 }),
-    pollMs: 15, waitMs: 2_000,
+    pollMs: 15,
   });
 }
 

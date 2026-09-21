@@ -186,7 +186,7 @@ test('522g: the host capacity authority\'s own observation reaches the predicate
   const root = mkdtempSync(join(tmpdir(), 'baton-issue522-lease-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const authority = new HostCapacityAuthority({
-    root, residentId: 'deployment-522', pollMs: 15, waitMs: 5_000,
+    root, residentId: 'deployment-522', pollMs: 15,
     observation: () => ({ cores: 4, totalBytes: 32 * 1024 ** 3, freeBytes: 24 * 1024 ** 3, load1m: 1 }),
   });
   const store = new CoordinationStore(root);

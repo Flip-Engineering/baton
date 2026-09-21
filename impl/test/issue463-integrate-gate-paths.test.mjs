@@ -226,7 +226,7 @@ async function world(t, { change = 'impl/src/coordinator.mjs', gate = {} } = {})
   const pool = new SupervisedProcesses();
   const G = 1024 ** 3;
   const hostCapacity = new HostCapacityAuthority({
-    root: capacityRoot, residentId: 'issue463-resident', pollMs: 10, waitMs: 1_500,
+    root: capacityRoot, residentId: 'issue463-resident', pollMs: 10,
     observation: () => ({ cores: 4, totalBytes: 32 * G, freeBytes: 24 * G, load1m: 0 }),
   });
   const runtime = new SwarmRuntime({

@@ -52,7 +52,7 @@ const { defaultSuiteParallelism } = await import(new URL('../src/host-capacity.m
 // this run's children below) nests a runner; the inherited BATON_TEST_SUITE_ROOT never does.
 const {
   acquireSuiteVerifyLease, formatSuiteAdmissionRefusal, formatSuiteDegradedWarning,
-  formatSuitePlan, SUITE_VERIFY_LEASE_ENV, suiteLeaseTokenDigest, suiteQueueTimeoutDecision,
+  formatSuitePlan, SUITE_VERIFY_LEASE_ENV, suiteLeaseTokenDigest,
 } = await import(new URL('./suite-host-lease.mjs', import.meta.url).href);
 
 /** The machine-local prerequisites this run observed, named by the readiness declaration. */
@@ -610,26 +610,20 @@ if (legacyPassthrough) {
   })}\n`);
   // Issue #333: the runner holds one host-wide verify lease for the whole verdict — a full
   // suite costs every core but the hub's, so two residents each running a suite would repeat
-  // the 2026-09-14 load incident. Admission waits IN ORDER printing the #329 queued row; a
-  // spent wait refuses BEFORE any lane starts (no lane runs starved) unless the dimension
-  // names a limit no wait could cure — a host that cannot fund a suite runs degraded with a
-  // warning instead of bricking (suiteQueueTimeoutDecision) — and the lease releases at the
-  // verdict whichever way it ends. A bypassed run acquires nothing.
-  // Issue #512: a refusal is terminal and names itself — the authority's message, then one row
-  // naming the stage, the typed code, the dimension the wait was spent on, and the missing verdict.
+  // the 2026-09-14 load incident. Admission waits IN ORDER printing the #329 queued row until
+  // the verdicts ahead release (#541: the wait is not bounded, never refused for waiting); a host
+  // that cannot fund a suite at all answers degraded at once and the run proceeds without a
+  // lease, with a warning. The lease releases at the verdict whichever way it ends. A bypassed
+  // run acquires nothing.
+  // Issue #512: an admission that fails for a real reason is terminal and names itself.
   let suiteLease = null;
   try {
     suiteLease = await acquireSuiteVerifyLease();
+    if (suiteLease.degraded) process.stderr.write(`${formatSuiteDegradedWarning(suiteLease.degraded)}\n`);
   } catch (error) {
-    if (error?.code === 'host_capacity_queue_timeout'
-      && suiteQueueTimeoutDecision(error) === 'proceed-degraded') {
-      process.stderr.write(`${formatSuiteDegradedWarning(error)}\n`);
-      suiteLease = { token: null, release: async () => false };
-    } else {
-      process.stderr.write(`baton test runner: ${error?.message ?? error}\n`);
-      process.stderr.write(`${formatSuiteAdmissionRefusal(error)}\n`);
-      finish(1, null, null, true);
-    }
+    process.stderr.write(`baton test runner: ${error?.message ?? error}\n`);
+    process.stderr.write(`${formatSuiteAdmissionRefusal(error)}\n`);
+    finish(1, null, null, true);
   }
   if (suiteLease !== null) {
     suiteLeaseDigest = suiteLease.token ? suiteLeaseTokenDigest(suiteLease.token) : null;

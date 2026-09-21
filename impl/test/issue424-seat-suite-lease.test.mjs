@@ -65,7 +65,7 @@ const SEAT_HOLDER = 'participant:swarm-wave6-20260918:omp-424';
 test('S424-1: a run that only inherits the suite root acquires the verify lease — the root alone is no bypass', async (t) => {
   const root = leaseRoot(t);
   const authority = new HostCapacityAuthority({
-    root, residentId: 's424-seat', observation: roomy, pollMs: 10, waitMs: 5_000,
+    root, residentId: 's424-seat', observation: roomy, pollMs: 10,
   });
   const logged = [];
   const lease = await acquireSuiteVerifyLease({
@@ -85,7 +85,7 @@ test('S424-2: the nested bypass needs the parent\'s lease token — the digest t
   const root = leaseRoot(t);
   const untouched = join(root, 'never-created');
   const authority = new HostCapacityAuthority({
-    root, residentId: 's424-parent', observation: roomy, pollMs: 10, waitMs: 5_000,
+    root, residentId: 's424-parent', observation: roomy, pollMs: 10,
   });
   const parent = await acquireSuiteVerifyLease({ env: {}, authority, log: () => {} });
   const digest = suiteLeaseTokenDigest(parent.token);
@@ -117,7 +117,7 @@ test('S424-2: the nested bypass needs the parent\'s lease token — the digest t
 test('S424-3: the seat\'s suite lease is held under the seat\'s participant holder', async (t) => {
   const root = leaseRoot(t);
   const authority = new HostCapacityAuthority({
-    root, residentId: 's424-seat', observation: roomy, pollMs: 10, waitMs: 5_000,
+    root, residentId: 's424-seat', observation: roomy, pollMs: 10,
   });
   assert.equal(suiteLeaseHolder(seatEnv()), SEAT_HOLDER,
     'the worker env the runtime projects names the seat, so its verdict enqueues under it');
@@ -154,11 +154,11 @@ test('S424-5: the runner prints the expanded selection count and the resolved la
   // decides (refuse before lanes, or degrade visibly) happens AFTER the plan line — the ordering
   // is read off one stream, and the queue row is evidence admission has started.
   const root = leaseRoot(t);
-  blockVerifyBudget(root, t);
+  const blocker = blockVerifyBudget(root, t);
   const parent = mkdtempSync(join(tmpdir(), 'baton-s424-tmp-'));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
   const env = {
-    ...process.env, BATON_HOST_CAPACITY_ROOT: root, BATON_HOST_CAPACITY_WAIT_MS: '1500',
+    ...process.env, BATON_HOST_CAPACITY_ROOT: root,
     BATON_HOST_CAPACITY_POLL_MS: '25', BATON_SUITE_PARALLELISM: '3', BATON_TEST_TMP_PARENT: parent,
   };
   // This test itself runs as a suite child; the runner it spawns is a top-level one.
@@ -172,25 +172,29 @@ test('S424-5: the runner prints the expanded selection count and the resolved la
   let stderr = '';
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const terminal = await new Promise((resolveClose) => {
+  const done = new Promise((resolveClose) => {
     child.once('error', (error) => resolveClose({ code: null, error }));
     child.once('close', (code) => resolveClose({ code, error: null }));
   });
+  // #541: admission never refuses. A host that can fund a suite queues behind the blocker and
+  // prints the queued row; a host that cannot fund one degrades at once. Either row is
+  // admission's own, and it follows the plan line. Once it shows, the blocker is released so a
+  // queued run is admitted and finishes.
+  const admissionRow = /host capacity queued this verify request at position|proceeding WITHOUT a host verify lease/u;
+  while (!admissionRow.test(stderr)) {
+    await new Promise((resolveWait) => { setTimeout(resolveWait, 25); });
+  }
+  rmSync(join(root, 'leases', `lease-verify-${blocker.nonce}.json`), { force: true });
+  const terminal = await done;
   assert.equal(terminal.error, null);
   assert.match(stderr,
     /^baton test runner: plan — 1 file\(s\) expanded from 1 changed path\(s\): 1 in the parallel lane \(x3\), 0 in the serial lane; progress deadline \d+ ms per file$/mu,
     'the plan line prints the expanded file count and the lane width the run resolved');
   const planIndex = stderr.search(/^baton test runner: plan —/mu);
-  const admittedIndex = stderr.indexOf('host capacity queued this verify request at position');
-  assert.ok(admittedIndex !== -1, `admission printed its own row: ${stderr.split('\n')[0]}`);
+  const admittedIndex = stderr.search(admissionRow);
   assert.ok(planIndex !== -1 && planIndex < admittedIndex,
     'the plan line precedes admission, so it precedes any lane');
-  // A spent wait either refuses before lanes (a `load`/`budget` shortfall) or degrades visibly (a
-  // standing `memory` one) — the live host decides which — but the plan line precedes that
-  // decision either way, and the decision precedes the lanes.
-  const degradedIndex = stderr.indexOf('proceeding WITHOUT a host verify lease');
-  assert.ok(degradedIndex === -1 || planIndex < degradedIndex,
-    'the plan line precedes the degraded decision it explains');
+  assert.equal(terminal.code, 0, 'the run was admitted (or degraded) and finished — never refused');
 }, { timeout: 120_000 });
 
 // The staged-authority blocker #333's suite uses: one live verify lease fills the whole verdict
@@ -206,4 +210,5 @@ function blockVerifyBudget(root, t) {
   writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
   t.after(() => rmSync(path, { force: true }));
+  return record;
 }

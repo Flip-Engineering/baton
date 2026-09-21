@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import * as suiteLease from '../scripts/suite-host-lease.mjs';
+import { deriveHostCapacity, hostCapacityObservation } from '../src/host-capacity.mjs';
 
 const IMPL = resolve(import.meta.dirname, '..');
 const RUNNER = join(IMPL, 'scripts', 'run-suite.mjs');
@@ -84,26 +85,24 @@ function runRunner({ file, env }) {
     child.once('error', (error) => resolveClose({ code: null, signal: null, error }));
     child.once('close', (code, signal) => resolveClose({ code, signal, error: null }));
   });
-  return { done: done.then((terminal) => ({ ...terminal, stdout, stderr })) };
+  return { done: done.then((terminal) => ({ ...terminal, stdout, stderr })), stderrSoFar: () => stderr };
 }
 
 test('S512-1: the admission refusal row names the stage, the code, the waiting dimension and the missing verdict', () => {
   assert.equal(typeof suiteLease.formatSuiteAdmissionRefusal, 'function',
     'the runner\'s refusal row is one exported formatter beside the queued and degraded rows');
-  const waited = Object.assign(new Error(
-    'host capacity queued this verify request at position 1 (0 ahead) and the 2000ms admission wait is spent'
-    + '; waiting on load: 11 load1m observed, 10 required; no capacity effect was applied'
-    + ' (operator bypass: BATON_HOST_CAPACITY_DISABLED=1)',
-  ), {
-    code: 'host_capacity_queue_timeout',
-    queuePosition: 1, queueAhead: 0, leaseKind: 'verify', waitMs: 2000,
+  // A synthetic refusal: since #541 admission never refuses for waiting, the formatter's input
+  // is a genuine authority failure that still carries a shortfall row.
+  const waited = Object.assign(new Error('host capacity lease directory is unavailable'), {
+    code: 'host_capacity_unavailable',
+    queuePosition: 1, queueAhead: 0, leaseKind: 'verify',
     shortfall: { dimension: 'load', observed: 11, required: 10, unit: 'load1m' },
   });
   const row = suiteLease.formatSuiteAdmissionRefusal(waited);
-  assert.equal(row, 'baton test runner: refused at admission (host_capacity_queue_timeout)'
+  assert.equal(row, 'baton test runner: refused at admission (host_capacity_unavailable)'
     + ' — waiting on load: 11 load1m observed, 10 required; no lane ran and no verdict was produced');
   assert.equal(row.split('\n').length, 1, 'the refusal is ONE terminal row');
-  assert.match(row, /refused at admission \(host_capacity_queue_timeout\)/u,
+  assert.match(row, /refused at admission \(host_capacity_unavailable\)/u,
     'the row names the stage and the refusal\'s typed code');
   assert.match(row, /waiting on load: 11 load1m observed, 10 required/u,
     'the row carries the dimension and the numbers the admission wait was spent on');
@@ -148,39 +147,28 @@ test('S512-2: a runner refused at admission exits 1 with one terminal row and no
   assert.doesNotMatch(terminal.stdout, /^# file /mu, 'no lane started: admission refuses pre-effect');
 }, { timeout: 120_000 });
 
-test('S512-3: a spent admission wait behind another verify lease ends as a refused run with its row, or a visible degrade', async (t) => {
+test('S512-3: a run behind another verify lease waits and runs once it releases, or degrades at once on a host that cannot fund a suite — never refused for waiting (#541)', async (t) => {
   const root = scratch(t, 'baton-s512-queue-');
-  blockVerifyBudget(root, t);
-  const { done } = runRunner({
+  const blocker = blockVerifyBudget(root, t);
+  const { done, stderrSoFar } = runRunner({
     file: FIXTURE,
-    env: stagedEnv(root, {
-      BATON_HOST_CAPACITY_WAIT_MS: '1500', BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: root,
-    }),
+    env: stagedEnv(root, { BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: root }),
   });
+  const live = deriveHostCapacity(hostCapacityObservation());
+  const queuedRow = /host capacity queued this verify request at position 1 \(0 ahead\)/u;
+  const degradedRow = /proceeding WITHOUT a host verify lease/u;
+  while (!queuedRow.test(stderrSoFar()) && !degradedRow.test(stderrSoFar())) {
+    await new Promise((resolveWait) => { setTimeout(resolveWait, 25); });
+  }
+  if (!live.memoryTight) {
+    assert.match(stderrSoFar(), /waiting on budget: [\d.]+ cores observed/u, 'the row names the budget it waits on');
+    rmSync(join(root, 'leases', `lease-verify-${blocker.nonce}.json`), { force: true });
+  }
   const terminal = await done;
   assert.equal(terminal.signal, null);
-  // The spent wait's outcome follows the live host's own gating dimension: a `load` or `budget`
-  // shortfall refuses before lanes, while a host whose own measurement is `memory` runs degraded
-  // with a warning instead of bricking (#333). Whatever the host answered, a refusal is never
-  // terminal without its row, and a degrade is never dressed as a refusal.
-  assert.match(terminal.stderr, /host capacity queued this verify request at position 1 \(0 ahead\)/u,
-    'the runner prints the queued row while it waits');
-  if (!/admission wait is spent/u.test(terminal.stderr)) {
-    assert.match(terminal.stderr, /proceeding WITHOUT a host verify lease/u,
-      'the only non-refusal outcome is the visible memory degrade');
-    assert.equal(terminal.code, 0, 'the degraded run still judges its file');
-    assert.equal(refusalRows(terminal.stderr).length, 0, 'a degraded run reports no refusal');
-    assert.match(terminal.stdout, /^# file /mu, 'the degraded run ran a lane');
-    return;
-  }
-  assert.equal(terminal.code, 1, 'a runner the host cannot admit refuses instead of running starved');
-  const rows = refusalRows(terminal.stderr);
-  assert.equal(rows.length, 1, `the refusal ends with one terminal row: ${terminal.stderr}`);
-  assert.match(rows[0], /refused at admission \(host_capacity_queue_timeout\)/u,
-    'the terminal row names the stage and the spent-wait refusal code');
-  assert.match(rows[0], /waiting on (load|budget): [\d.]+ (load1m|cores|bytes) observed, [\d.]+ required/u,
-    'the terminal row carries the dimension and the numbers the wait was spent on');
-  assert.match(rows[0], /no lane ran and no verdict was produced/u,
-    'the terminal row states that the run produced no verdict');
-  assert.doesNotMatch(terminal.stdout, /^# file /mu, 'no lane started: admission refuses pre-effect');
+  assert.equal(terminal.code, 0, 'the run proceeded once admitted (or degraded), never refused');
+  assert.equal(refusalRows(terminal.stderr).length, 0, 'no refusal row: nothing was refused for waiting');
+  assert.doesNotMatch(terminal.stderr, /admission wait is spent|host_capacity_queue_timeout/u);
+  assert.match(terminal.stdout, /^# file /mu, 'the run ran its lane');
+  if (live.memoryTight) assert.match(terminal.stderr, degradedRow, 'a host that cannot fund a suite degrades at once');
 }, { timeout: 120_000 });

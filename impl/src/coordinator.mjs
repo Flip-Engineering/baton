@@ -61,7 +61,7 @@ import { MAX_STDERR_TAIL_BYTES } from './cli-adapters.mjs';
 // same bound and the same nested-child proof — so the landing holds exactly the lease a verdict
 // holds, and no second reading of the lease protocol can drift from it.
 import {
-  acquireSuiteVerifyLease, createSuiteLeaseAuthority, suiteLeaseTokenDigest, suiteQueueTimeoutDecision,
+  acquireSuiteVerifyLease, createSuiteLeaseAuthority, suiteLeaseTokenDigest,
   SUITE_VERIFY_LEASE_ENV,
 } from '../scripts/suite-host-lease.mjs';
 import * as runtimeRecovery from './runtime-recovery.mjs';
@@ -454,38 +454,19 @@ export async function runSupervisedGateRun({
   if (typeof poll.unref === 'function') poll.unref();
   let lease = null;
   let degraded = null;
-  try {
-    lease = await acquireSuiteVerifyLease({
-      authority, holder, log: () => {},
-      onQueued: (row) => {
-        queued = Object.freeze({ position: row?.position ?? null, ahead: row?.ahead ?? null,
-          shortfall: row?.shortfall ?? null });
-      },
-    });
-  } catch (error) {
-    clearInterval(poll);
-    if (error?.code !== 'host_capacity_queue_timeout') throw error;
-    // The seam's own spent-wait decision, taken verbatim (`suiteQueueTimeoutDecision`): a `memory`
-    // shortfall is a STANDING property of this host — no wait could ever admit the run — so a seat's
-    // own suite proceeds degraded and says so, and a landing's gate run does the same rather than
-    // refusing forever on a small host. Every other dimension (load, budget) is a queue some other
-    // lease will leave, and that one refuses typed, naming the holder the wait was behind.
-    if (suiteQueueTimeoutDecision(error) !== 'proceed-degraded') {
-      throw Object.assign(new Error('the host verify lease could not be taken within its bound'), {
-        code: 'integrate_gates_busy',
-        detail: {
-          holder: ahead, holderId: holder, leaseKind: 'verify',
-          position: queued?.position ?? error.queuePosition ?? null,
-          ahead: queued?.ahead ?? error.queueAhead ?? null,
-          shortfall: queued?.shortfall ?? error.shortfall ?? null,
-          waitMs: error.waitMs ?? null, bypass: error.bypass ?? HOST_CAPACITY_BYPASS,
-        },
-      });
-    }
-    degraded = Object.freeze({
-      reason: error?.shortfall?.dimension ?? 'memory',
-      shortfall: error?.shortfall ?? null, waitMs: error.waitMs ?? null,
-    });
+  // #541: the wait is not bounded — a landing's gate run is admitted when the verdicts ahead of it
+  // release, never refused for having waited. A host that cannot fund a suite at all (a standing
+  // memory shortfall) answers `degraded` at once and the gate run proceeds without a lease.
+  lease = await acquireSuiteVerifyLease({
+    authority, holder, log: () => {},
+    onQueued: (row) => {
+      queued = Object.freeze({ position: row?.position ?? null, ahead: row?.ahead ?? null,
+        shortfall: row?.shortfall ?? null });
+    },
+  });
+  clearInterval(poll);
+  if (lease.degraded) {
+    degraded = Object.freeze({ reason: lease.degraded.dimension ?? 'memory', shortfall: lease.degraded });
   }
   try {
     const digest = lease === null || lease.token === null ? null : suiteLeaseTokenDigest(lease.token);
