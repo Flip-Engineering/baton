@@ -284,7 +284,7 @@ Statement: A host whose measured memory cannot fund one full suite answers at on
 shortfall and no lease, and the caller proceeds without the lease.
 Plain explanation: Some machines cannot run the full test suite in one go. On those machines the
 system answers immediately, naming the shortfall, and the caller continues without the exclusive
-lease instead of waiting for a condition that no amount of waiting changes. Without this rule,
+lease; no queue forms, because waiting cannot change the outcome. Without this rule,
 on a small machine every full-suite check queues indefinitely.
 Bend2 carrier: the `Degraded(shortfall)` arm of the admission variant is the only way to proceed
 without a lease, so an unrecorded lease-free proceed is unwritable; the shortfall record names
@@ -455,7 +455,7 @@ Statement: A worker-concurrency ceiling is configured only by the deployment cal
 unbounded; an invalid value refuses at construction rather than coercing.
 Plain explanation: The system sets no limit of its own on how many workers run at once. Only the
 operator may set one; leaving it unset means no limit; a malformed value stops startup with a
-typed error instead of becoming some arbitrary number. Without this rule, an unstated limit
+typed error, and the configured number is kept exactly as given. Without this rule, an unstated limit
 throttles the workers for no recorded reason, or a typo becomes an arbitrary cap.
 Bend2 carrier: closed variant — `Ceiling = Unbounded | Limit(n)` with `n` a positive structural
 bound, so the malformed value is not a value.
@@ -523,7 +523,7 @@ Statement: A consumer further behind than the replay bound receives a typed mark
 rows it lost.
 Plain explanation: The feed retains a limited history. If a worker was away so long that part of
 the history is outside the retained range, the feed sends a structured message stating exactly
-which entries are gone, instead of appearing complete. Without this rule, the worker assumes it
+which entries are gone, and the answer identifies itself as partial. Without this rule, the worker assumes it
 has seen everything and acts on an incomplete picture.
 Bend2 carrier: closed variant — the pull result carries a `Lagged` arm holding the dropped count
 and the lost range, and there is no arm for a silent gap.
@@ -606,7 +606,7 @@ Statement: The served-commit header is read once per pull on the deployment-obse
 supplier that cannot answer yields none.
 Plain explanation: Notification frames can carry a "which version is serving you" stamp. Reading
 it on every event would be wasteful, so it is refreshed on a schedule; when the read fails, the
-stamp is absent rather than stale or invented. Without this rule, workers can believe they are
+stamp is absent; only a successful read produces a value. Without this rule, workers can believe they are
 talking to a version that is no longer running.
 Constraint: partial. The unanswerable case is an optional `Served` value; the once-per-cadence
 discipline is runtime and would take the header to be a value threaded through the pull rather
@@ -645,7 +645,7 @@ and `:1057` the 1009 close, `:1058` the 1002 close). Test: `impl/test/wake-bindi
 "a declared loopback binding serves the same wake stream to an authenticated WebSocket client,
 and refuses an anonymous one".
 
-### PROP-1 · proposed · law · A log read is bounded by law, not by each reader's discipline
+### PROP-1 · proposed · constraint · A log read is bounded by law, not by each reader's discipline
 Statement: A ledger read is bounded; today the bounds exist per reader, with no single predicate
 stating the rule.
 Plain explanation: Reading from the shared log should always carry a stated size or window limit,
@@ -659,7 +659,7 @@ Trace: partial evidence: `WAITING_ON_TAIL_SCAN_CHUNK`
 `impl/test/issue140-waiting-on-tail-read.test.mjs` (6 passing tests). No runtime predicate states
 the rule.
 
-### PROP-2 · proposed · law · Replay of any log the writer accepted produces a working summary
+### PROP-2 · proposed · constraint · Replay of any log the writer accepted produces a working summary
 Statement: The fold is total over recorded history: replay of any log the appender accepted
 produces a projection.
 Plain explanation: Whatever the writing rules admit, the reading rules must be able to process:
@@ -671,7 +671,7 @@ non-total fold unwritable. This is a proposal; nothing enforces it today.
 Trace: partial evidence: `impl/test/issue290-prospective-fold.test.mjs` and
 `impl/test/issue304-fold-admission-gate.test.mjs` pass; no runtime predicate states the rule.
 
-### PROP-3 · proposed · law · One writer per log, stated as one rule across both logs
+### PROP-3 · proposed · constraint · One writer per log, stated as one rule across both logs
 Statement: One writer per ledger; today the main log's writer lease and the session log's
 numbering rule enforce it separately, with no single stated rule joining them.
 Plain explanation: Each append-only record should allow exactly one writer at a time, as one
@@ -706,7 +706,7 @@ Statement: A log tail with no trailing newline refuses with `truncated_tail`; a 
 not valid UTF-8 refuses with `invalid_utf8`.
 Plain explanation: Each log entry is one complete line of text in one standard character
 encoding. If the file ends mid-line, or contains bytes that are not valid text in that encoding,
-the system refuses with the named defect instead of guessing. The mid-line case is tested; the
+the system refuses and names the defect. The mid-line case is tested; the
 wrong-encoding case is enforced but not. Without this rule, a partially written or corrupted
 entry is accepted as history.
 Constraint: partial. A proof would take an exact-UTF-8 string type built only by a validated
@@ -942,7 +942,7 @@ Trace: `_lines` `impl/src/web-auth.mjs:70` (`:73` `truncated_tail`); `_consume` 
 Statement: The head is the event count; a cursor past the head refuses; every wait arms from the
 head.
 Plain explanation: Workers record their place in the log as an entry number. A number beyond
-anything the log contains is refused rather than accepted and waited on. New waits start from the
+anything the log contains is refused at once; only numbers the log produced can wait. New waits start from the
 log's actual end. Without this rule, a worker holding a bogus position can wait forever for
 events that cannot exist, or misnumber its place and skip real events.
 Bend2 carrier: structural — the sequence type is refined to the log bound, so a cursor past the
@@ -1151,8 +1151,8 @@ carrying status, raiser and rule; both refuse helpers mint through the table, so
 is a construction-time error; the web status map derives from the table.
 Plain explanation: Every distinct error the coordination system produces is listed exactly once,
 with its web status, who may raise it, and the rule it names. Error-raising code must go through a
-helper that accepts only listed codes, so an undocumented error stops the program instead of
-shipping. Without this rule, the same failure is described differently on different surfaces and
+helper that accepts only listed codes, so an undocumented error is refused at construction and
+never ships. Without this rule, the same failure is described differently on different surfaces and
 clients cannot tell one error from another.
 Bend2 carrier: a refusal closed variant with one constructor per code, each carrying exactly its
 detail; the status is a total function over the variant, and minting an undeclared code is
@@ -1529,8 +1529,8 @@ Statement: Each participant knowledge verb names its permission and identity fie
 table (seed, post, append, elevate contribute; board read, scratchpad read, evidence search read),
 and the gate reads the table.
 Plain explanation: The actions that write or read the shared knowledge base each declare in one
-table which authority they require, and enforcement reads that table rather than repeating rules
-per verb. Without this rule, adding a knowledge verb means wiring its authority in several
+table which authority they require, and enforcement reads that one table for every verb,
+Without this rule, adding a knowledge verb means wiring its authority in several
 places, and the advertised requirement drifts from the enforced one.
 Bend2 carrier: an exhaustive record keyed by the verb enum; a verb without an admission row fails
 to compile.
@@ -1688,8 +1688,8 @@ Trace: `impl/src/worktree.mjs:2196-2233` `landContribution` (rule comment `:2215
 
 ### CL-10 · runtime · law · Merging nothing is refused, and the scratch copy is cleaned up
 Statement: A range carrying no change to land refuses and removes the scratch checkout.
-Plain explanation: If a merge attempt contains no actual changes, the system refuses instead of
-recording an empty merge, and removes the temporary working copy it created. This arm is enforced
+Plain explanation: If a merge attempt contains no actual changes, the system refuses with the
+empty-change refusal and removes the temporary working copy it created. This arm is enforced
 but not directly tested. Without this rule, empty merges accumulate in the history and abandoned
 temporary copies accumulate on the machine.
 Bend2 carrier: boundary — the squash step returns a diff result, changed or empty, and the landing
@@ -1729,7 +1729,7 @@ Statement: A red gate set refuses, naming the unexpected rows; the fast-forward 
 compare-and-swap update whose loss refuses; a dry run gates the squash, records head-after null,
 and moves nothing.
 Plain explanation: Work merges only after every required check passes. The final move is guarded so
-that if the branch moved while the checks ran, the merge fails instead of landing on a stale base;
+that if the branch moved while the checks ran, the merge fails, and every landing is computed against the branch's current head;
 a rehearsal mode runs everything except the final move and reports what would have happened.
 Without this rule, work merges over a teammate's just-landed changes, or failing work merges
 through a race.
@@ -1796,7 +1796,7 @@ Trace: `impl/src/swarm-event-schemas.mjs:201-207` and `:252-297`;
 `impl/src/swarm-contract.mjs:55-57`. Test: `impl/test/swarm-refusals.test.mjs:188` (a forged kind
 refuses).
 
-### PR-01 · proposed · law · Parse scope patterns when a worker is admitted, so no broken pattern exists downstream
+### PR-01 · proposed · constraint · Parse scope patterns when a worker is admitted, so no broken pattern exists downstream
 Statement: Recruit scope entries pass a length and distinctness check but no pattern-grammar
 check today; an invalid glob later matches everything in view derivations and escapes as an
 untyped error in retained-result enforcement. Proposal: parse scope entries at recruit admission,
@@ -1929,8 +1929,8 @@ CL-06, CL-08, CL-13.
 ### DEV-6 · development · constraint · A seat holds whole scope and full authority, never a slice
 Statement: Orchestration gives a seat whole scope and full authority, never a slice of a mandate.
 Plain explanation: When work is divided among workers, each worker receives a complete assignment
-it can finish on its own, with the authority that finishing requires, rather than a fragment that
-depends on continuous coordination. Without this rule, work stalls on missing authority, and the
+it can finish on its own, with the authority that finishing requires. Without this rule, work
+stalls on missing authority, and the
 coordinator becomes the limit on how much work can proceed.
 Constraint: no carrier at the pin — the rule governs an orchestration process, not a value. A
 proof form would take scope values built only by one total derivation from the mandate record,
@@ -1959,12 +1959,11 @@ custody, 17 capacity, 13 wake, 19 coordination-ledger, 3 proposed; 67 in the val
 closed shapes, 14 authorization boundaries, 11 permission rows, 17 contribution and landing, 5
 proposed) and 7 development laws.
 
-Class marks: 103 rows are marked law (a Bend2 proof form is stated: 51 from the ledger lane's
-classification, 47 from the validators lane's, 5 development); 35 rows are marked constraint (13
-ledger-domain: 10 partial carriers and 3 with no carrier known; 20 validator-domain; 2
-development). Proposed rows: 3 ledger-proposed are marked law (a stated carrier, nothing
-enforced), and 5 validator-proposed are marked constraint (proposed test pins; two superseded by
-carriers, two partially superseded, one open).
+Class marks: 99 rows are marked law (a Bend2 proof form is stated: 48 in the ledger lane's
+domains, 46 in the validator lane's domains, 5 development); 39 rows are marked constraint (a
+runtime check, with what a proof would take). All 8 proposed rows carry the constraint class per
+the operator's rule: 4 of them (PROP-1..3, PR-01) state a carrier that becomes a law form once
+the behavior exists and a compiled example pins it, and 4 (PR-02..05) are proposed test pins.
 
 Marked unpinned (enforced, no pinning test): CAP-8, WAKE-10, LEDG-2 (half), LEDG-15, CUST-3 (no
 direct test), CS-19, AB-02, PM-01 (refusal arm), PM-03, PM-08, CL-10 (arm), CL-13 (race arm).
