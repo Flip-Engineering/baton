@@ -3,6 +3,15 @@
 
 export const CANONICAL_ORDER_VERSION = 1;
 export const CANONICAL_CASE_FOLD_VERSION = 1;
+// Issue #500: the canonical-order implementation ceilings. A deployment-supplied policy
+// (normalizeCanonicalOrderPolicy) and the in-memory sort/JSON helpers are judged against
+// these, never against a caller-supplied bound. The ledger ceiling holds 64 max-size events
+// (1 GiB / 16 MiB), so one full event can never be a sizable fraction of the ledger it lands
+// in; the receipt ceiling is one wire frame (1 MiB), so a receipt composes with the transport
+// frame beside the ledger it attests. The item ceiling is the default the sort and JSON
+// helpers run with, and the depth ceiling is twice the JSON helper's default (128). The
+// numbers themselves are operator-declared: no file in the repository derives them, and
+// moving one moves every policy judged against it.
 const MAX_CANONICAL_ITEMS = 1_000_000;
 const MAX_CANONICAL_DEPTH = 256;
 const MAX_LEDGER_BYTES = 1024 * 1024 * 1024;

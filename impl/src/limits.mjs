@@ -207,10 +207,9 @@ const SUBSTRATE = Object.freeze({
   // (local-web-transport.mjs's LOCAL_TRANSPORT_IDLE_TIMEOUT_MS), so a resident stall inside the
   // ceiling renders as the command's own pending/wake answer, never as `cli_transport_failed`.
   'transport.idle_margin_ms': { lane: 'transport.idle_margin_ms', class: 'substrate', value: TRANSPORT_IDLE_MARGIN_MS, unit: 'ms', graceful: null, enforcedAt: 'local-web-transport.mjs (the owner-socket transport\u2019s request bound)' },
-  // freshness (`cache-control: max-age` minus `age`) overrides this fallback with the window the
-  // provider itself stated; this row is what a response that declares nothing is judged against,
-  // and what the read publishes as `boundMs`.
-  'model_profile.catalog_staleness_ms': { lane: 'model_profile.catalog_staleness_ms', class: 'substrate', value: MODEL_PROFILE_REFRESH_MS, unit: 'ms', graceful: null, enforcedAt: 'model-profile.mjs readCachedCatalog (the deployment profile reader)' },
+  // Issue #500: the duplicate `model_profile.catalog_staleness_ms` row (and its comment
+  // fragment) that used to sit here is removed — a duplicate key renders the first
+  // declaration dead, and the registry declares one face per lane.
 });
 
 // Issue #306 (lane B): the ONE list page the family's read rows draw — the item ceiling a page of
