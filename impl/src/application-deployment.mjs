@@ -92,10 +92,18 @@ const DEFAULT_WORKTREE_CAPACITY = Object.freeze({
   minFreeInodes: null,
   // Conservative per-runtime growth allowances inside one checkout, configurable by the owner.
   // These are allowances, not measurements of a native harness's future disk use.
+  // #500: operator-declared allowances with no derivation elsewhere in the tree — sizing a
+  // real fleet's growth headroom is an operator judgment. The #500 pin test records the
+  // shipped 64 MiB / 10 000-inode values.
   runtimeReserveBytes: 64 * 1024 * 1024,
   runtimeReserveInodes: 10_000,
 });
 
+// #500: the bounds one dependency-tree attestation is walked under — the mapping count, the
+// file and directory counts, the total and per-file byte ceilings, and the path-length and
+// depth caps; toolchain-projection.mjs enforces each against the descriptor this module
+// declares. The values are operator-declared with no derivation elsewhere in the tree; the
+// #500 pin test records the live values.
 const DEPENDENCY_PROJECTION_LIMITS = Object.freeze({
   maxMappings: 128,
   maxFiles: 1_000_000,
@@ -109,6 +117,8 @@ const DEPENDENCY_PROJECTION_LIMITS = Object.freeze({
 // Issue #500: credential file bounds read the registry's credential.file row (Decision 8
 // no-re-declare law). Every credential family's file-size and field-length guard draws this
 // ONE declared value; the registry is the source (limits.mjs credential.file substrate row).
+// A cached Grok OAuth grant is invalidated 5 min before its own expiresAt so no lane draws a
+// token inside its expiry margin (GROK_AUTH_EARLY_INVALIDATION_MS below).
 const MAX_KIMI_CREDENTIAL_METADATA_BYTES = FRAME_LIMITS['credential.file'].value;
 const MAX_GROK_CREDENTIAL_METADATA_BYTES = FRAME_LIMITS['credential.file'].value;
 const GROK_AUTH_EARLY_INVALIDATION_MS = 5 * 60 * 1000;
@@ -1073,6 +1083,11 @@ function measureRuntimeFootprint(roots) {
   return Object.freeze({ bytes, inodes });
 }
 
+// #500: the quantization steps of a capacity observation — free bytes snap down to a 64 MiB
+// step and free inodes to a 10 000-inode step before any verdict or published row, so
+// equal-state projections stay deeply equal across reads and the verdict errs conservative
+// (the #35 discipline). Operator-declared steps with no derivation elsewhere; the #500 pin
+// test records the live values.
 const WORKSPACE_OBSERVATION_BYTE_QUANTUM = 64 * 1024 * 1024;
 const WORKSPACE_OBSERVATION_INODE_QUANTUM = 10_000;
 
@@ -1302,9 +1317,16 @@ function ompRouteReadinessFacts(model, providerKeyFiles = DEFAULT_OMP_PROVIDER_K
 // process for a short window keyed by the operator's models.yml mtime, and never throws: an
 // unreadable catalog is a typed blocked row, never a doctor failure.
 const OMP_CATALOG_ARGS = Object.freeze(['models', '--json', '--no-extensions']);
+// #500 (extending the #342 pin): the memo window is 60 s — process-local, keyed by the
+// operator's models.yml mtime, so a catalog edit invalidates it at once and a steady file
+// re-reads at most once a minute. Operator-declared with no derivation elsewhere in the
+// tree; the #500 pin test records it.
 const OMP_CATALOG_MEMO_MS = 60_000;
 let ompCatalogMemo = null;
 
+// #500: the read is bounded — a 20 s timeout on the omp child and an 8 MiB ceiling on its
+// answer; a read that overruns either returns null and readiness renders the typed blocked
+// row. Operator-declared; the #500 pin test records the values.
 function defaultOmpCatalogRead() {
   try {
     return execFileSync('omp', [...OMP_CATALOG_ARGS], {
@@ -1611,6 +1633,8 @@ function locallyConfiguredRoutes(repoRoot) {
 
 function commandCandidates(name, extras = []) {
   const candidates = [...extras];
+  // #500: the PATH probe is bounded at 5 s — command resolution never hangs the open on an
+  // unresponsive which.
   try {
     candidates.push(...execFileSync('/usr/bin/which', ['-a', name], {
       encoding: 'utf8', timeout: 5_000,
@@ -1622,6 +1646,8 @@ function commandCandidates(name, extras = []) {
 function codexCommand() {
   const candidates = commandCandidates('codex', [join(dirname(process.execPath), 'codex')]);
   for (const candidate of candidates) {
+    // #500: the capability probe is bounded at 5 s with a 1 MiB answer ceiling; an
+    // unresponsive or chatty --help fails this candidate and the loop probes the next.
     try {
       execFileSync(candidate, ['app-server', '--help'], {
         stdio: 'ignore', timeout: 5_000, maxBuffer: 1024 * 1024,
@@ -1635,6 +1661,8 @@ function codexCommand() {
 function museCommand() {
   const candidates = commandCandidates('muse', [join(dirname(process.execPath), 'muse')]);
   for (const candidate of candidates) {
+    // #500: the capability probe is bounded at 5 s with a 1 MiB answer ceiling; an
+    // unresponsive or chatty --help fails this candidate and the loop probes the next.
     try {
       execFileSync(candidate, ['exec', '--help'], {
         stdio: 'ignore', timeout: 5_000, maxBuffer: 1024 * 1024,
@@ -1648,6 +1676,10 @@ function museCommand() {
 /** Issue #28: deliberate wire ceilings are deployment-owned (64KiB–16MiB governance range). */
 const MIN_ADAPTER_WIRE_FRAME_BYTES = 64 * 1024;
 const MAX_ADAPTER_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
+// #500 (extending the #28 pin): the deployment default inside that corridor is 8 MiB — what
+// the claude-session families resolve to when neither advanced.adapterOptions nor
+// BATON_CLAUDE_MAX_WIRE_FRAME_BYTES speaks. Operator-declared; the #500 pin test records all
+// three bounds.
 const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 * 1024 * 1024;
 
 /**
@@ -1884,6 +1916,9 @@ function applicationProfile(repoId, routes, verification, exportBounds) {
     verification: {
       command: verification.command, arguments: verification.arguments,
       cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code',
+      // #500: a verification capture is read to a 1 MiB output ceiling — the registry's
+      // wire.frame row's own value, so a full capture stays representable in one delivery
+      // frame. Operator-declared; the #500 pin test records the value.
       timeoutMs: DEFAULT_BUDGET.wallMin * 60_000, maxOutputBytes: 1024 * 1024,
       requiredPredecessorEvidence: [],
     },
@@ -2309,6 +2344,10 @@ const PROVIDER_REFUSAL_SCAN_BYTES = FRAME_LIMITS['view.attention_text.bytes'].va
 
 /** The bytes a published `lastProviderRefusal.text` is bounded to — the bound this row already
  * published before a refusal became readiness evidence (#341 part 1's row contract). */
+// #500: the published bound is 1 KiB of the provider's own words — enough to name the quota
+// class and a stated reset instant, small enough that a refusal row never carries a provider
+// answer wholesale. Operator-declared with no derivation elsewhere in the tree; the #500 pin
+// test records the live value.
 const PROVIDER_REFUSAL_TEXT_BYTES = 1024;
 
 /** The ledger kinds a provider refusal rides: the crash cert, and the turn terminal (a
@@ -4957,7 +4996,10 @@ class BatonDeployment {
    * (#301). A target the checkout can already name is resolved locally; one it cannot is looked for
    * in the deployment's configured remote (`git fetch` of the ONE remote — `origin` when there is
    * one, else the first configured), then resolved again. A target that resolves to no commit is
-   * refused typed, BEFORE any effect. */
+   * refused typed, BEFORE any effect.
+   *
+   * #500: every git child here is bounded — 10 s for the local rev-parse and remote reads,
+   * 60 s for the one remote fetch; a timeout is absence, refused typed below. */
   #resolveReincarnationTarget(target) {
     const repo = this.#repository.root;
     const revParse = (value) => {
@@ -5703,6 +5745,8 @@ class BatonDeployment {
 
     // The successor serves the SAME directory, moved to the target commit first (its code, its
     // doctor row and its served revision are all the target's).
+    // #500: the move is bounded at 60 s; a wedged checkout refuses the handoff typed in the
+    // catch below instead of hanging the stop.
     try {
       execFileSync('git', ['checkout', '--detach', resolved.sha], {
         cwd: this.#repository.root, encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], timeout: 60_000,
@@ -6176,6 +6220,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     now: rawResident.now ?? Date.now,
     sessionTtlMs: rawResident.sessionTtlMs ?? 24 * 60 * 60 * 1000,
     webDrainMs: rawResident.webDrainMs ?? 5_000,
+    // #500: the resident command client's default per-command deadline is 30 s — the same
+    // bound scripts/baton.mjs sends as BATON_COMMAND_TIMEOUT_MS and the bound the registry's
+    // web.wait_ceiling_ms row names as its own source, so one 30 s vocabulary covers the CLI,
+    // the web wait ceiling and this client. Operator-declarable through
+    // advanced.resident.commandTimeoutMs; the #500 pin test records the default.
     commandTimeoutMs: rawResident.commandTimeoutMs ?? 30_000,
     pollMs: rawResident.pollMs ?? 100,
     // #306 lane A: the handoff's own bound (each phase) and the injected spawner. Both are
@@ -6600,13 +6649,25 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     workflowPolicy,
     runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
     approvalTimeoutMs: DEFAULT_BUDGET.wallMin * 60_000,
+    // #500: the stop path's 15 s deadline; each worker wait inside it takes at most the two
+    // bounded attempts STOP_WAIT_ATTEMPT_BOUND names (above) before the stop proceeds with
+    // the worker named abandoned. Operator-declared with no derivation elsewhere; the #500
+    // pin test records the value.
     stopDeadlineMs: 15_000,
     // TG3: the bounded steering-cycle window — a deployment knob, never stallTimeoutMs (the
     // layer confusion in v0.9 is corrected; the stall watchdog is issue #67).
+    // #500: 5 min between steering nudges; operator-declared with no derivation elsewhere in
+    // the tree, and the #500 pin test records the shipped value.
     progressNudgeWindowMs: 300_000,
+    // #500: the drain — 64 workers waited on in one pass, a 90 s window (the bound the
+    // registry's host.reincarnation.wait_ms row adds its measured startup allowance to), and
+    // a 10 ms poll cadence. Operator-declared; the #500 pin test records the values.
     drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
     ...(verification.concurrency === undefined ? {} : { verificationConcurrency: verification.concurrency }),
     ...(verification.paths === undefined ? {} : { verificationForCapture: verificationSelector(verification) }),
+    // #500: the grace between a budget threshold and the owner's hard stop (issue #258's
+    // budget law); the 2 s default is operator-declarable through
+    // advanced.budgetPolicy.terminalGraceMs, and the #500 pin test records it.
     budgetPolicy: { terminalGraceMs: 2_000, ...budgetPolicy },
     // D1: the stall budget no longer derives from DEFAULT_BUDGET.wallMin — it is the separately
     // frozen DEFAULT_WATCHDOG (20 min < 480 min wall), admission-checked at createDriver.
