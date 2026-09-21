@@ -742,12 +742,15 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
     optional: Object.freeze(['view']),
   }),
-  // Issue #296: the landing verb. `--dry-run` is optional; `target` is required — a landing with no
-  // named branch would have to guess, and guessing which branch a contribution belongs on is the
-  // one decision the verb must not make for its caller.
+  // Issue #296: the landing verb. `--dry-run` is optional; so is `target` (#43 AX, 2026-09-21):
+  // omitted, the landing targets the deployment's own branch — the branch its checkout has
+  // current, the ONE derivation the #438 target facts and every landing receipt already read.
+  // Naming another branch stays admitted; the deployment's target is the deployment's own
+  // decision, never a guess about the caller's intent, so the CLI's `[--onto]` usage tells the
+  // truth and an omitted flag can never refuse.
   'swarm.integrate': Object.freeze({
-    required: Object.freeze(['swarmId', 'contributionId', 'target', 'idempotencyKey']),
-    optional: Object.freeze(['dryRun', 'view']),
+    required: Object.freeze(['swarmId', 'contributionId', 'idempotencyKey']),
+    optional: Object.freeze(['target', 'dryRun', 'view']),
   }),
   'swarm.stop': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey']),

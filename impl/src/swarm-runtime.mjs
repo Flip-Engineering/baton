@@ -7522,6 +7522,11 @@ export class SwarmRuntime {
         command: 'swarm.integrate', rule: 'integration-authority',
       });
     }
+    // Issue #43 AX (2026-09-21): `target` is optional at every surface now — omitted, the
+    // landing targets the deployment's own branch (the branch its checkout has current, the
+    // ONE derivation the #438 target facts read), which is what every receipt already names.
+    const target = typeof args.target === 'string' && args.target.length > 0
+      ? args.target : targetRefOf(authority.repoRoot);
     const contract = this._contributionContract(contribution);
     const subject = typeof contract?.subject === 'string' && contract.subject.length > 0
       ? contract.subject
@@ -7567,7 +7572,7 @@ export class SwarmRuntime {
         ? authority.regenerate : (dir) => defaultIntegrationRegenerate(dir, { pool });
       landed = await landContribution(authority.repoRoot, {
         contributionId: args.contributionId,
-        target: args.target,
+        target,
         commitSha: tip,
         message,
         // Issue #451: the SAME dependency directories the deployment configures for lane
@@ -7586,7 +7591,7 @@ export class SwarmRuntime {
         started: async ({ dir }) => {
           started = this._recordIntegrationRow('swarm.integration_started', {
             swarmId: args.swarmId, contributionId: args.contributionId,
-            participantId: contribution.participantId, target: args.target, scratch: dir,
+            participantId: contribution.participantId, target, scratch: dir,
             // The checkouts a PREVIOUS incarnation left behind that this open swept: the leftover
             // is named where the landing that would have reused its directory is announced.
             ...(swept.length === 0 ? {} : { swept }),
@@ -7664,7 +7669,8 @@ export class SwarmRuntime {
         regenerated: gateRegenerated,
       });
       if (started !== null) {
-        this._recordIntegrationFailure(args, contribution, error, principal, operationKey, landingFacts);
+        this._recordIntegrationFailure(args, contribution, error, principal, operationKey,
+          landingFacts, target);
       }
       this._refuseLanding(error, swarm, landingFacts);
     }
@@ -7700,7 +7706,7 @@ export class SwarmRuntime {
       principal, context, {
         integration: receipt,
         integrationStarted: started === null ? null : {
-          contributionId: args.contributionId, target: args.target,
+          contributionId: args.contributionId, target,
           scratch: started.payload.scratch, seq: started.seq, ts: started.ts,
           ...(swept.length === 0 ? {} : { swept }),
         },
@@ -7713,12 +7719,12 @@ export class SwarmRuntime {
    * `_refuseLanding` maps 1:1), so the row and the refusal can never spell the failure
    * differently. Issue #463: `facts` is the same context the refusal carries — the row the caller
    * never saw and the refusal the caller did see are composed from ONE derivation. */
-  _recordIntegrationFailure(args, contribution, error, principal, operationKey, facts = {}) {
+  _recordIntegrationFailure(args, contribution, error, principal, operationKey, facts = {}, target = args.target) {
     const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : 'integrate_change_invalid';
     try {
       this._recordIntegrationRow('swarm.integration_failed', {
         swarmId: args.swarmId, contributionId: args.contributionId,
-        participantId: contribution.participantId, target: args.target,
+        participantId: contribution.participantId, target,
         code, detail: this._landingFailureDetail(error, this._swarm(args.swarmId), facts),
       }, principal, `swarm-integration-failed:${operationKey}`);
     } catch { /* the refusal below is the caller's answer; a raced failure row is evidence only */ }

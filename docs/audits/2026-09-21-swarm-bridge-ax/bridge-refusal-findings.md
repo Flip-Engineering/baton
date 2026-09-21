@@ -50,14 +50,48 @@ The seat called `run.contributions.read` with `{"sinceSeq":0}` — a guessed fie
 seq 7203: `swarm_command_invalid`, `rule: "unknown-field"`, `field: "sinceSeq"`,
 `admitted: ["since", "swarmId"]`, `correction: "remove sinceSeq — run.contributions.read accepts
 since, swarmId"`, rendered remedy `remove sinceSeq`. The next call named `since` and succeeded.
-
 The refusal named the rule, the admitted set, and the exact correction in one round trip. This is
 the designed teaching refusal (#430); no change. It is recorded here as the in-tolerance control
 beside R1/R2: the same caller, the same surface, one round trip from mistake to fix.
 
+## R4, R5, R6 — the root orchestrator's reported refusals (2026-09-21, same batch)
+
+**R4 — `swarm integrate` demanded a target the CLI called optional.** `baton swarm integrate
+<SWARM> <CONTRIBUTION>` refused `swarm_command_invalid: target is required` while the CLI usage
+rendered `[--onto]`, and the refusal named the internal field, never the flag. The landing now
+derives an omitted target from the deployment's own branch — the ONE derivation the #438 target
+facts read (`targetRefOf`, `impl/src/swarm-runtime.mjs:896-899`) — which is what every landing
+receipt already names; the contract moves `target` to optional
+(`impl/src/swarm-contract.mjs`, SWARM_COMMAND_ARGUMENTS) and the CLI usage tells the truth.
+Regression pin: `impl/test/issue459-integrate-off-loop.test.mjs` (459h).
+
+**R5 — a request-bound-cut landing answer hinted a held wait.** The pending observation for
+`swarm.integrate` printed `--follow` — a held wait, the pattern the swarm's own guidance bans —
+when the receipt is readable from the view with no wait at all. The observation hint now teaches
+the bounded read: `baton swarm view <SWARM>`
+(`impl/src/application-cli.mjs`, `commandObservation`). Regression pin: `impl/test/issue353-stop-of-dead-seat-settles.test.mjs` (353d3).
+
+**R6 — a resume-from recruit refused without naming its precondition.** `swarm recruit
+--resume-from X` after `swarm stop X` crossed `invalid_command: command precondition failed` —
+no field, no rule, no statement of which precondition failed. Two layers:
+the web layer's name-based collapse arm
+(`impl/src/web-northbound.mjs`, dispatchFailure) now lets a cause that carries its own code cross
+with that code and message (the #335 composed-teaching rule), so a coded precondition refusal
+keeps its identity; and the recruit help now states which predecessor states resume-from accepts —
+active, provider-killed (`provider_fault`), or root-settled (`stopped`/`completed`) with a
+carriable workspace (a retained checkout or a lane-branch snapshot) — the same closed set
+`SWARM_RESUMABLE_PREDECESSOR_STATES` (`impl/src/swarm-runtime.mjs:850-855`) teaches at the
+refusal. Removing the stray duplicate `'swarm.recruit'` key in SWARM_CLI_SUMMARIES also fixes the
+pre-existing shadowing that had replaced the recruit help's description paragraph with its
+positional list. Regression pin: `impl/test/swarm-surface.test.mjs` (the recruit summary pin).
+
 ## Verification
 
 `node --test impl/test/swarm-surface.test.mjs impl/test/issue441b-seat-read-verbs.test.mjs
-impl/test/swarm-native-bridge.test.mjs` — green after the fix, including the pre-existing pin that
-the bridge reports `required-field` among its refusal rules
-(`impl/test/swarm-native-bridge.test.mjs:391-392`).
+impl/test/swarm-native-bridge.test.mjs impl/test/issue430-swarm-refusal-set.test.mjs
+impl/test/issue537-capture-refusals-typed.test.mjs impl/test/issue473-stop-incomplete-typed.test.mjs
+impl/test/issue459-integrate-off-loop.test.mjs impl/test/issue353-stop-of-dead-seat-settles.test.mjs
+impl/test/doc-truth-conformance-red.test.mjs` — green after the fixes, including the pre-existing
+pin that the bridge reports `required-field` among its refusal rules
+(`impl/test/swarm-native-bridge.test.mjs:391-392`) and the #430 (b) crossing harness that drives
+every owner row through the served transport.

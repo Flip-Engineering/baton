@@ -3822,12 +3822,12 @@ export function commandObservation(name, args, commandId) {
     });
   }
   // Issue #459: a landing answers its receipt at once and settles later, so a caller whose command
-  // crossed as pending observes the contribution row — the integration receipt or the failure row
-  // is written THERE, and the follow leg is the one that waits for it.
+  // crossed as pending reads the contribution row — the integration receipt or the failure row
+  // is written THERE, readable from the view with no wait at all (#43 AX: the observation hint
+  // teaches the bounded read, never a held `--follow`).
   if (name === 'swarm.integrate' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
     return Object.freeze({
-      command: `baton swarm integrate ${value.swarmId} ${value.contributionId}`
-        + `${nonempty(value.target) ? ` --onto ${value.target}` : ''} --follow`,
+      command: `baton swarm view ${value.swarmId}`,
       row: `contributions["${value.contributionId}"] in \`baton swarm view ${value.swarmId}\` — the landing receipt, or the \`integrationFailure\` row naming the code it stopped under`,
     });
   }

@@ -710,6 +710,18 @@ function dispatchFailure(cause, command = null) {
     } } };
   }
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) {
+    // Issue #43 AX: a cause that carries its own code crosses with it — the same composed-teaching
+    // rule the application_ arm applies (#335) — so a precondition refusal names its rule instead
+    // of a fixed string that names nothing. Only an UNCODED cause gets the sanitized collapse.
+    if (typeof cause?.code === 'string' && cause.code.length > 0) {
+      const detail = isRecord(cause?.detail) ? cause.detail : null;
+      return { httpStatus: 400, body: { ok: false, error: {
+        code: cause.code,
+        message: typeof cause?.message === 'string' && cause.message.length > 0
+          ? cause.message : 'command precondition failed',
+        ...(detail === null ? {} : { detail }),
+      } } };
+    }
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
   // #105 D3 (reply-chains-2026-08-06): the message lane's budget refusal maps to the same

@@ -16,9 +16,9 @@ import { swarmApplicationToolDefinitions } from '../src/mcp-northbound.mjs';
 import { canonicalAndTransportNames, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { createSwarms } from '../src/swarm-client.mjs';
 import {
-  SWARM_CLI_COMMANDS, SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS,
-  SWARM_MCP_TOOL_DEFINITIONS, SWARM_COMMAND_SCHEMAS, SWARM_CLI_HELP, swarmCliCommand,
-  swarmRegisteredCommands, swarmWebAdmittedCommands, validateSwarmCommand,
+  SWARM_CLI_COMMANDS, SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES,
+  SWARM_EVENT_KINDS, SWARM_MCP_TOOL_DEFINITIONS, SWARM_COMMAND_SCHEMAS, SWARM_CLI_HELP,
+  swarmCliCommand, swarmRegisteredCommands, swarmWebAdmittedCommands, validateSwarmCommand,
 } from '../src/swarm-surface.mjs';
 
 // The registry as root will carry it: the live application definitions plus the swarm family. Every
@@ -172,6 +172,17 @@ test('a required-field refusal names every missing field in one refusal (#43 AX,
   assert.match(singular.message, /swarmId is required/u);
   assert.equal(singular.detail.field, 'swarmId');
   assert.equal(singular.detail.expectation, 'a swarm identity');
+});
+
+test('the recruit summary states which predecessor states resume-from accepts (#43 AX)', () => {
+  const summary = swarmCliCommand('recruit').summary;
+  assert.match(summary, /resumable while it is active/u);
+  assert.match(summary, /provider_fault/u, 'the provider-killed state is taught');
+  assert.match(summary, /reason stopped or completed/u, 'the root-settled states are taught');
+  assert.match(summary, /retained checkout or a snapshot commit on its lane branch/u,
+    'the carriable-workspace condition is taught');
+  assert.match(summary, /swarm_recruit_predecessor_unavailable/u,
+    'the help names the typed refusal the out-of-states case draws');
 });
 
 // ── the transport registration seam ─────────────────────────────────────────────────────────────
