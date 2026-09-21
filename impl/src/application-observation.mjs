@@ -285,13 +285,30 @@ export function deepFreeze(value) {
   for (const child of Object.values(value)) deepFreeze(child);
   return Object.freeze(value);
 }
-export function exactObject(value, fields, code, label) {
+/** The ONE closed-shape read (#532, #535). Issue #532 loosened the unknown-field half for
+ * forward compatibility: a calling seam that validates a structure it may extend accepts fields it
+ * does not declare, and only the declared fields are required. That loosening belongs to
+ * DATA-SHAPE validation. A validator on an AUTHORIZATION boundary is the opposite: an undeclared
+ * field there is not an extension, it is an attempt to grant authority the caller does not hold
+ * (#176: a forged principal carrying `orchestratorLeaseId` refused `application_authority_invalid`).
+ * Those callers ask for the closed read explicitly with `{rejectUnknown: true}`; the default stays
+ * #532's forward-compatible behaviour, so no data-shape caller changes.
+ * The strict refusal names the field, the rule and the expectation, the #376 shape. */
+export function exactObject(value, fields, code, label, options = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw applicationError(`${label} has missing required field(s)`, code);
   }
   const keys = Object.keys(value);
   for (const f of fields) {
     if (!keys.includes(f)) throw applicationError(`${label} has missing required field(s)`, code);
+  }
+  if (options.rejectUnknown !== true) return;
+  const declared = new Set(fields);
+  for (const key of keys) {
+    if (declared.has(key)) continue;
+    throw applicationError(`${label} carries undeclared field ${key}`, code, {
+      field: key, rule: 'unknown-field', expectation: `one of ${fields.join(', ')}`,
+    });
   }
 }
 export function validId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value); }
@@ -847,7 +864,10 @@ export function debugFrameDegradedSummary(events) {
   };
 }
 export function normalizePrincipal(value, label) {
-  exactObject(value, ['actor', 'principalId', 'sessionId'], 'application_authority_invalid', label);
+  // Issue #535: the principal is an AUTHORIZATION boundary, so its shape stays closed — an
+  // undeclared field is a forged grant, never a forward-compatible extension.
+  exactObject(value, ['actor', 'principalId', 'sessionId'], 'application_authority_invalid', label,
+    { rejectUnknown: true });
   if (!validText(value.actor, 256) || !validId(value.principalId) || !validId(value.sessionId)) {
     throw applicationError(`${label} is invalid`, 'application_authority_invalid');
   }

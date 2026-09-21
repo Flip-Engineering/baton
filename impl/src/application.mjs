@@ -1273,7 +1273,11 @@ export function validateApplicationCommandArgs(name, args) {
     }
     return true;
   }
-  exactObject(args, definition.args, 'application_command_invalid', name);
+  // Issue #535: the public-argument shape is an authority boundary, not a data-shape
+  // preference — the closed check is what stops a caller injecting recursive session or lease
+  // authority (`sessionAuthority`, `orchestratorLeaseId`) into a public request, which phase77
+  // RA2 pins. #532's forward-compatibility loosening therefore does not apply here.
+  exactObject(args, definition.args, 'application_command_invalid', name, { rejectUnknown: true });
   if (name === 'run.start') normalizeIntent(args.intent);
   if (name === 'run.status' && !validId(args.runId)) {
     throw applicationError('run id is invalid', 'application_run_invalid');
