@@ -913,9 +913,14 @@ export function semanticAuthorityPayload(value) {
   };
 }
 export function normalizeSemanticAuthority(value, code = 'application_context_invalid') {
+  // Issue #536: a command context carries AUTHORITY GRANTS, and a grant keeps the closed shape —
+  // an undeclared field in a grant is an attempt to claim authority the grantor never vouched
+  // (#535's rule, one level down). The durable seam already demands the exact S-2 envelope
+  // (mintBoardGrant's proofFields), so a looser read here accepts what the ledger then refuses,
+  // and projects the undeclared keys into the frozen context other consumers read verbatim.
   exactObject(value,
     ['schemaVersion', 'actionId', 'kind', 'effect', 'requiredCapabilities', 'authorityDigest'],
-    code, 'semantic action authority');
+    code, 'semantic action authority', { rejectUnknown: true });
   if (value.schemaVersion !== 1 || !validId(value.actionId) || !validId(value.kind)
     || !validId(value.effect) || !Array.isArray(value.requiredCapabilities)
     || value.requiredCapabilities.length === 0 || value.requiredCapabilities.length > 16
@@ -953,9 +958,11 @@ export function normalizeCommandContext(value) {
     throw applicationError('application command context is invalid', 'application_context_invalid');
   }
   if (value.sessionAuthority !== undefined) {
+    // The context object itself stays #532-forward-compatible: unknown context keys are dropped
+    // by the closed construction below and carry no authority.
     exactObject(value.sessionAuthority,
       ['schemaVersion', 'authorityDigest', 'expiresAt', 'orchestratorLeaseId'],
-      'application_context_invalid', 'application session authority');
+      'application_context_invalid', 'application session authority', { rejectUnknown: true });
     if (value.sessionAuthority.schemaVersion !== 1
       || !/^[a-f0-9]{64}$/u.test(value.sessionAuthority.authorityDigest ?? '')
       || !validText(value.sessionAuthority.orchestratorLeaseId, 512)
@@ -1247,8 +1254,12 @@ export function normalizeProfileRegistryEvent(event) {
 function normalizeGateCauseFeedback(value) {
   // Diagnostics DG-1b / R-DG-6: run.feedback structured inputs accept the same {gate, detail}
   // payload the run.debug failure leg projects — no new seam.
+  // Issue #538: this payload is a caller-authored claim about hub-owned gate state, so its
+  // shape stays closed — `derived` and `gateEventSeq` are hub-set only (the validated-or-replaced
+  // verdict law), and a caller-authored key here is an attempt to author that state, never a
+  // forward-compatible extension. The #532 loosening stays for data-shape callers.
   exactObject(value, ['gate', 'detail'], 'application_workflow_feedback_invalid',
-    'gate diagnosis feedback');
+    'gate diagnosis feedback', { rejectUnknown: true });
   if (!DEBUG_GATE_CODES.has(value.gate)
     || !value.detail || typeof value.detail !== 'object' || Array.isArray(value.detail)) {
     throw applicationError('workflow feedback is invalid', 'application_workflow_feedback_invalid');
