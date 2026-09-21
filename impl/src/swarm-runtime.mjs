@@ -7032,10 +7032,12 @@ export class SwarmRuntime {
     // rows composed at recruitment time. The wakeClassFor derivation (wake-stream.mjs) maps each
     // ledger row to its wake class; the block carries this swarm's own swarm-scoped events plus
     // the deployment-scoped events whose resolved coordinates name this seat's lane, newest first
-    // under the situation byte budget.
+    // under its own item ceiling and the situation byte budget. The rows come from the CALLER's
+    // ledger read (#441 lane C: the composer scans nothing itself, so the recruit path's own read
+    // is the ONE read a brief costs) — a caller that read none composes no block.
     const sinceSeq = predecessor?.lastCheckpoint?.seq ?? swarm.seq ?? 0;
     const swarmId = swarm.swarmId;
-    const ledgerEvents = ledger ?? this.store.eventsView();
+    const ledgerEvents = ledger ?? [];
     // The two scopes §3.1 names: a swarm-scoped row rides when it belongs to this swarm; a
     // deployment-scoped row rides when the coordinates the stream resolves it to name this seat or
     // the predecessor seat its lineage continues — the seat's own Run is admitted after this brief
@@ -7067,14 +7069,19 @@ export class SwarmRuntime {
         + `${frame.next === null ? '' : ` · next: ${frame.next}`}`);
     }
     if (wakeLines.length > 0) {
+      // Issue #529 (docs/54 §6.1): the block draws its OWN registry ceiling (a count), then the
+      // situation byte budget it shares with the other age-scaling blocks. Whatever either bound
+      // sheds is counted beside the read that answers it, so a short block is never a silent one.
+      const wakeItemsBudget = FRAME_LIMITS['brief.wake_events.items'];
       const reversed = [...wakeLines].reverse();
       const { lines, taken } = takeSituationBlocks(
-        reversed.map((line) => [line]), situationsBudget.value);
+        reversed.slice(0, wakeItemsBudget.value).map((line) => [line]), situationsBudget.value);
       situation.push(`Recent wake events (since seq ${sinceSeq}, newest first):`);
       for (const line of lines) situation.push(line);
       if (taken < reversed.length) {
         situation.push(`- ${reversed.length - taken} further wake event${reversed.length - taken === 1 ? '' : 's'} not shown`
-          + ` (this block is bounded by ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
+          + ` (this block is bounded by ${wakeItemsBudget.lane} = ${wakeItemsBudget.value} items and by`
+          + ` ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
           + ' read them with baton deployment wakes-since)');
       }
     }
