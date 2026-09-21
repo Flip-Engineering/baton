@@ -11,7 +11,8 @@
 //   (d)  the block names events from contributions;
 //   (e)  a first recruit INTO a swarm that has already produced events carries the block, diffed
 //        against the swarm's creation seq, and never reads its own join;
-//   (f)  the block carries this swarm's events only — a sibling swarm's seats never ride it.
+//   (f)  the block carries this swarm's events only — a sibling swarm's seats never ride it;
+//   (g)  a TERMINAL class's line names the command that acts on it (docs/54 §3.1).
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -258,4 +259,22 @@ test('529-f: the block carries this swarm\'s events only', async (t) => {
   assert.ok(block.length > 0, 'gamma reads its own swarm\'s events');
   assert.match(block, /recruited/u, 'this swarm\'s events ride the block');
   assert.doesNotMatch(block, /delta/u, 'a sibling swarm\'s seat never rides this seat\'s block');
+});
+
+// ── (g) a terminal class names the command that acts on it ──────────────────
+
+test('529-g: a terminal wake line names the command that acts on it', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test terminal wake follow-up' });
+
+  await f.recruit('alpha');
+  await f.call('stop', { participantId: 'alpha', reason: 'Done' });
+
+  await f.recruit('gamma');
+  const block = wakeBlockOf(f.seat('gamma').brief);
+
+  assert.match(block, /left[^\n]*· next: baton swarm view wake-529/u,
+    'a terminal class carries the command that acts on it, with the swarm filled in from the frame');
+  assert.doesNotMatch(block, /recruited[^\n]*· next:/u,
+    'a non-terminal class names no follow-up command');
 });

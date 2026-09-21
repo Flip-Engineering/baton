@@ -329,13 +329,15 @@ brief's `## Swarm situation` section carries a "Recent wake events" block listin
 wake events that occurred since the predecessor's last checkpoint seq. A first recruit (no
 predecessor) reads them since the swarm's own creation seq: a seat recruited into a swarm that has
 already produced events reads that history, and a swarm that has produced none renders no block.
-Each line names the wake class, ledger seq, timestamp, and the participant the event concerns. The
-block uses the same `wakeClassFor` derivation the wake stream uses (the `WAKE_CLASS_TABLE` in
-`wake-stream.mjs`), filtered to events whose `swarmId` matches the seat's swarm, and bounded by the
-situation byte budget (`brief.situation.bytes`), newest first with the remainder counted beside the
-read that answers it (`baton deployment wakes-since`). The mechanism is the same as parked guidance
-(#337): durable ledger rows composed at recruitment time, received by the seat without any verb.
-See `docs/54-native-wake.md` for the full design.
+Each line names the wake class, ledger seq, timestamp and the participant the event concerns, and a
+terminal class names the command that acts on it (`· next: baton swarm view <swarm>`) — both
+rendered from the same `deriveWakeFrame` derivation the wake stream serves (the `WAKE_CLASS_TABLE`
+in `wake-stream.mjs`), so a brief can never name a class, a subject or a follow-up command the
+stream would not. The block carries the events whose `swarmId` matches the seat's swarm and is
+bounded by the situation byte budget (`brief.situation.bytes`), newest first with the remainder
+counted beside the read that answers it (`baton deployment wakes-since`). The mechanism is the same
+as parked guidance (#337): durable ledger rows composed at recruitment time, received by the seat
+without any verb. See `docs/54-native-wake.md` for the full design.
 
 **An MCP session subscribes itself to the wake stream as it connects (#529, 2026-09-21).** The
 session's `initialize` opens one wake subscription through the same facade entry

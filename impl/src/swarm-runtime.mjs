@@ -54,7 +54,7 @@ import { landContribution } from './worktree.mjs';
 // redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
 // a tail nobody else's bound describes.
 import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
-import { wakeClassFor } from './wake-stream.mjs';
+import { deriveWakeFrame, wakeClassFor } from './wake-stream.mjs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -6946,9 +6946,16 @@ export class SwarmRuntime {
       if (classRow.scope !== 'swarm') continue;
       const payload = event.payload ?? {};
       if (payload.swarmId !== swarmId) continue;
-      const participantLabel = typeof payload.participantId === 'string' ? payload.participantId : '';
-      const contributionLabel = typeof payload.contributionId === 'string' ? ` ${payload.contributionId}` : '';
-      wakeLines.push(`- [seq ${event.seq} · ${classRow.wakeClass} · ts ${event.ts ?? ''}${contributionLabel}]: ${participantLabel}${participantLabel ? ' — ' : ''}${classRow.summary}`);
+      // Each line renders from the ONE frame derivation the wake stream itself serves
+      // (deriveWakeFrame), so the brief can never name a class, a subject or a follow-up command
+      // the stream would not: a TERMINAL class carries the command that acts on it, which is what
+      // makes a completion the seat reads actionable (#541).
+      const frame = deriveWakeFrame(event);
+      const participantLabel = frame.participantId ?? '';
+      const contributionLabel = frame.subject?.kind === 'contribution' ? ` ${frame.subject.id}` : '';
+      wakeLines.push(`- [seq ${frame.seq} · ${frame.wakeClass} · ts ${frame.ts ?? ''}${contributionLabel}]:`
+        + ` ${participantLabel}${participantLabel === '' ? '' : ' — '}${classRow.summary}`
+        + `${frame.next === null ? '' : ` · next: ${frame.next}`}`);
     }
     if (wakeLines.length > 0) {
       const reversed = [...wakeLines].reverse();
