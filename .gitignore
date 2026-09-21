@@ -11,3 +11,7 @@ aa_key
 designarena_key
 impl/*.tgz
 baton-status.json
+# #539: the Bend2 evaluation installs its toolchain inside the checkout (BEND_HOME=.bend)
+# and writes network and build scratch under .scratch/; neither is a source artifact.
+.bend/
+.scratch/
