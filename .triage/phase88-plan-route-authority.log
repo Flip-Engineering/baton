@@ -1,0 +1,34 @@
+✔ PR88-1: v2 Plan tuples normalize in locale-independent code-unit order and retain one canonical digest (5.407334ms)
+✔ PR88-2: route helpers distinguish closed tuples, safe legacy singleton, and quarantined ambiguity (0.904833ms)
+✔ PR88-3: fresh legacy singleton promotes to v2 while fresh ambiguous axes are refused (0.977792ms)
+✖ PR88-4: v2 Plan route schema is closed, unique, nonempty, and policy-bounded (1.408583ms)
+✔ PR88-5: live dispatch authorizes exact tuple membership and refuses Cartesian widening without a write (51.758917ms)
+✔ PR88-6: historical ambiguous legacy Plan replays for observation but quarantines every new dispatch (31.724208ms)
+✔ PR88-7: an already-admitted ambiguous legacy dispatch replays only its exact historical transaction (35.172541ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 6
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 394.589
+
+✖ failing tests:
+
+test at test/phase88-plan-route-authority.test.mjs:238:1
+✖ PR88-4: v2 Plan route schema is closed, unique, nonempty, and policy-bounded (1.408583ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase88-plan-route-authority.test.mjs:251:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }

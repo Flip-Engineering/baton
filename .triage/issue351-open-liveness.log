@@ -1,0 +1,13 @@
+✔ OL-a: a 150 000-row, 600-worker-ledger deployment opens through createDriver with the loop beating (2065.121084ms)
+✔ OL-b: the serve log reads replaying then published, and swarm list answers within a bound of the flip (4681.76025ms)
+✔ OL-c: a tampered ledger rejects the open with the typed replay refusal and leaves no writer lease (604.874833ms)
+✔ OL-d: a worker story is served on first read after the lazy ingest, and the chunked warm yields (1009.495833ms)
+✔ OL-e: SIGTERM during the open is admitted — the stop row lands, the stop converges, no lease is left (6118.106125ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14855.964458

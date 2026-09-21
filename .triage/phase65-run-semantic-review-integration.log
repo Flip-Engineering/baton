@@ -1,0 +1,48 @@
+✔ SR1-SR10: exact independent structured review gates an evidence-bound integration and reaps reviewer ownership (7945.40525ms)
+✔ SR5/SR7/SR9: a stale source anchor fails closed and cannot authorize integration (5955.80675ms)
+✔ SR2/SR6: same-family review is rejected before the reviewer provider sees a spawn (2555.65075ms)
+✔ SR3/SR10: semantic approval and adoption reconstruct from durable state before later integration (10261.185667ms)
+▶ SR4-SR7: unknown fields, substituted evidence, inconsistent verdicts, and extra reviewer edits fail closed
+  ✖ unknown-report-field (4703.526833ms)
+  ✔ substituted-evidence (5425.725291ms)
+  ✔ inconsistent-verdict (5212.635959ms)
+  ✔ extra-reviewer-edit (5478.696375ms)
+✖ SR4-SR7: unknown fields, substituted evidence, inconsistent verdicts, and extra reviewer edits fail closed (20821.894542ms)
+✔ SR7/SR9: unverifiable findings and stale displayed evidence cannot authorize integration (6499.774ms)
+✔ SR9: result adoption invalidates an older displayed manifest before integration (6850.822334ms)
+✔ SR8: Run stop races an in-flight review to one exact fully reaped ownership set (5398.004708ms)
+▶ SR9: dirty and non-fast-forward main states cannot become claimed integrations
+  ✔ dirty (7853.313292ms)
+  ✔ non-fast-forward (8912.223875ms)
+✔ SR9: dirty and non-fast-forward main states cannot become claimed integrations (16766.115792ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 13
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 83721.219084
+
+✖ failing tests:
+
+test at test/phase65-run-semantic-review-integration.test.mjs:345:13
+✖ unknown-report-field (4703.526833ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'semantic_reviewed'
+  - 'review_failed'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase65-run-semantic-review-integration.test.mjs:353:14)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase65-run-semantic-review-integration.test.mjs:345:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'semantic_reviewed',
+    expected: 'review_failed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

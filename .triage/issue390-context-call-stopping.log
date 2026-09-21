@@ -1,0 +1,11 @@
+✔ a390 (a)(b): an admitted stop reads stopping with the awaited receipt named; the receipt exits to stopped (6433.1215ms)
+✔ a390 (c): a stop whose receipt never lands stays stopping and never reads stopped (6715.2285ms)
+✔ a390 (d): a ledger with the admission but not the receipt replays to stopping (7526.262209ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21575.840292

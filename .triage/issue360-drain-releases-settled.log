@@ -1,0 +1,25 @@
+✔ 360a: the drain releases a settled stopped seat through the custody boundary and the shutdown exits zero (3457.515875ms)
+✖ 360b: the drain releases and names the capacity reservation a stopped seat left behind (4644.102334ms)
+✔ 360c: the drain deadline names the reaper and since per waited resource (1967.697333ms)
+✔ 360d: the enriched wait rows replay from the durable worker log (1966.031625ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13103.903708
+
+✖ failing tests:
+
+test at test/issue360-drain-releases-settled.test.mjs:243:1
+✖ 360b: the drain releases and names the capacity reservation a stopped seat left behind (4644.102334ms)
+  Error: fleet drain did not converge before its deployment deadline
+      at Module._drainFailure (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-admission.mjs:883:35)
+      at Coordinator._drainFailure (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/coordinator.mjs:718:29)
+      at file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-observation.mjs:285:39
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    code: 'coordinator_drain_incomplete',
+    detail: { reason: 'historical_reconciliation_pending', timeoutMs: 1500 }
+  }

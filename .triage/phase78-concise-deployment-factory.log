@@ -1,0 +1,141 @@
+✔ DF0: the public entry point exports openBaton as the one deployment factory (1.490792ms)
+✔ DF0b: the ordinary deployment namespace does not reinterpret incompatible v1 authority (753.330416ms)
+✔ DF1: one repository object returns one bound run/open/close deployment surface (835.02425ms)
+✔ DF2: advanced root injection still produces one private deployment-owned namespace (836.683667ms)
+✖ DF3: exact route cards are self-described and multi-route start has no effort fallback (877.683583ms)
+✔ DF4: Kimi-through-Claude is an assembly selector, not a fourth public route axis (926.939625ms)
+✔ DF5: ordinary options reject driver choreography and advanced is one closed branch (2919.242042ms)
+✖ DF6: deployment close joins callers, drains ownership, and remains idempotent (814.027875ms)
+✖ DF7: worker worktrees materialize the effective caller tree without importing credentials or mutating the caller (1247.81625ms)
+✔ DF8: one public Claude harness dispatches exact Opus and Kimi tuples only to their private adapters (6987.856875ms)
+WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "/private/tmp/baton-resident-20260921/.git/baton/application-v3/runtime/w-1/tmp" (codex_home: AbsolutePathBuf("/private/tmp/baton-resident-20260921/.git/baton/application-v3/runtime/w-1/tmp/baton-phase90-tombstoned-kimi-home-F2Ix13/.codex"))
+✔ DF9: built-in GLM exposes every exact supported effort for glm-5.2 and rejects mixed models before effects (1796.035333ms)
+✖ DF10: default route inventory retains configured Claude routes for explicit readiness without mutating an isolated home (1621.077708ms)
+✖ P92-DF10b: default readiness retains a configured rejected-refresh Kimi route as blocked (2593.422125ms)
+✖ DF11: concise complete prepares an adopted result and one explicit apply fast-forwards it (945.15425ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 8
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 23634.859625
+
+✖ failing tests:
+
+test at test/phase78-concise-deployment-factory.test.mjs:162:1
+✖ DF3: exact route cards are self-described and multi-route start has no effort fallback (877.683583ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: No provider credential is projected into the worker runtime for this route.
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase78-concise-deployment-factory.test.mjs:200:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: No provider credential is projected into the worker runtime for this route.
+        at assertRouteReady (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:2752:23)
+        at #assertRouteReady (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:3464:5)
+        at BatonDeployment.run (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:3993:27)
+        at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase78-concise-deployment-factory.test.mjs:201:16)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at test/phase78-concise-deployment-factory.test.mjs:267:1
+✖ DF6: deployment close joins callers, drains ownership, and remains idempotent (814.027875ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: No provider credential is projected into the worker runtime for this route.
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase78-concise-deployment-factory.test.mjs:281:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: No provider credential is projected into the worker runtime for this route.
+        at assertRouteReady (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:2752:23)
+        at #assertRouteReady (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:3464:5)
+        at BatonDeployment.run (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:3993:27)
+        at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase78-concise-deployment-factory.test.mjs:282:16)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at test/phase78-concise-deployment-factory.test.mjs:287:1
+✖ DF7: worker worktrees materialize the effective caller tree without importing credentials or mutating the caller (1247.81625ms)
+  Error: No provider credential is projected into the worker runtime for this route.
+      at assertRouteReady (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:2752:23)
+      at #assertRouteReady (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:3464:5)
+      at BatonDeployment.run (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:3993:27)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase78-concise-deployment-factory.test.mjs:357:32)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'route_credentials_unprojected',
+    state: 'blocked',
+    route: { harness: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' }
+  }
+
+test at test/phase78-concise-deployment-factory.test.mjs:485:1
+✖ DF10: default route inventory retains configured Claude routes for explicit readiness without mutating an isolated home (1621.077708ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase78-concise-deployment-factory.test.mjs:511:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/phase78-concise-deployment-factory.test.mjs:530:1
+✖ P92-DF10b: default readiness retains a configured rejected-refresh Kimi route as blocked (2593.422125ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase78-concise-deployment-factory.test.mjs:562:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/phase78-concise-deployment-factory.test.mjs:565:1
+✖ DF11: concise complete prepares an adopted result and one explicit apply fast-forwards it (945.15425ms)
+  Error: No provider credential is projected into the worker runtime for this route.
+      at assertRouteReady (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:2752:23)
+      at #assertRouteReady (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:3464:5)
+      at BatonDeployment.run (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/application-deployment.mjs:3993:27)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase78-concise-deployment-factory.test.mjs:585:32)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'route_credentials_unprojected',
+    state: 'blocked',
+    route: { harness: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' }
+  }

@@ -1,0 +1,24 @@
+✔ SP1: createFromBase materializes only selected worker paths while preserving exact branch and base identity (1267.718625ms)
+✔ SP2: captureCommit records a selected-path edit without deleting unmaterialized base paths (2268.6295ms)
+✔ SP3: empty worker sparse path refuses before creating worktree, branch, directory, or metadata (402.024834ms)
+✔ SP3: absolute worker sparse path refuses before creating worktree, branch, directory, or metadata (357.399125ms)
+✔ SP3: parent worker sparse path refuses before creating worktree, branch, directory, or metadata (397.161625ms)
+✔ SP3: embedded-parent worker sparse path refuses before creating worktree, branch, directory, or metadata (424.288708ms)
+✔ SP3: empty-segment worker sparse path refuses before creating worktree, branch, directory, or metadata (479.437542ms)
+✔ SP3: wildcard worker sparse path refuses before creating worktree, branch, directory, or metadata (392.865625ms)
+✔ SP3: duplicate deployment worker policy refuses before driver filesystem authority (379.812584ms)
+✔ SP3: reserved-git-root deployment worker policy refuses before driver filesystem authority (355.345542ms)
+✔ SP3: reserved-baton-root deployment worker policy refuses before driver filesystem authority (335.969292ms)
+✔ SP3: overlong deployment worker policy refuses before driver filesystem authority (288.98575ms)
+✔ SP3: max-plus-one deployment worker policy refuses before driver filesystem authority (299.89ms)
+✔ SP4: createDriver forwards workerSparsePaths independently from verifySparsePaths (1537.7345ms)
+✔ SP5: sparse worker identity is durable in handle, event, metadata, and exact cleanup (1094.97575ms)
+✔ SP6: worktree.ready and replayed session context preserve the worker sparse projection (3862.457416ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14966.816875

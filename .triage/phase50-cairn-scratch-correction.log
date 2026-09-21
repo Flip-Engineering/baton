@@ -1,0 +1,22 @@
+✔ SC1-SC4: direct Scratch oracle binds a private fact snapshot and preserves exact independent route across restart (3732.87425ms)
+✔ SC2/SC11: authenticated web and MCP Scratch oracle routes share exact harness/model/effort selection without disclosing the fact (5256.217375ms)
+✔ SC1/SC2: oracle policy is exact and oversized facts refuse before worker allocation (2085.045666ms)
+✔ SC2/SC4: an oracle worktree and verification stay pinned to the fact tree after repository HEAD advances (3390.980916ms)
+✔ SC5-SC10: an accepted fact-bound independent oracle atomically releases and exactly reverifies one derived Finding (3389.931ms)
+✔ SC4: an oracle cannot borrow same-worker verification provenance from another task (3452.095625ms)
+✔ SC4: a superseded accepted oracle artifact cannot release knowledge (3895.575ms)
+✔ SC5-SC8: a qualified observed replacement supersedes and retracts with exact contamination (1843.934875ms)
+✔ SC5-SC11: authenticated web supersedes with an independently-oracled fact and MCP retracts it (3639.813292ms)
+✔ SC4-SC9: observed, generic, failed, unbound, post-boundary, and stale-tail evidence cannot release (4844.143875ms)
+✔ SC1-SC3: route admission, policy shape, producer-route integrity, and hub-derived Scratch IDs fail closed (1957.581542ms)
+✔ SC8-SC9: scan/read/evidence/batch/result ceilings, cancellation, ACI preflight, and append failure leave no correction (34784.313791ms)
+✔ SC6/SC9: stale CAS, unresolved contradiction, and same-source correction refuse without mutation (1356.9945ms)
+✔ SC4/SC9/SC10: correction restart and route, artifact, row, and contamination tampering fail replay (2975.67125ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 77228.595958

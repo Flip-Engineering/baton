@@ -1,0 +1,85 @@
+✔ RO1: the module imports neither monolith and contains no implicit receiver at all (51.928709ms)
+✖ RO2: every observation_port delegate keeps the member name, parameter list, and hands over the recorder (8.306375ms)
+✖ RO3: the recorder is the only recording path — census pinned, and instance patches fire across the boundary (46.176625ms)
+✔ RO4: the eleven relocated helpers moved once; exactly three are imported back (2.238041ms)
+✖ RO5: the map sees the move (3.289917ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 2
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 498.018583
+
+✖ failing tests:
+
+test at test/runtime-observation.test.mjs:86:1
+✖ RO2: every observation_port delegate keeps the member name, parameter list, and hands over the recorder (8.306375ms)
+  AssertionError [ERR_ASSERTION]: expected the 142 moved delegates in the map, found 143
+  
+  143 !== 142
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/runtime-observation.test.mjs:92:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 143,
+    expected: 142,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/runtime-observation.test.mjs:133:1
+✖ RO3: the recorder is the only recording path — census pinned, and instance patches fire across the boundary (46.176625ms)
+  AssertionError [ERR_ASSERTION]: the bucket records through the port exactly as many times as the pre-move bodies recorded through the class
+  + actual - expected
+  
+    {
+      coordRecord: 6,
+  +   coordination: 147,
+  -   coordination: 145,
+      logAppend: 36,
+      mapEvent: 16
+    }
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/runtime-observation.test.mjs:144:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { logAppend: 36, mapEvent: 16, coordRecord: 6, coordination: 147 },
+    expected: { logAppend: 36, mapEvent: 16, coordRecord: 6, coordination: 145 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/runtime-observation.test.mjs:222:1
+✖ RO5: the map sees the move (3.289917ms)
+  AssertionError [ERR_ASSERTION]: the module target carries the 142 bodies plus 8 relocated helper functions (slice 12 moved noop and closedVerificationVerdict to the runtime-recovery base layer; they stay on this module's surface as re-exports)
+  
+  151 !== 150
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/runtime-observation.test.mjs:226:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 151,
+    expected: 150,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

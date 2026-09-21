@@ -1,0 +1,10 @@
+✔ #383 child (a): an unguarded child stdin turns EPIPE into a throw; the guard owns it, records it and tells the observer (372.185209ms)
+✔ #383 child (b): OmpRpcProcess guards its child at start and reports the pipe error as a transport stall, never a crash (175.691125ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 840.500333

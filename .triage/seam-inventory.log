@@ -1,0 +1,65 @@
+✔ SI1: the committed map classifies every member of every declared class exactly once (1929.286583ms)
+✔ SI1b: the committed artifact carries no line numbers, so ordinary edits never stale it (5.502917ms)
+✔ SI2: the committed map regenerates clean, deterministically, and the check mode fails when it is stale (13778.914208ms)
+✔ SI3: the check mode is the same one the CLI runs, and it exits non-zero on a stale artifact (5021.959542ms)
+✔ SI4: the classifier reads the seams off the source, not off a per-member table (1269.77975ms)
+✔ SI5 (S-G4): SwarmRuntime is a declared target, mapped across all four seams, and an unmapped member refuses (2550.937334ms)
+✖ SI6: the per-target corpus is pinned, so a dropped TARGETS entry fails even after a regeneration (1138.402125ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 6
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 26803.6725
+
+✖ failing tests:
+
+test at test/seam-inventory.test.mjs:289:1
+✖ SI6: the per-target corpus is pinned, so a dropped TARGETS entry fails even after a regeneration (1138.402125ms)
+  AssertionError [ERR_ASSERTION]: a corpus row that moved must be updated in this table in the same commit; a missing row means a TARGETS entry was dropped
+  + actual - expected
+  ... Skipped lines
+  
+    {
+      'impl/src/application-briefing.mjs': 2,
+  +   'impl/src/application-observation.mjs': 175,
+  -   'impl/src/application-observation.mjs': 174,
+      'impl/src/application.mjs': 237,
+      'impl/src/coordination-admission.mjs': 180,
+      'impl/src/coordination-internals.mjs': 122,
+      'impl/src/coordination-ledger-writes.mjs': 31,
+      'impl/src/coordination-ledger.mjs': 272,
+      'impl/src/coordination-replay.mjs': 62,
+      'impl/src/coordination-store.mjs': 604,
+  +   'impl/src/coordinator.mjs': 425,
+  -   'impl/src/coordinator.mjs': 424,
+      'impl/src/runtime-admission.mjs': 102,
+      'impl/src/runtime-api.mjs': 47,
+      'impl/src/runtime-briefing.mjs': 1,
+      'impl/src/runtime-effects.mjs': 10,
+      'impl/src/runtime-event-handlers/dispatcher.mjs': 1,
+  ...
+      'impl/src/runtime-event-handlers/turn-terminal.mjs': 3,
+  +   'impl/src/runtime-observation.mjs': 151,
+  -   'impl/src/runtime-observation.mjs': 150,
+      'impl/src/runtime-recovery.mjs': 65,
+  +   'impl/src/swarm-runtime.mjs': 161
+  -   'impl/src/swarm-runtime.mjs': 160
+    }
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/seam-inventory.test.mjs:292:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { 'impl/src/coordinator.mjs': 425, 'impl/src/application.mjs': 237, 'impl/src/coordination-store.mjs': 604, 'impl/src/swarm-runtime.mjs': 161, 'impl/src/coordination-internals.mjs': 122, 'impl/src/coordination-replay.mjs': 62, 'impl/src/runtime-briefing.mjs': 1, 'impl/src/application-briefing.mjs': 2, 'impl/src/coordination-ledger.mjs': 272, 'impl/src/coordination-admission.mjs': 180, 'impl/src/runtime-recovery.mjs': 65, 'impl/src/coordination-ledger-writes.mjs': 31, 'impl/src/runtime-effects.mjs': 10, 'impl/src/runtime-observation.mjs': 151, 'impl/src/runtime-admission.mjs': 102, 'impl/src/runtime-api.mjs': 47, 'impl/src/runtime-event-handlers/dispatcher.mjs': 1, 'impl/src/runtime-event-handlers/process-lifecycle.mjs': 4, 'impl/src/runtime-event-handlers/turn-terminal.mjs': 3, 'impl/src/runtime-event-handlers/interaction.mjs': 6, 'impl/src/runtime-event-handlers/observation-events.mjs': 9, 'impl/src/application-observation.mjs': 175 },
+    expected: { 'impl/src/coordinator.mjs': 424, 'impl/src/application.mjs': 237, 'impl/src/coordination-store.mjs': 604, 'impl/src/swarm-runtime.mjs': 160, 'impl/src/coordination-internals.mjs': 122, 'impl/src/coordination-replay.mjs': 62, 'impl/src/runtime-briefing.mjs': 1, 'impl/src/application-briefing.mjs': 2, 'impl/src/coordination-ledger.mjs': 272, 'impl/src/coordination-admission.mjs': 180, 'impl/src/runtime-recovery.mjs': 65, 'impl/src/coordination-ledger-writes.mjs': 31, 'impl/src/runtime-effects.mjs': 10, 'impl/src/runtime-observation.mjs': 150, 'impl/src/runtime-admission.mjs': 102, 'impl/src/runtime-api.mjs': 47, 'impl/src/application-observation.mjs': 174, 'impl/src/runtime-event-handlers/dispatcher.mjs': 1, 'impl/src/runtime-event-handlers/process-lifecycle.mjs': 4, 'impl/src/runtime-event-handlers/turn-terminal.mjs': 3, 'impl/src/runtime-event-handlers/interaction.mjs': 6, 'impl/src/runtime-event-handlers/observation-events.mjs': 9 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,38 @@
+✔ a test importing a changed module transitively is selected, and the changed test selects itself (12.718791ms)
+✔ a file no test imports selects the tests that name it in a fixture path, and says so (6.348834ms)
+✔ the selection is deterministic and carries the selected files expected-red rows (9.57625ms)
+✔ static import parsing covers the ESM forms and refuses what is not a file edge (0.223875ms)
+✔ a check runs the affected subset first and records it as a typed receipt row (177.373125ms)
+✔ a docs-only capture keeps the #269 skip and records it on the receipt (48.339625ms)
+✔ a change no test reaches skips the subset by name and a fixture-path change does not (46.623458ms)
+✔ an empty selection and an unusable selection are named, not silently skipped (76.836625ms)
+✔ a red subset verdict does not fail the check, and the selection is cached per capture (52.528583ms)
+✖ run-suite --changed selects the affected tests from its own checkout and lands green (5650.346292ms)
+✔ run-suite --changed refuses to run with no paths or with a manifest rewrite (4524.185958ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 10
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11344.583125
+
+✖ failing tests:
+
+test at test/pre-verdict-selection.test.mjs:268:1
+✖ run-suite --changed selects the affected tests from its own checkout and lands green (5650.346292ms)
+  AssertionError [ERR_ASSERTION]: the selected subset is green (a partial run judges only its rows)
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/pre-verdict-selection.test.mjs:277:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

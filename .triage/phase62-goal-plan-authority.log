@@ -1,0 +1,16 @@
+✔ GP1-GP4/GP6/GP8: goals and plans are append-only, bounded, distinct-authority, and restart-visible (380.033041ms)
+✔ GP2/GP3/GP8: weakening, cycles, and double-counted budget refuse without durable prefixes (339.159666ms)
+✔ GP5/GP8: mandatory plan-gated spawn binds Brief/route/budget and has one concurrent CAS winner before effects (1921.982791ms)
+✔ GP5/GP8: every caller Brief field must be present and match the approved node before mutation (560.976834ms)
+✔ GP5/GP6/GP8: an admitted plan-gated spawn reconciles an exact lost-response retry without duplicate effects (3488.586208ms)
+✔ GP5/GP8: plan-bound follow-up and recovery refuse before provider, adapter, runtime, task, or log effects (2891.962375ms)
+✔ GP6/GP8: exact terminal usage settles and releases each plan budget dimension durably (3050.249667ms)
+✔ GP6: status exposes a stable verification refusal code without private verifier prose (2747.519791ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16019.24925

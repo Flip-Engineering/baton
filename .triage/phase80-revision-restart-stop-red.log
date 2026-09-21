@@ -1,0 +1,43 @@
+✔ AR80-RS1: lost successor-approval response restarts one exact revision dispatch (8437.654333ms)
+✖ AR80-RS2: a working revision lost across restart exposes exact typed recovery and forbids redelivery (7330.550917ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 1
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16405.735292
+
+✖ failing tests:
+
+test at test/phase80-revision-restart-stop-red.test.mjs:246:1
+✖ AR80-RS2: a working revision lost across restart exposes exact typed recovery and forbids redelivery (7330.550917ms)
+  Error: startup owned-resource reconciliation refused: ws-5db51f99131a8842c38ebd63798980c7, ws-6ac00dcdd6baeab94c1d95557db53611 — delete the named records under .git/baton/workspace-owners/ after proving their controllers dead, or restore their worktrees (reconciler workspace_owners; record ws-5db51f99131a8842c38ebd63798980c7; observed {"code":"worktree_cleanup_failed","workers":[{"record":"ws-5db51f99131a8842c38ebd63798980c7","workerId":"w-wave-bddeda699aa6e7846ac7a2aa","pid":null,"generation":null,"state":"unavailable","alive":false},{"record":"ws-6ac00dcdd6baeab94c1d95557db53611","workerId":"w-wave-5ece93bb9ab1179b6cd89844","pid":null,"generation":null,"state":"unavailable","alive":false}]}; next: delete the named records under .git/baton/workspace-owners/ after proving their controllers dead, or restore their worktrees)
+      at Module._startupCleanupIncomplete (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-recovery.mjs:880:26)
+      at Coordinator._startupCleanupIncomplete (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/coordinator.mjs:643:28)
+      at Module._trackStartupCleanup (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-recovery.mjs:930:93)
+      at Coordinator._trackStartupCleanup (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/coordinator.mjs:656:28)
+      ... 5 lines matching cause stack trace ...
+      at Module._startupReconstruction (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-recovery.mjs:520:38) {
+    code: 'coordinator_cleanup_incomplete',
+    cause: Error: worktree reconciliation was incomplete
+        at Object.reconcile (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/index.mjs:1137:85)
+        at file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-recovery.mjs:771:51
+        at Module._trackStartupCleanup (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-recovery.mjs:928:20)
+        at Coordinator._trackStartupCleanup (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/coordinator.mjs:656:28)
+        at reconcileStartupResources (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-recovery.mjs:693:42)
+        at Module._startupReconstructionPasses (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-recovery.mjs:827:7)
+        at _startupReconstructionPasses.next (<anonymous>)
+        at Coordinator._startupReconstructionPasses (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/coordinator.mjs:574:28)
+        at _startupReconstructionPasses.next (<anonymous>)
+        at Module._startupReconstruction (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/src/runtime-recovery.mjs:520:38) {
+      code: 'worktree_cleanup_failed',
+      report: { prunedAdminEntries: [], removedZombieDirs: [Array], removedIntegrationDirs: [], removedVerifyDirs: [], validatedExpectedOwners: [], retainedExpectedOwners: [], validatedExpectedBindings: [], retainedExpectedBindings: [], removedPhysicalOwners: [Array], removedWorkspaces: [Array], retainedContentOwners: [], receiptOnlyRefusals: [], diagnostics: [], errors: [Array] }
+    },
+    reconciler: 'workspace_owners',
+    record: 'ws-5db51f99131a8842c38ebd63798980c7',
+    observed: { code: 'worktree_cleanup_failed', workers: [ [Object], [Object] ] },
+    next: 'delete the named records under .git/baton/workspace-owners/ after proving their controllers dead, or restore their worktrees',
+    detail: { reconciler: 'workspace_owners', record: 'ws-5db51f99131a8842c38ebd63798980c7', observed: { code: 'worktree_cleanup_failed', workers: [Array] }, next: 'delete the named records under .git/baton/workspace-owners/ after proving their controllers dead, or restore their worktrees' }
+  }

@@ -1,0 +1,35 @@
+✔ CE1/CE2: the registry and immutable profile expose one strict directory-v1 export command (4.969291ms)
+✖ CE2: export root is deployment authority and is absent from profile/card/digest projections (873.00125ms)
+✔ CE9: direct export authorization is checked with fresh evidence before filesystem effects (3377.6875ms)
+✔ CE9/CE10: completed directory-v1 export is the exact accepted Git tree and leaks no path/ref authority (4407.047ms)
+▶ CE10: deployment root links and accepted Git symlinks fail closed without a completed export
+  ✔ deployment-root-link (307.895125ms)
+  ✔ accepted-tree-symlink (3178.767709ms)
+✔ CE10: deployment root links and accepted Git symlinks fail closed without a completed export (3487.420458ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 6
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12810.814583
+
+✖ failing tests:
+
+test at test/phase66-materialized-result-export.test.mjs:216:1
+✖ CE2: export root is deployment authority and is absent from profile/card/digest projections (873.00125ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/phase66-materialized-result-export.test.mjs:232:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }

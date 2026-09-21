@@ -1,0 +1,51 @@
+✔ GP-A (pin): the trust-gate enum is the closed live set, "never path strings", and gains no LSP-derived code (§4, GT5, R7/R12) (53.0465ms)
+✔ GP-B (pin): _orientationFreshness composes the frame in the declared ACTUAL source order (§3 D3.3, GT4, R8) (17.960584ms)
+✔ GP-C (pin): the closed UNTRUSTED_ORIENTATION frame + prose-leaf discipline the LSP tier reuses (§3 D3.1/D4.3, GT4, R8/R11) (24.024541ms)
+✖ GP-D (pin): the atlas substrate the pool rides — staleness gate, provenance, honest-empty, the symbol degradation targets, and code.seed kept off the read port (GT2/GT3, R1/R8/R9) (13.023708ms)
+✔ GP-E (pin): the referee coverage pass is TEXTUAL and byte-unchanged — coverageOfChange is never reference-derived (GT6, B5b, R6/R12) (58.270792ms)
+✔ GP-F (pin): the sanctioned sanitizers are reused verbatim — no parallel redaction path (GT8, D4.3, R11) (107.330667ms)
+✔ GP-G (pin): the supervised process-lifecycle machinery the pool inherits — bounded kill-wait, closed reap reasons, slot-clear latch (GT7, D1.3/D4.2, R3) (62.12625ms)
+✔ GP-H (pin): the read-port byte bound rows the LSP tier SHARES — no new #89 byte row (OQ4, D3.1, R8) (33.924917ms)
+✔ GP-I (pin): localeCompare is banned across the cited machinery; the compare is locale-free (campaign law, §6) (132.828834ms)
+✔ GP-L (pin): the stubbed typescript-language-server fixture is a real hermetic LSP responder (initialize + textDocument/*) — non-vacuous fixture (203.258583ms)
+✔ R1 (stage: no pool / no LSP card): code.index_status on a no-server language returns typed-empty (empty + honest_empty), never a fabricated answer (§5 R1, D1.5) (240.521375ms)
+✔ R2 (stage: no pool): exactly one server per (repo, language), lazily started, single-flight on concurrent demand, never per-worker; a worker-worktree path refuses lsp_workspace_scope_violation (§5 R2, D1.1/D1.2/M3) (466.217875ms)
+✔ R3 (stage: no LSP server lifecycle): the server rides the exact lifecycle; a server over the outstanding-request ceiling is wedged → lsp_server_unavailable (wedged) + reap+restart as a NEW GENERATION; startup_failed clears the slot first; an unreapable group publishes lsp_reap_unconfirmed (§5 R3, D1.3/B2/D4.2) (2186.712458ms)
+✔ R4 (stage: no bounds): resource bounds refuse before unbounded spawn — lsp_pool_capacity_exceeded names {cap, actual, unit}; the four caps are constructive, never a clock (§5 R4, D1.4/M1/M2) (416.241625ms)
+✔ R5 (stage: no symbol projection): a verification failure resolves its diagnostics to definitions/references by symbol; the worker-facing projection is symbol NAMES + file digests (§5 R5, D2.1/B5a) (11.621833ms)
+✔ R6 (stage: no reference-based scoping): the blast-radius projection is ADDITIVE and annotates the verdict only — coverageOfChange stays textual and never feeds the gate (§5 R6, D2.2/B5b) (344.634375ms)
+✔ R7 (stage: no LSP evidence to leak): the worker-facing reject receipt stays digests+counts + symbol names + file digests; the "never path strings" clause is categorical (§5 R7, D2.3/B5a) (17.460083ms)
+✔ R8 (stage: only code.orient.* exist): the code ops serve pool→index→typed-empty; every answer rides the UNTRUSTED_ORIENTATION frame + the freshness composition; pool answers are base-only (§5 R8, D3.1/D3.2/D3.3/M4/M5) (384.163708ms)
+✔ R9 (stage: nothing serves LSP stale / no dirty-drift check): a committed base move answers orientation_base_stale; a dirty base root at server-open refuses lsp_server_unavailable (base_root_dirty) (§5 R9, D3.3/D3.5/B3) (788.756666ms)
+✔ R10 (stage: no absence cache): the absence cache composes on the effective-view frame {base_epoch, overlayDigest, normalized_query}; a proven-zero is shared only on matching views; base/overlay change invalidates by construction; a conflict refuses (§5 R10, D3.4/B4) (223.46875ms)
+✔ R11 (stage: no LSP content exists): no LSP content crosses a worker surface unsanitized — the closed M6 mapping + frame; hover/docstring is a repository-prose leaf; a violation refuses (§5 R11, D4.3/M6/OQ2) (10.539375ms)
+✔ R12 (stage: no LSP evidence exists to gate with): LSP-derived evidence is never a verdict input — the gate enum stays the live set, no LSP gate code; the blast-radius projection annotates only (§5 R12, D4.1/B5b) (28.050334ms)
+✔ R13 (stage: no pool / no opt-in gate): the pool never starts a server for a language not opted in (lsp_language_not_opted_in before spawn); an un-opted-but-index-supported language serves the static index; the card names the honest trust posture (§5 R13, D1.5/D4.4/B1) (345.716833ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 22
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6550.079709
+
+✖ failing tests:
+
+test at test/issue144-lsp-pool-red.test.mjs:576:1
+✖ GP-D (pin): the atlas substrate the pool rides — staleness gate, provenance, honest-empty, the symbol degradation targets, and code.seed kept off the read port (GT2/GT3, R1/R8/R9) (13.023708ms)
+  AssertionError [ERR_ASSERTION]: atlas provenance carries overlay_applied + the staleness labels
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/issue144-lsp-pool-red.test.mjs:582:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

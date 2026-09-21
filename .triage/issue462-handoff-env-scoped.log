@@ -1,0 +1,51 @@
+✔ 462-A: a deployment opened with the declaration consumes it — out of process.env, into the incarnation state (1250.142ms)
+✔ 462-B: the consume is one act — a malformed declaration is consumed too, never left for the children (378.74975ms)
+✔ 462-C: a deployment opened with the declaration spawns a worker whose environment lacks every key in the closed list (3272.156958ms)
+baton serve: host.stop_waiting on successor_publication at 2026-09-21T17:10:20.028Z
+baton serve: host.reincarnation_failed publication_handoff (publication_timeout, waited 4011ms) at 2026-09-21T17:10:29.215Z; this incarnation re-took the writer authority and keeps serving (admission reopened: work open, fleet unchanged)
+baton serve: host.stop_requested supersedes the failed handoff at 2026-09-21T17:10:29.217Z; this incarnation stops (the re-publish held only until the stop that was already asked for)
+baton serve: host.stop_requested trigger operation_completed at 2026-09-21T17:10:29.218Z
+baton serve: web admission closed (admission_closed)
+baton serve: draining the fleet with the served transport open for reads
+baton serve: drain converged; 0 of 0 participant(s) stopped
+baton serve: web transport closed (closed)
+baton serve: host.stopped stopped at 2026-09-21T17:10:29.254Z (projection checkpoint written; 4475 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)
+baton serve: host.stopped tail stop_record 1ms; host_closed 45ms; publication_withdrawal 0ms
+✔ 462-D: the old mints a fresh declaration for the successor it spawns — exactly the closed list (10580.006125ms)
+baton serve: host.stop_waiting on successor_publication at 2026-09-21T17:10:30.618Z
+baton serve: host.reincarnation_failed publication_handoff (publication_timeout, waited 4007ms) at 2026-09-21T17:10:39.825Z; this incarnation re-took the writer authority and keeps serving (admission reopened: work open, fleet unchanged)
+baton serve: host.stop_requested supersedes the failed handoff at 2026-09-21T17:10:39.826Z; this incarnation stops (the re-publish held only until the stop that was already asked for)
+baton serve: host.stop_requested trigger operation_completed at 2026-09-21T17:10:39.826Z
+baton serve: web admission closed (admission_closed)
+baton serve: draining the fleet with the served transport open for reads
+baton serve: drain converged; 0 of 0 participant(s) stopped
+baton serve: web transport closed (closed)
+baton serve: host.stopped stopped at 2026-09-21T17:10:39.858Z (projection checkpoint written; 4475 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)
+baton serve: host.stopped tail stop_record 4ms; host_closed 31ms; publication_withdrawal 0ms
+✔ 462-E: a reincarnated resident that reincarnates again hands the NEXT successor its OWN declaration (10591.772375ms)
+✖ 462-F: the six keep-green rows run green in the environment a successor leaves its children (14758.863708ms)
+ℹ a child of a successor inherits the successor's environment — the seat, the #459 supervised gate run and the regenerator all build theirs over it; at HEAD it carried the declaration, and these six rows went red inside a reincarnated resident
+ℹ tests 6
+ℹ suites 0
+ℹ pass 5
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 41673.518042
+
+✖ failing tests:
+
+test at test/issue462-handoff-env-scoped.test.mjs:325:1
+✖ 462-F: the six keep-green rows run green in the environment a successor leaves its children (14758.863708ms)
+  AssertionError [ERR_ASSERTION]: and all six ran — a pattern that selects none would pass vacuously
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/issue462-handoff-env-scoped.test.mjs:356:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: "baton serve: host.stop_waiting on successor_publication at 2026-09-21T17:10:44.356Z\nbaton serve: web admission closed (closed_degraded); the handoff's authority is the successor's\nbaton serve: the handoff's authority is the successor's (coordination_writer_lost); this incarnation's own application legs are released\nbaton serve: host.publication_withdrawn instance-59d6d804-6e0a-4f9b-92c4-54b916e244ac → instance-e3beb4ab-76a0-46c4-80ed-8c9a6a7af366\nbaton serve: host.stopped tail web_admission_close 2ms; stop_record 0ms; host_closed 16ms; publication_withdrawal 0ms; incarnation_exit 0ms\n✔ #306 §2.1: the request records host.reincarnation_requested {target, from} and answers the reincarnating receipt (2241.426375ms)\nbaton serve: host.stop_waiting on successor_publication at 2026-09-21T17:10:46.527Z\nbaton serve: web admission closed (closed_degraded); the handoff's authority is the successor's\nbaton serve: the handoff's authority is the successor's (coordination_writer_lost); this incarnation's own application legs are released\nbaton serve: host.publication_withdrawn instance-bf9700ef-bfc4-4cf5-8747-d17eec2e337c → instance-1decce23-a804-4b75-b273-7e659aa249a7\nbaton serve: host.stopped tail web_admission_close 0ms; stop_record 0ms; host_closed 25ms; publication_withdrawal 0ms; incarnation_exit 0ms\n✔ #306 §2.5: the successor takes the writer lease only after the old incarnation's release — host.stopped lies between successor_started and successor_published (2166.120667ms)\nbaton serve: host.stop_waiting on successor_publication at 2026-09-21T17:10:48.047Z\nbaton serve: web admission closed (closed_degraded); the handoff's authority is the successor's\nbaton serve: the handoff's authority is the successor's (coordination_writer_lost); this incarnation's own application legs are released\nbaton serve: host.publication_withdrawn instance-7602e172-68a5-4faa-8d19-5487d7080497 → instance-6f8704fd-159a-4b2d-81f5-1dfb5cb22cc4\nbaton serve: host.stopped tail web_admission_close 1ms; stop_record 0ms; host_closed 16ms; publication_withdrawal 0ms; incarnation_exit 0ms\n✔ #306 §2.8: the settlement rows are the successor's observations of the old incarnation (1460.963583ms)\n✔ RS2: the stop writes host.stop_requested and then host.stopped — and nothing between them (7196.772917ms)\n✔ RS4: the publication is withdrawn on stop, and the stop that withdrew it is recorded (5850.963ms)\n✔ SA2: a converged stop reads in the order the facts happened — request, intent, outcome (5111.933667ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 13338.814417\n",
+    expected: /# pass 6/u,
+    operator: 'match',
+    diff: 'simple'
+  }

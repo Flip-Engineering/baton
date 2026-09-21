@@ -1,0 +1,36 @@
+✔ AO1: the module imports neither monolith and contains no implicit receiver at all (39.034583ms)
+✔ AO2: every observation_port delegate keeps the member name, parameter list, and arity (81.927166ms)
+✔ AO3: the bucket appends nothing and the durable-read census is pinned (1.451208ms)
+✔ AO4: the helpers moved once; the host imports back its staying readers and re-exports its consumers' names (23.956834ms)
+✖ AO5: the map sees the move — a new target, the host unchanged, every delegate on the port rule (2.243625ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 357.768584
+
+✖ failing tests:
+
+test at test/application-observation.test.mjs:152:1
+✖ AO5: the map sees the move — a new target, the host unchanged, every delegate on the port rule (2.243625ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  175 !== 174
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/application-observation.test.mjs:156:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 175,
+    expected: 174,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

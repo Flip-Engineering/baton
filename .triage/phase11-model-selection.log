@@ -1,0 +1,22 @@
+✔ MS1/MS5: spawn model is independent of vendor and survives handle, event, observed state, and result (84.58225ms)
+✔ MS1: an exact model rejected by a known card fails typed before allocation (10.80625ms)
+✔ MS2: Claude task model overrides constructor default and reports the wire-observed model (268.605291ms)
+✔ MS2: Codex exact model reaches thread/start and is reported from its response (151.38ms)
+✔ MS2: Grok exact model reaches argv and prompt usage reports the observed model (178.065875ms)
+✔ MS3: product cards publish model selection, defaults, discovery posture, and controls (51.654833ms)
+✔ MS2/MS4: reasoning controls map to native Claude and Grok argv (0.233791ms)
+✔ MS4: auto routing filters harnesses by exact model before scoring (18.347708ms)
+✔ MS4: model preference and deny policy resolve deterministically before routing (14.421125ms)
+✔ MS4: conflicting or unsatisfied exact model policy refuses visibly before allocation (2.34525ms)
+✔ MS5: model attribution reaches verification, router learning, and terminal replay (32.882125ms)
+✔ MS5: a non-alias observed-model mismatch fails visibly and kills the fallback session (18.994916ms)
+✔ MS5: snapshot commits carry Baton-Model independently of Baton-Vendor (1546.653292ms)
+✔ MS5: story keeps requested, resolved, observed, and mismatch model identities (1.114958ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2833.410167

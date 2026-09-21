@@ -1,0 +1,12 @@
+✔ RL-a: the heartbeat beats between the replay’s resolution and the reconstruction’s end (3963.570167ms)
+✔ RL-b: the sync constructor path and the async open produce the identical coordinator state (1334.008209ms)
+✔ RL-c: the startup report carries the reconstruction phase and elapsed (1243.375666ms)
+✔ RL-d: the serve flip line prints the reconstruction it ran (5636.6465ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13130.588042

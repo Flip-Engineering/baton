@@ -1,0 +1,44 @@
+✖ TF1/TF2/TF3: a passing nested suite reaps only its owned fixture root (4536.039958ms)
+✔ TF2/TF3: a failing nested suite stays failed and still reaps its fixture root (4691.13525ms)
+✖ TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root (5017.329666ms)
+✔ #521: a file that stops reporting is reaped by its own progress deadline and named hung (3714.692ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 2
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18171.611584
+
+✖ failing tests:
+
+test at test/test-runner.test.mjs:68:1
+✖ TF1/TF2/TF3: a passing nested suite reaps only its owned fixture root (4536.039958ms)
+  AssertionError [ERR_ASSERTION]: surface-gate: mcp-dispatch: 3 tool(s) are host-local and not advertised over the resident bridge: baton_scratchpad_elevate, baton_scratchpad_settle, baton_knowledge_settlement_lease
+  baton test runner: plan — 1 file(s) in the whole suite: 1 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+  baton test runner: host capacity queued this verify request at position 1 (0 ahead); waiting on load: 16.73046875 load1m observed, 10 required (operator bypass: BATON_HOST_CAPACITY_DISABLED=1)
+  baton test runner: host capacity queued this verify request at position 1 (0 ahead) and the 2000ms admission wait is spent; waiting on load: 16.73046875 load1m observed, 10 required; no capacity effect was applied (operator bypass: BATON_HOST_CAPACITY_DISABLED=1)
+  baton test runner: refused at admission (host_capacity_queue_timeout) — waiting on load: 16.73046875 load1m observed, 10 required; no lane ran and no verdict was produced
+  
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/test-runner.test.mjs:80:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/test-runner.test.mjs:105:1
+✖ TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root (5017.329666ms)
+  Error: timed out waiting for nested test marker
+      at waitFor (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/test-runner.test.mjs:50:9)
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-ffc4b2f34d034cb6ae177887389c80a5/impl/test/test-runner.test.mjs:124:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
