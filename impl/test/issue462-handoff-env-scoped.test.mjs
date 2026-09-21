@@ -340,8 +340,12 @@ test('462-F: the six keep-green rows run green in the environment a successor le
     // inherited NODE_TEST_CONTEXT would report the six rows into THIS runner and print nothing.
     const childEnv = { ...process.env };
     delete childEnv.NODE_TEST_CONTEXT;
+    // ONE row at a time: each of the six starts a real resident and bounds its own handoff at a
+    // few seconds, so running them concurrently turns the host's load into their failures (the
+    // suite's own lane law: a file that spawns real processes runs with --test-concurrency=1).
     const child = spawnSync(process.execPath, [
       '--test',
+      '--test-concurrency=1',
       '--test-name-pattern', '§2\\.1|§2\\.5|§2\\.8|RS2|RS4|SA2',
       'test/issue306-reincarnation-red.test.mjs',
       'test/issue351-resident-shutdown.test.mjs',
@@ -353,6 +357,10 @@ test('462-F: the six keep-green rows run green in the environment a successor le
   });
   assert.equal(status, 0,
     `the six rows pass in the seat's inherited environment:\n${stdout.slice(-4_000)}\n${stderr.slice(-4_000)}`);
-  assert.match(stdout, /# pass 6/u, 'and all six ran — a pattern that selects none would pass vacuously');
+  // A count that is not six names the rows that failed, out of the child's own output: a short
+  // child must never read as a vacuous pass, and the failing row must be readable here.
+  assert.match(stdout, /# pass 6/u, 'and all six ran — a pattern that selects none would pass vacuously'
+    + `\n${(stdout.match(/^not ok \d+ - .*$/gmu) ?? ['(no failing row named)']).join('\n')}`
+    + `\n${stdout.slice(-1_500)}`);
   assert.match(stdout, /§2\.1|§2\.5|§2\.8|RS2|RS4|SA2/u, 'the six named rows are the ones that ran');
 });

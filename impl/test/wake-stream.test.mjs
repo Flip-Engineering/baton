@@ -402,3 +402,60 @@ test('#272: terminal rows carry the command that acknowledges them, and only ter
     assert.ok(frame.next.startsWith('baton doctor'), `${wakeClass} names the command that acts on it`);
   }
 });
+
+// ── #547: the observation arm rides the ledger's own append cursor ────────────────────────────
+
+/** The unit shape the observation rows drive: a mutable ledger, an injected observation, and a
+ * clock the test owns — so "why did the stream re-read" is a fact the row can name (an append, or
+ * the ceiling), never a wall-clock accident. */
+function observationFixture({ observation, observationMs = 60_000, now = () => 1_000 }) {
+  const ledger = [{ seq: 1, ts: 'T', kind: 'swarm.created', actor: 'root', payload: { swarmId: 's1' } }];
+  const coordination = {
+    eventsView: (from) => ledger.filter((event) => event.seq >= (from ?? 1)),
+    ledgerHeadSeq: () => ledger.at(-1).seq,
+    swarms: () => [],
+  };
+  return {
+    stream: new WakeStream({ coordination, observation, observationMs, now, pollMs: 50 }),
+    append: () => ledger.push({ seq: ledger.at(-1).seq + 1, ts: 'T', kind: 'swarm.context_updated',
+      actor: 'root', payload: { key: `k${ledger.length}`, swarmId: 's1' } }),
+  };
+}
+
+test('#547: a standing observation whose measurements drift is ONE condition, not a crossing per read', { timeout: 30_000 }, () => {
+  let reads = 0;
+  const f = observationFixture({
+    observation: () => ({ capacity: {
+      state: 'blocked', code: 'worktree_capacity_exceeded', freeBytes: 100 - reads++,
+    } }),
+  });
+  const observations = () => f.stream.pull(parseWakeFilter({}), { includeObservations: true })
+    .frames.filter((frame) => frame.observation === true);
+  const announced = [...observations()];
+  for (let index = 0; index < 5; index += 1) {
+    f.append();
+    announced.push(...observations());
+  }
+  assert.equal(reads, 6, 'every append re-reads the observation');
+  assert.equal(announced.length, 1,
+    'a standing fault whose free bytes drift is announced once at attach — the drift is not a crossing');
+  assert.equal(announced[0].wakeClass, 'capacity_pressure');
+  assert.equal(announced[0].subject.id, 'worktree_capacity_exceeded');
+});
+
+test('#547: a crossing is announced on the append that precedes it, never on the next poll window', { timeout: 30_000 }, () => {
+  let code = 'worktree_capacity_exceeded';
+  const f = observationFixture({ observation: () => ({ capacity: { state: 'blocked', code, freeBytes: 0 } }) });
+  const observations = () => f.stream.pull(parseWakeFilter({}), { includeObservations: true })
+    .frames.filter((frame) => frame.observation === true);
+  assert.equal(observations().length, 1, 'the standing fault is announced at attach');
+  // The condition CHANGES and the deployment writes: the crossing rides that append. The clock in
+  // this fixture never advances, so a stream that re-read on its own timer could not see it.
+  code = 'worktree_capacity_unavailable';
+  f.append();
+  const crossed = observations();
+  assert.equal(crossed.length, 1, 'the changed condition is announced with the append that carried it');
+  assert.equal(crossed[0].subject.id, 'worktree_capacity_unavailable');
+  f.append();
+  assert.deepEqual(observations(), [], 'and an unchanged condition re-announces nothing');
+});

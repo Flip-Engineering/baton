@@ -19,6 +19,7 @@
     "test/phase8-correctness.test.mjs",
     "test/phase91-semantic-interrupt-preservation-red.test.mjs",
     "test/readiness-credentials-red.test.mjs",
-    "test/worktree-capacity-contention.test.mjs"
+    "test/worktree-capacity-contention.test.mjs",
+    "test/issue462-handoff-env-scoped.test.mjs"
   ]
 }
