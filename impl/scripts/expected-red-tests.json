@@ -469,6 +469,10 @@
       "reason": "#460"
     },
     {
+      "key": "test/issue542-startup-runtime-cleanup.test.mjs :: 542-a: transient scratch cleanup publishes pending and retries to absence without refusing startup",
+      "reason": "#542"
+    },
+    {
       "key": "test/issue545-quota-scope-read.test.mjs :: 545-c: the route row carries remaining usage from the provider, and unknown remaining is not `ready`",
       "reason": "#545"
     },
