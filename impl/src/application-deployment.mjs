@@ -482,6 +482,7 @@ function normalizeRoutes(value = DEFAULT_ROUTES) {
     || value.length > FRAME_LIMITS['deployment.routes'].value) {
     throw deploymentError('advanced routes must be a non-empty bounded array');
   }
+  const seen = new Set();
   return value.map((route) => {
     closed(route, ['aaSlug', 'billing', 'effort', 'harness', 'model', 'openRouterId', 'provider'], 'advanced route');
     for (const field of ['harness', 'model', 'effort']) {
