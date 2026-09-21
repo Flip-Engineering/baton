@@ -340,13 +340,18 @@ test('462-F: the six keep-green rows run green in the environment a successor le
     // inherited NODE_TEST_CONTEXT would report the six rows into THIS runner and print nothing.
     const childEnv = { ...process.env };
     delete childEnv.NODE_TEST_CONTEXT;
+    // ONE row at a time: each of the six starts a real resident and bounds its own handoff at a
+    // few seconds, so running them concurrently turns the host's load into their failures (the
+    // suite's own lane law: a file that spawns real processes runs with --test-concurrency=1).
     // The child's summary is asserted below in TAP's spelling (`# pass 6`), so the reporter is
-    // pinned rather than left to the default: Node 22's default is `tap` only while stdout is not
-    // a terminal, and a later Node prints the `spec` summary (`ℹ pass 6`) — the row then failed on
-    // the reporter's format with all six rows green. `run-suite.mjs` pins its own reporter the
-    // same way.
+    // pinned too rather than left to the default: the default is `tap` only while stdout is not a
+    // terminal, and a Node that prints the `spec` summary (`ℹ pass 6`) failed this row on the
+    // reporter's format with all six rows green — measured on this checkout's Node, where the
+    // concurrency bound alone leaves the child printing `ℹ pass 6` and no `# pass 6` at all.
+    // `run-suite.mjs` pins its own reporter the same way.
     const child = spawnSync(process.execPath, [
       '--test',
+      '--test-concurrency=1',
       '--test-reporter=tap',
       '--test-name-pattern', '§2\\.1|§2\\.5|§2\\.8|RS2|RS4|SA2',
       'test/issue306-reincarnation-red.test.mjs',
@@ -359,6 +364,10 @@ test('462-F: the six keep-green rows run green in the environment a successor le
   });
   assert.equal(status, 0,
     `the six rows pass in the seat's inherited environment:\n${stdout.slice(-4_000)}\n${stderr.slice(-4_000)}`);
-  assert.match(stdout, /# pass 6/u, 'and all six ran — a pattern that selects none would pass vacuously');
+  // A count that is not six names the rows that failed, out of the child's own output: a short
+  // child must never read as a vacuous pass, and the failing row must be readable here.
+  assert.match(stdout, /# pass 6/u, 'and all six ran — a pattern that selects none would pass vacuously'
+    + `\n${(stdout.match(/^not ok \d+ - .*$/gmu) ?? ['(no failing row named)']).join('\n')}`
+    + `\n${stdout.slice(-1_500)}`);
   assert.match(stdout, /§2\.1|§2\.5|§2\.8|RS2|RS4|SA2/u, 'the six named rows are the ones that ran');
 });

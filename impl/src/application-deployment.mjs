@@ -2386,11 +2386,16 @@ function refusalEvidenceOf(payload, card, kind) {
   const texts = refusalTextsOf(payload, kind);
   if (payload?.code === PROVIDER_FAULT_CODES.quota) {
     const detail = record(payload.detail) ? payload.detail : null;
+    // #442 item 2 / #545: the answer's own reset INSTANT when it spelled one, else the WINDOW it
+    // named ("Usage limit reached for 5 hour"). A window is relative, so the caller composes it
+    // with the refusal instant, which is the only thing that makes it absolute. An answer that
+    // names neither keeps resetAt null and clears by probe.
     return {
       code: PROVIDER_FAULT_CODES.quota,
       text: texts[0] ?? '',
       resetAt: typeof detail?.resetAt === 'string' && Number.isFinite(Date.parse(detail.resetAt))
         ? new Date(Date.parse(detail.resetAt)).toISOString() : null,
+      windowMs: providerFaultWindowMs(texts[0] ?? ''),
       resetAtFromText: false,
     };
   }
@@ -2491,8 +2496,14 @@ function deriveRouteRefusals({ log, routes, cardContext }) {
         const eventRoute = Object.freeze({
           harness: event.harnessResolved, model: event.modelResolved, effort: event.effortResolved,
         });
-        const resetAt = evidence.resetAt ?? (evidence.resetAtFromText
-          ? parseProviderResetAt(evidence.text, { provider: providerOfRoute(eventRoute) }) : null);
+        // The instant the refusal happened, which the answer's own named window is measured from:
+        // the ledger stamps `ts` as a number on some rows and an ISO string on others.
+        const refusedAtMs = typeof event.ts === 'number' ? event.ts : Date.parse(event.ts);
+        const resetAt = evidence.resetAt
+          ?? (evidence.resetAtFromText
+            ? parseProviderResetAt(evidence.text, { provider: providerOfRoute(eventRoute) }) : null)
+          ?? (typeof evidence.windowMs === 'number' && Number.isFinite(refusedAtMs)
+            ? new Date(refusedAtMs + evidence.windowMs).toISOString() : null);
         entry.route = eventRoute;
         entry.refusal = { ...position, code: evidence.code, resetAt };
         entry.refusalRow = Object.freeze({ code: evidence.code, text, at: event.ts, resetAt });
