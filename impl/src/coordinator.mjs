@@ -358,15 +358,17 @@ function normalizeModelPolicy(model, policy, effort) {
  * (and the redaction) stays where it always was, in the adapter these tails are composed by. */
 
 
-/** The knob a deployment pins to extend the patience of ONE supervised gate run: the SAME variable
- * the suite runner honours for a hung file (`BATON_SUITE_IDLE_MS`, run-suite.mjs), and the same
- * default when nothing is pinned. The resident's deadline is the BACKSTOP behind the runner's own
- * per-file deadline, never a second policy about how long a suite may take. */
+/** The knob a deployment pins to bound ONE deterministic regenerate step (`--write` inventory
+ * regenerators, `BATON_SUITE_IDLE_MS` — the same variable and default the suite runner honours
+ * for its own per-file liveness law). The GATE RUN takes no such bound (#546): a landing waits
+ * for the runner's verdict, and a regenerator — a mechanical rewrite with no verdict structure of
+ * its own to guarantee termination — keeps this backstop as the one liveness law it has, its
+ * failure row naming the script that died. */
 export const SUPERVISED_GATE_IDLE_ENV = 'BATON_SUITE_IDLE_MS';
 const SUPERVISED_GATE_IDLE_DEFAULT_MS = 600_000;
 
-/** The deadline one supervised gate run is given: the knob's own value when the deployment pinned
- * a positive one, else the runner's own default. */
+/** The deadline ONE regenerate step is given: the knob's own value when the deployment pinned a
+ * positive one, else the runner's own per-file default. */
 export function supervisedGateTimeoutMs(env = process.env) {
   const configured = Number.parseInt(`${env?.[SUPERVISED_GATE_IDLE_ENV] ?? ''}`, 10);
   return Number.isSafeInteger(configured) && configured > 0 ? configured : SUPERVISED_GATE_IDLE_DEFAULT_MS;
@@ -430,10 +432,19 @@ export function gateRunnerFile(layout, file) {
  * root was the working directory, so every name resolved one directory too high and `node --test`
  * answered "exited 1 without reporting" 192 times. The runner takes names relative to its suite
  * root; the suite root is where it runs.
+ *
+ * Issue #546: the gate run carries NO resident-side wall clock. A whole-suite deadline on this
+ * child manufactured `suite-timed-out` landing refusals with no verdict — on a host that cannot
+ * fund a verify lease, a wide gate set (everything a moved module's import closure reaches) needs
+ * more than any fixed backstop, so every landing refused unjudged. The landing waits for the
+ * runner's verdict; the runner's own per-file progress deadline is the judged liveness law that
+ * guarantees one arrives (a silent file is reaped and judged `fileHung`, never holding the
+ * verdict hostage), and the resident's fence plus the landing's leftover sweep remain the
+ * structural backstops for a child that outlives its resident.
  */
 export async function runSupervisedGateRun({
   file, dir, files = [], env = {}, holder, label = 'integration-gate',
-  pool = null, leaseAuthority = null, timeoutMs = supervisedGateTimeoutMs(),
+  pool = null, leaseAuthority = null,
 }) {
   const authority = leaseAuthority ?? createSuiteLeaseAuthority(process.env);
   // The request ahead of this one, when the admission queue shows one: the holder the wait was
@@ -479,7 +490,7 @@ export async function runSupervisedGateRun({
       // `resolve`, not `join`: a runner a deployment names absolutely keeps its own suite root
       // rather than being read as a path under the checkout.
       cwd: resolve(dir, layout.suiteRoot),
-      label, timeoutMs,
+      label,
       env: { ...env, ...(digest === null ? {} : { [SUITE_VERIFY_LEASE_ENV]: digest }) },
     });
   } finally {

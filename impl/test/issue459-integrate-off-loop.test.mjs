@@ -463,35 +463,38 @@ test('459f: a gate run behind the host verify lease waits in the queue and lands
   assert.deepEqual(w.failureRows(), [], 'nothing was refused');
 });
 
-// ── (g) a gate run killed at its deadline leaves a failure row and no scratch ────────────────────
+// ── (g) a gate run waits out any wall-clock guess — no resident-side kill arms (#546) ────────────
 
-test('459g: a gate run the resident kills at its deadline lands the failure row and removes the scratch', needsGit, async (t) => {
-  // A runner that never finishes: the resident's own backstop (the SAME knob the suite runner
-  // honours for a hung file) kills it, and the landing must settle instead of hanging on it.
-  const w = await world(t, { gate: { sleepMs: 30_000, green: true } });
-  const restore = process.env.BATON_SUITE_IDLE_MS;
-  process.env.BATON_SUITE_IDLE_MS = '400';
-  t.after(() => {
-    if (restore === undefined) delete process.env.BATON_SUITE_IDLE_MS;
-    else process.env.BATON_SUITE_IDLE_MS = restore;
-  });
+test('459g: a gate run slower than any fixed bound waits for its verdict and lands — the resident kills nothing on a wall clock (#546)', needsGit, async (t) => {
+  // The old backstop killed this landing's gate run at BATON_SUITE_IDLE_MS and refused it
+  // `suite-timed-out` with no verdict. The wait is the law now: the landing settles when the
+  // runner's own verdict arrives, however long the host takes to produce it, and the runner's
+  // per-file progress deadline stays the judged liveness law inside the run.
+  const w = await world(t, { gate: { sleepMs: 1_200, green: true } });
   const headBefore = git(w.repo, 'rev-parse', 'master');
 
-  const error = await w.integration().then(() => null, (thrown) => thrown);
+  const answer = await w.integration();
 
-  assert.ok(error, 'the landing settles when its gate run is killed');
-  assert.equal(error.code, 'integrate_gates_red');
-  assert.equal(existsSync(w.markerPath), false, 'the run was killed before it could finish');
-  const failures = w.failureRows();
-  assert.equal(failures.length, 1, 'the killed run leaves its outcome in the record');
-  assert.equal(failures[0].code, 'integrate_gates_red');
-  assert.equal(failures[0].detail.unexpected[0].row, 'suite-timed-out',
-    'the row names the timeout, never a red gate the runner never judged');
-  assert.equal(failures[0].detail.unexpected[0].timedOut, true);
-  assert.deepEqual(w.leftoverCheckouts(), [], 'the scratch checkout is gone');
-  assert.equal(existsSync(join(w.wtRoot, 'integrate-contribution-1.projection.exclude')), false,
-    'and so is the projection-exclude file');
-  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
+  assert.equal(answer.integration.dryRun, false, 'the landing lands once the verdict arrives');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), answer.integration.squashSha, 'master moved to the squash');
+  assert.equal(existsSync(w.markerPath), true, 'the gate run ran to its own verdict');
+  assert.deepEqual(w.failureRows(), [], 'nothing was refused for having waited');
+  assert.deepEqual(w.leftoverCheckouts(), [], 'no scratch checkout is left behind');
+});
+
+test('459g2: a supervised child with no declared deadline waits on the child — timedOut never arms (#546)', async () => {
+  const pool = new SupervisedProcesses();
+  const script = join(mkdtempSync(join(tmpdir(), 'baton-459g2-')), 'slow-verdict.mjs');
+  writeFileSync(script, "setTimeout(() => process.exit(0), 600);\n");
+  const run = await pool.run({ file: script, cwd: dirname(script), label: '459g2-no-deadline' });
+  assert.equal(run.status, 'ok', 'the child ran to its own exit past any old-style bound');
+  assert.equal(run.timedOut, false, 'no kill timer armed');
+  assert.equal(run.code, 0);
+  for (const bad of [0, -1, 1.5]) {
+    await assert.rejects(() => pool.run({ file: script, cwd: dirname(script), timeoutMs: bad, label: '459g2-invalid' }),
+      /positive integer in milliseconds, or null/u,
+      'a DECLARED deadline must still be a positive integer');
+  }
 });
 
 // ── (h) an omitted --onto lands on the deployment's own branch (#43 AX) ──────────────────────────
