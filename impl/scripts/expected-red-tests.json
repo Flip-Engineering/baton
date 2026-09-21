@@ -465,6 +465,34 @@
       "reason": "#460"
     },
     {
+      "key": "test/issue541-durable-admission-red.test.mjs :: R1: a worker admits under a saturated host — load no longer gates admission",
+      "reason": "#541"
+    },
+    {
+      "key": "test/issue541-durable-admission-red.test.mjs :: R2: a verify behind a held budget admits when the budget frees — no wait bound refuses it",
+      "reason": "#541"
+    },
+    {
+      "key": "test/issue541-durable-admission-red.test.mjs :: R3: the admission gate and the suite lease carry no wait constant and no timeout refusal",
+      "reason": "#541"
+    },
+    {
+      "key": "test/issue541-durable-admission-red.test.mjs :: R4: a standing memory shortfall proceeds degraded at once, without a queue entry",
+      "reason": "#541"
+    },
+    {
+      "key": "test/issue541-durable-admission-red.test.mjs :: R5: the 30 s command vocabulary is gone from the CLI, deployment and registry",
+      "reason": "#541"
+    },
+    {
+      "key": "test/issue541-durable-admission-red.test.mjs :: R6: a client without a command bound answers when the resident answers",
+      "reason": "#541"
+    },
+    {
+      "key": "test/issue541-durable-admission-red.test.mjs :: R7: a wait above the retired ceiling is a legal request",
+      "reason": "#541"
+    },
+    {
       "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
       "reason": "#24"
     },
@@ -1822,34 +1850,6 @@
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
       "reason": "#87"
-    },
-    {
-      "key": "test/issue541-durable-admission-red.test.mjs :: R1: a worker admits under a saturated host — load no longer gates admission",
-      "reason": "#541"
-    },
-    {
-      "key": "test/issue541-durable-admission-red.test.mjs :: R2: a verify behind a held budget admits when the budget frees — no wait bound refuses it",
-      "reason": "#541"
-    },
-    {
-      "key": "test/issue541-durable-admission-red.test.mjs :: R3: the admission gate and the suite lease carry no wait constant and no timeout refusal",
-      "reason": "#541"
-    },
-    {
-      "key": "test/issue541-durable-admission-red.test.mjs :: R4: a standing memory shortfall proceeds degraded at once, without a queue entry",
-      "reason": "#541"
-    },
-    {
-      "key": "test/issue541-durable-admission-red.test.mjs :: R5: the 30 s command vocabulary is gone from the CLI, deployment and registry",
-      "reason": "#541"
-    },
-    {
-      "key": "test/issue541-durable-admission-red.test.mjs :: R6: a client without a command bound answers when the resident answers",
-      "reason": "#541"
-    },
-    {
-      "key": "test/issue541-durable-admission-red.test.mjs :: R7: a wait above the retired ceiling is a legal request",
-      "reason": "#541"
     }
   ],
   "converged": [
