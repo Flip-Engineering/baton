@@ -14,13 +14,16 @@
 
 import { realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { FRAME_LIMITS } from './limits.mjs';
 
 // ---------------------------------------------------------------------------
 // Closed constants (byte-identical to workflow-interpreter.mjs:40-46 — the S5 source-scan pin).
 // ---------------------------------------------------------------------------
 
-const MAX_MEMBERS = 64;
-const MAX_SCOPE = 64;
+// Issue #499: the member/scope ceilings are the registry's COUNTS rows — a structural admission
+// bound on ONE wavefile payload (admission audit §4 F7), never a fleet size.
+const MAX_MEMBERS = FRAME_LIMITS['wave.members'].value;
+const MAX_SCOPE = FRAME_LIMITS['wave.member.scope'].value;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const MESSAGE_KINDS = new Set(['inform', 'query', 'steer', 'brief', 'result']);
 const SCRATCHPAD_KINDS = new Set(['doubt', 'link', 'note', 'plan']);

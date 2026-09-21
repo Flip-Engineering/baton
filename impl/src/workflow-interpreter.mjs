@@ -50,8 +50,10 @@ const objectiveRefInvalid = (message) => workflowError(message, 'workflow_object
 // workflow_spec_invalid naming both byte counts — fail-loud at the seam, never a per-member
 // phantom start failure.
 const OBJECTIVE_REF_MAX_BYTES = 64 * 1024;
-const MAX_MEMBERS = 64;                     // the wave-machinery member ceiling (P4).
-const MAX_SCOPE = 64;
+// Issue #499: the member/scope ceilings are the registry's COUNTS rows — a structural admission
+// bound on ONE wave payload (admission audit §4 F7), never a fleet size.
+const MAX_MEMBERS = FRAME_LIMITS['wave.members'].value;
+const MAX_SCOPE = FRAME_LIMITS['wave.member.scope'].value;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
 const MESSAGE_KINDS = new Set(['inform', 'query', 'steer', 'brief', 'result']); // coordinator.mjs:6795 + #74 D4 (brief/result).
