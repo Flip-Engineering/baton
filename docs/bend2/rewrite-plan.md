@@ -35,9 +35,11 @@ The following inputs are pending. This plan does not fill their findings in adva
 - **LAW-FINDINGS-PENDING:** [`laws.bend`](laws.bend), [`laws-trace.md`](laws-trace.md), and their
   compiled evidence.
 
-Phase 0 incorporates those inputs before rewrite implementation starts. A later review may change
-the subsystem grouping or stop the plan after Phase 1. The boundary and proof requirements remain
-applicable to the revised phases.
+Phase 0 incorporates those inputs before rewrite implementation starts. The plan targets
+**baton2**, the simplified architecture produced by the architecture review. It does not port the
+current subsystem list one for one. The review may change the provisional subsystem grouping or
+stop the plan after Phase 1. The target remains a Baton written entirely in Bend2. The boundary and
+proof requirements remain applicable to the revised phases.
 
 ## Migration rules
 
@@ -45,15 +47,17 @@ Every phase follows these rules:
 
 1. One implementation owns each decision and each effect at a time. Shadow evaluation may compute
    a second result, but only the selected authority can append events or request effects.
-2. JavaScript and Bend2 exchange closed, versioned values through the boundary described below.
-   They do not share mutable in-memory state.
+2. JavaScript and Bend2 exchange closed, versioned values through the temporary boundary described
+   below. They do not share mutable in-memory state. Each boundary operation names the phase that
+   deletes it.
 3. The durable ledger remains the recovery source. Both implementations must decode every event
    present at the phase boundary before authority changes.
 4. Host effects use a request and receipt pair. The decision core records the request identity
    before execution and records the receipt after observation.
 5. A phase advances only after its named proving test passes and `npm test --prefix impl` exits 0.
 6. A rollback changes authority at a phase boundary and replays the durable ledger. It does not
-   rewrite or discard accepted ledger rows.
+   rewrite or discard accepted ledger rows. The last phase deletes the rollback bridge and Node
+   runtime after its declared rollback window closes.
 7. Public CLI and MCP operation names, request shapes, refusal codes, cursor behavior, and result
    shapes stay compatible until an operator approves a separately versioned public API.
 8. Each phase includes failure injection for process exit, truncated messages, duplicate requests,
@@ -61,9 +65,10 @@ Every phase follows these rules:
 
 ## Coexistence boundary
 
-The migration uses a local host protocol named `baton.bridge.v1`. Phase 0 freezes its fixtures and
+The migration uses a local protocol named `baton.bridge.v1`. Phase 0 freezes its fixtures and
 schema. The transport choice is filled from **LANGUAGE-FINDINGS-PENDING**. The logical contract is
-independent of that transport.
+independent of that transport. This protocol is a migration mechanism. Phase 7 deletes it, its
+transport, every JavaScript adapter, and the Node runtime.
 
 ### Value rules
 
@@ -104,7 +109,10 @@ return the recorded receipt or a typed `unconfirmed` result. It must not start a
 of the effect.
 
 Effect kinds are introduced per phase. The JavaScript host owns only the kinds enabled for that
-phase. Bend2 cannot name an undeclared host function through this boundary.
+phase. Bend2 cannot name an undeclared host function through this boundary. Phase 6 moves every
+effect kind to a Bend2 Base effect or a declared C import and then deletes that kind from the
+bridge. A required effect without a proved Bend2 owner blocks Phase 6 and is recorded as a no-go or
+a named prerequisite in [`go-no-go.md`](go-no-go.md).
 
 ### Landing as the reference design
 
@@ -121,6 +129,18 @@ The rewrite applies this sequence to every external effect: durable identity, is
 verification, conditional commit, durable receipt, and replay. An effect whose outcome cannot be
 proven after restart remains unsettled and blocks dependent work.
 
+### Boundary retirement
+
+| Temporary boundary member | Introduced | Deleted |
+|---|---:|---:|
+| `DecisionRequest`, `DecisionResult`, `EventProposal`, and `AppendReceipt` | Phases 1-2 | Phase 7 |
+| Process, socket, filesystem, git, terminal, credential, clock, entropy, and provider effect requests | Phases 3-4 | Individually in Phase 6 after Bend2 takes authority |
+| Canonical `OperationRequest` and `OperationResult` bridge forwarding | Phase 5 | Phase 7 |
+| Bridge transport, compatibility negotiation, and Node bootstrap | Phase 0 | Phase 7 |
+
+Fixtures and schemas needed for historical replay may remain as Bend2 test data. No live bridge
+handler or JavaScript runtime remains after Phase 7.
+
 ## Phase summary
 
 | Phase | Subsystems that move | Boundary contract added | Proving test |
@@ -131,7 +151,8 @@ proven after restart remains unsettled and blocks dependent work.
 | 3. Runtime planning | Admission, capacity and custody decisions, run/swarm/workflow planning, recovery decisions, and effect ordering | `EffectRequest` and `EffectReceipt` for process, provider, filesystem, clock, and host observations | `phase3-runtime-effects.test.mjs` |
 | 4. Contribution and landing decisions | Contribution lifecycle, review state, verification selection, landing plan, and integration receipt projection | `LandingPlan` and host git/gate receipts | `phase4-landing-parity.test.mjs` |
 | 5. Application semantics | Operation registry, command schemas, dispatch, capability resolution, and result projection | One operation envelope used by CLI, MCP, and web adapters | `phase5-surface-conformance.test.mjs` |
-| 6. Host consolidation, conditional | Transport and host adapters that the language review proves suitable for Bend2 | Versioned public transport frames plus host-effect compatibility receipts | `phase6-deployment-cutover.test.mjs` |
+| 6. Host-effect migration | Process, socket, filesystem, JSON, git, interprocess transport, terminal, clock, entropy, credential, and provider adapters | Per-effect compatibility receipts; each bridge effect kind is deleted after cutover | `phase6-host-effects-cutover.test.mjs` |
+| 7. Remove the migration boundary | `baton.bridge.v1`, every JavaScript adapter, JavaScript packaging, and the Node runtime | No coexistence boundary remains; public protocols terminate in Bend2 | `phase7-bend2-only-deployment.test.mjs` |
 
 The test filenames are required rewrite deliverables. They do not exist in the current design-only
 branch.
@@ -148,11 +169,18 @@ No production subsystem moves. The phase creates the compatibility assets used b
 - fixture requests and answers taken from current tests;
 - replay corpora containing valid rows, refused operations, partial effects, and recovery cases;
 - an ownership map that assigns every inventoried seam member to a planned phase or an explicit
-  JavaScript host boundary.
+  temporary JavaScript host boundary and the phase that deletes it.
 
 The ownership map is revised with **ARCHITECTURE-FINDINGS-PENDING**. The law corpus is revised with
 **LAW-FINDINGS-PENDING**. The transport and executable packaging are revised with
 **LANGUAGE-FINDINGS-PENDING**.
+
+### BATON2 deletions and merges
+
+**BATON2-PHASE-0-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that remove or
+merge compatibility assets from the inventory before implementation begins. This phase must mark
+every current subsystem as retained in baton2, merged into a named baton2 owner, deleted, or kept
+only for a named migration phase.
 
 ### Boundary contract
 
@@ -196,6 +224,12 @@ and produces shadow results. Shadow results have no append or effect capability.
 The exact module list is filled from **ARCHITECTURE-FINDINGS-PENDING**. The exact invariant list is
 filled from **LAW-FINDINGS-PENDING**.
 
+### BATON2 deletions and merges
+
+**BATON2-PHASE-1-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that collapse
+the current validators, authorization paths, folders, projections, and wake classifiers into the
+baton2 decision owners evaluated by this shadow core. No current module survives by default.
+
 ### Boundary contract
 
 The phase enables `DecisionRequest` and a read-only `DecisionResult`. Both implementations must
@@ -235,6 +269,12 @@ Bend2 becomes authoritative for:
 JavaScript continues to own authenticated CLI, MCP, and web connections, durable event append,
 bounded event reads, and delivery of wake frames. The current JavaScript decision path stays
 available as the rollback implementation for one compatibility window.
+
+### BATON2 deletions and merges
+
+**BATON2-PHASE-2-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that delete or
+merge the current coordination stores, ledger projections, permission paths, and wake machinery
+when baton2 takes coordination authority.
 
 ### Boundary contract
 
@@ -280,8 +320,15 @@ Bend2 becomes authoritative for the decisions that coordinate work:
 
 JavaScript executes declared host effects: process spawn, signal, and reap; provider and harness
 protocols; filesystem and worktree operations; clocks and random identities; host observation; and
-credential access. **LANGUAGE-FINDINGS-PENDING** determines whether any of these adapters can move
-later.
+credential access. This ownership is temporary. Phase 6 moves every listed effect to Bend2 through
+a pinned Base effect or a declared C import. **LANGUAGE-FINDINGS-PENDING** must identify and prove
+that Bend2 owner for every effect before Phase 6 starts.
+
+### BATON2 deletions and merges
+
+**BATON2-PHASE-3-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that delete or
+merge current admission, capacity, custody, run, swarm, wave, workflow, provider, and recovery
+abstractions into the baton2 runtime owners. The cited findings decide which names remain.
 
 ### Boundary contract
 
@@ -326,7 +373,14 @@ Bend2 becomes authoritative for:
 - projection of started, failed, dry-run, and integrated receipts.
 
 JavaScript retains git, scratch-checkout, regenerator, test-runner, and local-ref authority. These
-are host effects with repository-specific safety checks.
+are temporary host effects with repository-specific safety checks. Phase 6 moves their execution
+to Bend2 and preserves these checks in the Bend2 effect implementation.
+
+### BATON2 deletions and merges
+
+**BATON2-PHASE-4-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that delete or
+merge contribution, review, verification-planning, landing-table, capture, check, and integration
+abstractions into the baton2 contribution and landing owners.
 
 ### Boundary contract
 
@@ -369,11 +423,19 @@ Bend2 becomes authoritative for:
 - application result projections; and
 - help and inventory data used by generated surface documentation.
 
-JavaScript CLI, MCP, and web modules remain transport adapters. They authenticate connections,
-decode their transport, call one canonical operation envelope, and encode the result.
+JavaScript CLI, MCP, and web modules remain temporary transport adapters. They authenticate
+connections, decode their transport, call one canonical operation envelope, and encode the result.
+Phase 6 replaces these adapters with Bend2 transport implementations. Phase 7 deletes their
+JavaScript code and the bridge they use.
 
 The architecture review supplies the exact file deletion and merge list. This plan records that
 list under **ARCHITECTURE-FINDINGS-PENDING** until publication.
+
+### BATON2 deletions and merges
+
+**BATON2-PHASE-5-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that delete or
+merge duplicate registries, command schemas, dispatch paths, capability resolution, and result
+projection while preserving the approved public surface.
 
 ### Boundary contract
 
@@ -398,46 +460,128 @@ Keep the manifest version supported by both cores. Route canonical operation env
 JavaScript core and regenerate the same surface documents. Public clients keep their transport
 connections and operation names.
 
-## Phase 6: consolidate the host, conditional
+## Phase 6: migrate every host effect
 
 ### Entry condition
 
 This phase starts only when **LANGUAGE-FINDINGS-PENDING** supplies compiled and run evidence for
-each host capability it proposes to move. The operator may accept Phase 5 as the production target
-with a JavaScript host adapter.
+every host capability Baton needs. Each capability must have a Bend2 owner at the pinned toolchain,
+implemented by a Base effect or a declared C import. A missing owner is a no-go or a named
+prerequisite that must close before this phase. Phase 5 is not a production end state.
 
 ### Subsystems that move
 
-Move only the transport and host adapters supported by the published language evidence and the
-target architecture. Candidate groups are CLI process entry, MCP framing, web serving, filesystem,
-process supervision, sockets, and provider protocol clients. The final list remains
-**LANGUAGE-FINDINGS-PENDING** and **ARCHITECTURE-FINDINGS-PENDING**.
+All remaining transport and host-effect subsystems move to Bend2 in independently reversible
+tranches:
+
+- process spawn, signal, wait, exit observation, and reap;
+- TCP listen, accept, connect, read, write, and close;
+- UDP bind, send, receive, and close where current discovery or transport requires UDP;
+- filesystem metadata, bounded reads and writes, atomic publication, rename, links, directory
+  traversal, permission checks, and cleanup;
+- JSON decode, closed-shape validation, canonical encode, and bounded framing;
+- git invocation, scratch-checkout management, gate execution, and compare-and-swap ref updates;
+- transport between Baton processes, including request framing, backpressure, disconnect, and
+  restart behavior;
+- terminal input, output, signals, hidden input, and exit status;
+- clocks, monotonic duration observations, entropy, and random identity generation;
+- credential-file access and private runtime projection; and
+- provider and harness protocol clients built over the process or socket effects above.
+
+The target owner for every row remains **LANGUAGE-FINDINGS-PENDING: BASE-EFFECT-OR-C-IMPORT**. The
+architecture grouping and concrete deletion list remain **ARCHITECTURE-FINDINGS-PENDING**. The
+evidence revision replaces each marker with a finding ID and compiled example path.
+
+### BATON2 deletions and merges
+
+**BATON2-PHASE-6-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that consolidate
+host effects under baton2 owners and delete each JavaScript executor when its Bend2 Base-effect or
+C-import implementation takes authority. The final list must cover every effect in this phase.
+
+Each tranche moves the Bend2 adapter, runs its proving cases, switches authority, and removes that
+effect kind from the JavaScript side of `baton.bridge.v1`. The final tranche leaves JavaScript with
+only bridge forwarding and rollback startup authority; Phase 7 deletes both.
 
 ### Boundary contract
 
 Each moved adapter must preserve the Phase 5 operation manifest and the Phase 3 and Phase 4 effect
-receipt shapes. A Bend2 adapter and the retained JavaScript adapter must accept the same recorded
-transport frames and host fixtures during the compatibility window.
+receipt shapes. During a tranche, the Bend2 adapter and the temporary JavaScript adapter accept the
+same recorded transport frames and host fixtures. One selected implementation owns each live
+effect identity. A successful tranche records a cursor and receipt-digest barrier, switches that
+effect kind to Bend2, and deletes the corresponding JavaScript handler. Phase 7 deletes the shared
+envelope, bridge transport, and remaining forwarding process.
 
 ### Proving test
 
-`phase6-deployment-cutover.test.mjs` must run the full suite, recorded CLI/MCP/web sessions, the
-runtime fault matrix, restart recovery, and contribution landing against the packaged deployment.
-The deployment then runs an operator-defined canary period with error, latency, memory, recovery,
+`phase6-host-effects-cutover.test.mjs` must first run the compiled example named by every language
+finding. It then runs effect-specific parity and fault cases for every capability listed above,
+including process death, socket disconnect, UDP truncation, partial filesystem publication,
+malformed and oversized JSON, git ref races, interprocess backpressure, terminal interruption,
+clock discontinuity, entropy failure, credential refusal, and provider protocol failure.
+
+The test must run the full suite, recorded CLI/MCP/web sessions, restart recovery, and contribution
+landing with all live effect ownership in Bend2. It proves that the JavaScript bridge has no
+registered effect kind and that every active effect identity is settled or safely classified.
+The packaged deployment then runs an operator-defined canary with error, latency, memory, recovery,
 and ledger-growth thresholds fixed before the canary starts.
 
 ### Rollback
 
-Retain the Phase 5 JavaScript host image and its compatible manifest for the declared rollback
-window. Stop admission, drain or classify effects, replay the ledger with that image, compare cursor
-and projection digests, and switch the service endpoint. Retire the image only after the operator
-closes the rollback window.
+For the active tranche, stop admission, drain or classify its effects, replay the ledger into the
+last proved owner, compare cursor and projection digests, and restore only that effect handler.
+Retain the complete Phase 5 JavaScript host image for the Phase 6 rollback window. A rollback never
+creates a permanent JavaScript target; it returns the deployment to a named migration checkpoint.
+
+## Phase 7: remove the migration boundary and Node runtime
+
+### Subsystems that move
+
+No decision or host-effect subsystem remains to move. This phase removes the migration machinery:
+
+- `baton.bridge.v1` schemas, dispatch, transport, fixtures used only for live coexistence, and
+  compatibility negotiation;
+- every remaining JavaScript forwarding, bootstrap, surface, and effect-adapter module;
+- Node package metadata, Node startup commands, and Node runtime requirements; and
+- rollback startup authority embedded in the deployed service.
+
+The public CLI, MCP, web, local-resident, and interprocess protocols terminate in Bend2. Bend2 owns
+all durable decisions, projections, transport handling, and host effects.
+
+### BATON2 deletions and merges
+
+Phase 7 unconditionally deletes `baton.bridge.v1`, every JavaScript adapter and effect host, Node
+packaging, and the Node runtime. **BATON2-PHASE-7-DELETIONS-MERGES-PENDING:** cite any additional
+architecture-review deletions or final merges required to leave only the baton2 subsystem set.
+
+### Boundary contract
+
+There is no JavaScript/Bend2 boundary after this phase. Before deletion, the two halves agree on one
+final ledger cursor, projection digest, operation-manifest digest, and set of settled effect
+identities. The Bend2 deployment records that cutover receipt. New rows after the receipt are
+written, decoded, projected, and served only by Bend2.
+
+### Proving test
+
+`phase7-bend2-only-deployment.test.mjs` must build and install the deployment in an environment with
+no `node` executable and no JavaScript source or package files. It runs the full compatibility
+corpus, public CLI/MCP/web sessions, process and socket fault matrix, filesystem and git landing
+matrix, restart replay, and an operator canary. Static checks must find no runtime reference to
+`baton.bridge.v1`, JavaScript, Node, or a JavaScript effect host. The final cursor and projection
+digest must match the Phase 6 cutover receipt before new traffic is admitted.
+
+### Rollback
+
+During a time-bounded release rollback window, stop Bend2 admission, classify active Bend2 effects,
+restore the last Phase 6 artifact, and replay from the shared cutover cursor. The rollback artifact
+is external to the Bend2-only deployment. When the operator closes the window, retire that artifact
+and record that rollback now requires a new migration decision and ledger-compatibility proof.
 
 ## Cross-phase verification records
 
 Each phase publishes one machine-readable verification record containing:
 
-- source commits for the JavaScript core, Bend2 core, pinned Bend toolchain, and contract manifest;
+- source commits for the temporary JavaScript core when present, Bend2 core, pinned Bend toolchain,
+  and contract manifest;
 - the phase test command and exit status;
 - full-suite command and exit status;
 - fixture count, event count, operation count, and difference count;
@@ -453,9 +597,12 @@ independently buildable and testable.
 ## Revision checklist after the reviews publish
 
 1. Replace **LANGUAGE-FINDINGS-PENDING** with cited finding IDs and example evidence paths. Update
-   the boundary transport, packaging, Phase 3 host list, and Phase 6 scope.
-2. Replace **ARCHITECTURE-FINDINGS-PENDING** with cited deletion, merge, subsystem, ownership, and
-   forbidden-ownership findings. Update every phase's module list.
+   the boundary transport, packaging, Phase 3 host list, and the Base-effect-or-C-import owner for
+   every Phase 6 host effect.
+2. Replace **ARCHITECTURE-FINDINGS-PENDING** and every
+   **BATON2-PHASE-N-DELETIONS-MERGES-PENDING** marker with cited deletion, merge, subsystem,
+   ownership, and forbidden-ownership findings. Update every phase's module list and proving test
+   to cover the deletions and merges that phase performs.
 3. Replace **LAW-FINDINGS-PENDING** with the extracted and proposed law IDs. Assign each law to the
    first phase that must prove it and name its source test.
 4. Update [`go-no-go.md`](go-no-go.md) with the findings that support a production rewrite and the
