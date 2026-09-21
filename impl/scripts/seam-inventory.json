@@ -24528,7 +24528,7 @@
         {
           "name": "exactObject",
           "ordinal": 0,
-          "size": 9,
+          "size": 17,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -24774,7 +24774,7 @@
         {
           "name": "normalizePrincipal",
           "ordinal": 0,
-          "size": 7,
+          "size": 10,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
