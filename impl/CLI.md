@@ -96,7 +96,7 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 | `baton swarm` | `swarm list` | Create, staff, guide and read living swarms (`baton help swarm`). |
 | `baton evidence search` | `evidence search` | Search the deployment’s evidence and contributions by swarm, participant, kind, path or free text. |
 | `baton services list` | `services list` | List the deployment’s configured provider services: models, derived routes, and subscription-window usage with its reset instant. |
-| `baton deployment watch (or wakes-since/reincarnate)` | `deployment watch --follow` | Attach to the deployment wake stream and print one JSON frame per coordination row; `watch --timeout-ms` holds ONE bounded wait instead, `wakes-since` reads one bounded page; reincarnate the RUNNING resident onto a commit in place. |
+| `baton deployment watch (or wakes-since/reincarnate)` | `deployment watch --follow` | Attach to the deployment wake stream and print one JSON frame per coordination row; `wakes-since` reads one bounded page instead; reincarnate the RUNNING resident onto a commit in place. |
 | `baton waves` | `waves list` | Run, compile, start, stop and inspect workflow waves. |
 | `baton runs list` | `runs list` | List the Runs this authenticated connection may observe. |
 | `baton help [TOPIC]` | `help` | Render one help topic; `baton --help` is the application overview. |

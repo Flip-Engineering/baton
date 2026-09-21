@@ -1574,7 +1574,7 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
   Object.freeze({
     token: 'deployment', verb: 'baton deployment watch (or wakes-since/reincarnate)',
     argv: Object.freeze(['deployment', 'watch', '--follow']), kind: 'wake_watch', parser: 'baton-cli',
-    summary: 'Attach to the deployment wake stream and print one JSON frame per coordination row; `watch --timeout-ms` holds ONE bounded wait instead, `wakes-since` reads one bounded page; reincarnate the RUNNING resident onto a commit in place.',
+    summary: 'Attach to the deployment wake stream and print one JSON frame per coordination row; `wakes-since` reads one bounded page instead; reincarnate the RUNNING resident onto a commit in place.',
   }),
   Object.freeze({
     token: 'waves', verb: 'baton waves', argv: Object.freeze(['waves', 'list']), kind: 'command',
@@ -2859,7 +2859,7 @@ function wakeWatchHelpBlocks(topic) {
   return [
     [
       'wake stream:',
-      '  baton deployment watch [--timeout-ms MS] [--wake-class CLASS,...] [--since SEQ]',
+      '  baton deployment watch --follow [--wake-class CLASS,...] [--since SEQ]',
       '  baton deployment wakes-since [--since SEQ] [--wake-class CLASS,...]',
       '    [--swarm SWARM_ID,...] [--participant PARTICIPANT_ID,...]',
       '  baton swarm watch SWARM_ID --follow [--wake-class CLASS,...] [--since SEQ]',
@@ -2871,10 +2871,6 @@ function wakeWatchHelpBlocks(topic) {
       '  actor, the subject it woke on, and — for terminal classes — the next command that',
       '  acknowledges it; a coordination row wakes at most once and never carries a request body.',
       '  Both verbs read the same stream through the same client; the swarm verb pins SWARM_ID.',
-      '  The BOUNDED deployment watch (--timeout-ms) is the root\'s own wake: one call that answers',
-      '  when a row of the named class lands (naming the class it woke on) or at its deadline, and',
-      '  resumes with --since <answer.cursor>, so the caller\'s turn holds one call and its answer is',
-      '  the wake it acts on.',
       '  The BOUNDED swarm watch accepts the same --wake-class: it answers when a row of that class',
       '  lands (naming the class it woke on) or at its --timeout-ms deadline, and resumes with',
       '  --after-seq — --since is the stream cursor and belongs to --follow.',
@@ -2941,36 +2937,18 @@ function parseWakeCliFlags(args) {
   return { kinds: filter.kinds === null ? null : [...filter.kinds].sort(), since: filter.since };
 }
 
-/** `baton deployment watch`: the unbounded feed under `--follow` — every swarm this resident
- * hosts, plus the deployment rows no swarm owns (worker deaths, pauses, approvals, capacity
- * pressure, resident incarnations) — and, under `--timeout-ms`, the BOUNDED wait: ONE call that
- * returns when a matching wake lands or at its deadline, the deployment-scope sibling of the
- * bounded swarm watch. The two forms are exclusive (a deadline on a feed, and a feed as a wake,
- * are both lies); the bare verb keeps the #507 refusal that names the stream's pull form. */
+/** `baton deployment watch --follow`: every swarm this resident hosts, plus the deployment rows no
+ * swarm owns (worker deaths, pauses, approvals, capacity pressure, resident incarnations). */
 function parseDeploymentWatch(args, idempotencyKey) {
   const follow = flag(args, '--follow');
-  const rawTimeoutMs = take(args, '--timeout-ms');
   const wakes = parseWakeCliFlags(args);
   noRemainder(args);
-  if (follow) {
-    if (rawTimeoutMs !== null) {
-      throw cliError('deployment watch takes one form: --follow holds the feed, '
-        + '--timeout-ms MS holds one bounded wait');
-    }
-    return {
-      kind: 'wake_watch', swarms: null, kinds: wakes.kinds, since: wakes.since,
-      follow: true, stopOnClosedWake: false, idempotencyKey,
-    };
-  }
-  if (rawTimeoutMs === null) {
+  if (!follow) {
     throw cliError('deployment watch requires --follow; the bounded read is baton deployment wakes-since [--since SEQ]', 'cli_command_unavailable');
   }
-  const timeoutMs = Number(rawTimeoutMs);
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-    throw cliError('deployment watch: --timeout-ms must be a positive integer of milliseconds');
-  }
   return {
-    kind: 'wake_wait', swarms: null, kinds: wakes.kinds, since: wakes.since, timeoutMs, idempotencyKey,
+    kind: 'wake_watch', swarms: null, kinds: wakes.kinds, since: wakes.since,
+    follow: true, stopOnClosedWake: false, idempotencyKey,
   };
 }
 
@@ -3183,30 +3161,6 @@ export async function readDeploymentWakePage(parsed, client) {
     ...page,
     continuationCursor: Number.isSafeInteger(page?.cursor) ? String(page.cursor) : null,
   });
-}
-
-/** Issue #529: `baton deployment watch --timeout-ms MS` — the deployment wake stream's BOUNDED
- * form, and the root's own wake: ONE call that returns when a frame of the named class lands or
- * at its deadline, so a root agent's own turn holds one call and is woken by its answer. The
- * caller's bound is held in rounds of the stream's own web ceiling (the resident refuses a longer
- * single hold), each round re-armed from the answer's own
- * cursor, so a hold longer than the ceiling loses nothing and repeats nothing. The resident's
- * answer is returned as it came — the CLI never rebuilds it. */
-export async function waitDeploymentWake(parsed, client, options = {}) {
-  const follow = assertCliFollowOptions(options ?? {}, 'CLI follow options are invalid');
-  const ceiling = FRAME_LIMITS['web.wait_ceiling_ms'].value;
-  const deadline = Date.now() + parsed.timeoutMs;
-  let cursor = parsed.since === undefined ? null : parsed.since;
-  for (;;) {
-    const remaining = deadline - Date.now();
-    const round = Math.max(1, Math.min(remaining, ceiling));
-    const answer = await client.wakesWait({
-      kinds: parsed.kinds ?? null, swarms: parsed.swarms ?? null,
-      participants: parsed.participants ?? null, since: cursor, timeoutMs: round,
-    }, follow.signal === undefined || follow.signal === null ? {} : { signal: follow.signal });
-    if (answer.reason === 'event' || Date.now() >= deadline) return answer;
-    cursor = answer.cursor;
-  }
 }
 
 /** The durable verdict row one check wrote, or null while it is still running. The runtime composes
@@ -5038,29 +4992,6 @@ export class BatonWebClient {
     return page;
   }
 
-  /** Issue #529: the deployment wake stream's BOUNDED form — ONE call that returns when a frame
-   * lands or at its `timeoutMs` deadline (the pull form's answer plus the `reason` that settled
-   * it, and the cursor the next call resumes from). The bound is the resident's to judge: it draws
-   * the ONE web wait ceiling and refuses past it, which is why a caller holding a longer bound
-   * waits in rounds (the CLI's own `deployment watch --timeout-ms` leg). The request bound covers
-   * the held wait itself, so a wait the resident is still serving is never a transport failure. */
-  async wakesWait(params = {}, options = {}) {
-    const filter = parseWakeFilter(params);
-    const timeoutMs = params.timeoutMs;
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-      throw cliError('wake wait needs a positive timeoutMs', 'cli_config_invalid');
-    }
-    const query = wakeQuery(filter);
-    const body = await this._json(`/v1/wakes${query === '' ? '?' : `${query}&`}timeoutMs=${timeoutMs}`, {
-      headers: { ...this._headers(), accept: 'application/json' },
-    }, timeoutMs + WEB_WAIT_TRANSPORT_SLACK_MS, options.signal ?? null);
-    const page = body?.wakes;
-    if (!record(page) || page.kind !== 'baton.wake_wait' || !Array.isArray(page.frames)) {
-      throw cliError('Baton Web returned an invalid wake wait answer', 'cli_protocol_failed');
-    }
-    return page;
-  }
-
   async command(name, args, idempotencyKey = randomUUID(), options = {}) {
     // Issue #365: a follow leg's caller signal rides every transport wait this dispatch makes —
     // the wait-envelope POST, the reconcile poll loop and its sleep — so an aborted wait ends
@@ -5708,7 +5639,6 @@ export async function runBatonCli(parsed, client, options = {}) {
     }, client, options ?? {});
   }
   if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
-  if (parsed.kind === 'wake_wait') return waitDeploymentWake(parsed, client, options ?? {});
   if (parsed.kind === 'wake_page') return readDeploymentWakePage(parsed, client);
   if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_watch_filtered') return watchSwarmFiltered(parsed, client);

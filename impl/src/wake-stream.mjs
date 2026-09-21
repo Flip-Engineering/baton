@@ -808,57 +808,6 @@ export class WakeStream {
     });
   }
 
-  /** The bounded wait (issue #529): the one call a consumer that can neither hold an attachment
-   * nor poll makes — it returns when a frame matching the filter lands, or at `timeoutMs`.
-   *
-   * The loop is the push loop's own shape — pull from the cursor, and on a pull that carries no
-   * frame wait on the store's own `waitAfter` (never a busy poll) — bounded by one deadline
-   * instead of running until the stream closes. The answer is the page `since` answers (the same
-   * `cursor`, `swarms`, `frames` and typed `lagged` marker, so a caller re-arms by passing the
-   * cursor back) plus the one fact a bounded caller reads: `reason` — `event` when at least one
-   * frame landed inside the bound, `timeout` when the deadline was reached first.
-   *
-   * A stream that closed under the wait, and a wait aborted through its own `signal`, answer
-   * `timeout`: nothing landed, and the caller's next call is refused by whichever authority owns
-   * the closed stream — this call never turns a consumer's own stop into a stream fault. */
-  async wait(filter, { timeoutMs, signal = null } = {}) {
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-      throw new TypeError('wake wait bound must be a positive safe integer');
-    }
-    if (signal !== null && !(signal instanceof AbortSignal)) {
-      throw new TypeError('wake wait signal must be an AbortSignal');
-    }
-    const deadline = this.now() + timeoutMs;
-    // `since === null` means "from now": the first pull takes the head as the cursor, exactly as
-    // an attachment's first pull does, so a caller that passed no cursor is woken by what lands
-    // after it asked — never by the deployment's whole history.
-    let active = filter;
-    for (;;) {
-      const { frames, cursor, lagged } = this.pull(active, { includeObservations: true });
-      if (frames.length > 0 || this._closed || signal?.aborted === true) {
-        return this._waitAnswer(frames.length > 0 ? 'event' : 'timeout', cursor, frames, lagged);
-      }
-      const remaining = deadline - this.now();
-      if (remaining <= 0) return this._waitAnswer('timeout', cursor, frames, lagged);
-      active = Object.freeze({ ...active, since: cursor });
-      try {
-        await this.coordination.waitAfter(cursor, Math.max(1, remaining), signal ? { signal } : {});
-      } catch (error) {
-        if (this._closed || signal?.aborted === true) return this._waitAnswer('timeout', cursor, frames, lagged);
-        throw error;
-      }
-    }
-  }
-
-  /** One bounded wait's answer. `frames` is already the filtered list the pull produced, and
-   * `cursor` is the stream's own continuation cursor — the two facts a caller re-arms with. */
-  _waitAnswer(reason, cursor, frames, lagged) {
-    return Object.freeze({
-      schemaVersion: WAKE_SCHEMA_VERSION, kind: 'baton.wake_wait', reason,
-      cursor, swarms: this._swarmIds(), frames: Object.freeze([...frames]), lagged,
-    });
-  }
-
   /** Push form: one frame at a time, as it lands. The loop wakes on the store's own `waitAfter`
    * (never a busy poll), so an idle deployment costs one timer and no ledger copy. */
   async watch(filter, handlers = {}) {
