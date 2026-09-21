@@ -174,14 +174,16 @@ const applicationIntent = objectSchema({
   profile: id,
   route: applicationRoute,
   scope: {
-    type: 'array', minItems: 1, maxItems: 64, uniqueItems: true,
+    // Issue #499: the intent scope is the same 64-path wave/scope payload class the wavefile
+    // grammar bounds with one ceiling (the wave scope IS the member default scope there).
+    type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true,
     items: { type: 'string', minLength: 1, maxLength: 4096 },
   },
   composition: objectSchema({
     strategy: { const: 'parallel_attempts' }, workspace: { const: 'isolated' },
     join: { const: 'operator_selected' },
     team: {
-      type: 'array', minItems: 2, maxItems: 16,
+      type: 'array', minItems: 2, maxItems: FRAME_LIMITS['workflow.team.members'].value,
       items: objectSchema({ role: id, route: objectSchema({
         harness: id, model: id, effort: id,
       }) }),
@@ -1641,7 +1643,7 @@ const CANONICAL_OPERATION_SPECS = [
   ['knowledge.settlement_lease', {
     profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      waveId: id, members: { type: 'array', maxItems: 64, items: id },
+      waveId: id, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: id },
     }, ['waveId']),
     authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
     liveMethod: 'settlementLease',
@@ -1674,7 +1676,7 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       waveId: id,
       members: {
-        type: 'array', minItems: 1, maxItems: 64,
+        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
         items: objectSchema({
           role: id,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -1698,12 +1700,12 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       idempotencyKey: id,
       members: {
-        type: 'array', minItems: 1, maxItems: 64,
+        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
         items: objectSchema({
           role: id,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
           exact: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
-          scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+          scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
         }, ['role', 'objective', 'exact']),
       },
     }, ['idempotencyKey', 'members']),

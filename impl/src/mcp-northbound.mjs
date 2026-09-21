@@ -568,7 +568,9 @@ const applicationIntentSchema = schema({
   resultIntent: { type: 'string', enum: ['change', 'read_only_evidence'], default: 'change' },
   profile: runId,
   route: applicationRouteSchema,
-  scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
+  // Issue #499: the intent scope is the same 64-path wave/scope payload class the wavefile
+  // grammar bounds with one ceiling (the wave scope IS the member default scope there).
+  scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
 }, ['objective']);
 const applicationAnswerSchema = {
   oneOf: [
@@ -693,7 +695,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
       ...repo,
       waveId: runId,
       members: {
-        type: 'array', minItems: 1, maxItems: 64,
+        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
         items: schema({
           role: runId,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
@@ -713,12 +715,12 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({
       ...repo, ...idem,
       members: {
-        type: 'array', minItems: 1, maxItems: 64,
+        type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value,
         items: schema({
           role: runId,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
           exact: applicationRouteSchema,
-          scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+          scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
         }, ['role', 'objective', 'exact']),
       },
     }, ['repoId', 'idempotencyKey', 'members']),
@@ -840,7 +842,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     name: 'baton_knowledge_settlement_lease',
     description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
     inputSchema: schema({
-      ...repo, ...idem, waveId: runId, members: { type: 'array', maxItems: 64, items: runId },
+      ...repo, ...idem, waveId: runId, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: runId },
     }, ['repoId', 'idempotencyKey', 'waveId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
