@@ -24598,13 +24598,21 @@
           ]
         },
         {
-          "name": "projectWaitingOn",
+          "name": "lastCoordinationEvent",
           "ordinal": 0,
-          "size": 80,
+          "size": 18,
           "seam": "observation",
           "evidence": [
-            "observation:record_name",
             "observation:durable_read"
+          ]
+        },
+        {
+          "name": "projectWaitingOn",
+          "ordinal": 0,
+          "size": 78,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
           ]
         },
         {
