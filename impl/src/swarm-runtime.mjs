@@ -6924,40 +6924,42 @@ export class SwarmRuntime {
         }
       }
     }
-    // Issue #529: wake events since the predecessor's last observation compose into the
-    // successor's brief. The seat reads what happened while it was absent through the same
-    // mechanism parked guidance uses: durable ledger rows composed at recruitment time. The
-    // wakeClassFor derivation (wake-stream.mjs) maps each ledger row to its wake class; the
-    // brief renders swarm-scoped events whose swarmId matches, newest first under the situation
-    // byte budget.
-    if (predecessor !== null) {
-      const sinceSeq = predecessor.lastCheckpoint?.seq ?? 0;
-      const swarmId = swarm.swarmId;
-      const ledgerEvents = ledger ?? this.store.eventsView();
-      const wakeLines = [];
-      for (const event of ledgerEvents) {
-        if (event.seq <= sinceSeq) continue;
-        const classRow = wakeClassFor(event);
-        if (classRow === null) continue;
-        const payload = event.payload ?? {};
-        const eventSwarmId = typeof payload.swarmId === 'string' ? payload.swarmId : null;
-        if (classRow.scope === 'swarm' && eventSwarmId !== swarmId) continue;
-        if (classRow.scope !== 'swarm') continue;
-        const participantLabel = typeof payload.participantId === 'string' ? payload.participantId : '';
-        const contributionLabel = typeof payload.contributionId === 'string' ? ` ${payload.contributionId}` : '';
-        wakeLines.push(`- [seq ${event.seq} · ${classRow.wakeClass} · ts ${event.ts ?? ''}${contributionLabel}]: ${participantLabel}${participantLabel ? ' — ' : ''}${classRow.summary}`);
-      }
-      if (wakeLines.length > 0) {
-        const reversed = [...wakeLines].reverse();
-        const { lines, taken } = takeSituationBlocks(
-          reversed.map((line) => [line]), situationsBudget.value);
-        situation.push(`Recent wake events (since seq ${sinceSeq}, newest first):`);
-        for (const line of lines) situation.push(line);
-        if (taken < reversed.length) {
-          situation.push(`- ${reversed.length - taken} further wake event${reversed.length - taken === 1 ? '' : 's'} not shown`
-            + ` (this block is bounded by ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
-            + ' read them with baton deployment wakes-since)');
-        }
+    // Issue #529 (docs/54 §3.1): the wake events since the seat's lineage reference point compose
+    // into the brief. The reference point is the predecessor's last observation (the seq of the
+    // last checkpoint row it wrote) when the seat continues a lineage, and the swarm's own
+    // creation seq for a first recruit — so a seat recruited INTO a swarm that has already
+    // produced events reads them, and a swarm that has produced none renders no block at all. The
+    // seat reads what happened through the same mechanism parked guidance uses: durable ledger
+    // rows composed at recruitment time. The wakeClassFor derivation (wake-stream.mjs) maps each
+    // ledger row to its wake class; the brief renders the swarm-scoped events whose swarmId
+    // matches this swarm, newest first under the situation byte budget.
+    const sinceSeq = predecessor?.lastCheckpoint?.seq ?? swarm.seq ?? 0;
+    const swarmId = swarm.swarmId;
+    const ledgerEvents = ledger ?? this.store.eventsView();
+    const wakeLines = [];
+    for (const event of ledgerEvents) {
+      if (event.seq <= sinceSeq) continue;
+      const classRow = wakeClassFor(event);
+      if (classRow === null) continue;
+      // This swarm's own events and nothing else: a deployment-scoped class (a row that carries
+      // no swarmId) is not this seat's news, and a sibling swarm's events never ride here.
+      if (classRow.scope !== 'swarm') continue;
+      const payload = event.payload ?? {};
+      if (payload.swarmId !== swarmId) continue;
+      const participantLabel = typeof payload.participantId === 'string' ? payload.participantId : '';
+      const contributionLabel = typeof payload.contributionId === 'string' ? ` ${payload.contributionId}` : '';
+      wakeLines.push(`- [seq ${event.seq} · ${classRow.wakeClass} · ts ${event.ts ?? ''}${contributionLabel}]: ${participantLabel}${participantLabel ? ' — ' : ''}${classRow.summary}`);
+    }
+    if (wakeLines.length > 0) {
+      const reversed = [...wakeLines].reverse();
+      const { lines, taken } = takeSituationBlocks(
+        reversed.map((line) => [line]), situationsBudget.value);
+      situation.push(`Recent wake events (since seq ${sinceSeq}, newest first):`);
+      for (const line of lines) situation.push(line);
+      if (taken < reversed.length) {
+        situation.push(`- ${reversed.length - taken} further wake event${reversed.length - taken === 1 ? '' : 's'} not shown`
+          + ` (this block is bounded by ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
+          + ' read them with baton deployment wakes-since)');
       }
     }
     if (situation.length > 0) blocks.push(['## Swarm situation', ...situation].join('\n'));
