@@ -398,11 +398,36 @@ const REINCARNATION = Object.freeze({
     enforcedAt: 'application-deployment.mjs (openDriverForHandoff/openResidentAuthorityForHandoff: the successor\'s lease waits; BatonDeployment.#awaitInFlightTurns/#awaitSuccessorReady/#completeReincarnationHandoff: the old incarnation\'s waits)' },
 });
 
+// ---------------------------------------------------------------------------
+// Issue #499: the item/row/member-count family. These rows are COUNTS over one
+// operation's payload, not byte measures and not fleet sizes. The wave member
+// ceiling (64) is a structural admission bound on ONE wave payload — the largest
+// member roster a single wavefile/wave-start/attach request may carry — and the
+// recipe, route-inventory, and workflow-team rows are the same operation-bound
+// class (docs/audits/2026-09-13-runtime-policy/admission.md §4 F7: keep the
+// bound, declare it once, document it as an operation bound).
+// ---------------------------------------------------------------------------
+const COUNTS = Object.freeze({
+  'wave.members': { lane: 'wave.members', class: 'admission', value: 64, unit: 'members', graceful: null,
+    enforcedAt: 'workflow-dsl.mjs wavefile admission, workflow-interpreter.mjs spec admission, application.mjs waves.attach admission and _normalizeWaveStart, application-semantics.mjs waves.attach/waves.start/knowledge.settlement_lease schemas, mcp-northbound.mjs baton_waves_attach/baton_waves_start schemas' },
+  'wave.member.scope': { lane: 'wave.member.scope', class: 'admission', value: 64, unit: 'paths', graceful: null,
+    enforcedAt: 'workflow-dsl.mjs member scope admission, workflow-interpreter.mjs member scope admission, application-semantics.mjs waves.start scope schema, mcp-northbound.mjs baton_waves_start scope schema' },
+  'recipe.members': { lane: 'recipe.members', class: 'admission', value: 8, unit: 'member_cards', graceful: null,
+    enforcedAt: 'recipes.mjs recipe member-card admission' },
+  'recipe.scope': { lane: 'recipe.scope', class: 'admission', value: 64, unit: 'paths', graceful: null,
+    enforcedAt: 'recipes.mjs member scope glob admission' },
+  'deployment.routes': { lane: 'deployment.routes', class: 'admission', value: 64, unit: 'routes', graceful: null,
+    enforcedAt: 'application-deployment.mjs normalizeRoutes (one deployment\'s declared route inventory)' },
+  'workflow.team.members': { lane: 'workflow.team.members', class: 'admission', value: 16, unit: 'members', graceful: null,
+    enforcedAt: 'application-semantics.mjs workflow composition team schema (the two-to-sixteen role-addressed Attempts bound)' },
+});
+
+
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
-export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION });
+export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION, ...COUNTS });
 
-export const FRAME_LIMITS_VERSION = '1.2.0';
+export const FRAME_LIMITS_VERSION = '1.3.0';
 
 /** Issue #105 (D1/B-3): the closed conversational depth ceiling for reply chains — a per-branch
  * depth cap (never per-subtree), declared per send, default 1. The derivation: the scanner's

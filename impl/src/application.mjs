@@ -1210,7 +1210,8 @@ export function validateApplicationCommandArgs(name, args) {
     if (!args || typeof args !== 'object' || Array.isArray(args)
       || Object.keys(args).some((key) => !allowed.has(key))
       || typeof args.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(args.waveId)
-      || !Array.isArray(args.members) || args.members.length === 0 || args.members.length > 64
+      || !Array.isArray(args.members) || args.members.length === 0
+      || args.members.length > FRAME_LIMITS['wave.members'].value
       || (args.timeoutMs !== undefined
         && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0))
       || (args.repoRoot !== undefined
@@ -7434,7 +7435,7 @@ export class BatonApplication {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).some((key) => !allowed.has(key))
       || !validId(value.idempotencyKey) || !Array.isArray(value.members)
-      || value.members.length === 0 || value.members.length > 64) {
+      || value.members.length === 0 || value.members.length > FRAME_LIMITS['wave.members'].value) {
       throw applicationError('wave start request is invalid', 'application_wave_start_invalid');
     }
     const roles = new Set();
