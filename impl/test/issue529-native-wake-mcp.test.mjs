@@ -12,7 +12,8 @@
 //   (c)  the seat's session carries only its own swarm's frames;
 //   (d)  the explicit tools still work: a narrower subscription adds beside the auto-subscription,
 //        and unsubscribing the auto-subscription releases the session's one attachment;
-//   (e)  wakeAutoSubscription(env) derives the filter from the seat's bridge environment;
+//   (e)  wakeAutoSubscription(env) derives the filter from the seat's bridge environment, its
+//        published narrowing (§4.1) included;
 //   (f)  a connection that serves no wake stream completes the handshake and says so;
 //   (g)  a session without `observe` takes no auto-subscription and the greeting says nothing;
 //   (h)  the auto-delivered frame reaches the MCP client on the wire, through the stdio transport.
@@ -271,6 +272,14 @@ test('529-mcp-e: the derivation reads the seat\'s bridge environment', () => {
   assert.deepEqual({ ...wakeAutoSubscription({ [SWARM_BRIDGE_ENV_KEYS.swarmId]: '   ' }) },
     { kinds: null, swarms: null, participants: null },
     'a blank seat id names no swarm');
+  assert.deepEqual({ ...wakeAutoSubscription({ ...SEAT_ENV,
+    [SWARM_BRIDGE_ENV_KEYS.autoWake]: `{"kinds":["dead","left"],"participants":["${SEAT}"]}` }) },
+  { kinds: ['dead', 'left'], swarms: [SEAT_SWARM], participants: [SEAT] },
+  'the narrowing the seat was recruited with narrows the axes it names and no others');
+  assert.deepEqual({ ...wakeAutoSubscription({ ...SEAT_ENV,
+    [SWARM_BRIDGE_ENV_KEYS.autoWake]: '{"kinds":["no-such-class"]}' }) },
+  { kinds: null, swarms: [SEAT_SWARM], participants: null },
+  'a corrupted declaration leaves the axes whole rather than narrowing a session to nothing');
 });
 
 // ── (f) a connection that serves no wake stream says so ─────────────────────

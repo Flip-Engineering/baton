@@ -1106,18 +1106,41 @@ export async function connectBatonWebApplication(options = {}) {
  * configuration, read from the environment the deployment publishes a seat's bridge under (the ONE
  * key table, swarm-native-bridge.mjs). A session carrying a seat's swarm coordinates receives that
  * swarm's events; a session without them — an operator's IDE session, a root orchestrator's MCP
- * connection — carries every event the deployment produces. The returned filter is the design's own
- * shape, and a null axis admits everything on it. */
+ * connection — carries every event the deployment produces. §4.1's narrowing rides the same
+ * environment (`autoWake`, the axes the recruit validated), and the returned filter is the
+ * design's own shape: a null axis admits everything on it. */
 export function wakeAutoSubscription(env = {}) {
   const declared = env?.[SWARM_BRIDGE_ENV_KEYS.swarmId];
   const swarmId = typeof declared === 'string' ? declared.trim() : '';
+  const narrowing = wakeNarrowingAxes(env?.[SWARM_BRIDGE_ENV_KEYS.autoWake]);
   return Object.freeze({
-    kinds: null,
+    kinds: narrowing.kinds,
     swarms: swarmId.length === 0 ? null : Object.freeze([swarmId]),
-    participants: null,
+    participants: narrowing.participants,
   });
 }
 
+/** Issue #529 (docs/54 §4.1): the two axes a published narrowing declares, each null when the
+ * seat declared none. A value that is absent, unreadable, or names a class outside the wake
+ * stream's closed set leaves the axes whole: the declaration was judged where it was written (the
+ * recruit refuses an unknown class before any membership lands), so a corrupted environment
+ * variable must never narrow a session's stream to nothing on its own. */
+function wakeNarrowingAxes(raw) {
+  const whole = Object.freeze({ kinds: null, participants: null });
+  if (typeof raw !== 'string' || raw.trim().length === 0) return whole;
+  let declared;
+  try { declared = JSON.parse(raw); } catch { return whole; }
+  if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) return whole;
+  try {
+    const parsed = parseWakeFilter({
+      kinds: declared.kinds ?? null, participants: declared.participants ?? null,
+    });
+    return Object.freeze({
+      kinds: parsed.kinds === null ? null : Object.freeze([...parsed.kinds].sort()),
+      participants: parsed.participants === null ? null : Object.freeze([...parsed.participants].sort()),
+    });
+  } catch { return whole; }
+}
 export async function createBatonWebMcpServer(options) {
   if (!options?.coordination) throw new TypeError('Baton Web MCP requires local call coordination');
   if (['principalId', 'sessionId', 'sessionTtlMs'].some((field) => Object.hasOwn(options, field))) {

@@ -476,7 +476,7 @@ the MCP tool table, and the web bus gate on.
 | `swarm.view` | `swarmId`, `participantId`, `projection`, `cursor` | `observe` | web + mcp | identity-keyed |
 | `swarm.watch` | `swarmId`, `afterSeq`, `timeoutMs`, `projection` | `observe` | web + mcp | identity-keyed |
 | `swarm.update` | `swarmId`, `event`, `payload`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
-| `swarm.recruit` | `swarmId`, `participantId`, `objective`, `options`, `permissions`, `mode`, `shareWorkspaceWith`, `resumeFrom`, `workId`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.recruit` | `swarmId`, `participantId`, `objective`, `options`, `permissions`, `mode`, `shareWorkspaceWith`, `resumeFrom`, `workId`, `autoWake`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.guide` | `swarmId`, `participantId`, `message`, `priority`, `inReplyTo`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.notify` | `swarmId`, `participantId`, `message`, `toSwarmId`, `priority`, `inReplyTo`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.notifications` | `swarmId`, `receipt`, `participantId`, `afterSeq` | `observe` | web + mcp | identity-keyed |

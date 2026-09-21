@@ -54,7 +54,7 @@ import { landContribution } from './worktree.mjs';
 // redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
 // a tail nobody else's bound describes.
 import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
-import { wakeClassFor } from './wake-stream.mjs';
+import { deriveWakeFrame, parseWakeFilter, wakeAttribution, wakeClassFor } from './wake-stream.mjs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -6465,8 +6465,11 @@ export class SwarmRuntime {
         parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
       await this.startRun({ runId, objective: brief, options: runOptions,
         swarmId: swarm.swarmId, participantId: participant.participantId,
-        sharedContext: Object.values(currentSwarm.context ?? {}),
-        ...(workspace ? { workspace } : {}) }, principal, context);
+        ...(workspace ? { workspace } : {}),
+        // Issue #529 (docs/54 §4.1): the narrowing the join recorded, so the session this answer
+        // starts opens the same subscription the recruit declared however long the question waited.
+        ...(seatRow.autoWake === undefined || seatRow.autoWake === null ? {} : { autoWake: seatRow.autoWake }) },
+        principal, context);
       const worker = this.coordinator.list().find((row) => row.runId === runId);
       if (!worker) refuse('Deferred start admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
       const checkout = typeof this.coordinator.workspaceAttachment === 'function'
@@ -6576,6 +6579,34 @@ export class SwarmRuntime {
       writes: [{ kind: 'swarm.guidance_sent', payload: event.payload,
         seq: event.seq, ts: event.ts, actor: event.actor }],
     };
+  }
+
+  /** The ONE guidance delivery dance (#273/#337): hand the message to the recipient's lane, park it
+   * durably when the harness takes no mid-turn delivery, and answer with the row a receipt names.
+   * The guide verb and the runtime's own resume-decision ask (#543) both ride it, so how a guide
+   * lands and how Baton's ask lands can never be two different rules. `worker` is null for a seat
+   * with no live runtime — the park is then the only delivery that exists. */
+  async _deliverGuidance({ swarmId, participant, worker, message, principal, args, guidance }) {
+    if (worker === null) {
+      return this._parkGuidance(swarmId, participant, message, principal, args, guidance);
+    }
+    const cursor = this.store.ledgerHeadSeq();
+    const guided = await this.coordinator.guideParticipant(worker.id, message,
+      { actor: principal.actor, priority: guidance.priority });
+    // Issue #337: a one-shot harness answers every mid-turn delivery with its unsupported refusal.
+    // When the seat's card verbs say mid-turn delivery is unsupported, the message parks durably
+    // instead: the seat's next exec / resume-from successor brief composes it. A harness whose card
+    // CAN deliver keeps the delivery path below, whatever the delivery itself answers.
+    if (guided?.ok !== true && this._midTurnGuidanceUnsupported(worker)) {
+      return this._parkGuidance(swarmId, participant, message, principal, args, guidance);
+    }
+    // The lane receipt is durable coordination log, not process state: deliveries are serialized
+    // per worker, so the newest nudge/steer row for this binding past the pre-call cursor is the
+    // row THIS delivery wrote — named by the receipt's own row, never copied in.
+    const sent = this.store.eventsView().filter((event) => event.kind === 'message.sent'
+      && ['nudge', 'steer'].includes(event.payload?.kind) && event.payload?.to?.workerId === worker.id
+      && event.seq > cursor).at(-1) ?? null;
+    return this._recordGuidanceSent(swarmId, participant, principal, args, guidance, sent, guided);
   }
 
   /** docs/45 §8 (#422): the coupling records one seat's brief renders as its "Couplings" block —
@@ -6737,6 +6768,74 @@ export class SwarmRuntime {
       + ' instead of working.',
       ...lines,
     ];
+  }
+
+  /** Issue #529 (docs/54 §3.1): the seat coordinates a DEPLOYMENT-scoped wake row must name to
+   * ride this brief — the seat's own participant id and, when a `resumeFrom` recruit continues a
+   * lineage, the predecessor seat's, each together with the run and the worker/task bindings the
+   * fold holds for it. The seat's own Run is admitted after its brief is composed, so the
+   * coordinates the fold already holds for the lane are what a row about that lane's run or worker
+   * resolves to through `wakeAttribution`. */
+  _wakeSeatCoordinates(swarm, participantId, predecessorId) {
+    const ids = new Set();
+    for (const id of [participantId, predecessorId]) {
+      if (typeof id !== 'string' || id.length === 0) continue;
+      ids.add(id);
+      const row = Object.hasOwn(swarm.participants ?? {}, id) ? swarm.participants[id] : null;
+      if (row === null) continue;
+      if (typeof row.runId === 'string' && row.runId.length > 0) ids.add(row.runId);
+      for (const binding of row.bindings ?? []) {
+        if (typeof binding.workerId === 'string' && binding.workerId.length > 0) ids.add(binding.workerId);
+        if (typeof binding.taskId === 'string' && binding.taskId.length > 0) ids.add(binding.taskId);
+      }
+    }
+    return ids;
+  }
+
+  /** Issue #525 D4 / Issue #543: the orchestrator a resume-from recruit's question is addressed to
+   * — the seated member that performed the recruit, else the predecessor's nearest living ancestor
+   * by the same walk the attention projection's responsible-party derivation uses (#525 D2). ONE
+   * derivation for the join's `parentId` and for the ask's receiver, so the seat a question pages
+   * and the seat its ask reaches can never be two different seats; null means the recovery has no
+   * seat of its own in the tree, and the ask then rides the ledger alone (the wake class, the
+   * attention row, and the root's own session over the wake stream, docs/54 §4). */
+  _resumeOrchestrator(swarm, caller, predecessor, args) {
+    if (caller) return caller.participantId;
+    if (predecessor === null || typeof args.resumeFrom !== 'string') return null;
+    const predecessorRow = Object.hasOwn(swarm.participants, args.resumeFrom)
+      ? swarm.participants[args.resumeFrom] : null;
+    if (predecessorRow === null) return null;
+    let ancestor = predecessorRow.parentId
+      ? (swarm.participants[predecessorRow.parentId] ?? null) : null;
+    while (ancestor && ancestor.status !== 'active') {
+      ancestor = ancestor.parentId ? (swarm.participants[ancestor.parentId] ?? null) : null;
+    }
+    return ancestor?.participantId ?? null;
+  }
+
+  /** Issue #543: the resume-decision ASK, delivered to the seat's orchestrator by native wake. It
+   * rides the ONE guidance delivery dance, so a Baton ask lands exactly the way a coordinator's
+   * guide does: the parent's own lane when its harness takes mid-turn delivery, else the #337 park
+   * its next exec / resume-from successor brief composes without any read. The request row is
+   * already recorded when this runs, so the ask is never the only copy of the question. */
+  async _askResumeDecision(swarm, args, orchestratorId, requestWrite, principal, operationKey) {
+    const parent = Object.hasOwn(swarm.participants, orchestratorId)
+      ? swarm.participants[orchestratorId] : null;
+    if (parent === null || parent.status !== 'active') return null;
+    const message = `Resume decision for ${args.participantId} (it resumes ${args.resumeFrom}):`
+      + ` continue it with \`baton swarm guide ${args.swarmId} ${args.participantId} "..."\`,`
+      + ` or settle it without work with \`baton swarm stop ${args.swarmId} ${args.participantId} "..."\`.`;
+    const guidance = Object.freeze({
+      from: guidanceFromRelationship(swarm, principal.actor),
+      priority: SWARM_GUIDANCE_DEFAULT_PRIORITY,
+      inReplyTo: typeof requestWrite?.seq === 'number' ? requestWrite.seq : null,
+    });
+    return this._deliverGuidance({
+      swarmId: args.swarmId, participant: parent, message, principal, guidance,
+      worker: this._workerFor(parent, this.coordinator.list()),
+      args: { swarmId: args.swarmId, participantId: parent.participantId, message,
+        priority: guidance.priority, idempotencyKey: `${operationKey}:resume-ask` },
+    });
   }
 
   /** The brief one seat is recruited with (#318 deliverables 3 and 4): the recruiter's objective
@@ -6947,34 +7046,58 @@ export class SwarmRuntime {
     // produced events reads them, and a swarm that has produced none renders no block at all. The
     // seat reads what happened through the same mechanism parked guidance uses: durable ledger
     // rows composed at recruitment time. The wakeClassFor derivation (wake-stream.mjs) maps each
-    // ledger row to its wake class; the brief renders the swarm-scoped events whose swarmId
-    // matches this swarm, newest first under the situation byte budget.
+    // ledger row to its wake class; the block carries this swarm's own swarm-scoped events plus
+    // the deployment-scoped events whose resolved coordinates name this seat's lane, newest first
+    // under its own item ceiling and the situation byte budget. The rows come from the CALLER's
+    // ledger read (#441 lane C: the composer scans nothing itself, so the recruit path's own read
+    // is the ONE read a brief costs) — a caller that read none composes no block.
     const sinceSeq = predecessor?.lastCheckpoint?.seq ?? swarm.seq ?? 0;
     const swarmId = swarm.swarmId;
-    const ledgerEvents = ledger ?? this.store.eventsView();
+    const ledgerEvents = ledger ?? [];
+    // The two scopes §3.1 names: a swarm-scoped row rides when it belongs to this swarm; a
+    // deployment-scoped row rides when the coordinates the stream resolves it to name this seat or
+    // the predecessor seat its lineage continues — the seat's own Run is admitted after this brief
+    // is composed, so a row about that lane resolves through the fold's own bindings.
+    const seatCoordinates = this._wakeSeatCoordinates(swarm, args.participantId,
+      predecessor?.participantId ?? null);
+    const attribution = wakeAttribution([swarm]);
     const wakeLines = [];
     for (const event of ledgerEvents) {
       if (event.seq <= sinceSeq) continue;
       const classRow = wakeClassFor(event);
       if (classRow === null) continue;
-      // This swarm's own events and nothing else: a deployment-scoped class (a row that carries
-      // no swarmId) is not this seat's news, and a sibling swarm's events never ride here.
-      if (classRow.scope !== 'swarm') continue;
-      const payload = event.payload ?? {};
-      if (payload.swarmId !== swarmId) continue;
-      const participantLabel = typeof payload.participantId === 'string' ? payload.participantId : '';
-      const contributionLabel = typeof payload.contributionId === 'string' ? ` ${payload.contributionId}` : '';
-      wakeLines.push(`- [seq ${event.seq} · ${classRow.wakeClass} · ts ${event.ts ?? ''}${contributionLabel}]: ${participantLabel}${participantLabel ? ' — ' : ''}${classRow.summary}`);
+      // Each line renders from the ONE frame derivation the wake stream itself serves
+      // (deriveWakeFrame), so the brief can never name a class, a subject or a follow-up command
+      // the stream would not: a TERMINAL class carries the command that acts on it, which is what
+      // makes a completion the seat reads actionable (#541).
+      const frame = deriveWakeFrame(event, attribution);
+      if (classRow.scope === 'swarm') {
+        // This swarm's own events and nothing else: a sibling swarm's events never ride here.
+        if (frame.swarmId !== swarmId) continue;
+      } else if (!seatCoordinates.has(frame.participantId) && !seatCoordinates.has(frame.runId)
+        && !seatCoordinates.has(frame.workerId)) {
+        continue;
+      }
+      const participantLabel = frame.participantId ?? '';
+      const contributionLabel = frame.subject?.kind === 'contribution' ? ` ${frame.subject.id}` : '';
+      wakeLines.push(`- [seq ${frame.seq} · ${frame.wakeClass} · ts ${frame.ts ?? ''}${contributionLabel}]:`
+        + ` ${participantLabel}${participantLabel === '' ? '' : ' — '}${classRow.summary}`
+        + `${frame.next === null ? '' : ` · next: ${frame.next}`}`);
     }
     if (wakeLines.length > 0) {
+      // Issue #529 (docs/54 §6.1): the block draws its OWN registry ceiling (a count), then the
+      // situation byte budget it shares with the other age-scaling blocks. Whatever either bound
+      // sheds is counted beside the read that answers it, so a short block is never a silent one.
+      const wakeItemsBudget = FRAME_LIMITS['brief.wake_events.items'];
       const reversed = [...wakeLines].reverse();
       const { lines, taken } = takeSituationBlocks(
-        reversed.map((line) => [line]), situationsBudget.value);
+        reversed.slice(0, wakeItemsBudget.value).map((line) => [line]), situationsBudget.value);
       situation.push(`Recent wake events (since seq ${sinceSeq}, newest first):`);
       for (const line of lines) situation.push(line);
       if (taken < reversed.length) {
         situation.push(`- ${reversed.length - taken} further wake event${reversed.length - taken === 1 ? '' : 's'} not shown`
-          + ` (this block is bounded by ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
+          + ` (this block is bounded by ${wakeItemsBudget.lane} = ${wakeItemsBudget.value} items and by`
+          + ` ${situationsBudget.lane} = ${situationsBudget.value} bytes;`
           + ' read them with baton deployment wakes-since)');
       }
     }
@@ -8202,6 +8325,38 @@ export class SwarmRuntime {
           refuse(`Swarm recruit work ${args.workId} not found in swarm ${args.swarmId}`, 'work_not_found',
             { field: 'workId', participantId: args.participantId, workId: args.workId });
         }
+        // Issue #529 (docs/54 §4.1): the wake narrowing this seat's session auto-subscribes with,
+        // judged BEFORE any membership is written against the ONE wake vocabulary the stream
+        // serves (parseWakeFilter's closed class set, aliases included). The `swarms` axis is
+        // never the recruiter's to declare: a seat's bridge token is scoped to its own swarm, so
+        // its subscription may only ever carry that swarm's events. A declaration that narrows
+        // neither axis is no declaration, and records nothing.
+        let autoWake = null;
+        if (args.autoWake !== undefined) {
+          const declared = args.autoWake;
+          const unknownAxis = Object.keys(declared).find((axis) => axis !== 'kinds' && axis !== 'participants');
+          if (unknownAxis !== undefined) {
+            refuse(`Swarm recruit autoWake carries no ${unknownAxis} axis`, 'swarm_command_invalid', {
+              field: `autoWake.${unknownAxis}`, rule: 'unknown-field', admitted: ['kinds', 'participants'],
+              participantId: args.participantId,
+            });
+          }
+          let parsed = null;
+          try {
+            parsed = parseWakeFilter({
+              kinds: declared.kinds ?? null, participants: declared.participants ?? null,
+            });
+          } catch (error) {
+            refuse(error.message, 'swarm_command_invalid', {
+              field: 'autoWake', rule: 'closed-set', participantId: args.participantId,
+              ...(error.detail ?? {}),
+            });
+          }
+          const kinds = parsed.kinds === null ? null : Object.freeze([...parsed.kinds].sort());
+          const participants = parsed.participants === null ? null
+            : Object.freeze([...parsed.participants].sort());
+          if (kinds !== null || participants !== null) autoWake = Object.freeze({ kinds, participants });
+        }
         // Issue #441: a package this deployment has not admitted cannot be attached, so the
         // recruit is refused BEFORE any membership is written — no seat joins on a package
         // nobody holds. The digest travels; the package itself was admitted by the root's CLI
@@ -8282,8 +8437,13 @@ export class SwarmRuntime {
         // recovery and the question and stops before the brief, the host lease and the run — the
         // orchestrator's answer performs the deferred half (docs/52 D3). Read BEFORE the host
         // admission, so a seat whose answer never comes never held a lease.
+        // Issue #543: the question this recruit asks is an ASK, and the join ALREADY names its
+        // receiver — the same derivation the join's parentId uses, read here so the ask below can
+        // be delivered to it by native wake rather than waiting to be read.
         const pendDecision = predecessor !== null
           && this._policyOf(currentSwarm).resumeContinuation === 'manual';
+        const resumeOrchestrator = pendDecision
+          ? this._resumeOrchestrator(currentSwarm, caller, predecessor, args) : null;
         const brief = pendDecision ? null
           : this._composeRecruitBrief(currentSwarm, args, caller, predecessor, parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
@@ -8345,26 +8505,10 @@ export class SwarmRuntime {
         }
         // Issue #525 D4: a resume-from recruit whose caller is NOT a seated member writes
         // parentId as the predecessor's nearest living ancestor, so the question pages the
-        // sub-orchestrator that recruited the seat rather than the root.
-        let joinParentId;
-        if (caller) {
-          joinParentId = caller.participantId;
-        } else if (predecessor && args.resumeFrom) {
-          const predecessorRow = currentSwarm.participants[args.resumeFrom] ?? null;
-          if (predecessorRow) {
-            let ancestor = predecessorRow.parentId
-              ? (currentSwarm.participants[predecessorRow.parentId] ?? null) : null;
-            while (ancestor && ancestor.status !== 'active') {
-              ancestor = ancestor.parentId
-                ? (currentSwarm.participants[ancestor.parentId] ?? null) : null;
-            }
-            joinParentId = ancestor?.participantId ?? null;
-          } else {
-            joinParentId = null;
-          }
-        } else {
-          joinParentId = null;
-        }
+        // sub-orchestrator that recruited the seat rather than the root. It is the SAME derivation
+        // the ask's receiver above reads, so the seat a question pages and the seat its ask
+        // reaches are one seat.
+        const joinParentId = this._resumeOrchestrator(currentSwarm, caller, predecessor, args);
         // Membership precedes dispatch, so even a fast first native turn has the continuing
         // participant protocol. The underlying Run remains the existing execution authority.
         // A resumed seat re-joins under the RESUME request's own key: the original join key
@@ -8381,6 +8525,11 @@ export class SwarmRuntime {
           ...(args.mode === 'read_only' ? { mode: args.mode } : {}),
           ...(workspace ? { workspaceId: workspace.workspaceId } : {}),
           ...(predecessor ? { resumeFrom: args.resumeFrom } : {}),
+          // Issue #529 (docs/54 §4.1): the wake narrowing the seat's own session auto-subscribes
+          // with. It rides the join so the deployment's bridge issue reads it from the fold (the
+          // participant row carries it) exactly where it reads the seat's run and identity — the
+          // one place a session's wake configuration is declared.
+          ...(autoWake === null ? {} : { autoWake }),
           ...(pendDecision ? {} : { brief }),
         }, principal, resuming
           ? `swarm-participant-resume:${this._operationKey(command, args, principal)}`
@@ -8391,7 +8540,7 @@ export class SwarmRuntime {
                 workspaceId: predecessorWs.workspaceId ?? null, snapshotSha: predecessorWs.snapshotSha ?? null }
             : { how: null, workspaceId: null, snapshotSha: null };
           const operationKey = this._operationKey(command, args, principal);
-          writes.push(this._write('swarm.resume_decision_requested', {
+          const requestWrite = this._write('swarm.resume_decision_requested', {
             swarmId: args.swarmId, participantId: args.participantId,
             predecessor: args.resumeFrom, carry: carryPlan,
             // D3: the deferred half's own plan — the admitted Run-start selection and the context
@@ -8401,7 +8550,16 @@ export class SwarmRuntime {
               contextPackage: contextPackage === null ? null
                 : { digest: contextPackage.digest, docs: contextPackage.docs.map((row) => ({ ...row })) } },
             at: new Date().toISOString(),
-          }, principal, `swarm-resume-decision:${operationKey}`));
+          }, principal, `swarm-resume-decision:${operationKey}`);
+          writes.push(requestWrite);
+          // Issue #543: the ask is DELIVERED to the orchestrator the join named, by the ONE
+          // guidance delivery dance — its own lane when it takes mid-turn delivery, else the #337
+          // park its next exec / resume-from successor brief composes. The seat does not wait to
+          // be read, and the request row the ask threads to keeps the question on the ledger for
+          // every other reader (the wake class, the attention row, the root's session).
+          const asked = await this._askResumeDecision(currentSwarm, args, resumeOrchestrator,
+            requestWrite, principal, operationKey);
+          writes.push(...(asked?.writes ?? []));
           return { writes, participantId: args.participantId, runId, swarmId: args.swarmId,
             result: { ok: true, result: 'decision_pending' },
             resumeDecision: { state: 'pending', predecessor: args.resumeFrom, carry: carryPlan },
@@ -8419,7 +8577,7 @@ export class SwarmRuntime {
         try {
           await this.startRun({ runId, objective: brief, options: runOptions,
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
-            ...(workspace ? { workspace } : {}) }, principal, context);
+            ...(workspace ? { workspace } : {}), ...(autoWake === null ? {} : { autoWake }) }, principal, context);
         const worker = this.coordinator.list().find((row) => row.runId === runId);
         if (!worker) refuse('Recruitment admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
         // The checkout this binding observed is recorded with the seat: the first recruit into a
@@ -8798,24 +8956,10 @@ export class SwarmRuntime {
           priority: args.priority ?? SWARM_GUIDANCE_DEFAULT_PRIORITY,
           inReplyTo: this._guidanceReplyTarget(args),
         };
-        const cursor = this.store.ledgerHeadSeq();
-        const guided = await this.coordinator.guideParticipant(worker.id, args.message,
-          { actor: principal.actor, priority: guidance.priority });
-        // Issue #337: a one-shot harness answers every mid-turn delivery with its unsupported
-        // refusal. When the seat's card verbs say mid-turn delivery is unsupported, the message
-        // parks durably instead: the seat's next exec / resume-from successor brief composes it.
-        // A harness whose card CAN deliver keeps the delivery path below, whatever the delivery
-        // itself answers.
-        if (guided?.ok !== true && this._midTurnGuidanceUnsupported(worker)) {
-          return this._parkGuidance(args.swarmId, participant, args.message, principal, args, guidance);
-        }
-        // The lane receipt is durable coordination log, not process state: deliveries are
-        // serialized per worker, so the newest nudge/steer row for this binding past the pre-call
-        // cursor is the row THIS guide wrote — named by the guide's own row, never copied in.
-        const sent = this.store.eventsView().filter((event) => event.kind === 'message.sent'
-          && ['nudge', 'steer'].includes(event.payload?.kind) && event.payload?.to?.workerId === worker.id
-          && event.seq > cursor).at(-1) ?? null;
-        return this._recordGuidanceSent(args.swarmId, participant, principal, args, guidance, sent, guided);
+        // The delivery itself is the ONE dance the runtime's own resume-decision ask rides too
+        // (#543), so a coordinator's guide and Baton's ask land by the same rule.
+        return this._deliverGuidance({ swarmId: args.swarmId, participant, worker,
+          message: args.message, principal, args, guidance });
       }, { context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, result: result.result, guide: result.guide });

@@ -329,13 +329,19 @@ brief's `## Swarm situation` section carries a "Recent wake events" block listin
 wake events that occurred since the predecessor's last checkpoint seq. A first recruit (no
 predecessor) reads them since the swarm's own creation seq: a seat recruited into a swarm that has
 already produced events reads that history, and a swarm that has produced none renders no block.
-Each line names the wake class, ledger seq, timestamp, and the participant the event concerns. The
-block uses the same `wakeClassFor` derivation the wake stream uses (the `WAKE_CLASS_TABLE` in
-`wake-stream.mjs`), filtered to events whose `swarmId` matches the seat's swarm, and bounded by the
-situation byte budget (`brief.situation.bytes`), newest first with the remainder counted beside the
-read that answers it (`baton deployment wakes-since`). The mechanism is the same as parked guidance
-(#337): durable ledger rows composed at recruitment time, received by the seat without any verb.
-See `docs/54-native-wake.md` for the full design.
+Each line names the wake class, ledger seq, timestamp and the participant the event concerns, and a
+terminal class names the command that acts on it (`· next: baton swarm view <swarm>`) — both
+rendered from the same `deriveWakeFrame` derivation the wake stream serves (the `WAKE_CLASS_TABLE`
+in `wake-stream.mjs`), so a brief can never name a class, a subject or a follow-up command the
+stream would not. The block carries this swarm's own swarm-scoped events plus the deployment-scoped
+events whose resolved coordinates name the seat or the predecessor seat its lineage continues: those
+coordinates ride in through `wakeAttribution` (the same fold the wake stream resolves frames with),
+so a seat reads the deployment-level rows about its own lane — a paused turn, a worker death, an
+unanswered question — and never another lane's. The block is bounded by the situation byte budget
+(`brief.situation.bytes`), newest first with the remainder counted beside the read that answers it
+(`baton deployment wakes-since`). The mechanism is the same as parked guidance (#337): durable
+ledger rows composed at recruitment time, received by the seat without any verb. See
+`docs/54-native-wake.md` for the full design.
 
 **An MCP session subscribes itself to the wake stream as it connects (#529, 2026-09-21).** The
 session's `initialize` opens one wake subscription through the same facade entry
@@ -350,6 +356,13 @@ attachment. A session that holds no `observe` capability takes no auto-subscript
 greeting says nothing about one; a connection whose transport cannot deliver notifications, or
 that serves no wake stream, completes the handshake and names that state in the same sentence. The
 explicit wake tools and the CLI surfaces are unchanged.
+A recruit may narrow what its seat's session carries: the `autoWake` argument names the wake
+classes (`kinds`) and the seats (`participants`) the session subscribes to, the runtime validates
+both against the wake stream's closed class set before any membership is written, and the join
+records the declaration. The deployment publishes it as `BATON_SWARM_BRIDGE_AUTOWAKE` beside the
+seat's bridge coordinates and `wakeAutoSubscription` reads it, so the session opens the narrower
+subscription from its own environment; the `swarms` axis stays the seat's own swarm, because the
+bridge token it calls through is scoped to that swarm.
 
 ### A stop that cannot converge names its wait (issue #265, 2026-09-14)
 

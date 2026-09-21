@@ -203,7 +203,8 @@ test('the CLI branch is table-driven from the family rows', () => {
   const recruit = swarmCliCommand('recruit');
   assert.deepEqual(recruit.positional, ['swarmId', 'participantId', 'objective']);
   assert.deepEqual(recruit.flags.map((entry) => entry.flag),
-    ['--options', '--permissions', '--mode', '--share-workspace-with', '--resume-from', '--work-id', '--view']);
+    ['--options', '--permissions', '--mode', '--share-workspace-with', '--resume-from', '--work-id',
+      '--auto-wake', '--view']);
   assert.equal(swarmCliCommand('bogus'), null);
   assert.ok(batonCliHelp('swarm').includes('baton swarm watch'), 'the family topic lists every verb');
 });
@@ -238,9 +239,11 @@ test('the CLI parses each swarm verb into its exact command args', () => {
     swarmId: 'swarm:one', afterSeq: 7, timeoutMs: 5_000,
   });
   assert.deepEqual(parsed(['swarm', 'recruit', 'swarm:one', 'impl-a', 'Implement X',
-    '--options', '{"exact":{"harness":"h","model":"m","effort":"e"}}', '--permissions', '["contribute"]']).args, {
+    '--options', '{"exact":{"harness":"h","model":"m","effort":"e"}}', '--permissions', '["contribute"]',
+    '--auto-wake', '{"kinds":["dead"]}']).args, {
     swarmId: 'swarm:one', participantId: 'impl-a', objective: 'Implement X',
     options: { exact: { harness: 'h', model: 'm', effort: 'e' } }, permissions: ['contribute'],
+    autoWake: { kinds: ['dead'] },
     idempotencyKey: key,
   });
   assert.deepEqual(parsed(['swarm', 'notify', 'swarm:one', 'impl-b', 'Reuse the contract.',

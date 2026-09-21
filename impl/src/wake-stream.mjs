@@ -575,6 +575,28 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
   });
 }
 
+/** Issue #529 (docs/54 §6.1): run/worker/task → swarm coordinates, folded from the swarm rows —
+ * the Run each seat was started under and the worker/task bindings its joins recorded. ONE
+ * derivation: the wake stream's own frame attribution and the recruit brief's deployment-scoped
+ * wake filter both read it, so a frame the brief renders resolves its coordinates exactly as the
+ * stream resolves them. */
+export function wakeAttribution(swarms) {
+  const index = new Map();
+  for (const swarm of swarms ?? []) {
+    for (const participant of Object.values(swarm.participants ?? {})) {
+      const coordinates = Object.freeze({
+        swarmId: swarm.swarmId, participantId: participant.participantId, runId: participant.runId ?? null,
+      });
+      if (participant.runId) index.set(participant.runId, coordinates);
+      for (const binding of participant.bindings ?? []) {
+        if (binding.taskId) index.set(binding.taskId, coordinates);
+        if (binding.workerId) index.set(binding.workerId, coordinates);
+      }
+    }
+  }
+  return index;
+}
+
 /** One wake frame from one live deployment observation. Observations have no ledger row to resume
  * from, so the frame names the observation it came from, carries `observation: true`, and takes the
  * ledger head at emission as its cursor. The served-commit header rides it exactly as it rides a
@@ -695,23 +717,8 @@ export class WakeStream {
   /** run/worker/task → swarm coordinates, folded from the live swarm rows. Rebuilt per read, so a
    * swarm created after the attachment attributes its own rows without re-attaching. */
   _attribution() {
-    const index = new Map();
-    let swarms;
-    try { swarms = this.coordination.swarms(); }
-    catch { return index; }
-    for (const swarm of swarms ?? []) {
-      for (const participant of Object.values(swarm.participants ?? {})) {
-        const coordinates = Object.freeze({
-          swarmId: swarm.swarmId, participantId: participant.participantId, runId: participant.runId ?? null,
-        });
-        if (participant.runId) index.set(participant.runId, coordinates);
-        for (const binding of participant.bindings ?? []) {
-          if (binding.taskId) index.set(binding.taskId, coordinates);
-          if (binding.workerId) index.set(binding.workerId, coordinates);
-        }
-      }
-    }
-    return index;
+    try { return wakeAttribution(this.coordination.swarms()); }
+    catch { return new Map(); }
   }
 
   _swarmIds() {

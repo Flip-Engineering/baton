@@ -297,7 +297,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // workspace id, and the two axes stay independent — adoption is not a native-session resume.
   'swarm.recruit': Object.freeze({
     args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions', 'mode',
-      'shareWorkspaceWith', 'resumeFrom', 'workId', 'idempotencyKey', 'view']),
+      'shareWorkspaceWith', 'resumeFrom', 'workId', 'autoWake', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -678,6 +678,12 @@ const SWARM_FIELD_RULES = Object.freeze({
   // owns the payload and refuses a token it did not mint.
   cursor: Object.freeze({ check: isId, expectation: 'a page cursor a previous answer named' }),
   resumeFrom: Object.freeze({ check: isId, expectation: 'a participant identity' }),
+  // Issue #529 (docs/54 §4.1): the wake narrowing a seat's session is recruited with. Only the
+  // SHAPE is checked here — the admitted class names are the wake stream's closed set
+  // (WAKE_CLASSES, wake-stream.mjs), and the runtime validates the two declared axes against it
+  // before any membership is written, naming the class it refused.
+  autoWake: Object.freeze({ check: isJsonObject, expectation:
+    'a JSON object naming kinds and/or participants to narrow this seat\'s wake subscription' }),
   // Issue #296: the branch a contribution lands onto. A ref NAME, never a sha — the verb resolves
   // it and the receipt records the exact commits it observed (targetHeadBefore / targetHeadAfter),
   // so a caller can hand the receipt to `git log` without having resolved anything itself.
@@ -710,7 +716,8 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.recruit': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']),
-    optional: Object.freeze(['options', 'permissions', 'mode', 'shareWorkspaceWith', 'resumeFrom', 'workId', 'view']),
+    optional: Object.freeze(['options', 'permissions', 'mode', 'shareWorkspaceWith', 'resumeFrom', 'workId',
+      'autoWake', 'view']),
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
@@ -1055,6 +1062,8 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
       shareWorkspaceWith: ID_SCHEMA,
       resumeFrom: ID_SCHEMA,
       workId: ID_SCHEMA,
+      autoWake: Object.freeze({ type: 'object', description:
+        'the wake narrowing this seat\'s session auto-subscribes with (docs/54 §4.1): kinds names wake classes, participants names seats; the subscription always carries this seat\'s own swarm' }),
     }),
     required: Object.freeze(['swarmId', 'participantId', 'objective']),
   }),
