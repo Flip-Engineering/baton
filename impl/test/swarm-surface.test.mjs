@@ -152,6 +152,28 @@ test('validation refuses the closed set with typed codes and invents no byte cei
     { swarmId: 'swarm:one', participantId: 'impl-a', message: long, idempotencyKey: 'ik-long' }), true);
 });
 
+test('a required-field refusal names every missing field in one refusal (#43 AX, R1/R2)', () => {
+  const refused = (fn) => {
+    try { fn(); } catch (error) { return error; }
+    assert.fail('expected a typed refusal');
+  };
+  const plural = refused(() => validateSwarmCommand('swarm.guide', {}));
+  assert.equal(plural.code, 'swarm_command_invalid');
+  assert.equal(plural.detail.rule, 'required-field');
+  assert.deepEqual(plural.detail.required, ['swarmId', 'participantId', 'message', 'idempotencyKey'],
+    'the refusal carries the whole missing set, so one round trip teaches the shape');
+  assert.match(plural.message, /swarmId, participantId, message, idempotencyKey are required/u);
+  assert.match(plural.detail.expectation, /participantId: a participant identity; message: non-empty text/u,
+    'the plural expectation spells each field with its own expectation');
+  const partial = refused(() => validateSwarmCommand('swarm.guide', { participantId: 'impl-a' }));
+  assert.deepEqual(partial.detail.required, ['swarmId', 'message', 'idempotencyKey']);
+  // A single missing field keeps the recorded singular shape: message, field, expectation.
+  const singular = refused(() => validateSwarmCommand('swarm.view', {}));
+  assert.match(singular.message, /swarmId is required/u);
+  assert.equal(singular.detail.field, 'swarmId');
+  assert.equal(singular.detail.expectation, 'a swarm identity');
+});
+
 // ── the transport registration seam ─────────────────────────────────────────────────────────────
 
 test('web admission derives from the shared registry spread, not from this module alone', () => {

@@ -873,11 +873,20 @@ export function validateSwarmCommand(name, args) {
           correction: `remove ${key} — ${name} accepts ${definition.args.length > 0 ? definition.args.join(', ') : 'no arguments'}` });
     }
   }
-  for (const field of shape.required) {
-    if (!Object.hasOwn(args, field) || args[field] === undefined) {
-      throw swarmError(`${name} request is invalid: ${field} is required`, 'swarm_command_invalid',
-        { field, rule: 'required-field', expectation: SWARM_FIELD_RULES[field].expectation });
-    }
+  // Issue #43 AX (2026-09-21): the refusal names EVERY missing required field — `shape.required`
+  // is fully known at validation time, and one field per attempt teaches a caller its own command's
+  // shape across N durable refusal rows. The first missing field stays `field` (the singular
+  // message and detail keep their recorded shape); `required` carries the whole missing set, and
+  // the plural expectation spells each field with its expectation.
+  const missing = shape.required.filter((field) => !Object.hasOwn(args, field) || args[field] === undefined);
+  if (missing.length > 0) {
+    const expectation = missing.length === 1
+      ? SWARM_FIELD_RULES[missing[0]].expectation
+      : missing.map((field) => `${field}: ${SWARM_FIELD_RULES[field].expectation}`).join('; ');
+    throw swarmError(
+      `${name} request is invalid: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required`,
+      'swarm_command_invalid',
+      { field: missing[0], rule: 'required-field', required: [...missing], expectation });
   }
   for (const [field, value] of Object.entries(args)) {
     if (value === undefined) continue;

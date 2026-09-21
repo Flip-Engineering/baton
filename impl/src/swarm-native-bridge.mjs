@@ -140,7 +140,8 @@ function refusalChange(detail) {
   const field = typeof detail?.field === 'string' ? detail.field : null;
   switch (detail?.rule) {
     case 'unknown-field': return `remove ${field}`;
-    case 'required-field': return `add ${field} (${detail.expectation ?? 'a value'})`;
+    case 'required-field': return `add ${(Array.isArray(detail.required) && detail.required.length > 1
+      ? detail.required : [field]).join(', ')} (${detail.expectation ?? 'a value'})`;
     case 'field-predicate': return `${field} must be ${detail.expectation ?? 'a valid value'}`;
     case 'closed-set': return `${field} must be ${detail.expectation ?? 'one of the values this command accepts'}`;
     case 'payload-required': return `send a payload object naming ${(detail.required ?? []).join(', ')}`;

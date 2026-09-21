@@ -396,6 +396,24 @@ test('contract admission refuses forged identity fields and malformed args befor
   });
 });
 
+test('the bridge refusal names every missing required field and its remedy follows (#43 AX, R1/R2)', async () => {
+  await withBridge({}, async ({ bridge, runtime }) => {
+    runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    await assert.rejects(call(issued, 'swarm.guide', { swarmId: 'swarm-1' }), (error) => {
+      assert.equal(error.code, 'swarm_command_invalid');
+      assert.deepEqual(error.detail.required, ['participantId', 'message', 'idempotencyKey']);
+      assert.match(error.message,
+        /^Nothing was recorded: add participantId, message, idempotencyKey \(participantId: a participant identity; message: non-empty text; idempotencyKey: an idempotency key\)\n/u,
+        'the remedy line renders the whole missing set once');
+      assert.match(error.message, /participantId, message, idempotencyKey are required/u);
+      return true;
+    });
+    assert.equal(runtime.refusals.at(-1)?.args.rule, 'required-field',
+      'the plural refusal is reported to the durable lane under its rule');
+  });
+});
+
 // ============================================================
 // Refusals — tokens, scope, runtime passthrough
 // ============================================================

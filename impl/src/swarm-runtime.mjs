@@ -1193,12 +1193,20 @@ export function validateSwarmKnowledgeCommand(name, args) {
   // Scratchpad scope defaults to the caller's own worker scope at the swarm layer: the scratchpad
   // is the run's memory, and a participant never knows its own worker id.
   const defaulted = name === 'run.scratchpad.append' || name === 'run.scratchpad.read' ? 'scope' : null;
-  for (const field of required) {
-    if (identity.has(field) || field === defaulted) continue;
-    if (args[field] === undefined) {
-      refuse(`Swarm knowledge request is invalid: add ${field} (${properties[field]?.description ?? 'a value'})`,
-        'swarm_command_invalid', { field, rule: 'required-field' });
-    }
+  // Issue #43 AX (2026-09-21): the refusal names EVERY missing required field, with each field's
+  // own description — the same whole-set teaching the contract validator gives (singular keeps the
+  // recorded one-field shape; `required` carries the plural set).
+  const missing = required.filter((field) => !identity.has(field) && field !== defaulted
+    && args[field] === undefined);
+  if (missing.length > 0) {
+    const describe = (field) => properties[field]?.description ?? 'a value';
+    refuse(`Swarm knowledge request is invalid: add ${missing.join(', ')}` + (missing.length === 1
+      ? ` (${describe(missing[0])})`
+      : ` — each: ${missing.map((field) => `${field}: ${describe(field)}`).join('; ')}`),
+    'swarm_command_invalid', {
+      field: missing[0], rule: 'required-field', required: [...missing],
+      expectation: missing.map((field) => `${field}: ${describe(field)}`).join('; '),
+    });
   }
   for (const [key, value] of Object.entries(args)) {
     const problem = knowledgeSchemaProblem(value, properties[key]);
@@ -1327,12 +1335,20 @@ export function validateSwarmSeatReadCommand(name, args) {
         { field: key, rule: 'unknown-field', admitted, correction: `remove ${key} — ${name} accepts ${admitted.join(', ')}` });
     }
   }
-  for (const field of ['swarmId', ...verb.required]) {
-    if (verb.identityFields.includes(field)) continue;
-    if (args[field] === undefined) {
-      refuse(`Swarm seat read request is invalid: add ${field} (${properties[field]?.description ?? 'a value'})`,
-        'swarm_command_invalid', { field, rule: 'required-field', expectation: properties[field]?.description ?? 'a value' });
-    }
+  // Issue #43 AX (2026-09-21): the refusal names EVERY missing required field, with each field's
+  // own description (singular keeps the recorded one-field shape; `required` carries the set).
+  const missing = ['swarmId', ...verb.required]
+    .filter((field) => !verb.identityFields.includes(field) && args[field] === undefined);
+  if (missing.length > 0) {
+    const describe = (field) => properties[field]?.description ?? 'a value';
+    refuse(`Swarm seat read request is invalid: add ${missing.join(', ')}` + (missing.length === 1
+      ? ` (${describe(missing[0])})`
+      : ` — each: ${missing.map((field) => `${field}: ${describe(field)}`).join('; ')}`),
+    'swarm_command_invalid', {
+      field: missing[0], rule: 'required-field', required: [...missing],
+      expectation: missing.length === 1 ? describe(missing[0])
+        : missing.map((field) => `${field}: ${describe(field)}`).join('; '),
+    });
   }
   for (const [key, value] of Object.entries(args)) {
     const problem = knowledgeSchemaProblem(value, properties[key]);
