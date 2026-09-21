@@ -24838,7 +24838,7 @@
         {
           "name": "normalizeSemanticAuthority",
           "ordinal": 0,
-          "size": 19,
+          "size": 24,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
@@ -24856,7 +24856,7 @@
         {
           "name": "normalizeCommandContext",
           "ordinal": 0,
-          "size": 50,
+          "size": 52,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
@@ -25008,7 +25008,7 @@
         {
           "name": "normalizeGateCauseFeedback",
           "ordinal": 0,
-          "size": 50,
+          "size": 54,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"

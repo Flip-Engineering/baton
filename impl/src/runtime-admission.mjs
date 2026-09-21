@@ -214,14 +214,17 @@ export class SupervisedProcesses {
    * Run ONE node script to completion in its own process group. Resolves — never rejects — with the
    * exit facts plus the bounded tails of both streams: a caller distinguishes a red run (an exit
    * status) from a run that never judged, and this seam never turns a child's own failure into an
-   * exception the caller cannot read. `timedOut` marks the run this supervisor killed at its
-   * deadline. `detached` puts the child in its own group so a kill reaches the grandchildren a
-   * runner spawns (test files, nested runners), never only the child itself.
+   * exception the caller cannot read. `timeoutMs` is the CALLER'S declared kill bound: when a
+   * caller declares one, `timedOut` marks the run this supervisor killed at it; when the caller
+   * declares none (null), no wall clock arms — the run waits on the child, whose own structure
+   * (a verdict, an exit) or the resident's fence (killAll, the leftover sweep) ends it (#546).
+   * `detached` puts the child in its own group so a kill reaches the grandchildren a runner
+   * spawns (test files, nested runners), never only the child itself.
    */
-  async run({ file, args = [], cwd, env = {}, timeoutMs, label = 'worker' }) {
+  async run({ file, args = [], cwd, env = {}, timeoutMs = null, label = 'worker' }) {
     if (typeof file !== 'string' || file.length === 0) throw new TypeError('a supervised worker needs the script it runs');
     if (typeof cwd !== 'string' || cwd.length === 0) throw new TypeError('a supervised worker needs the directory it runs in');
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError('a supervised worker needs a positive deadline in milliseconds');
+    if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)) throw new TypeError('a supervised worker deadline is a positive integer in milliseconds, or null to wait on the child');
     const id = `supervised-worker-${++this._seq}`;
     const child = spawn(process.execPath, [file, ...args], {
       cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
@@ -239,8 +242,8 @@ export class SupervisedProcesses {
       try { process.kill(-child.pid, signal); }
       catch { try { child.kill(signal); } catch { /* already gone */ } }
     };
-    const deadline = setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
-    if (typeof deadline.unref === 'function') deadline.unref();
+    const deadline = timeoutMs === null ? null : setTimeout(() => { timedOut = true; killGroup('SIGKILL'); }, timeoutMs);
+    if (deadline !== null && typeof deadline.unref === 'function') deadline.unref();
     const settled = await new Promise((resolve) => {
       child.once('error', (error) => resolve({ status: 'failed', code: null, signal: null, error: `${error?.message ?? error}` }));
       child.once('close', (code, signal) => resolve({ status: code === 0 ? 'ok' : 'failed', code, signal }));

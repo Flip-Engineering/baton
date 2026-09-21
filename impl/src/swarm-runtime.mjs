@@ -152,7 +152,6 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
     const result = await runSupervisedGateRun({
       file: INTEGRATION_GATE_RUNNER, dir, files, pool, holder, leaseAuthority,
       env: { BATON_SUITE_VERDICT_FILE: verdictPath },
-      timeoutMs: supervisedGateTimeoutMs(),
     });
     // Read ONCE, and carried on both outcomes below.
     const stderrTail = boundedStderrTail(`${result.stderr || result.stdout}`);
@@ -164,15 +163,16 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
     if (document === null) {
       // A runner that died before it could judge is not a green gate set. Never a bare "failed":
       // the row names the script, its exit status and the #326 tail of what the runner said — the
-      // same bounded, redacted derivation the regenerator refusal carries (issue #451) — and a run
-      // the supervisor KILLED at its deadline names that, so a timeout is never read as a red gate.
+      // same bounded, redacted derivation the regenerator refusal carries (issue #451). No
+      // resident-side wall clock arms on this child (#546): a landing waits for the runner's
+      // verdict — its own per-file progress deadline is the judged liveness law that guarantees
+      // one arrives — so an unjudged gate run can only mean the runner exited without verdict.
       return {
         files,
         verdictLine: null,
         unexpected: [{
-          row: result.timedOut ? 'suite-timed-out' : 'suite-did-not-judge',
+          row: 'suite-did-not-judge',
           script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
-          ...(result.timedOut ? { timedOut: true } : {}),
           stderrTail,
         }],
         stderrTail, exit,
