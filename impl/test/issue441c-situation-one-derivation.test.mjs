@@ -413,9 +413,13 @@ test('441c-d: a swarm with no contributions renders the section byte-identically
     'a swarm that contributed nothing has no rows to count — the derivation invents none');
   await f.recruit('gamma', ['read', 'contribute']);
   const section = situationOf(f.briefOf('gamma'));
-  // Today's bytes, exactly: the two peer blocks, the two peer rows, and nothing else — no
-  // contribution count line for an empty swarm (docs/47 §7, the migration rule).
-  assert.equal(section, [
+  // Today's bytes, exactly, above the wake block: the two peer blocks, the two peer rows, and no
+  // contribution count line for an empty swarm (docs/47 §7, the migration rule). Issue #529 adds
+  // the one section after them — the seat's own ledger rows since the reference point — so the
+  // pinned prefix is what "byte-identical" means now, and the block below it is composed from the
+  // rows themselves (its timestamps are the ledger's, never a fixture constant).
+  const [peers, wakeBlock] = section.split('\nRecent wake events (since seq ');
+  assert.equal(peers, [
     '## Swarm situation',
     'Peers (the seats already working beside you):',
     '- alpha — alpha lane — scope: impl/**',
@@ -423,7 +427,10 @@ test('441c-d: a swarm with no contributions renders the section byte-identically
     'Peers now:',
     '- alpha — holds nothing; last checkpoint: none recorded',
     '- beta — holds nothing; last checkpoint: none recorded',
-  ].join('\n'), 'a pre-#441 brief composes byte-identically');
+  ].join('\n'), 'a pre-#441 brief composes byte-identically above the #529 wake block');
+  assert.ok(wakeBlock !== undefined, 'the wake block is the only section the peers are followed by');
+  assert.match(wakeBlock, /^1, newest first\):\n- \[seq \d+ · [a-z_]+ · ts \S+\]:/u,
+    'and it is this swarm\'s own rows, newest first from the reference point');
   assert.doesNotMatch(section, /contributions recorded on this swarm/u,
     'the count line is absent — not zero — for a swarm with no contributions');
 });

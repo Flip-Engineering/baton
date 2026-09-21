@@ -181,6 +181,20 @@ attention row and the wake class re-derive on the successor's first read after a
 pending seat holds no host resources: capacity admission moves from recruit time to answer time
 for the resume path, so a seat whose answer never comes never held a lease.
 
+**D8 — The question reaches the orchestrator by native wake (#543).** D1 stops the seat at the
+question, so the question itself must arrive where the orchestrator already reads. The recruit
+delivers the ask to the seat the join names as `parentId` (D4) through the ONE guidance delivery
+dance (#273, #337): the parent's own lane when its harness takes mid-turn delivery, otherwise the
+durable park its next exec or its own `--resume-from` successor's brief composes. The ask threads to
+the request row (`inReplyTo`), so the guidance row answers a question the ledger holds. Both
+settling acts stay the ones D3 already names — `swarm.guide` continues the seat, `swarm.stop`
+settles it without work — and the ask spells both commands, so the parent neither guesses the verb
+nor reads the view first. A recovery with no seat in its tree writes no guidance: the question
+still rides the request row, the attention row, and the wake class, which the root's own session
+reads over the deployment wake stream (docs/54 §4). Whether a resume may CONTINUE when no
+orchestrator could receive the ask is unchanged from D5/D7 — the question waits, and the waiting
+seat holds no lease.
+
 ## 3. New vocabulary
 
 | Name | Where | Shape |

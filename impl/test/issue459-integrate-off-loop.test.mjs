@@ -38,6 +38,7 @@ import { dirname, join } from 'node:path';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { SWARM_REFUSAL_CODES } from '../src/swarm-refusals.mjs';
+import { validateSwarmCommand } from '../src/swarm-contract.mjs';
 import { wakeClassFor } from '../src/wake-stream.mjs';
 import { HostCapacityAuthority } from '../src/host-capacity.mjs';
 import { parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
@@ -491,4 +492,20 @@ test('459g: a gate run the resident kills at its deadline lands the failure row 
   assert.equal(existsSync(join(w.wtRoot, 'integrate-contribution-1.projection.exclude')), false,
     'and so is the projection-exclude file');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
+});
+
+// ── (h) an omitted --onto lands on the deployment's own branch (#43 AX) ──────────────────────────
+
+test('459h: an integrate with no target lands on the deployment\'s own branch and the contract admits the omission', needsGit, async (t) => {
+  const w = await world(t, { gate: { sleepMs: 0, green: true } });
+  // The CLI's usage renders --onto optional ([--onto]); the surface must agree with it.
+  assert.equal(validateSwarmCommand('swarm.integrate',
+    { swarmId: 's1', contributionId: 'contribution:1', idempotencyKey: 'i459:default-target' }), true,
+    'an omitted target admits at the contract');
+  const answer = await w.integration({ target: undefined, idempotencyKey: 'i459:default-target' });
+  assert.equal(answer.integration.target, 'master',
+    'the receipt names the deployment\'s own branch — the ONE derivation the #438 target facts read');
+  assert.equal(answer.integration.targetHeadAfter, git(w.repo, 'rev-parse', 'master'),
+    'the landing moved the branch the receipt names');
+  assert.deepEqual(w.failureRows(), [], 'nothing was refused');
 });

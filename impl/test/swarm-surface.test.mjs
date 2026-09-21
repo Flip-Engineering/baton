@@ -16,9 +16,9 @@ import { swarmApplicationToolDefinitions } from '../src/mcp-northbound.mjs';
 import { canonicalAndTransportNames, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { createSwarms } from '../src/swarm-client.mjs';
 import {
-  SWARM_CLI_COMMANDS, SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS,
-  SWARM_MCP_TOOL_DEFINITIONS, SWARM_COMMAND_SCHEMAS, SWARM_CLI_HELP, swarmCliCommand,
-  swarmRegisteredCommands, swarmWebAdmittedCommands, validateSwarmCommand,
+  SWARM_CLI_COMMANDS, SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES,
+  SWARM_EVENT_KINDS, SWARM_MCP_TOOL_DEFINITIONS, SWARM_COMMAND_SCHEMAS, SWARM_CLI_HELP,
+  swarmCliCommand, swarmRegisteredCommands, swarmWebAdmittedCommands, validateSwarmCommand,
 } from '../src/swarm-surface.mjs';
 
 // The registry as root will carry it: the live application definitions plus the swarm family. Every
@@ -152,6 +152,39 @@ test('validation refuses the closed set with typed codes and invents no byte cei
     { swarmId: 'swarm:one', participantId: 'impl-a', message: long, idempotencyKey: 'ik-long' }), true);
 });
 
+test('a required-field refusal names every missing field in one refusal (#43 AX, R1/R2)', () => {
+  const refused = (fn) => {
+    try { fn(); } catch (error) { return error; }
+    assert.fail('expected a typed refusal');
+  };
+  const plural = refused(() => validateSwarmCommand('swarm.guide', {}));
+  assert.equal(plural.code, 'swarm_command_invalid');
+  assert.equal(plural.detail.rule, 'required-field');
+  assert.deepEqual(plural.detail.required, ['swarmId', 'participantId', 'message', 'idempotencyKey'],
+    'the refusal carries the whole missing set, so one round trip teaches the shape');
+  assert.match(plural.message, /swarmId, participantId, message, idempotencyKey are required/u);
+  assert.match(plural.detail.expectation, /participantId: a participant identity; message: non-empty text/u,
+    'the plural expectation spells each field with its own expectation');
+  const partial = refused(() => validateSwarmCommand('swarm.guide', { participantId: 'impl-a' }));
+  assert.deepEqual(partial.detail.required, ['swarmId', 'message', 'idempotencyKey']);
+  // A single missing field keeps the recorded singular shape: message, field, expectation.
+  const singular = refused(() => validateSwarmCommand('swarm.view', {}));
+  assert.match(singular.message, /swarmId is required/u);
+  assert.equal(singular.detail.field, 'swarmId');
+  assert.equal(singular.detail.expectation, 'a swarm identity');
+});
+
+test('the recruit summary states which predecessor states resume-from accepts (#43 AX)', () => {
+  const summary = swarmCliCommand('recruit').summary;
+  assert.match(summary, /resumable while it is active/u);
+  assert.match(summary, /provider_fault/u, 'the provider-killed state is taught');
+  assert.match(summary, /reason stopped or completed/u, 'the root-settled states are taught');
+  assert.match(summary, /retained checkout or a snapshot commit on its lane branch/u,
+    'the carriable-workspace condition is taught');
+  assert.match(summary, /swarm_recruit_predecessor_unavailable/u,
+    'the help names the typed refusal the out-of-states case draws');
+});
+
 // ── the transport registration seam ─────────────────────────────────────────────────────────────
 
 test('web admission derives from the shared registry spread, not from this module alone', () => {
@@ -181,7 +214,8 @@ test('the CLI branch is table-driven from the family rows', () => {
   const recruit = swarmCliCommand('recruit');
   assert.deepEqual(recruit.positional, ['swarmId', 'participantId', 'objective']);
   assert.deepEqual(recruit.flags.map((entry) => entry.flag),
-    ['--options', '--permissions', '--mode', '--share-workspace-with', '--resume-from', '--work-id', '--view']);
+    ['--options', '--permissions', '--mode', '--share-workspace-with', '--resume-from', '--work-id',
+      '--auto-wake', '--view']);
   assert.equal(swarmCliCommand('bogus'), null);
   assert.ok(batonCliHelp('swarm').includes('baton swarm watch'), 'the family topic lists every verb');
 });
@@ -216,9 +250,11 @@ test('the CLI parses each swarm verb into its exact command args', () => {
     swarmId: 'swarm:one', afterSeq: 7, timeoutMs: 5_000,
   });
   assert.deepEqual(parsed(['swarm', 'recruit', 'swarm:one', 'impl-a', 'Implement X',
-    '--options', '{"exact":{"harness":"h","model":"m","effort":"e"}}', '--permissions', '["contribute"]']).args, {
+    '--options', '{"exact":{"harness":"h","model":"m","effort":"e"}}', '--permissions', '["contribute"]',
+    '--auto-wake', '{"kinds":["dead"]}']).args, {
     swarmId: 'swarm:one', participantId: 'impl-a', objective: 'Implement X',
     options: { exact: { harness: 'h', model: 'm', effort: 'e' } }, permissions: ['contribute'],
+    autoWake: { kinds: ['dead'] },
     idempotencyKey: key,
   });
   assert.deepEqual(parsed(['swarm', 'notify', 'swarm:one', 'impl-b', 'Reuse the contract.',

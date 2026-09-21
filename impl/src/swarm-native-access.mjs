@@ -15,10 +15,13 @@ export class SwarmNativeAccess {
     this.clientPath = fileURLToPath(new URL('./swarm-native-bridge.mjs', import.meta.url));
   }
 
-  async prepare({ swarmId, participantId, runId }) {
+  /** Issue #529 (docs/54 §4.1): `autoWake` is the seat's declared wake narrowing (the recruit
+   * recorded it on the join), published into the environment the participant's runtime rides so
+   * the session's entry opens the subscription the seat was recruited with. */
+  async prepare({ swarmId, participantId, runId, autoWake = null }) {
     if (!this.participants.has(runId)) {
       const entry = { revoked: false, promise: null };
-      entry.promise = this.bridge.issue({ swarmId, participantId, runId }).then((issued) => {
+      entry.promise = this.bridge.issue({ swarmId, participantId, runId, autoWake }).then((issued) => {
         if (entry.revoked) {
           this.bridge.revoke(issued.token);
           throw Object.assign(new Error('Participant access was revoked during preparation'), { code: 'swarm_native_access_revoked' });

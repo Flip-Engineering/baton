@@ -165,6 +165,17 @@ test('353d: the pending observation for swarm.stop names the seat row, never doc
   assert.equal(observe.command.includes('doctor'), false);
 });
 
+test('353d3: the integrate observation names the view read, never a held --follow (#43 AX)', () => {
+  const observe = commandObservation('swarm.integrate',
+    { swarmId: OBSERVE_SWARM, contributionId: 'contribution:1', target: 'master' }, 'command-353b');
+  assert.equal(observe.command, `baton swarm view ${OBSERVE_SWARM}`,
+    'the receipt is readable from the view with no wait at all');
+  assert.equal(observe.command.includes('--follow'), false,
+    'the hint never teaches the held-wait spelling');
+  assert.ok(observe.row.includes('contributions["contribution:1"]'),
+    'the row names where the landing receipt lands');
+});
+
 test('353d2: a swarm.stop that outlives the request bound answers cli_command_pending on the seat row', async () => {
   const requested = [];
   const web = new BatonWebClient({
