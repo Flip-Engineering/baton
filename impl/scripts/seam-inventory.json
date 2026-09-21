@@ -13890,7 +13890,7 @@
         {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 313,
+          "size": 349,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
