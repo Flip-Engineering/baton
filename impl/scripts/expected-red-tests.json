@@ -1026,6 +1026,10 @@
       "prerequisite": "codex/gpt-5.6-sol"
     },
     {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: P92-DF10b: default readiness retains a configured rejected-refresh Kimi route as blocked",
+      "reason": "#546"
+    },
+    {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-1: deployment workflow compiles one durable multi-node Plan and starts no provider before approval",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
