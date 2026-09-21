@@ -189,7 +189,16 @@ test('517-a: a resume-from successor of a dead predecessor binds its retained ch
     swarmId: 'resumed', participantId: 'bravo', objective: 'Continue from alpha',
     options: selection, resumeFrom: 'alpha', idempotencyKey: 'recruit:resumed:bravo',
   });
-  assert.equal(typeof bravo.runId, 'string', 'the successor is admitted');
+  assert.equal(typeof bravo.runId, 'string', 'the successor recovery is admitted');
+
+  // #525 makes a recovered seat's continuation an explicit decision. The answer performs the
+  // deferred start, binding and workspace carry through the same deployment admission as an
+  // immediate recruit.
+  await second.command('swarm.guide', {
+    swarmId: 'resumed', participantId: 'bravo', message: 'Continue from alpha.',
+    idempotencyKey: 'guide:resumed:bravo',
+  });
+  await working(second.driver, bravo.runId);
 
   // The recruit stops at the resume question (docs/52 D1/D5: `manual` is the default), so the
   // carry lands when the question is answered — the existing guide IS the answer (docs/52 D3).
