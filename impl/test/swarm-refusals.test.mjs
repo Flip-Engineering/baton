@@ -14,13 +14,19 @@ import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/i
 import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SWARM_DRIVER_EVENT_KINDS, SWARM_EVENT_KINDS, validateSwarmCommand } from '../src/swarm-contract.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 
 const policy = Object.freeze({
   schemaVersion: 1, repoId: 'repo-swarm-refusals', mandatory: true, approvalTtlMs: 60 * 60 * 1000,
   riskClasses: ['low', 'medium', 'high', 'critical'], effectClasses: ['repository_edit', 'provider_call'],
   capabilityClasses: ['code', 'test'],
   limits: Object.freeze({
-    maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16, maxTextBytes: 4096,
+    // #362: a recruit's run objective IS its whole composed brief, and the deployment's own policy
+    // draws this bound from the objective lane (application-deployment.mjs). The brief's
+    // age-scaling situation blocks are each bounded by `brief.situation.bytes` (8192 bytes), so a
+    // literal below the brief's own budget cannot admit the objective this fixture composes.
+    maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
+    maxTextBytes: FRAME_LIMITS['run.objective'].value,
     maxItems: 64, maxScopePaths: 64, maxRouteValues: 32, maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024,
     maxStatusBytes: 256 * 1024, maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
   }),
