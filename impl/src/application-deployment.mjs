@@ -2175,15 +2175,20 @@ function deploymentReadiness(
     let credentialProjection = null;
     if (route.harness === 'kimi-code' && nativeKimiAuthentication) {
       credentialProjection = kimiCredentialProjection(nativeKimiAuthentication);
-      // Issue #348: the HARNESS is checked before the credential, the way the grok row's own gate
-      // does. A host with no `kimi` executable cannot run the login the credential remedy names,
+      // A rejected-refresh tombstone is server-side evidence the grant itself is revoked:
+      // installing the CLI changes nothing about it, so the credential verdict outranks the
+      // harness probe. Every other credential state keeps the Issue #348 harness-first order:
+      // the HARNESS is checked before the credential, the way the grok row's own gate does.
+      // A host with no `kimi` executable cannot run the login the credential remedy names,
       // so a credential verdict there describes a remedy nobody can execute; the paths probed ride
       // the summary, and the credential state is reported only for a harness this host has. The
       // native facts gate this arm exactly as they gate the credential it carries — a route built
       // from a caller-supplied adapter answers for its own harness (#327) and is never judged
       // against this host's binary paths.
-      const harness = kimiHarnessAvailability();
-      if (harness.state === 'absent') {
+      const rejectedRefresh = nativeKimiAuthentication.state === 'blocked'
+        && nativeKimiAuthentication.credentialState === 'revoked';
+      const harness = rejectedRefresh ? null : kimiHarnessAvailability();
+      if (harness?.state === 'absent') {
         return Object.freeze({
           ...publicFields, state: 'blocked', code: 'harness_unavailable',
           summary: `The Kimi Code executable was not found (probed ${harness.paths.join(', ')}). `
