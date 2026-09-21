@@ -1141,7 +1141,6 @@ function wakeNarrowingAxes(raw) {
     });
   } catch { return whole; }
 }
-
 export async function createBatonWebMcpServer(options) {
   if (!options?.coordination) throw new TypeError('Baton Web MCP requires local call coordination');
   if (['principalId', 'sessionId', 'sessionTtlMs'].some((field) => Object.hasOwn(options, field))) {

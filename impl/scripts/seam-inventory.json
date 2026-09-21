@@ -4759,7 +4759,7 @@
         {
           "name": "_parseSemanticReview",
           "ordinal": 0,
-          "size": 80,
+          "size": 85,
           "seam": "admission",
           "evidence": [
             "delegates:admission"
@@ -24894,7 +24894,7 @@
         {
           "name": "normalizeExportPolicy",
           "ordinal": 0,
-          "size": 24,
+          "size": 27,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name",

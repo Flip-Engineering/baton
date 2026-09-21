@@ -577,14 +577,20 @@ test('GP-D (pin): the atlas substrate the pool rides — staleness gate, provena
   // _assertBaseFresh refuses orientation_base_stale for COMMITTED moves (reused by R9 for moves).
   assert.ok(grepCount('atlas-index.mjs', 'orientation_base_stale') >= 1,
     'the atlas base-fresh gate throws orientation_base_stale (committed moves)');
-  // Provenance carries overlay_applied + the staleness labels the pool mirrors (M5).
-  const prov = sedSrc('atlas-index.mjs', 469, 469);
+  // Provenance carries overlay_applied + the staleness labels the pool mirrors (M5). Anchored on
+  // the frame's own declaration and read to its end, never on a frozen line number: the absolute
+  // window this pin used to carry (469,469) drifted two lines when the #81 base-freshness comment
+  // landed above it, and moved nothing the pin defends (the GP-A/GP-F convention).
+  const provenanceLine = grepFirstLineNum('atlas-index.mjs', 'const provenance = \\{ index_epoch:');
+  assert.ok(provenanceLine > 0, 'the atlas serve projection builds its provenance frame');
+  const prov = sedSrc('atlas-index.mjs', provenanceLine, provenanceLine + 1);
   assert.ok(prov.includes('overlay_applied') && prov.includes('base_snapshot_only')
     && prov.includes('base_plus_worktree_overlay'),
     'atlas provenance carries overlay_applied + the staleness labels');
-  // Honest-empty availability (R1 mirrors this posture).
-  const empty = sedSrc('atlas-index.mjs', 365, 372);
-  assert.ok(empty.includes('honest_empty'),
+  // Honest-empty availability (R1 mirrors this posture) — anchored on the projection that names
+  // the ceiling, never on the (365,372) window the #81 coverage block moved it out of.
+  const honestEmptyLine = grepFirstLineNum('atlas-index.mjs', "language_ceiling: emptyPosture \\? 'honest_empty'");
+  assert.ok(honestEmptyLine > 0,
     "an empty atlas projects language_ceiling 'honest_empty', never a fabricated answer");
   // The degradation targets (M4: code.symbol → symbol.search before search.lexical).
   assert.ok(grepCount('atlas-index.mjs', "op === 'symbol.search'") >= 1, 'symbol.search is the definition-lookup degradation target');
