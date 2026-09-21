@@ -211,6 +211,10 @@ function readMeta(repoRoot, taskId) {
   if (!existsSync(f)) return null;
   try {
     const stat = lstatSync(f);
+    // #500: the lane metadata record this reader parses. 1 MiB is the largest record readMeta
+    // accepts; a larger or non-private file reads as absent (null), so a meta.json replaced with
+    // bulk data is never parsed as a lane record. Operator-declared: no file in the repository
+    // derives the number.
     if ((stat.mode & 0o077) !== 0 || stat.size > 1024 * 1024) return null;
     return JSON.parse(readFileSync(f, 'utf8'));
   } catch {
@@ -362,6 +366,10 @@ function workspaceOwnerReceiptPath(repoRoot, physicalOwnerId) {
   return join(workspaceOwnerRoot(repoRoot, false), `${physicalOwnerId}.json`);
 }
 
+// #500: the identity text a workspace owner receipt carries — logical task id, run id, attempt
+// id — is bounded at 4 096 bytes each, and the controller's pidStart at 256 bytes. The default is
+// the reader's own: validateWorkspaceOwnerReceipt passes no explicit bound for logicalTaskId.
+// Operator-declared: no file in the repository derives the numbers.
 function validOwnerText(value, maxBytes = 4_096, nullable = false) {
   return (nullable && value === null) || (typeof value === 'string' && value.length > 0
     && Buffer.byteLength(value) <= maxBytes && !value.includes('\0'));
@@ -409,6 +417,9 @@ function readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId) {
   const f = workspaceOwnerReceiptPath(repoRoot, physicalOwnerId);
   try {
     const stat = lstatSync(f);
+    // #500: a physical workspace owner receipt is one small JSON record. 64 KiB is the largest file
+    // readWorkspaceOwnerReceipt will read; a larger one is refused as unsafe rather than parsed.
+    // Operator-declared: no file in the repository derives the number.
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 64 * 1024) {
       throw new WorkspaceOwnerDiagnostic('physical workspace owner receipt is unsafe', 'workspace_owner_receipt_invalid');
     }
@@ -431,6 +442,8 @@ function foreignConsistentReceipt(repoRoot, physicalOwnerId) {
   if (!existsSync(f)) return null;
   try {
     const stat = lstatSync(f);
+    // #500: the same 64 KiB receipt bound as readWorkspaceOwnerReceipt. A foreign record larger
+    // than it is not adopted here either: this reader returns null and reconcile leaves it alone.
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 64 * 1024) return null;
     const value = JSON.parse(readFileSync(f, 'utf8'));
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -466,6 +479,7 @@ function readWorkspaceOwnerTemp(repoRoot, root, name, physicalOwnerId) {
   const candidate = join(root, name);
   try {
     const stat = lstatSync(candidate);
+    // #500: the same 64 KiB receipt bound, applied to a publication temp that may hold a receipt.
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
       || stat.size > 64 * 1024) return null;
     return validateWorkspaceOwnerReceipt(
@@ -557,6 +571,8 @@ function removeExactWorktreeRegistration(repoRoot, worktreePath) {
       if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
       const gitdirFile = join(admin, 'gitdir');
       const gitdirStat = lstatSync(gitdirFile);
+      // #500: a worktree administration gitdir file holds one path to the worktree's `.git` file.
+      // 64 KiB bounds what this scan reads; a larger file is skipped, never parsed.
       if (!gitdirStat.isFile() || gitdirStat.isSymbolicLink() || gitdirStat.size > 64 * 1024) continue;
       const raw = readFileSync(gitdirFile, 'utf8').trim();
       if (!raw || raw.includes('\0')) continue;
@@ -938,6 +954,12 @@ export function validateToolchainProjectionMetadata(repoRoot, taskId, identity) 
     && Array.isArray(meta.toolchainProjectionTargets) && meta.toolchainProjectionTargets.length > 0;
 }
 
+// #500: the sparse-checkout admission bounds (normalizeSparsePaths, sparseCheckoutIdentity). One
+// lane's path set is at most 1 024 paths; one path is at most 2 048 bytes; the set's paths total
+// under 256 KiB; and no single path carries more than 64 segments. An admitted identity is a git
+// sparse-checkout file this module writes and reads whole, so these bound the file and the
+// pathspec list one admission can carry. Operator-declared: no file in the repository derives the
+// numbers.
 const SPARSE_MAX_PATHS = 1024;
 const SPARSE_MAX_PATH_BYTES = 2048;
 const SPARSE_MAX_TOTAL_PATH_BYTES = 256 * 1024;
@@ -951,6 +973,9 @@ function canonicalDigest(value) {
 
 export function normalizePhysicalOwnerId(value, label = 'worktree owner') {
   const folded = typeof value === 'string' ? foldCanonicalCase(value) : '';
+  // #500: one physical owner id is a single path component and a single git ref component, so it
+  // stays inside the byte budget a filesystem name can carry: 128 B. Operator-declared: no file in
+  // the repository derives the number.
   if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > 128
     || value.normalize('NFC') !== value || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
     || value.endsWith('.') || value.includes('..') || foldCanonicalCase(value) === '.git'

@@ -649,6 +649,10 @@ export class WorktreeCapacityAuthority {
       if (error?.code === 'ENOENT') return null;
       throw typed(`${label} could not be observed`, 'worktree_capacity_unavailable', error);
     }
+    // #500: an owner record is one generation tuple (validLockOwner). 4 096 bytes is the largest
+    // artifact this protocol reads; a larger lock or reaper file is refused as not a bounded
+    // private regular file rather than parsed. Operator-declared: no file in the repository
+    // derives the number.
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 4096) {
       throw typed(`${label} is not a bounded private regular file`, 'worktree_capacity_unavailable');
     }
