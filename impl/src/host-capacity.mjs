@@ -225,7 +225,8 @@ export function hostCapacityObservation({
  * A worker (a recruited participant) has NO derived slot (operator ruling, 2026-09-18, retiring
  * the #329 "one core share per worker" rule): a worker is not a thread, its footprint is not
  * known before it runs, and mapping seats onto cores was a hardware analogy, not a measurement.
- * Worker admission is gated only by `saturated` — the host's own load reading is the throttle.
+ * A worker has no admission gate: it holds no slot, `roomFor` admits it unconditionally, and
+ * the host's own scheduler is the throttle (#541).
  */
 export function deriveHostCapacity(observation) {
   const { cores, totalBytes, freeBytes, availableBytes, load1m } = hostCapacityObservation(observation);
@@ -254,7 +255,7 @@ function leaseWeight(kind, capacity) {
 
 /** Whether the host's own measurement is too tight for ONE lease of this kind (the budget of
  * already-admitted leases is judged separately by `fits`). Only a verify has a measured
- * memory cost to be tight against; a worker is gated by load alone. */
+ * memory cost to be tight against; a worker holds no slot, so this answers false for it. */
 function memoryTightFor(kind, capacity) {
   return kind === 'verify' && capacity.memoryTight;
 }
@@ -277,11 +278,10 @@ function roomFor(kind, capacity, used) {
 }
 
 /** #329: WHY a request of this kind does not fit right now — the ONE dimension an operator can
- * act on, with the observed and required numbers, so a queued or timed-out request names what
- * it waits for instead of "temporarily unavailable". `load` (the host is saturated), `memory`
- * (available memory below this kind's share), or `budget` (admitted leases hold the cores or
- * bytes this kind needs). Null when the request fits. A worker weighs nothing, so it can only
- * ever wait on `load`. */
+ * act on, with the observed and required numbers, so a queued request names what it waits on.
+ * `memory` (available memory below this kind's share) or `budget` (admitted leases hold the
+ * cores or bytes this kind needs). Null when the request fits — and always null for a worker,
+ * which weighs nothing and never queues (#541). */
 export function hostCapacityShortfall(kind, capacity, used) {
   const weight = leaseWeight(kind, capacity);
   if (memoryTightFor(kind, capacity)) {
