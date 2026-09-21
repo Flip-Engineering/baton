@@ -45,9 +45,15 @@ split below is the mandate, not an assignment list.
   than as a runtime check.
 
 ### 4. Rewrite plan
-- A phased plan that names, per phase, which subsystems move, what the JavaScript and Bend2
-  halves must agree on at the boundary while both exist, and the test that proves each phase
-  before the next starts.
+- The end state is a Baton written entirely in Bend2: no JavaScript, no Node runtime, no
+  JavaScript host for transport, process, socket, filesystem or git effects. A coexistence
+  boundary may exist only while a migration is in progress, and the plan deletes it in its final
+  phase. No phase is "conditional" on keeping JavaScript: if the language review finds that Bend2
+  cannot perform a host effect Baton needs, that finding goes to the go/no-go (a No-go, or a
+  named prerequisite Bend2 must gain first), never into a permanent JavaScript layer.
+- A phased plan that names, per phase, which subsystems move, what the two halves must agree on
+  at the boundary while the migration is in progress, and the test that proves each phase before
+  the next starts.
 - An honest go/no-go recommendation with the specific findings from parts 1 to 3 that support
   it.
 
