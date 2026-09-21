@@ -3,10 +3,11 @@
 // run-suite.mjs holds ONE `verify` lease from the host capacity authority for the whole
 // verdict — a full suite costs every core but the hub's (the #269 measurement), so two
 // residents each running a suite would drive the load the way the 2026-09-14 incident did.
-// The lease is acquired before the lanes start and released at the verdict; while the
-// request waits it prints the queued row (position, ahead, shortfall — the #329 shape), and
-// a spent wait refuses BEFORE any lane starts unless the dimension names a standing host
-// limit no wait could cure (suiteQueueTimeoutDecision).
+// The lease is acquired before the lanes start and released at the verdict. The request is a
+// durable intent (#541): admission waits IN ORDER printing the #329 queued row for as long as
+// the host is busy — there is no wait bound and no timeout refusal — and a limit no wait could
+// cure (the host cannot fund one suite's memory share) proceeds degraded with a warning
+// instead of queueing forever. A bypassed run acquires nothing.
 //
 // BATON_HOST_CAPACITY_DISABLED=1 stays the operator bypass (the run acquires nothing and touches
 // no lease directory). The `nested` bypass is narrower: a runner spawned BY a test file whose
@@ -16,9 +17,7 @@
 // deployment's environment onto its seats with that name intact (only secret- and provider-shaped
 // names are filtered), so reading the root as "nested" left every seat's verdict lease-free — the
 // 2026-09-18 03:15 incident (#424: nine worker leases, no verify lease, three concurrent
-// `run-suite.mjs --changed` runs, load 58). The runner's own wait defaults short (verify leases
-// are held for minutes, so a longer wait only delays the same decision);
-// BATON_HOST_CAPACITY_WAIT_MS extends it and BATON_HOST_CAPACITY_POLL_MS sets the queue poll.
+// `run-suite.mjs --changed` runs, load 58). BATON_HOST_CAPACITY_POLL_MS sets the queue poll.
 
 import { createHash } from 'node:crypto';
 
@@ -75,82 +74,44 @@ function positiveInt(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-/** The runner's default admission wait: short on purpose. Verify leases are held for whole
- * suites and checks (minutes), so a longer wait would only delay the same refuse/degrade
- * decision — while a top-level run that stalls the authority default (120s) would break the
- * suite's own time-bound self-checks on a host with no room. The operator extends it through
- * BATON_HOST_CAPACITY_WAIT_MS when queuing behind a known-finishing holder. */
-export const DEFAULT_SUITE_LEASE_WAIT_MS = 2_000;
 
-/** The runner's own admission wait bound: the operator pin, else the short default. */
-export function suiteLeaseWaitMs(env = process.env) {
-  return positiveInt(env?.BATON_HOST_CAPACITY_WAIT_MS) ?? DEFAULT_SUITE_LEASE_WAIT_MS;
-}
+/** The authority this runner admits through: the shared host directory, never a fixture.
+ * There is no wait bound to configure (#541): the queued intent waits in order until the
+ * host admits it. */
+export function createSuiteLeaseAuthority(env = process.env) {
 
 /** The runner's own queue poll interval, when the operator pins one. */
 export function suiteLeasePollMs(env = process.env) {
   return positiveInt(env?.BATON_HOST_CAPACITY_POLL_MS);
 }
 
-/** The authority this runner admits through: the shared host directory, never a fixture. */
-export function createSuiteLeaseAuthority(env = process.env) {
-  return new HostCapacityAuthority({
     ...(typeof env?.BATON_HOST_CAPACITY_ROOT === 'string' && env.BATON_HOST_CAPACITY_ROOT.length > 0
       ? { root: env.BATON_HOST_CAPACITY_ROOT } : {}),
-    waitMs: suiteLeaseWaitMs(env),
-    ...(suiteLeasePollMs(env) !== null ? { pollMs: suiteLeasePollMs(env) } : {}),
     residentId: `run-suite-${process.pid}`,
   });
 }
-
+    ...(suiteLeasePollMs(env) !== null ? { pollMs: suiteLeasePollMs(env) } : {}),
 /** The queued row the runner prints while it waits — the #329 shape with its numbers. */
 export function formatSuiteQueueRow(row) {
   const shortfall = row?.shortfall
     ? `; waiting on ${row.shortfall.dimension}: ${row.shortfall.observed} ${row.shortfall.unit} observed, ${row.shortfall.required} required`
     : '';
-  return `baton test runner: host capacity queued this verify request at position ${row?.position} (${row?.ahead} ahead)${shortfall} (operator bypass: ${HOST_CAPACITY_BYPASS})`;
-}
-
-/** The spent-wait decision for the runner: `refuse`, unless the dimension names a limit no
- * wait could cure. A `budget` shortfall means another lease holds the verdict lane and a
- * `load` shortfall means the host is oversubscribed — waiting can resolve either, so a spent
- * wait refuses before lanes, the way a recruit refuses pre-effect. A `memory` shortfall
- * means the host itself cannot fund a full suite's entitled share (a standing property of a
- * small host, not a transient queue): refusing would brick the suite there forever, so the
- * runner proceeds degraded without mutual exclusion and says so. Anything unrecognized
- * fails closed to `refuse`. */
-export function suiteQueueTimeoutDecision(error) {
-  if (error?.code !== 'host_capacity_queue_timeout') return 'refuse';
-  return error?.shortfall?.dimension === 'memory' ? 'proceed-degraded' : 'refuse';
+  return `baton test runner: host capacity queued this verify request at position ${row?.position} (${row?.ahead} ahead)${shortfall}`;
 }
 
 /** The degraded-run warning: the host cannot fund a verdict, so this run proceeds without
- * the exclusion the lease would have bought — concurrent suites here will contend. */
-export function formatSuiteDegradedWarning(error) {
-  const shortfall = error?.shortfall
-    ? `waiting on ${error.shortfall.dimension}: ${error.shortfall.observed} ${error.shortfall.unit} observed, ${error.shortfall.required} required`
+ * the exclusion the lease would have bought — concurrent suites here will contend. The
+ * argument is the authority's own shortfall row (#329 shape). */
+export function formatSuiteDegradedWarning(shortfall) {
+  const why = shortfall
+    ? `waiting on ${shortfall.dimension}: ${shortfall.observed} ${shortfall.unit} observed, ${shortfall.required} required`
     : 'no room for a verify lease';
-  return `baton test runner: proceeding WITHOUT a host verify lease (${shortfall}) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend`;
-}
-
-/** Issue #512: the terminal row a refused admission prints, beside the authority's own message.
- * It names the stage the run stopped at (`admission`), the refusal's typed code, the dimension
- * and the numbers the admission wait was spent on, and that the run produced no verdict — the
- * one line that keeps a refusal from reading like a suite that ran and found failures. A refusal
- * that carried no shortfall dimension says so rather than naming one it never observed. */
-export function formatSuiteAdmissionRefusal(error) {
-  const code = typeof error?.code === 'string' && error.code.length > 0
-    ? error.code
-    : (typeof error?.name === 'string' && error.name.length > 0 ? error.name : 'untyped');
-  const shortfall = error?.shortfall
-    ? `waiting on ${error.shortfall.dimension}: ${error.shortfall.observed} ${error.shortfall.unit} observed, ${error.shortfall.required} required`
-    : 'the refusal named no shortfall dimension';
-  return `baton test runner: refused at admission (${code}) — ${shortfall}; no lane ran and no verdict was produced`;
+  return `baton test runner: proceeding WITHOUT a host verify lease (${why}) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend`;
 }
 
 /** The runner's pre-lane plan line (#424): the selection it expanded and the lane width it
  * resolved — one line printed BEFORE admission and before any lane, so a reader sees what is
- * about to run even when the host queues this verdict, degrades it, or refuses it. */
+ * about to run even when the host queues this verdict or degrades it. */
 export function formatSuitePlan({
   expanded = 0, changedPaths = 0, parallel = 0, serial = 0, parallelism = 1, idleMs = 0,
 } = {}) {
@@ -161,10 +122,11 @@ export function formatSuitePlan({
 }
 
 /** Acquire the runner's verify lease, printing the queued row while it waits. Resolves with
- * `{disabled, nested, token, authority, release}`; a bypassed or nested run resolves
- * `{disabled: true}` without touching the lease directory, and a spent wait rejects with the
- * authority's typed `host_capacity_queue_timeout` — the caller refuses before lanes or
- * degrades visibly (suiteQueueTimeoutDecision), never starved silently inside them. */
+ * `{disabled, nested, degraded, shortfall, token, authority, release}`; a bypassed or nested
+ * run resolves `{disabled: true}` without touching the lease directory; a shortfall no wait
+ * could cure (the host cannot fund one suite's memory share) resolves `degraded` AT ONCE,
+ * before any queue entry exists; and otherwise the call waits IN ORDER — unbounded (#541) —
+ * until the host admits the verdict. It never rejects for being early. */
 export async function acquireSuiteVerifyLease({
   authority = null, createAuthority = createSuiteLeaseAuthority,
   env = process.env, holder = suiteLeaseHolder(env),
@@ -173,10 +135,19 @@ export async function acquireSuiteVerifyLease({
   if (suiteLeaseDisabled(env) || suiteLeaseNested(env)) {
     return Object.freeze({
       disabled: true, nested: suiteLeaseNested(env),
+      degraded: false, shortfall: null,
       token: null, authority: null, release: async () => false,
     });
   }
   const resolved = authority ?? createAuthority(env);
+  const standing = await resolved.shortfallFor('verify');
+  if (standing?.dimension === 'memory') {
+    return Object.freeze({
+      disabled: false, nested: false,
+      degraded: true, shortfall: standing,
+      token: null, authority: null, release: async () => false,
+    });
+  }
   let reported = false;
   const outcome = await resolved.acquire('verify', {
     holder,
@@ -190,8 +161,7 @@ export async function acquireSuiteVerifyLease({
   let released = false;
   return Object.freeze({
     disabled: false, nested: false,
-    token: outcome.token,
-    authority: resolved,
+    degraded: false, shortfall: null,
     release: async () => {
       if (released) return false;
       released = true;

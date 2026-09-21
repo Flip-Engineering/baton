@@ -14,9 +14,9 @@
 //   admission     `verify` (a full-suite verdict) and `worker` (a recruited participant's
 //                 dispatch) ask `acquire()`; the request is admitted when the derived budget has
 //                 room, and otherwise QUEUED in order with a visible {position, ahead} until
-//                 capacity returns — admission is never refused for being busy; only the caller's
-//                 own bounded wait ends in a typed refusal that names the queue
-//
+//                 capacity returns (#541: admission never refuses and never times out — the
+//                 wait is unbounded by design, the queue entry is the intent's durable face,
+//                 and a crashed holder's entry is swept by liveness).
 // The lease directory is a concurrency substrate, so it uses the ONE published-owner protocol the
 // per-repo worktree capacity ledger proved (worktree-capacity.mjs): an owner record published by
 // atomic link, counted only after re-observation, a dead holder reclaimed only under an exclusive
@@ -57,12 +57,6 @@ const LOCK_POLL_MS = 5;
 const LOCK_WAIT_MS = 5_000;
 const LOCK_LABEL = 'host capacity lease lock';
 const REAPER_LABEL = 'host capacity lease reaper gate';
-// The bounded wait ONE acquire may hold before it refuses pre-effect naming the queue. It is
-// protocol timing (the caller's patience), not an admission threshold: admission itself never
-// refuses for capacity, and this deadline only stops a caller that cannot wait any longer. It
-// rides the resident command deadline's order of magnitude, so a queued recruit refuses as a
-// typed row before its transport times out as an error.
-const DEFAULT_ADMISSION_WAIT_MS = 120_000;
 const DEFAULT_POLL_MS = 250;
 // #495: how often a resident's post-admission watch asks whether the host still funds the verify
 // leases it admitted. This number is a check cadence: the derivation alone decides whether the host
@@ -219,20 +213,21 @@ export function hostCapacityObservation({
  *                 entitled to suiteCores shares (the #269 measurement of what one run costs).
  *   usableBytes   totalBytes − coreShare — memory after the hub's share.
  *   saturated     load1m ≥ cores — the operator's `uptime` read, derived: at or above a
- *                 one-minute load equal to the core count the host is already oversubscribed,
- *                 and new heavy work queues.
+ *                 one-minute load equal to the core count the host is already oversubscribed.
+ *                 TELEMETRY and the suiteLanes term — never an admission gate (#541: a fixed
+ *                 load threshold below a shared host's normal working load refused every
+ *                 admission; the load reading no longer refuses or queues anything).
  *   memoryTight   availableBytes < suiteBytes — available memory cannot fund one more verdict.
  *   suiteLanes    saturated ? 1 : min(usableCores, floor(usableBytes / coreShare)) — the suite
- *                 runner's default file parallelism (#297/#424), stated here beside the other
- *                 derivations because the observation's LOAD is one of its terms: a host already
- *                 at its core count takes ONE lane, never a full-width burst into a host that is
- *                 already oversubscribed (the 2026-09-18 load-58 incident, #424).
+ *                 runner's default file parallelism (#297/#424): a host already at its core
+ *                 count takes ONE lane, never a full-width burst into the 2026-09-18 load-58
+ *                 shape (#424).
  *
  * A worker (a recruited participant) has NO derived slot (operator ruling, 2026-09-18, retiring
  * the #329 "one core share per worker" rule): a worker is not a thread, its footprint is not
  * known before it runs, and mapping seats onto cores was a hardware analogy, not a measurement.
- * Worker admission is gated only by `saturated` — the host's own load reading is the throttle.
- */
+ * Worker admission waits on nothing (#541): the queue orders concurrent arrivals, and every
+ * entry admits in order at once. */
 export function deriveHostCapacity(observation) {
   const { cores, totalBytes, freeBytes, availableBytes, load1m } = hostCapacityObservation(observation);
   const hubCores = 1;
@@ -259,8 +254,9 @@ function leaseWeight(kind, capacity) {
 }
 
 /** Whether the host's own measurement is too tight for ONE lease of this kind (the budget of
- * already-admitted leases is judged separately by `fits`). Only a verify has a measured
- * memory cost to be tight against; a worker is gated by load alone. */
+ * already-admitted leases is judged separately by `budgetFits`). Only a verify has a measured
+ * memory cost to be tight against; a worker weighs nothing and waits on nothing (#541: the
+ * load average never gates admission — it is telemetry and the lane-width term, nothing else). */
 function memoryTightFor(kind, capacity) {
   return kind === 'verify' && capacity.memoryTight;
 }
@@ -271,24 +267,20 @@ function budgetFits(kind, capacity, used) {
   return used.cores + weight.cores <= capacity.usableCores
     && used.bytes + weight.bytes <= capacity.usableBytes;
 }
-
-/** Whether ONE more lease of this kind is admissible right now: not saturated, not tight for
- * this kind, and within the budget the admitted leases leave. */
+/** Whether ONE more lease of this kind is admissible right now: not tight for this kind, and
+ * within the budget the admitted leases leave. The load reading is NOT a term (#541): a host
+ * at load 166 with memory free admits, and a queued intent admits when memory and budget free. */
 function roomFor(kind, capacity, used) {
-  return !capacity.saturated && !memoryTightFor(kind, capacity) && budgetFits(kind, capacity, used);
+  return !memoryTightFor(kind, capacity) && budgetFits(kind, capacity, used);
 }
 
 /** #329: WHY a request of this kind does not fit right now — the ONE dimension an operator can
- * act on, with the observed and required numbers, so a queued or timed-out request names what
- * it waits for instead of "temporarily unavailable". `load` (the host is saturated), `memory`
- * (available memory below this kind's share), or `budget` (admitted leases hold the cores or
- * bytes this kind needs). Null when the request fits. A worker weighs nothing, so it can only
- * ever wait on `load`. */
+ * act on, with the observed and required numbers, so a queued request names what it waits for
+ * instead of "temporarily unavailable". `memory` (available memory below this kind's share) or
+ * `budget` (admitted leases hold the cores or bytes this kind needs). Null when the request
+ * fits. A worker weighs nothing, so it never waits at all. */
 export function hostCapacityShortfall(kind, capacity, used) {
   const weight = leaseWeight(kind, capacity);
-  if (capacity.saturated) {
-    return Object.freeze({ dimension: 'load', observed: capacity.load1m, required: capacity.cores, unit: 'load1m' });
-  }
   if (memoryTightFor(kind, capacity)) {
     return Object.freeze({ dimension: 'memory', observed: capacity.availableBytes, required: weight.bytes, unit: 'bytes' });
   }
@@ -458,22 +450,19 @@ export class HostCapacityAuthority {
   constructor({
     root = defaultHostCapacityRoot(), residentId = `resident-${process.pid}`,
     observation = hostCapacityObservation, liveness = livePid,
-    now = Date.now, pollMs = DEFAULT_POLL_MS, waitMs = DEFAULT_ADMISSION_WAIT_MS,
+    now = Date.now, pollMs = DEFAULT_POLL_MS,
     shedPollMs = DEFAULT_SHED_POLL_MS,
   } = {}) {
     if (typeof root !== 'string' || root.length === 0 || !isAbsolute(root)) throw new TypeError('host capacity lease root must be one absolute path');
     if (typeof residentId !== 'string' || residentId.length === 0 || Buffer.byteLength(residentId) > 128) throw new TypeError('host capacity resident id must be one bounded non-empty string');
     if (typeof observation !== 'function' || typeof liveness !== 'function' || typeof now !== 'function') throw new TypeError('host capacity dependencies must be functions');
     if (!Number.isSafeInteger(pollMs) || pollMs <= 0) throw new TypeError('host capacity poll interval must be a positive safe integer');
-    if (!Number.isSafeInteger(waitMs) || waitMs <= 0) throw new TypeError('host capacity admission wait must be a positive safe integer');
     if (!Number.isSafeInteger(shedPollMs) || shedPollMs <= 0) throw new TypeError('host capacity shed poll interval must be a positive safe integer');
     this.root = root;
     this.residentId = residentId;
     this.observation = observation;
     this.liveness = liveness;
     this.now = now;
-    this.pollMs = pollMs;
-    this.waitMs = waitMs;
     this.shedPollMs = shedPollMs;
     this.ownerId = randomBytes(16).toString('hex');
     this.leasesDir = join(root, 'leases');
@@ -701,19 +690,32 @@ export class HostCapacityAuthority {
     return projectParticipantVerify(queue, holders, holder);
   }
 
+  /** #541: WHY the next request of this kind would not fit right now — the ONE dimension an
+   * operator or a caller can act on, read under the mutex with a sweep so a dead holder's
+   * lease never colors the answer. Null when the kind fits. A caller whose shortfall names a
+   * limit no wait could cure (a verify's memory share on a small host) degrades at once
+   * instead of queueing behind a wait that cannot admit it. */
+  async shortfallFor(kind) {
+    return this._mutex(() => {
+      this.#sweep();
+      const capacity = deriveHostCapacity(hostCapacityObservation(this.observation()));
+      return hostCapacityShortfall(kind, capacity, this.#usedBudget(capacity));
+    });
+  }
+
   // ── admission ───────────────────────────────────────────────────────────────────────────────────
 
   /** Admit one unit of heavy work. Resolves with `{token}` once the derived budget admits the
    * request; while it does not, the request waits IN ORDER as a visible queue entry and
-   * `onQueued` is called once with {position, ahead}. The wait is bounded by `waitMs`; exceeding
-   * it refuses BEFORE ANY EFFECT with the queue facts attached, so the caller's retry (or its
-   * operator) sees exactly what it waits behind. */
+   * `onQueued` is called once with {position, ahead}. The wait is UNBOUNDED by design (#541):
+   * the request is a durable intent — the queue entry is the intent's durable face, a crashed
+   * holder's entry is swept by liveness, and admission happens whenever capacity allows, in
+   * order, never refused for being early. */
   async acquire(kind, { holder = '', onQueued = null } = {}) {
     if (!HOST_CAPACITY_LEASE_KINDS.includes(kind)) throw new TypeError(`host capacity lease kind must be one of ${HOST_CAPACITY_LEASE_KINDS.join(', ')}`);
     if (typeof holder !== 'string' || Buffer.byteLength(holder) > 256) throw new TypeError('host capacity lease holder must be one bounded string');
     if (onQueued !== null && typeof onQueued !== 'function') throw new TypeError('host capacity onQueued must be a function');
     this.#ensureRoot();
-    const deadline = performance.now() + this.waitMs;
     const nonce = randomBytes(16).toString('hex');
     let queuedAt = null;
     let reportedQueue = false;
@@ -749,7 +751,7 @@ export class HostCapacityAuthority {
           queued: {
             position: ahead + 1, ahead, running: used.leases.verify, workerLeases: used.leases.worker,
             // #329: the dimension this request waits on, with the numbers, so the queued row
-            // and the refusal name what an operator can act on.
+            // names what an operator can act on.
             shortfall: hostCapacityShortfall(kind, capacity, used),
           },
         });
@@ -764,28 +766,7 @@ export class HostCapacityAuthority {
         reportedQueue = true;
         if (onQueued) onQueued(Object.freeze(outcome.queued));
       }
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) {
-        // #329: "no capacity effect was applied" must be true of the queue too — a spent wait
-        // withdraws its own queue record, so a refused recruit never leaves a phantom entry that
-        // every later reader (observeNow, the doctor) counts ahead of the next request.
-        await this._mutex(() => {
-          rmSync(join(this.queueDir, queueName({ enqueuedAt: new Date(queuedAt).toISOString(), nonce })), { force: true });
-        });
-        const shortfall = outcome.queued.shortfall;
-        const why = shortfall
-          ? `; waiting on ${shortfall.dimension}: ${shortfall.observed} ${shortfall.unit} observed, ${shortfall.required} required`
-          : '';
-        throw typed(
-          `host capacity queued this ${kind} request at position ${outcome.queued.position} (${outcome.queued.ahead} ahead) and the ${this.waitMs}ms admission wait is spent${why}; no capacity effect was applied (operator bypass: ${HOST_CAPACITY_BYPASS})`,
-          'host_capacity_queue_timeout',
-          {
-            queuePosition: outcome.queued.position, queueAhead: outcome.queued.ahead,
-            shortfall, bypass: HOST_CAPACITY_BYPASS, leaseKind: kind, waitMs: this.waitMs,
-          },
-        );
-      }
-      await new Promise((resolve) => { setTimeout(resolve, Math.min(this.pollMs, remaining)); });
+      await new Promise((resolve) => { setTimeout(resolve, this.pollMs); });
     }
   }
 
