@@ -13034,6 +13034,15 @@
           ]
         },
         {
+          "name": "_routeExhaustedFor",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
           "name": "_routeProbeState",
           "ordinal": 0,
           "size": 23,
@@ -13827,7 +13836,7 @@
         {
           "name": "_performDeferredStart",
           "ordinal": 0,
-          "size": 193,
+          "size": 216,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -14011,7 +14020,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1169,
+          "size": 1192,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -21293,7 +21302,7 @@
         {
           "name": "projectHorizonScratchpad",
           "ordinal": 0,
-          "size": 55,
+          "size": 57,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -24519,7 +24528,7 @@
         {
           "name": "exactObject",
           "ordinal": 0,
-          "size": 6,
+          "size": 9,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
