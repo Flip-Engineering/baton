@@ -1080,10 +1080,13 @@ function normalizeExportPolicy(value) {
     mode: 'none', format: 'directory-v1', maxFiles: 0, maxBytes: 0,
     requireAdoptedResult: false, requireSemanticReview: false, requireIntegration: false,
   });
+  // The profile's export policy is an authority boundary: the export root is the deployment's
+  // decision, so an undeclared field here is a smuggled path grant rather than a
+  // forward-compatible extension (#535's authorization-boundary rule).
   exactObject(value, [
     'mode', 'format', 'maxFiles', 'maxBytes',
     'requireAdoptedResult', 'requireSemanticReview', 'requireIntegration',
-  ], 'application_profile_invalid', 'profile exportPolicy');
+  ], 'application_profile_invalid', 'profile exportPolicy', { rejectUnknown: true });
   if (value.mode === 'none' && value.format === 'directory-v1' && value.maxFiles === 0 && value.maxBytes === 0
     && value.requireAdoptedResult === false && value.requireSemanticReview === false
     && value.requireIntegration === false) {

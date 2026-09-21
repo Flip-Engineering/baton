@@ -4759,7 +4759,7 @@
         {
           "name": "_parseSemanticReview",
           "ordinal": 0,
-          "size": 80,
+          "size": 85,
           "seam": "admission",
           "evidence": [
             "delegates:admission"
@@ -13836,7 +13836,7 @@
         {
           "name": "_performDeferredStart",
           "ordinal": 0,
-          "size": 216,
+          "size": 219,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -13849,6 +13849,16 @@
           "seam": "observation",
           "evidence": [
             "observation:record_name"
+          ]
+        },
+        {
+          "name": "_deliverGuidance",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "effect:action_name"
           ]
         },
         {
@@ -13888,9 +13898,37 @@
           ]
         },
         {
+          "name": "_wakeSeatCoordinates",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_resumeOrchestrator",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_askResumeDecision",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect",
+            "delegates:observation"
+          ]
+        },
+        {
           "name": "_composeRecruitBrief",
           "ordinal": 0,
-          "size": 349,
+          "size": 375,
           "seam": "admission",
           "evidence": [
             "delegates:admission",
@@ -13982,7 +14020,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 218,
+          "size": 224,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -14020,7 +14058,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1192,
+          "size": 1213,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -24894,7 +24932,7 @@
         {
           "name": "normalizeExportPolicy",
           "ordinal": 0,
-          "size": 24,
+          "size": 27,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name",

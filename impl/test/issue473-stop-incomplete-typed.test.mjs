@@ -385,8 +385,15 @@ test('#473 (b): the set\'s coordinator rows are the coordinator\'s own — no in
     .sort();
   const coordinatorMapped = swarmMappedCodes
     .filter((code) => LEG_RAISER[legOfCode(code)[0]] === 'coordinator');
-  assert.deepEqual(declared, coordinatorMapped,
-    'the rows claiming the coordinator as their raiser are exactly the run-stop codes this audit maps, and no others');
+  // Issue #537: the capture/check leg's codes are the SECOND coordinator family the table holds.
+  // Each carries its own leg scan (issue537-capture-refusals-typed.test.mjs (a)), so a
+  // coordinator row outside these two audited legs still fails here until it is classified.
+  const captureLegCodes = ['contribution_workspace_unavailable', 'contribution_capture_not_paused',
+    'contribution_capture_conflict', 'capture_failed', 'contribution_retention_unavailable',
+    'checkpoint_failed', 'contribution_invalid', 'contribution_unknown', 'contribution_changed'];
+  assert.deepEqual(declared, [...coordinatorMapped, ...captureLegCodes].sort(),
+    'the rows claiming the coordinator as their raiser are exactly the audited legs\' codes — '
+    + 'the run stop\'s (this file) and the capture/check leg\'s (#537) — and no others');
 });
 
 test('#473 (b): the store\'s wait-abort row is the store\'s own — the runtime raises it, and no other scan does', () => {

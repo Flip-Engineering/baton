@@ -297,7 +297,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // workspace id, and the two axes stay independent — adoption is not a native-session resume.
   'swarm.recruit': Object.freeze({
     args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions', 'mode',
-      'shareWorkspaceWith', 'resumeFrom', 'workId', 'idempotencyKey', 'view']),
+      'shareWorkspaceWith', 'resumeFrom', 'workId', 'autoWake', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -678,6 +678,12 @@ const SWARM_FIELD_RULES = Object.freeze({
   // owns the payload and refuses a token it did not mint.
   cursor: Object.freeze({ check: isId, expectation: 'a page cursor a previous answer named' }),
   resumeFrom: Object.freeze({ check: isId, expectation: 'a participant identity' }),
+  // Issue #529 (docs/54 §4.1): the wake narrowing a seat's session is recruited with. Only the
+  // SHAPE is checked here — the admitted class names are the wake stream's closed set
+  // (WAKE_CLASSES, wake-stream.mjs), and the runtime validates the two declared axes against it
+  // before any membership is written, naming the class it refused.
+  autoWake: Object.freeze({ check: isJsonObject, expectation:
+    'a JSON object naming kinds and/or participants to narrow this seat\'s wake subscription' }),
   // Issue #296: the branch a contribution lands onto. A ref NAME, never a sha — the verb resolves
   // it and the receipt records the exact commits it observed (targetHeadBefore / targetHeadAfter),
   // so a caller can hand the receipt to `git log` without having resolved anything itself.
@@ -710,7 +716,8 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.recruit': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']),
-    optional: Object.freeze(['options', 'permissions', 'mode', 'shareWorkspaceWith', 'resumeFrom', 'workId', 'view']),
+    optional: Object.freeze(['options', 'permissions', 'mode', 'shareWorkspaceWith', 'resumeFrom', 'workId',
+      'autoWake', 'view']),
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
@@ -735,12 +742,15 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
     optional: Object.freeze(['view']),
   }),
-  // Issue #296: the landing verb. `--dry-run` is optional; `target` is required — a landing with no
-  // named branch would have to guess, and guessing which branch a contribution belongs on is the
-  // one decision the verb must not make for its caller.
+  // Issue #296: the landing verb. `--dry-run` is optional; so is `target` (#43 AX, 2026-09-21):
+  // omitted, the landing targets the deployment's own branch — the branch its checkout has
+  // current, the ONE derivation the #438 target facts and every landing receipt already read.
+  // Naming another branch stays admitted; the deployment's target is the deployment's own
+  // decision, never a guess about the caller's intent, so the CLI's `[--onto]` usage tells the
+  // truth and an omitted flag can never refuse.
   'swarm.integrate': Object.freeze({
-    required: Object.freeze(['swarmId', 'contributionId', 'target', 'idempotencyKey']),
-    optional: Object.freeze(['dryRun', 'view']),
+    required: Object.freeze(['swarmId', 'contributionId', 'idempotencyKey']),
+    optional: Object.freeze(['target', 'dryRun', 'view']),
   }),
   'swarm.stop': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey']),
@@ -873,11 +883,20 @@ export function validateSwarmCommand(name, args) {
           correction: `remove ${key} — ${name} accepts ${definition.args.length > 0 ? definition.args.join(', ') : 'no arguments'}` });
     }
   }
-  for (const field of shape.required) {
-    if (!Object.hasOwn(args, field) || args[field] === undefined) {
-      throw swarmError(`${name} request is invalid: ${field} is required`, 'swarm_command_invalid',
-        { field, rule: 'required-field', expectation: SWARM_FIELD_RULES[field].expectation });
-    }
+  // Issue #43 AX (2026-09-21): the refusal names EVERY missing required field — `shape.required`
+  // is fully known at validation time, and one field per attempt teaches a caller its own command's
+  // shape across N durable refusal rows. The first missing field stays `field` (the singular
+  // message and detail keep their recorded shape); `required` carries the whole missing set, and
+  // the plural expectation spells each field with its expectation.
+  const missing = shape.required.filter((field) => !Object.hasOwn(args, field) || args[field] === undefined);
+  if (missing.length > 0) {
+    const expectation = missing.length === 1
+      ? SWARM_FIELD_RULES[missing[0]].expectation
+      : missing.map((field) => `${field}: ${SWARM_FIELD_RULES[field].expectation}`).join('; ');
+    throw swarmError(
+      `${name} request is invalid: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required`,
+      'swarm_command_invalid',
+      { field: missing[0], rule: 'required-field', required: [...missing], expectation });
   }
   for (const [field, value] of Object.entries(args)) {
     if (value === undefined) continue;
@@ -1046,6 +1065,8 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
       shareWorkspaceWith: ID_SCHEMA,
       resumeFrom: ID_SCHEMA,
       workId: ID_SCHEMA,
+      autoWake: Object.freeze({ type: 'object', description:
+        'the wake narrowing this seat\'s session auto-subscribes with (docs/54 §4.1): kinds names wake classes, participants names seats; the subscription always carries this seat\'s own swarm' }),
     }),
     required: Object.freeze(['swarmId', 'participantId', 'objective']),
   }),

@@ -2738,7 +2738,8 @@ function parseSwarmCli(args, idempotencyKey) {
           `${entry.flag} must be the positive ledger seq this guidance answers`);
       }
       values[entry.field] = value;
-    } else if (entry.field === 'options' || entry.field === 'permissions' || entry.field === 'policy') {
+    } else if (entry.field === 'options' || entry.field === 'permissions' || entry.field === 'policy'
+      || entry.field === 'autoWake') {
       // Issue #474: the parse's own refusal is typed like #431's argv refusals (the flag, the rule
       // and the admitted form), and the shape the wire schema requires — an object for `options`
       // and `policy`, an array for `permissions` — refuses HERE, where the caller can still fix it.
@@ -3821,12 +3822,12 @@ export function commandObservation(name, args, commandId) {
     });
   }
   // Issue #459: a landing answers its receipt at once and settles later, so a caller whose command
-  // crossed as pending observes the contribution row — the integration receipt or the failure row
-  // is written THERE, and the follow leg is the one that waits for it.
+  // crossed as pending reads the contribution row — the integration receipt or the failure row
+  // is written THERE, readable from the view with no wait at all (#43 AX: the observation hint
+  // teaches the bounded read, never a held `--follow`).
   if (name === 'swarm.integrate' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
     return Object.freeze({
-      command: `baton swarm integrate ${value.swarmId} ${value.contributionId}`
-        + `${nonempty(value.target) ? ` --onto ${value.target}` : ''} --follow`,
+      command: `baton swarm view ${value.swarmId}`,
       row: `contributions["${value.contributionId}"] in \`baton swarm view ${value.swarmId}\` — the landing receipt, or the \`integrationFailure\` row naming the code it stopped under`,
     });
   }

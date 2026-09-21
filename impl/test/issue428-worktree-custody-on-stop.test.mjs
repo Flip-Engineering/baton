@@ -41,6 +41,8 @@ import {
   allocatePhysicalWorkspaceOwner, createFromBase, reconcile,
 } from '../src/worktree.mjs';
 
+import { FRAME_LIMITS } from '../src/limits.mjs';
+
 const repoId = 'repo-issue428-custody';
 
 const policy = Object.freeze({
@@ -51,9 +53,12 @@ const policy = Object.freeze({
   riskClasses: ['low', 'medium', 'high', 'critical'],
   effectClasses: ['repository_edit', 'provider_call'],
   capabilityClasses: ['code', 'test'],
+  // The #362 rule (the same one issue490 and swarm-refusals follow): a recruit's run objective IS
+  // its whole composed brief, so the text bound is the deployment's own objective lane, never a
+  // tighter constant a brief with a wake block would legitimately exceed.
   limits: Object.freeze({
     maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
-    maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
+    maxTextBytes: FRAME_LIMITS['run.objective'].value, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
     maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024,
     maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
   }),

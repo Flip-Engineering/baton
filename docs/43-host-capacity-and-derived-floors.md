@@ -35,15 +35,15 @@ Admission weights: a `verify` lease (a full-suite verdict) charges `suiteCores` 
 recruited participant) charges nothing: a seat is not a thread, its footprint is not known
 before it runs, and a derived slot count per core was a hardware analogy rather than a
 measurement (operator ruling, 2026-09-18, retiring #329's one-share-per-worker rule and the
-`workerSlots` / `workerMemoryTight` rows). A worker waits only while the host is
-`saturated`; the host's own load reading is the throttle, and a worker can never wait on
-`memory` or `budget`.
+`workerSlots` / `workerMemoryTight` rows). A worker never waits: it holds no slot,
+`roomFor` admits it unconditionally, and the host's own scheduler is the throttle (#541).
 Admission never refuses for being busy — a request that does not fit waits IN ORDER as a
 visible queue entry (FIFO by enqueued timestamp, same-instant ties broken by a random
-nonce), reporting `{position, ahead}` once. Only the caller's own bounded wait
-(`waitMs`, protocol timing aligned with the resident command deadline) ends in a typed
-`host_capacity_queue_timeout` refusal that names the queue position — nothing was
-started, nothing recorded as work.
+nonce), reporting `{position, ahead}` once. The wait has no bound: a request that cannot be
+admitted now is admitted when the requests ahead of it release, and admission is never
+refused for having waited (#541). A verify on a host whose memory cannot fund one full
+suite is answered at once as degraded, with the shortfall named, and proceeds without a
+lease.
 
 ### Sharing: the host-scoped lease directory
 

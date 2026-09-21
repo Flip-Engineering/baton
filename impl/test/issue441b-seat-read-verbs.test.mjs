@@ -360,6 +360,30 @@ test('441b-e: every seat read verb refuses an unknown argument key typed, before
     (error) => error.code === 'swarm_command_invalid' && error.detail?.rule === 'field-predicate');
 });
 
+test('the seat-read and knowledge validators name every missing required field in one refusal (#43 AX, R1/R2)', () => {
+  const refused = (fn) => {
+    try { fn(); } catch (error) { return error; }
+    assert.fail('expected a typed refusal');
+  };
+  // The seat-read validator: the whole missing set in one refusal (the bridge fills swarmId from
+  // the token, so a through-bridge refusal pluralizes on the caller-required fields alone).
+  const seat = refused(() => runtimeModule.validateSwarmSeatReadCommand('run.package.read', {}));
+  assert.equal(seat.code, 'swarm_command_invalid');
+  assert.equal(seat.detail.rule, 'required-field');
+  assert.deepEqual(seat.detail.required, ['swarmId', 'packageDigest']);
+  assert.match(seat.message, /add swarmId, packageDigest — each: swarmId: a value; packageDigest: /u);
+  // The knowledge validator: one refusal teaches the seed shape whole.
+  const seed = refused(() => runtimeModule.validateSwarmKnowledgeCommand('run.knowledge.seed', {}));
+  assert.equal(seed.code, 'swarm_command_invalid');
+  assert.deepEqual(seed.detail.required, ['swarmId', 'type', 'grounding', 'body']);
+  assert.match(seed.message, /add swarmId, type, grounding, body — each: /u);
+  // A single missing field keeps the recorded singular shape: message and expectation unchanged.
+  const singular = refused(() => runtimeModule.validateSwarmSeatReadCommand(
+    'run.package.read', { swarmId: SWARM_ID }));
+  assert.match(singular.message, /^Swarm seat read request is invalid: add packageDigest \(/u);
+  assert.equal(singular.detail.expectation, 'the package digest your brief named');
+});
+
 test('441b-f: the bridge guidance states the contribution-id mechanism the fold enforces', async (t) => {
   const f = await swarmFixture(t, 'guidance');
   const publish = (idempotencyKey) => f.command('swarm.update', { swarmId: SWARM_ID,

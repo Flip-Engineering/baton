@@ -87,6 +87,10 @@ export const SWARM_BRIDGE_ENV_KEYS = Object.freeze({
   participantId: 'BATON_SWARM_BRIDGE_PARTICIPANT_ID',
   runId: 'BATON_SWARM_BRIDGE_RUN_ID',
   frameBytes: 'BATON_SWARM_BRIDGE_FRAME_BYTES',
+  // Issue #529 (docs/54 §4.1): the wake narrowing this seat's session auto-subscribes with,
+  // published beside its swarm coordinates. Absent means the session carries its swarm's whole
+  // stream — the same default a session with no coordinates has deployment-wide.
+  autoWake: 'BATON_SWARM_BRIDGE_AUTOWAKE',
 });
 const DEFAULT_FRAME_ROW = FRAME_LIMITS['wire.frame'];
 const BRIDGE_ERROR_STATUS = Object.freeze({
@@ -127,7 +131,7 @@ export const SWARM_BRIDGE_NOTHING_RECORDED = 'Nothing was recorded:';
  * text a brief renders cannot drift from the bridge's behaviour; swarm-native-access.mjs joins
  * it beside SWARM_NATIVE_GUIDANCE as the one derivation of the section. */
 export const SWARM_BRIDGE_GUIDANCE = [
-  `The bridge is located by environment variable NAMES only — ${SWARM_BRIDGE_ENV_KEYS.url}, ${SWARM_BRIDGE_ENV_KEYS.token}, ${SWARM_BRIDGE_ENV_KEYS.swarmId}, ${SWARM_BRIDGE_ENV_KEYS.participantId}, ${SWARM_BRIDGE_ENV_KEYS.runId} (and ${SWARM_BRIDGE_ENV_KEYS.frameBytes} names the negotiated frame ceiling). Read them; never print their values: the token variable carries your private credential.`,
+  `The bridge is located by environment variable NAMES only — ${SWARM_BRIDGE_ENV_KEYS.url}, ${SWARM_BRIDGE_ENV_KEYS.token}, ${SWARM_BRIDGE_ENV_KEYS.swarmId}, ${SWARM_BRIDGE_ENV_KEYS.participantId}, ${SWARM_BRIDGE_ENV_KEYS.runId} (and ${SWARM_BRIDGE_ENV_KEYS.frameBytes} names the negotiated frame ceiling, while ${SWARM_BRIDGE_ENV_KEYS.autoWake} carries the wake narrowing this seat's session opened its subscription with). Read them; never print their values: the token variable carries your private credential.`,
   `A request is one JSON document, {"command":"swarm.update","args":{...}}, POSTed to the bridge URL with the bearer token from the token variable; the client wrapper does this for you — node "$BATON_SWARM_CLIENT" swarm.update '{"event":"...","payload":{...}}'. Arguments are checked against closed schemas, so an unknown field refuses.`,
   'A success answers {"ok":true,"result":...}. swarm.update answers the refreshed view: the contribution it recorded is in it, carrying the seq of the event that recorded it — read the answer and confirm the recorded seq before you call the work published.',
   `A refusal answers {"ok":false,"error":{"message","code","detail"}} on the same stream, and its message begins "${SWARM_BRIDGE_NOTHING_RECORDED}" followed by what to change. node "$BATON_SWARM_CLIENT" --help renders the full command help locally, before any credential is read.`,
@@ -140,7 +144,8 @@ function refusalChange(detail) {
   const field = typeof detail?.field === 'string' ? detail.field : null;
   switch (detail?.rule) {
     case 'unknown-field': return `remove ${field}`;
-    case 'required-field': return `add ${field} (${detail.expectation ?? 'a value'})`;
+    case 'required-field': return `add ${(Array.isArray(detail.required) && detail.required.length > 1
+      ? detail.required : [field]).join(', ')} (${detail.expectation ?? 'a value'})`;
     case 'field-predicate': return `${field} must be ${detail.expectation ?? 'a valid value'}`;
     case 'closed-set': return `${field} must be ${detail.expectation ?? 'one of the values this command accepts'}`;
     case 'payload-required': return `send a payload object naming ${(detail.required ?? []).join(', ')}`;
@@ -565,7 +570,7 @@ export function createSwarmNativeBridge({
   return Object.freeze({
     ready: () => ready,
     get endpoint() { return endpoint(); },
-    async issue({ swarmId, participantId, runId } = {}) {
+    async issue({ swarmId, participantId, runId, autoWake = null } = {}) {
       if (closed) throw bridgeError('This swarm bridge is closed', 'swarm_bridge_closed');
       scopeIdentity('swarmId', swarmId);
       scopeIdentity('participantId', participantId);
@@ -584,6 +589,16 @@ export function createSwarmNativeBridge({
       const sessionId = `swarm-bridge:${digest.slice(0, 16)}`;
       const issuedAt = new Date().toISOString();
       tokens.set(digest, { swarmId, participantId, runId, principalId, actor, sessionId, digest, issuedAt });
+      // Issue #529 (docs/54 §4.1): the declared wake narrowing, normalized to the axes it names —
+      // the recruit already validated them against the wake stream's closed class set, so this is
+      // a shape pass, never a second vocabulary. An empty declaration publishes no key.
+      const wakeAxes = autoWake === null || typeof autoWake !== 'object' ? null
+        : Object.freeze({
+          ...(Array.isArray(autoWake.kinds) && autoWake.kinds.length > 0
+            ? { kinds: Object.freeze([...autoWake.kinds]) } : {}),
+          ...(Array.isArray(autoWake.participants) && autoWake.participants.length > 0
+            ? { participants: Object.freeze([...autoWake.participants]) } : {}),
+        });
       // RuntimeIsolation strips secret-named vars from inherited baseEnv, so the deployment merges
       // this env AFTER isolation.create() — see docs/audits/2026-09-13-runtime-policy/native-swarm-access.md.
       const env = Object.freeze({
@@ -594,6 +609,11 @@ export function createSwarmNativeBridge({
         [SWARM_BRIDGE_ENV_KEYS.runId]: runId,
         // The negotiated frame ceiling, so the client buffers under the bound its own server emits.
         [SWARM_BRIDGE_ENV_KEYS.frameBytes]: String(maxFrameBytes),
+        // Issue #529 (docs/54 §4.1): the narrowing rides the environment the same way the seat's
+        // own coordinates do, so the session's entry configures its subscription from what the
+        // deployment published.
+        ...(wakeAxes === null || Object.keys(wakeAxes).length === 0
+          ? {} : { [SWARM_BRIDGE_ENV_KEYS.autoWake]: JSON.stringify(wakeAxes) }),
       });
       // The receipt is the non-secret correlation view for guidance and audit surfaces.
       const receipt = Object.freeze({
