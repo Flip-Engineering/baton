@@ -76,10 +76,20 @@ export const GOAL_PLAN_CEILINGS = Object.freeze({
   planBytes: 64 * FRAME_LIMITS['spill.body'].value,
   statusBytes: 64 * FRAME_LIMITS['spill.body'].value,
 });
-function exactObject(value, fields, code = 'goal_plan_invalid') {
+/** The closed-shape read. Presence is always enforced; the unknown-field half is opt-in, so a
+ * calling seam that may extend a structure stays forward-compatible while a schema declared
+ * closed (the v2 route allowlist) refuses an undeclared field instead of ignoring it. */
+function exactObject(value, fields, code = 'goal_plan_invalid', { rejectUnknown = false } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('goal/plan object has missing required field(s)', code);
   const keys = Object.keys(value);
   for (const f of fields) { if (!keys.includes(f)) fail('goal/plan object has missing required field(s)', code); }
+  if (!rejectUnknown) return;
+  const declared = new Set(fields);
+  for (const key of keys) {
+    if (declared.has(key)) continue;
+    fail(`goal/plan object carries undeclared field ${key}`, code,
+      { field: key, rule: 'unknown-field', expectation: `one of ${fields.join(', ')}` });
+  }
 }
 const SECRET_SHAPED_TEXT = Object.freeze([
   /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u,
@@ -241,7 +251,7 @@ function comparePlanRouteTuples(left, right) {
     || compare(left.effort, right.effort);
 }
 function normalizePlanRouteTuple(value) {
-  exactObject(value, ['harness', 'model', 'effort'], 'plan_route_invalid');
+  exactObject(value, ['harness', 'model', 'effort'], 'plan_route_invalid', { rejectUnknown: true });
   return {
     harness: normalizedText(value.harness, 256, 'routes.allowed.harness'),
     model: normalizedText(value.model, 256, 'routes.allowed.model'),
@@ -261,7 +271,7 @@ function normalizedLegacyRoutes(value, policy) {
 }
 function normalizeRoutes(value, policy, { preserveLegacyRoutes = false } = {}) {
   if (value?.schemaVersion === 2 || Object.hasOwn(value ?? {}, 'allowed')) {
-    exactObject(value, ['schemaVersion', 'allowed'], 'plan_route_invalid');
+    exactObject(value, ['schemaVersion', 'allowed'], 'plan_route_invalid', { rejectUnknown: true });
     if (value.schemaVersion !== 2 || !Array.isArray(value.allowed) || value.allowed.length === 0
       || value.allowed.length > policy.limits.maxRouteValues) {
       fail('Plan route tuple allowlist is invalid', 'plan_route_invalid');
