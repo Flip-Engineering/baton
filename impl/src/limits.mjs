@@ -420,8 +420,9 @@ const COUNTS = Object.freeze({
     enforcedAt: 'application-deployment.mjs normalizeRoutes (one deployment\'s declared route inventory)' },
   'workflow.team.members': { lane: 'workflow.team.members', class: 'admission', value: 16, unit: 'members', graceful: null,
     enforcedAt: 'application-semantics.mjs workflow composition team schema (the two-to-sixteen role-addressed Attempts bound)' },
+  'recipe.constraints': { lane: 'recipe.constraints', class: 'admission', value: 8, unit: 'strings', graceful: null,
+    enforcedAt: 'recipes.mjs admitTemplate (the objectiveTemplate constraints array admission)' },
 });
-
 
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
  * graceful, enforcedAt?, refusalCode?}. */
@@ -481,3 +482,4 @@ export function composeWebWaitCeilingRefusal(actual, row = WEB_WAIT_CEILING_ROW)
 // (Decision 8 no-re-declare law); the application dispatch seam consumes them by import.
 export const COORDINATOR_AUTHORITY_FORBIDDEN = 'coordinator_authority_forbidden';
 export const COORDINATOR_AUTHORITY_GRACEFUL_PATH = 'DECISION_REQUEST';
+

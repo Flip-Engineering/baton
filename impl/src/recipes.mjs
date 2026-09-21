@@ -31,9 +31,11 @@ import { FRAME_LIMITS } from './limits.mjs';
 const DESCRIPTOR_MAX_BYTES = 8 * 1024;
 const TASK_MAX_BYTES = 2 * 1024;
 const CONSTRAINT_MAX_BYTES = 240;
-const MAX_CONSTRAINTS = 8;
-const MAX_MEMBERS = 8;
-const MAX_SCOPE = 64;
+// Issue #499: the recipe count ceilings are the registry's COUNTS rows — structural admission
+// bounds on one recipe payload (admission audit §4 F7), never a fleet size.
+const MAX_CONSTRAINTS = FRAME_LIMITS['recipe.constraints'].value;
+const MAX_MEMBERS = FRAME_LIMITS['recipe.members'].value;
+const MAX_SCOPE = FRAME_LIMITS['recipe.scope'].value;
 const ATTACH_SETTLE_TIMEOUT_MS = 5_000;
 
 const RECIPE_TOP_FIELDS = Object.freeze(['name', 'version', 'members', 'policy']);

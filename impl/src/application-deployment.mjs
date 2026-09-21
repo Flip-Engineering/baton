@@ -478,10 +478,10 @@ function repositorySnapshot(repoRoot, stateRoot, providerKeyFiles = DEFAULT_OMP_
 const ROUTE_BILLING_BASES = Object.freeze(['subscription', 'api']);
 
 function normalizeRoutes(value = DEFAULT_ROUTES) {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
+  if (!Array.isArray(value) || value.length === 0
+    || value.length > FRAME_LIMITS['deployment.routes'].value) {
     throw deploymentError('advanced routes must be a non-empty bounded array');
   }
-  const seen = new Set();
   return value.map((route) => {
     closed(route, ['aaSlug', 'billing', 'effort', 'harness', 'model', 'openRouterId', 'provider'], 'advanced route');
     for (const field of ['harness', 'model', 'effort']) {
