@@ -263,10 +263,6 @@
       "prerequisite": "codex/gpt-5.6-sol"
     },
     {
-      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
-      "reason": "#538"
-    },
-    {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
