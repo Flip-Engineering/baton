@@ -19,8 +19,9 @@ import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeCodexFrame } from './native-subagent-observations.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const CODEX_TOKEN_METRIC = 'codex_thread_total_tokens';
 const MAX_NOTIFICATION_METHOD_PREFIX_CHARS = 512;
 

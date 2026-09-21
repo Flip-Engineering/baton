@@ -23,7 +23,7 @@ import { CLI_PROMPT_DIALECT, assertCardProviderRefusals, providerRefusalsForHarn
 import { assertAdapterCard } from './adapter-contract.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 // Issue #326: the stderr tail bound derives from the ONE frame registry (never a fresh
 // constant) — one 128th of the wire-frame ceiling, the same 8 KiB the referee's failure
 // capsule uses — so a CLI that dies before its first JSONL leaves provider-failure evidence

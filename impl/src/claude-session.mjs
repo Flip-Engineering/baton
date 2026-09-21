@@ -19,8 +19,9 @@ import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest 
 import { createDecisionRequest, ValidationError, WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeClaudeToolProgressFrame } from './native-subagent-observations.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
 
 // Part B / F7 (issue #16): the emulated up-channel grammar. This scans ONLY the model's own
@@ -29,17 +30,17 @@ const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache'
 // through this parser. That structural separation is what makes a quoted fixture containing
 // this literal string spoof-safe: it never reaches `_scanForDecisionRequest`.
 const DECISION_REQUEST_GRAMMAR = /DECISION_REQUEST:\s*(\{[\s\S]*)/;
-const MAX_DECISION_GRAMMAR_SCAN_BYTES = 8_192;
+const MAX_DECISION_GRAMMAR_SCAN_BYTES = FRAME_LIMITS['scanner.window.decision'].value;
 const SCRATCHPAD_WRITE_GRAMMAR = /SCRATCHPAD_WRITE:\s*(\{[\s\S]*)/;
-const MAX_SCRATCHPAD_GRAMMAR_SCAN_BYTES = 20_480;
+const MAX_SCRATCHPAD_GRAMMAR_SCAN_BYTES = FRAME_LIMITS['scanner.window.scratchpad'].value;
 const CONTEXT_READ_GRAMMAR = /CONTEXT_READ:\s*(\{[\s\S]*)/;
-const MAX_CONTEXT_READ_GRAMMAR_SCAN_BYTES = 20_480;
+const MAX_CONTEXT_READ_GRAMMAR_SCAN_BYTES = FRAME_LIMITS['scanner.window.context_read'].value;
 const MESSAGE_SEND_GRAMMAR = /MESSAGE_SEND:\s*(\{[\s\S]*)/;
-const MAX_MESSAGE_SEND_GRAMMAR_SCAN_BYTES = 20_480;
+const MAX_MESSAGE_SEND_GRAMMAR_SCAN_BYTES = FRAME_LIMITS['scanner.window.message_send'].value;
 const BOARD_CLAIM_GRAMMAR = /BOARD_CLAIM:\s*(\{[\s\S]*)/;
-const MAX_BOARD_CLAIM_GRAMMAR_SCAN_BYTES = 20_480;
+const MAX_BOARD_CLAIM_GRAMMAR_SCAN_BYTES = FRAME_LIMITS['scanner.window.board_claim'].value;
 const BOARD_REPORT_GRAMMAR = /BOARD_REPORT:\s*(\{[\s\S]*)/;
-const MAX_BOARD_REPORT_GRAMMAR_SCAN_BYTES = 20_480;
+const MAX_BOARD_REPORT_GRAMMAR_SCAN_BYTES = FRAME_LIMITS['scanner.window.board_report'].value;
 const BOARD_FRAME_MARKER = /BOARD_(?:CLAIM|REPORT):/u;
 
 /** Bracket-depth walk to the first balanced `{...}` object, bounded, string-aware. Trailing

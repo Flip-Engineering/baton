@@ -25,8 +25,9 @@ import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { typedAcpRefusal } from './acp-json-rpc-process.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
 const TERMINAL_TOOL_CALL_PHASES = new Set(['completed', 'failed', 'cancelled']);
 

@@ -8,8 +8,9 @@ import {
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
 const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;
 
