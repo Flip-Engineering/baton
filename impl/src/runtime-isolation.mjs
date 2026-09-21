@@ -643,10 +643,16 @@ export class RuntimeIsolation {
   remove(workerId) {
     this.leases.delete(workerId);
     const target = join(this.root, workerId);
-    rmSync(target, { recursive: true, force: true });
+    try {
+      rmSync(target, { recursive: true, force: true });
+    } catch (cause) {
+      throw Object.assign(new Error('runtime isolation cleanup did not reach an exact absent state'), {
+        code: 'runtime_cleanup_failed', record: workerId, cause,
+      });
+    }
     if (existsSync(target)) {
       throw Object.assign(new Error('runtime isolation cleanup did not reach an exact absent state'), {
-        code: 'runtime_cleanup_failed',
+        code: 'runtime_cleanup_failed', record: workerId,
       });
     }
     return Object.freeze({ state: 'absent', workerId });

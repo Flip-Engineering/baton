@@ -556,6 +556,10 @@ export function constructor(coordinator, opts) {
     coordinator._startupCleanupPromises = [];
     coordinator._startupCleanupPending = 0;
     coordinator._startupCleanupError = null;
+    // Issue #542: transient scratch-scope cleanup continues after startup publishes. These
+    // promises are observational only: startup admission does not await them, and their timers are
+    // unref'd so a closing resident is never kept alive by a stale scope.
+    coordinator._startupCleanupBackground = new Set();
     const budgetPolicy = opts.budgetPolicy ?? {};
     const budgetPolicyKeys = new Set(['hardStopAt', 'terminalGraceMs', 'thresholds']);
     if (!budgetPolicy || typeof budgetPolicy !== 'object' || Array.isArray(budgetPolicy)

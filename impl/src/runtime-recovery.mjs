@@ -924,9 +924,55 @@ export function _startupReconcilerObservation(coordinator, recorder, caught, rec
   }
 
 export function _trackStartupCleanup(coordinator, recorder, operation, reconciler = null) {
+    const scratchCleanupPending = (error) => reconciler === 'worker_processes'
+      && error?.code === 'runtime_cleanup_failed'
+      && error?.observed?.alive !== true;
+    const cleanupObservation = (error) => Object.freeze({
+      code: error.code,
+      ...(typeof error?.cause?.code === 'string' ? { causeCode: error.cause.code } : {}),
+    });
+    const deferScratchCleanup = (error) => {
+      const record = typeof error?.record === 'string' ? error.record : null;
+      recorder.recordDriver('host.cleanup_pending', {
+        code: error.code, reconciler, record, observed: cleanupObservation(error),
+      }, `host.cleanup_pending:${reconciler}:${record ?? 'unknown'}`);
+      const background = (async () => {
+        while (!coordinator._closed) {
+          await new Promise((resolveDelay) => {
+            const timer = coordinator._setTimeout(resolveDelay, KILL_ESCALATION_GRACE_MS);
+            timer?.unref?.();
+          });
+          if (coordinator._closed) return;
+          try {
+            await operation();
+            return;
+          } catch (caught) {
+            if (scratchCleanupPending(caught)) continue;
+            if (!coordinator._startupCleanupError) {
+              coordinator._startupCleanupError = coordinator._startupCleanupIncomplete(caught, reconciler);
+            }
+            return;
+          }
+        }
+      })();
+      coordinator._startupCleanupBackground.add(background);
+      background.then(
+        () => coordinator._startupCleanupBackground.delete(background),
+        (caught) => {
+          coordinator._startupCleanupBackground.delete(background);
+          if (!coordinator._startupCleanupError) {
+            coordinator._startupCleanupError = coordinator._startupCleanupIncomplete(caught, reconciler);
+          }
+        },
+      );
+    };
     let source;
     try { source = operation(); }
     catch (error) {
+      if (scratchCleanupPending(error)) {
+        deferScratchCleanup(error);
+        return Promise.resolve();
+      }
       if (!coordinator._startupCleanupError) coordinator._startupCleanupError = coordinator._startupCleanupIncomplete(error, reconciler);
       return Promise.resolve();
     }
@@ -936,6 +982,10 @@ export function _trackStartupCleanup(coordinator, recorder, operation, reconcile
     if (!source || typeof source.then !== 'function') return Promise.resolve(source);
     coordinator._startupCleanupPending += 1;
     const tracked = Promise.resolve(source).catch((error) => {
+      if (scratchCleanupPending(error)) {
+        deferScratchCleanup(error);
+        return;
+      }
       if (!coordinator._startupCleanupError) coordinator._startupCleanupError = coordinator._startupCleanupIncomplete(error, reconciler);
     }).finally(() => { coordinator._startupCleanupPending -= 1; });
     coordinator._startupCleanupPromises.push(tracked);
