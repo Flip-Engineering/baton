@@ -1057,6 +1057,45 @@ function changedPathsFromBase(dir, baseSha) {
   return [...paths].sort();
 }
 
+function stagedPathsFromBase(dir, baseSha) {
+  const raw = gitFile(['diff', '--cached', '--name-only', '-z', baseSha], dir, { encoding: 'utf8' });
+  return raw.split('\0').filter(Boolean);
+}
+
+/** Unstaged tracked modifications plus untracked files: the residue a whole-tree
+ * `git add -A` would sweep into a worker-attributed snapshot (issue #52). */
+function unstagedPaths(dir) {
+  const paths = new Set();
+  for (const args of [
+    ['diff', '--name-only', '-z'],
+    ['ls-files', '--others', '--exclude-standard', '-z'],
+  ]) {
+    const raw = gitFile(args, dir, { encoding: 'utf8' });
+    for (const path of raw.split('\0').filter(Boolean)) paths.add(path);
+  }
+  return [...paths].sort();
+}
+
+function isProjectionPath(path, projectionTargets) {
+  return projectionTargets.some((target) => path === target || path.startsWith(`${target}/`));
+}
+
+/** Split working-tree residue into paths the declared sparse scope covers (safe to
+ * stage) and paths it does not (left unstaged and reported, never swept in). A path
+ * below a toolchain projection target is not residue: like the staged check, it fails
+ * closed with the projection error. */
+function partitionCapturePaths(paths, identity, projectionTargets = []) {
+  const covered = [];
+  const outOfScope = [];
+  for (const path of paths) {
+    if (isProjectionPath(path, projectionTargets)) {
+      throw new ToolchainProjectionError('toolchain projection entered the result tree', 'toolchain_projection_materialization_failed');
+    }
+    (sparseCheckoutCoversPath(identity, path) ? covered : outOfScope).push(path);
+  }
+  return { covered, outOfScope };
+}
+
 function assertSparseIndexState(dir, baseSha, identity) {
   const normalized = normalizeSparseCheckoutIdentity(identity);
   if (normalized.mode === 'full') return;
@@ -1273,7 +1312,23 @@ export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
   if (!existsSync(dir)) throw new UnknownWorktreeError(`no owned worktree for taskId "${taskId}"`);
   const meta = validatedMetadata(repoRoot, taskId);
   const realDir = realpathSync(dir);
-  if (opts.expectedPath !== undefined && realpathSync(opts.expectedPath) !== realDir) throw new UnknownWorktreeError('owned worktree path identity mismatch');
+  const repoReal = realpathSync(pathResolve(repoRoot));
+  // Issue #52 defect (1): the resolved workspace is never the repository main
+  // checkout. A capture path that ran with the main checkout as the worker workspace
+  // sweeps unrelated main-checkout files into a worker-attributed snapshot, so
+  // ownership refuses a workspace that IS the main checkout instead of capturing it.
+  if (realDir === repoReal) throw new UnknownWorktreeError('owned worktree resolves to the repository main checkout: worker capture requires an owned .baton/wt/ worktree');
+  if (opts.expectedPath !== undefined) {
+    let expectedReal = null;
+    try { expectedReal = realpathSync(opts.expectedPath); } catch { expectedReal = null; }
+    if (expectedReal !== null && expectedReal === repoReal) throw new UnknownWorktreeError('worker capture refused: the expected worktree path is the repository main checkout, not an owned .baton/wt/ worktree');
+    if (expectedReal !== null) {
+      const wtRoot = authorityRoot(repoRoot, 'wt', { create: false });
+      const within = wtRoot === null ? '..' : pathRelative(realpathSync(wtRoot), expectedReal);
+      if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new UnknownWorktreeError('worker capture refused: the expected worktree path is outside owned .baton/wt/ worktrees');
+    }
+    if (realpathSync(opts.expectedPath) !== realDir) throw new UnknownWorktreeError('owned worktree path identity mismatch');
+  }
   if (realpathSync(sh('git', ['rev-parse', '--show-toplevel'], dir)) !== realDir) throw new UnknownWorktreeError('owned worktree Git root identity mismatch');
   if (sh('git', ['branch', '--show-current'], dir) !== meta.branch) throw new UnknownWorktreeError('owned worktree branch identity mismatch');
   if (opts.expectedBranch !== undefined && meta.branch !== opts.expectedBranch) throw sparseError('owned worktree branch metadata disagrees with admitted branch', 'worker_sparse_metadata_invalid');
@@ -1341,6 +1396,25 @@ export async function pinBaseSha(repoRoot, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Worktree git sharing (issue #412)
+// ---------------------------------------------------------------------------
+
+/**
+ * A Baton lane checkout is workspace separation, not git-ref isolation: `git worktree
+ * add -b baton/<taskId>` publishes a repo-visible branch ref for every private checkout
+ * and every checkout shares the repository object store. Nothing at the creation seam
+ * below isolates either namespace; read this before treating a lane checkout as
+ * git-ref isolation.
+ */
+export const WORKTREE_GIT_SHARING = Object.freeze({
+  schemaVersion: 1,
+  statement: 'A Baton lane checkout is workspace separation, not git-ref isolation: `git worktree add -b baton/<taskId>` publishes a repo-visible branch ref and every checkout shares the repository object store.',
+  refNamespace: 'shared',
+  objectStore: 'shared',
+  branchForTask: (taskId) => `baton/${taskId}`,
+});
+
+// ---------------------------------------------------------------------------
 // createFromBase
 // ---------------------------------------------------------------------------
 
@@ -1384,17 +1458,15 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
   const sparsePaths = normalizeSparsePaths(opts.sparsePaths ?? []);
   const sparseIdentity = sparseCheckoutIdentity(sparsePaths);
-  // #412: the branch `baton/<taskId>` lives in the repository's shared ref namespace
-  // (`refs/heads/baton/<taskId>`). Every worktree of the same repository — and the main
-  // checkout — can see it. Workspace separation (isolated working trees, confined paths) is
-  // not git-ref isolation: a concurrent `git branch -l` or `git for-each-ref` from any
-  // worktree lists this branch, and `refs/stash` is likewise shared (#447).
   const branch = `baton/${taskId}`;
   if (opts.toolchainProjection) {
     const collisions = trackedProjectionPathsAtCommit(repoRoot, baseSha, opts.toolchainProjection.targetPaths());
     if (collisions.length > 0) throw new ToolchainProjectionError('toolchain projection target is tracked by the worker base commit', 'toolchain_projection_materialization_failed');
   }
   try {
+    // Issue #412: workspace separation is not git-ref isolation — this publishes the
+    // repo-visible ref named by WORKTREE_GIT_SHARING.branchForTask and shares the
+    // repository object store with every other checkout.
     sh('git', ['worktree', 'add', '-b', branch, ...(sparsePaths.length ? ['--no-checkout'] : []), dir, baseSha], repoRoot);
   } catch (err) {
     const msg = String(err.stderr || err.message || err);
@@ -1471,7 +1543,7 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
  * @param {string} repoRoot
  * @param {string} taskId
  * @param {{vendor?: string, model?: string, log?: object}} [opts]
- * @returns {Promise<{sha:string, snapshotted:boolean}>}
+ * @returns {Promise<{sha:string, snapshotted:boolean, baseSha:string, changedPaths:string[], sparseCheckoutIdentity:object, warnings:{code:string, paths:string[]}[]}>}
  */
 export async function captureCommit(repoRoot, taskId, opts = {}) {
   normalizePhysicalOwnerId(taskId, 'taskId');
@@ -1485,44 +1557,61 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
   const projectionTargets = meta.toolchainProjectionTargets ?? [];
   if (opts.toolchainProjectionTargets && JSON.stringify([...opts.toolchainProjectionTargets].sort()) !== JSON.stringify([...projectionTargets].sort())) throw new ToolchainProjectionError('toolchain projection target authority mismatch', 'toolchain_projection_materialization_failed');
   if (trackedProjectionPaths(dir, projectionTargets).length > 0) throw new ToolchainProjectionError('toolchain projection entered the result index', 'toolchain_projection_materialization_failed');
-  assertChangedPathsCovered(changedPathsFromBase(dir, meta.baseSha), owned.sparseCheckoutIdentity, projectionTargets);
+  // Issue #52 defect (2): a staged out-of-scope path would enter the snapshot under the
+  // worker's attribution, so staged scope violations still fail closed here. Unstaged and
+  // untracked residue is scoped out of staging below and reported, never swept in.
+  assertChangedPathsCovered(stagedPathsFromBase(dir, meta.baseSha), owned.sparseCheckoutIdentity, projectionTargets);
 
   let snapshotted = false;
+  let warnings = [];
   if (!isClean(dir)) {
     let staged = false;
     try {
-      sh('git', ['add', '-A'], dir); staged = true;
+      const { covered, outOfScope } = partitionCapturePaths(unstagedPaths(dir), owned.sparseCheckoutIdentity, projectionTargets);
+      if (outOfScope.length > 0) {
+        warnings = Object.freeze([{ code: 'worker_capture_out_of_scope_residue', paths: Object.freeze([...outOfScope]) }]);
+      }
+      if (covered.length > 0) {
+        // Literal top-relative pathspecs: only covered paths enter the index, and a
+        // filename carrying pathspec magic stages itself rather than its reading.
+        sh('git', ['add', '--', ...covered.map((path) => `:(literal,top)${path}`)], dir);
+        staged = true;
+      }
       validateOwnedWorktree(repoRoot, taskId, {
         expectedPath: dir, expectedBaseSha: opts.expectedBaseSha ?? meta.baseSha,
         expectedBranch: opts.expectedBranch ?? meta.branch, sparseCheckoutIdentity: owned.sparseCheckoutIdentity,
       });
       if (trackedProjectionPaths(dir, projectionTargets).length > 0) throw new ToolchainProjectionError('toolchain projection entered the result index', 'toolchain_projection_materialization_failed');
-      const changedPaths = changedPathsFromBase(dir, meta.baseSha);
-      assertChangedPathsCovered(changedPaths, owned.sparseCheckoutIdentity, projectionTargets);
-      const vendor = opts.vendor;
-      const authorName = vendor ? `baton-worker-${vendor}` : 'baton-snapshot';
-      const authorEmail = `${authorName}@localhost`;
-      const trailerLines = [`Baton-Task: ${taskId}`];
-      if (vendor) trailerLines.push(`Baton-Vendor: ${vendor}`);
-      if (opts.model) trailerLines.push(`Baton-Model: ${opts.model}`);
-      if (opts.effort) trailerLines.push(`Baton-Effort: ${opts.effort}`);
-      const message = `baton snapshot: ${taskId}\n\n${trailerLines.join('\n')}\n`;
-      sh('git', ['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir);
-      snapshotted = true;
+      const stagedAfter = stagedPathsFromBase(dir, meta.baseSha);
+      assertChangedPathsCovered(stagedAfter, owned.sparseCheckoutIdentity, projectionTargets);
+      if (stagedAfter.length > 0) {
+        const vendor = opts.vendor;
+        const authorName = vendor ? `baton-worker-${vendor}` : 'baton-snapshot';
+        const authorEmail = `${authorName}@localhost`;
+        const trailerLines = [`Baton-Task: ${taskId}`];
+        if (vendor) trailerLines.push(`Baton-Vendor: ${vendor}`);
+        if (opts.model) trailerLines.push(`Baton-Model: ${opts.model}`);
+        if (opts.effort) trailerLines.push(`Baton-Effort: ${opts.effort}`);
+        const message = `baton snapshot: ${taskId}\n\n${trailerLines.join('\n')}\n`;
+        sh('git', ['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir);
+        snapshotted = true;
+      }
     } catch (error) {
       if (staged) try { gitFile(['reset', '-q'], dir, { stdio: 'ignore' }); } catch { /* refusal remains authoritative */ }
       throw error;
     }
   }
   const sha = sh('git', ['rev-parse', 'HEAD'], dir);
+  // The reported tree still names warned residue: leaving it out of the commit keeps the
+  // snapshot attribution clean while the trust gate observes the same residue here.
   const changedPaths = changedPathsFromBase(dir, meta.baseSha);
-  assertChangedPathsCovered(changedPaths, owned.sparseCheckoutIdentity, projectionTargets);
   validateOwnedWorktree(repoRoot, taskId, {
     expectedPath: dir, expectedBaseSha: opts.expectedBaseSha ?? meta.baseSha,
     expectedBranch: opts.expectedBranch ?? meta.branch, sparseCheckoutIdentity: owned.sparseCheckoutIdentity,
   });
-  logEvent(opts, taskId, 'worktree.captured', { sha, snapshotted, baseSha: meta.baseSha, changedPaths, sparseCheckoutIdentity: owned.sparseCheckoutIdentity });
-  return { sha, snapshotted, baseSha: meta.baseSha, changedPaths, sparseCheckoutIdentity: owned.sparseCheckoutIdentity };
+  warnings = Object.freeze(warnings);
+  logEvent(opts, taskId, 'worktree.captured', { sha, snapshotted, baseSha: meta.baseSha, changedPaths, sparseCheckoutIdentity: owned.sparseCheckoutIdentity, warnings });
+  return { sha, snapshotted, baseSha: meta.baseSha, changedPaths, sparseCheckoutIdentity: owned.sparseCheckoutIdentity, warnings };
 }
 
 // ---------------------------------------------------------------------------
