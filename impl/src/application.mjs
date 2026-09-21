@@ -1512,7 +1512,8 @@ function publicArtifact(artifact) {
 
 function semanticSourceSlice(text, source) {
   const fields = ['path', 'startLine', 'startColumn', 'endLine', 'endColumn', 'contentDigest'];
-  exactObject(source, fields, 'application_review_report_invalid', 'semantic finding source');
+  exactObject(source, fields, 'application_review_report_invalid', 'semantic finding source',
+    { rejectUnknown: true });
   if (!safeScopePath(source.path) || !/^[a-f0-9]{64}$/u.test(source.contentDigest ?? '')
     || ![source.startLine, source.startColumn, source.endLine, source.endColumn]
       .every((value) => Number.isSafeInteger(value) && value > 0)
@@ -2896,7 +2897,11 @@ export class BatonApplication {
     let report;
     try { report = JSON.parse(inspection.report.text); }
     catch { throw applicationError('semantic review report is not valid JSON', 'application_review_report_invalid'); }
-    exactObject(report, ['schemaVersion', 'targetDigest', 'verdict', 'summary', 'findings'], 'application_review_report_invalid', 'semantic review report');
+    // The report is the reviewer's authored document, not a caller's extension point: an
+    // undeclared field is refused rather than ignored (#535's authorization-boundary rule), and
+    // the finding and its source slice are closed with it.
+    exactObject(report, ['schemaVersion', 'targetDigest', 'verdict', 'summary', 'findings'], 'application_review_report_invalid', 'semantic review report',
+      { rejectUnknown: true });
     const policy = current.profile.reviewPolicy;
     if (report.schemaVersion !== 1 || report.targetDigest !== target.targetDigest
       || !['approved', 'revision_required', 'unverifiable'].includes(report.verdict)
@@ -2906,7 +2911,8 @@ export class BatonApplication {
     }
     const findingIds = new Set();
     const findings = report.findings.map((finding) => {
-      exactObject(finding, ['id', 'severity', 'disposition', 'claim', 'source', 'evidence', 'requiredCorrection'], 'application_review_report_invalid', 'semantic finding');
+      exactObject(finding, ['id', 'severity', 'disposition', 'claim', 'source', 'evidence', 'requiredCorrection'], 'application_review_report_invalid', 'semantic finding',
+        { rejectUnknown: true });
       if (!validId(finding.id) || findingIds.has(finding.id) || !['P0', 'P1', 'P2', 'P3'].includes(finding.severity)
         || !['confirmed', 'contradicted', 'unverifiable'].includes(finding.disposition)
         || !validText(finding.claim, 8_192) || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(finding.claim))

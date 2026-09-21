@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  CoordinationStore, createBatonWebMcpServer, serveMcpStdio,
+  CoordinationStore, createBatonWebMcpServer, serveMcpStdio, wakeAutoSubscription,
 } from '../src/index.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 import { BatonControlError } from '../src/holistic-runtime.mjs';
@@ -52,6 +52,11 @@ if (args.length > 0) {
       // answer fits instead of tripping the oversize refusal. No number is re-declared here.
       return createBatonWebMcpServer({
         coordination, cwd: process.cwd(), maxMessageBytes: FRAME_LIMITS['wire.frame'].value,
+        // Issue #529 (docs/54 §4): the session's wake auto-subscription is derived from the
+        // environment the deployment published this seat's bridge under — a seat's session
+        // receives its own swarm's events, a session without seat coordinates receives every
+        // event the deployment produces. It arrives as notifications/baton/wake with no tool call.
+        autoWake: wakeAutoSubscription(process.env),
       });
     })();
     const server = wrapProductionMcpServer(rawServer, { expandNative: true });

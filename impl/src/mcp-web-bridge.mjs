@@ -7,6 +7,7 @@ import { McpFleetServer, coreMutationAnswer, coreWakeHandoff, coreWakeHandoffFil
 import { coreCommandFacts, CORE_TOOL_NAMES } from './mcp-core-tools.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from './swarm-contract.mjs';
+import { SWARM_BRIDGE_ENV_KEYS } from './swarm-native-bridge.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { WAKE_CLASSES, parseWakeFilter, wakeMatches } from './wake-stream.mjs';
 
@@ -1101,6 +1102,22 @@ export async function connectBatonWebApplication(options = {}) {
   });
 }
 
+/** Issue #529 (docs/54 §4): the wake subscription a session takes from its own bridge
+ * configuration, read from the environment the deployment publishes a seat's bridge under (the ONE
+ * key table, swarm-native-bridge.mjs). A session carrying a seat's swarm coordinates receives that
+ * swarm's events; a session without them — an operator's IDE session, a root orchestrator's MCP
+ * connection — carries every event the deployment produces. The returned filter is the design's own
+ * shape, and a null axis admits everything on it. */
+export function wakeAutoSubscription(env = {}) {
+  const declared = env?.[SWARM_BRIDGE_ENV_KEYS.swarmId];
+  const swarmId = typeof declared === 'string' ? declared.trim() : '';
+  return Object.freeze({
+    kinds: null,
+    swarms: swarmId.length === 0 ? null : Object.freeze([swarmId]),
+    participants: null,
+  });
+}
+
 export async function createBatonWebMcpServer(options) {
   if (!options?.coordination) throw new TypeError('Baton Web MCP requires local call coordination');
   if (['principalId', 'sessionId', 'sessionTtlMs'].some((field) => Object.hasOwn(options, field))) {
@@ -1140,6 +1157,10 @@ export async function createBatonWebMcpServer(options) {
     maxWaitMs: options.maxWaitMs ?? 30_000,
     maxMessageBytes: options.maxMessageBytes ?? 256 * 1024,
     takeToolQuota,
+    // Issue #529 (docs/54 §4): the auto-subscription the entry derived for THIS session from its
+    // environment (`wakeAutoSubscription`). A caller that keeps no wake stream, or that wants a
+    // different filter, passes its own; absent means the session takes none.
+    autoWake: options.autoWake ?? null,
   });
   return server;
 }

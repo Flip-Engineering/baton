@@ -615,17 +615,24 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
   }
 
   const responses = stdout.trim().split('\n').map(JSON.parse);
-  assert.deepEqual(responses.map((entry) => entry.id), [1, 2, 3]);
-  assert.deepEqual(responses[1].result.tools.map((tool) => tool.name), [
+  // Issue #529: the entry's session takes its wake auto-subscription at initialize, so an id-less
+  // notifications/baton/wake frame rides this same stdout. The three answers are what this row
+  // asserts; a notification is not one of them.
+  const answers = responses.filter((entry) => entry.id !== undefined);
+  for (const frame of responses.filter((entry) => entry.id === undefined)) {
+    assert.equal(frame.method, 'notifications/baton/wake');
+  }
+  assert.deepEqual(answers.map((entry) => entry.id), [1, 2, 3]);
+  assert.deepEqual(answers[1].result.tools.map((tool) => tool.name), [
     'baton_deployment', 'baton_run', 'baton_swarm', 'baton_waves',
     'baton_knowledge', 'baton_wakes', 'baton_services', 'baton_surface',
   ]);
-  assert.equal(responses[2].result.isError, false);
-  assert.match(responses[2].result.content[0].text, /run-packaged-kimi/u);
-  assert.equal(responses[2].result.content[0].text.includes('internalStartRecord'), false);
+  assert.equal(answers[2].result.isError, false);
+  assert.match(answers[2].result.content[0].text, /run-packaged-kimi/u);
+  assert.equal(answers[2].result.content[0].text.includes('internalStartRecord'), false);
   // The core tool baton_run {verb:'start'} returns a mutation receipt with a next pointer
   // and wake subscription — the outline is a follow-up call, not inlined.
-  const startResult = JSON.parse(responses[2].result.content[0].text);
+  const startResult = JSON.parse(answers[2].result.content[0].text);
   assert.equal(startResult.command, 'run.start');
   assert.ok(startResult.receipt, 'the start result carries a receipt');
   assert.ok(startResult.next, 'the start result carries a next pointer');
