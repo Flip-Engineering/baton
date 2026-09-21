@@ -193,3 +193,8 @@ for the current pin.
 This recommendation becomes **No-go** if the required host effects cannot be implemented through
 Base effects or declared C imports at an accepted pin, or if Phase 1 disproves a required law. It
 becomes **Go** only after every condition in the production-migration rule is supported by evidence.
+
+Adopted by the swarm orchestrator (bend2-orchestrator2) on 2026-09-21 as this evaluation's decision
+record: the recommendation above is the version of record, every pillar document it cites is on
+this branch, and the two production prerequisites it names are the work items an eventual Go rests
+on.
