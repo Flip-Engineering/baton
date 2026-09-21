@@ -26,20 +26,25 @@ The plan uses these current sources:
 - [`reference/README.md`](reference/README.md) pins `bendlang/bend` at
   `a49524265bdfa5753a4bf38e25f0574a705dd868` and the Bend 2.0.25 toolchain.
 
-The following inputs are pending. This plan does not fill their findings in advance:
+The three review work items have published:
 
-- **LANGUAGE-FINDINGS-PENDING:** [`language-review.md`](language-review.md) and its compiled
-  `examples/lang-*` evidence.
-- **ARCHITECTURE-FINDINGS-PENDING:** [`architecture-review.md`](architecture-review.md) and
-  [`target-architecture.md`](target-architecture.md).
-- **LAW-FINDINGS-PENDING:** [`laws.bend`](laws.bend), [`laws-trace.md`](laws-trace.md), and their
-  compiled evidence.
+- [`language-review.md`](language-review.md) provides `LANG-F-01` through `LANG-F-25` and the
+  per-capability verdicts `LANG-CAP-01` through `LANG-CAP-08`, backed by the compiled examples in
+  [`examples/index.md`](examples/index.md).
+- [`architecture-review.md`](architecture-review.md) provides deletion and merge findings `F1`
+  through `F24`. [`target-architecture.md`](target-architecture.md) proposes eight BATON2
+  subsystems with exclusive ownership and forbidden-ownership rules.
+- [`laws-proposed.md`](laws-proposed.md) presents 138 candidate laws with source and test traces:
+  `CUST-*`, `CAP-*`, `WAKE-*`, `LEDG-*`, `CS-*`, `AB-*`, `PM-*`, `CL-*`, `PROP-*`, `PR-*`, and
+  `DEV-*`.
 
-Phase 0 incorporates those inputs before rewrite implementation starts. The plan targets
-**baton2**, the simplified architecture produced by the architecture review. It does not port the
-current subsystem list one for one. The review may change the provisional subsystem grouping or
-stop the plan after Phase 1. The target remains a Baton written entirely in Bend2. The boundary and
-proof requirements remain applicable to the revised phases.
+The operator has not approved the BATON2 deletions or the candidate laws. They remain proposals.
+Phase 0 records the operator's decision on each architecture deletion and law candidate before a
+later phase treats it as a target requirement. Only approved law rows enter `laws.bend`.
+
+The plan targets **BATON2**, the simplified architecture proposed by the architecture review. It
+does not port the current subsystem list one for one. The target remains a Baton written entirely
+in Bend2. The boundary and proof requirements apply to every operator-approved phase.
 
 ## Migration rules
 
@@ -66,9 +71,10 @@ Every phase follows these rules:
 ## Coexistence boundary
 
 The migration uses a local protocol named `baton.bridge.v1`. Phase 0 freezes its fixtures and
-schema. The transport choice is filled from **LANGUAGE-FINDINGS-PENDING**. The logical contract is
-independent of that transport. This protocol is a migration mechanism. Phase 7 deletes it, its
-transport, every JavaScript adapter, and the Node runtime.
+schema. `LANG-CAP-02` proves Base TCP transport. `LANG-CAP-06` leaves JSON framing as an incomplete
+Bend2 module or C-import prerequisite. The logical contract is independent of that transport.
+This protocol is a migration mechanism. Phase 7 deletes it, its transport, every JavaScript
+adapter, and the Node runtime.
 
 ### Value rules
 
@@ -169,18 +175,25 @@ No production subsystem moves. The phase creates the compatibility assets used b
 - fixture requests and answers taken from current tests;
 - replay corpora containing valid rows, refused operations, partial effects, and recovery cases;
 - an ownership map that assigns every inventoried seam member to a planned phase or an explicit
-  temporary JavaScript host boundary and the phase that deletes it.
+  temporary JavaScript host boundary and the phase that deletes it;
+- an operator decision ledger for every deletion in `F1` through `F24` and every candidate in
+  [`laws-proposed.md`](laws-proposed.md); and
+- an approved `laws.bend` containing only the candidate rows the operator accepted.
 
-The ownership map is revised with **ARCHITECTURE-FINDINGS-PENDING**. The law corpus is revised with
-**LAW-FINDINGS-PENDING**. The transport and executable packaging are revised with
-**LANGUAGE-FINDINGS-PENDING**.
+The ownership map uses the eight proposed owners in [`target-architecture.md`](target-architecture.md):
+Domain Kernel, Journal and Projectors, Scheduler, Worker Gateway, Workspace and Artifacts,
+Verification and Landing, Northbound Gateway, and Capability Services. `LANG-CAP-02` supplies the
+temporary TCP transport. `LANG-CAP-06` makes JSON framing a prerequisite that must close before the
+bridge executable exists.
 
 ### BATON2 deletions and merges
 
-**BATON2-PHASE-0-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that remove or
-merge compatibility assets from the inventory before implementation begins. This phase must mark
-every current subsystem as retained in baton2, merged into a named baton2 owner, deleted, or kept
-only for a named migration phase.
+Phase 0 performs no production deletion. It classifies every current subsystem as retained during
+migration, merged into one proposed BATON2 owner, deleted by a named later phase, or absent from the
+target. This is the inventory required by `F1` through `F24`, with special coverage for the facade
+shells (`F1`), parallel runtime (`F3`), seam inventory (`F17`), and Node-specific persistence
+machinery (`F24`). The operator approves, edits, or rejects each proposed deletion before it enters
+the executable phase plan.
 
 ### Boundary contract
 
@@ -197,7 +210,10 @@ executable must decode and re-encode each fixture with the same meaning and cano
 - reject every fixture with one added unknown field;
 - prove canonical encode/decode parity and digest parity;
 - replay the corpus through the current JavaScript implementation with no projection change; and
-- run the compiled Bend2 boundary executable produced at the pinned toolchain.
+- run the compiled Bend2 boundary executable produced at the pinned toolchain;
+- prove every phase deletion has an operator decision and one target owner; and
+- prove `laws.bend` contains only operator-approved rows from `laws-proposed.md`, with the decision
+  recorded beside each row.
 
 Phase 1 starts only after that test and the full JavaScript suite pass on the same commit.
 
@@ -218,17 +234,25 @@ Implement read-only Bend2 versions of these pure decisions:
 - read projections and bounded cursor handling; and
 - wake-class derivation.
 
+These decisions form the first slices of the proposed Domain Kernel and Journal and Projectors.
+They cover the schema and refusal consolidation in `F22`, canonical domain construction in `F13`,
+materialized views in `F10`, and the pure half of the at-most-once operation in `F19`.
+
 JavaScript remains the production authority. Bend2 receives copies of requests and ledger prefixes
 and produces shadow results. Shadow results have no append or effect capability.
 
-The exact module list is filled from **ARCHITECTURE-FINDINGS-PENDING**. The exact invariant list is
-filled from **LAW-FINDINGS-PENDING**.
+The proof corpus includes the operator-approved closed-shape, authorization, permission, wake, and
+ledger candidates from `CS-01..20`, `AB-01..14`, `PM-01..11`, `WAKE-01..13`, and `LEDG-01..19` in
+[`laws-proposed.md`](laws-proposed.md). A rejected candidate remains a compatibility fixture when
+the current implementation enforces it, but it does not become a BATON2 law.
 
 ### BATON2 deletions and merges
 
-**BATON2-PHASE-1-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that collapse
-the current validators, authorization paths, folders, projections, and wake classifiers into the
-baton2 decision owners evaluated by this shadow core. No current module survives by default.
+This phase merges the candidate implementations named by `F10`, `F13`, `F19`, and `F22` into
+read-only Domain Kernel constructors and Journal projectors. It deletes nothing from production;
+the shadow must first prove that these proposed merges retain canonical digests, authorization,
+closed-set refusals, bounded views, idempotency classification, and wake derivation. The operator's
+Phase 0 decisions determine which of these merges proceeds.
 
 ### Boundary contract
 
@@ -244,9 +268,10 @@ implementations. Required results are zero unexplained differences, deterministi
 across repeated runs, bounded execution for bounded reads, and identical replay projections at
 every fixture cursor. Any difference receives a regression fixture before correction.
 
-The test also runs each extracted law named by **LAW-FINDINGS-PENDING** through its declared proof
-method. A law marked as type-enforced uses the compile-pass or compile-refusal evidence declared by
-the laws lane.
+The test also runs each approved law through the proof method and source test named in
+[`laws-proposed.md`](laws-proposed.md). A law marked as type-enforced uses a compile-pass and a
+compile-refusal fixture. Rows marked unpinned require a new pinning test before they can pass this
+gate.
 
 ### Rollback
 
@@ -266,15 +291,23 @@ Bend2 becomes authoritative for:
 - ledger-derived projections; and
 - wake classification.
 
+The target owners are Domain Kernel for typed admission, Journal and Projectors for durable append,
+fold, query, and wake cursors, and Scheduler for command admission. The phase covers the proposed
+journal merge (`F2`), affine authority boundary (`F8`), reconciler (`F9`), view merge (`F10`),
+idempotency collapse (`F19`), append transaction (`F20`), task and journal waits (`F21`), schema and
+refusal merge (`F22`), and wake subscription merge (`F23`).
+
 JavaScript continues to own authenticated CLI, MCP, and web connections, durable event append,
 bounded event reads, and delivery of wake frames. The current JavaScript decision path stays
 available as the rollback implementation for one compatibility window.
 
 ### BATON2 deletions and merges
 
-**BATON2-PHASE-2-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that delete or
-merge the current coordination stores, ledger projections, permission paths, and wake machinery
-when baton2 takes coordination authority.
+After the cutover proof, delete the `CoordinationStore` decision shell and its same-name forwarding
+methods covered by `F1`. Merge the current coordination append and projection paths into the target
+owners listed above under the operator-approved parts of `F2`, `F8` through `F10`, and `F19` through
+`F23`. Keep versioned decoders and the JavaScript append/transport adapter until Phase 7. The proof
+corpus is the approved subset of `CS-*`, `AB-*`, `PM-*`, `WAKE-*`, and `LEDG-*`.
 
 ### Boundary contract
 
@@ -318,17 +351,28 @@ Bend2 becomes authoritative for the decisions that coordinate work:
 - recovery classification and retry decisions; and
 - ordering of provider and process effects.
 
+These decisions move into the proposed Scheduler. It uses Workspace and Artifacts for resource and
+workspace leases and Worker Gateway for provider-session effect plans. The phase implements the
+operator-approved scheduling and recovery proposals in `F4`, `F5`, `F7` through `F9`, `F12`,
+`F18`, and `F21`.
+
 JavaScript executes declared host effects: process spawn, signal, and reap; provider and harness
 protocols; filesystem and worktree operations; clocks and random identities; host observation; and
 credential access. This ownership is temporary. Phase 6 moves every listed effect to Bend2 through
-a pinned Base effect or a declared C import. **LANGUAGE-FINDINGS-PENDING** must identify and prove
-that Bend2 owner for every effect before Phase 6 starts.
+a pinned Base effect or a declared C import. `LANG-CAP-01` and `LANG-CAP-04` prove filesystem,
+environment, clock, sleep, and randomness primitives. `LANG-CAP-05` leaves the required process
+lifecycle C-effect family incomplete. Phase 6 cannot start until the full effect list has compiled
+and run evidence.
 
 ### BATON2 deletions and merges
 
-**BATON2-PHASE-3-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that delete or
-merge current admission, capacity, custody, run, swarm, wave, workflow, provider, and recovery
-abstractions into the baton2 runtime owners. The cited findings decide which names remain.
+After the cutover proof, delete the independent goal-plan, orchestrator-plan, workflow, wave, and
+swarm schedulers under `F4`; replace the duplicated wave and workflow joins under `F5`; merge the
+three provider supervisors under `F7`; and delete in-process fence and custody emulation only where
+the affine and durable authority proof required by `F8` passes. Merge recovery under `F9`, context
+lineage under `F12`, capacity leases under `F18`, and polling waits under `F21`. The approved
+`CUST-01..12`, `CAP-01..17`, `WAKE-*`, and applicable `DEV-*` rows are the law corpus for this
+phase.
 
 ### Boundary contract
 
@@ -372,15 +416,23 @@ Bend2 becomes authoritative for:
 - landing request construction; and
 - projection of started, failed, dry-run, and integrated receipts.
 
+The target owner is Verification and Landing, with scoped leases and artifacts from Workspace and
+Artifacts and durable outcomes in Journal and Projectors. This phase implements `F16`; typed gate
+selection prepares the later removal in `F17`, and the shared append and durable replacement
+primitives come from `F20`.
+
 JavaScript retains git, scratch-checkout, regenerator, test-runner, and local-ref authority. These
 are temporary host effects with repository-specific safety checks. Phase 6 moves their execution
 to Bend2 and preserves these checks in the Bend2 effect implementation.
 
 ### BATON2 deletions and merges
 
-**BATON2-PHASE-4-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that delete or
-merge contribution, review, verification-planning, landing-table, capture, check, and integration
-abstractions into the baton2 contribution and landing owners.
+After the proving test, merge contribution, independent review, verification, result adoption, gate
+planning, and integration authority under `F16`. Retain the generated seam inventory until typed
+effect declarations select the same or stronger gate set; then delete it under `F17`. Merge landing
+append and atomic replacement paths under `F20`. The phase proves the approved `CL-01..17` laws,
+including the unpinned `CL-10` empty-range arm and `CL-13` compare-and-swap race after adding their
+tests. `DEV-5` governs review and gated integration if the operator approves it.
 
 ### Boundary contract
 
@@ -423,19 +475,24 @@ Bend2 becomes authoritative for:
 - application result projections; and
 - help and inventory data used by generated surface documentation.
 
+The target owners are Domain Kernel for the typed protocol, Northbound Gateway for transport
+codecs, Journal and Projectors for queries, and Capability Services for optional tools. This phase
+implements the operator-approved parts of `F1`, `F3`, `F10` through `F15`, and `F22` through `F23`.
+
 JavaScript CLI, MCP, and web modules remain temporary transport adapters. They authenticate
 connections, decode their transport, call one canonical operation envelope, and encode the result.
 Phase 6 replaces these adapters with Bend2 transport implementations. Phase 7 deletes their
 JavaScript code and the bridge they use.
 
-The architecture review supplies the exact file deletion and merge list. This plan records that
-list under **ARCHITECTURE-FINDINGS-PENDING** until publication.
-
 ### BATON2 deletions and merges
 
-**BATON2-PHASE-5-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that delete or
-merge duplicate registries, command schemas, dispatch paths, capability resolution, and result
-projection while preserving the approved public surface.
+After the proving test, delete the application and coordinator facade delegates approved under `F1`;
+delete the parallel convergence runtime under `F3`; merge observation under `F10`; merge command
+semantics under `F11`; merge context and artifact lineage under `F12`; merge validation,
+redaction, export, and presentation policy under `F13`; delete ESM and source-shape shims under
+`F14`; and move Atlas behind Capability Services under `F15`. The typed schema and refusal source
+from `F22` and journal subscription from `F23` replace transport-local copies. Compatibility aliases
+remain versioned in Northbound Gateway until Phase 7.
 
 ### Boundary contract
 
@@ -464,10 +521,28 @@ connections and operation names.
 
 ### Entry condition
 
-This phase starts only when **LANGUAGE-FINDINGS-PENDING** supplies compiled and run evidence for
-every host capability Baton needs. Each capability must have a Bend2 owner at the pinned toolchain,
-implemented by a Base effect or a declared C import. A missing owner is a no-go or a named
-prerequisite that must close before this phase. Phase 5 is not a production end state.
+This phase starts only when every host capability Baton needs has compiled and run evidence. Each
+capability must have a Bend2 owner at the pinned toolchain, implemented by a Base effect or a
+declared C import. Phase 5 is not a production end state.
+
+The published review leaves this entry condition **open**:
+
+- `LANG-CAP-01` through `LANG-CAP-04` prove Base filesystem, TCP, UDP, environment, argv, clock,
+  sleep, and randomness primitives.
+- `LANG-CAP-05` proves that Base has no operating-system process surface. Its example is a blocking
+  `popen` call with whole stdout and exit status; it has no process handle, streaming stdout and
+  stderr, signal, kill, cancellation, or nonblocking wait. The prerequisite is a compiled C-effect
+  family that supplies all of those operations without stalling the event loop.
+- `LANG-CAP-06` proves that Base has no JSON module. The prerequisite is a compiled Bend2 JSON
+  module with laws or a declared C-library import with the same closed and canonical behavior.
+- `LANG-CAP-07` makes git invocation depend on the process and JSON prerequisites.
+- `LANG-CAP-08` proves TCP bytes for interprocess transport and makes framing depend on the JSON
+  prerequisite.
+
+Terminal signal and hidden-input behavior, credential access, git races, and provider protocol
+clients also need effect-specific compiled examples before this phase. The generic foreign-effect
+contract in `LANG-F-08`, `LANG-F-16`, and `LANG-F-17` proves a C-import route; it does not prove
+those production implementations.
 
 ### Subsystems that move
 
@@ -488,15 +563,19 @@ tranches:
 - credential-file access and private runtime projection; and
 - provider and harness protocol clients built over the process or socket effects above.
 
-The target owner for every row remains **LANGUAGE-FINDINGS-PENDING: BASE-EFFECT-OR-C-IMPORT**. The
-architecture grouping and concrete deletion list remain **ARCHITECTURE-FINDINGS-PENDING**. The
-evidence revision replaces each marker with a finding ID and compiled example path.
+Worker Gateway owns processes and provider protocols. Workspace and Artifacts owns filesystem,
+Git, credentials, and durable publication. Northbound Gateway owns terminal and public transports.
+Journal and Projectors owns durable framing and replay. Capability Services owns optional external
+clients. Each owner uses only a Base effect or declared C import proved for that effect.
 
 ### BATON2 deletions and merges
 
-**BATON2-PHASE-6-DELETIONS-MERGES-PENDING:** cite the architecture-review findings that consolidate
-host effects under baton2 owners and delete each JavaScript executor when its Bend2 Base-effect or
-C-import implementation takes authority. The final list must cover every effect in this phase.
+Merge adapter and process ownership into Worker Gateway under `F6`; provider supervisors under
+`F7`; workspace and artifact effects under `F12`, `F13`, and `F18`; verification effects under
+`F16`; waits under `F21`; wake transport under `F23`; and Node-specific effect workarounds under
+`F24`. Delete each JavaScript executor only after its Bend2 Base-effect or C-import implementation
+takes authority and passes the effect-specific fault test. The operator-approved target disposition
+in [`target-architecture.md`](target-architecture.md) supplies the final deletion list.
 
 Each tranche moves the Bend2 adapter, runs its proving cases, switches authority, and removes that
 effect kind from the JavaScript side of `baton.bridge.v1`. The final tranche leaves JavaScript with
@@ -550,8 +629,11 @@ all durable decisions, projections, transport handling, and host effects.
 ### BATON2 deletions and merges
 
 Phase 7 unconditionally deletes `baton.bridge.v1`, every JavaScript adapter and effect host, Node
-packaging, and the Node runtime. **BATON2-PHASE-7-DELETIONS-MERGES-PENDING:** cite any additional
-architecture-review deletions or final merges required to leave only the baton2 subsystem set.
+packaging, and the Node runtime. It completes the approved facade and compatibility deletion in
+`F1`, parallel-runtime deletion in `F3`, shim deletion in `F14`, seam-inventory deletion in `F17`,
+and Node-workaround deletion in `F24`. Static verification permits only the eight BATON2 subsystems
+and their versioned durable decoders; it rejects every current subsystem that
+[`target-architecture.md`](target-architecture.md) marks for deletion.
 
 ### Boundary contract
 
@@ -594,18 +676,17 @@ Each phase publishes one machine-readable verification record containing:
 A phase cannot use a later phase's code to satisfy its proof. This keeps each rollback target
 independently buildable and testable.
 
-## Revision checklist after the reviews publish
+## Decisions and prerequisites still open
 
-1. Replace **LANGUAGE-FINDINGS-PENDING** with cited finding IDs and example evidence paths. Update
-   the boundary transport, packaging, Phase 3 host list, and the Base-effect-or-C-import owner for
-   every Phase 6 host effect.
-2. Replace **ARCHITECTURE-FINDINGS-PENDING** and every
-   **BATON2-PHASE-N-DELETIONS-MERGES-PENDING** marker with cited deletion, merge, subsystem,
-   ownership, and forbidden-ownership findings. Update every phase's module list and proving test
-   to cover the deletions and merges that phase performs.
-3. Replace **LAW-FINDINGS-PENDING** with the extracted and proposed law IDs. Assign each law to the
-   first phase that must prove it and name its source test.
-4. Update [`go-no-go.md`](go-no-go.md) with the findings that support a production rewrite and the
-   findings that limit work to the Phase 1 prototype.
-5. Ask an independent reviewer to check the revised plan against all three source documents and
-   the pinned examples before the orchestrator publishes the final recommendation.
+1. The operator must approve, edit, or reject each deletion and merge in
+   [`architecture-review.md`](architecture-review.md) before the phase that performs it becomes
+   executable.
+2. The operator must decide every row in [`laws-proposed.md`](laws-proposed.md). Only approved rows
+   enter `laws.bend`; unpinned approved rows first receive the missing test named by the candidate.
+3. The `LANG-CAP-05` process family and `LANG-CAP-06` JSON implementation must be built and backed
+   by compiled evidence. Git, terminal, credential, provider, and interprocess framing effects need
+   their own compiled examples.
+4. Phase 1 must produce the zero-difference proof specified above. No current evidence substitutes
+   for that prototype result.
+5. An independent reviewer checks each completed decision and prerequisite against the three
+   review documents and the pinned examples before the operator authorizes Phase 2.

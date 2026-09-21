@@ -1,17 +1,28 @@
 # Bend2 rewrite go/no-go recommendation
 
-## Draft status
+## Recommendation
 
-**Decision: pending.** This draft does not recommend a production rewrite or a prototype-only stop.
-The three evidence work items required by the mandate have not published their findings. Issuing a
-decision now would require claims that belong to those work items.
+**Decision: Prototype only.** Complete Phase 0 and the Phase 1 shadow decision core. Do not move
+production authority to Bend2 at this pin.
 
-The final recommendation is owned by the swarm orchestrator. This document supplies the decision
-record structure, cites the current migration evidence, and names the evidence still required.
+The language review proves enough of the type, effect, concurrency, filesystem, and network model to
+make the prototype useful. It also proves that two production prerequisites are incomplete:
+`LANG-CAP-05` requires a nonblocking process-lifecycle C-effect family, and `LANG-CAP-06` requires a
+JSON implementation. The current examples do not prove streaming process output, signals, kill,
+cancellation, canonical JSON, git execution, terminal behavior, credential handling, or provider
+protocol effects. Phase 6 therefore cannot satisfy its entry condition.
+
+The architecture and laws work support a prototype but do not yet authorize a production rewrite.
+The 24 architecture deletions and the BATON2 target remain subject to operator approval. The 138
+rows in [`laws-proposed.md`](laws-proposed.md) are candidates; none becomes a binding `laws.bend`
+row until the operator approves it. Phase 1 also has no differential result yet.
+
+The swarm orchestrator owns this recommendation wording. This record cites the published basis and
+the evidence required to change the answer.
 
 ## Decision being made
 
-The operator will select one outcome:
+This record uses three outcomes:
 
 - **Go:** execute the phased production migration in [`rewrite-plan.md`](rewrite-plan.md) through
   the Bend2-only Phase 7 target.
@@ -25,7 +36,8 @@ The decision covers the pinned language and runtime in [`reference/README.md`](r
 requires a new evidence run for affected findings.
 
 The production target contains no JavaScript, Node runtime, `baton.bridge.v1` process, or
-JavaScript effect host. The bridge exists only while authority moves between implementations.
+JavaScript effect host. The bridge exists only while authority moves between implementations. The
+current recommendation does not authorize a production target.
 
 ## Evidence available now
 
@@ -44,21 +56,17 @@ The current implementation provides a workable temporary migration boundary mode
 
 This evidence shows how a decision core and a host-effect executor can exchange a request and a
 durable receipt during migration. The target deletes that boundary, every JavaScript adapter, and
-the Node runtime. The current evidence does not establish that Bend2 can implement the core and all
-required host effects, that the proposed target architecture is smaller or safer, or that the
-extracted laws are preserved.
+the Node runtime.
 
-## Required findings
+## Published findings
 
-| Work item | Required source | Findings that support **Go** | Findings that support **Prototype only** or **No-go** | Status |
+| Work item | Source | Findings that support continuing the prototype | Findings that stop a production migration | Status |
 |---|---|---|---|---|
-| `work-bend2-language` | [`language-review.md`](language-review.md) and `examples/lang-*` | **LANGUAGE-GO-FINDINGS-PENDING** | **LANGUAGE-STOP-FINDINGS-PENDING** | Not published |
-| `work-bend2-architecture` | [`architecture-review.md`](architecture-review.md) and [`target-architecture.md`](target-architecture.md) | **ARCHITECTURE-GO-FINDINGS-PENDING** | **ARCHITECTURE-STOP-FINDINGS-PENDING** | Not published |
-| `work-bend2-laws` | [`laws.bend`](laws.bend), [`laws-trace.md`](laws-trace.md), and compiled evidence | **LAWS-GO-FINDINGS-PENDING** | **LAWS-STOP-FINDINGS-PENDING** | Not published |
+| `work-bend2-language` | [`language-review.md`](language-review.md), [`examples/index.md`](examples/index.md) | `LANG-F-01` through `LANG-F-09` prove the affine type, law, result, and C-effect model; `LANG-F-07`, `LANG-F-10`, and `LANG-F-11` prove the concurrency and native parallelism model; `LANG-CAP-01` through `LANG-CAP-04` prove filesystem, TCP, UDP, environment, time, and randomness primitives; `LANG-F-17` proves a C-only native effect needs no JavaScript runtime. | `LANG-CAP-05` leaves process spawn, streaming, wait, signals, kill, and cancellation as an incomplete C-effect family. `LANG-CAP-06` leaves JSON as an incomplete Bend2 module or C import. `LANG-CAP-07` and `LANG-CAP-08` depend on those prerequisites. `LANG-F-25` records the limited test, debug, profiling, REPL, and incremental-build tooling. | Published and independently accepted in `contribution-b512a726a54efc7df28921fa1c876aa9`. |
+| `work-bend2-architecture` | [`architecture-review.md`](architecture-review.md), [`target-architecture.md`](target-architecture.md) | `F1` through `F24` name concrete deletions or merges and their possible losses. The target assigns every mutable fact to one of eight owners and lists all 28 subsystem synchronization pairs. `F2`, `F4`, `F6`, `F8`, `F16`, `F19`, `F20`, `F22`, and `F23` provide substantial prototype targets. | Every deletion and merge still needs operator approval. A wrong deletion can lose replay, process, authorization, custody, landing, or public-surface behavior as recorded under each finding. | Review and target published as `contribution-2d159f005e24f4cd60b6985b47eb037c` and `contribution-3164141d06b6aaee6930870b40ea5f26`; independent reviews accepted both documents. |
+| `work-bend2-laws` | [`laws-proposed.md`](laws-proposed.md) | The 138 rows supply specific source and test traces for custody (`CUST-*`), capacity (`CAP-*`), wake (`WAKE-*`), ledger (`LEDG-*`), closed shapes (`CS-*`), authorization (`AB-*`), permissions (`PM-*`), contribution and landing (`CL-*`), and development (`DEV-*`) behavior. They give Phase 1 a concrete law corpus. | No row is binding until operator approval. The document identifies 12 enforced but unpinned arms and eight proposed rows (`PROP-1..3`, `PR-01..05`); approved unpinned rows need tests before migration. `laws.bend` is intentionally not populated before those decisions. | Candidates published in `contribution-1b67c4212caa8f41138c0f113e955171`; operator decisions pending. |
 
-The revision replaces every pending marker with finding or law IDs, file links, and the evidence
-paths cited by the source document. It does not convert an absence of evidence into supporting
-evidence.
+An unpublished implementation or an unapproved proposal is not supporting evidence for **Go**.
 
 ## Decision rules
 
@@ -75,12 +83,13 @@ Phase 1 proof:
    interprocess transport, terminal IO, clocks, entropy, credential access, and provider protocol
    IO. A missing owner is a no-go or a named prerequisite that must close before the phase that
    needs it.
-3. The target architecture names a smaller, enforceable subsystem set, assigns one owner to each
-   durable fact and effect, and states what each subsystem cannot own.
-4. The architecture review names concrete deletions or merges whose value exceeds the cost of the
-   coexistence boundary and migration phases.
-5. Every extracted law has a parity proof assigned to a phase. Every proposed law is clearly
-   separated from current compatibility requirements.
+3. The operator has approved the BATON2 deletion and merge set. The approved target assigns one
+   owner to each durable fact and effect and states what each subsystem cannot own.
+4. The approved architecture deletions provide enough value to justify the coexistence boundary
+   and migration phases, and every recorded loss has a proving test before deletion.
+5. The operator has decided every candidate in [`laws-proposed.md`](laws-proposed.md). Every
+   approved law appears in `laws.bend`, has a parity proof assigned to a phase, and has a pinning
+   test when the candidate was marked unpinned. Rejected rows remain documented decisions.
 6. Phase 1 produces zero unexplained differences across the frozen corpus, extracted laws, closed
    validation mutations, replay prefixes, and wake projections.
 7. Each migration rollback restores the preceding phase from the same ledger without deleting or
@@ -107,7 +116,10 @@ specific case. Qualifying cases include:
 - the migration and rollback mechanisms add more operational state than the target architecture
   removes.
 
-These are decision conditions, not current findings.
+The current recommendation meets the second and third conditions: `LANG-CAP-05` and
+`LANG-CAP-06` are credible prerequisites but incomplete, and several required production effects
+have no effect-specific compiled implementation. It also lacks the operator approvals and Phase 1
+parity result required for **Go**.
 
 ### Do not start the prototype
 
@@ -147,21 +159,37 @@ The following evidence moves a **Go** decision toward **Prototype only** or **No
 Evidence from a new Bend commit triggers a re-pin decision. It does not silently revise the result
 for the current pin.
 
-## Final recommendation template
+## Decision record
 
-The orchestrator completes this section after all three work items publish.
+> **Recommendation:** **Prototype only.** Execute Phase 0 and Phase 1. Do not transfer production
+> authority to Bend2.
+>
+> **Language basis:** `LANG-F-01..11`, `LANG-F-17`, and `LANG-CAP-01..04` support a native shadow
+> decision core with filesystem and network primitives. `LANG-CAP-05` and `LANG-CAP-06` leave the
+> process lifecycle and JSON implementations incomplete; `LANG-CAP-07` and `LANG-CAP-08` depend on
+> them. See [`language-review.md`](language-review.md) and the compiled evidence linked from
+> [`examples/index.md`](examples/index.md).
+>
+> **Architecture basis:** `F1..F24` and the eight-subsystem ownership model provide a concrete
+> simplification to evaluate. Every deletion remains subject to operator approval and to the loss
+> test recorded by its finding. See [`architecture-review.md`](architecture-review.md) and
+> [`target-architecture.md`](target-architecture.md).
+>
+> **Law basis:** the 138 `CUST-*`, `CAP-*`, `WAKE-*`, `LEDG-*`, `CS-*`, `AB-*`, `PM-*`, `CL-*`,
+> `PROP-*`, `PR-*`, and `DEV-*` rows provide the prototype corpus. They remain candidates until the
+> operator decides them, and the listed unpinned arms need tests before they can gate migration.
+> See [`laws-proposed.md`](laws-proposed.md).
+>
+> **Prototype evidence:** no Phase 1 differential run exists yet. The prototype must produce zero
+> unexplained differences across the frozen corpus, approved laws, refusal mutations, replay
+> prefixes, and wake projections before Phase 2 can be considered.
+>
+> **Evidence that would change the answer:** compiled and run implementations for the full
+> `LANG-CAP-05` process family, `LANG-CAP-06` JSON, and each remaining Git, terminal, credential,
+> provider, and transport effect; operator approval of the BATON2 deletions and law rows; a green
+> Phase 1 parity result; and successful rollback and canary proofs against thresholds declared in
+> advance.
 
-> **Recommendation:** **FINAL-OUTCOME-PENDING**
->
-> **Language basis:** **LANGUAGE-CITATIONS-PENDING**
->
-> **Architecture basis:** **ARCHITECTURE-CITATIONS-PENDING**
->
-> **Law basis:** **LAW-CITATIONS-PENDING**
->
-> **Prototype evidence:** **PHASE-1-EVIDENCE-PENDING**
->
-> **Evidence that would change the answer:** **DECISION-REVERSAL-EVIDENCE-PENDING**
-
-The final text lists adverse evidence as well as supporting evidence and states any condition the
-operator must satisfy before the next phase.
+This recommendation becomes **No-go** if the required host effects cannot be implemented through
+Base effects or declared C imports at an accepted pin, or if Phase 1 disproves a required law. It
+becomes **Go** only after every condition in the production-migration rule is supported by evidence.
