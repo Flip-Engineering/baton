@@ -388,6 +388,38 @@ export function projectBlockedInteraction(phase, attention) {
   const text = pending.kind === 'answer_question' ? pending.question : pending.approvalKind;
   return { kind: 'answer_question', summary: boundedBlockedInteractionSummary(text) };
 }
+// issue #140: the waitingOn lookups read the ledger for the LAST matching event, and
+// `events(1)` deep-clones the whole log to find it — O(ledger) per read on the observability
+// hot path (waves.progress polls the projection per member per cycle). The exact bounded read:
+// walk backwards from the eventCursor() tail in eventsView windows — clone-free frozen
+// references — until the predicate matches or seq 1 is reached, so a read's cost tracks the
+// distance from the tail to the match, not the ledger length. A coordination face without the
+// cursor/view pair keeps the full read it always served.
+// issue #492: the single numeric constant is the window size, 256 events. It bounds each
+// read's allocation to one window of frozen references, and the exact walk costs
+// ⌈distance/256⌉ windows; a smaller window multiplies per-read call overhead on the poll
+// path, a larger one re-grows the per-read allocation this helper exists to bound.
+export const WAITING_ON_TAIL_SCAN_CHUNK = 256;
+
+export function lastCoordinationEvent(driver, predicate) {
+  const coordination = driver?.coordination;
+  if (typeof coordination?.eventCursor !== 'function' || typeof coordination?.eventsView !== 'function') {
+    return typeof coordination?.events === 'function'
+      ? coordination.events(1).findLast(predicate) ?? null
+      : null;
+  }
+  let high = coordination.eventCursor();
+  while (high >= 1) {
+    const fromSeq = Math.max(1, high - WAITING_ON_TAIL_SCAN_CHUNK + 1);
+    const window = coordination.eventsView(fromSeq, high - fromSeq + 1);
+    for (let index = window.length - 1; index >= 0; index -= 1) {
+      if (predicate(window[index])) return window[index];
+    }
+    high = fromSeq - 1;
+  }
+  return null;
+}
+
 // issue #10 / docs/32 §5 (waiting-vocabulary): the single waitingOn projection, consumed
 // identically by the run view, the workflow view, and (through those) `runs.list` and the CLI
 // outline. The five kinds are closed (WAITING_ON_KINDS) and ride event-epoch `since` stamps —
@@ -397,11 +429,9 @@ export function projectBlockedInteraction(phase, attention) {
 export function projectWaitingOn(driver, current, phase, task, workers, blocked) {
   if (phase === 'awaiting_plan_approval') {
     const planId = current?.plan?.planId ?? null;
-    const events = typeof driver?.coordination?.events === 'function' ? driver.coordination.events(1) : [];
-    const proposal = planId
-      ? events.findLast((event) => event.kind === 'plan.version_proposed'
-        && event.payload?.plan?.planId === planId)
-      : events.findLast((event) => event.kind === 'plan.version_proposed');
+    const proposal = lastCoordinationEvent(driver, planId
+      ? (event) => event.kind === 'plan.version_proposed' && event.payload?.plan?.planId === planId
+      : (event) => event.kind === 'plan.version_proposed');
     if (!proposal) return null;
     return {
       kind: 'plan_approval',
@@ -434,10 +464,10 @@ export function projectWaitingOn(driver, current, phase, task, workers, blocked)
     .filter(Boolean);
   const pendingTask = candidates.find((candidate) => candidate.status === 'pending');
   if (pendingTask) {
-    const receipt = typeof driver?.coordination?.events === 'function'
-      ? driver.coordination.events(1).find((event) => event.kind === 'task.dispatch_deferred'
-        && event.payload?.taskId === pendingTask.id)
-      : null;
+    // The deferral receipt is idempotency-keyed per task (`task.dispatch_deferred:<taskId>:
+    // <taskCreatedSeq>`, re-skips never re-mint), so the last match is the only match.
+    const receipt = lastCoordinationEvent(driver, (event) => event.kind === 'task.dispatch_deferred'
+      && event.payload?.taskId === pendingTask.id);
     if (receipt) {
       return {
         kind: 'capacity_ceiling',

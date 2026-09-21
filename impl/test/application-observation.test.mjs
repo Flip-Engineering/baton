@@ -12,7 +12,7 @@
 //      on both sides of the boundary; the module function's parameter list is the member's own
 //      with 'application' prepended; the 11 async members keep async.
 //   3. THE READS ARE THE RECORDING — the bucket appends nothing: zero append calls in the
-//      module, and the durable-read census (139 driver-coordination reads) is pinned
+//      module, and the durable-read census (136 driver-coordination reads) is pinned
 //      against the pre-move source, member for member.
 //   4. THE HELPERS MOVED ONCE — the 142 relocated module-scope declarations
 //      (94 functions, 48 consts) are declared exactly once, module-side; the host
@@ -53,7 +53,7 @@ const RELOCATED = Object.freeze(["ACTION_INPUT_ENVELOPE","ACTION_TURN_RESPONSE_K
 const IMPORT_BACK = Object.freeze(["ACTION_INPUT_ENVELOPE","ACTION_TURN_RESPONSE_KIND","APPLICATION_PROFILE_RECORD_ACTOR","APPLICATION_PROFILE_RECORD_KIND","APPLICATION_RUN_TERMINAL_PHASES","APPLICATION_STEERING_REGISTERED_KIND","APPLICATION_WAVE_DRIVER_DETACHED_KIND","APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND","APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND","APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND","APPLICATION_WORKFLOW_RECORD_ACTOR","APPLICATION_WORKFLOW_RECORD_KIND","APPLICATION_WORKFLOW_SELECTION_RECORD_KIND","ATTENTION_PAGE_BYTES","EPISODE_TOPICS","EXPLICIT_RESULT_CONSTRAINTS","MAX_ATTENTION","MAX_ATTENTION_TEXT_BYTES","MAX_RUN_RECORDS","MAX_RUN_VIEW_BYTES","MAX_SCRATCHPAD_VIEW_ITEMS","NOISE_TELEMETRY_OPERATIONAL_KINDS","PROVIDER_EXECUTION_SETTLED_PHASES","READ_ONLY_RESULT_DEFINITION","RESULT_POLICY_CONSTRAINT_PREFIX","RUN_VIEW_SHED_STEPS","SECRET_SHAPED_TEXT","VERDICT_CORRECTIVE_TABLE","VERIFIER_DIAGNOSTIC_CODES","VERIFIER_DURATION_BOUND_MS","VERIFIER_EXECUTION_CODES","VERIFIER_EXECUTION_STATES","VERIFIER_OUTCOMES","VERIFIER_OWNERSHIPS","actionDoInputs","adoptionState","applicationError","assertResultIntentCoherence","assertWorkflowFeedbackAnchors","authority","boundedAttentionText","boundedBlockedInteractionSummary","boundedPlanNodes","byteBoundedPage","capBytesToScalar","capabilityEligibleSemanticActions","clone","closedEnum","debugFrameDegradedSummary","debugGateFromLiveCode","debugGateRefusal","debugTerminalCode","deepFreeze","digest","exactObject","exactPlanNodeRoute","exactPlanRoutes","goalPlanDispatchesPage","goalPlanReadAll","goalPlanRunPlansPage","goalPlanStorePage","normalizeCommandContext","normalizePrincipal","normalizeProfile","normalizeProfileRegistryEvent","normalizeRoute","normalizeSemanticAuthority","normalizeWorkflowFeedback","objectiveFirstLine","objectiveReach","objectiveResultPolicy","parseProfileConstraint","profileDefinition","profileRegistryCoordinate","profileRegistryKey","projectBlockedInteraction","projectContextPackageBranch","projectDecisionAttention","projectPlanRouteAuthority","projectProgressClass","projectRunRouteEvidence","projectScratchpadView","projectVerdictSurface","projectWaitingOn","projectedCleanupState","refs","requestedPlanNodeRoute","resultExportArchiveCeiling","resultIntentConstraint","resultIntentFromConstraints","runActivity","runProgress","runViewNarrowedRead","runWorkerOwnership","safeScopePath","sanitizeHex64","scopeEntryWithin","semanticAuthorityPayload","semanticViewDigest","sessionAttachmentUnproven","terminalCauseNarrative","validId","validText","validateContextEvalArgs","workflowDefinitionPolicy","workflowEligibilityProjection","workflowNodeBudget","workflowRevisionBudget"]);
 const HOST_REEXPORTS = Object.freeze(["APPLICATION_RUN_TERMINAL_PHASES","MAX_SCRATCHPAD_VIEW_BYTES","MAX_SCRATCHPAD_VIEW_CACHE_KEYS","MAX_SCRATCHPAD_VIEW_ITEMS","PROVIDER_EXECUTION_SETTLED_PHASES","VERDICT_CORRECTIVE_TABLE","actionDoInputs","byteBoundedPage","goalPlanDispatchesPage","goalPlanReadAll","goalPlanRunPlansPage","projectContextPackageBranch","projectProgressClass","projectRouteAttestation","projectRunRouteEvidence","projectScratchpadView","projectVerdictSurface","semanticViewDigest"]);
 
-const COORDINATION_READS = 139;
+const COORDINATION_READS = 136;
 
 test('AO1: the module imports neither monolith and contains no implicit receiver at all', () => {
   const root = parseOf(read(MEMBER_FILE));
@@ -123,7 +123,7 @@ test('AO3: the bucket appends nothing and the durable-read census is pinned', ()
   assert.equal((moduleText.match(/recordDriver\(/gu) ?? []).length, 4,
     'the four store recordDriver writes ride along verbatim, through the same driver.coordination face');
   assert.equal((moduleText.match(/driver\??\.coordination/gu) ?? []).length, COORDINATION_READS,
-    'every durable read (131 from the moved bodies, 8 from the relocated projection helpers) happens module-side, through the same face');
+    'every durable read (131 from the moved bodies, 4 from the relocated projection helpers, 1 from the issue-140 tail-scan helper) happens module-side, through the same face');
 });
 test("AO4: the helpers moved once; the host imports back its staying readers and re-exports its consumers' names", () => {
   const moduleText = read(MEMBER_FILE);
