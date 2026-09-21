@@ -343,9 +343,16 @@ test('462-F: the six keep-green rows run green in the environment a successor le
     // ONE row at a time: each of the six starts a real resident and bounds its own handoff at a
     // few seconds, so running them concurrently turns the host's load into their failures (the
     // suite's own lane law: a file that spawns real processes runs with --test-concurrency=1).
+    // The child's summary is asserted below in TAP's spelling (`# pass 6`), so the reporter is
+    // pinned too rather than left to the default: the default is `tap` only while stdout is not a
+    // terminal, and a Node that prints the `spec` summary (`ℹ pass 6`) failed this row on the
+    // reporter's format with all six rows green — measured on this checkout's Node, where the
+    // concurrency bound alone leaves the child printing `ℹ pass 6` and no `# pass 6` at all.
+    // `run-suite.mjs` pins its own reporter the same way.
     const child = spawnSync(process.execPath, [
       '--test',
       '--test-concurrency=1',
+      '--test-reporter=tap',
       '--test-name-pattern', '§2\\.1|§2\\.5|§2\\.8|RS2|RS4|SA2',
       'test/issue306-reincarnation-red.test.mjs',
       'test/issue351-resident-shutdown.test.mjs',
