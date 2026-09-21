@@ -1754,7 +1754,7 @@ const F_EXEMPTIONS = Object.freeze([
   ['kimi-credential-setup.mjs', /FILE_MAX_BYTES = 16 \* 1024/u, 'uncataloged: setup-file bound (NOT the credential.file lane)'],
   ['mcp-core-tools.mjs', /REPO_ID_SCHEMA = Object\.freeze\(\{ type: 'string', minLength: 1, maxLength: 4096 \}\)/u, 'uncataloged: repoId identity schema (#314)'],
   ['mcp-descriptor.mjs', /maxMessageBytes: 256 \* 1024/u, 'uncataloged: descriptor message bound'],
-  ['mcp-northbound.mjs', /scope: \{ type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: \{ type: 'string', minLength: 1, maxLength: (4_096|4096) \} \}/u, 'uncataloged: scope item schemas'],
+  ['mcp-northbound.mjs', /scope: \{ type: 'array', minItems: 1, maxItems: FRAME_LIMITS\['wave\.member\.scope'\]\.value, uniqueItems: true, items: \{ type: 'string', minLength: 1, maxLength: (4_096|4096) \} \}/u, 'scope item byte bound uncataloged; the path count above it is the cataloged wave.member.scope row (#499)'],
   ['mcp-northbound.mjs', /message: \{ type: 'string', minLength: 1, maxLength: 4_096 \}/u, 'uncataloged: feedback finding message schema'],
   ['mcp-northbound.mjs', /^\s+\{ type: 'string', minLength: 1, maxLength: 4_096 \},$/u, 'uncataloged: workflow feedback free-form string schema'],
   ['mcp-northbound.mjs', /(summary|repoRoot): \{ type: 'string', minLength: 1, maxLength: (4_096|4096) \}/u, 'uncataloged: workflow feedback / repoRoot schemas'],
