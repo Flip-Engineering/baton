@@ -60,7 +60,12 @@ split below is the mandate, not an assignment list.
 - Approval. No law is written into `laws.bend` as law until the operator has approved it. The
   laws pillar delivers its candidates as a document on the branch
   (`docs/bend2/laws-proposed.md`): one row per candidate law, its kind (runtime or
-  development), its statement, and its trace. The root presents that document to the operator;
+  development), its statement, its trace, and a plain explanation. The plain explanation is
+  two to four sentences of plain technical English that a reader with no knowledge of Baton's
+  code, its issue tracker or its internal names can understand well enough to say yes or no: what
+  the law requires, what it forbids, and what goes wrong without it. No issue numbers, no
+  function or file names, no Baton-internal vocabulary in the explanation. The operator answers
+  each row yes or no from that explanation alone. The root presents that document to the operator;
   the operator approves, edits, or rejects each row; only approved rows enter `laws.bend`, each
   carrying the operator's decision. The same applies to the baton2 architecture's deletions and
   merges (part 2): they are presented to the operator for approval before the rewrite plan
