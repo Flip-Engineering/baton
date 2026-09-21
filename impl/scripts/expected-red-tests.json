@@ -263,6 +263,10 @@
       "prerequisite": "codex/gpt-5.6-sol"
     },
     {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
+      "reason": "#538"
+    },
+    {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
@@ -978,10 +982,6 @@
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web listener with pure stdio",
       "reason": "#289"
     },
     {
@@ -1822,10 +1822,6 @@
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
       "reason": "#87"
-    },
-    {
-      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
-      "reason": "#538"
     }
   ],
   "converged": [
