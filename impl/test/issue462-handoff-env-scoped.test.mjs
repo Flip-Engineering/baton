@@ -340,8 +340,14 @@ test('462-F: the six keep-green rows run green in the environment a successor le
     // inherited NODE_TEST_CONTEXT would report the six rows into THIS runner and print nothing.
     const childEnv = { ...process.env };
     delete childEnv.NODE_TEST_CONTEXT;
+    // The child's summary is asserted below in TAP's spelling (`# pass 6`), so the reporter is
+    // pinned rather than left to the default: Node 22's default is `tap` only while stdout is not
+    // a terminal, and a later Node prints the `spec` summary (`ℹ pass 6`) — the row then failed on
+    // the reporter's format with all six rows green. `run-suite.mjs` pins its own reporter the
+    // same way.
     const child = spawnSync(process.execPath, [
       '--test',
+      '--test-reporter=tap',
       '--test-name-pattern', '§2\\.1|§2\\.5|§2\\.8|RS2|RS4|SA2',
       'test/issue306-reincarnation-red.test.mjs',
       'test/issue351-resident-shutdown.test.mjs',
