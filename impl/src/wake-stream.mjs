@@ -689,6 +689,10 @@ export class WakeStream {
     }
     this._observationState = new Map();
     this._observedAt = 0;
+    // The ledger cursor this stream last took an observation at (#547): the observation arm rides
+    // the SAME append cursor every other frame rides, so a re-read happens because the deployment
+    // wrote something, never because a wall clock elapsed.
+    this._observedAtSeq = null;
     this._servedHeader = null;
     this._servedAt = 0;
     this._closed = false;
@@ -744,13 +748,20 @@ export class WakeStream {
 
   /** Observation frames: a crossing, and — for a class whose condition is a STANDING fault the
    * consumer must know about — once at attach. A class that reports a change (an incarnation) only
-   * establishes its baseline at attach: announcing "nothing changed yet" would be noise. */
+   * establishes its baseline at attach: announcing "nothing changed yet" would be noise.
+   *
+   * The crossing identity is the frame's own bounded identity (#272, #547): the class, the subject
+   * the consumer dedupes on, and the code the row carries — never a serialization of the payload.
+   * A standing fault whose live measurements drift (free bytes, inode counts) is ONE standing
+   * condition, so it is announced once; a changed state or code is a real crossing and is
+   * announced. Serializing the payload made the measurement drift itself read as a crossing. */
   _observationFrames(seq, ts, served) {
     const frames = [];
     const present = new Set();
     for (const { row, observed, key } of this._observations()) {
       present.add(key);
-      const signature = JSON.stringify(observed.payload);
+      const signature = JSON.stringify([observationKey(row), subjectOf(row, observed.payload),
+        stringField(observed.payload.code)]);
       const previous = this._observationState.get(key) ?? null;
       this._observationState.set(key, signature);
       if (previous === signature) continue;
@@ -792,17 +803,25 @@ export class WakeStream {
         frames.push(frame);
       }
     }
-    if (includeObservations && this._observationDue()) {
+    if (includeObservations && this._observationDue(head)) {
       frames.push(...this._observationFrames(cursor, this.now(), served));
     }
     return Object.freeze({ frames: Object.freeze(frames), cursor, lagged });
   }
 
-  _observationDue() {
+  /** Whether this pull re-reads the deployment's observations (#547). The trigger is the LEDGER's
+   * own append cursor — the same subscription every ledger-derived frame rides — so a crossing is
+   * announced because the deployment advanced, never on a poll. The one remaining timer is the
+   * CEILING the class documents: a condition that crosses while the deployment writes nothing is
+   * still announced within `observationMs`, so the bound is a guarantee, not the mechanism. */
+  _observationDue(head) {
     if (this.observation === null) return false;
     const now = this.now();
-    if (this._observedAt !== 0 && now - this._observedAt < this.observationMs) return false;
+    const advanced = this._observedAtSeq === null || head > this._observedAtSeq;
+    const ceiling = this._observedAt === 0 || now - this._observedAt >= this.observationMs;
+    if (!advanced && !ceiling) return false;
     this._observedAt = now;
+    this._observedAtSeq = head;
     return true;
   }
 
