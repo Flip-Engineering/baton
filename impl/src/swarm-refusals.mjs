@@ -11,14 +11,15 @@
 // (impl/src/swarm-state.mjs) OR the runtime's `refuse()` (impl/src/swarm-runtime.mjs) can raise
 // has exactly one row here, carrying:
 //   status   — the HTTP class the code crosses the web with: 404 not-found, 409 conflict/state,
-//              400 request shape, 403 permission, 503 only for genuinely transient (a shut-down
-//              runtime a resident restart repairs).
+//              400 request shape, 403 permission, 503 for what only the deployment repairs (a
+//              shut-down runtime a resident restart serves again, or a capability this
+//              deployment does not carry).
 //   raisedBy — which seam raises the code: 'fold' (the durable event fold), 'runtime' (the
-//              command runtime), 'coordinator' (a physical-convergence leg of the coordinator —
-//              the run stop, the kill, the drain — whose code a swarm verb surfaces through its
-//              own ports: `swarm.stop` drives the run stop, so the leg's vocabulary crosses this
-//              family's HTTP classes, not the web layer's transient fallthrough), or a
-//              combination for a spelling the family shares.
+//              command runtime), 'coordinator' (a physical leg of the coordinator — the run
+//              stop, the kill, the drain, and the contribution capture/check leg — whose code a
+//              swarm verb surfaces through its own ports: `swarm.stop` drives the run stop, so
+//              the leg's vocabulary crosses this family's HTTP classes, not the web layer's
+//              transient fallthrough), or a combination for a spelling the family shares.
 //   rule     — the one-line rule the code refuses on.
 //
 // Codes are NOT renamed (the fold's `participant_not_found` and the runtime's
@@ -102,6 +103,22 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_holder_release_refused: row(409, ['runtime'], 'the holder release batch does not fold against the current projection'),
   swarm_capture_base_unreachable: row(409, ['runtime'], 'the captured revision and the deployment target share no common ancestor'),
   contribution_commit_unresolved: row(409, ['runtime'], 'the contribution names a commit that does not resolve on its lane branch yet'),
+  // Issue #537: the capture/check leg's own refusals. These are minted OUTSIDE the runtime's
+  // `refuse()` — runtime-admission.mjs `captureContribution` (the capture window: workspace
+  // state, pause reservation) and contribution-service.mjs `capture`/`check` (revision identity,
+  // retention, identifier shape) — so the #430 source scan cannot see them, and every one crossed
+  // the web as the narrated 503 fallthrough before this table held them. `coordinator` is the
+  // raisedBy: the swarm verb surfaces the coordinator leg's typed refusals through the family's
+  // own HTTP classes.
+  contribution_workspace_unavailable: row(409, ['coordinator'], 'the participant workspace is closing or closed, so the capture window is gone — observe the seat rather than retrying'),
+  contribution_capture_not_paused: row(409, ['coordinator'], 'the legacy capture port captures a paused turn, and the seat holds no paused turn to capture'),
+  contribution_capture_conflict: row(409, ['coordinator'], 'the author\'s turn changed between reserving the pause record and the capture, so the reservation rolled back'),
+  capture_failed: row(409, ['coordinator'], 'the capture did not identify a revision: the author\'s checkout refused to yield a snapshot sha'),
+  contribution_retention_unavailable: row(503, ['coordinator'], 'this deployment\'s worktree manager carries no contribution retention ports — a deployment defect to repair, never a retry'),
+  checkpoint_failed: row(503, ['coordinator'], 'the retained checkpoint ref does not resolve back to the captured sha — a retention defect; inspect the resident'),
+  contribution_invalid: row(400, ['coordinator'], 'the contribution operation requires a non-empty identifier without a NUL'),
+  contribution_unknown: row(404, ['coordinator'], 'the check names a contributionId this seat has never captured'),
+  contribution_changed: row(409, ['coordinator'], 'the retained contribution no longer resolves to its revision'),
   route_degraded: row(409, ['runtime'], 'the named route\'s provider degraded it (one fault class took several seats inside one window); recruits pause on it until a probe succeeds'),
   // Issue #531: every route the recruit's selection names is ineligible (quota exhausted, blocked,
   // or a mix), so the recruit refuses before the host-capacity queue rather than waiting 120s to
