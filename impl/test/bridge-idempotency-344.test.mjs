@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from '../src/swarm-contract.mjs';
-import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
+import { webAdmittedCommandNames, webCardCommandNames } from '../src/web-northbound.mjs';
 import { BatonWebApplicationFacade } from '../src/mcp-web-bridge.mjs';
 import { CoordinationStore, McpFleetServer, WebNorthbound } from '../src/index.mjs';
 
@@ -27,7 +27,7 @@ const SESSION = Object.freeze({
 });
 const PRINCIPAL = Object.freeze({ actor: 'mcp:bridge-user:bridge-session', principalId: 'bridge-user', sessionId: 'bridge-session' });
 const CONTEXT = Object.freeze({ transport: 'mcp', requestId: '7', idempotencyKey: 'mcp.call:7' });
-const WIRE_CARD = Object.freeze([...new Set([...webAdmittedCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])]);
+const WIRE_CARD = Object.freeze([...new Set([...webAdmittedCommandNames(), ...webCardCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])]);
 
 function facadeWith(commands) {
   const forwarded = [];
@@ -146,7 +146,7 @@ function readingApplication() {
   return {
     application: {
       repoId: REPO_ID,
-      card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+      card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: webCardCommandNames() }),
       async authorizeReplay() { return true; },
       async command(name, args) { commands.push({ name, args }); return { schemaVersion: 1, command: name }; },
     },
@@ -209,7 +209,7 @@ test('344: bound keys derive over every argument axis', async (t) => {
   const effects = [];
   const application = {
     repoId: REPO_ID,
-    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: webCardCommandNames() }),
     async authorizeReplay() { return true; },
     async command(name, args) { effects.push({ name, args }); return { schemaVersion: 1, command: name }; },
   };
@@ -241,7 +241,7 @@ test('344: read tools carry no idempotencyKey', async (t) => {
   const NOW = Date.parse('2026-09-16T00:00:00.000Z');
   const application = {
     repoId: REPO_ID,
-    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: webCardCommandNames() }),
     async authorizeReplay() { return true; },
     async command(name) { return { schemaVersion: 1, command: name }; },
   };

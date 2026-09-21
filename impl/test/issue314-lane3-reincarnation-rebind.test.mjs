@@ -44,6 +44,7 @@ import test from 'node:test';
 
 import { MockAdapter, createDriver } from '../src/index.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import { webCardCommandNames } from '../src/web-northbound.mjs';
 import { openBatonDeployment } from '../src/application-deployment.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
@@ -634,7 +635,7 @@ test('314e-l3-e: the session lifecycle frame is routed to its own MCP method, be
   let deliver = null;
   const application = {
     repoId: REPO_ID,
-    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: webCardCommandNames() }),
     async authorizeReplay() { return true; },
     async actionAuthority() { return { schemaVersion: 1 }; },
     async command(name) { return { schemaVersion: 1, command: name }; },

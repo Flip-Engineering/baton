@@ -36,6 +36,7 @@ import {
   SWARM_COMMAND_DEFINITIONS,
 } from '../src/swarm-contract.mjs';
 import { swarmViewBridgeFrameBytes, webAdmittedCommandNames } from '../src/web-northbound.mjs';
+import { webCardCommandNames } from '../src/web-northbound.mjs';
 import { APPLICATION_TOOL, swarmApplicationToolDefinitions } from '../src/mcp-northbound.mjs';
 import { BatonWebApplicationFacade } from '../src/mcp-web-bridge.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
@@ -238,7 +239,7 @@ function stubApplication(handler) {
     card: () => ({
       schemaVersion: 1,
       repoId: 'repo-a',
-      commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
+      commands: webCardCommandNames(),
     }),
     async authorizeReplay() {
       return true;
@@ -689,7 +690,7 @@ test('343-e: the baton_swarm_view tool descriptor accepts cursor and documents t
   // family — the resident's real wire card projection.
   const card = {
     repoId: 'repo-a',
-    commands: [...new Set([...webAdmittedCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])],
+    commands: [...new Set([...webAdmittedCommandNames(), ...webCardCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])],
     agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest },
   };
   const session = {
@@ -782,7 +783,7 @@ test('343-g: the swarm view tool oversize refusal names the swarm own narrowing 
     card: () => ({
       schemaVersion: 1,
       repoId: "repo-a",
-      commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
+      commands: webCardCommandNames(),
     }),
     async authorizeReplay() {
       return true;

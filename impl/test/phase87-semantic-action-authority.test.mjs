@@ -16,6 +16,7 @@ import {
   WebNorthbound,
 } from '../src/index.mjs';
 import { northboundCapabilityToken } from '../src/northbound-capability-authority.mjs';
+import { webCardCommandNames } from '../src/web-northbound.mjs';
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -178,7 +179,7 @@ test('SA2/SA3: Web denies semantic authority before quota/admission and persists
   let authorityAvailable = true;
   const application = {
     repoId: 'repo-phase87',
-    card: () => ({ repoId: 'repo-phase87', commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+    card: () => ({ repoId: 'repo-phase87', commands: webCardCommandNames() }),
     async actionAuthority() {
       calls.push('authority');
       if (!authorityAvailable) throw Object.assign(new Error('gone'), { code: 'application_action_scope_mismatch' });
@@ -272,7 +273,7 @@ test('SA2/SA4: MCP denies before quota/admission, marks run.act destructive, and
   let quotaCalls = 0;
   const application = {
     repoId: 'repo-phase87',
-    card: () => ({ repoId: 'repo-phase87', commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+    card: () => ({ repoId: 'repo-phase87', commands: webCardCommandNames() }),
     async authorizeReplay() { calls.push('replay'); return true; },
     async actionAuthority() { calls.push('authority'); return resolved; },
     async command(_name, _args, _principal, context) {
@@ -354,7 +355,7 @@ test('SA4: Web client and MCP bridge preflight use the exact remote semantic mut
     async session() { return session; },
     async doctor() {
       return { ready: true, application: {
-        repoId: 'repo-phase87', commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
+        repoId: 'repo-phase87', commands: webCardCommandNames(),
         agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest },
       } };
     },
@@ -365,7 +366,7 @@ test('SA4: Web client and MCP bridge preflight use the exact remote semantic mut
     },
   };
   const facade = new BatonWebApplicationFacade(client, {
-    repoId: 'repo-phase87', commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
+    repoId: 'repo-phase87', commands: webCardCommandNames(),
     agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest },
   }, session);
   const principal = {

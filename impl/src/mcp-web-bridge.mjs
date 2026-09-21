@@ -5,43 +5,31 @@ import { BatonWebClient, discoverBatonConnection } from './application-cli.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { McpFleetServer, coreMutationAnswer, coreWakeHandoff, coreWakeHandoffFilter } from './mcp-northbound.mjs';
 import { coreCommandFacts, CORE_TOOL_NAMES } from './mcp-core-tools.mjs';
+import { webCardCommandNames } from './web-northbound.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from './swarm-contract.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { WAKE_CLASSES, parseWakeFilter, wakeMatches } from './wake-stream.mjs';
 
-// REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval is absent from
-// ORDINARY_COMMANDS because it is not an APPLICATION_COMMAND_DEFINITIONS entry at all (see the
-// note above that table in application.mjs) — there is no `application.command(...)` string
-// dispatch for this Web bridge to forward. It is reachable only as a direct method call,
-// `application.contextEval(...)`, today.
-// docs/36 §8.3 L8 / D8 (R-OP-15b), M4b — the remote_bridge profile projection of the registry: the
-// same five operations. The bridge forwards the legacy application-command spelling it dispatches
-// (the canonical `baton_*` tools route to these same commands), so there is NO reachability change
-// this phase; the retained legacy names resolve to their canonical operation as registry aliases
-// (`run.act`→`run.do`, `run.inspect`→`run.view`), which is what retires their M0 ledger rows.
-// canonical operation ← legacy application command (both reach one remote operation): run.view ←
-// run.inspect, run.do ← run.act; the others are already one spelling. The registry owns these as
-// aliases (retiring the mcp.web-bridge ledger rows); the bridge forwards the legacy spelling.
-// #227 (operator-ordered direct landing, 2026-08-15): the facade carries the WIRE's registry —
-// the resident admits every verb below (WAVE_WEB_ENTRIES + the application table); the old
-// five-verb allowlist forced every harness to hand-roll a BatonWebClient proxy. The wire card
-// (doctor.application.commands) is the authority: every listed command EXCEPT shutdown
-// (never proxied — host-side lifecycle only).
-const ORDINARY_COMMANDS = Object.freeze([
-  'application.help',
-  'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
-  'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',
-  'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work',
-  'run.review', 'run.integrate', 'run.export', 'run.recover',
-  'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
-  'run.message.send', 'run.message.receipt', 'run.attention.watch',
-  'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
-  'run.board.post', 'run.board.read', 'run.knowledge.seed',
-  'runs.list',
-  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
-  'waves.stop', 'waves.run', 'waves.compile',
-]);
+// REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval is absent from this
+// bridge's forwarding table because it is not a served application command at all (see the note
+// above APPLICATION_COMMAND_DEFINITIONS in application.mjs) — there is no
+// `application.command(...)` string dispatch for this bridge to forward. It is reachable only as
+// a direct method call, `application.contextEval(...)`, today.
+// docs/36 §8.3 L8 / D8 (R-OP-15b), M4b: the bridge forwards the legacy application-command
+// spelling it dispatches (the canonical `baton_*` tools route to these same commands; e.g.
+// run.view ← run.inspect, run.do ← run.act), which the registry owns as aliases.
+// #227 (operator-ordered direct landing, 2026-08-15): the facade carries the WIRE's registry, and
+// its landing note records the rule this floor follows: the wire card (doctor.application.commands)
+// is the authority. The floor is the served card's own command derivation (`webCardCommandNames`,
+// the U-N4 export at web-northbound.mjs — the exact command list the /v1/application-card route
+// serves), so a real resident's card passes by construction, and a card that has lost any
+// production-served command (a half-migrated resident, a foreign application) refuses at open.
+// Drift repair: the hand list this derivation replaced kept demanding sixteen served verbs
+// (run.message.*, run.scratchpad.*, run.board.*, run.knowledge.seed, waves.*) that left the
+// card with the docs/36 grammar landing, so every bridge open against a real resident refused
+// at the constructor (the phase87 SA4 row, pinned under #227).
+const ORDINARY_COMMANDS = Object.freeze(webCardCommandNames());
 const MUTATIONS = new Set([
   'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve', 'run.feedback',
   'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate',

@@ -49,7 +49,7 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { McpFleetServer } from '../src/mcp-northbound.mjs';
 import { wrapProductionMcpServer } from '../src/production-mcp-complete.mjs';
 import { BatonWebApplicationFacade } from '../src/mcp-web-bridge.mjs';
-import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
+import { webAdmittedCommandNames, webCardCommandNames } from '../src/web-northbound.mjs';
 import {
   SWARM_COMMAND_DEFINITIONS, SWARM_EVENT_KINDS, SWARM_RECRUIT_MODES, SWARM_VIEW_PROJECTION_NAMES,
 } from '../src/swarm-contract.mjs';
@@ -347,7 +347,7 @@ const SESSION = Object.freeze({
 });
 const PRINCIPAL = Object.freeze({ actor: 'mcp:bridge-user:bridge-session', principalId: 'bridge-user', sessionId: 'bridge-session' });
 const CONTEXT = Object.freeze({ transport: 'mcp', requestId: 'r1', idempotencyKey: 'mcp.call:r1' });
-const WIRE_CARD = Object.freeze([...new Set([...webAdmittedCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])]);
+const WIRE_CARD = Object.freeze([...new Set([...webAdmittedCommandNames(), ...webCardCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])]);
 
 /** The served agent surface exactly as a client meets it: the real McpFleetServer (ordinary
  * surface) under the production wrapper, over a stub application card. */
@@ -356,7 +356,7 @@ function servedSurface(t) {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const application = {
     repoId: REPO_ID,
-    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: webCardCommandNames() }),
     async authorizeReplay() { return true; },
     async actionAuthority() {
       return { schemaVersion: 1, actionId: 'a', kind: 'stop', effect: 'run_stop', requiredCapabilities: ['emergency_stop'], authorityDigest: 'x' };

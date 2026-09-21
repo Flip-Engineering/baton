@@ -8602,7 +8602,22 @@ export class SwarmRuntime {
       if (existing && existing.participantId !== participant.participantId) {
         refuse('Contribution identity already belongs to another author', 'swarm_replay_conflict');
       }
-      const capture = await this.coordinator.captureContribution(worker.id, { contributionId: args.contributionId });
+      let capture;
+      try {
+        capture = await this.coordinator.captureContribution(worker.id, { contributionId: args.contributionId });
+      } catch (error) {
+        if (error?.code !== 'contribution_workspace_unavailable') throw error;
+        // Issue #537: the capture leg (runtime-admission.mjs `captureContribution`) mints the bare
+        // code when the author workspace is already closing or closed. This arm is the ONE seam
+        // that knows the seat the capture names, so the runtime raises the family refusal here
+        // with the seat facts in the detail (the #483 split: the leg mints, the runtime raises).
+        refuse(
+          `Contribution capture refused: participant ${participant.participantId}'s workspace is`
+          + ` ${worker.status ?? 'unavailable'} (closing or closed), so the revision cannot be captured from it`,
+          'contribution_workspace_unavailable',
+          { participantId: participant.participantId, workspaceState: worker.status ?? null },
+        );
+      }
       // The base the captured revision sits on (issue #301): derived from the author's own
       // checkout at capture time, and refused TYPED when its history cannot reach the deployment
       // target — a revision that shares no common ancestor with the target could never integrate,

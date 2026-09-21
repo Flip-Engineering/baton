@@ -101,6 +101,13 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_holder_live: row(409, ['runtime'], 'the holder whose seats are being released is still live'),
   swarm_holder_release_refused: row(409, ['runtime'], 'the holder release batch does not fold against the current projection'),
   swarm_capture_base_unreachable: row(409, ['runtime'], 'the captured revision and the deployment target share no common ancestor'),
+  // Issue #537: the capture leg (runtime-admission.mjs `captureContribution`) mints the bare code
+  // when the author workspace is already closing or closed — the seat is settling, so this is a
+  // state the caller observes (409). The runtime's swarm.capture arm is the seam that assembles
+  // the family refusal: it attaches the participant and the observed workspace state to the
+  // refusal detail and re-raises with the leg's own code and message byte-stable (the #483
+  // split: the leg mints, the runtime raises).
+  contribution_workspace_unavailable: row(409, ['runtime'], 'the author workspace is closing or closed, so the revision cannot be captured from it'),
   contribution_commit_unresolved: row(409, ['runtime'], 'the contribution names a commit that does not resolve on its lane branch yet'),
   route_degraded: row(409, ['runtime'], 'the named route\'s provider degraded it (one fault class took several seats inside one window); recruits pause on it until a probe succeeds'),
   // Issue #531: every route the recruit's selection names is ineligible (quota exhausted, blocked,

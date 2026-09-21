@@ -19,6 +19,7 @@ import { createBatonWebMcpServer } from '../src/mcp-web-bridge.mjs';
 import { serveMcpStdio } from '../src/mcp-northbound.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from '../src/swarm-contract.mjs';
 import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
+import { webCardCommandNames } from '../src/web-northbound.mjs';
 import { startWakeResident, wakeFrame } from './wake-resident-double.mjs';
 
 const REPO_ID = 'repo-wake-mcp';
@@ -30,7 +31,7 @@ const CARD = Object.freeze({
   schemaVersion: 1,
   repoId: REPO_ID,
   commands: Object.freeze([...new Set([
-    ...webAdmittedCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS),
+    ...webAdmittedCommandNames(), ...webCardCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS),
   ])]),
   readiness: Object.freeze({ schemaVersion: 1, routes: Object.freeze([]) }),
 });

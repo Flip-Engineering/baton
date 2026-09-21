@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { webCardCommandNames } from '../src/web-northbound.mjs';
 
 // #227 red-first enforcement suite (operator-ordered direct landing, 2026-08-15).
 // Methodology: EVERY pin here was RED at the pre-implementation HEAD (verified by run)
@@ -14,6 +15,7 @@ import assert from 'node:assert/strict';
 //   4. The store exposed no O(1) ledger cursor (eventsView() copies the world).
 
 const WIRE_CARD = [
+  ...webCardCommandNames(),
   'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list',
   'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
   'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',

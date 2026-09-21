@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
-import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
+import { webAdmittedCommandNames, webCardCommandNames } from '../src/web-northbound.mjs';
 import { BatonWebClient } from '../src/application-cli.mjs';
 import { BatonWebApplicationFacade } from '../src/mcp-web-bridge.mjs';
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
@@ -27,7 +27,7 @@ const PRINCIPAL = Object.freeze({ actor: 'mcp:bridge-user:bridge-session', princ
 const CONTEXT = Object.freeze({ transport: 'mcp', requestId: '1', idempotencyKey: 'mcp.call:1' });
 // The wire card as the resident composes it: the web-admitted command names (the same export the
 // wire-card coverage pin reads) plus the swarm family the resident admits.
-const WIRE_CARD = Object.freeze([...new Set([...webAdmittedCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])]);
+const WIRE_CARD = Object.freeze([...new Set([...webAdmittedCommandNames(), ...webCardCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])]);
 
 function facadeWith(commands) {
   const forwarded = [];
@@ -75,7 +75,7 @@ function server(t, options = {}) {
   const NOW = Date.parse('2026-09-14T00:00:00.000Z');
   const application = {
     repoId: REPO_ID,
-    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+    card: () => ({ schemaVersion: 1, repoId: REPO_ID, commands: webCardCommandNames() }),
     async authorizeReplay() { return true; },
     async actionAuthority() { return { schemaVersion: 1, actionId: 'a', kind: 'stop', effect: 'run_stop', requiredCapabilities: ['emergency_stop'], authorityDigest: 'x' }; },
     async command(name) { return { schemaVersion: 1, command: name }; },
@@ -142,7 +142,7 @@ function bridgeServer(t, fetchImpl) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-bridge-refusal-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const NOW = Date.parse('2026-09-14T00:00:00.000Z');
-  const card = { repoId: REPO_ID, commands: [...webAdmittedCommandNames()] };
+  const card = { repoId: REPO_ID, commands: [...new Set([...webAdmittedCommandNames(), ...webCardCommandNames()])] };
   const client = new BatonWebClient({
     baseUrl: 'https://baton.local/', origin: 'https://baton.local/', repoId: REPO_ID, token: 'bridge-refusals-token',
     commandTimeoutMs: 5_000, pollMs: 10, fetchImpl, clock: () => NOW, sleep: async () => {},

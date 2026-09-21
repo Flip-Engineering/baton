@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
+import { webCardCommandNames } from '../src/web-northbound.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { createBatonWebMcpServer } from '../src/mcp-web-bridge.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from '../src/swarm-contract.mjs';
@@ -52,7 +53,7 @@ const CARD = Object.freeze({
   schemaVersion: 1,
   repoId: REPO_ID,
   commands: Object.freeze([...new Set([
-    ...webAdmittedCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS),
+    ...webAdmittedCommandNames(), ...webCardCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS),
   ])]),
   agentExperience: Object.freeze({ registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest }),
 });
