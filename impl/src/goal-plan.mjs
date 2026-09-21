@@ -5,6 +5,7 @@ import { normalizeContextEffectNodeBinding } from './context-call.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 import { normalizeWorkflowRevision } from './workflow-revision.mjs';
+import { SECRET_SHAPED_TEXT, secretShapedText } from './messages.mjs';
 
 export class GoalPlanValidationError extends Error {
   constructor(message, code = 'goal_plan_invalid') {
@@ -91,15 +92,6 @@ function exactObject(value, fields, code = 'goal_plan_invalid', { rejectUnknown 
       { field: key, rule: 'unknown-field', expectation: `one of ${fields.join(', ')}` });
   }
 }
-const SECRET_SHAPED_TEXT = Object.freeze([
-  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u,
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/iu,
-  /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/u,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u,
-  /\bAKIA[A-Z0-9]{16}\b/u,
-  /\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/u,
-]);
-function secretShapedText(value) { return SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value)); }
 function normalizedText(value, maxBytes, label) {
   if (typeof value !== 'string' || value.includes('\0')) fail(`${label} is invalid`, 'goal_plan_invalid');
   const normalized = value.normalize('NFKC').trim();

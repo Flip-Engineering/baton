@@ -37,8 +37,10 @@ export function contextProgramPure(value) {
 /** The secret-shaped text a context source may not carry — the ONE table both the scan
  * (`normalizeContextSource`, `boundedText`) and the typed refusal's detail read: `pattern` is the
  * name the `context_source_sensitive` refusal publishes (`private_key`, `keyed_secret`,
- * `sk_token`, `gh_token`) and `expression` is the shape the scan tests. The matched text is never
- * quoted anywhere: a refusal that echoed it would leak the very credential it refused. */
+ * `sk_token`, `gh_token`, `aws_key`, `jwt`) and `expression` is the shape the scan tests. The
+ * expressions are byte-identical to the ONE set in messages.mjs (#548), so the scan cannot miss a
+ * shape the redactor knows. The matched text is never quoted anywhere: a refusal that echoed it
+ * would leak the very credential it refused. */
 export const CONTEXT_SOURCE_SECRET_SHAPES = Object.freeze([
   Object.freeze({
     pattern: 'private_key',
@@ -55,6 +57,14 @@ export const CONTEXT_SOURCE_SECRET_SHAPES = Object.freeze([
   Object.freeze({
     pattern: 'gh_token',
     expression: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u,
+  }),
+  Object.freeze({
+    pattern: 'aws_key',
+    expression: /\bAKIA[A-Z0-9]{16}\b/u,
+  }),
+  Object.freeze({
+    pattern: 'jwt',
+    expression: /\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/u,
   }),
 ]);
 const SECRET_SHAPED_TEXT = Object.freeze(
