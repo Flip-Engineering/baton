@@ -60,6 +60,9 @@ function fixture(t) {
 
   const store = new CoordinationStore(join(directory, 'coordination'));
   const workers = [];
+  // Every Run-start request the runtime hands the deployment, in order, so a row can read what the
+  // seat's recruitment passed on (its brief, and the wake narrowing its session is configured with).
+  const requests = [];
   const checkouts = new Map();
   const coordinator = {
     list: () => workers,
@@ -83,6 +86,7 @@ function fixture(t) {
     situationGit: { repoRoot: repo },
     startRun: async (request) => {
       if (workers.some((row) => row.runId === request.runId)) return;
+      requests.push(request);
       const carried = request.workspace ?? null;
       const carriedCheckout = carried?.workspaceId === undefined
         ? null : join(repo, '.baton', 'wt', carried.workspaceId);
@@ -113,7 +117,7 @@ function fixture(t) {
   const call = (command, args = {}, caller = owner) => runtime.command(`swarm.${command}`,
     { swarmId: SWARM_ID, idempotencyKey: `wake529-${++key}`, ...args }, caller);
   return {
-    store, runtime, repo, baseSha, workers, call,
+    store, runtime, repo, baseSha, workers, requests, call,
     seat: (participantId) => store.swarm(SWARM_ID)?.participants?.[participantId] ?? null,
     recruit: (participantId, resumeFrom) => call('recruit', {
       participantId, objective: `Work as ${participantId}`,
@@ -277,4 +281,92 @@ test('529-g: a terminal wake line names the command that acts on it', async (t) 
     'a terminal class carries the command that acts on it, with the swarm filled in from the frame');
   assert.doesNotMatch(block, /recruited[^\n]*· next:/u,
     'a non-terminal class names no follow-up command');
+});
+
+// ── (h) a deployment-scoped event about this lane rides the block ───────────
+
+test('529-h: a deployment-scoped event that resolves to this lane rides the block', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test deployment-scoped wake rows' });
+
+  await f.recruit('alpha');
+  const binding = f.seat('alpha').bindings.at(-1);
+  assert.ok(binding?.workerId, 'alpha is bound to a worker');
+  // A deployment-scoped class carries no swarmId of its own: the row names only the worker the
+  // turn paused on, so its coordinates ride in through `wakeAttribution` — the same fold the wake
+  // stream serves frames from — and the successor of that lane reads it in its brief.
+  const paused = f.store.recordDriver('turn.paused', {
+    worker: binding.workerId, taskId: binding.taskId, turn: 'turn-1', reason: 'awaiting a caller',
+  }, { actor: 'driver', key: 'wake529-paused-alpha' });
+
+  await f.call('stop', { participantId: 'alpha', reason: 'Re-route' });
+  await f.recruit('delta', 'alpha');
+  await f.answer('delta');
+
+  const block = wakeBlockOf(f.seat('delta').brief);
+  assert.match(block, new RegExp(`seq ${paused.event.seq} · paused`, 'u'),
+    'the predecessor lane\'s paused turn rides the successor\'s block');
+  assert.match(block, new RegExp(`paused[^\\n]*· next: baton swarm guide ${SWARM_ID} alpha`, 'u'),
+    'the deployment-scoped line names the command that acts on it, with the lane resolved from attribution');
+});
+
+// ── (i) a deployment-scoped event about another lane never rides the block ──
+
+test('529-i: a deployment-scoped event about another lane never rides the block', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test the deployment-scope lane filter' });
+
+  await f.recruit('alpha');
+  await f.recruit('gamma');
+  const other = f.seat('gamma').bindings.at(-1);
+  assert.ok(other?.workerId, 'gamma is bound to a worker');
+  const paused = f.store.recordDriver('turn.paused', {
+    worker: other.workerId, taskId: other.taskId, turn: 'turn-2', reason: 'awaiting a caller',
+  }, { actor: 'driver', key: 'wake529-paused-gamma' });
+
+  await f.call('stop', { participantId: 'alpha', reason: 'Re-route' });
+  await f.recruit('delta', 'alpha');
+  await f.answer('delta');
+
+  const block = wakeBlockOf(f.seat('delta').brief);
+  assert.ok(block.length > 0, 'delta reads its own lane\'s events');
+  assert.doesNotMatch(block, new RegExp(`seq ${paused.event.seq}`, 'u'),
+    'a deployment-scoped row about another seat\'s lane never rides this seat\'s block');
+});
+
+// ── (j) the recruit's declared wake narrowing rides the seat ────────────────
+
+test('529-j: a recruit\'s autoWake narrowing is recorded on the seat and reaches its run', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test the autoWake narrowing' });
+
+  await f.call('recruit', {
+    participantId: 'alpha', objective: 'Work as alpha',
+    // A repeated class and an alias, so the recorded value proves it is the stream's own
+    // canonical spelling and set, never the caller's text.
+    autoWake: { kinds: ['left', 'context', 'left'], participants: ['alpha'] },
+  });
+
+  const expected = { kinds: ['context_updated', 'left'], participants: ['alpha'] };
+  assert.deepEqual({ ...f.seat('alpha').autoWake }, expected,
+    'the join records the narrowing in the wake stream\'s own class spelling');
+  const started = f.requests.find((request) => request.participantId === 'alpha');
+  assert.ok(started, 'the recruit started a run');
+  assert.deepEqual({ ...started.autoWake }, expected,
+    'the run this seat starts carries the declared narrowing into its bridge issue');
+});
+
+// ── (k) an unknown wake class refuses before any membership ─────────────────
+
+test('529-k: an autoWake naming an unknown class refuses before the seat joins', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test the autoWake closed set' });
+
+  await assert.rejects(
+    f.call('recruit', { participantId: 'alpha', objective: 'Work as alpha', autoWake: { kinds: ['no-such-class'] } }),
+    (error) => error.code === 'swarm_command_invalid' && error.detail?.field === 'autoWake'
+      && Array.isArray(error.detail?.unknown) && error.detail.unknown.includes('no-such-class'),
+  );
+  assert.equal(f.seat('alpha'), null, 'no seat joined on a declared class the stream does not serve');
+  assert.equal(f.requests.some((request) => request.participantId === 'alpha'), false, 'no run started');
 });

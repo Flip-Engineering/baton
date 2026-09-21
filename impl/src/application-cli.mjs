@@ -2738,7 +2738,8 @@ function parseSwarmCli(args, idempotencyKey) {
           `${entry.flag} must be the positive ledger seq this guidance answers`);
       }
       values[entry.field] = value;
-    } else if (entry.field === 'options' || entry.field === 'permissions' || entry.field === 'policy') {
+    } else if (entry.field === 'options' || entry.field === 'permissions' || entry.field === 'policy'
+      || entry.field === 'autoWake') {
       // Issue #474: the parse's own refusal is typed like #431's argv refusals (the flag, the rule
       // and the admitted form), and the shape the wire schema requires — an object for `options`
       // and `policy`, an array for `permissions` — refuses HERE, where the caller can still fix it.

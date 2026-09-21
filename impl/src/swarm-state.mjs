@@ -1309,6 +1309,16 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
         : Object.freeze({ harness: p.route.harness, model: p.route.model, effort: p.route.effort ?? null }),
       scope: p.scope === undefined || p.scope === null ? null : Object.freeze([...p.scope]),
       resumeFrom: p.resumeFrom ?? null,
+      // Issue #529 (docs/54 §4.1): the wake narrowing the seat was recruited with. It rides the
+      // join (validated against the wake stream's closed class set before the row was written) and
+      // is read at bridge-issue time, where the session's auto-subscription is configured.
+      autoWake: p.autoWake === undefined || p.autoWake === null ? null
+        : Object.freeze({
+          kinds: p.autoWake.kinds === undefined || p.autoWake.kinds === null
+            ? null : Object.freeze([...p.autoWake.kinds]),
+          participants: p.autoWake.participants === undefined || p.autoWake.participants === null
+            ? null : Object.freeze([...p.autoWake.participants]),
+        }),
       brief: p.brief ?? null,
       // Issue #464: the brief's caller-independent reach (see participantBriefReach above) — the
       // length and the ledger row, never the text again.

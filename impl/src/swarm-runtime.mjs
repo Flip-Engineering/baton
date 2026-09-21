@@ -54,7 +54,7 @@ import { landContribution } from './worktree.mjs';
 // redaction), reused verbatim — a landing failure that grew a second truncation rule would publish
 // a tail nobody else's bound describes.
 import { appendStderrTail, crashedStderrTail } from './cli-adapters.mjs';
-import { deriveWakeFrame, wakeClassFor } from './wake-stream.mjs';
+import { deriveWakeFrame, parseWakeFilter, wakeAttribution, wakeClassFor } from './wake-stream.mjs';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -6449,8 +6449,11 @@ export class SwarmRuntime {
         parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
       await this.startRun({ runId, objective: brief, options: runOptions,
         swarmId: swarm.swarmId, participantId: participant.participantId,
-        sharedContext: Object.values(currentSwarm.context ?? {}),
-        ...(workspace ? { workspace } : {}) }, principal, context);
+        ...(workspace ? { workspace } : {}),
+        // Issue #529 (docs/54 §4.1): the narrowing the join recorded, so the session this answer
+        // starts opens the same subscription the recruit declared however long the question waited.
+        ...(seatRow.autoWake === undefined || seatRow.autoWake === null ? {} : { autoWake: seatRow.autoWake }) },
+        principal, context);
       const worker = this.coordinator.list().find((row) => row.runId === runId);
       if (!worker) refuse('Deferred start admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
       const checkout = typeof this.coordinator.workspaceAttachment === 'function'
@@ -6723,6 +6726,28 @@ export class SwarmRuntime {
     ];
   }
 
+  /** Issue #529 (docs/54 §3.1): the seat coordinates a DEPLOYMENT-scoped wake row must name to
+   * ride this brief — the seat's own participant id and, when a `resumeFrom` recruit continues a
+   * lineage, the predecessor seat's, each together with the run and the worker/task bindings the
+   * fold holds for it. The seat's own Run is admitted after its brief is composed, so the
+   * coordinates the fold already holds for the lane are what a row about that lane's run or worker
+   * resolves to through `wakeAttribution`. */
+  _wakeSeatCoordinates(swarm, participantId, predecessorId) {
+    const ids = new Set();
+    for (const id of [participantId, predecessorId]) {
+      if (typeof id !== 'string' || id.length === 0) continue;
+      ids.add(id);
+      const row = Object.hasOwn(swarm.participants ?? {}, id) ? swarm.participants[id] : null;
+      if (row === null) continue;
+      if (typeof row.runId === 'string' && row.runId.length > 0) ids.add(row.runId);
+      for (const binding of row.bindings ?? []) {
+        if (typeof binding.workerId === 'string' && binding.workerId.length > 0) ids.add(binding.workerId);
+        if (typeof binding.taskId === 'string' && binding.taskId.length > 0) ids.add(binding.taskId);
+      }
+    }
+    return ids;
+  }
+
   /** The brief one seat is recruited with (#318 deliverables 3 and 4): the recruiter's objective
    * verbatim, then the swarm situation — the peers and their scopes, the contracts published so
    * far, the commits landed on the target since the base — then, for a seat admitted onto a
@@ -6931,26 +6956,36 @@ export class SwarmRuntime {
     // produced events reads them, and a swarm that has produced none renders no block at all. The
     // seat reads what happened through the same mechanism parked guidance uses: durable ledger
     // rows composed at recruitment time. The wakeClassFor derivation (wake-stream.mjs) maps each
-    // ledger row to its wake class; the brief renders the swarm-scoped events whose swarmId
-    // matches this swarm, newest first under the situation byte budget.
+    // ledger row to its wake class; the block carries this swarm's own swarm-scoped events plus
+    // the deployment-scoped events whose resolved coordinates name this seat's lane, newest first
+    // under the situation byte budget.
     const sinceSeq = predecessor?.lastCheckpoint?.seq ?? swarm.seq ?? 0;
     const swarmId = swarm.swarmId;
     const ledgerEvents = ledger ?? this.store.eventsView();
+    // The two scopes §3.1 names: a swarm-scoped row rides when it belongs to this swarm; a
+    // deployment-scoped row rides when the coordinates the stream resolves it to name this seat or
+    // the predecessor seat its lineage continues — the seat's own Run is admitted after this brief
+    // is composed, so a row about that lane resolves through the fold's own bindings.
+    const seatCoordinates = this._wakeSeatCoordinates(swarm, args.participantId,
+      predecessor?.participantId ?? null);
+    const attribution = wakeAttribution([swarm]);
     const wakeLines = [];
     for (const event of ledgerEvents) {
       if (event.seq <= sinceSeq) continue;
       const classRow = wakeClassFor(event);
       if (classRow === null) continue;
-      // This swarm's own events and nothing else: a deployment-scoped class (a row that carries
-      // no swarmId) is not this seat's news, and a sibling swarm's events never ride here.
-      if (classRow.scope !== 'swarm') continue;
-      const payload = event.payload ?? {};
-      if (payload.swarmId !== swarmId) continue;
       // Each line renders from the ONE frame derivation the wake stream itself serves
       // (deriveWakeFrame), so the brief can never name a class, a subject or a follow-up command
       // the stream would not: a TERMINAL class carries the command that acts on it, which is what
       // makes a completion the seat reads actionable (#541).
-      const frame = deriveWakeFrame(event);
+      const frame = deriveWakeFrame(event, attribution);
+      if (classRow.scope === 'swarm') {
+        // This swarm's own events and nothing else: a sibling swarm's events never ride here.
+        if (frame.swarmId !== swarmId) continue;
+      } else if (!seatCoordinates.has(frame.participantId) && !seatCoordinates.has(frame.runId)
+        && !seatCoordinates.has(frame.workerId)) {
+        continue;
+      }
       const participantLabel = frame.participantId ?? '';
       const contributionLabel = frame.subject?.kind === 'contribution' ? ` ${frame.subject.id}` : '';
       wakeLines.push(`- [seq ${frame.seq} · ${frame.wakeClass} · ts ${frame.ts ?? ''}${contributionLabel}]:`
@@ -8193,6 +8228,38 @@ export class SwarmRuntime {
           refuse(`Swarm recruit work ${args.workId} not found in swarm ${args.swarmId}`, 'work_not_found',
             { field: 'workId', participantId: args.participantId, workId: args.workId });
         }
+        // Issue #529 (docs/54 §4.1): the wake narrowing this seat's session auto-subscribes with,
+        // judged BEFORE any membership is written against the ONE wake vocabulary the stream
+        // serves (parseWakeFilter's closed class set, aliases included). The `swarms` axis is
+        // never the recruiter's to declare: a seat's bridge token is scoped to its own swarm, so
+        // its subscription may only ever carry that swarm's events. A declaration that narrows
+        // neither axis is no declaration, and records nothing.
+        let autoWake = null;
+        if (args.autoWake !== undefined) {
+          const declared = args.autoWake;
+          const unknownAxis = Object.keys(declared).find((axis) => axis !== 'kinds' && axis !== 'participants');
+          if (unknownAxis !== undefined) {
+            refuse(`Swarm recruit autoWake carries no ${unknownAxis} axis`, 'swarm_command_invalid', {
+              field: `autoWake.${unknownAxis}`, rule: 'unknown-field', admitted: ['kinds', 'participants'],
+              participantId: args.participantId,
+            });
+          }
+          let parsed = null;
+          try {
+            parsed = parseWakeFilter({
+              kinds: declared.kinds ?? null, participants: declared.participants ?? null,
+            });
+          } catch (error) {
+            refuse(error.message, 'swarm_command_invalid', {
+              field: 'autoWake', rule: 'closed-set', participantId: args.participantId,
+              ...(error.detail ?? {}),
+            });
+          }
+          const kinds = parsed.kinds === null ? null : Object.freeze([...parsed.kinds].sort());
+          const participants = parsed.participants === null ? null
+            : Object.freeze([...parsed.participants].sort());
+          if (kinds !== null || participants !== null) autoWake = Object.freeze({ kinds, participants });
+        }
         // Issue #441: a package this deployment has not admitted cannot be attached, so the
         // recruit is refused BEFORE any membership is written — no seat joins on a package
         // nobody holds. The digest travels; the package itself was admitted by the root's CLI
@@ -8372,6 +8439,11 @@ export class SwarmRuntime {
           ...(args.mode === 'read_only' ? { mode: args.mode } : {}),
           ...(workspace ? { workspaceId: workspace.workspaceId } : {}),
           ...(predecessor ? { resumeFrom: args.resumeFrom } : {}),
+          // Issue #529 (docs/54 §4.1): the wake narrowing the seat's own session auto-subscribes
+          // with. It rides the join so the deployment's bridge issue reads it from the fold (the
+          // participant row carries it) exactly where it reads the seat's run and identity — the
+          // one place a session's wake configuration is declared.
+          ...(autoWake === null ? {} : { autoWake }),
           ...(pendDecision ? {} : { brief }),
         }, principal, resuming
           ? `swarm-participant-resume:${this._operationKey(command, args, principal)}`
@@ -8410,7 +8482,7 @@ export class SwarmRuntime {
         try {
           await this.startRun({ runId, objective: brief, options: runOptions,
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
-            ...(workspace ? { workspace } : {}) }, principal, context);
+            ...(workspace ? { workspace } : {}), ...(autoWake === null ? {} : { autoWake }) }, principal, context);
         const worker = this.coordinator.list().find((row) => row.runId === runId);
         if (!worker) refuse('Recruitment admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
         // The checkout this binding observed is recorded with the seat: the first recruit into a
