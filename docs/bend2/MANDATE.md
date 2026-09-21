@@ -30,8 +30,11 @@ split below is the mandate, not an assignment list.
 - This review is adversarial: it argues against the current design, names what it would delete,
   and states what Baton would lose if that deletion were wrong. Findings that do not name a
   concrete deletion or merge are not findings.
-- Produce a proposed target architecture for the rewrite, with the subsystem list, what each
-  owns, and what each is forbidden from owning.
+- Produce a proposed target architecture for the rewrite -- call it baton2 -- with the
+  subsystem list, what each owns, and what each is forbidden from owning. baton2 is the
+  simplified and refined architecture this review arrives at, not the current subsystem list
+  ported one for one. The rewrite plan (part 4) targets baton2; every phase of the plan names
+  the deletions and merges from this review it carries out.
 
 ### 3. Baton's laws in Bend2
 - Extract the invariants Baton actually enforces today (the closed-shape validators, the
@@ -43,6 +46,17 @@ split below is the mandate, not an assignment list.
 - Where Bend2's type system can make a law unrepresentable-as-violated (a forged principal
   field, an unowned capture path, an unbounded ledger read), state the law that way rather
   than as a runtime check.
+- The laws file carries two kinds of law, marked as such. Runtime laws are the invariants
+  above. Development laws are the rules Baton is built under, extracted from AGENTS.md,
+  CONTRIBUTING.md, the docs/ design documents, and the operator rulings recorded on issues
+  #541, #543, #529 and #539 -- among them: no cutoff of any kind on an agent control flow or an
+  input (no deadline, queue wait, size, count or buffer limit that stops work; a bound derived
+  from a physical resource carries its derivation); a verb records a durable intent and answers
+  its receipt at once, never a synchronous wait; wake is native and always on, never a verb a
+  model invokes; every refusal is typed and names its rule, its field and its remedy; a
+  contribution lands red-first, through review and integrate, never by hand; orchestration
+  gives a seat whole scope and full authority, never a slice; prose is plain technical English.
+  Each development law traces to the document or ruling it comes from.
 
 ### 4. Rewrite plan
 - The end state is a Baton written entirely in Bend2: no JavaScript, no Node runtime, no
@@ -56,6 +70,15 @@ split below is the mandate, not an assignment list.
   the next starts.
 - An honest go/no-go recommendation with the specific findings from parts 1 to 3 that support
   it.
+
+## Deliverable form
+Every pillar's output is a file on the branch: `docs/bend2/language-review.md`,
+`docs/bend2/architecture-review.md` (the adversarial review and the baton2 target
+architecture), `laws.bend`, `docs/bend2/rewrite-plan.md`, `docs/bend2/go-no-go.md`, and the
+examples. A contribution whose body carries findings but whose `commit` is null has delivered
+nothing to the branch: it cannot be reviewed against the tree or integrated. A lane commits its
+document on its own branch and records the commit in the contribution; the pillar lead reviews
+and integrates it onto `bend2-rewrite`.
 
 ## Constraints
 - Plain technical English throughout (AGENTS.md).
