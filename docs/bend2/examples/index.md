@@ -1,0 +1,25 @@
+# Bend2 proof examples index
+
+Every example pairs a `.bend` program (header: `# CLAIM:`) with a `.evidence.md` recording the
+host, the pinned reference, the toolchain, every command with its verbatim output, and a verdict.
+The convention is fixed by `README.md` in this directory. This index is named `index.md` so no
+test selects it: a changed `README.md` draws a wide gate set at landing (issue #546), and
+`README.md` itself is owned by the orchestrator.
+
+Rows marked "landing with the language review" arrive on the same branch as
+[`../language-review.md`](../language-review.md) (cherry-picked from the lane branch
+`baton/ws-78f229391cd49ec10cf1bb072bdd1a55`, commits `18065ce9` and `70f0078f`, unchanged).
+
+| Example | Claim (one line) | Files | Verdict |
+|---|---|---|---|
+| lang-core-types | The checker enforces affine use and Data-only copying, verifies termination by shrinking arguments, and refuses computed scrutinees, mutual recursion and reusable closures — each with a precise message. | `lang-core-types.bend`, `lang-core-types.evidence.md` | Claim holds at the pin; four refusals and one positive run recorded. |
+| lang-core-errors | Fallible effects answer the handle beside a `Result`, `IO.try` unwraps or exits (code 2), the `Fail` branch carries a U32 code and String message, and a `do` block binds only plain annotated binders. | `lang-core-errors.bend`, `lang-core-errors.evidence.md` | Claim holds at the pin; EBADF with a live handle, `IO.try` exit, and the destructuring refusal recorded. |
+| lang-core-effects | A foreign effect is a def whose body names a `.c` and a `.js` import; the same program runs interpreted, as a native executable (C host) and as emitted JavaScript under Node. | `lang-core-effects.bend`, `lang-core-effects.c`, `lang-core-effects.js`, `lang-core-effects.evidence.md` | Claim holds at the pin; all three lanes print `Core.double(21) = 42`. |
+| lang-core-imports | A module is a file imported by relative path under a local alias; an open law is proven in another file as `def M.name`; a Hub import fetches hash-pinned content at check time, so a checked-in module is the offline (vendored) form. | `lang-core-imports.bend`, `lang-core-imports-lib.bend`, `lang-core-imports.evidence.md` | Claim holds at the pin; open-law TODO refusal, cross-file proof, missing-file refusal, and the Hub-fetch refusal naming its URL recorded. |
+| lang-host-concurrency | The parallel call is two calls in one statement; the native runtime spreads it over the cores given to `--threads` (median 1.736 s at 1 thread, 0.330 s at 10, identical values); `IO.fork`/`IO.join` run computations concurrently on one event loop; the JavaScript target runs sequentially. | `lang-host-concurrency.bend`, `lang-host-concurrency.evidence.md` | Claim holds at the pin; 5-run scaling table and the `bun:ffi` boundary recorded. |
+| lang-host-gpu | `!` marks a parallel call for the GPU: the native build emits a Metal `.gpu` companion, `--gpu off` runs the CPU, and a binary without its companion recompiles the GPU program; both paths print the same value. | `lang-host-gpu.bend`, `lang-host-gpu.evidence.md` | Claim holds at the pin; `file(1)` output for the companion and both run paths recorded. |
+| lang-host-interop | Base ships filesystem, TCP, UDP and environment effects (one program runs all four on three lanes) and ships no process spawn and no JSON (`bend base exec`/`Json` refuse). | `lang-host-interop.bend`, `lang-host-interop.evidence.md` | Claim holds at the pin; six-line run output, the full `bend base` listing, and the two absent-surface refusals recorded. |
+| lang-host-foreign | A host effect Base does not ship is a def with a `.c`/`.js` pair: a process-spawn effect type-checks and runs on all lanes, answers whole stdout and the exit status, blocks the event loop for the command's life, and carries no handle, streaming, signals or kill. | `lang-host-foreign.bend`, `lang-host-foreign-exec.c`, `lang-host-foreign-exec.js`, `lang-host-foreign.evidence.md` | Claim holds at the pin; both branches (success, `exit 3`) on interpreter and native lanes recorded. |
+| lang-host-tooling | The toolchain is one command (check, run, native, JavaScript, page bundle, publish); the `#|` convention is `gates/test.ts`'s judge; `test`, `debug`, `repl` and `fmt` do not exist; the one companion tool is a formatting-only LSP. | `lang-host-tooling.bend`, `lang-host-tooling.evidence.md` | Claim holds at the pin; the command surface, the byte-identical `#|` diff, and the upstream test inventory recorded. |
+| c-only-spawn | An effect whose only host half is a C file builds a native binary that runs with no JavaScript in its runtime; the interpreter lane refuses the same file. | `c-only-spawn.bend`, `c-only-spawn-exec.c`, `c-only-spawn.evidence.md` | Claim holds at the pin. Not on this branch yet: contribution `dfa52a1f38c9108a4bbdfc331e73e519`, branch `baton/ws-3fbd5e9b51ff5a2b853073747fee1626` at `aeecf0d5`. |
+| toolchain-sanity | The pinned toolchain checks, runs and builds on this host. | `toolchain-sanity.bend`, `toolchain-sanity.evidence.md` | Owned by bend2-orchestrator2; landed on `bend2-rewrite`. |
