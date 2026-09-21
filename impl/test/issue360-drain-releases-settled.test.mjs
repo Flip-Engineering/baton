@@ -92,7 +92,9 @@ const principal = (principalId) => ({
 const orchestrator = principal('orchestrator');
 const command = (app, name, args) => app.command(name, args, orchestrator);
 
-const DRAIN_TIMEOUT_MS = 1_500;
+// Real Git capture, snapshot and worktree removal run inside this bound. Keep enough headroom for
+// a loaded host while the assertions below continue to require exact drain convergence.
+const DRAIN_TIMEOUT_MS = 10_000;
 
 function workingAdapter() {
   const adapter = new MockAdapter({

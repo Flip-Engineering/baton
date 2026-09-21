@@ -353,6 +353,7 @@ test('462-F: the six keep-green rows run green in the environment a successor le
   });
   assert.equal(status, 0,
     `the six rows pass in the seat's inherited environment:\n${stdout.slice(-4_000)}\n${stderr.slice(-4_000)}`);
-  assert.match(stdout, /# pass 6/u, 'and all six ran — a pattern that selects none would pass vacuously');
+  assert.match(stdout, /^(?:#|ℹ) pass 6$/mu,
+    'and all six ran — accept the Node test reporter summary marker used by this runtime');
   assert.match(stdout, /§2\.1|§2\.5|§2\.8|RS2|RS4|SA2/u, 'the six named rows are the ones that ran');
 });

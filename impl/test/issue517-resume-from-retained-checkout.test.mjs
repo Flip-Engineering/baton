@@ -40,7 +40,7 @@ const policy = Object.freeze({
   capabilityClasses: ['code', 'test'],
   limits: Object.freeze({
     maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
-    maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
+    maxTextBytes: 16 * 1024, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
     maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024,
     maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
   }),
@@ -185,7 +185,16 @@ test('517-a: a resume-from successor of a dead predecessor binds its retained ch
     swarmId: 'resumed', participantId: 'bravo', objective: 'Continue from alpha',
     options: selection, resumeFrom: 'alpha', idempotencyKey: 'recruit:resumed:bravo',
   });
-  assert.equal(typeof bravo.runId, 'string', 'the successor is admitted');
+  assert.equal(typeof bravo.runId, 'string', 'the successor recovery is admitted');
+
+  // #525 makes a recovered seat's continuation an explicit decision. The answer performs the
+  // deferred start, binding and workspace carry through the same deployment admission as an
+  // immediate recruit.
+  await second.command('swarm.guide', {
+    swarmId: 'resumed', participantId: 'bravo', message: 'Continue from alpha.',
+    idempotencyKey: 'guide:resumed:bravo',
+  });
+  await working(second.driver, bravo.runId);
 
   const swarm = second.driver.coordination.swarm('resumed');
   assert.equal(swarm.participants.bravo.workspaceId, alphaWorkspaceId,
