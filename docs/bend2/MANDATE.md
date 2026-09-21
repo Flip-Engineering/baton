@@ -7,8 +7,9 @@ The work has four parts. They run under one orchestrated swarm with sub-orchestr
 split below is the mandate, not an assignment list.
 
 ### 1. Bend2 language and runtime review
-- Obtain the current Bend2 language reference and the HVM runtime documentation, and vendor a
-  copy under `docs/bend2/reference/` on the branch so every lane reads the same source at the
+- The canonical source is https://bend-lang.com (the language site) and the HigherOrderCO
+  repositories it links. Obtain the current Bend2 language reference and the HVM runtime
+  documentation from there, and vendor a copy under `docs/bend2/reference/` on the branch so every lane reads the same source at the
   same version (record the upstream commit).
 - Install the toolchain on the deployment host if it can be installed; every claim about what
   Bend2 can or cannot express must be backed by a compiled, run example checked in under
