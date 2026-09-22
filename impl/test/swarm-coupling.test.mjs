@@ -282,7 +282,7 @@ test('an exclusive writer over a shared checkout is one claim at a time, and a g
   // release that frees it.
   await swarm.stop('joiner', 'joiner runtime lost');
   view = await swarm.view();
-  const gone = view.attention.find((row) => row.kind === 'coupling_writer_gone');
+  const gone = view.attention.rows.find((row) => row.kind === 'coupling_writer_gone');
   assert.deepEqual(gone, { kind: 'coupling_writer_gone', couplingId: 'writer-turn-2', participantId: 'joiner',
     workspaceId: couplingRow(view, 'writer-turn-2').workspaceId,
     next: { event: 'swarm.coupling_updated', couplingId: 'writer-turn-2', action: 'release' } });
@@ -299,7 +299,7 @@ test('a declared failure policy tells the dependents when a member is gone; inde
     contributionId: 'contribution-alpha-1', participantId: 'alpha', workId: 'W-A', body: 'Part A implemented',
   });
   let view = await swarm.view();
-  assert.equal(view.attention.some((row) => row.kind === 'group_member_gone'), false);
+  assert.equal(view.attention.rows.some((row) => row.kind === 'group_member_gone'), false);
 
   // The lead declares the policy on the builders' group and W-B declares its dependency on W-A.
   await swarm.work({ workId: 'W-B', objective: 'Part B', dependsOn: [{ workId: 'W-A' }] });
@@ -315,7 +315,7 @@ test('a declared failure policy tells the dependents when a member is gone; inde
   // dependent work (W-B, declared on alpha's W-A) is told. Independent peers continue.
   await swarm.stop('alpha', 'runtime lost');
   view = await swarm.view();
-  const row = view.attention.find((row) => row.kind === 'group_member_gone');
+  const row = view.attention.rows.find((row) => row.kind === 'group_member_gone');
   assert.deepEqual(row, { kind: 'group_member_gone', couplingId: 'policy-impl', groupId: 'impl',
     participantId: 'alpha', policy: 'independent', dependentWork: ['W-B'] });
   assert.equal(view.participants.find((row) => row.participantId === 'beta').status, 'active',
@@ -325,7 +325,7 @@ test('a declared failure policy tells the dependents when a member is gone; inde
   await delegated.couple({ couplingId: 'policy-impl', coupling: 'failure', action: 'release', reason: 'integration window over' });
   view = await swarm.view();
   assert.equal(couplingRow(view, 'policy-impl').released, true);
-  assert.equal(view.attention.some((row) => row.kind === 'group_member_gone'), false);
+  assert.equal(view.attention.rows.some((row) => row.kind === 'group_member_gone'), false);
 });
 
 test('a member that leaves hands its live session to its recruiter, then to the creator, and the row names the reclaim', async (t) => {
@@ -333,7 +333,7 @@ test('a member that leaves hands its live session to its recruiter, then to the 
   // beta leaves organizationally while its session keeps running.
   await delegated.leave({ participantId: 'beta', reason: 'turn complete' });
   let view = await swarm.view();
-  let row = view.attention.find((row) => row.kind === 'member_left_session_live' && row.participantId === 'beta');
+  let row = view.attention.rows.find((row) => row.kind === 'member_left_session_live' && row.participantId === 'beta');
   assert.equal(row.responsibleParticipant, 'lead', 'the recruiter is the responsible party');
   assert.equal(row.responsibleActor, null);
   assert.deepEqual(row.next, { command: 'swarm.stop', swarmId: swarm.id, participantId: 'beta' },
@@ -342,16 +342,16 @@ test('a member that leaves hands its live session to its recruiter, then to the 
   // The lead leaves too: responsibility walks up to the swarm's creator.
   await delegated.leave({ reason: 'delegation complete' });
   view = await swarm.view();
-  row = view.attention.find((row) => row.kind === 'member_left_session_live' && row.participantId === 'beta');
+  row = view.attention.rows.find((row) => row.kind === 'member_left_session_live' && row.participantId === 'beta');
   assert.equal(row.responsibleParticipant, null, 'no living participant ancestor remains');
   assert.equal(row.responsibleActor, 'direct:root', 'the creator is named as the responsible party');
-  row = view.attention.find((row) => row.kind === 'member_left_session_live' && row.participantId === 'lead');
+  row = view.attention.rows.find((row) => row.kind === 'member_left_session_live' && row.participantId === 'lead');
   assert.equal(row.responsibleActor, 'direct:root', 'the lead\'s own row names the creator too');
 
   // Reclaiming is the explicit stop the row named: after it, the row is gone.
   await swarm.stop('beta', 'reclaimed by the responsible party');
   view = await swarm.view();
-  assert.equal(view.attention.some((row) => row.kind === 'member_left_session_live' && row.participantId === 'beta'), false,
+  assert.equal(view.attention.rows.some((row) => row.kind === 'member_left_session_live' && row.participantId === 'beta'), false,
     'the reclaim cleared the row');
 });
 

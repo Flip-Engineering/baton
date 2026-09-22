@@ -244,7 +244,7 @@ test('438d: the participants view over 40 seats with checkouts answers inside th
   const started = Date.now();
   const view = await f.call('view', { projection: 'participants' });
   const elapsed = Date.now() - started;
-  assert.equal(view.participants.length, 40);
+  assert.equal(view.participants.length, 41, '40 seats plus the synthesized root row (docs/46 §5.1)');
   assert.ok(elapsed < WEB_WAIT_CEILING_ROW.value,
     `the participants view answered in ${elapsed} ms, inside the ${WEB_WAIT_CEILING_ROW.lane} bound of ${WEB_WAIT_CEILING_ROW.value} ms`);
 });

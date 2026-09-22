@@ -197,8 +197,8 @@ test('356-b: --projection participants on the watch carries the rows and the enr
   const answer = await watchSwarmFiltered(parsed, client);
 
   assert.equal(answer.projection, 'participants', 'an explicit projection rides');
-  assert.ok(Array.isArray(answer.participants) && answer.participants.length === 2,
-    'the participants rows ride the watch answer');
+  assert.ok(Array.isArray(answer.participants) && answer.participants.length === 3,
+    'the participants rows ride the watch answer, the synthesized root row included (docs/46 §5.1)');
   assert.ok(answer.participants.every((row) => typeof row.participantId === 'string'));
   assert.equal(answer.watch.event.wakeClass, 'contribution_recorded');
   assert.deepEqual(answer.watch.event.subject, { kind: 'contribution', id: 'c-1' },

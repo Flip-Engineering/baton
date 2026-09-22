@@ -165,7 +165,7 @@ test('#423 RED (stage: design-not-landed): a claim whose holder is gone raises c
   await f.call('update', { event: 'swarm.claim_updated', payload: { claimId: 'c-1', workId: 'W-1' } }, alpha);
   f.workers.find((row) => row.id === 'w-1').status = 'dead';
   const view = await f.call('view');
-  const row = (view.attention ?? []).find((entry) => entry.kind === 'claim_holder_gone' && entry.claimId === 'c-1');
+  const row = (view.attention?.rows ?? []).find((entry) => entry.kind === 'claim_holder_gone' && entry.claimId === 'c-1');
   assert.ok(row, 'land claim_holder_gone: the mirror of assignment_holder_gone (docs/45 §2.1)');
   assert.equal(row.participantId, 'alpha', 'the row names the gone holder (docs/45 §2.1)');
   assert.deepEqual(row.next, { event: 'swarm.claim_updated', claimId: 'c-1', status: 'released' },
@@ -206,10 +206,14 @@ test('#423 RED (stage: design-not-landed): the peers-now brief section renders h
   await f.call('update', { event: 'swarm.contribution_recorded', payload: {
     contributionId: 'alpha-progress', body: 'half of W-1', workId: 'W-1',
   } }, alpha);
-  await f.recruit('delta');
+  // docs/46 §4 (issue #274): the peers-now section is the `subtree`/`checkout` classes'
+  // exposure — delta is recruited INTO alpha's recorded checkout, so alpha's carried line is
+  // the docs/45 §6 line in full.
+  await f.call('recruit', { participantId: 'delta', objective: 'Continue working as delta',
+    shareWorkspaceWith: 'alpha' });
   const brief = f.starts.at(-1).objective;
   assert.match(brief, /Peers now/,
-    'land the peers-now section in every recruit and resume brief (docs/45 §6)');
+    'the peers-now section renders for the classes that carry it (docs/45 §6 as gated by docs/46 §4)');
   assert.match(brief, /alpha[^\n]*W-1|W-1[^\n]*alpha/,
     'the section names each peer\'s held work from the active assignments (docs/45 §6)');
   assert.match(brief, /alpha-progress/,
@@ -223,7 +227,7 @@ test('#423 RED (stage: design-not-landed): a claimed path observed changed on a 
     claimId: 'c-1', paths: ['impl/src/held.mjs'],
   } }, beta);
   const view = await f.call('view');
-  const overlap = (view.attention ?? []).find((entry) => entry.kind === 'shared_checkout_overlap');
+  const overlap = (view.attention?.rows ?? []).find((entry) => entry.kind === 'shared_checkout_overlap');
   assert.ok(overlap,
     'land shared_checkout_overlap: the shared checkout\'s changed set intersecting an active claim pages before commit (docs/45 §5)');
   assert.equal(overlap.workspaceId, WS_SHARED, 'the row names the shared checkout (docs/45 §5)');

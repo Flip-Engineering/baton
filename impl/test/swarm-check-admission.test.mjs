@@ -126,7 +126,7 @@ test('#269 item 2: a check that waits on the host authority reads queued on the 
     assert.equal(admission.ahead, 0);
     assert.deepEqual(admission.shortfall,
       { dimension: 'budget', observed: 0, required: 3, unit: 'cores' });
-    const queued = waiting.attention.find((row) => row.kind === 'check_queued');
+    const queued = waiting.attention.rows.find((row) => row.kind === 'check_queued');
     assert.ok(queued, 'the waiting check mints a check_queued attention row');
     assert.equal(queued.contributionId, 'c1');
     assert.equal(queued.position, 1);
@@ -144,7 +144,7 @@ test('#269 item 2: a check that waits on the host authority reads queued on the 
   const result = await pending;
   assert.equal(result.passed, true, 'the check still settles once admitted');
   const after = await f.call('view', {}, reviewer);
-  assert.equal(after.attention.some((row) => row.kind === 'check_queued'), false,
+  assert.equal(after.attention.rows.some((row) => row.kind === 'check_queued'), false,
     'the queued attention retires once the check is admitted');
   assert.equal(after.admission.find((row) => row.command === 'swarm.check')?.state, 'admitted');
 });
@@ -188,7 +188,7 @@ test('#269 item 2: a check the host cannot admit records admission_timeout and r
   assert.deepEqual(timeout.payload?.shortfall, shortfall);
   assert.equal(timeout.payload?.bypass, 'BATON_HOST_CAPACITY_DISABLED=1');
   const view = await f.call('view', {}, reviewer);
-  const attention = view.attention.find((row) => row.kind === 'check_queue_timeout');
+  const attention = view.attention.rows.find((row) => row.kind === 'check_queue_timeout');
   assert.ok(attention, 'the spent wait mints a check_queue_timeout attention row');
   assert.equal(attention.contributionId, 'c1');
   assert.equal(attention.checkId, 'k3');

@@ -111,7 +111,7 @@ test('every projection answers its own slice, keeps the frame, and the default s
 
   const participants = await f.call('view', { projection: 'participants' });
   assert.deepEqual(Object.keys(participants).filter((key) => FAMILIES.includes(key)), ['participants']);
-  assert.deepEqual(participants.participants.map((row) => row.participantId), ['lead', 'alpha', 'beta', 'leaf']);
+  assert.deepEqual(participants.participants.map((row) => row.participantId), ['lead', 'alpha', 'beta', 'leaf', 'root']);
 
   const contributions = await f.call('view', { projection: 'contributions' });
   assert.deepEqual(contributions.contributions.map((row) => row.contributionId), ['c-alpha']);
@@ -227,7 +227,7 @@ test('a participant-scoped view carries its own brief and no other, by roster in
   const alphaScope = await f.call('view', { participantId: 'alpha' });
 
   // Briefs: the scope's own row carries its brief; every other row says the text was withheld.
-  assert.deepEqual(alphaScope.participants.map((row) => row.participantId), ['alpha', 'leaf']);
+  assert.deepEqual(alphaScope.participants.map((row) => row.participantId), ['alpha', 'leaf', 'root']);
   assert.equal(alphaScope.participants[0].role, 'Build A');
   assert.equal(alphaScope.participants[1].role, null, 'another participant\'s brief is never in the view');
   assert.equal(alphaScope.participants[1].briefWithheld, true, 'withheld is said, not silently dropped');
@@ -236,7 +236,9 @@ test('a participant-scoped view carries its own brief and no other, by roster in
   assert.equal(alphaScope.participants.some((row) => row.participantId === 'lead'), false,
     'the recruiter outside the subtree is not here at all');
   // #464 (third half): a withheld row carries the brief's REACH {bytes, seq, exposure}, never the text.
+  // The root row (docs/46 §5.1) is the derived actor row and carries no brief reach at all.
   assert.equal(alphaScope.participants.every((row) => row.participantId === 'alpha'
+    || row.participantId === 'root'
     || (typeof row.brief === 'object' && row.brief !== null && row.briefWithheld === true)), true,
     'no carried row keeps another seat\u2019s composed brief');
 
@@ -262,7 +264,7 @@ test('a participant-scoped view carries its own brief and no other, by roster in
   }, { actor: 'worker:w-2', key: 'swarm-operation:probe-in-flight' });
 
   const global = await f.call('view');
-  const row = global.attention.find((entry) => entry.kind === 'operation_unconfirmed');
+  const row = global.attention.rows.find((entry) => entry.kind === 'operation_unconfirmed');
   assert.deepEqual(row, {
     kind: 'operation_unconfirmed', command: 'swarm.guide', participantId: 'beta',
     operationKey: 'swarm-operation:probe-in-flight', state: 'unconfirmed', code: null,
@@ -270,15 +272,15 @@ test('a participant-scoped view carries its own brief and no other, by roster in
   assert.equal(row.request, undefined);
   assert.equal(JSON.stringify(row).includes('digest'), false, 'the recorded row itself carries no body either');
   const attentionSlice = await f.call('view', { projection: 'attention' });
-  assert.deepEqual(attentionSlice.attention, global.attention, 'the attention slice is the same attention');
+  assert.deepEqual(attentionSlice.attention.rows, global.attention.rows, 'the attention slice is the same attention');
   assert.equal(JSON.stringify(global).includes(secret), false, 'no attention row carries a request body');
 
   // A scoped view carries only the attention its subtree can act on: beta's operation is not
   // alpha's business, and its own is.
   const alphaScoped = await f.call('view', { participantId: 'alpha' });
-  assert.equal(alphaScoped.attention.some((entry) => entry.kind === 'operation_unconfirmed'), false);
+  assert.equal(alphaScoped.attention.rows.some((entry) => entry.kind === 'operation_unconfirmed'), false);
   const betaScoped = await f.call('view', { participantId: 'beta' });
-  assert.equal(betaScoped.attention.some((entry) => entry.kind === 'operation_unconfirmed'), true);
+  assert.equal(betaScoped.attention.rows.some((entry) => entry.kind === 'operation_unconfirmed'), true);
 });
 
 test('one runtime record, one classification: the view, the wake feed and the bridge all carry it', async (t) => {
@@ -329,10 +331,10 @@ test('one runtime record, one classification: the view, the wake feed and the br
   worker.status = 'dead';
   worker.paused = false;
   const dead = await f.call('view');
-  assert.deepEqual(dead.attention.find((entry) => entry.kind === 'participant_runtime_dead'),
+  assert.deepEqual(dead.attention.rows.find((entry) => entry.kind === 'participant_runtime_dead'),
     { kind: 'participant_runtime_dead', participantId: 'alpha', state: 'dead' });
   f.workers.splice(f.workers.indexOf(worker), 1);
-  assert.equal((await f.call('view')).attention.some((entry) => entry.kind === 'participant_runtime_dead'), false,
+  assert.equal((await f.call('view')).attention.rows.some((entry) => entry.kind === 'participant_runtime_dead'), false,
     'an unbound seat is not a dead runtime');
 });
 

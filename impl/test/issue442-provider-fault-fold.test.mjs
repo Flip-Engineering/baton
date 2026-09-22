@@ -220,11 +220,11 @@ test('442-a1: a provider-fault kill folds ONE fault row, settles the seat, and p
   assert.deepEqual({ ...alpha.fault.route }, { ...ROUTE });
   assert.equal(alpha.fault.resetAt, RESET_AT);
   assert.equal(alpha.fault.workerId, seat.workerId);
-  assert.deepEqual(view.attention.filter((row) => row.kind === 'participant_runtime_dead'), [],
+  assert.deepEqual(view.attention.rows.filter((row) => row.kind === 'participant_runtime_dead'), [],
     'the specific fault row replaces the generic dead-runtime row, never both');
 
   // The attention row the root acts on: the fault, its route and reset, and the next act.
-  const attention = view.attention.filter((row) => row.kind === 'provider_fault');
+  const attention = view.attention.rows.filter((row) => row.kind === 'provider_fault');
   assert.equal(attention.length, 1, 'the faulted seat pages once');
   assert.equal(attention[0].participantId, 'alpha');
   assert.equal(attention[0].workerId, seat.workerId);

@@ -305,12 +305,13 @@ test('464c-c: a 39-seat swarm whose briefs are the live ~17 KB answers its parti
 
   const answer = await f.send('swarm.view', { swarmId: SWARM, projection: 'participants' });
   assert.equal(answer.projection, 'participants');
-  assert.equal(answer.participants.length, 39, 'every seat answers in the ONE frame');
+  assert.equal(answer.participants.length, 40, 'every seat answers in the ONE frame, root row included (docs/46 §5.1)');
   assert.equal(answer.page?.next ?? null, null,
     'no cursor: the roster did not have to be walked — a seat\'s first look answers every peer (#464 item 2)');
   assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, result: answer }), 'utf8') <= WIRE_FRAME,
     `and the answer fits the ${FRAME_LIMITS['wire.frame'].lane} frame it was measured against`);
   for (const row of answer.participants) {
+    if (row.participantId === 'root') continue; // docs/46 §5.1: the derived actor row carries neither reach nor workspace.
     assertReach(row, row.participantId);
     assert.equal(row.workspace.commitsTotal, 200, `${row.participantId}: the live row load really rides this fixture`);
     assert.equal(row.workspace.commits.length, FRAME_LIMITS['view.workspace.commits'].value,

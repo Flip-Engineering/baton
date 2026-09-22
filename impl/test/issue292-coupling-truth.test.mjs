@@ -266,10 +266,13 @@ test('a review is attributed to the ACTOR: the reviewing member, or the acting p
     contributionId: 'contribution-alpha-1', participantId: 'alpha', body: 'Part A ready',
   });
 
-  // The root (no participant row) reviews: the row names the root's principal, never null.
+  // The root (no participant row) reviews: the DURABLE row keeps reviewerId null with the
+  // principal on `actor` (assertAttribution), and the VIEW renders the attribution against the
+  // synthesized root row — reviewerId 'root' (docs/46 §5.3, issue #274).
   await root.swarms.open(swarm.id).review({ contributionId: 'contribution-alpha-1', decision: 'accept', reason: 'verified' });
   let view = await swarm.view();
-  assert.equal(view.reviews['contribution-alpha-1'][0].reviewerId, 'direct:root');
+  assert.equal(view.reviews['contribution-alpha-1'][0].reviewerId, 'root');
+  assert.equal(view.reviews['contribution-alpha-1'][0].actor, 'root');
   await delegated.review({ contributionId: 'contribution-alpha-1', decision: 'comment', reason: 'second look' });
   view = await swarm.view();
   assert.equal(view.reviews['contribution-alpha-1'][1].reviewerId, 'lead');

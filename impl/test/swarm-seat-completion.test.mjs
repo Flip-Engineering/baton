@@ -70,7 +70,7 @@ function fixture(t, { lastCrash } = {}) {
 }
 
 const rowOf = (view, participantId) => view.participants.find((entry) => entry.participantId === participantId);
-const deadRowOf = (view, participantId) => view.attention.find((entry) => entry.kind === 'participant_runtime_dead'
+const deadRowOf = (view, participantId) => view.attention.rows.find((entry) => entry.kind === 'participant_runtime_dead'
   && entry.participantId === participantId);
 
 test('#332: a seat that exited after its final contribution reads completed, not dead', async (t) => {

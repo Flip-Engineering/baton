@@ -73,7 +73,7 @@ async function fixture(t) {
   return { app, driver, root: bindBaton(app, principal('root')), paused, asWorker };
 }
 
-const kinds = (view) => view.attention.map((row) => row.kind);
+const kinds = (view) => view.attention.rows.map((row) => row.kind);
 
 test('a delegated subtree: dead workers, orphaned delegations, departed members and closed swarms are attention, not archaeology', async (t) => {
   const { driver, root, paused, asWorker } = await fixture(t);
@@ -101,7 +101,7 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   assert.equal(alphaRow.runtime.turn, null, 'a dead worker has no paused turn to guide');
   assert.equal(driver.coordinator.pausedTurns({ workerId: alphaWorker.id }).length >= 0, true);
   assert.deepEqual(kinds(view).sort(), ['assignment_holder_gone']);
-  assert.deepEqual(view.attention.find((row) => row.kind === 'assignment_holder_gone'),
+  assert.deepEqual(view.attention.rows.find((row) => row.kind === 'assignment_holder_gone'),
     { kind: 'assignment_holder_gone', assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A',
       next: { event: 'swarm.holder_released', participantId: 'alpha' } });
 
@@ -110,11 +110,11 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   const left = await delegated.leave({ reason: 'delegation complete' });
   assert.equal(left.sessionStopped, false);
   view = await swarm.view();
-  assert.ok(view.attention.some((row) => row.kind === 'member_left_session_live' && row.participantId === 'lead'));
-  assert.ok(view.attention.some((row) => row.kind === 'delegation_orphaned' && row.participantId === 'beta' && row.parentId === 'lead'));
+  assert.ok(view.attention.rows.some((row) => row.kind === 'member_left_session_live' && row.participantId === 'lead'));
+  assert.ok(view.attention.rows.some((row) => row.kind === 'delegation_orphaned' && row.participantId === 'beta' && row.parentId === 'lead'));
   // Issue #350: alpha's membership was settled by its stop, so it holds no delegation left to
   // orphan — only the live child of the departed parent is attention.
-  assert.ok(!view.attention.some((row) => row.kind === 'delegation_orphaned' && row.participantId === 'alpha'), 'a stopped child of a departed parent is settled, not orphaned');
+  assert.ok(!view.attention.rows.some((row) => row.kind === 'delegation_orphaned' && row.participantId === 'alpha'), 'a stopped child of a departed parent is settled, not orphaned');
 
   // The root can still guide the orphan — loose coupling holds — and closing the swarm while it
   // runs is named too.
@@ -123,7 +123,7 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   await swarm.close({ reason: 'audit complete' });
   view = await swarm.view();
   assert.equal(view.status, 'closed');
-  const closed = view.attention.find((row) => row.kind === 'closed_with_live_participants');
+  const closed = view.attention.rows.find((row) => row.kind === 'closed_with_live_participants');
   assert.ok(closed && closed.participantIds.includes('beta'), 'a closed swarm with a live participant says so');
 });
 

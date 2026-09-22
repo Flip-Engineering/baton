@@ -65,7 +65,7 @@ function fixture(t) {
     await update('swarm.coupling_updated', { couplingId: 'policy-impl', coupling: 'failure',
       action: 'declare', groupId: 'impl', policy: 'independent' });
   };
-  const goneRow = (view) => view.attention.find((row) => row.kind === 'group_member_gone') ?? null;
+  const goneRow = (view) => view.attention.rows.find((row) => row.kind === 'group_member_gone') ?? null;
   return { store, runtime, workers, call, update, coupled, goneRow };
 }
 
