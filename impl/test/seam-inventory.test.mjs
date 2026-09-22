@@ -270,7 +270,7 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/coordination-replay.mjs': 62,
   'impl/src/runtime-briefing.mjs': 1,
   'impl/src/application-briefing.mjs': 2,
-  'impl/src/coordination-ledger.mjs': 277,
+  'impl/src/coordination-ledger.mjs': 278,
   'impl/src/coordination-admission.mjs': 180,
   'impl/src/runtime-recovery.mjs': 65,
   'impl/src/coordination-ledger-writes.mjs': 31,

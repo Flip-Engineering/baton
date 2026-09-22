@@ -1529,8 +1529,11 @@ export function _scratchpadReapReceipt(store, prior, result = 'idempotent') {
  * is a wall deadline the stopping run already owns (`null` = reap every partition this pass); the
  * pass always takes at least one partition, so it advances whatever the clock says. The per-run
  * partition count is not a physical quantity — the previous literal cap bought nothing but the
- * ability to observe `partial`. */
-export function reapRunScratchpads(store, runId, { deadlineAt = null, now = Date.now } = {}) {
+ * ability to observe `partial`.
+ *
+ * #403: that deadline is read through the store's OWN (injectable) clock unless the caller hands
+ * its reading in — the host clock is never the authority for a window a fixture clock must expire. */
+export function reapRunScratchpads(store, runId, { deadlineAt = null, now = () => Date.parse(store._clock()) } = {}) {
   if (!validRunId(runId) || (!store._runStopByTarget.has(runId) && !store._runStops.has(runId))) {
     throw new CoordinationRefusal('scratchpad stop cleanup requires a stopping Run', 'run_stopping');
   }

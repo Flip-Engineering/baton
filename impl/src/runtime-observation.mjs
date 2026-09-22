@@ -197,10 +197,10 @@ export function drain(coordinator, recorder, ctx = {}) {
     for (const method of ['fleetDrain', 'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain']) {
       if (typeof recorder.coordination[method] !== 'function') throw Object.assign(new Error('fleet drain coordination authority is unavailable'), { code: 'coordinator_drain_unavailable' });
     }
-    const deadline = Date.now() + coordinator._drainPolicy.timeoutMs;
+    const deadline = coordinator._now() + coordinator._drainPolicy.timeoutMs;
     let targetWorkerIds = null;
     const assertWithinDeadline = () => {
-      if (Date.now() < deadline) return;
+      if (coordinator._now() < deadline) return;
       throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
         code: 'coordinator_drain_incomplete',
         detail: { timeoutMs: coordinator._drainPolicy.timeoutMs, waitingOn: coordinator._drainWaitingOn(targetWorkerIds ?? [], null, ctx.actor) },
@@ -646,14 +646,14 @@ export async function _cancelPendingForDrain(coordinator, recorder, deadline) {
     for (const requestId of [...coordinator._activeInteractionIds]) {
       const record = coordinator._pending.get(requestId);
       if (!record) { coordinator._activeInteractionIds.delete(requestId); continue; }
-      if (Date.now() >= deadline || processed >= coordinator._drainPolicy.maxInteractions) {
+      if (coordinator._now() >= deadline || processed >= coordinator._drainPolicy.maxInteractions) {
         throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
           code: 'coordinator_drain_incomplete',
           detail: {
             reason: 'interaction_cancel_deadline',
             timeoutMs: coordinator._drainPolicy.timeoutMs,
             processed,
-            ...(Date.now() >= deadline
+            ...(coordinator._now() >= deadline
               ? { waitingOn: coordinator._drainWaitingOn([...coordinator._workers.keys()], null, 'policy') }
               : { capacity: coordinator._drainPolicy.maxInteractions }),
           },

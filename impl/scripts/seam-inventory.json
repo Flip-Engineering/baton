@@ -12899,7 +12899,7 @@
         {
           "name": "_once",
           "ordinal": 0,
-          "size": 51,
+          "size": 65,
           "seam": "recovery",
           "evidence": [
             "admission:swarm_refusal",
@@ -15836,7 +15836,7 @@
         {
           "name": "_validateRecoveryAttemptAdmissionPayload",
           "ordinal": 0,
-          "size": 75,
+          "size": 78,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -15883,7 +15883,7 @@
         {
           "name": "createAndClaimPlanRecoveryRefinement",
           "ordinal": 0,
-          "size": 117,
+          "size": 121,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -17839,9 +17839,18 @@
           ]
         },
         {
+          "name": "swarmReplayConflictDetail",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
           "name": "recordSwarm",
           "ordinal": 0,
-          "size": 20,
+          "size": 25,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
@@ -20928,7 +20937,7 @@
         {
           "name": "reapRunScratchpads",
           "ordinal": 0,
-          "size": 23,
+          "size": 25,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
