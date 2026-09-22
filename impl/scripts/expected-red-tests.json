@@ -1265,10 +1265,6 @@
       "reason": "S-G5"
     },
     {
-      "key": "test/swarm-wake.test.mjs :: a real resident wakes a real `baton swarm watch --follow` child on guidance, contribution, and close",
-      "reason": "#320"
-    },
-    {
       "key": "test/tight-cell-red.test.mjs :: D1 depth1[cell-mate-task-tier-read-missing]: a cell member's CONTEXT_READ resolves the cell's task tiers",
       "reason": "#102"
     },

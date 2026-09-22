@@ -394,7 +394,14 @@ const CLASS_BY_LEDGER_ROW = (() => {
   return index;
 })();
 
-/** The class one coordination ledger row produces, or null when the row is not a wake row. */
+/** The class one coordination ledger row produces, or null when the row is not a wake row.
+ *
+ * The index's three keys are consulted in that order, and the bare row kind is the LAST of them,
+ * never skipped: a payload `kind` is an operational event on the rows the coordinator projects,
+ * but not on every row that carries one. The message lane's `message.delivered` row names the
+ * DELIVERY MODE there ('nudge'/'steer'), and the class that owns the row — `guidance_delivered`,
+ * "a message reached the participant it was addressed to" — is registered under the bare row
+ * kind, so the row must still reach it (docs/39, guidance delivery semantics). */
 export function wakeClassFor(event) {
   const kind = event?.kind;
   if (typeof kind !== 'string' || kind.length === 0) return null;
@@ -402,6 +409,7 @@ export function wakeClassFor(event) {
   if (payloadKind !== '') {
     return CLASS_BY_LEDGER_ROW.get(`${kind}\0${payloadKind}`)
       ?? CLASS_BY_LEDGER_ROW.get(`\0${payloadKind}`)
+      ?? CLASS_BY_LEDGER_ROW.get(`${kind}\0`)
       ?? null;
   }
   return CLASS_BY_LEDGER_ROW.get(`${kind}\0`) ?? null;

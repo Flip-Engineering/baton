@@ -6559,7 +6559,13 @@ export class SwarmRuntime {
    * receipt names. A lane that took the message writes `delivered` and NAMES the lane receipt it
    * rode (the paused-turn lane writes none — the turn itself carries the guidance, and the row
    * says so with lane: null); a lane that took nothing on a harness that CAN deliver writes
-   * `refused`, so the guidance is never silently dropped. */
+   * `refused`, so the guidance is never silently dropped.
+   *
+   * The delivered half also writes the message lane's own `message.delivered` row — the row the
+   * wake class table reads for `guidance_delivered` ("a message reached the participant it was
+   * addressed to"), exactly as the recruit-time composition writes it for the parked guidance it
+   * delivers. A refused delivery writes none: nobody received it. The row is evidence for the
+   * wake stream, never delivery-critical, so a store that refuses it leaves the delivery standing. */
   _recordGuidanceSent(swarmId, participant, principal, args, guidance, lane, guided) {
     const messageId = lane?.payload?.messageId
       ?? `message:${hash(['swarm.guidance_sent', swarmId, participant.participantId, args.message,
@@ -6572,6 +6578,13 @@ export class SwarmRuntime {
     const recorded = this.store.recordDriver('swarm.guidance_sent', payload,
       { actor: principal.actor, key: `swarm-guidance-sent:${messageId}` });
     const event = recorded.event;
+    if (guided?.ok === true) {
+      try {
+        this.store.recordMessage('message.delivered', {
+          swarmId, participantId: participant.participantId, messageId, kind: 'nudge',
+        }, { actor: principal.actor, key: `message.delivered:${messageId}:${participant.participantId}` });
+      } catch { /* the wake row is evidence, never delivery-critical */ }
+    }
     return {
       participantId: participant.participantId,
       result: guided,

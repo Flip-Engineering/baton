@@ -527,7 +527,15 @@ try {
       // Issue #365: a follow that ended through its ended row (an aborted signal, or a wake
       // stream that closed) prints that row even when pages already streamed — the ended row is
       // the leg's own verdict, never swallowed by the pages it delivered.
-      if (followPages === 0 || (typeof result?.kind === 'string' && result.kind.endsWith('_ended'))) {
+      // Issue #320: unless the pages already carried that verdict. A wake follow whose end IS a
+      // delivered frame — the pinned swarm's own closed wake, which the ended row names under
+      // `closed` — printed that frame as its last page, and the ended row only restates it;
+      // printing it would put a second, differently-shaped document on a stream whose contract is
+      // one JSON frame per line. An end the frames did not name (a caller abort, a resident stop,
+      // a transport close) still prints its verdict.
+      const endedRow = typeof result?.kind === 'string' && result.kind.endsWith('_ended');
+      const closedWakeEnded = endedRow && result.closed !== null && result.closed !== undefined;
+      if (followPages === 0 || (endedRow && !closedWakeEnded)) {
         process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, result), null, 2)}\n`);
       }
     }
