@@ -750,6 +750,13 @@ export class WorktreeCapacityAuthority {
             : [])
           .concat(floor.source === 'derived' ? [] : ['or lower advanced.capacity.policy.minFreeBytes/minFreeInodes'])
           .join(', ');
+        // #178 (the #169 audit's instance 4): exactly ONE axis is named when the refusal has to
+        // name one. The physical floor is judged before the policy ceiling and bytes before inodes
+        // on the same tier, so a wave that breaches both axes is reported against the axis
+        // admission checked first — the same order `reasons` is pushed in.
+        const breachingAxis = remainingBytes < floor.bytes ? 'bytes'
+          : remainingInodes < floor.inodes ? 'inodes'
+            : reasons.includes('maxReservedBytes') ? 'bytes' : 'inodes';
         throw Object.assign(typed(
           `worktree capacity is unavailable for this reservation wave: ${observation.freeBytes} bytes and ${observation.freeInodes} inodes free,`
           + ` ${outstanding.bytes} bytes and ${outstanding.inodes} inodes reserved outstanding,`
@@ -763,6 +770,13 @@ export class WorktreeCapacityAuthority {
           estimateBytes: wave.bytes, estimateInodes: wave.inodes,
           floorBytes: floor.bytes, floorInodes: floor.inodes, floorSource: floor.source,
           deficitBytes, deficitInodes,
+          // #178: the audit's own field names ride beside the #307 ones, so a reader of the
+          // refusal — an orchestrating model above all — never has to read the source or run
+          // `df -h` to learn the observation, the floor, what is reserved outstanding, which
+          // axis breached, and what to do next.
+          minFreeBytes: floor.bytes, minFreeInodes: floor.inodes,
+          reservedBytes: outstanding.bytes, reservedInodes: outstanding.inodes,
+          breachingAxis, next: remedy,
         });
       }
       const createdAt = new Date(this.now()).toISOString();
