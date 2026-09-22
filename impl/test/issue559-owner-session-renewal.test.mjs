@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { MockAdapter, connectBaton, openBaton } from '../src/index.mjs';
+import { ResidentAuthority } from '../src/resident-authority.mjs';
+import { WebSessionStore } from '../src/web-auth.mjs';
+import { connectBatonWebApplication } from '../src/mcp-web-bridge.mjs';
 
 // Issue #559: the resident issues one `local-owner` visitor session at open and caps it at
 // `advanced.resident.sessionTtlMs`. Before the fix nothing renewed it, so an incarnation that
@@ -195,4 +198,99 @@ test('559-b: the stop withdraws the credential the last renewal published', { ti
   assert.notEqual(ledger.at(-1).payload.sessionId, undefined);
   assert.equal(ledger.filter((row) => row.kind === 'session.rotated').length >= 1, true);
   assert.equal(renewal.length > 0, true);
+});
+
+// Execute only the resident renewal timer manually. Startup and transport timers stay real.
+function renewalTimers(t) {
+  const timers = new Set();
+  const set = globalThis.setTimeout;
+  const clear = globalThis.clearTimeout;
+  t.mock.method(globalThis, 'setTimeout', function (callback, delay, ...args) {
+    if (!new Error().stack.includes('#scheduleOwnerSessionRenewal')) return set(callback, delay, ...args);
+    const timer = { callback, delay, unref() {} };
+    timers.add(timer);
+    return timer;
+  });
+  t.mock.method(globalThis, 'clearTimeout', function (timer) {
+    if (!timers.delete(timer)) clear(timer);
+  });
+  return {
+    get pending() { return [...timers]; },
+    fire() {
+      assert.equal(timers.size, 1);
+      const timer = [...timers][0];
+      timers.delete(timer);
+      timer.callback();
+    },
+  };
+}
+
+async function hosted(t, configure = () => {}) {
+  const configured = options(t, repository(t));
+  configure(configured);
+  const owner = await openBaton({ repo: configured.repo, advanced: configured.advanced });
+  t.after(async () => { try { await owner.close(); } catch {} });
+  await owner.host();
+  return { owner, configured, tokenPath: credentialPath(configured) };
+}
+
+test('559-c: failed credential publication preserves the published admission and retries within the TTL', async (t) => {
+  const timers = renewalTimers(t);
+  const { configured, tokenPath } = await hosted(t);
+  const before = credential(tokenPath);
+  const original = ResidentAuthority.prototype.renewToken;
+  let failures = 1;
+  t.mock.method(ResidentAuthority.prototype, 'renewToken', function (...args) {
+    if (failures-- > 0) throw Object.assign(new Error('injected write failure'), { code: 'EIO' });
+    return original.apply(this, args);
+  });
+  timers.fire();
+  assert.equal(credential(tokenPath), before);
+  assert.deepEqual(await ownerCall(configured), [], 'a failed publication retains the usable predecessor');
+  assert.ok(timers.pending[0].delay <= TTL_MS / 2, 'retry fits inside the declared lifetime');
+  timers.fire();
+  assert.notEqual(credential(tokenPath), before);
+  assert.deepEqual(await ownerCall(configured), []);
+});
+
+test('559-d: a failed session-store renewal retries within a short lifetime', async (t) => {
+  const timers = renewalTimers(t);
+  await hosted(t);
+  t.mock.method(WebSessionStore.prototype, 'rotate', () => { throw new Error('injected ledger failure'); });
+  t.mock.method(WebSessionStore.prototype, 'issue', () => { throw new Error('injected ledger failure'); });
+  timers.fire();
+  assert.ok(timers.pending[0].delay <= TTL_MS / 2, 'retry is bounded by half the session lifetime');
+});
+
+test('559-e: a connected client and MCP facade retain admission across renewal', async (t) => {
+  const timers = renewalTimers(t);
+  const { configured } = await hosted(t);
+  const connected = await connectBaton(configured.connection);
+  const bridge = await connectBatonWebApplication({
+    cwd: configured.repo, ...configured.connection.advanced,
+  });
+  timers.fire();
+  assert.deepEqual((await connected.runs.list()).items, [], 'an existing client follows renewal');
+  const current = await bridge._reattestSession();
+  assert.equal(current.identity.userId, 'local-owner', 'the bridge reattests the owner');
+});
+
+test('559-f: startup self-check survives expiry of its first owner session', async (t) => {
+  renewalTimers(t);
+  let now = Date.now();
+  const issue = WebSessionStore.prototype.issue;
+  let first = true;
+  t.mock.method(WebSessionStore.prototype, 'issue', function (...args) {
+    const result = issue.apply(this, args);
+    if (first) { first = false; now += TTL_MS + 1; }
+    return result;
+  });
+  const { configured } = await hosted(t, (value) => { value.advanced.resident.now = () => now; });
+  assert.deepEqual(await ownerCall(configured), []);
+});
+
+test('559-g: long session lifetimes stay within the Node timer range', async (t) => {
+  const timers = renewalTimers(t);
+  await hosted(t, (value) => { value.advanced.resident.sessionTtlMs = 2 ** 33; });
+  assert.ok(timers.pending[0].delay <= 2 ** 31 - 1);
 });

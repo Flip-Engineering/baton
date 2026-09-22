@@ -1,0 +1,116 @@
+baton serve: owner session renewal failed (EIO); retrying in 30000 ms
+baton serve: web admission closed (admission_closed)
+baton serve: draining the fleet with the served transport open for reads
+baton serve: drain did not converge; no named wait was reported
+baton serve: web transport closed (closed_degraded)
+✖ 559-c: failed credential publication preserves the published admission and retries within the TTL (2686.055458ms)
+baton serve: owner session renewal failed (injected ledger failure); retrying in 30000 ms
+baton serve: web admission closed (admission_closed)
+baton serve: draining the fleet with the served transport open for reads
+baton serve: drain did not converge; no named wait was reported
+baton serve: web transport closed (closed_degraded)
+✖ 559-d: a failed session-store renewal retries within a short lifetime (2548.481291ms)
+baton serve: web admission closed (admission_closed)
+baton serve: draining the fleet with the served transport open for reads
+baton serve: drain did not converge; no named wait was reported
+baton serve: web transport closed (closed_degraded)
+✖ 559-e: a connected client and MCP facade retain admission across renewal (2342.660375ms)
+✖ 559-f: startup self-check survives expiry of its first owner session (1596.567208ms)
+baton serve: web admission closed (admission_closed)
+baton serve: draining the fleet with the served transport open for reads
+baton serve: drain did not converge; no named wait was reported
+baton serve: web transport closed (closed_degraded)
+✖ 559-g: long session lifetimes stay within the Node timer range (1945.286417ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18307.616584
+
+✖ failing tests:
+
+test at impl/test/issue559-owner-session-renewal.test.mjs:237:1
+✖ 559-c: failed credential publication preserves the published admission and retries within the TTL (2686.055458ms)
+  Error: Baton Web request was refused (GET /v1/session, HTTP 401): unauthenticated: no admissible credential was presented; send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it
+      at cliError (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:156:24)
+      at BatonWebClient._json (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:4896:23)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async BatonWebClient.session (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:4960:18)
+      at async Promise.all (index 1)
+      at async connectBaton (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:5374:29)
+      at async ownerCall (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/test/issue559-owner-session-renewal.test.mjs:132:21)
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/test/issue559-owner-session-renewal.test.mjs:249:20)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    code: 'unauthenticated',
+    wireSafe: true,
+    status: 401,
+    detail: { code: 'unauthenticated', message: 'unauthenticated: no admissible credential was presented; send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it', detail: { cause: 'absent', rule: 'no admissible credential was presented', remedy: 'send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it', credential: null, accepted: [Array] }, action: 'send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it' }
+  }
+
+test at impl/test/issue559-owner-session-renewal.test.mjs:256:1
+✖ 559-d: a failed session-store renewal retries within a short lifetime (2548.481291ms)
+  AssertionError [ERR_ASSERTION]: retry is bounded by half the session lifetime
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/test/issue559-owner-session-renewal.test.mjs:262:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/issue559-owner-session-renewal.test.mjs:265:1
+✖ 559-e: a connected client and MCP facade retain admission across renewal (2342.660375ms)
+  Error: Baton Web request was refused (POST /v1/commands, HTTP 401): unauthenticated: no admissible credential was presented; send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it
+      at cliError (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:156:24)
+      at BatonWebClient._json (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:4896:23)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async BatonWebClient.command (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:5063:18)
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/test/issue559-owner-session-renewal.test.mjs:273:21)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'unauthenticated',
+    wireSafe: true,
+    status: 401,
+    detail: { code: 'unauthenticated', message: 'unauthenticated: no admissible credential was presented; send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it', detail: { cause: 'absent', rule: 'no admissible credential was presented', remedy: 'send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it', credential: null, accepted: [Array] }, action: 'send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it' }
+  }
+
+test at impl/test/issue559-owner-session-renewal.test.mjs:278:1
+✖ 559-f: startup self-check survives expiry of its first owner session (1596.567208ms)
+  Error: Baton Web request was refused (GET /v1/session, HTTP 401): unauthenticated: no admissible credential was presented; send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it
+      at cliError (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:156:24)
+      at BatonWebClient._json (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:4896:23)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async BatonWebClient.session (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-cli.mjs:4960:18)
+      at async Promise.all (index 1)
+      at async #startOrdinaryHost (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/src/application-deployment.mjs:4257:33) {
+    code: 'unauthenticated',
+    wireSafe: true,
+    status: 401,
+    detail: { code: 'unauthenticated', message: 'unauthenticated: no admissible credential was presented; send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it', detail: { cause: 'absent', rule: 'no admissible credential was presented', remedy: 'send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it', credential: null, accepted: [Array] }, action: 'send Authorization: Bearer <token> (obtained from POST /v1/auth/login) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it' }
+  }
+
+test at impl/test/issue559-owner-session-renewal.test.mjs:292:1
+✖ 559-g: long session lifetimes stay within the Node timer range (1945.286417ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(timers.pending[0].delay <= 2 ** 31 - 1)
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-a9cdf846384ec98e3c8c6efca4ebce2e/impl/test/issue559-owner-session-renewal.test.mjs:295:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
