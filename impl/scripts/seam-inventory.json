@@ -4217,7 +4217,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 159,
+          "size": 163,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call"
@@ -6105,7 +6105,7 @@
         {
           "name": "waveList",
           "ordinal": 0,
-          "size": 97,
+          "size": 121,
           "seam": "surface",
           "evidence": [
             "observation:durable_read",
@@ -6220,7 +6220,7 @@
         {
           "name": "doctorReadiness",
           "ordinal": 0,
-          "size": 24,
+          "size": 37,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -6257,7 +6257,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 235,
+          "size": 241,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
@@ -6470,6 +6470,25 @@
           "name": "boardRead",
           "ordinal": 0,
           "size": 21,
+          "seam": "surface",
+          "evidence": [
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "planRead",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "surface",
+          "evidence": [
+            "observation:durable_read",
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "planWrite",
+          "ordinal": 0,
+          "size": 30,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -11014,6 +11033,16 @@
           ]
         },
         {
+          "name": "appendPlanEntries",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "ledgerHeadSeq",
           "ordinal": 0,
           "size": 1,
@@ -13111,7 +13140,7 @@
         {
           "name": "_settleRouteProbes",
           "ordinal": 0,
-          "size": 17,
+          "size": 26,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -13193,7 +13222,7 @@
         {
           "name": "_rerouteCandidates",
           "ordinal": 0,
-          "size": 37,
+          "size": 45,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -14032,7 +14061,7 @@
         {
           "name": "_landedBy",
           "ordinal": 0,
-          "size": 10,
+          "size": 11,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -17823,6 +17852,16 @@
           "name": "appendWaveClosed",
           "ordinal": 0,
           "size": 11,
+          "seam": "observation",
+          "evidence": [
+            "observation:store_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "appendPlanEntries",
+          "ordinal": 0,
+          "size": 7,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
