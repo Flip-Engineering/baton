@@ -71,3 +71,24 @@ contribution-721b24395f40cb6d98efd460402a2244 (the #188 design).
 `/tmp/wake3-acceptance-green.txt`. The runner derived one lane (load1m 10 on 10 cores, host
 saturated) over 725 files, so it needs hours. Its verdict is the lane's acceptance evidence and
 must be published with its base named.
+
+## Final state at turn close (23:32Z)
+
+- The store still answers `operational_log_unavailable` / ENOSPC on every call, including with
+  3.35 GiB free on the Data volume at 23:31Z, so the refusal is a latched or bound-writer state
+  in the resident's write path, not bare disk space. The final publish attempt of this seat's
+  status contribution (payload `wake3-contribution-4.json`, seq-less) refused at 23:31Z.
+- `origin/master` is still `65c913f0` and `git ls-remote origin refs/heads/master` names the same
+  commit: no landing has reached the remote in this deployment since the 20:12Z restart.
+- The acceptance run on `wake-lead3-green-verify` was stopped at 311 of 725 files when it became
+  clear the suite itself drives the store (the kg-settlement and kg-activation rows could not
+  pass while the store refused writes); the partial log is beside this file.
+- The worktree is left on `wake-lead3-green-verify` (b33ba1ca): the lane's green verification
+  base plus the #188 document, the tree that can pass the canonical command once the store and
+  the host are healthy. The lane's delta against the current master stays on
+  `baton/ws-3bcabf79f9adbee1799468a2b784eb7f` (86a638bb) and the design on
+  `wake-lead3-188-design` (ac691c01).
+- When the store answers again: publish `wake3-contribution-4.json`, then
+  `baton swarm integrate swarm-wake-20260921 contribution-721b24395f40cb6d98efd460402a2244 target master`
+  for the #188 document (no affected tests), then the #410 integrate named in this file's table
+  once the MCP closure is green, and finally `npm test --prefix impl` in this worktree.
