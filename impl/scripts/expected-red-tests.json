@@ -1049,98 +1049,6 @@
       "reason": "#167"
     },
     {
-      "key": "test/redrive-continuity-red.test.mjs :: A1 (RED): renderBrief does not emit `## Re-drive continuity` for a brief carrying continuity (stage: renderBrief-continuity-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: A2 (RED): renderPrompt does not emit `## Re-drive continuity` (stage: renderPrompt-continuity-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: A4 (RED): the closed four-member set has no admission surface — redriveMembers/carryForward/REDRIVE_SCOPES absent (stage: admission-surface-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: A5 (RED): no per-item `[carried/untrusted]` frame and no within-block order exist (stage: carried-per-item-frame-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: A6 (RED): the pin digest list is not bound to the dead member's checkpoint history (stage: pin-digest-list-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: B1 (RED): a carried scratchpad note containing `## Pending attention` renders INERT — inside the bullet, never a new section (stage: carried-body-neutralize-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: B2 (RED): a fake `UNTRUSTED_...` frame header in carried text renders inert — it cannot re-frame its own body (stage: fake-frame-neutralize-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: C1 (RED): the ONE total render order does not hold in renderBrief (stage: renderBrief-total-order-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: C2 (RED): the ONE total render order does not hold in renderPrompt (stage: renderPrompt-total-order-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D1 (RED): default-off — no carryForward declared means a byte-identical re-drive EVEN with a same-role dead source (stage: redrive-carry-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D2 (RED): a cross-role carry-forward refuses redrive_carry_role_mismatch BEFORE any side effect (stage: redrive-carry-refusal-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D3 (RED): an unrelated-wave carry refuses redrive_carry_wave_unrelated; a same-wave/direct-predecessor source admits (stage: redrive-carry-refusal-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D4 (RED): a malformed/empty carryForward option refuses with the typed codes (stage: redrive-carry-refusal-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D5 (RED): the redrive_carry_* refusal family is not a typed surface constant (stage: redrive-refusal-codes-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D6 (RED): an empty named scope on the source refuses redrive_carry_no_evidence (stage: redrive-carry-no-evidence-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D7 (RED): a carried body that cannot be framed/neutralized refuses redrive_carry_unframable at the render seam (stage: redrive-carry-unframable-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D8 (RED): an over-bound block with the spill lane unavailable refuses redrive_carry_oversized (stage: redrive-carry-oversized-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: D9 (RED): an overflow whose spill lane refuses carries redrive_carry_spill_unavailable (stage: redrive-carry-spill-unavailable-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: E2 (RED): a carry writes NOTHING to the fresh run's store — no dead-attempt rows become the fresh attempt's own (stage: no-store-write-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: F1 (RED): the view.continuity.items registry row does not exist (stage: continuity-registry-rows-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: F2 (RED): the view.continuity.bytes registry row does not exist (stage: continuity-bytes-row-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: F3 (RED): the D1 overflow round trip — 9 carried items serve 8 in-block, the excess spills digest-cited, and the worker resolves it (stage: continuity-overflow-spill-missing)",
-      "reason": "#59"
-    },
-    {
-      "key": "test/redrive-continuity-red.test.mjs :: G1 (RED): a carry changes the served brief but NOT task.brief — the digest pin never moves (stage: brief-purity-violation)",
-      "reason": "#59"
-    },
-    {
       "key": "test/run-show-verification-verdict.test.mjs :: V7: a candidate-owned exit mismatch reads as its own closed code on run show",
       "reason": "#460"
     },
@@ -1953,6 +1861,10 @@
     {
       "file": "test/recipes-red.test.mjs",
       "reason": "design"
+    },
+    {
+      "file": "test/redrive-continuity-red.test.mjs",
+      "reason": "#59"
     },
     {
       "file": "test/reflex1-decision-requests-red.test.mjs",
