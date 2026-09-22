@@ -1457,10 +1457,6 @@
       "reason": "#158"
     },
     {
-      "key": "test/seat-telemetry-red.test.mjs :: A-L (lint): blocking-decision dispatch holds a working seat; ceiling-skip mints the receipt; adapterFor diverges on pausability",
-      "reason": "#146"
-    },
-    {
       "key": "test/seat-telemetry-red.test.mjs :: A1 (stage: doctor-seats-missing): deployment.doctor carries an enumerable seats array, one closed D1 atom per readiness route in route order, observedAtEventSeq, and the card inherits seats (D2.4)",
       "reason": "#146"
     },
