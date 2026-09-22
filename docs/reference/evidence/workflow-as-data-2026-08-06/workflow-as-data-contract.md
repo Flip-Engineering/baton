@@ -149,8 +149,12 @@ policy on the driver loop (all events surfaced to `receipt.steering[]` with the 
   insertion order; the chosen `optionId` is validated against the live decision's `options` (or
   `allowFreeResponse` → send `text`); dedup by `(runId, requestId)`; any non-match → `defer`
   (leave for the human; the attention item surfaces). Every answer receipted.
-- `signalOnMembersDone` — when the named roles reach terminal, send the message to the remaining
-  members (the demo's lead-signal pattern). Terminality is monotonic — bounded (SOUND, red-team §3.4).
+- `signalOnMembersDone` — `roles` is the WATCHED set: the policy fires when every named role is
+  terminal. The message is delivered to the COMPLEMENT — every wave member not named in `roles`
+  (workflow-interpreter.mjs:927-939: `recipients = [...handles.keys()].filter((role) =>
+  !signalRoles.has(role))`). A watched role is never a recipient. The field name invites reading
+  `roles` as the recipient list (#175), so the direction is stated here and at the filter.
+  Terminality is monotonic — bounded (SOUND, red-team §3.4).
 
 **D4 — the harvest spec (folded: B1, B2).** `harvest.paths` recovers per-path from the run's
 **authoritative result sha** via the #99 harvest-accessor — the same section read `wave.mjs`
