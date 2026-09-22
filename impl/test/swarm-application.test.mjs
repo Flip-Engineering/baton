@@ -106,7 +106,7 @@ const selection = { exact: { harness: 'mock', model: 'model-a', effort: 'low' },
 test('real application supports delegated recruitment and continuing native turns through the swarm SDK', async (t) => {
   const { app, baton, driver } = await fixture(t);
   const swarm = await baton.swarms.create('Develop Baton using a living swarm', { swarmId: 'self-build' });
-  assert.equal((await swarm.view()).participants.length, 0);
+  assert.equal((await swarm.view()).participants.length, 1, 'a fresh swarm still answers with the synthesized root row (docs/46 §5.1)');
   await swarm.context({ key: 'design', body: 'Participants may contribute without ending their sessions.' });
   const lead = await swarm.recruit('lead', 'Coordinate implementation', { ...selection, permissions: SWARM_PERMISSIONS });
   const leadWorker = await paused(driver, lead.runId);

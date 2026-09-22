@@ -131,7 +131,7 @@ test('#422 RED (stage: design-not-landed): a hold whose holder left the swarm is
   // and the remedy (docs/45 §4.1 — death is settled by an explicit act, §0).
   f.workers.find((row) => row.id === 'w-1').status = 'dead';
   const deadView = await f.call('view');
-  const gone = (deadView.attention ?? []).find((row) => row.kind === 'coupling_writer_gone' && row.couplingId === 'lease-1');
+  const gone = (deadView.attention?.rows ?? []).find((row) => row.kind === 'coupling_writer_gone' && row.couplingId === 'lease-1');
   assert.ok(gone, 'land coupling_writer_gone for a lease whose holder runtime is dead (docs/45 §4.1)');
   assert.equal(gone.participantId, 'alpha', 'the row names the dead holder (docs/45 §4.1)');
   assert.ok(gone.next, 'the row names the remedy act — never an auto-release (docs/45 §4.1, §0)');

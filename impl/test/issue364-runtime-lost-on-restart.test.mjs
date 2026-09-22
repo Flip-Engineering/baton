@@ -92,7 +92,7 @@ const close = async (incarnationRow) => {
 const participantRow = (view, participantId) =>
   view.participants.find((row) => row.participantId === participantId) ?? null;
 const lostRows = (store) => store.eventsView().filter((event) => event.kind === 'swarm.participant_runtime_lost');
-const attentionKinds = (view) => view.attention.map((row) => row.kind);
+const attentionKinds = (view) => view.attention.rows.map((row) => row.kind);
 
 test('364-a: a seat whose worker died with the old incarnation reads live:false/state:dead, with the worker_lost_on_restart attention row', async (t) => {
   const f = world('a');
@@ -124,7 +124,7 @@ test('364-a: a seat whose worker died with the old incarnation reads live:false/
     'the row names the lost worker incarnation');
   assert.equal(typeof rows[0].payload.at, 'string', 'the row is stamped when the loss was reconciled');
 
-  const attention = view.attention.filter((row) => row.kind === 'worker_lost_on_restart');
+  const attention = view.attention.rows.filter((row) => row.kind === 'worker_lost_on_restart');
   assert.equal(attention.length, 1, 'the lost seat pages');
   assert.equal(attention[0].participantId, 'alpha');
   assert.equal(attention[0].workerId, bound.bindings.at(-1).workerId);
@@ -165,7 +165,7 @@ test('364-c: a seat recruited by the recovering incarnation is untouched', async
   assert.equal(beta.runtime.live, true);
   assert.equal(beta.runtimeLost ?? null, null, 'no reconciliation row lands on a seat this incarnation owns');
   assert.equal(lostRows(second.driver.coordination).filter((row) => row.payload.participantId === 'beta').length, 0);
-  assert.deepEqual(view.attention.filter((row) => row.kind === 'worker_lost_on_restart'
+  assert.deepEqual(view.attention.rows.filter((row) => row.kind === 'worker_lost_on_restart'
     && row.participantId === 'beta'), [],
   'and it pages nobody');
 });
@@ -226,7 +226,7 @@ test('364-e: a dead seat holds no host-capacity reservation, and scopeOverlap do
   assert.equal(probe.admission?.state, 'admitted', 'the seat this incarnation owns is admitted');
   assert.equal(probe.admission?.authority, 'host', 'and it holds the host lease the resident admitted it on');
   const view = await second.call('view', { swarmId: 'sw' });
-  assert.deepEqual(view.attention.filter((row) => row.kind === 'worker_lost_on_restart')
+  assert.deepEqual(view.attention.rows.filter((row) => row.kind === 'worker_lost_on_restart')
     .map((row) => row.participantId), ['alpha']);
 });
 
@@ -273,7 +273,7 @@ test('364-f: a binding recorded AFTER the loss supersedes it — a rebound seat 
   const reboundRow = participantRow(rebound, 'alpha');
   assert.equal(reboundRow.runtime.state, 'idle', 'the newer binding is what the seat reads');
   assert.equal(reboundRow.runtime.live, true);
-  assert.deepEqual(rebound.attention.filter((row) => row.kind === 'worker_lost_on_restart'), [],
+  assert.deepEqual(rebound.attention.rows.filter((row) => row.kind === 'worker_lost_on_restart'), [],
     'and the loss stops paging');
 
   // The row is runtime-recorded, never caller-submittable: swarm.update's closed set is the

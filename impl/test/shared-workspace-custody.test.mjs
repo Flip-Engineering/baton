@@ -506,7 +506,8 @@ test('T7 a source that is still a live member but has no attachable checkout ref
     () => recruit(app, { swarmId: 'solo', participantId: 'solo', objective: 'Self attach', shareWorkspaceWith: 'solo', key: 'solo-self' }),
     (error) => error.code === 'swarm_workspace_unavailable' && error.detail.reason === 'self',
   );
-  assert.deepEqual((await inspect(app, 'solo')).participants.map((row) => row.participantId), ['solo']);
+  assert.deepEqual((await inspect(app, 'solo')).participants.map((row) => row.participantId),
+    ['solo', 'root'], 'the roster answers with the seat and the synthesized root row (docs/46 §5.1)');
 });
 
 // Issue #277 deliverable 0: a participant that owns its checkout must converge its stop. T8 is

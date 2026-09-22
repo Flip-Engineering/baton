@@ -192,7 +192,8 @@ test('the subtree view: the root and the lead see the same delegation, scoped to
 
   // A leaf scope excludes everyone else: alpha's delegation is alpha, its work, its evidence.
   const alphaScope = await swarm.view({ participantId: 'alpha' });
-  assert.deepEqual(alphaScope.participants.map((row) => row.participantId), ['alpha']);
+  // The root row rides every scope (docs/46 §5.5): the leaf answers alpha and the actor row.
+  assert.deepEqual(alphaScope.participants.map((row) => row.participantId), ['alpha', 'root']);
   assert.deepEqual(Object.keys(alphaScope.work), ['W-A']);
   assert.deepEqual(Object.keys(alphaScope.assignments), ['as-alpha']);
   assert.deepEqual(alphaScope.contributions.map((row) => row.contributionId), ['contribution-alpha-1']);
@@ -224,7 +225,7 @@ test('a gone holder is released in one durable batch; a live one refuses', async
   // Stopping alpha names the release operation as the next step...
   await swarm.stop('alpha', 'part A delivered');
   let view = await swarm.view();
-  assert.deepEqual(view.attention.find((row) => row.kind === 'assignment_holder_gone'),
+  assert.deepEqual(view.attention.rows.find((row) => row.kind === 'assignment_holder_gone'),
     { kind: 'assignment_holder_gone', assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A',
       next: { event: 'swarm.holder_released', participantId: 'alpha' } });
 
@@ -255,7 +256,7 @@ test('a gone holder is released in one durable batch; a live one refuses', async
   // departed lead itself (status left) is releasable — an honest no-op when it holds no seats.
   await delegated.leave({ reason: 'delegation complete' });
   view = await swarm.view();
-  const orphan = view.attention.find((row) => row.kind === 'delegation_orphaned' && row.participantId === 'beta');
+  const orphan = view.attention.rows.find((row) => row.kind === 'delegation_orphaned' && row.participantId === 'beta');
   assert.deepEqual(orphan.next, { event: 'swarm.holder_released', participantId: 'lead' });
   await swarm.holderRelease('lead', 'departed; seats released');
   view = await swarm.view();

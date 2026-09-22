@@ -142,7 +142,7 @@ test('454-b: the runtime entry still folds the lost seat, and the view reads it'
   assert.deepEqual(participantRow(view, 'alpha').runtime,
     { workerId: lostWorkerId, state: 'dead', turn: null, live: false },
     'the projection reads the state the entry reconciled');
-  assert.ok(view.attention.some((row) => row.kind === 'worker_lost_on_restart'
+  assert.ok(view.attention.rows.some((row) => row.kind === 'worker_lost_on_restart'
     && row.participantId === 'alpha'), 'the folded seat still pages');
 
   // One row per loss, however many reads project it: the entry pass is idempotent and the reads

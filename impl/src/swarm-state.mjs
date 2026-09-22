@@ -139,6 +139,12 @@ const SCOPE_CLAIM_PREFIX = 'scope:';
 export const scopeClaimId = (participantId) => `${SCOPE_CLAIM_PREFIX}${participantId}`;
 const isScopeClaimId = (claimId) => typeof claimId === 'string' && claimId.startsWith(SCOPE_CLAIM_PREFIX);
 
+/** docs/46 §5.1 (issue #274): the participant ids no join may record. `root` is the swarm's
+ * creator — the view synthesizes its actor row per read (swarm-runtime.mjs), so a recruited
+ * seat wearing the name would double it. ONE set, owned here (docs/46 §10): the fold's
+ * membership validation and the runtime's recruit pre-effect both read it. */
+export const SWARM_RESERVED_PARTICIPANT_IDS = Object.freeze(['root']);
+
 // One physical workspace identity (`ws-…`): the checkout a participant works in, as recorded at
 // recruitment and at binding. The writer coupling's exclusivity is exactly this identity, so the
 // shape is named once here rather than re-spelled at each site that carries it.
@@ -433,6 +439,11 @@ export function validateSwarmEvent(kind, payload) {
   }
   if (kind === 'swarm.participant_joined') {
     if (!isNonEmptyString(p.participantId)) refuse('swarm.participant_joined requires participantId', 'invalid_payload');
+    // docs/46 §5.1: the root is the swarm's creator — a derived actor row on every view, never
+    // a recruited seat. No membership event ever names it, so the fold refuses the id outright.
+    if (SWARM_RESERVED_PARTICIPANT_IDS.includes(p.participantId)) {
+      refuse('participant id ' + p.participantId + ' is reserved: the root row is derived per view, never recruited', 'participant_reserved');
+    }
     validOptionalNonEmptyString(p.role, 'participant role', refuse);
     validOptionalNonEmptyString(p.parentId, 'participant parentId', refuse);
     // The physical checkout this participant deliberately shares with others, when it was

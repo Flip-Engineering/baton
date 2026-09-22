@@ -125,6 +125,9 @@ exec ${JSON.stringify(REAL_GIT)} "$@"
       ? [{ pauseId: workerId }] : []),
     routeCards: () => [],
     guideParticipant: async () => ({ ok: true }),
+    // docs/46 §4 (issue #274): one recorded checkout, so the checkout class of the brief's
+    // exposure ladder is fixtureable — every seat's worker resolves to the same attachment.
+    workspaceAttachment: () => ({ workspaceId: `ws-${'a'.repeat(32)}`, worktree: repo }),
     captureContribution: async (workerId, { contributionId }) => ({
       contributionId, workerId, sha: WORKER_SHA, ref: `refs/baton/checkpoints/${WORKER_SHA}`,
     }),
@@ -330,7 +333,10 @@ test('441c-a: the contributions projection and run.contributions.read answer the
 test('441c-b: the Swarm situation section counts the folds, composes with zero spawns, and scans no ledger', needsGit, async (t) => {
   const f = await situationFixture(t, 'situation');
   const before = f.gitSpawns();
-  await f.recruit('gamma', ['read', 'contribute']);
+  // docs/46 §4 (issue #274): gamma is recruited INTO beta's recorded checkout, so beta reads
+  // the `checkout` class — the class that carries the docs/45 §6 peers-now line in full.
+  await f.call('recruit', { participantId: 'gamma', objective: 'gamma lane',
+    permissions: ['read', 'contribute'], shareWorkspaceWith: 'beta' });
   assert.equal(f.gitSpawns(), before,
     'composing a brief spawns NO process: the peers and contribution folds are the durable rows (docs/46 §7, #438)');
   const section = situationOf(f.briefOf('gamma'));
@@ -378,7 +384,11 @@ test('441c-c: run.peers.read and the brief\'s Peers now rows are the same deriva
   const f = await situationFixture(t, 'peers');
   assert.ok(renderPeerNowLine !== null,
     'export the ONE peer renderer (swarm-runtime.mjs) so the brief and the read cannot spell a peer line twice');
-  await f.recruit('gamma', ['read', 'contribute']);
+  // docs/46 §4 (issue #274): gamma is recruited INTO the recorded checkout, and every seat of
+  // this fixture shares it — so every peer reads the `checkout` class, the one that carries the
+  // docs/45 §6 peers-now line in full through the ONE renderer.
+  await f.call('recruit', { participantId: 'gamma', objective: 'gamma lane',
+    permissions: ['read', 'contribute'], shareWorkspaceWith: 'beta' });
   const lines = peersNowLines(situationOf(f.briefOf('gamma')));
   assert.deepEqual(lines.map((line) => line.slice(2, line.indexOf(' —'))), ['alpha', 'beta'],
     'the brief renders one line per peer that can act, in the read\'s own order');
@@ -398,8 +408,8 @@ test('441c-c: run.peers.read and the brief\'s Peers now rows are the same deriva
     'what the peer holds: the work it is assigned and the paths it claims');
   assert.match(lines[1], /holds work-1 \(assigned\)/u,
     'the brief renders the assignment the read answers');
-  assert.match(lines[1], /claims impl\/src\/claimed\.mjs \(no recorded checkout\)/u,
-    'the brief renders the claim the read answers, naming the checkout it is held on');
+  assert.match(lines[1], /claims impl\/src\/claimed\.mjs on ws-/u,
+    'the brief renders the claim the read answers, naming the checkout it is held on (the fixture now records the seat checkout, so the claim names it)');
 });
 
 // ── (d) no contributions: the section is byte-identical to the pre-#441c composition ───────────
@@ -413,21 +423,18 @@ test('441c-d: a swarm with no contributions renders the section byte-identically
     'a swarm that contributed nothing has no rows to count — the derivation invents none');
   await f.recruit('gamma', ['read', 'contribute']);
   const section = situationOf(f.briefOf('gamma'));
-  // Today's bytes, exactly, above the wake block: the two peer blocks, the two peer rows, and no
-  // contribution count line for an empty swarm (docs/47 §7, the migration rule). Issue #529 adds
-  // the one section after them — the seat's own ledger rows since the reference point — so the
-  // pinned prefix is what "byte-identical" means now, and the block below it is composed from the
-  // rows themselves (its timestamps are the ledger's, never a fixture constant).
+  // The brief's bytes, exactly, above the wake block — under docs/46 §4 (issue #274): the
+  // peers lines are class-graded (alpha and beta are `swarm`-class peers of gamma: identity,
+  // role, liveness word — no scope), the peers-now block takes no line for their class, and no
+  // contribution count line renders for an empty swarm (docs/47 §7). The wake block below is
+  // composed from the rows themselves (its timestamps are the ledger's, never a constant).
   const [peers, wakeBlock] = section.split('\nRecent wake events (since seq ');
   assert.equal(peers, [
     '## Swarm situation',
     'Peers (the seats already working beside you):',
-    '- alpha — alpha lane — scope: impl/**',
-    '- beta — beta lane — scope: impl/**',
-    'Peers now:',
-    '- alpha — holds nothing; last checkpoint: none recorded',
-    '- beta — holds nothing; last checkpoint: none recorded',
-  ].join('\n'), 'a pre-#441 brief composes byte-identically above the #529 wake block');
+    '- alpha — alpha lane; working',
+    '- beta — beta lane; working',
+  ].join('\n'), 'a no-relationship brief composes byte-identically above the #529 wake block');
   assert.ok(wakeBlock !== undefined, 'the wake block is the only section the peers are followed by');
   assert.match(wakeBlock, /^1, newest first\):\n- \[seq \d+ · [a-z_]+ · ts \S+\]:/u,
     'and it is this swarm\'s own rows, newest first from the reference point');

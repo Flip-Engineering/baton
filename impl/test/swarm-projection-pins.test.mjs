@@ -193,7 +193,12 @@ test('every projected row family pins its seq and ts', async (t) => {
     assert.ok(Number.isSafeInteger(row.seq) && row.seq > 0, `${family} carries its seq`);
     assert.ok(typeof row.ts === 'string' && row.ts.length > 0, `${family} carries its ts`);
   };
-  for (const participant of view.participants) stamped(participant, `participant ${participant.participantId}`);
+  // docs/46 §5.1 (issue #274): the root row is DERIVED per view — no ledger row carries it, so
+  // it pins no seq/ts; every FOLDED participant row still does.
+  for (const participant of view.participants) {
+    if (participant.participantId === 'root') continue;
+    stamped(participant, `participant ${participant.participantId}`);
+  }
   for (const [workId, row] of Object.entries(view.work)) stamped(row, `work ${workId}`);
   for (const [assignmentId, row] of Object.entries(view.assignments)) stamped(row, `assignment ${assignmentId}`);
   for (const [key, row] of Object.entries(view.context)) stamped(row, `context ${key}`);

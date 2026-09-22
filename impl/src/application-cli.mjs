@@ -3208,7 +3208,9 @@ export function swarmWakeSummary(view) {
   return {
     schemaVersion: 1, kind: 'baton.swarm_wake', swarmId: view.swarmId, seq: view.cursor,
     event: view.watch?.event ?? null, status: view.status,
-    attention: view.attention ?? [],
+    // docs/46 §9 cutover (issue #274): attention is the {rows, coverage} envelope; the summary
+    // iterates the rows.
+    attention: view.attention?.rows ?? [],
     participants: (view.participants ?? []).map((row) => ({
       participantId: row.participantId, status: row.status, state: row.runtime?.state ?? null, turn: row.runtime?.turn ?? null,
     })),

@@ -79,7 +79,8 @@ function fixture(t, { lastCrash } = {}) {
     ...(Object.keys(options).length ? { options } : {}),
   });
   const workerOf = (participantId) => workers.find((row) => row.runId === store.swarm('attn').participants[participantId].runId);
-  const attention = async (projection = 'attention') => (await call('view', { projection })).attention;
+  // docs/46 §9 cutover (issue #274): the envelope's rows are the array the pins read.
+  const attention = async (projection = 'attention') => (await call('view', { projection })).attention?.rows ?? [];
   return { store, workers, runtime, call, recruit, workerOf, attention };
 }
 
@@ -108,7 +109,10 @@ const bindTree = (worker, tree) => {
   worker.sessionContext = { worktree: tree, repoRoot: tree };
 };
 
-const kinds = (rows) => rows.map((row) => row.kind);
+// docs/46 §9 cutover (issue #274): attention is the {rows, coverage} envelope; the row pins
+// read `attention.rows`.
+const kinds = (attention) => (Array.isArray(attention) ? attention : attention?.rows ?? [])
+  .map((row) => row.kind);
 const rowFor = (rows, kind, participantId) => rows.find((row) => row.kind === kind && row.participantId === participantId);
 
 test('357a: a worktree path outside the seat scope raises worktree_foreign_changes; an in-scope path raises nothing', async (t) => {

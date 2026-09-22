@@ -262,7 +262,7 @@ test('525-c RED at base: the attention projection carries resume_decision_requir
   await f.recruit('bravo', { resumeFrom: 'alpha' });
 
   const view = await f.call('view');
-  const row = (view.attention ?? []).find((entry) => entry.kind === 'resume_decision_required'
+  const row = view.attention?.rows?.find((entry) => entry.kind === 'resume_decision_required'
     && entry.participantId === 'bravo');
   assert.ok(row, 'a pending recovery pages as resume_decision_required (docs/52 D2)');
   assert.equal(row.predecessor, 'alpha');
@@ -314,7 +314,7 @@ test('525-d RED at base: the orchestrator\'s guide answers the decision — park
   assert.equal(delivered.length, 1, 'the parked answer is marked delivered exactly once');
 
   const after = await f.call('view');
-  assert.ok(!(after.attention ?? []).some((entry) => entry.kind === 'resume_decision_required'
+  assert.ok(!after.attention?.rows?.some((entry) => entry.kind === 'resume_decision_required'
     && entry.participantId === 'bravo'), 'the answer settles the attention row');
 });
 
@@ -336,7 +336,7 @@ test('525-e RED at base: swarm.stop settles a decision-pending successor without
   assert.equal(bravo.leftReason, 'stopped');
 
   const view = await f.call('view');
-  assert.ok(!(view.attention ?? []).some((entry) => entry.kind === 'resume_decision_required'
+  assert.ok(!view.attention?.rows?.some((entry) => entry.kind === 'resume_decision_required'
     && entry.participantId === 'bravo'), 'the stop settles the attention row');
 
   // The stopped successor is itself a resumable predecessor (#452): the work it carried waits
@@ -370,7 +370,7 @@ test('525-f RED at base: a root-run resume re-joins the predecessor\'s subtree, 
     'a resume by a non-member re-joins the successor under the predecessor\'s nearest living ancestor');
 
   const subView = await f.call('view', { participantId: 'sub' }, workerPrincipal(subWorker.id));
-  const row = (subView.attention ?? []).find((entry) => entry.kind === 'resume_decision_required'
+  const row = subView.attention?.rows?.find((entry) => entry.kind === 'resume_decision_required'
     && entry.participantId === 'bravo');
   assert.ok(row, 'the sub-orchestrator\'s own scoped view carries the question');
   assert.equal(row.responsibleParticipant, 'sub',

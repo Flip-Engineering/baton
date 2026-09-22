@@ -92,9 +92,9 @@ test('the CLI parses swarm watch --follow into the deployment wake stream, pinne
 
 test('followSwarm emits one summary per matched event and returns when the swarm is closed and nothing is alive', async () => {
   const views = [
-    { swarmId: 's', status: 'open', cursor: 5, watch: { reason: 'event', event: { seq: 5, kind: 'turn.paused', payloadKind: null } }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'working', turn: 'paused' } }], attention: [], contributions: { c1: {} }, work: {} },
-    { swarmId: 's', status: 'open', cursor: 5, watch: { reason: 'timeout', event: null }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'working', turn: 'paused' } }], attention: [], contributions: { c1: {} }, work: {} },
-    { swarmId: 's', status: 'closed', cursor: 9, watch: { reason: 'event', event: { seq: 9, kind: 'driver.recorded', payloadKind: 'swarm.closed' } }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'dead', turn: null } }], attention: [{ kind: 'participant_runtime_dead', participantId: 'a', state: 'dead' }], contributions: { c1: {} }, work: {} },
+    { swarmId: 's', status: 'open', cursor: 5, watch: { reason: 'event', event: { seq: 5, kind: 'turn.paused', payloadKind: null } }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'working', turn: 'paused' } }], attention: { rows: [], coverage: { examined: [], unexamined: [] } }, contributions: { c1: {} }, work: {} },
+    { swarmId: 's', status: 'open', cursor: 5, watch: { reason: 'timeout', event: null }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'working', turn: 'paused' } }], attention: { rows: [], coverage: { examined: [], unexamined: [] } }, contributions: { c1: {} }, work: {} },
+    { swarmId: 's', status: 'closed', cursor: 9, watch: { reason: 'event', event: { seq: 9, kind: 'driver.recorded', payloadKind: 'swarm.closed' } }, participants: [{ participantId: 'a', status: 'active', runtime: { state: 'dead', turn: null } }], attention: { rows: [{ kind: 'participant_runtime_dead', participantId: 'a', state: 'dead' }], coverage: { examined: ['a'], unexamined: [] } }, contributions: { c1: {} }, work: {} },
   ];
   const calls = [];
   const client = { async command(name, args) { calls.push([name, args.afterSeq ?? null]); return views.shift(); } };

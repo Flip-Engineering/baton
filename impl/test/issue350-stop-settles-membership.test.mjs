@@ -162,7 +162,7 @@ test('350f: a closed swarm with only stopped seats raises no closed_with_live_pa
   await f.call('update', { event: 'swarm.closed', payload: { reason: 'objective met' } });
 
   const view = await f.call('view');
-  const closed = view.attention.find((row) => row.kind === 'closed_with_live_participants');
+  const closed = view.attention.rows.find((row) => row.kind === 'closed_with_live_participants');
   assert.deepEqual(closed?.participantIds ?? null, ['beta'],
     'only seats that can still act keep a closed swarm live');
 });
