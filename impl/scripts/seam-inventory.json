@@ -16787,7 +16787,7 @@
         {
           "name": "_runStopTargets",
           "ordinal": 0,
-          "size": 40,
+          "size": 43,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -19024,7 +19024,7 @@
         {
           "name": "_validateRunStopAdmission",
           "ordinal": 0,
-          "size": 104,
+          "size": 111,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -19553,7 +19553,7 @@
         {
           "name": "_normalizeContextPackage",
           "ordinal": 0,
-          "size": 51,
+          "size": 56,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
