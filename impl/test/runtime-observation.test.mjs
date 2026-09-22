@@ -70,8 +70,9 @@ const RECLASSIFIED = Object.freeze([
   ['replBindingSnapshot', 'admission'], ['resolveReplCitation', 'admission'],
 ]);
 
-/** The reroute census across the bucket, as generated and verified against the source. */
-const REROUTE_TOTALS = Object.freeze({ logAppend: 36, mapEvent: 16, coordRecord: 6, coordination: 147 });
+/** The reroute census across the bucket, as generated and verified against the source. Issue #66:
+ * the settle ritual's doubt raise act adds one `recorder.coordination` call site. */
+const REROUTE_TOTALS = Object.freeze({ logAppend: 36, mapEvent: 16, coordRecord: 6, coordination: 148 });
 
 test('RO1: the module imports neither monolith and contains no implicit receiver at all', () => {
   const root = parseOf(read(MEMBER_FILE));
