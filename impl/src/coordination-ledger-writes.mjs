@@ -96,10 +96,10 @@ function validRepresentationPolicy(policy) {
     || policy.schemaVersion !== 1 || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId ?? '')) return false;
   const numeric = REPRESENTATION_POLICY_FIELDS.filter((field) => !['repoId', 'schemaVersion'].includes(field));
   if (numeric.some((field) => !Number.isSafeInteger(policy[field]) || policy[field] <= 0)) return false;
-  return policy.maxArgumentBytes <= 16 * 1024 * 1024 && policy.maxSourceRefs <= 256 && policy.maxSourceRefBytes <= 16 * 1024 * 1024
-    && policy.maxEvidenceRefs <= 100_000 && policy.maxReceiptBytes <= 16 * 1024 * 1024
-    && policy.maxGraphBatchBytes <= 16 * 1024 * 1024 && policy.maxResultItems <= 1024
-    && policy.maxResultRefs <= 256 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return policy.maxArgumentBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && policy.maxSourceRefs <= 256 && policy.maxSourceRefBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
+    && policy.maxEvidenceRefs <= 100_000 && policy.maxReceiptBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
+    && policy.maxGraphBatchBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && policy.maxResultItems <= 1024
+    && policy.maxResultRefs <= 256 && policy.maxResultBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value;
 }
 
 function writerProcessStartIdentity(pid) {

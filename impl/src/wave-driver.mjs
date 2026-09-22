@@ -40,9 +40,9 @@ const OBJECTIVE_MAX_BYTES = FRAME_LIMITS['wave.member.objective'].value;
 const DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   completionMessage: 'Continue the current turn.',
-  pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
-  settleTimeoutMs: 5_000,
+  pollIntervalMs: FRAME_LIMITS['driver.poll_ms'].value,
+  stallTimeoutMs: FRAME_LIMITS['driver.stall_ms'].value,
+  settleTimeoutMs: FRAME_LIMITS['driver.settle_ms'].value,
   finalization: 'none',
   unproductiveNudgeBudget: 1,
   // CP8 (#88): the per-member corrective-nudge COUNT budget drawn on a claim_premature_liveness

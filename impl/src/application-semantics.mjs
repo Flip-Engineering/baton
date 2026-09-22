@@ -52,7 +52,7 @@ export const PROGRESS_CLASS_LEAVES = Object.freeze(['silent', 'progressing']);
 export const PROGRESS_BLOCKED_INTERACTION_DETAILS = Object.freeze([
   'approve_plan', 'select_candidate', 'answer_required', 'turn_checkpoint',
 ]);
-export const PROGRESS_SILENCE_THRESHOLD_MS = 120_000;
+export const PROGRESS_SILENCE_THRESHOLD_MS = FRAME_LIMITS['progress.silence_ms'].value;
 
 // Issue #10 (D2): the closed waiting-on vocabulary. Additive on the run view/outline/runs.list
 // item, never a new run phase (D1). The array is frozen AND written in ACTUAL sorted order so the

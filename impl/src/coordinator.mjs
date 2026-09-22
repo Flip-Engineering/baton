@@ -2570,7 +2570,7 @@ export class Coordinator {
         || !/^[a-f0-9]{64}$/u.test(candidate.targetDigest ?? '')
         || candidate.targetDigest !== canonicalDigest(candidate.target)
         || !Number.isSafeInteger(candidate.maxReportBytes) || candidate.maxReportBytes <= 0
-        || candidate.maxReportBytes > 16 * 1024 * 1024
+        || candidate.maxReportBytes > FRAME_LIMITS['review.report_max_bytes'].value
         || Buffer.byteLength(JSON.stringify(candidate.target)) > 128 * 1024) {
         throw new ReviewSelectionError('structured review contract is invalid', 'structured_review_invalid');
       }

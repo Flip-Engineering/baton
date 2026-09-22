@@ -2,6 +2,7 @@
 // Absolute source paths stay in this closure. Public identity is content/policy only.
 
 import { createHash } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
 import {
   closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync,
   readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, symlinkSync, writeFileSync,
@@ -18,7 +19,7 @@ export class ToolchainProjectionError extends Error {
 const LIMIT_FIELDS = Object.freeze(['maxMappings', 'maxFiles', 'maxDirectories', 'maxBytes', 'maxFileBytes', 'maxPathBytes', 'maxDepth']);
 const IMPLEMENTATION_CEILINGS = Object.freeze({
   maxMappings: 128, maxFiles: 1_000_000, maxDirectories: 250_000,
-  maxBytes: 2 * 1024 * 1024 * 1024, maxFileBytes: 512 * 1024 * 1024,
+  maxBytes: FRAME_LIMITS['workspace.capacity_max_bytes'].value, maxFileBytes: FRAME_LIMITS['workspace.file_max_bytes'].value,
   maxPathBytes: 4096, maxDepth: 256,
 });
 const BASE_FIELDS = Object.freeze(['schemaVersion', 'sourceRoot', 'sourceId', 'mappings', 'limits']);

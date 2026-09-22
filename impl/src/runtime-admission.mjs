@@ -518,8 +518,8 @@ export function constructor(coordinator, opts) {
       coordinator._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, authorizeRecheck: policy.authorizeRecheck ?? null, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes, policyReconcile: Object.freeze({ ...reconcile }) });
     }
     coordinator._now = opts.now || Date.now;
-    coordinator._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
-    coordinator._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
+    coordinator._approvalTimeoutMs = opts.approvalTimeoutMs ?? FRAME_LIMITS['approval.timeout_ms'].value;
+    coordinator._stopDeadlineMs = opts.stopDeadlineMs ?? FRAME_LIMITS['run.stop_deadline_ms'].value;
     // #201 durable member retry: the bounded retry COUNT for death-cert crashes (never a
     // clock — the #163 law). Absent/null = authority OFF (deaths settle failed exactly as
     // today); N>=0 = up to N retry_pending parks per member task before failed.
@@ -567,7 +567,7 @@ export function constructor(coordinator, opts) {
     // exists only when the deployment owner names one (`hardStopAt`); the default is none, so no
     // built-in number can kill a productive worker.
     const budgetHardStopAt = budgetPolicy.hardStopAt ?? null;
-    const budgetTerminalGraceMs = budgetPolicy.terminalGraceMs ?? 250;
+    const budgetTerminalGraceMs = budgetPolicy.terminalGraceMs ?? FRAME_LIMITS['budget.terminal_grace_default_ms'].value;
     if (!Array.isArray(budgetThresholds) || budgetThresholds.length === 0 || budgetThresholds.length > 32
       || budgetThresholds.some((value) => !Number.isFinite(value) || value <= 0 || value > 100)
       || new Set(budgetThresholds).size !== budgetThresholds.length
@@ -603,8 +603,8 @@ export function constructor(coordinator, opts) {
       if (!orientationCard?.ops?.['orientation.slice']) throw new TypeError('scope orientation policy requires registered cartographer-quartermaster/orientation.slice');
     }
     coordinator._watchdog = Object.freeze({
-      stallMs: opts.watchdog?.stallMs ?? 120000,
-      blockingInteractionTimeoutMs: opts.watchdog?.blockingInteractionTimeoutMs ?? 20 * 60_000,
+      stallMs: opts.watchdog?.stallMs ?? FRAME_LIMITS['watchdog.stall_ms'].value,
+      blockingInteractionTimeoutMs: opts.watchdog?.blockingInteractionTimeoutMs ?? FRAME_LIMITS['driver.blocking_interaction_ms'].value,
       loopThreshold: opts.watchdog?.loopThreshold ?? 3,
       scopeAction,
       orientation: scopeOrientation,
