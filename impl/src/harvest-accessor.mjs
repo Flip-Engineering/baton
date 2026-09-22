@@ -6,6 +6,7 @@
 // touches the onto checkout. The kernel lanes (worktree.mjs structured integration,
 // index.mjs worktrees wrappers, coordinator preservation) are consumers, never dependents.
 import { execFileSync } from 'node:child_process';
+import { FRAME_LIMITS } from './limits.mjs';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ import { join } from 'node:path';
 export const SHA1_HEX = /^[a-f0-9]{40}$/u;
 export const RESULT_REF_ROOT = 'refs/baton/results/';
 // The serialized changedFiles page ceiling (#89 doctrine: cap + graceful spill) — Decision 6.
-export const CHANGED_FILES_PAGE_BYTES = 256 * 1024;
+export const CHANGED_FILES_PAGE_BYTES = FRAME_LIMITS['harvest.changed_files_page_bytes'].value;
 
 /** One typed accessor refusal. Every refusal carries a string .code — no bare TypeError. */
 export function typedError(message, code, detail = null) {

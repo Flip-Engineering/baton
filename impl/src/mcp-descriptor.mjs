@@ -10,6 +10,7 @@
 
 import { readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { FRAME_LIMITS } from './limits.mjs';
 
 import { CoordinationStore } from './coordination-store.mjs';
 import { McpFleetServer } from './mcp-northbound.mjs';
@@ -228,8 +229,8 @@ export function createMcpServerFromDescriptor(descriptor) {
     shutdownPrincipal: { actor: 'mcp-host:descriptor', principalId: 'mcp-host', sessionId: 'mcp-host-session' },
     repoIds: [descriptor.repo],
     now: () => Date.now(),
-    maxWaitMs: 25_000,
-    maxMessageBytes: 256 * 1024,
+    maxWaitMs: FRAME_LIMITS['mcp.wait_default_ms'].value,
+    maxMessageBytes: FRAME_LIMITS['mcp.message_bytes'].value,
     takeToolQuota: async () => ({ ok: true }),
   };
 }

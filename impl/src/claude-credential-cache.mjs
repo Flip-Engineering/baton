@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
 import { spawn } from 'node:child_process';
 import {
   chmodSync, closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync,
@@ -95,7 +96,7 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function acquireLock(path, { now, timeoutMs = 30_000, pollMs = 10 } = {}) {
+async function acquireLock(path, { now, timeoutMs = FRAME_LIMITS['credential.cache_timeout_ms'].value, pollMs = FRAME_LIMITS['credential.cache_poll_ms'].value } = {}) {
   const started = now();
   for (;;) {
     let descriptor;
@@ -118,7 +119,7 @@ async function acquireLock(path, { now, timeoutMs = 30_000, pollMs = 10 } = {}) 
   }
 }
 
-function defaultRefreshRuntime({ cmd, cmdArgs = [], credential, directory, timeoutMs = 30_000 }) {
+function defaultRefreshRuntime({ cmd, cmdArgs = [], credential, directory, timeoutMs = FRAME_LIMITS['credential.cache_timeout_ms'].value }) {
   const credentialPath = join(directory, '.credentials.json');
   writeFileSync(credentialPath, `${JSON.stringify(credential.wire)}\n`, { mode: 0o600 });
   return new Promise((resolve) => {

@@ -1190,7 +1190,7 @@ export async function createBatonWebMcpServer(options) {
     now,
     admitsCommand: (command) => application._admits(command),
     maxWaitMs: options.maxWaitMs ?? 30_000,
-    maxMessageBytes: options.maxMessageBytes ?? 256 * 1024,
+    maxMessageBytes: options.maxMessageBytes ?? FRAME_LIMITS['mcp.message_bytes'].value,
     takeToolQuota,
     // Issue #529 (docs/54 §4): the auto-subscription the entry derived for THIS session from its
     // environment (`wakeAutoSubscription`). A caller that keeps no wake stream, or that wants a

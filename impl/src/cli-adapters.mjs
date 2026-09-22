@@ -392,7 +392,7 @@ class CliAdapter {
     const session = {
       worker, child, terminal: false, turnSettled: false, processClosePending: false,
       turnEpoch, buf: '', stderrTailRaw: '', logicalSequence: 0, processGeneration, processClosedEmitted: false,
-      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
+      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : FRAME_LIMITS['process.reap_timeout_ms'].value,
       spawnError: null, timeoutFailure: null, wallBudgetNotified: false,
       workerPolicyObserved,
     };
