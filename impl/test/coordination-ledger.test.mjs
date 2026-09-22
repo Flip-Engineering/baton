@@ -204,7 +204,7 @@ test('CL2: the committed map, the delegates, the exports and the store imports a
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     if (member.evidence.some((entry) => entry.endsWith(':ledger_port'))) moved.set(`${member.name}\u0000${member.ordinal}`, member.name);
   }
-  assert.equal(moved.size, 241, 'the map must show the observation bucket — every store member whose body left');
+  assert.equal(moved.size, 242, 'the map must show the observation bucket — every store member whose body left (#161 added the plan-object append lane)');
   const movedNames = new Set(moved.values());
   const wired = delegates();
   const orphans = [...moved.keys()].filter((identity) => !wired.has(identity.split('\u0000')[0]));
@@ -218,7 +218,7 @@ test('CL2: the committed map, the delegates, the exports and the store imports a
   // delegate each — and every name the store imports from the module exists.
   const helpers = [...wired.values()].map((delegate) => delegate.helper);
   assert.equal(new Set(helpers).size, helpers.length, 'one delegate per ledger helper');
-  assert.equal(helpers.length, 241, 'the port carries one helper per moved member');
+  assert.equal(helpers.length, 242, 'the port carries one helper per moved member');
   const moduleRows = map.files.find((file) => file.file === MAP_MODULE_FILE).members;
   for (const name of new Set(helpers)) {
     assert.equal(moduleRows.filter((member) => member.name === name).length, 1,
@@ -361,8 +361,11 @@ test('CL4: the store reaches every moved member through its own delegate, with i
   ['reverifyKnowledgeRecallAssessment', 5], ['readKnowledge', 3], ['knowledgeContentDigest', 0],
   ['knowledgeCandidateQueue', 0], ['knowledgeRitual', 1], ['invalidateKnowledge', 4],
   ['auditKnowledge', 0],
+  // #161 (G4/D1): the plan object's adjudicated-entry append, delegated to the ledger module
+  // beside the plan evidence-link writer that already lives there.
+  ['appendPlanEntries', 2],
   ];
-  assert.equal(MOVED.length, 241, 'the observation bucket is 241 members');
+  assert.equal(MOVED.length, 242, 'the observation bucket is 242 members');
   const wired = delegates();
   for (const [name, arity] of MOVED) {
     assert.ok(wired.has(name), `${name}: the class must still delegate it`);
@@ -377,7 +380,7 @@ test('CL4: the store reaches every moved member through its own delegate, with i
     assert.ok(descriptor, `${name}: the store must still answer on ${name}`);
     assert.equal(descriptor.value?.length ?? descriptor.get?.length, arity, `${name}: the signature must not move with the body`);
   }
-  assert.equal(wired.size, 241, 'the ledger port carries exactly the observation bucket');
+  assert.equal(wired.size, 242, 'the ledger port carries exactly the observation bucket');
 });
 
 test('CL5: the store keeps its exact behavior across the move, and a moved member is still dispatched through the class', () => {
