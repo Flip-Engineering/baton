@@ -506,10 +506,19 @@ async function runRecipe(baton, rawRecipe, invocation) {
   const opts = validateRunOptions(invocation);
   const digest = recipeDigest(baseRecipe);
 
-  // Same-key retry: load the durable manifest and attach — never re-start.
+  // Same-key retry: load the durable manifest and attach to its member runs.
   const existing = opts.manifestPath && existsSync(opts.manifestPath) ? loadManifest(opts.manifestPath) : null;
   if (existing && existing.idempotencyKey === opts.idempotencyKey) {
-    return attachRun(baton, existing);
+    try {
+      return await attachRun(baton, existing);
+    } catch (error) {
+      // Issue #100: the manifest is written before member admission. A startup failure can
+      // therefore leave a valid manifest for a wave with no runs. Resume that manifest through
+      // the driver with its original members, salt, and wave id.
+      if (error?.code !== 'wave_attach_unknown_wave') throw error;
+      const merged = admitRecipe(mergeOverrides(baseRecipe, opts.overrides));
+      return startRun(baton, existing, opts, merged);
+    }
   }
 
   // Fresh mint: merge overrides + re-validate (a post-merge breach refuses before any side effect),

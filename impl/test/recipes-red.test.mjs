@@ -337,6 +337,44 @@ test('RC-3: the invocation manifest is the identity boundary — same key loads+
   assert.equal(onDisk.schemaVersion, 1);
 });
 
+test('RC-4: a manifest written before a failed start remains retryable with the same key', async (t) => {
+  const { baton, manifestDir } = harness(t, scenarios);
+  const manifestPath = join(manifestDir, 'rc4-retry.json');
+  const liveWaves = baton.waves;
+  let starts = 0;
+  const interrupted = createRecipes({
+    waves: {
+      attach: (...args) => liveWaves.attach(...args),
+      start: async (...args) => {
+        starts += 1;
+        if (starts === 1) {
+          throw Object.assign(new Error('startup interrupted before member admission'), {
+            code: 'startup_interrupted',
+          });
+        }
+        return liveWaves.start(...args);
+      },
+    },
+  });
+  const invocation = {
+    task: 'feature X', idempotencyKey: 'rc4-key', manifestPath,
+  };
+
+  await assert.rejects(
+    interrupted.run(validRecipe(), invocation),
+    (error) => error?.code === 'startup_interrupted',
+  );
+  assert.equal(existsSync(manifestPath), true, 'the interrupted start leaves its identity manifest');
+  const firstManifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+
+  const retry = await interrupted.run(validRecipe(), invocation);
+  assert.equal(starts, 2, 'the memberless manifest retries its start once');
+  assert.equal(retry.manifest.salt, firstManifest.salt, 'the retry preserves the manifest identity');
+  assert.equal(retry.manifest.waveId, firstManifest.waveId, 'the retry preserves the wave id');
+  assert.equal(retry.outcomes.length, 1);
+  assert.match(retry.outcomes[0].resultSha ?? '', /^[a-f0-9]{40}$/u);
+});
+
 // RC-5 (run options): callbacks/evidencePath/overrides never enter the recipe digest; the override
 // allowlist merges and re-validates (a post-merge oversize objective refuses before any side
 // effect); onDecision passes through unchanged (present only when the bidirectional field exists in
