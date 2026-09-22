@@ -1822,8 +1822,11 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton run resultpin run:1',
     inputSchema: objectSchema({ runId: id }, ['runId']),
   }],
+  // The effect names the authority class the verb exercises, never a restatement of the verb's own
+  // key: every mutating wave verb (waves.start/send/stop/run) declares 'control', and harvest
+  // carries neither the run lane's adopt_result nor its export_result capability.
   ['waves.harvest', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'waves_harvest',
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves harvest run:1 --onto /srv/checkout',
     inputSchema: objectSchema({
