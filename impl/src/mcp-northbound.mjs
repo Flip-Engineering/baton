@@ -912,6 +912,24 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // Issue #314 (docs/49 §2): the core knowledge tool's `seed` verb derives its argument schema from
+  // this row (mcp-core-tools CORE_TABLE → verbSchema), so the flat spelling stays the projection's
+  // landed source even though the core verb replaces it at dispatch. It was dropped in the
+  // 2026-09-22 parity restructure while the core leg survived, which made coreToolDefinitions()
+  // throw `no landed schema for verb seed` and took issue314 rows a..g and one unified-surface row
+  // with it.
+  {
+    name: 'baton_run_knowledge_seed',
+    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
+    inputSchema: schema({
+      ...repo, runId,
+      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
+      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
+      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
+    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ].map((tool) => Object.freeze({
   ...tool,
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
