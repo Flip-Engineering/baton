@@ -165,6 +165,13 @@ async function defaultIntegrationRegenerate(dir, { pool = null } = {}) {
  * gate is as actionable as a crashed one — the refusal carries them either way instead of only
  * when the runner died before judging. */
 async function defaultIntegrationGates(dir, files, context, { pool = null, holder = null, leaseAuthority = null } = {}) {
+  // Issue #551: a verdict the runner writes can outlive the supervisor that was watching it. A
+  // resident reincarnation mid-verification takes the child handle (the pool holds children in
+  // process-state) and the in-process result with it, so this landing reads no document and cannot
+  // tell a run that judged nothing from a run whose supervisor was lost. The scratch is kept when
+  // no document was read, and its path rides the no-verdict row, so a successor incarnation can
+  // read a verdict the runner wrote after this incarnation stopped waiting.
+  let judged = false;
   const scratch = mkdtempSync(join(tmpdir(), 'baton-integrate-'));
   const verdictPath = join(scratch, 'verdict.json');
   try {
@@ -179,6 +186,7 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
     try {
       document = JSON.parse(readFileSync(verdictPath, 'utf8'));
     } catch { document = null; }
+    judged = document !== null;
     if (document === null) {
       // A runner that died before it could judge is not a green gate set. Never a bare "failed":
       // the row names the script, its exit status and the #326 tail of what the runner said — the
@@ -190,12 +198,19 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
       // a NAMED PARTIAL verdict (root decision on #546, option a): the per-file rows the runner
       // streamed before it died are real results, so the record names them and the files its
       // death left unreported, with a partial verdictLine — never suite-timed-out with
-      // verdictLine null.
+      // verdictLine null. An unjudged run has TWO causes, and they are not the same fact: the
+      // runner exited without writing a verdict, or the SUPERVISOR was lost (a reincarnation
+      // mid-verification takes the child handle and the in-process result, #551). Neither is a
+      // timeout, so the row names the file a reader can check for a verdict that arrives after
+      // this incarnation stops waiting.
       const interrupted = result.signal !== null && result.signal !== undefined;
       const filesJudged = interrupted ? partialFilesJudged(`${result.stdout}\n${result.stderr}`) : [];
       const reported = new Set(filesJudged.map((row) => row.file));
       return {
         files,
+        // Issue #551: where the verdict would be — the path a successor incarnation checks before
+        // concluding the run never finished.
+        verdictPath,
         verdictLine: interrupted
           ? `partial — interrupted by ${result.signal}; ${filesJudged.length} of ${files.length} file(s) reported before the run died`
           : null,
@@ -207,7 +222,7 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
             filesJudged,
             filesUnreported: files.filter((file) => !reported.has(file)),
           } : {}),
-          stderrTail,
+          stderrTail, verdictPath,
         }],
         stderrTail, exit,
       };
@@ -222,7 +237,9 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
       stderrTail, exit,
     };
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    // Issue #551: the scratch is removed only when the verdict was read; an unjudged run keeps its
+    // directory so the verdict it may still write is findable by the path the row carries.
+    if (judged) rmSync(scratch, { recursive: true, force: true });
   }
 }
 
