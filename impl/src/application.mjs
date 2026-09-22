@@ -540,7 +540,7 @@ export function projectBoardView(snapshot, viewer = {}, cache = null) {
   // Epic #78 Decision 5/7: the view cache keys on BOTH fence components — a claim/report/expiry
   // advances projectionInputFence without moving boardFence, so a cached pre-claim/pre-report
   // view is never served after worker traffic (BW-14).
-  const cacheKey = `${board} ${role}:${workerId ?? ''} ${boardFence} ${projectionInputFence}`;
+  const cacheKey = `${board}\0${role}:${workerId ?? ''}\0${boardFence}\0${projectionInputFence}`;
   if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
 
   const claimByItem = new Map((snapshot?.claims ?? []).map((claim) => [claim.itemId, claim]));
