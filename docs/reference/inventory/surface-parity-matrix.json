@@ -544,6 +544,24 @@
       "ledgered": false
     },
     {
+      "name": "plan.read",
+      "category": "observation",
+      "cli": "baton plan read",
+      "mcp": "baton_plan_read",
+      "web": "plan_read",
+      "divergence": null,
+      "ledgered": true
+    },
+    {
+      "name": "plan.write",
+      "category": "control",
+      "cli": "baton plan write",
+      "mcp": "baton_plan_write",
+      "web": "plan_write",
+      "divergence": null,
+      "ledgered": true
+    },
+    {
       "name": "repl.binding",
       "category": "control",
       "cli": "baton repl binding",
@@ -775,7 +793,7 @@
       "mcp": "baton_run_resultpin",
       "web": "run_resultpin",
       "divergence": null,
-      "ledgered": false
+      "ledgered": true
     },
     {
       "name": "run.resume",
@@ -1135,7 +1153,7 @@
       "mcp": "baton_waves_harvest",
       "web": "waves_harvest",
       "divergence": null,
-      "ledgered": false
+      "ledgered": true
     },
     {
       "name": "waves.list",

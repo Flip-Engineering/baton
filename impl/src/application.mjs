@@ -38,6 +38,7 @@ import { hasNorthboundCapabilityAuthority } from './northbound-capability-author
 import { projectRunTimelinePage } from './run-timeline.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 import * as coordinationLedger from './coordination-ledger.mjs';
+import { PLAN_OBJECT_ID_PATTERN, admitPlanWrite, readPlanObject } from './orchestrator-plan.mjs';
 import {
   normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText,
 } from './verifier-diagnostics.mjs';
@@ -1627,7 +1628,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId', 'planPolicy']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -1649,6 +1650,10 @@ export class BatonApplication {
     // the column rather than minting a foreign row.
     this.deploymentId = options.deploymentId ?? null;
     this.authorize = options.authorize;
+    // #161 (DR-3): the deployment-owned plan policy (planPolicy.maxFocusTasks) the plan lane
+    // bounds its focus window by. Null when the application is constructed bare — the lane then
+    // reads its own declared default rather than a fabricated deployment value.
+    this._planPolicy = options.planPolicy ?? null;
     this._clock = options.clock ?? (() => new Date().toISOString());
     if (typeof this._clock !== 'function') {
       throw applicationError('application clock is invalid', 'application_config_invalid');
@@ -8544,6 +8549,12 @@ export class BatonApplication {
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
+    // #161 (D3.2/H2.1): the orchestrator plan object's two direct ports. Like the siblings above
+    // they dispatch BEFORE context validation and the recursive-session gate, each validates its
+    // own closed shape first, and the lane adjudicates authority (the plan:* power is the
+    // deployment authorize's composition; worker ownership is the lane's, never this seam).
+    if (name === 'plan.read') return this.planRead(args, principal);
+    if (name === 'plan.write') return this.planWrite(args, principal);
     // #176 (waves.* authority closure): the six waves.* verbs pass the recursive-session gate like
     // their run.* siblings — a sessionAuthority-context call refuses typed rather than dispatching
     // unchecked (the observe verbs are not exempt). Checked on the RAW context before full context
@@ -9352,6 +9363,64 @@ export class BatonApplication {
     }
     const view = projectBoardView(snapshot, { role: 'orchestrator', workerId: null });
     return deepFreeze({ schemaVersion: 1, board: request.board, boardRunId: boundRunId, view });
+  }
+
+  // ── #161: the orchestrator plan object's direct ports ─────────────────────────────────────────
+  //
+  // plan.read — the campaign-plan projection at the deployment seat, composed from the
+  // replay-derived plan-object fold (the store's campaignPlan accessor); an unminted plan refuses
+  // plan_not_found naming the addressed planId, and the projection emits the lane's canonical
+  // sorted task key order.
+  async planRead(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'plan read principal');
+    const planId = rawRequest?.planId;
+    if (typeof planId !== 'string' || !PLAN_OBJECT_ID_PATTERN.test(planId)) {
+      throw applicationError('plan read request must name the addressed plan:<hex32> planId',
+        'application_plan_read_invalid', { field: 'planId' });
+    }
+    await this._authorize('plan.read', principal, null, { planId });
+    return deepFreeze(this.driver.coordination.campaignPlan(planId));
+  }
+
+  // plan.write — the idempotency-keyed mutation lane. Both verbs authorize through the facade
+  // `_authorize` seam (the contract's enforcement seam, H2.1): the deployment authorize decides
+  // whether the caller holds the plan:* power, and a denial is the facade refusal
+  // application_unauthorized. `admitPlanWrite` then composes the ownership classes (plan owner /
+  // coordinator subtree / row member, H2.3) and adjudicates the closed
+  // {planId, idempotencyKey?, mutation} body against the live projection, returning the entries to
+  // land; the store's own appendPlanEntries seam lands them (the auto-demote pair atomically) and
+  // nothing further is derived here.
+  async planWrite(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'plan write principal');
+    const body = rawRequest;
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || typeof body.planId !== 'string' || !PLAN_OBJECT_ID_PATTERN.test(body.planId)
+      || !body.mutation || typeof body.mutation !== 'object' || Array.isArray(body.mutation)) {
+      throw applicationError('plan write request must carry a plan:<hex32> planId and a closed mutation',
+        'application_plan_write_invalid', { field: 'mutation' });
+    }
+    await this._authorize('plan.write', principal, null, {
+      planId: body.planId,
+      ...(typeof body.mutation.taskId === 'string' ? { taskId: body.mutation.taskId } : {}),
+    });
+    const store = this.driver.coordination;
+    const plans = new Map(store.campaignPlans().plans.map((plan) => [plan.planId, plan]));
+    const outcome = admitPlanWrite({
+      body,
+      principal,
+      planPower: true,
+      planPolicy: this._planPolicy,
+      plans,
+      priorEvent: (key) => store.priorCoordinationEvent(key),
+      resolveRunId: (waveId, waveRole) => store.waveRoleRun(waveId, waveRole),
+      actor: principal.principalId,
+    });
+    if (!outcome.replay) store.appendPlanEntries(outcome.entries, outcome.batchKind);
+    return deepFreeze({ schemaVersion: 1, ...outcome.outcome });
   }
 
   // run.knowledge.seed — Decision 9: content-addressed seeding inside the run's horizon.
