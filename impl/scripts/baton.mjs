@@ -417,7 +417,13 @@ try {
         process.stdout.write(`${JSON.stringify(projected, null, 2)}\n`);
         if ((parsed.check && local.state !== 'configured') || coordination !== null) process.exitCode = 1;
       } else {
-        const remote = await clientFor(discoverBatonConnection({ tolerateRegistryDrift: true })).doctor();
+        // #167 (A2/D1 trigger 3): `--check` is the operator's on-demand probe trigger — the request
+        // rides the reading verb to the served card, which refreshes exactly the stale routes ONCE
+        // through the deployment's own probe handle (the cache discipline decides staleness).
+        const forceProbe = parsed.check === true;
+        const remoteClient = clientFor(discoverBatonConnection({ tolerateRegistryDrift: true }));
+        if (forceProbe) remoteClient.requestForceProbe();
+        const remote = await remoteClient.doctor();
         // Issue #476: a resident that is STOPPING is not merely `not_ready` — it is a state with a
         // reason and a wait, and #467 keeps this transport's reads open so the operator can read
         // it. The stopping section the deployment already puts on its own card (`state`, `at`, the
