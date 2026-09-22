@@ -121,15 +121,6 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['evidence.search', 'evidence.search'],
     ['baton_services_list', 'services.list'],
     ['services.list', 'services.list'],
-    ['baton_run_knowledge_seed', 'run.knowledge.seed'],
-    ['baton_run_scratchpad_append', 'run.scratchpad.append'],
-    ['baton_knowledge_promote', 'knowledge.promote'],
-    ['baton_knowledge_settlement_lease', 'knowledge.settlement_lease'],
-    ['baton_run_attention_watch', 'run.attention.watch'],
-    ['baton_run_scratchpad_read', 'run.scratchpad.read'],
-    ['baton_run_scratchpad_elevate', 'run.scratchpad.elevate'],
-    ['baton_scratchpad_elevate', 'scratchpad.elevate'],
-    ['baton_scratchpad_settle', 'scratchpad.settle'],
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
     ...LIFECYCLE_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.key]),
     ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [[tool.name, tool.command], [tool.command, tool.command]]),
@@ -704,6 +695,20 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({ ...repo, topic: runId, depth: { type: 'string', enum: APPLICATION_SEMANTIC_REGISTRY.depths }, runId }, ['repoId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // Issue #555: the seed leg is a #314 core-table projection source — baton_knowledge
+  // {verb: 'seed'} projects THIS row's schema, so the ordinary table carries it.
+  {
+    name: 'baton_run_knowledge_seed',
+    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
+    inputSchema: schema({
+      ...repo, runId,
+      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
+      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
+      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
+    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   {
     // CS-2: baton_runs was already in ORDINARY_APPLICATION_ENTRIES dispatch (sibling of the
     // advertised set) but missing from the tool table — advertise it on the application surface.
@@ -1119,28 +1124,6 @@ function withSpellingNote(tool) {
   }
   return tool;
 }
-// Issue #555 correction: the memory-family rows restored verbatim from the pre-cut table —
-// each carries a landed contract pin (scratchpad-write #158, the settlement/packaging pins, the
-// attention surface, and the #314 seed leg) that the #156 composition cut over-removed.
-const RESTORED_MEMORY_FAMILY_TOOL_DEFINITIONS = Object.freeze([
-  {
-    name: 'baton_run_knowledge_seed',
-    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
-    inputSchema: schema({
-      ...repo, runId,
-      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
-      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
-      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
-      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
-    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-].map((tool) => Object.freeze({
-  ...tool,
-  _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
-  execution: Object.freeze({ taskSupport: 'forbidden' }),
-})));
-
 export const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   // Issue #156 D1 step 3: the derived lifecycle siblings LEAD the table (the combined profile's
   // ordinary prefix starts with them), each spread from its fleet_run_* source definition — the
@@ -1160,7 +1143,6 @@ export const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   ...SERVICES_LIST_TOOL_DEFINITIONS,
   // Issue #294 (final-landing ruling): the wake family's registry rows claim the mcp surface.
   ...WAKE_TOOL_DEFINITIONS,
-  ...RESTORED_MEMORY_FAMILY_TOOL_DEFINITIONS,
 ]);
 
 // ── the core mutation answer (docs/49 §5; issues #302, #294) ─────────────────────────────────────
