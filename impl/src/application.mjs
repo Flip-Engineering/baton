@@ -49,6 +49,9 @@ import { searchDeploymentEvidence, validateEvidenceSearchArgs } from './evidence
 import { validateServicesListArgs } from './provider-services.mjs';
 import * as applicationObservation from './application-observation.mjs';
 import {
+  seatAtomsForRoutes, seatCapacityAtoms, seatDeferredByVendor, seatObservedAtEventSeq,
+} from './seat-telemetry.mjs';
+import {
   ACTION_INPUT_ENVELOPE,
   ACTION_TURN_RESPONSE_KIND,
   APPLICATION_PROFILE_RECORD_ACTOR,
@@ -7627,9 +7630,16 @@ export class BatonApplication {
     // the per-member inspect calls consume the keyed results instead of one resolveResult each
     // (~90 members × ~3 git calls ≈ 11-13 s per waves_list at HEAD).
     const preservedResults = await this._pagePreservedInspections(page, waveIndex);
+    // #146 (D2.2): the capacity block's inputs, read ONCE for the whole response — the deferral
+    // aggregate (one ledger sweep) and the composition's ledger sequence. Never per wave row: the
+    // WLS-1 bound holds the roster projection to a bounded number of log reads per call.
+    const coordinator = this.driver?.coordinator ?? null;
+    const coordination = this.driver?.coordination ?? null;
+    const deferredByVendor = seatDeferredByVendor(coordination);
     const waves = [];
     for (const row of page) {
       const members = [];
+      const memberRoutes = [];
       for (const member of row.roster ?? []) {
         if (typeof member === 'string') {
           // B2/F13: a legacy string-array member is a bare role with NO registered runId — the
@@ -7643,6 +7653,7 @@ export class BatonApplication {
           // run that vanished refuses wave_not_found, never a silent null.
           const runId = this._runIdForWaveMember(row.waveId, member, waveIndex);
           const route = this._runWaveRoute(runId, waveIndex);
+          if (route !== null) memberRoutes.push(route);
           let view = null;
           if (runId !== null) {
             try {
@@ -7671,6 +7682,8 @@ export class BatonApplication {
         }
         const role = member?.role ?? null;
         const runId = this._runIdForWaveMember(row.waveId, role, waveIndex);
+        const route = this._runWaveRoute(runId, waveIndex);
+        if (route !== null) memberRoutes.push(route);
         let view = null;
         if (runId !== null) {
           try {
@@ -7691,17 +7704,31 @@ export class BatonApplication {
           attentionCount: runId === null ? null : attention,
         }));
       }
-      waves.push(deepFreeze({
+      // #146 (D2.2/A3): the wave-row sibling — the DISTINCT routes this wave's members occupy, each
+      // the closed D1 seat atom, deduplicated by route key. The wave-observability D2.3 pin closes
+      // the wave row's enumerable shape, so the block is attached NON-enumerably, the same pattern
+      // the doctor row's liveness/occupancy siblings use: property access reads it and
+      // Object.keys/JSON keep the pinned shape. A wave whose members' routes cannot be recovered
+      // reads `capacity: []` — the honest answer for a roster with no seat map.
+      const waveRow = {
         closedAtEventSeq: row.closedAtEventSeq ?? null,
         deploymentId: row.deploymentId ?? null,
         roster: members,
         startedAtEventSeq: row.startedAtEventSeq,
         state: row.state,
         waveId: row.waveId,
-      }));
+      };
+      Object.defineProperty(waveRow, 'capacity', {
+        value: seatCapacityAtoms({ coordinator, routes: memberRoutes, deferredByVendor }),
+        enumerable: false,
+      });
+      waves.push(deepFreeze(waveRow));
     }
     const nextCursor = cursor + page.length < open.length ? cursor + page.length : null;
-    return deepFreeze({ schemaVersion: 1, cursor, nextCursor, waves });
+    return deepFreeze({
+      schemaVersion: 1, cursor, nextCursor, waves,
+      observedAtEventSeq: seatObservedAtEventSeq(coordination),
+    });
   }
 
   async _pagePreservedInspections(page, waveIndex) {
@@ -8335,6 +8362,18 @@ export class BatonApplication {
     const routes = [...this.profiles.values()].flatMap((profile) => profile.routes.map((route) => (
       Object.freeze({ ...clone(route), state: 'ready' })
     )));
+    // #146 (D2.1, Fold A5): the same fleet seat projection over the profile routes this
+    // derivation publishes. The raw path reaches the coordinator for the route facts it already
+    // reads for `_reuseDecisionPolicy`, so the allocator binding resolves here too; a bare host
+    // with no coordinator reads every count null (unobservable), never a fabricated 0.
+    const coordinator = this.driver?.coordinator ?? null;
+    const coordination = this.driver?.coordination ?? null;
+    const seats = seatAtomsForRoutes({
+      coordinator,
+      routes,
+      stateOf: (route) => route.state,
+      deferredByVendor: seatDeferredByVendor(coordination),
+    });
     // Decision 7: the frozen limits projection tabulates EVERY registry lane; `effective` is
     // present ONLY where a deployment override exists (decision.need / decision.rationale) — the
     // digest covers DECLARED rows only, so an override never changes the handshake.
@@ -8348,7 +8387,8 @@ export class BatonApplication {
     });
     return deepFreeze({
       schemaVersion: 1, repoId: this.repoId,
-      routes, workspace: Object.freeze({ state: 'ready' }),
+      routes, seats, workspace: Object.freeze({ state: 'ready' }),
+      observedAtEventSeq: seatObservedAtEventSeq(coordination),
       limits: Object.freeze({
         version: FRAME_LIMITS_VERSION, digest: FRAME_LIMITS_DIGEST,
         lanes: deepFreeze(lanes),
