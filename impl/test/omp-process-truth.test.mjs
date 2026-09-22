@@ -282,3 +282,38 @@ test('A-E11: a stale spawn releases only its OWN reservation', async () => {
     'the stale spawn\'s cleanup must not cancel a newer reservation (the sibling identity guard)');
   adapter.kill('w-race');
 });
+
+// ---------------------------------------------------------------------------
+// A-G3 (OMP half) — kill() reports the latch's own observation, never a bare ok
+// ---------------------------------------------------------------------------
+
+test('A-G3: kill() reports the latch\'s own observation while the group reap is unconfirmed, and terminal once it is', async () => {
+  const child = new FakeChild();
+  let reap = { confirmed: false, reason: 'attempts_exhausted' };
+  const { adapter, events } = adapterFixture({
+    spawnFn: () => child,
+    options: { killGraceMs: 5, processReapTimeoutMs: 10, reapOwnedProcessGroup: async () => reap },
+  });
+  const admitted = await adapter.spawn('w-ack', { goal: 'g' }, { model: MODEL, reasoningEffort: 'high', worktree: '/tmp' });
+  assert.equal(admitted.ok, true, 'the worker owns a live session to stop');
+
+  // The child is still alive: no close fact exists, so the Ack carries the latch's own
+  // observation — a bare ok would read as done while nothing about the group was observed.
+  assert.deepEqual(await adapter.kill('w-ack'), { ok: true, confirmed: false, reason: 'close_pending' });
+
+  // The child exits, but the bounded reap cannot prove its group gone: the typed receipt is the
+  // only stop evidence, and no kill.confirmed may be published for a group nobody saw die.
+  await once(child, 'exit');
+  for (let tick = 0; tick < 20; tick += 1) await new Promise((resolve) => setImmediate(resolve));
+  const receipts = events.filter((event) => event.kind === 'lifecycle.process_reap_unconfirmed');
+  assert.equal(receipts.length, 1, 'the unconfirmed reap is a receipt, not silence');
+  assert.equal(receipts[0].payload.reason, 'attempts_exhausted');
+  assert.equal(events.some((event) => event.kind === 'kill.confirmed'), false,
+    'no stop is published while the group probe has not said ESRCH');
+
+  // The group is observed gone now: no confirmation event can ever follow, so the Ack IS it.
+  reap = { confirmed: true, reason: null };
+  assert.deepEqual(await adapter.kill('w-ack'), { ok: true, terminal: true });
+  assert.equal(events.some((event) => event.kind === 'kill.confirmed'), true,
+    'the confirmation arrives as the event once the group was observed gone');
+});
