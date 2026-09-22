@@ -1443,3 +1443,162 @@ Every carrier named for a Candidate row is a proposal to pin: per the evidence c
 needs a compiled, run example under `docs/bend2/examples/laws-*` citing the pinned reference
 before `laws.bend` claims it. Still no laws.bend entries and no rewrite implementation: this
 document is the pre-approval register.
+
+---
+
+## The reduction record (revision 5 table, carried with the review repairs)
+
+Verdict precedence for mechanical counting: a row is rejected if its verdict contains
+"rejected", else reduced if it contains "reduced", else kept. Repairs applied per the r5
+review: CAP-3 now points at the adopted narrow abandonment entry; CS-02 and LEDG-17 name their
+surviving homes. Mechanical count after repairs: kept 49, reduced 26, rejected 58, retired 1,
+evidence block 1 — 135 rows, each accounted for.
+
+| CUST-1 | kept → M-4 | passes |
+| CUST-2 | kept → M-4 | passes |
+| CUST-3 | reduced → M-4 scope note | failed Q3: one authoritative determination is required; the live-handle registry is an implementation |
+| CUST-4 | kept → M-4 | passes |
+| CUST-5 | kept → M-4 | passes |
+| CUST-6 | reduced → M-4 | failed Q3: the evidence requirement is the law; the metadata and path rules are one mechanism |
+| CUST-7 | reduced → M-4 | failed Q3: protection follows ownership, not one folder name |
+| CUST-8 | kept → M-7 | passes |
+| CUST-9 | rejected | failed Q1: a workspace-representation property, not a forbidden behavior |
+| CUST-10 | rejected | failed Q3: branch-moving is one preservation method |
+| CUST-11 | reduced → M-4 | failed Q3: custody-before-effects is the law; the receipt mechanism is not |
+| CUST-12 | rejected | failed Q3/independence: agreement is a theorem or a routing choice, not a prohibition |
+| CAP-1 | reduced → M-10 | failed Q3: derivation honesty is required; the formula is not |
+| CAP-2 | reduced → M-10 | failed independence: carried by the no-cutoff entry |
+| CAP-3 | reduced → M-10 and M-17 (narrow abandonment, adopted in revision 6) | failed Q3: FIFO is policy; the durable hold and admission-on-release are the guarantees |
+| CAP-4 | rejected (policy) | failed Q2: a workload choice, and the extraction overstated the source (derived share, not measured cost) |
+| CAP-5 | rejected (policy) | failed Q2: a chosen fallback with operation-specific justification |
+| CAP-6 | kept → M-2 | passes |
+| CAP-7 | kept → M-6 | passes |
+| CAP-8 | reduced → M-10 | failed Q3: the closed shape is construction hygiene; the byte ceiling is an unjustified cutoff |
+| CAP-9 | rejected | failed Q1: housekeeping design, not a forbidden behavior |
+| CAP-10 | rejected (policy) | failed Q2: one recovery response among possible ones |
+| CAP-11 | rejected (policy) | failed Q2: tunable scheduling |
+| CAP-12 | kept → M-8 | passes |
+| CAP-13 | rejected | failed Q3: exclusive accounting is required; the seal, root and lock are mechanisms |
+| CAP-14 | kept → M-6 | passes |
+| CAP-15 | reduced → M-10 | failed Q3: the terminal refusal dies under the no-cutoff ruling; the bounded queue survives (adjudicated wording) |
+| CAP-16 | rejected | failed Q3/independence: agreement is the property, one predicate is an organization |
+| CAP-17 | rejected (policy) | failed Q6: conflicts with the no-cutoff ruling; retire or state as an operator exception |
+| WAKE-1 | rejected | failed Q3: defined delivery meaning is required; the one-class-per-row design is not the law |
+| WAKE-2 | rejected (policy) | failed Q3: truthful refusal of unknown filters kept at the decoder; the vocabulary is versioned |
+| WAKE-3 | kept → M-5 | passes |
+| WAKE-4 | rejected (policy) | failed Q3: a stated default, not a universal one |
+| WAKE-5 | RETIRED | conflicts with the #541 ruling (dropping recorded events from a slow reader) |
+| WAKE-6 | rejected (policy) | failed Q3: per-signal subscription semantics |
+| WAKE-7 | rejected (policy) | failed Q3: the consistency half is noted in the design notes; the vocabulary is policy |
+| WAKE-8 | kept → M-13 | passes |
+| WAKE-9 | rejected (policy) | failed Q3: metadata-only is one design; verified content may be valid later |
+| WAKE-10 | rejected | failed Q3: one push implementation among possible ones |
+| WAKE-11 | rejected (policy) | failed Q3: the once-per-pull consistency half is noted; the cadence is policy |
+| WAKE-12 | reduced → M-10 | failed Q3: continuation is the guarantee; the ceiling needs physical derivation |
+| WAKE-13 | rejected | failed Q3: transport conformance; Baton2 may use other transports |
+| PROP-1 | reduced → M-10 | failed independence: bounded processing is carried by the no-cutoff entry |
+| PROP-2 | kept → M-5 | passes |
+| PROP-3 | reduced → M-4 scope | failed Q3: one ordering authority is required; the writer count is not |
+| LEDG-1 | kept → M-5 | passes |
+| LEDG-2 | rejected | failed Q3: detection is required; UTF-8 and newlines are codec choices |
+| LEDG-3 | kept → M-1 | passes |
+| LEDG-4 | kept → M-2 | passes |
+| LEDG-5 | rejected | failed Q3: one exclusion protocol among possible ones |
+| LEDG-6 | kept → M-1 and M-12 | passes |
+| LEDG-7 | kept → M-5 | passes |
+| LEDG-8 | rejected (policy) | failed Q3: actionable provenance is required; the codes and fields are versioned protocol |
+| LEDG-9 | rejected | failed Q3: evidence preservation is required; the write pattern is one implementation |
+| LEDG-10 | kept → M-5 | passes |
+| LEDG-11 | rejected | failed Q3: checkpoints are derived state; coalescing is performance |
+| LEDG-12 | kept → M-5 | passes |
+| LEDG-13 | rejected | failed Q3: consistent resolution is required; the grammar table is an interface |
+| LEDG-14 | rejected | failed Q3: bounded memory is required; the literal 256 is tuning |
+| LEDG-15 | kept → M-5 | passes |
+| LEDG-16 | kept → M-5 | passes |
+| LEDG-17 | rejected | failed independence: carried by the interface clause of the authority boundary (M-7/M-8 in revision 6); returns if Codex shows an uncovered failure |
+| LEDG-18 | rejected | failed Q3: session integrity is required; the second ledger and byte format are mechanisms |
+| LEDG-19 | reduced → M-5 | failed Q3: cursor validation is the guarantee; head-only waiting is an implementation |
+| CS-01 | rejected (policy) | failed Q2: thirteen kinds is today's vocabulary, not a permanent bound |
+| CS-02 | reduced → boundary-decoder obligations; the associated flagged entry was withdrawn | failed independence |
+| CS-03 | reduced → boundary-decoder obligation of M-1/M-7 | failed Q3: decode-before-effect is an implementation order |
+| CS-04 | rejected | failed Q3: declared retry identity is required; the two-verb list is one encoding |
+| CS-05 | reduced → M-14 | failed Q3: the structured refusal is the law; the template is presentation |
+| CS-06 | reduced → boundary-decoder obligation of M-1/M-7 | failed Q3, as CS-03 |
+| CS-07 | reduced → boundary-decoder obligation of M-7 | failed Q3, as CS-03 |
+| CS-08 | rejected (policy) | failed Q2: a boundary decision owed, with the recorded incident as the justification |
+| CS-09 | rejected (policy) | failed Q3: a versioned query API |
+| CS-10 | reduced → M-8 | failed independence: read-only preservation carried by the enlargement ban |
+| CS-11 | rejected (policy) | failed Q3: a scheduling interface choice |
+| CS-12 | rejected (policy) | failed Q3: prove the transitions; do not freeze the lists |
+| CS-13 | rejected (policy) | failed Q2: product choices need a reason |
+| CS-14 | rejected (policy) | failed Q2: exclusivity needs a product reason to be impossible |
+| CS-15 | rejected | failed Q3: the two-field plan encodes today's API |
+| CS-16 | reduced → M-14 | failed Q3: meaning-per-code is the law; the registry inventory is versioned |
+| CS-17 | kept → M-3 | passes |
+| CS-18 | rejected (policy) | failed Q2: three statuses constrain future reporting without proving correctness |
+| CS-19 | kept → M-1 and M-3 | passes |
+| CS-20 | rejected | failed Q1: development tooling, not a domain behavior |
+| AB-01 | rejected | failed Q3: total deterministic matching is required; the glob dialect is one representation |
+| AB-02 | reduced → M-8 scope | failed Q3: lexical rules are necessary and do not establish containment |
+| AB-03 | rejected | failed Q3: unambiguous targets are required; the list form is subordinate |
+| AB-04 | kept → M-9 | passes |
+| AB-05 | reduced → M-6 and M-7 | failed independence: carried by the binding entries |
+| AB-06 | reduced → M-8 | failed Q4: valid-authority transfer is the law; revocation and recovery scopes are owed |
+| AB-07 | rejected | failed Q3: truthful provenance is required; the reserved-prefix strategy is a recording choice |
+| AB-08 | rejected | failed Q3: the distinction is required; the exemptions are mechanism |
+| AB-09 | kept → M-7 | passes |
+| AB-10 | kept → M-8 | passes |
+| AB-11 | kept → M-8 | passes |
+| AB-12 | reduced → M-10 and M-8 | failed Q6: the 64-entry cap is a superseded cutoff; duplicate rejection needs its own reason |
+| AB-13 | reduced → M-7 (boundary recheck) | failed Q3: loopback-only is deployment policy |
+| AB-14 | kept → M-7 | passes |
+| PM-01 | rejected (policy) | failed Q2: today's vocabulary, not a permanent capability bound |
+| PM-02 | rejected (policy) | failed Q3: defaults are policy; explicitness is the property |
+| PM-03 | rejected (policy) | failed Q3: defined requirement per action; single-value may prohibit valid conjunctions |
+| PM-04 | rejected (policy) | failed Q3: today's mappings are reviewed policy |
+| PM-05 | rejected | failed independence: agreement is the law; one shared function is one way (finding 6) |
+| PM-06 | rejected (policy) | failed Q2: per-operation justification owed |
+| PM-07 | reduced → M-7 | failed Q4: membership currency is part of authority validity |
+| PM-08 | kept → M-8 | passes |
+| PM-09 | rejected (policy) | failed Q3: the table evolves under a versioned policy contract |
+| PM-10 | reduced → M-3 scope | failed Q3: independence of authority is the guarantee; label inequality is not proof — the inequality proposition route is owed |
+| PM-11 | kept → M-7 | passes |
+| CL-01 | rejected (policy) | failed Q3: explicit form is required; the six-key heuristic is compatibility |
+| CL-02 | kept → M-7 | passes |
+| CL-03 | kept → M-3 | passes |
+| CL-04 | rejected (policy) | failed Q3: truthful status is required; the stamp vocabulary is not frozen |
+| CL-05 | kept → M-3 | passes |
+| CL-06 | rejected (policy) | failed Q2: last-accept-wins is a resolution policy with a named alternative |
+| CL-07 | kept → M-3 and M-5 | passes |
+| CL-08 | kept → M-3 | passes |
+| CL-09 | rejected | failed Q3: preservation of the approved change is the contract; one squash commit is a strategy |
+| CL-10 | kept → M-3 | passes |
+| CL-11 | rejected (policy) | failed Q3: overwrite protection is the guarantee; blanket overlap refusal rejects valid work |
+| CL-12 | reduced → M-3 | failed Q3: required-gate coverage is the guarantee; the derivation is a strategy |
+| CL-13 | kept → M-3 | passes |
+| CL-14 | reduced → M-2 and M-3 | failed independence: three separate properties, each carried |
+| CL-15 | kept → M-3 | passes |
+| CL-16 | rejected (policy) | failed Q2: prose scanning needs its incident-based justification |
+| CL-17 | kept → M-11 | passes |
+| PR-01 | kept → M-8 | passes |
+| PR-02..PR-05 | evidence tasks | unchanged — work items in `laws-design-notes.md` |
+| DEV-1 | kept → M-10 | passes (operator ruling) |
+| DEV-2 | kept → M-1 and M-12 | passes (operator ruling) |
+| DEV-3 | kept → M-13 | passes (operator ruling) |
+| DEV-4 | kept → M-14 | passes (operator ruling) |
+| DEV-5 | kept → M-3 | passes (operator ruling; chronology and exclusive publication split into development controls) |
+| DEV-6 | kept → M-15 | passes (operator ruling; precise meanings owed) |
+| DEV-7 | kept → M-16 | passes (operator ruling) |
+
+Family verdicts: CX-1 → reduced to M-1 · CX-2 → kept as M-2 · CX-3 → reduced to M-3 · CX-4 →
+rejected, failed independence (its divergence ban restates M-7 and M-8 applied per interface;
+returns as its own entry if Codex shows an uncovered failure) · CX-5 → split into M-5 and M-10 ·
+CX-6 → split: the continuation prohibition rejected (failed the prohibition test — a positive
+obligation; the stranding behaviors are already banned by M-10 and M-12), the ready-work half
+rejected as a scheduler design duty, both recorded in `laws-design-notes.md`.
+
+Family verdicts (carried): CX-1 reduced to the receipt/intent entry · CX-2 kept as the
+uncertainty entry · CX-3 reduced to the publication-evidence entry · CX-4 rejected, its full
+theorem in the design notes above · CX-5 split into the history-preservation and no-cutoff
+entries · CX-6 split, the narrow no-silent-abandonment prohibition adopted in revision 6 and
+the ready-work half recorded here as design guidance.
