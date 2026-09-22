@@ -2181,8 +2181,15 @@ function deploymentReadiness(
       // native facts gate this arm exactly as they gate the credential it carries — a route built
       // from a caller-supplied adapter answers for its own harness (#327) and is never judged
       // against this host's binary paths.
+      // P92-DF10b: the one exception is a revoked tombstone. The cleared wire record is the OAuth
+      // server's own verdict that the grant is gone, so the row must name re-login even when the
+      // executable is absent: installing the CLI cannot restore a revoked grant, and reporting
+      // `harness_unavailable` hides the revocation behind the missing binary. Every other
+      // credential state keeps the #348 harness-first order.
       const harness = kimiHarnessAvailability();
-      if (harness.state === 'absent') {
+      const revokedTombstone = nativeKimiAuthentication.state === 'blocked'
+        && nativeKimiAuthentication.credentialState === 'revoked';
+      if (harness.state === 'absent' && !revokedTombstone) {
         return Object.freeze({
           ...publicFields, state: 'blocked', code: 'harness_unavailable',
           summary: `The Kimi Code executable was not found (probed ${harness.paths.join(', ')}). `
