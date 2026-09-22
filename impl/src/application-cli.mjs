@@ -16,6 +16,7 @@ import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { honestLivenessProjection } from './route-liveness.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
+import { SEAT_ATOM_KEYS } from './seat-telemetry.mjs';
 
 import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, SWARM_VIEW_PROJECTION_NAMES,
@@ -1648,6 +1649,30 @@ function topLevelVerbHelpBlocks(topic) {
   ];
 }
 
+/** Issue #146 (D2.3, the #159 surface doctrine): the doctor's seat record is a closed, documented
+ * set, so the help that renders the doctor verb teaches it — the field set, the split staleness
+ * labels, what `deferred` counts, and the vendor scoping. The two topics below are the ones whose
+ * usage carries `baton doctor` (the application overview and the connection topic). */
+function doctorSeatHelpBlocks(topic) {
+  if (topic !== 'application' && topic !== 'connection') return null;
+  return [
+    'the doctor seat record (#146) — `deployment doctor` carries `seats`, and every `waves list` row '
+    + 'carries a `capacity` block; both hold ONE closed atom per route:\n'
+    + `  ${SEAT_ATOM_KEYS.join(', ')}\n`
+    + '  route is the harness/model/effort the atom was derived for, and state is that route\'s '
+    + 'readiness, never a liveness probe.\n'
+    + '  The atom is a point-in-time composition. observedAtEventSeq is the ledger event sequence at '
+    + 'composition and labels the ledger-derived parts (deferred, state, ceiling); inFlightRevision '
+    + 'is the resolved vendor\'s handle-revision counter and labels the live inFlight count, so two '
+    + 'reads with an equal revision carry the same live count. Neither label is a clock.\n'
+    + '  deferred counts the tasks whose dispatch was skipped at the concurrency ceiling and is still '
+    + 'pending. It is not a queue and not a promise of future dispatch: a task whose ceiling has '
+    + 'cleared stays counted until it claims.\n'
+    + '  The counts are vendor-scoped, so two routes the allocator binds to the same adapter read '
+    + 'identical counts; a route the allocator binds to no single vendor reads null, never 0.',
+  ];
+}
+
 /** #306 lane A: the reincarnation verb's help row. The two spellings are ONE command, and the
  * topic renders it wherever the deployment family is read (`baton help deployment`,
  * `baton help deployment.reincarnate`) — the refusals it can draw are named here, in the closed set
@@ -1733,6 +1758,7 @@ export function batonCliHelp(topic = 'application') {
     blocks.push(`Deprecated: use baton ${operation.aliases[0].replaceAll('.', ' ')}.`);
   }
   return [...blocks, ...(topLevelVerbHelpBlocks(helpTopic) ?? []),
+    ...(doctorSeatHelpBlocks(helpTopic) ?? []),
     ...(reincarnationHelpBlocks(topic) ?? []),
     ...(wakeWatchHelpBlocks(topic) ?? []),
     ...(recruitLegHelpBlocks(topic) ?? [])].join('\n\n');
@@ -4989,6 +5015,13 @@ export class BatonWebClient {
       stopping,
       deployment,
       routes,
+      // Issue #146 (D2.1): the served readiness carries the fleet seat projection and the
+      // composition's ledger sequence. The CLI reads both through, the same way it reads routes —
+      // the resident derives them, and a document that does not carry them reads the honest empty
+      // shape rather than a CLI-side guess.
+      seats: Array.isArray(deployment?.seats) ? deployment.seats : [],
+      observedAtEventSeq: Number.isSafeInteger(deployment?.observedAtEventSeq)
+        ? deployment.observedAtEventSeq : null,
       // Epic #103 (D6c): the CLI is a READING consumer of the non-enumerable doctor sibling — it
       // adds the ONE named additive briefing field (never a text render). Property access reads
       // the sibling; an absent pack is an honest null (D5b/B5).
