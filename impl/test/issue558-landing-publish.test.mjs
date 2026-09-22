@@ -25,6 +25,9 @@ import { dirname, join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
+import { BatonApplication } from '../src/application.mjs';
+import { MockAdapter } from '../src/adapter.mjs';
+import { createDriver } from '../src/index.mjs';
 
 const principal = { actor: 'direct:issue558-root', principalId: 'issue558-root', sessionId: 'issue558-root' };
 const QUIET_GIT_ENV = { GIT_PAGER: 'cat', PAGER: 'cat', GIT_TERMINAL_PROMPT: '0' };
@@ -202,4 +205,70 @@ test('558d: a malformed publishRemote declaration is refused at deployment open'
   assert.ok(error, 'the open refuses a malformed declaration');
   assert.equal(error.code, 'deployment_config_invalid');
   assert.match(error.message, /publishRemote/u, 'the refusal names the declaration');
+});
+
+// ── (e) the declared value reaches the landing authority ───────────────────────────────
+
+const principalOf = (id) => Object.freeze({ actor: 'test', principalId: id, sessionId: `session-${id}` });
+
+function applicationOver(t, repo, { publishRemote } = {}) {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-issue558-app-'));
+  const logDir = join(directory, 'log');
+  mkdirSync(logDir, { recursive: true });
+  const repoId = 'repo-issue558-app';
+  const driver = createDriver({
+    repoRoot: repo, repoId, logDir,
+    adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [] } }) },
+    ...(publishRemote === undefined ? {} : { integrationPublishRemote: publishRemote }),
+  });
+  const application = new BatonApplication({
+    driver, repoId,
+    profiles: {
+      default: Object.freeze({
+        schemaVersion: 1, repoId,
+        definitionOfDone: ['deployment verification passes'],
+        constraints: [], risk: 'low',
+        goalBudget: { tokens: 200_000, usd: 20, wallMin: 120, providerTurns: 64 },
+        nodeBudget: { tokens: 50_000, usd: 5, wallMin: 30, providerTurns: 16 },
+        pathScope: ['**'],
+        verification: { command: 'true', arguments: [], cwd: '.', envAllowlist: [], expectExit: 0, expectResult: 'exit_code', timeoutMs: 30_000, maxOutputBytes: 65_536, requiredPredecessorEvidence: [] },
+        routes: [{ harness: 'mock', model: 'mock-model', effort: 'low' }],
+        capabilities: ['code', 'test'],
+        effects: ['provider_call', 'repository_edit'],
+        resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
+      }),
+    },
+    defaults: { profile: 'default', route: null },
+    principals: {
+      planner: principalOf('application-planner'),
+      dispatcher: principalOf('application-dispatcher'),
+      observer: principalOf('application-observer'),
+    },
+    authorize: async () => true,
+  });
+  t.after(async () => {
+    try { await application.shutdown(principalOf('cleanup')); } catch { /* best effort */ }
+    try { await driver.coordination?.releaseWriterLease?.(); } catch { /* best effort */ }
+    rmSync(directory, { recursive: true, force: true });
+  });
+  return application;
+}
+
+test('558e: the declared remote rides the driver to the landing authority, verbatim', needsGit, async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-issue558-app-repo-'));
+  const repo = join(directory, 'repo');
+  execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
+  write(repo, 'README.md', 'base\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-qm', 'base');
+  t.after(() => { rmSync(directory, { recursive: true, force: true }); });
+
+  const declared = applicationOver(t, repo, { publishRemote: 'https://shared.example.test/baton.git' });
+  assert.equal(declared._swarmRuntime().integration.repoRoot, repo);
+  assert.equal(declared._swarmRuntime().integration.publishRemote, 'https://shared.example.test/baton.git',
+    'the landing authority carries the declared value itself, never an inference');
+
+  const undeclared = applicationOver(t, repo);
+  assert.equal(undeclared._swarmRuntime().integration.publishRemote, null,
+    'no declaration reads as absence, never a guessed remote');
 });

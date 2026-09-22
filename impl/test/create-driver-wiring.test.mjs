@@ -319,9 +319,36 @@ test('CDW4: the injected knowledge-briefing provider is consulted, and its block
 // factory and is consulted by the runtime it builds — is a wiring the driver-level suite would
 // otherwise never see: the two lists below must together name every option the factory reads,
 // and an `exercised` claim must be backed by a case in THIS file that names the option.
+test('CDW6: the declared shared remote rides the driver to the landing authority', async (t) => {
+  const badRepo = repo();
+  const badLog = root('log');
+  const repository = repo();
+  const logDir = root('log');
+  let driver = null;
+  t.after(async () => {
+    await driver?.drainAndClose('wiring-cdw6').catch(() => {});
+    for (const dir of [badRepo, badLog, repository, logDir]) rmSync(dir, { recursive: true, force: true });
+  });
+  // A malformed declaration refuses before any driver is built: nothing to drain or close.
+  assert.throws(() => createDriver({
+    repoRoot: badRepo, repoId: 'repo-wiring', logDir: badLog,
+    adapters: { mock: mock() }, integrationPublishRemote: '',
+  }), /publishRemote/u, 'a malformed declaration refuses at composition');
+  driver = createDriver({
+    repoRoot: repository, repoId: 'repo-wiring', logDir,
+    adapters: { mock: mock() }, integrationPublishRemote: 'https://shared.example.test/baton.git',
+  });
+  // The wiring identity: the declared value reaches the driver surface the landing authority
+  // reads (application.mjs `_swarmRuntime`), verbatim and un-inferred. A composition root that
+  // drops the option lands every future landing as a local-only success.
+  assert.equal(driver.integrationPublishRemote, 'https://shared.example.test/baton.git',
+    'createDriver must carry the declared shared remote on the driver');
+});
+
 const EXERCISED_OPTIONS = Object.freeze({
   adapters: 'CDW1',
   goalPlanAuthority: 'CDW2',
+  integrationPublishRemote: 'CDW6',
   knowledgeBriefingProvider: 'CDW4',
   verificationRuntime: 'CDW1',
 });
