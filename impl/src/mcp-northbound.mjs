@@ -292,13 +292,17 @@ function toolResult(value, isError = false) {
 // U-F3 (issue #288): a tool refusal states its transience verdict (`retryable`) and its remedy
 // (`action`) beside the code — the same two keys the undocumented surface family and
 // BatonControlError already carry. Both are additive: a refusal that states neither keeps the
-// byte-stable {code, message?, detail?, field?} shape every existing pin reads.
+// byte-stable {code, message?, detail?, field?} shape every existing pin reads. Issue #164 adds
+// the third additive key: `renewal` — the re-authentication lane a dead transport principal
+// re-opens — carried only by the refusals whose authority died mid-wait (the refusal table).
 function toolError(code, message = null, detail = null, field = null, options = {}) {
   const retryable = options?.retryable ?? null;
   const action = options?.action ?? null;
+  const renewal = options?.renewal ?? null;
   return toolResult({ ok: false, error: {
     code, ...(message == null ? {} : { message }), ...(detail == null ? {} : { detail }), ...(field == null ? {} : { field }),
     ...(retryable == null ? {} : { retryable: retryable === true }), ...(action == null ? {} : { action }),
+    ...(renewal == null ? {} : { renewal }),
   } }, true);
 }
 // U-F3 (issue #288): the fallthrough rows this surface mints state their own transience. A cause
@@ -2196,8 +2200,10 @@ export class McpFleetServer {
 
   /** The wire shape for an _authority refusal (U-E11/U-I2): a capability shortfall reuses the
    * exact {required, held, missing} sentence shape the action gate composes; a repo refusal
-   * names the requested repoId and the served set. Bare-string refusals (unauthenticated) keep
-   * the code-only envelope. Strings stay the _authority contract: surface-mcp-authority.mjs
+   * names the requested repoId and the served set. Issue #164: the unauthenticated refusal —
+   * a principal whose session died, including mid-wait on the wait-capable tools — names the
+   * MCP session's OWN re-authentication lane in `renewal` (the refusal table; never the web
+   * /v1/auth/refresh lane). Strings stay the _authority contract: surface-mcp-authority.mjs
    * consumes the seam directly. */
   _authorityRefusal(code, name, args) {
     if (code === 'forbidden') {
@@ -2220,6 +2226,15 @@ export class McpFleetServer {
       return toolError('repo_not_served',
         `this principal is not scoped to repoId ${JSON.stringify(args.repoId)}; this deployment serves ${servedList}`,
         { repoId: args.repoId ?? null, served });
+    }
+    if (code === 'unauthenticated') {
+      return toolError(code, null, null, null, {
+        renewal: {
+          verb: 'authenticate',
+          lane: 'mcp-session',
+          how: 're-authenticate the MCP session: the host re-opens the session and the fleet server re-validates the principal',
+        },
+      });
     }
     return toolError(code);
   }
@@ -2460,7 +2475,13 @@ export class McpFleetServer {
           requestId,
         })}`;
         const value = await this._dispatch(name, args, null, observeCallId, this.principal);
-        const refused = ['run.follow', 'run.wait'].includes(APPLICATION_TOOL[name]) ? this._authority(name, args) : null;
+        // Issue #164 (fold-164 B3, D2 MCP row): the post-dispatch transport-principal recheck
+        // covers all FOUR wait-capable tools — fleet_run_wait, fleet_run_follow,
+        // fleet_run_episode, fleet_run_workstreams (and their baton_run_* siblings, which map to
+        // the same commands) — keyed by the command the tool dispatches, so a mid-wait
+        // revocation on any wait-capable surface refuses instead of returning the dispatched
+        // value.
+        const refused = ['run.follow', 'run.wait', 'run.episode', 'run.workstreams'].includes(APPLICATION_TOOL[name]) ? this._authority(name, args) : null;
         if (refused) {
           this._audit('tool_refused_after_wait', name, args, refused);
           return this._authorityRefusal(refused, name, args);
