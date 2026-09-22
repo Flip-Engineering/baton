@@ -1868,7 +1868,7 @@ export class CoordinationStore {
   // live projection and returns `{entries, batchKind}`; THIS is where the adjudicated entries land
   // — through the store's own append seams, in one call, so the auto-demote pair folds atomically
   // and no caller reaches past the store for a ledger append.
-  appendPlanEntries(entries, batchKind = null) {
+  appendPlanEntries(entries, batchKind) {
     return coordinationLedger.appendPlanEntries(this, entries, batchKind);
   }
 
@@ -2726,5 +2726,10 @@ export async function loadCoordinationStoreAsync(store) {
   // Issue #434: the projection now exists — appends are admitted and the ledger/projection
   // equality check (#331's reload) is live again.
   store._deferredLoad = false;
+  // #177: the projection exists now, so the two facts a deferred claim could not write land here —
+  // the `writer.lease_recovered` record of a stale holder it reaped, and the ledger boundary its own
+  // lease was taken at (stamped into the lease file a later claimant reads). No append happened
+  // between the fold and this call: a deferred store refuses every append until the line above.
+  coordinationLedgerWrites._settleDeferredWriterLease(store);
   return store;
 }
