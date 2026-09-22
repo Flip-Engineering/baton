@@ -490,6 +490,27 @@ export class ResidentAuthority {
     return this.publicOutline();
   }
 
+  /** Issue #559: replace the published bearer credential with the one the resident's live owner
+   * session now holds. The credential is the ONE coordinate a client returns with, and the
+   * publication carries it as a file (`tokenFile`), so renewing the owner's admission is replacing
+   * that file — nothing else in the publication names it. The leases are asserted for the same
+   * reason `publish` asserts them: only the incarnation holding the host and publication leases may
+   * write the credential a client will present. The publication's own record of the bytes is
+   * updated with it, because `close` withdraws the token file by EXACT content and a renewal it did
+   * not know about would leave a live credential file behind a process that has exited. */
+  renewToken(token) {
+    this.lease.assertHeld();
+    this.publicationLease.assertHeld();
+    const published = this._publication;
+    if (!published) throw residentError('resident token renewal requires a published resident');
+    if (typeof token !== 'string' || token.length < 40 || token.includes('\n') || token.includes('\r')) {
+      throw residentError('resident publication authority is invalid');
+    }
+    const tokenBytes = Buffer.from(`${token}\n`);
+    replaceAtomic(this.tokenPath, tokenBytes);
+    this._publication = Object.freeze({ ...published, tokenBytes });
+  }
+
   /** The stream endpoints this publication serves. The two HTTP paths are the resident's own — the
    * wake feed and the ticketed Run event feed — and a declared loopback binding is admitted only
    * when it names a real host, a non-ephemeral port, and the wake path. */
