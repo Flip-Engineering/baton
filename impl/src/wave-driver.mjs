@@ -55,9 +55,21 @@ const DEFAULT_POLICY = Object.freeze({
   preflight: true,
   evidencePath: null,
   onProgress: null,
-  // Bidirectional v2 rule 3: the embedded decision-gating callback. Async, awaited, fired AT MOST
-  // ONCE per (runId, requestId); its return is validated against `{optionId}|{text}|undefined`.
+  // Bidirectional v2 rule 3 + #106: the decision lane is function OR declarative. The imperative
+  // form is the embedded callback — async, awaited, fired AT MOST ONCE per (runId, requestId),
+  // its return validated against `{optionId}|{text}|undefined`. The declarative form is the
+  // answerDecisions-shaped `{ policy }` map (question pattern → optionId | text | 'defer'),
+  // answered by the driver with the interpreter's exact match discipline.
   onDecision: null,
+  // #106: the declarative lane field set — the wavefile steering vocabulary available to the
+  // shipped driver policy, with the same closed shapes the spec fields carry
+  // (workflow-interpreter.mjs:254-301). onSpawn mirrors messageOnSpawn, onNotes mirrors
+  // elevateWhenNotes, onMemberRest mirrors signalOnMembersDone (roles is the WATCHED set whose
+  // rest fires the lane; the message goes to the complement — the #175 direction). Every lane
+  // action is receipted on receipt.declarative[].
+  onSpawn: null,
+  onNotes: null,
+  onMemberRest: null,
   // Bidirectional v2 rule 6: optional per-wait-cycle instrumentation (wall-clock, active-follow
   // count, advancing cursors) so a caller/test can observe the wake laws without a live provider.
   onWait: null,
@@ -116,6 +128,85 @@ function assertInteger(value, field) {
   }
 }
 
+
+// #106: the declarative lane shapes mirror the wavefile steering fields exactly
+// (workflow-interpreter.mjs:254-301) — the same closed fields, the same refusals, so a driver
+// policy lane and a spec steering field are one declarative fact in two homes.
+const LANE_MESSAGE_KINDS = new Set(['inform', 'query', 'steer', 'brief', 'result']); // workflow-interpreter.mjs:59
+const LANE_SCRATCHPAD_KINDS = new Set(['doubt', 'link', 'note', 'plan']); // workflow-interpreter.mjs:60
+
+function laneInvalid(field, why) {
+  return driverError(`wave driver policy ${field} is invalid: ${why}`, 'wave_driver_policy_invalid');
+}
+
+function assertLaneMessage(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw laneInvalid(field, 'must be an object');
+  for (const key of Object.keys(value)) {
+    if (key !== 'kind' && key !== 'body') throw laneInvalid(field, `carries the unknown field "${key}"`);
+  }
+  if (!LANE_MESSAGE_KINDS.has(value.kind)) {
+    throw laneInvalid(field, `"kind" must be one of ${[...LANE_MESSAGE_KINDS].join('|')}`);
+  }
+  if (typeof value.body !== 'string' || value.body.length === 0) throw laneInvalid(field, 'requires a "body" string');
+}
+
+function assertLaneNotes(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw laneInvalid(field, 'must be an object');
+  for (const key of Object.keys(value)) {
+    if (key !== 'kinds' && key !== 'maxEntries') throw laneInvalid(field, `carries the unknown field "${key}"`);
+  }
+  if (!Array.isArray(value.kinds) || value.kinds.length === 0) throw laneInvalid(field, 'requires a non-empty "kinds" array');
+  for (const kind of value.kinds) {
+    if (!LANE_SCRATCHPAD_KINDS.has(kind)) {
+      throw laneInvalid(field, `"kinds" value "${kind}" is not a scratchpad kind (${[...LANE_SCRATCHPAD_KINDS].join('|')})`);
+    }
+  }
+  if (!Number.isSafeInteger(value.maxEntries) || value.maxEntries <= 0) {
+    throw laneInvalid(field, '"maxEntries" must be a positive integer');
+  }
+}
+
+function assertLaneSignal(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw laneInvalid(field, 'must be an object');
+  for (const key of Object.keys(value)) {
+    if (key !== 'roles' && key !== 'message') throw laneInvalid(field, `carries the unknown field "${key}"`);
+  }
+  if (!Array.isArray(value.roles) || value.roles.length === 0
+    || value.roles.some((role) => typeof role !== 'string' || role.length === 0)) {
+    throw laneInvalid(field, 'requires a non-empty "roles" array');
+  }
+  assertLaneMessage(value.message, `${field}.message`);
+}
+
+function assertLaneAnswers(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw laneInvalid(field, 'must be an object');
+  for (const key of Object.keys(value)) {
+    if (key !== 'policy') throw laneInvalid(field, `carries the unknown field "${key}"`);
+  }
+  const policy = value.policy;
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
+    throw laneInvalid(field, 'requires a "policy" map (question → optionId | text | "defer")');
+  }
+  for (const [pattern, answer] of Object.entries(policy)) {
+    if (typeof answer !== 'string' || answer.length === 0) {
+      throw laneInvalid(field, `policy "${pattern}" must map to a non-empty string`);
+    }
+  }
+}
+
+// The answerDecisions match discipline, verbatim (workflow-interpreter.mjs:555-565): exact
+// literal first, then anchored regex; first-match-wins in insertion order.
+function matchLaneAnswer(policyMap, question) {
+  for (const [pattern, value] of Object.entries(policyMap)) {
+    if (pattern === question) return { pattern, value };
+  }
+  for (const [pattern, value] of Object.entries(policyMap)) {
+    try { if (new RegExp(`^${pattern}$`, 'u').test(question ?? '')) return { pattern, value }; }
+    catch { /* a non-regex pattern only ever matches literally, handled above */ }
+  }
+  return null;
+}
+
 // §2: freeze the closed policy field set, validating each field. Unknown fields reject so a typo
 // (e.g. `stallTimeoutMs` vs `stalltimeoutMs`) fails loudly instead of silently falling back to the
 // default — and the retired `hardCapMs` (#163 law) rejects by the same closed-set discipline.
@@ -163,8 +254,13 @@ function freezePolicy(raw) {
     throw driverError('wave driver policy onProgress is invalid', 'wave_driver_policy_invalid');
   }
   if (policy.onDecision !== null && typeof policy.onDecision !== 'function') {
-    throw driverError('wave driver policy onDecision is invalid', 'wave_driver_policy_invalid');
+    // #106: the declarative form — a closed answerDecisions-shaped { policy } map. The
+    // imperative form stays the function callback (bidirectional v2 rule 3).
+    assertLaneAnswers(policy.onDecision, 'onDecision');
   }
+  if (policy.onSpawn !== null) assertLaneMessage(policy.onSpawn, 'onSpawn');
+  if (policy.onNotes !== null) assertLaneNotes(policy.onNotes, 'onNotes');
+  if (policy.onMemberRest !== null) assertLaneSignal(policy.onMemberRest, 'onMemberRest');
   if (policy.onWait !== null && typeof policy.onWait !== 'function') {
     throw driverError('wave driver policy onWait is invalid', 'wave_driver_policy_invalid');
   }
@@ -392,6 +488,76 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // refusalNudgeBudget (CP8); claimed stays per-member ("one claim" vs "settled").
     const memberState = new Map();
     const freshState = () => ({ digest: null, nudges: 0, done: false, refusalsNudged: 0, claimed: false });
+    // #106: declarative-lane state and receipt rows. The dedup/budget keys mirror the
+    // interpreter's steering state (workflow-interpreter.mjs:860-939): spawn attempts per role,
+    // elevation once per member with a bounded retry, one rest signal per wave.
+    const laneReceipts = [];
+    const laneState = {
+      spawned: new Set(), msgAttempts: new Map(),
+      elevated: new Set(), elevAttempts: new Map(), signaled: false,
+    };
+    // onSpawn (the messageOnSpawn mirror): burst ≤3 attempts to a DELIVERED messageId; a
+    // real-but-undelivered send consumes one attempt; a not-ready reply defers without cost
+    // (workflow-interpreter.mjs:960-992).
+    const pumpLaneSpawn = async (role, runHandle) => {
+      for (;;) {
+        if (laneState.spawned.has(role)) return;
+        const attempts = laneState.msgAttempts.get(role) ?? 0;
+        if (attempts >= 3) return;
+        let sent;
+        try { sent = await runHandle._command('run.message.send', { runId: runHandle.id, kind: policy.onSpawn.kind, body: policy.onSpawn.body }); }
+        catch { return; } // command rejection (worker not active) — defer, no budget consumed.
+        const realAttempt = sent?.result === 'sent' || (sent?.ok !== false && typeof sent?.messageId === 'string');
+        if (!realAttempt) return; // worker_spawning / deferred — retry on a later poll.
+        if (typeof sent?.messageId === 'string' && Number.isFinite(sent?.delivered) && sent.delivered > 0) {
+          laneState.spawned.add(role);
+          laneReceipts.push({ lane: 'onSpawn', role, messageId: sent.messageId, delivered: sent.delivered });
+          return;
+        }
+        const next = attempts + 1;
+        laneState.msgAttempts.set(role, next);
+        laneReceipts.push({ lane: 'onSpawn', role, messageId: typeof sent?.messageId === 'string' ? sent.messageId : null, delivered: 0 });
+        if (next >= 3) {
+          laneState.spawned.add(role);
+          laneReceipts.push({ lane: 'onSpawn', role, evidence: 'steering_message_undelivered' });
+          return;
+        }
+      }
+    };
+    // onNotes (the elevateWhenNotes mirror): read the worker tier, elevate the matching entries
+    // once per member; a mid-flight settlement refusal retries, other refusals retry ≤2 then a
+    // named evidence row (workflow-interpreter.mjs:1066-1097).
+    const pumpLaneNotes = async (role, runHandle, outline) => {
+      if (laneState.elevated.has(role)) return;
+      const taskId = (Array.isArray(outline.nodes) ? outline.nodes.find((n) => typeof n?.taskId === 'string')?.taskId : null) ?? null;
+      const workerId = outline.scratchpad?.workerId
+        ?? (Array.isArray(outline.attention) ? outline.attention.find((a) => typeof a?.workerId === 'string')?.workerId : null)
+        ?? null;
+      if (!taskId || !workerId) return;
+      let slice = null;
+      try { slice = await runHandle._command('run.scratchpad.read', { runId: runHandle.id, scope: `worker:${workerId}`, cursor: 0 }); }
+      catch { return; }
+      const kinds = new Set(policy.onNotes.kinds);
+      const entries = (slice?.entries ?? []).filter((entry) => kinds.has(entry?.kind));
+      if (entries.length === 0) return;
+      const entryIds = entries.slice(0, policy.onNotes.maxEntries).map((entry) => entry.entryId).filter(Boolean);
+      if (entryIds.length === 0) return;
+      let res;
+      try { res = await runHandle._command('run.scratchpad.elevate', { runId: runHandle.id, taskId, entryIds }); }
+      catch (error) { res = { ok: false, result: error?.code ?? 'scratchpad_elevate_error' }; }
+      if (res?.ok === true) {
+        laneState.elevated.add(role);
+        laneReceipts.push({ lane: 'onNotes', role, entryIds });
+        return;
+      }
+      if (res?.result === 'scratchpad_settlement_not_ready') return; // retry once the member settles
+      const attempts = (laneState.elevAttempts.get(role) ?? 0) + 1;
+      laneState.elevAttempts.set(role, attempts);
+      if (attempts >= 2) {
+        laneState.elevated.add(role);
+        laneReceipts.push({ lane: 'onNotes', role, evidence: 'scratchpad_elevation_refused', code: res?.result ?? null });
+      }
+    };
     const nudgedRequestIds = new Set(); // L4: dedup within a single pause (requestId-stable across polls)
     const failuresByRequestId = new Map(); // consecutive delivery failures per pause; K=3 = unsteerable
     // #414: the retirement ledger for the unsteerable rule above. lastFailureByRequestId keeps
@@ -677,6 +843,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
           }
           markerParts.push([role, phase, markerDigest]);
           const claimed = memberState.get(role)?.claimed === true;
+          // #106: the declarative spawn/notes lanes ride the same per-member read — one status
+          // view feeds the lanes and the steering reducer. A settled member's cached outline
+          // (the #216 snapshot) still carries taskId/workerId for the notes retry.
+          if (!terminal && !claimed && policy.onSpawn) await pumpLaneSpawn(role, runHandle);
+          if (policy.onNotes) await pumpLaneNotes(role, runHandle, outline);
           statusInfo.set(role, { terminal: terminal || claimed });
           if (!terminal && !claimed) {
             // v2 rule 7: reduce this member from the same status view — ordered, precedence-fixed.
@@ -707,6 +878,24 @@ export function createWaveDriver(baton, rawPolicy = null) {
           }
         }
 
+        // #106: the onMemberRest lane — `roles` is the WATCHED set whose rest fires it; the
+        // message goes to the COMPLEMENT (every member not named in roles), the #175 direction.
+        // One signal per wave; per-recipient delivery is best-effort (a recipient may already
+        // rest), exactly like the spec lane (workflow-interpreter.mjs:931-939).
+        if (policy.onMemberRest && !laneState.signaled) {
+          const watched = new Set(policy.onMemberRest.roles);
+          const rested = [...watched].every((role) => statusInfo.get(role)?.terminal === true || !runs.has(role));
+          if (rested) {
+            laneState.signaled = true;
+            const recipients = [...runs.keys()].filter((role) => !watched.has(role));
+            for (const role of recipients) {
+              const handle = runs.get(role);
+              try { await handle._command('run.message.send', { runId: handle.id, kind: policy.onMemberRest.message.kind, body: policy.onMemberRest.message.body }); }
+              catch { /* the recipient may already be terminal — the signal is best-effort */ }
+            }
+            laneReceipts.push({ lane: 'onMemberRest', doneRoles: [...watched], recipients });
+          }
+        }
         // #396: no roster-wide clock is kept — each member's own digest change already reset
         // ITS clock above, and a sibling-only cursor movement is stripped from every digest,
         // so it resets none. markerParts below is render-only (the onProgress line).
@@ -766,6 +955,44 @@ export function createWaveDriver(baton, rawPolicy = null) {
               role, runId, requestId: decision.requestId, at, outcome: delivered.result,
               ...(delivered.message ? { message: delivered.message } : {}),
             });
+          }
+        } else if (policy.onDecision && typeof policy.onDecision === 'object') {
+          // #106: the declarative decision lane — the answerDecisions discipline verbatim
+          // (workflow-interpreter.mjs:994-1043): first-match-wins, 'defer' and non-match leave
+          // the ask attention-required, an invalid optionId is recorded refused once, a denied
+          // answer is recorded once and never re-auto-answered, every attempt receipted.
+          for (const { role, run: runHandle, runId, decision } of decisions) {
+            const key = `${runId}:${decision.requestId}`;
+            if (decisionFired.has(key)) continue;
+            decisionFired.add(key);
+            const question = decision.question ?? decision.request?.question ?? null;
+            const match = matchLaneAnswer(policy.onDecision.policy, question);
+            if (!match || match.value === 'defer') {
+              laneReceipts.push({ lane: 'onDecision', role, requestId: decision.requestId, deferred: true, outcome: 'deferred' });
+              continue;
+            }
+            const allowFreeResponse = decision.allowFreeResponse === true || decision.request?.allowFreeResponse === true;
+            if (allowFreeResponse) {
+              try {
+                await runHandle.answer(decision.requestId, { text: match.value });
+                laneReceipts.push({ lane: 'onDecision', role, requestId: decision.requestId, text: match.value, outcome: 'answered' });
+              } catch (error) {
+                laneReceipts.push({ lane: 'onDecision', role, requestId: decision.requestId, text: match.value, outcome: 'denied', refusal: error?.code ?? null });
+              }
+              continue;
+            }
+            const options = Array.isArray(decision.options) ? decision.options
+              : (Array.isArray(decision.request?.options) ? decision.request.options : []);
+            if (!options.some((option) => option?.id === match.value)) {
+              laneReceipts.push({ lane: 'onDecision', role, requestId: decision.requestId, optionId: match.value, refused: true, outcome: 'refused' });
+              continue;
+            }
+            try {
+              await runHandle.answer(decision.requestId, { optionId: match.value });
+              laneReceipts.push({ lane: 'onDecision', role, requestId: decision.requestId, optionId: match.value, outcome: 'answered' });
+            } catch (error) {
+              laneReceipts.push({ lane: 'onDecision', role, requestId: decision.requestId, optionId: match.value, outcome: 'denied', refusal: error?.code ?? null });
+            }
           }
         }
 
@@ -985,6 +1212,9 @@ export function createWaveDriver(baton, rawPolicy = null) {
       decisions: decisionEvidence,
       // Bidirectional v2 rule 6: one downgrade line per member that lost the follow path.
       follows,
+      // #106: one row per declarative-lane action (onSpawn / onNotes / onDecision /
+      // onMemberRest) — the receipt the declarative lanes are judged by.
+      declarative: laneReceipts,
       salt,
       pumpDrained: evidence.pumpDrained === true,
       // KG settlement D3: the candidacy/settlement counts fold into the knowledge block (zero as 0,
