@@ -1199,6 +1199,33 @@
           ]
         },
         {
+          "name": "_redriveContinuity",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:redrive_port"
+          ]
+        },
+        {
+          "name": "_composeContinuity",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:redrive_port"
+          ]
+        },
+        {
+          "name": "_continuityForMember",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:redrive_port"
+          ]
+        },
+        {
           "name": "_gateVerdictItemForWorker",
           "ordinal": 0,
           "size": 3,
@@ -16017,7 +16044,7 @@
         {
           "name": "providerBrief",
           "ordinal": 0,
-          "size": 115,
+          "size": 125,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -22592,7 +22619,7 @@
         {
           "name": "writeScratchpad",
           "ordinal": 0,
-          "size": 55,
+          "size": 59,
           "seam": "admission",
           "evidence": [
             "admission:policy_gate",
@@ -22642,7 +22669,7 @@
         {
           "name": "_renderContextRead",
           "ordinal": 0,
-          "size": 48,
+          "size": 51,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -23322,7 +23349,7 @@
         {
           "name": "_admitPauseRecord",
           "ordinal": 0,
-          "size": 60,
+          "size": 64,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -26437,6 +26464,212 @@
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "impl/src/runtime-redrive.mjs",
+      "class": null,
+      "members": [
+        {
+          "name": "refusal",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "boundRefusal",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "digestOf",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "describe",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "admitCarryForwardOption",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "memberDescriptors",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "latestMemberDescriptor",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "latestTerminalTransition",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "checkpointRecords",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "admission:validation_vocabulary",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "carriedItem",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "terminalCauseOf",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "terminalItems",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "refusalItems",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "scratchpadItems",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "scratchpadEntryText",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "pinItems",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "redriveContinuity",
+          "ordinal": 0,
+          "size": 59,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "composeContinuity",
+          "ordinal": 0,
+          "size": 79,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "continuityForMember",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "armSteeringCycle",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "armSteeringCycles",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "observeSteeringEvidence",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:record_name"
           ]
         }
       ]

@@ -262,7 +262,7 @@ test('SI5 (S-G4): SwarmRuntime is a declared target, mapped across all four seam
 // the row for the source AND the destination in the same commit that regenerates the artifact,
 // and a TARGETS edit that loses coverage fails here no matter how many times --write runs.
 const CORPUS_COUNTS = Object.freeze({
-  'impl/src/coordinator.mjs': 433,
+  'impl/src/coordinator.mjs': 436,
   'impl/src/application.mjs': 241,
   'impl/src/coordination-store.mjs': 608,
   'impl/src/swarm-runtime.mjs': 165,
@@ -284,6 +284,9 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/runtime-event-handlers/turn-terminal.mjs': 3,
   'impl/src/runtime-event-handlers/interaction.mjs': 6,
   'impl/src/runtime-event-handlers/observation-events.mjs': 9,
+  // Issue #59: the re-drive continuity seam's own target (6 exported seams and the 16 module-scope
+  // helpers their bodies read).
+  'impl/src/runtime-redrive.mjs': 22,
 });
 
 test('SI6: the per-target corpus is pinned, so a dropped TARGETS entry fails even after a regeneration', () => {
