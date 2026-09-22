@@ -1,7 +1,25 @@
-{ "pending": "swarm.contribution_recorded + swarm.integrate target=master blocked by host ENOSPC (ledger append refused ~15 attempts, 20:40-21:40Z). Operator frees disk -> run: (1) the swarm.update below, (2) swarm.integrate with the returned contributionId, (3) git ls-remote to confirm the #558 publish hook pushed master.",
-  "commits": ["a06c30fb Issues #498/#377 landing two (limits.mjs v1.5.0, 30 rows, ~45 sites)", "689260bc Issues #497/#530/#418 (+ mechanical half of #498) (limits v1.4.0, 26 sites, the lint)"],
-  "base": "65c913f0df143ec8d01f999047ca5cfdf6f03a51",
-  "verification": "lint exit 0; frame-economics 50/50; issue500/issue530/issue541/issue499/issue496/registry/referee/advisory/canonical/atlas suites green; full suite NOT run (ENOSPC); a390/CR83/cairn-CR reds pre-existing on 65c913f0 (baseline-checked)",
-  "closeReadyOnGitHub": ["#541", "#536", "#532", "#500", "#499", "#496"],
-  "landedByThisWork": ["#497", "#530", "#418", "#498 (src-side: every bound-shaped constant declared, derived or named)", "#377 (headline families; identity/schema residue named in lint/F tables)"],
-  "blocker": "host disk 94-97% full; ledger ENOSPC; operator must free disk" }
+{
+ "pending": "swarm.contribution_recorded + swarm.integrate target=master blocked by host ENOSPC (ledger append refused ~15 attempts, 20:40-21:40Z). Operator frees disk -> run: (1) the swarm.update below, (2) swarm.integrate with the returned contributionId, (3) git ls-remote to confirm the #558 publish hook pushed master.",
+ "commits": [
+  "a06c30fb Issues #498/#377 landing two (limits.mjs v1.5.0, 30 rows, ~45 sites)",
+  "689260bc Issues #497/#530/#418 (+ mechanical half of #498) (limits v1.4.0, 26 sites, the lint)"
+ ],
+ "base": "65c913f0df143ec8d01f999047ca5cfdf6f03a51",
+ "verification": "lint exit 0; frame-economics 50/50; issue500/issue530/issue541/issue499/issue496/registry/referee/advisory/canonical/atlas suites green; full suite NOT run (ENOSPC); a390/CR83/cairn-CR reds pre-existing on 65c913f0 (baseline-checked)",
+ "closeReadyOnGitHub": [
+  "#541",
+  "#536",
+  "#532",
+  "#500",
+  "#499",
+  "#496"
+ ],
+ "landedByThisWork": [
+  "#497",
+  "#530",
+  "#418",
+  "#498 (src-side: every bound-shaped constant declared, derived or named)",
+  "#377 (headline families; identity/schema residue named in lint/F tables)"
+ ],
+ "blocker": "REFINED 2026-09-22T22:35Z: plain 5 MB writes to the application-v3 dir SUCCEED at 745 MB free — the ENOSPC is a STICKY failure in the resident process (its ledger append stream caught the true-zero window at ~20:52 and every append now replays the error, including swarm.view). Unblock = resident reincarnation/restart (root call, docs/48) — disk freeing advisable but the restart alone should clear it. Then: swarm.update (record below), swarm.integrate target=master, git ls-remote confirm."
+}
