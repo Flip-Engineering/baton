@@ -153,7 +153,7 @@ test('AO5: the map sees the move — a new target, the host unchanged, every del
   const map = JSON.parse(read(MAP_FILE));
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact must carry the application-observation target');
-  assert.equal(target.members.length, 174);
+  assert.equal(target.members.length, 175);
   const hostFile = map.files.find((file) => file.file === HOST_FILE);
   assert.equal(hostFile.members.length, 237, 'application.mjs keeps every member as delegates');
   for (const member of hostFile.members) {

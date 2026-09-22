@@ -263,6 +263,10 @@
       "prerequisite": "codex/gpt-5.6-sol"
     },
     {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
+      "reason": "#538"
+    },
+    {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
@@ -1328,94 +1332,6 @@
       "reason": "#59"
     },
     {
-      "key": "test/repl-realization-red.test.mjs :: A1 (RED): renderBrief does not emit `## Cited REPL objects` for a brief carrying a cited REPL object (stage: renderBrief-repl-objects-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: A2 (RED): renderPrompt does not emit `## Cited REPL objects` (stage: renderPrompt-repl-objects-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: A3 (RED): _providerBrief does not attach inner.replObjects for a brief citing a real shared binding (stage: cited-repl-objects-seam-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: B3 (RED): a cited cell embedding `\\n## Pending attention` renders INSIDE the bullet as a single-line sanitized leaf — never a second section (stage: repl-object-sanitize-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: C1 (RED): FRAME_LIMITS does not declare view.repl_object.items (stage: repl-object-registry-rows-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: C2 (RED): FRAME_LIMITS does not declare view.repl_object.bytes (stage: repl-object-bytes-row-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: C4 (RED): the D2 overflow round trip — 9 cited objects serve 8 in-block, the excess spills digest-cited, and the worker resolves the spill (stage: cited-repl-objects-seam-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: C5 (RED): the D2 byte shed — an over-byte cited set sheds with a (truncated) marker and the full text stays reachable by citation (stage: cited-repl-objects-seam-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: D1 (RED): a citation naming another worker's scope in a worker's citation set refuses repl_object_not_addressed (stage: repl-object-refusal-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: D2 (RED): tier visibility by scope — a worker:<id> object renders to its owner only, a shared object to every member (stage: cited-repl-objects-seam-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: D3 (RED): the shared tier across a multi-run wave — a shared object admitted at spawn resolves in EACH member's own runId (stage: multi-run-fanout-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: D4 (RED): the run-close reap does not exist — task-ephemeral active bindings are not dropped at close, while history is retained for replay-exact resolution (stage: run-close-reap-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: E1 (RED): a promotion through the orchestrator facade records NO promotedFrom provenance (stage: repl-promotion-provenance-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: E2 (RED): a non-orchestrator promotion attempt refuses repl_object_unauthorized (stage: repl-promotion-refusal-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: E4 (RED): an orchestrator promotion SUCCEEDS through the facade and is replay-safe — an always-refuse facade is caught (stage: repl-promotion-positive-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: F1 (RED): no run-view REPL review projection exists — worker manifests are not reviewable by projection (stage: repl-review-projection-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: F2 (RED): a review record carrying a shadow field the projection cannot display refuses — the review shape is closed (stage: repl-shadow-field-refusal-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: G1 (RED): baton_repl_cite has no membership check — a caller-supplied runId is a live cross-run read escape (stage: repl-cite-run-boundary-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: G4 (RED): the baton_repl_cite PORT refuses a caller-supplied foreign runId whose citation resolves there (stage: repl-cite-run-boundary-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: H1 (RED): the section order is `## Verification` ahead of `## Ambient knowledge` → `## Cited REPL objects` (stage: renderBrief-repl-objects-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: H2 (RED): the repl_object_* refusal family is not a typed frozen surface constant (stage: repl-object-refusal-codes-missing)",
-      "reason": "#69"
-    },
-    {
-      "key": "test/repl-realization-red.test.mjs :: H4 (RED): the serving-path refusals FIRE — unresolved / not-addressed / oversized are typed, never silent (stage: repl-object-refusal-firing-missing)",
-      "reason": "#69"
-    },
-    {
       "key": "test/run-show-verification-verdict.test.mjs :: V7: a candidate-owned exit mismatch reads as its own closed code on run show",
       "reason": "#460"
     },
@@ -1822,10 +1738,6 @@
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
       "reason": "#87"
-    },
-    {
-      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
-      "reason": "#538"
     }
   ],
   "converged": [
@@ -2356,6 +2268,10 @@
     {
       "file": "test/reflex4-context-eval-red.test.mjs",
       "reason": "#19"
+    },
+    {
+      "file": "test/repl-realization-red.test.mjs",
+      "reason": "#69"
     },
     {
       "file": "test/repl1-kind-inventory-red.test.mjs",

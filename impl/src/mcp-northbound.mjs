@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { replObjectRefusal } from './messages.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
@@ -2565,6 +2566,21 @@ export class McpFleetServer {
     return pending;
   }
 
+  /** Issue #69 (R10/D3): `repl.cite` is a READ in the caller's OWN run. The wire's `runId` is
+   * never consulted — the run is the caller's task's (`principal.taskId`), the `contextRead`
+   * posture — so a caller cannot name another run's bindings and read them, however the request
+   * is written. A citation that does not resolve in the caller's own run refuses
+   * repl_citation_out_of_run (issue #143's shipped-code fix). */
+  _replCiteInOwnRun(principal, args) {
+    const taskId = typeof principal?.taskId === 'string' && principal.taskId.length > 0
+      ? principal.taskId : null;
+    if (taskId === null) {
+      throw replObjectRefusal('repl.cite requires an authenticated caller task',
+        'repl_citation_out_of_run');
+    }
+    return this.coordinator._replCiteInOwnRun(taskId, args.citation);
+  }
+
   async _dispatch(name, args, actor, callId, principal = this.principal, semanticAuthority = null) {
     let value;
     if (APPLICATION_TOOL[name]) {
@@ -2950,9 +2966,8 @@ export class McpFleetServer {
         ))
         : this._readContextPackage(args.packageDigest);
     }
-    else if (name === 'baton_repl_cite') {
-      value = this.coordinator.resolveReplCitation(args.runId, args.citation);
-    }
+    // Issue #69 (R10): the run is the caller's task's, never the wire's `runId`.
+    else if (name === 'baton_repl_cite') value = this._replCiteInOwnRun(principal, args);
     else if (name === 'baton_knowledge_recall') {
       value = this.coordinator.recallKnowledge(args.query, args.reader ?? {}, {
         ...(args.options ?? {}), actor, idempotencyKey: `mcp.call:${callId}`,

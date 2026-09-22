@@ -196,7 +196,7 @@ test('CA2: the committed map, the delegates, the exports and the store imports a
   for (const member of map.files.find((file) => file.file === MAP_STORE_FILE).members) {
     if (member.evidence.some((entry) => entry.endsWith(':admission_port'))) moved.set(`${member.name}\u0000${member.ordinal}`, member.name);
   }
-  assert.equal(moved.size, 172, 'the map must show the admission bucket — every store member whose body left');
+  assert.equal(moved.size, 173, 'the map must show the admission bucket — every store member whose body left');
   const movedNames = new Set(moved.values());
   const wired = delegates();
   const orphans = [...moved.keys()].filter((identity) => !wired.has(identity.split('\u0000')[0]));
@@ -207,7 +207,7 @@ test('CA2: the committed map, the delegates, the exports and the store imports a
   }
   const helpers = [...wired.values()].map((delegate) => delegate.helper);
   assert.equal(new Set(helpers).size, helpers.length, 'one delegate per admission helper');
-  assert.equal(helpers.length, 172, 'the port carries one helper per moved member');
+  assert.equal(helpers.length, 173, 'the port carries one helper per moved member');
   const moduleRows = map.files.find((file) => file.file === MAP_MODULE_FILE).members;
   for (const name of new Set(helpers)) {
     assert.equal(moduleRows.filter((member) => member.name === name).length, 1,
@@ -344,8 +344,9 @@ test('CA4: the store reaches every moved member through its own delegate, with i
   ['reverifyKnowledgeContradictionResolution', 6], ['_validateContradictionResolution', 1],
   ['_validateKnowledgeInvalidation', 2], ['_validateContaminationRecord', 2],
   ['_validateKnowledgeRecallPayload', 2], ['_validateKnowledgeRecallAssessmentPayload', 2],
+  ['admitReplFanout', 2],
   ];
-  assert.equal(MOVED.length, 172, 'the admission bucket is 172 members');
+  assert.equal(MOVED.length, 173, 'the admission bucket is 173 members');
   const wired = delegates();
   for (const [name, arity] of MOVED) {
     assert.ok(wired.has(name), `${name}: the class must still delegate it`);
@@ -356,7 +357,7 @@ test('CA4: the store reaches every moved member through its own delegate, with i
     assert.ok(descriptor, `${name}: the store must still answer on ${name}`);
     assert.equal(descriptor.value?.length ?? descriptor.get?.length, arity, `${name}: the signature must not move with the body`);
   }
-  assert.equal(wired.size, 172, 'the admission port carries exactly the admission bucket');
+  assert.equal(wired.size, 173, 'the admission port carries exactly the admission bucket');
 });
 
 test('CA5: the store keeps its exact decisions across the move, and a moved member is still dispatched through the class', () => {

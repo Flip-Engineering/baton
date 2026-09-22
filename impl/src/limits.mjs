@@ -266,6 +266,13 @@ const VIEW = Object.freeze({
   // row is a RENDER-side shed flag (OQ1), never a wire cap.
   'view.attention_push.items': { lane: 'view.attention_push.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
   'view.attention_push.bytes': { lane: 'view.attention_push.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
+  // Issue #69 (D2/D7): the cited-REPL-object section's bounds, declared independently of the #79
+  // rows above so a fold-order change in that lane can never renumber these. The ITEM row is the
+  // serve bound (8 = the knowledge-slice precedent); its overflow is a digest-cited spill, never a
+  // truncation. The BYTE row is a RENDER-side shed flag — the boundary entry's leaf is cut with a
+  // `(truncated)` marker and the full text stays reachable by citation.
+  'view.repl_object.items': { lane: 'view.repl_object.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
+  'view.repl_object.bytes': { lane: 'view.repl_object.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
   'view.blocked_interaction_summary.bytes': { lane: 'view.blocked_interaction_summary.bytes', class: 'view', value: 160, unit: 'bytes', graceful: 'shed-flagged' },
   'view.knowledge_slice.items': { lane: 'view.knowledge_slice.items', class: 'view', value: 8, unit: 'items', graceful: 'shed-flagged' },
   'view.knowledge_slice.bytes': { lane: 'view.knowledge_slice.bytes', class: 'view', value: 2048, unit: 'bytes', graceful: 'shed-flagged' },

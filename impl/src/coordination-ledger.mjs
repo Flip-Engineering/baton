@@ -15,7 +15,7 @@ import { serialize } from 'node:v8';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { COORDINATION_QUARANTINE_FILE, COORDINATION_QUARANTINE_TEMP_PREFIX, CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, PROJECTION_CHECKPOINT_FIELDS, PROJECTION_LEDGER_FIELDS, SCRATCHPAD_SCOPE, SEGMENT_FILE_SUFFIX, TERMINAL, boundedText, canonicalBytes, canonicalDigest, clone, digest, eventTime, freeze, promotionActor, recallBody, replFenceKey, scratchpadScopeKey, sha256Bytes, validKnowledgeContradictionPolicy, validRunId, validUnicodeScalarString } from './coordination-internals.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
-import { frameWebContent, referencesWebFetchHandle } from './messages.mjs';
+import { boundedAttentionText, frameWebContent, referencesWebFetchHandle, wrapProse } from './messages.mjs';
 import { GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical, goalPlanDigest, goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planBriefMatches, planRouteAuthorityState, planRouteMatches } from './goal-plan.mjs';
 import { normalizeContextAuthority } from './context-authority.mjs';
 import { PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest, planObjectSnapshot, waveRoleRunKey } from './orchestrator-plan.mjs';
@@ -3146,6 +3146,9 @@ export function _apply(store, event) {
     const rec = freeze({
       scope: p.scope, name: p.name, bindingVersion: p.bindingVersion, state: p.state,
       cellId: p.cellId, bindingDigest: p.bindingDigest, runId,
+      // D5: a promotion rebind carries the worker coordinates it promotes. Absent on an ordinary
+      // bind, so the record shape is unchanged for every binding the promotion path never touched.
+      ...(p.promotedFrom ? { promotedFrom: clone(p.promotedFrom) } : {}),
       admittedEvent: event.seq, admittedAt: event.ts,
     });
     store._replBindings.set(key, rec);
@@ -3287,6 +3290,12 @@ export function _apply(store, event) {
     }));
     for (const targetRunId of p.targetRunIds ?? [p.runId]) store._runStopByTarget.set(targetRunId, p.runId);
     const stoppedRunIds = new Set(p.targetRunIds ?? [p.runId]);
+    // Issue #69 (D4): a run stop closes the task-ephemeral REPL tier — the run's ACTIVE binding map
+    // and its per-scope fences go, while the append-only history stays for replay-exact resolution.
+    // The FOLD performs this rather than the admission, so a replayed ledger reconstructs exactly
+    // the closed tier the live process served, and the reap is idempotent for the run-stop path's
+    // own call.
+    for (const targetRunId of stoppedRunIds) reapRunReplBindings(store, targetRunId);
     for (const [exportId, state] of store._runResultExports) {
       if (!stoppedRunIds.has(state.runId) || state.status !== 'pending') continue;
       const cancellationCore = {
@@ -6911,6 +6920,112 @@ export function replBindingSnapshot(store, runId, scope) {
     .filter((rec) => rec.state === 'bound')
     .map(clone);
   return freeze({ runId, scope, bindingFence: store.bindingFence(runId, scope), bindings: rows });
+}
+
+/** The run's admitted REPL manifests, in admission order — the D6 review projection's input. */
+export function replManifestAdmissions(state, runId) {
+  return [...state.values()]
+    .filter((row) => row.runId === runId)
+    .sort((left, right) => left.admittedEvent - right.admittedEvent)
+    .map(clone);
+}
+
+/** Does this principal hold an ACTIVE run-orchestrator lease — this run's, or (when no run is
+ * named) any run of this repository? This is the orchestrator identity a promotion is authorized
+ * by (D5): the lease is the admission authority, so the promotion asks the same authority the
+ * `shared` manifest admission asks, without demanding the caller re-present the whole lease. */
+export function holdsRunOrchestratorLease(store, fields) {
+  const principalId = fields?.principalId;
+  const runId = fields?.runId ?? null;
+  if (typeof principalId !== 'string' || principalId.length === 0
+    || (runId !== null && !validRunId(runId))) {
+    throw new CoordinationRefusal('run orchestrator lease lookup is invalid', 'invalid_repl_binding');
+  }
+  const now = store._clock();
+  return [...store._runOrchestratorLeases.values()].some((lease) => (
+    lease.status === 'active'
+    && lease.repoId === store._repoId
+    && lease.session.principalId === principalId
+    && Date.parse(now) < Date.parse(lease.expiresAt)
+    && (runId === null || lease.parent?.runId === runId)
+  ));
+}
+
+/** Issue #69 (D4): the run-close reap of the task-ephemeral tier. A run's `worker:<id>` and
+ * `shared` objects are run-scoped and unreachable once the run closes, so the ACTIVE binding map
+ * and the per-scope fences for that run are dropped here. The append-only history is RETAINED:
+ * `resolveReplCitation` resolves the EXACT version row from it (Part A rule 2), so a post-close
+ * replay still resolves the object a receipt cites, and the drop is idempotent.
+ * `active` is the count of active bindings the run has LEFT (0 after a complete reap) — the
+ * question a caller asks of a closed run. */
+export function reapRunReplBindings(store, runId) {
+  if (!validRunId(runId)) {
+    throw new CoordinationRefusal('REPL binding reap requires a run id', 'invalid_repl_binding');
+  }
+  let reaped = 0;
+  for (const key of [...store._replBindings.keys()]) {
+    const [rowRunId, scope] = JSON.parse(key);
+    if (rowRunId !== runId) continue;
+    store._replBindings.delete(key);
+    store._replBindingFences.delete(replFenceKey(runId, scope));
+    reaped += 1;
+  }
+  const active = [...store._replBindings.keys()]
+    .filter((key) => JSON.parse(key)[0] === runId).length;
+  const retained = [...store._replBindingHistory.keys()]
+    .filter((key) => JSON.parse(key)[0] === runId).length;
+  return freeze({ runId, reaped, active, retained });
+}
+
+// REPL-2 binding-view ceilings (repl23-decisions.md Part D rule 13), the exact same
+// byte/count-ceiling shape MAX_BOARD_VIEW_BYTES/MAX_BOARD_ITEMS use for boards.
+const MAX_REPL_VIEW_BYTES = FRAME_LIMITS['view.repl.bytes'].value;
+const MAX_REPL_BINDING_ITEMS = 512;
+
+// REPL-2 (repl23-decisions.md Part D rules 11-13): a bounded, sanitized, per-worker binding
+// projection. Reads are NON-EVENTED (pure — appends nothing) and CACHED by
+// (runId, scope, workerId, bindingFence): while the (runId, scope) fence is unchanged the
+// exact cached view is served; a fence advance is the only thing that recomputes it. `scope`/
+// `name` are attacker-influenced identifiers and route through the same
+// boundedAttentionText/wrapProse untrusted-prose discipline board title/detail/report bodies
+// use (rule 16, P2-6); a resolved cellId is a closed hub-derived token and is never wrapped.
+// It lives here, beside `replBindingSnapshot`, because it is a pure projection of that snapshot:
+// the coordinator's run-view REPL review (issue #69 D6) reads it without reaching the
+// application layer, which owns the run view but not this shape.
+export function projectReplBindingView(snapshot, viewer = {}, cache = null) {
+  const runId = snapshot?.runId ?? null;
+  const scope = snapshot?.scope ?? null;
+  const bindingFence = Number.isSafeInteger(snapshot?.bindingFence) ? snapshot.bindingFence : 0;
+  const workerId = viewer.workerId ?? null;
+  const role = viewer.role === 'orchestrator' ? 'orchestrator' : 'worker';
+  const cacheKey = `${runId} ${scope} ${role}:${workerId ?? ''} ${bindingFence}`;
+  if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
+
+  // Part D rule 12: a worker sees its own worker:<id> scope plus the shared scope
+  // (read-only), both within its own run; the orchestrator sees every scope in the run.
+  const visibleScope = role === 'orchestrator' || scope === 'shared' || scope === `worker:${workerId}`;
+  const visible = visibleScope ? (snapshot?.bindings ?? []) : [];
+  let replBindingViewTruncated = visible.length > MAX_REPL_BINDING_ITEMS;
+  const project = (binding) => ({
+    scope: wrapProse(binding.scope, boundedAttentionText(binding.scope)),
+    name: wrapProse(binding.scope, boundedAttentionText(binding.name)),
+    bindingVersion: binding.bindingVersion, state: binding.state,
+    cellId: binding.cellId, bindingDigest: binding.bindingDigest,
+  });
+  let items = visible.slice(0, MAX_REPL_BINDING_ITEMS).map(project);
+  const build = () => Object.freeze({
+    runId, scope, bindingFence, viewer: Object.freeze({ workerId, role }),
+    bindings: Object.freeze(items), replBindingViewTruncated,
+  });
+  let view = build();
+  // Byte ceiling: shed the trailing item and re-flag until under MAX_REPL_VIEW_BYTES (never silent).
+  while (Buffer.byteLength(JSON.stringify(view)) > MAX_REPL_VIEW_BYTES && items.length > 0) {
+    items = items.slice(0, items.length - 1);
+    replBindingViewTruncated = true;
+    view = build();
+  }
+  if (cache) cache.set(cacheKey, view);
+  return view;
 }
 
 export function _knowledgeLiveAt(row, at) {
