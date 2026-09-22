@@ -127,6 +127,9 @@ export const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   // commitments, and bounded prose-free reap receipts are one ledger projection.
   '_scratchpadEntries', '_scratchpadEntriesByScope', '_scratchpadFences',
   '_scratchpadElevations', '_scratchpadReaps',
+  // Issue #66: the folded doubt review records (doubtId → the state its latest doubt_* event
+  // folded), replay-derived like the scratchpad projection beside them.
+  '_doubtRecords',
   // KG-1 (Part A rule 5): gains _projectionInputFence, a plain replay-derived counter.
   '_projectionInputFence',
   // Issue #465(4): the runs a `steering.registered` row folded — read by run/wave admission, and

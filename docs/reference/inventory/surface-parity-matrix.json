@@ -463,6 +463,15 @@
       "ledgered": false
     },
     {
+      "name": "knowledge.doubts",
+      "category": "knowledge",
+      "cli": "baton knowledge doubts",
+      "mcp": "baton_knowledge_doubts",
+      "web": "knowledge_doubts",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
       "name": "knowledge.horizon",
       "category": "knowledge",
       "cli": "baton knowledge horizon",
@@ -477,6 +486,15 @@
       "cli": "baton knowledge promote",
       "mcp": "baton_knowledge_promote",
       "web": "knowledge_promote",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "knowledge.promote_doubt",
+      "category": "control",
+      "cli": "baton knowledge promote_doubt",
+      "mcp": "baton_knowledge_promote_doubt",
+      "web": "knowledge_promote_doubt",
       "divergence": null,
       "ledgered": false
     },
