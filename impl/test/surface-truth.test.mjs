@@ -60,12 +60,11 @@ test('webCardCommands: the sorted web-admitted card plus the wave direct ports, 
   }
 });
 
-test('ordinaryMcpToolNames: the shipped ordinary surface is the core table, byte-stable against the artifact', () => {
+test('ordinaryMcpToolNames: the shipped ordinary surface is the core table the production wrapper advertises', () => {
   const names = ordinaryMcpToolNames();
   assert.deepEqual(names, ordinaryMcpToolNames(), 'the served order is deterministic');
-  assert.deepEqual(names, artifact.profiles['mcp.application'],
-    'the served set, in served order, is byte-stable against the committed mcp.application profile');
-  assert.equal(names.length, artifact.counts.mcpApplicationTools);
+  // The artifact's mcp.application profile records the RAW ordinary table the renderer documents
+  // (the row below), not this shipped projection — the two surfaces carry one derivation each.
   assert.deepEqual([...names].sort(), [...CORE_TOOL_NAMES].sort(),
     'the shipped ordinary surface IS the core table the production wrapper advertises (docs/49 §2)');
   assert.ok(names.includes('baton_swarm'), 'the swarm family rides the ordinary surface as its verb tool');
@@ -78,6 +77,12 @@ test('northboundApplicationToolNames: the raw northbound table is the flat list 
   assert.deepEqual([...names].sort(), mcpApplicationToolNames(),
     'the raw application table equals mcpApplicationToolNames()');
   assert.equal(new Set(names).size, names.length, 'no duplicate tool names');
+  // The committed mcp.application profile IS this raw table: d1288fd9's profile composition (the
+  // renderer documents it, the surface gate compares the two), so the artifact pins it here.
+  assert.deepEqual([...artifact.profiles['mcp.application']].sort(), [...names].sort(),
+    'the committed mcp.application profile is the raw application table');
+  assert.equal(artifact.counts.mcpApplicationTools, names.length,
+    'the committed application-tool count is the raw application table length');
   assert.ok(names.includes('baton_swarm_list'), 'the flat swarm family rides the raw application table');
   assert.ok(!names.some((name) => /shutdown|fleet_/u.test(name)), 'no host-lifecycle or fleet_ tool');
 });

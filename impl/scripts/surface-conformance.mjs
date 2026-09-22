@@ -24,7 +24,7 @@ import {
   mcpCombinedToolNames,
   mcpDispatchToolNames,
 } from '../src/mcp-northbound.mjs';
-import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
+import { APPLICATION_PROFILE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { WAVEFILE_DIRECTIVES } from '../src/workflow-dsl.mjs';
 
 // docs/36 §6.1 / M4A-2 — `deriveSurfaceNames` is imported, not redefined: the registry, the audit,
@@ -484,13 +484,16 @@ export function instantiateProfileInventory(profile) {
         names: Object.freeze([...HOST_LOCAL_CLI_KEYS].sort()),
       });
     case 'mcp.application':
-      // Issue #314 (docs/49 §2): the ordinary MCP surface IS the shipped core table — the seven
-      // verb-tools the production wrapper advertises — never the raw flat list the northbound
-      // still keeps for dispatch.
+      // Issue #314 (docs/49 §2): the `mcp.application` PROFILE is the ordinary table the raw
+      // server serves and `renderMcpToolInventory()` documents — the surface this profile's
+      // parity check compares against, so both sides read ONE derivation
+      // (APPLICATION_PROFILE_TOOL_NAMES). The shipped core surface the production wrapper
+      // advertises instead (CORE_TOOL_NAMES, the eight verb-tools) is a different profile and
+      // has no doc block of its own.
       return Object.freeze({
         profile: id,
         kind: 'tool-names',
-        names: Object.freeze([...CORE_TOOL_NAMES]),
+        names: Object.freeze([...APPLICATION_PROFILE_TOOL_NAMES]),
       });
     case 'mcp.advanced':
       return Object.freeze({
@@ -739,7 +742,7 @@ export function buildSurfaceInventoryArtifact() {
       canonicalOperations: APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.length,
       cliWebCommands: CLI_WEB_COMMANDS.size,
       parserLifecycleActions: parserLifecycleDispatchCount(),
-      mcpApplicationTools: CORE_TOOL_NAMES.length,
+      mcpApplicationTools: APPLICATION_PROFILE_TOOL_NAMES.length,
       mcpAdvancedTools: mcpAdvancedToolNames().length,
       mcpCombinedTools: mcpCombinedToolNames().length,
       mcpDispatchTools: mcpDispatchToolNames().length,
@@ -761,7 +764,7 @@ export function buildSurfaceInventoryArtifact() {
       contextEvalParseRefusal: contextEval,
       runDebugRegistered: APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
         .some((entry) => entry.key === 'run.debug'),
-      batonRunsAdvertised: CORE_TOOL_NAMES.includes('baton_runs'),
+      batonRunsAdvertised: APPLICATION_PROFILE_TOOL_NAMES.includes('baton_runs'),
     },
   };
   return artifact;

@@ -36,14 +36,14 @@
 //               set — fold)                                                               (stage: sibling-schema-inherits-source)
 //   RG-07  RED  wait/follow lists admit the siblings + invalid_run_wait bounds              (stage: wait-follow-lists-admit-siblings)
 //   RG-08  RED  fleet resume/retry dispatch, typed refusal, idem required, replay           (stage: fleet-resume-retry-dispatch)
-//   RG-09  RED  combined tools/list = 149 (86 + 2 + 14 + 7 + 40), the 14 siblings
+//   RG-09  RED  combined tools/list = 102 (86 + 2 + 14, composition fold), the 14 siblings
 //               lead the ordinary prefix (derived from the uncovered set — fold)            (stage: combined-102-includes-siblings)
 //   RG-10a RED  5 non-canonical mcp.baton surfaceAlias rows registered                  (stage: alias-rows-registered)
 //   RG-10b RED  renderer canonical-miss fallback byte-string present in EXECUTABLE source
 //               (comment-stripped, fold)                                                 (stage: renderer-fallback-absent)
 //   RG-10c RED  renderMcpToolInventory resolves the 5 ops to their operation keys       (stage: non-canonical-ops-render-operation-keys)
-//   RG-11R RED  surface-inventory-artifact encodes mcp.application 56 / mcp.combined 149,
-//               tied to composition (35 + 14 / 86 + 2 + 14 + 7 + 40, fold)                  (stage: artifact-counts-49-102)
+//   RG-11R RED  surface-inventory-artifact encodes mcp.application 49 / mcp.combined 102,
+//               tied to composition (35 + 14 / 86 + 2 + 14, fold)                        (stage: artifact-counts-49-102)
 //   RG-P1  PIN  surface-conformance main stays green                                    (stage: conformance-main-green)
 //   RG-P2  PIN  committed artifact mcp.application count == live application surface    (stage: artifact-application-count-pin)
 //   RG-P3  PIN  committed artifact mcp.combined count == live combined surface          (stage: artifact-combined-count-pin)
@@ -105,7 +105,7 @@ import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import * as mcpNorthbound from '../src/mcp-northbound.mjs';
-import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
+import { APPLICATION_PROFILE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { renderMcpToolInventory } from '../scripts/render-surface-docs.mjs';
 import { combinedMcpToolNames, mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
 
@@ -240,7 +240,7 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 56, 'application tools/list count 56 (stage: application-tools-count-49)'); // composition (final landing): 35 base legacy + 14 lifecycle siblings + 3 wakes (issue #294 registry-mandated) + 2 message lane (issue #206) + 2 harvest pair (issue #99/#179) = 56
+  assert.equal(names.length, 57, 'application tools/list count 57 (stage: application-tools-count-49)'); // composition: 36 base legacy (35 + baton_run_knowledge_seed, restored after d1288fd9 displaced the row) + 14 lifecycle siblings + 3 wakes (issue #294 registry-mandated) + 2 message lane (issue #206) + 2 harvest pair (issue #99/#179) = 57
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling set derives from the pre-spread
   // uncoveredCommands() export — never from the grown served set (empty of uncovered at green) —
   // and the count ties to composition (35 HEAD ordinary tools + the 14 lifecycle siblings), so a
@@ -248,8 +248,8 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 35 + uncovered.length + 3 + 2 + 2,
-    'application tools/list count ties to composition: 35 + 14 + 3 wakes + 2 message + 2 pair = 56 (stage: application-count-composition)');
+  assert.equal(names.length, 36 + uncovered.length + 3 + 2 + 2,
+    'application tools/list count ties to composition: 36 + 14 + 3 wakes + 2 message + 2 pair = 57 (stage: application-count-composition)');
   const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp).sort();
   const missing = siblingTools.filter((tool) => !names.includes(tool));
   assert.deepEqual(missing, [],
@@ -470,22 +470,16 @@ test('RG-09 RED: combined tools/list is the served combined table with the 14 si
   const { server } = setup({ surface: 'combined' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 149, 'combined tools/list count 149 (stage: combined-102-includes-siblings)');
+  assert.equal(names.length, 110, 'combined tools/list count 110 (stage: combined-102-includes-siblings)'); // 87 + 2 fleet + 14 siblings + 3 wakes + 2 message + 2 pair
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling checks derive from the pre-spread
   // uncoveredCommands() export — never the grown served set (empty at green) — and the count ties
-  // to composition (86 HEAD combined + 2 D2 fleet tools + 14 siblings + 7 new families + the
-  // canonical dot twins), so a bare count of arbitrary self-consistent names cannot pass.
+  // to composition (86 HEAD combined + 2 D2 fleet tools + 14 siblings), so a bare 102 of arbitrary
+  // self-consistent names cannot pass.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  // The canonical dot twins (issue #233) are advertised beside their base tools so a caller may
-  // address one operation under either spelling. A 2026-09-22 restructure dropped the family from
-  // TOOL_DEFINITIONS while keeping its dispatch rows; this pin is what caught it, so the family
-  // size rides its own assertion and the drop cannot reappear as a smaller self-consistent table.
-  const dotTwins = names.filter((name) => name.includes('.'));
-  assert.equal(dotTwins.length, 40, 'the advertised canonical dot-twin family (issue #233)');
-  assert.equal(names.length, 86 + 2 + uncovered.length + 3 + 2 + 2 + 40,
-    'combined count ties to composition: 86 + 2 fleet + 14 siblings + 3 wakes + 2 message + 2 pair + 40 dot twins (stage: combined-count-composition)');
+  assert.equal(names.length, 87 + 2 + uncovered.length + 3 + 2 + 2,
+    'combined count ties to composition: 87 + 2 fleet + 14 siblings + 3 wakes + 2 message + 2 pair (stage: combined-count-composition)');
   assert.ok(names.includes('fleet_run_resume_work'), 'combined serves fleet_run_resume_work');
   assert.ok(names.includes('fleet_run_retry_verification'), 'combined serves fleet_run_retry_verification');
   const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp);
@@ -538,18 +532,19 @@ test('RG-10c RED: renderMcpToolInventory renders the 5 non-canonical ops to thei
 
 test('RG-11-R RED: the surface-inventory artifact encodes the measured mcp.application / mcp.combined counts, tied to composition (stage: artifact-counts-49-102)', () => {
   const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  assert.equal(artifact.counts.mcpApplicationTools, 56, 'artifact mcp.application count 56 (stage: artifact-counts-49-102)');
-  assert.equal(artifact.counts.mcpCombinedTools, 149, 'artifact mcp.combined count 149 (stage: artifact-counts-49-102)');
-  // Fold (blue-team #4 — SHALLOW): the committed counts also tie to composition (35 + 14 /
-  // 86 + 2 + 14 + 7 + 40), so an arbitrary self-consistent pair of counts (artifact == live,
-  // both wrong) cannot pass without the pre-spread 14 being the actual uncovered set.
+  assert.equal(artifact.counts.mcpApplicationTools, 57, 'artifact mcp.application count 57 (stage: artifact-counts-49-102)');
+  assert.equal(artifact.counts.mcpCombinedTools, 110, 'artifact mcp.combined count 110 (stage: artifact-counts-49-102)');
+  // Fold (blue-team #4 — SHALLOW): the committed counts also tie to composition (36 + 14 /
+  // 87 + 2 + 14), so an arbitrary self-consistent 49/102 (artifact == live, both wrong) cannot
+  // pass without the pre-spread 14 being the actual uncovered set. The two bases carry the
+  // restored baton_run_knowledge_seed row (d1288fd9 displaced it; run.knowledge.seed claims mcp).
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(artifact.counts.mcpApplicationTools, 35 + uncovered.length + 3 + 2 + 2,
-    'artifact mcp.application ties to composition: 35 + 14 + 3 wakes + 2 message + 2 pair (stage: artifact-application-composition)');
-  assert.equal(artifact.counts.mcpCombinedTools, 86 + 2 + uncovered.length + 3 + 2 + 2 + 40,
-    'artifact mcp.combined ties to composition: 86 + 2 + 14 + 3 wakes + 2 message + 2 pair + 40 dot twins (stage: artifact-combined-composition)');
+  assert.equal(artifact.counts.mcpApplicationTools, 36 + uncovered.length + 3 + 2 + 2,
+    'artifact mcp.application ties to composition: 36 + 14 + 3 wakes + 2 message + 2 pair (stage: artifact-application-composition)');
+  assert.equal(artifact.counts.mcpCombinedTools, 87 + 2 + uncovered.length + 3 + 2 + 2,
+    'artifact mcp.combined ties to composition: 87 + 2 + 14 + 3 wakes + 2 message + 2 pair (stage: artifact-combined-composition)');
 });
 
 // ── RG-P1 (PIN) — the conformance gate stays a citizen ──────────────────────────────────────────
@@ -564,12 +559,14 @@ test('RG-P1 PIN: surface-conformance.mjs executable main is green (stage: confor
 
 // ── RG-P2/RG-P3 (PIN) — the committed artifact matches the live counts (D4 item 3) ──────────────
 
-test('RG-P2 PIN: committed artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)', () => {
+test('RG-P2 PIN: committed artifact mcp.application count equals the live application profile (stage: artifact-application-count-pin)', () => {
   const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  // Issue #314 (docs/49 §2): the live application surface is the SHIPPED core table the production
-  // wrapper advertises — the seven verb-tools — never the raw flat list the northbound keeps for dispatch.
-  assert.equal(artifact.counts.mcpApplicationTools, CORE_TOOL_NAMES.length,
-    'artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)');
+  // Issue #156 D4: the mcp.application PROFILE is the raw ordinary table `renderMcpToolInventory()`
+  // documents and the surface gate compares the profile against (APPLICATION_PROFILE_TOOL_NAMES).
+  // The shipped core surface (CORE_TOOL_NAMES, the eight verb-tools) is the production wrapper's
+  // projection, a different surface with its own pins.
+  assert.equal(artifact.counts.mcpApplicationTools, APPLICATION_PROFILE_TOOL_NAMES.length,
+    'artifact mcp.application count equals the live application profile (stage: artifact-application-count-pin)');
 });
 
 test('RG-P3 PIN: committed artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)', () => {

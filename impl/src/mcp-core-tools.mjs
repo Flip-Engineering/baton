@@ -278,11 +278,29 @@ const RETIRED_FLAT_SPELLINGS = Object.freeze(new Map([
   ['baton_swarm_watch', Object.freeze({ tool: 'baton_wakes', verb: 'subscribe' })],
 ]));
 
-/** Issue #156: the application profile IS the parity superset — the ordinary table the raw
- * McpFleetServer serves (D1's 49-tool flat table), in served order. The CORE_TABLE verb-tool
- * curation above remains the production wrapper's projection; this name list is the surface the
- * committed inventory artifact records (the conformance reader and the red suite agree on it). */
-export const CORE_TOOL_NAMES = Object.freeze(ORDINARY_APPLICATION_TOOL_DEFINITIONS.map((tool) => tool.name));
+/** The CORE TOOL NAMES: the verb-discriminated family tools this table curates, in table order.
+ *
+ * This is the name list every reader of the shipped ordinary MCP surface needs: the production
+ * wrapper advertises exactly these tools on `surface: 'application'` (production-mcp-convergence
+ * coreNames dispatch guard), the Kimi project entry allowlists them (mcp-web-bridge
+ * kimiBatonMcpEntry) and the core-table red suite pins the served set against them. */
+export const CORE_TOOL_NAMES = Object.freeze(CORE_TABLE.map((row) => row.name));
+
+/** The APPLICATION PROFILE's tool names: the ordinary table the raw `McpFleetServer` serves on
+ * `surface: 'application'`, in served order. This is the inventory the committed artifact's
+ * `counts.mcpApplicationTools` and `profiles['mcp.application']` record, and the tool column
+ * `renderMcpToolInventory()` renders into MCP.md — the list the surface gate's profile parity
+ * check compares the renderer against. It is NOT the shipped core surface (CORE_TOOL_NAMES
+ * above): the production wrapper replaces this table with the eight core verb-tools for MCP
+ * clients.
+ *
+ * d1288fd9 pointed CORE_TOOL_NAMES at this list to make the profile parity green; the shipped
+ * surface's readers (the wrapper's coreNames dispatch guard, the Kimi project entry's allowlist,
+ * the mcp-northbound projection the bridge starts through) all read that constant and broke,
+ * because one name cannot carry two surfaces. This constant is the second surface's own name. */
+export const APPLICATION_PROFILE_TOOL_NAMES = Object.freeze(
+  ORDINARY_APPLICATION_TOOL_DEFINITIONS.map((tool) => tool.name),
+);
 
 /** The closed verb set of each core tool, in the tool's own order (the served enum). */
 export const CORE_TOOL_VERBS = Object.freeze(Object.fromEntries(
