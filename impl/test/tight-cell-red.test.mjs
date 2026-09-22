@@ -104,7 +104,7 @@
 // today). No other invented symbol is imported; the cell vocabulary rows are source assertions
 // over impl/src (readFileSync), never live imports.
 //
-// NUL discipline: application.mjs / coordination-store.mjs contain NUL bytes — they are read
+// NUL discipline: application.mjs / coordination-store.mjs contained NUL bytes until #215 — they are read
 // with readFileSync(...,'utf8') and only matched, never opened whole in this suite. Campaign
 // law: controls are eval-able (no clocks, no turn counts); the only timers are test I/O flushes.
 // localeCompare is banned; sorted literals below are in actual sorted order.
