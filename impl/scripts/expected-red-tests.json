@@ -6,48 +6,8 @@
       "reason": "A-G10"
     },
     {
-      "key": "test/blind-waits-red.test.mjs :: A1-a RED: run.wait({until:\"terminal\"}) on a durably-stopped run burns the clock instead of returning the projected terminal truth",
-      "reason": "#164"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: A1-b RED: run.wait settle-block on a durably-stopped run burns the clock too — the durable-stop predicate must extend to the settle-block loop",
-      "reason": "#164"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: A2-a RED: MCP fleet_run_wait refuses a mid-wait revocation with unauthenticated AND names the renewal path",
-      "reason": "#164"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: A2-b RED: MCP fleet_run_follow refuses a mid-wait revocation with unauthenticated AND names the renewal path",
-      "reason": "#164"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: A2-c RED: MCP fleet_run_episode refuses a mid-wait revocation with unauthenticated AND names the renewal path (A2/D2 fold — B3)",
-      "reason": "#164"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: A2-d RED: MCP fleet_run_workstreams refuses a mid-wait revocation with unauthenticated AND names the renewal path (A2/D2 fold — B3)",
-      "reason": "#164"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: A3-a RED: web run_wait refuses a mid-wait expiry with 401 unauthenticated AND names /v1/auth/refresh",
-      "reason": "#164"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: A3-b RED: web run_follow refuses a mid-wait expiry with 401 unauthenticated AND names /v1/auth/refresh",
-      "reason": "#164"
-    },
-    {
       "key": "test/blind-waits-red.test.mjs :: A4 RED: the driver pump loop L5/D10 catch blanket-swallows status failures — no auth-stop guard in the CODE (the #148 instance's shape)",
       "reason": "#148"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: P-APP RED: the APPLICATION-layer run.wait refusal keeps application_unauthorized AND names the app-layer renewal — never the transport /v1/auth/refresh lane (D1.2(a))",
-      "reason": "#164"
-    },
-    {
-      "key": "test/blind-waits-red.test.mjs :: P-MCP RED: the MCP post-dispatch recheck list must extend to fleet_run_episode/fleet_run_workstreams (fold-164 B3)",
-      "reason": "#164"
     },
     {
       "key": "test/bridge-idempotency-344.test.mjs :: 344: read tools carry no idempotencyKey",

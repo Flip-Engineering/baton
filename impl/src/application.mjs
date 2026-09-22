@@ -32,7 +32,7 @@ import * as harvestAccessor from './harvest-accessor.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap,
   canonicalOperationFields, canonicalOperationForCommand,
-  PROGRESS_SILENCE_THRESHOLD_MS, projectTypedTerminalCause,
+  PROGRESS_SILENCE_THRESHOLD_MS, projectTypedTerminalCause, waitDurableStopTruth,
 } from './application-semantics.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { projectRunTimelinePage } from './run-timeline.mjs';
@@ -2718,7 +2718,18 @@ export class BatonApplication {
       runId,
       subject: clone(subject),
     }));
-    if (allowed !== true) throw applicationError('application command is not authorized', 'application_unauthorized');
+    if (allowed !== true) {
+      // Issue #164 (D1.2(a) + the refusal table): the application-layer deployment-policy refusal
+      // names ITS OWN renewal lane — the credential/seat the deployment policy authorized this
+      // command with (for a recursive call, the run orchestrator lease seat) — never the
+      // transport /v1/auth/refresh lane (the P-APP pin).
+      const refusal = applicationError('application command is not authorized', 'application_unauthorized');
+      refusal.renewal = Object.freeze({
+        verb: 'reauthorize',
+        seat: 'the deployment-policy credential that authorized this command (for a recursive call, the run orchestrator lease)',
+      });
+      throw refusal;
+    }
   }
   // Issue #74 (D2/A5): the coordinator authority boundary. A coordinator-seat principal (a worker
   // seat, principalId `worker:<id>` — the G9 seat class that never holds `approve`) reaching a
@@ -5815,7 +5826,7 @@ export class BatonApplication {
     // docs/36 §4.1 read row / R-OP-9 — `--until terminal` blocks until the application Run itself is
     // terminal; the default (settled) preserves run.wait's historical provider-settlement block.
     if (options.until === 'terminal') {
-      while (!APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) && Date.now() < deadline) {
+      while (!APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) && !waitDurableStopTruth(view.phase) && Date.now() < deadline) {
         await this.driver.coordinator.wait(0);
         const remaining = deadline - Date.now();
         if (remaining <= 0) break;
@@ -5824,7 +5835,7 @@ export class BatonApplication {
       }
       return view;
     }
-    while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && Date.now() < deadline) {
+    while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && !waitDurableStopTruth(view.phase) && Date.now() < deadline) {
       await this.driver.coordinator.wait(0);
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;

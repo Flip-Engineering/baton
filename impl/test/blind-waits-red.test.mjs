@@ -15,6 +15,20 @@
 //   evidence directory.
 
 // ===========================================================================
+// LANDED (wait-transport, 2026-09-22, issue #164): the ten #164 rows pass at HEAD.
+//   A1-a/A1-b — the wait-local durable-stop truth predicate (waitDurableStopTruth,
+//     application-semantics.mjs) gates BOTH run.wait loops;
+//   A2-a/A2-b/A2-c/A2-d + P-MCP — the post-dispatch recheck covers all four wait-capable
+//     commands and the MCP unauthenticated refusal names the mcp-session renewal lane;
+//   A3-a/A3-b — the web post-wait 401 names /v1/auth/refresh;
+//   P-APP — the application-layer application_unauthorized names the deployment-policy/lease
+//     renewal seat.
+// Their expected-red pins left impl/scripts/expected-red-tests.json. A4 stays pinned RED under
+// #148 (the driver-law client discipline is #148's landing, not #164's). Row titles keep their
+// RED form: they are the row identities the contract docs cite.
+// ===========================================================================
+
+// ===========================================================================
 // ROW INVENTORY (the stage is the HEAD failure seam, named per row; the split at
 // the bottom was measured twice against the PRE-implementation tree and twice
 // against the POST-fold tree)
@@ -1064,15 +1078,18 @@ test('P-MCP RED: the MCP post-dispatch recheck list must extend to fleet_run_epi
   // Fold (row-sf164, blue-team P-MCP BROKEN over-pin → FOLDED): the old pin froze the recheck list
   // at the two-verb form, which the folded authority contract requires EXTENDING to the four
   // wait-capable tools (fold-164 B3 → FOLDED; contract D2 MCP row: "extend it to
-  // fleet_run_episode/fleet_run_workstreams"; A2). At HEAD the list is still the two-verb form
-  // (mcp-northbound.mjs:1510), so the row stays RED until the extension lands — the A2-c/A2-d
-  // behavioral rows pin the same gap.
-  const recheck = srcAnchor('mcp-northbound.mjs', "const refused = ['fleet_run_follow', 'fleet_run_wait'].includes(name) ? this._authority(name, args) : null;");
+  // fleet_run_episode/fleet_run_workstreams"; A2).
+  // Re-anchor (wait-transport, 2026-09-22, the #164 landing): the seam the v1 fold pinned was
+  // refactored after the fold — the observe path now keys the post-dispatch recheck by the
+  // APPLICATION_TOOL command (which covers the baton_run_* siblings of the same commands), so the
+  // v1 tool-name literal no longer exists in src. Per the A4 fold's re-anchoring law the pin
+  // anchors on the FOUND line and requires the four wait-capable commands.
+  const recheck = srcAnchor('mcp-northbound.mjs', "const refused = ['run.follow', 'run.wait', 'run.episode', 'run.workstreams'].includes(APPLICATION_TOOL[name]) ? this._authority(name, args) : null;");
   const list = recheck.text.match(/\[[^\]]*\]/u)?.[0] ?? '';
   assert.equal(
-    ['fleet_run_follow', 'fleet_run_workstreams', 'fleet_run_episode', 'fleet_run_wait'].every((name) => list.includes(name)),
+    ['run.follow', 'run.wait', 'run.episode', 'run.workstreams'].every((command) => list.includes(command)),
     true,
-    'stage: mcp-recheck-episode-workstreams-missing — the MCP post-dispatch transport recheck list must enumerate the four wait-capable tools (fleet_run_follow/fleet_run_wait/fleet_run_episode/fleet_run_workstreams), per fold-164 B3 + contract D2 MCP row + A2; at HEAD the list covers only the two wait verbs, so a mid-wait revocation on fleet_run_episode/fleet_run_workstreams is not caught post-dispatch');
+    'stage: mcp-recheck-episode-workstreams-missing — the MCP post-dispatch transport recheck must cover the four wait-capable commands (run.follow/run.wait/run.episode/run.workstreams — fleet_run_follow/fleet_run_wait/fleet_run_episode/fleet_run_workstreams and their baton_run_* siblings), per fold-164 B3 + contract D2 MCP row + A2; a recheck that misses episode/workstreams leaves a mid-wait revocation on those tools unanswered');
 });
 
 test('P-MCP-ceiling GREEN: invalid_run_wait stays the MCP wait-budget ceiling (A10/MCP pin)', async (t) => {
