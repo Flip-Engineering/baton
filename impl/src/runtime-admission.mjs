@@ -753,6 +753,10 @@ export function constructor(coordinator, opts) {
     coordinator._attentionReasons = [];
     coordinator._attentionCursor = 0;
     coordinator._attentionMintEpoch = 0;
+    // Issue #71 (contract D1.6): the reasons notifier's waiters — one entry per in-flight
+    // `attention.wait`, resolved by any wake-worthy reason mint or interaction park on its
+    // run. Process-scoped exactly like the attention reasons themselves.
+    coordinator._attentionWaiters = new Set();
     /** #316 (a): the OPEN provider-degrade episode per exact route — one entry holds the single
      * deployment-level row the route's deaths fold into while they are inside the deployment's
      * declared provider-failure window, so one provider fault class is never N anonymous deaths. */

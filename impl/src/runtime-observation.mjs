@@ -1326,9 +1326,99 @@ export function _isReviewAuthority(coordinator, recorder, principal, runId) {
     return false;
   }
 
+// Issue #71 (contract D1.6): the reasons notifier — process-scoped, exactly like the attention
+// reasons. An in-flight `attention.wait` parks on the store's waitAfter AND on this notifier;
+// a reason-only mint has no store event to finish the wait, so every mint site finishes it
+// here. A run-scoped mint wakes its own run's waiters; a deployment-level (runId null) mint
+// wakes every waiter, because every run's page reads a null-runId reason.
+export function _notifyAttention(coordinator, runId) {
+  for (const waiter of coordinator._attentionWaiters ?? []) {
+    if (waiter.runId === null || runId === null || waiter.runId === runId) waiter.wake();
+  }
+}
+
+// The `attention.wait` registration half: one waiter with an explicit disposer, so a
+// delivered, aborted, or timed-out wake never leaves a waiter behind.
+export function _attentionWaiter(coordinator, runId) {
+  let wake = null;
+  const waiter = {
+    runId,
+    wake: () => {},
+    promise: new Promise((resolve) => { wake = resolve; }),
+  };
+  waiter.wake = wake;
+  const set = coordinator._attentionWaiters ?? (coordinator._attentionWaiters = new Set());
+  set.add(waiter);
+  return { promise: waiter.promise, dispose: () => set.delete(waiter) };
+}
+
+const WAKE_INTERACTION_KINDS = Object.freeze({
+  question: 'answer_question', approval: 'answer_approval', decision: 'answer_decision',
+});
+
+// Issue #71 (contract fold F7/D1.6): a blocking interaction park is wake-visible through the
+// REASON lane — the park itself can be store-invisible (the fixture probe confirmed delta 0),
+// so the wake-worthy signal mints an `answer_*` reason and finishes the notifier. Deduped per
+// requestId: a re-admitted interaction never mints a second row.
+export function _mintInteractionWake(coordinator, task, interaction) {
+  const kind = WAKE_INTERACTION_KINDS[interaction?.kind];
+  const requestId = typeof interaction?.requestId === 'string' && interaction.requestId.length > 0
+    ? interaction.requestId : null;
+  if (kind === undefined || requestId === null) return;
+  const existing = coordinator._attentionReasons
+    .find((reason) => reason.kind === kind && reason.requestId === requestId);
+  if (existing) {
+    _notifyAttention(coordinator, task?.runId ?? null);
+    return;
+  }
+  coordinator._attentionReasons.push({
+    seq: ++coordinator._attentionCursor,
+    kind,
+    runId: task?.runId ?? null,
+    mintEpoch: ++coordinator._attentionMintEpoch,
+    workerId: task?.assignee ?? null,
+    requestId,
+    windowMs: 0,
+    mintedAt: coordinator._now(),
+  });
+  _notifyAttention(coordinator, task?.runId ?? null);
+}
+
+// A standing wake reason with a stable identity — the B2 discipline applied outside the page:
+// minted once per identity, refreshed in place (seq unchanged), never re-minted. The budget
+// alarm (contract B3/OQ-2) and the wave-terminal close (D1.2/G9) mint through this helper.
+export function _mintStandingWakeReason(coordinator, { kind, runId = null, workerId = null, identity, detail }) {
+  const standing = coordinator._attentionReasons
+    .find((reason) => reason.kind === kind && reason.identity === identity);
+  if (standing) {
+    Object.assign(standing, detail, { mintedAt: coordinator._now() });
+    _notifyAttention(coordinator, runId);
+    return standing;
+  }
+  const minted = {
+    seq: ++coordinator._attentionCursor,
+    kind,
+    runId,
+    workerId,
+    identity,
+    mintEpoch: ++coordinator._attentionMintEpoch,
+    windowMs: 0,
+    mintedAt: coordinator._now(),
+    ...detail,
+  };
+  coordinator._attentionReasons.push(minted);
+  _notifyAttention(coordinator, runId);
+  return minted;
+}
+
 export function _attentionPage(coordinator, recorder, runId, targetKinds, afterCursor, principal) {
-    const reasons = [];
     const reviewAuthority = coordinator._isReviewAuthority(principal, runId);
+    _ensureCandidacyReason(coordinator, recorder, runId,
+      reviewAuthority && (targetKinds.size === 0 || targetKinds.has('candidacy_review')));
+    if (targetKinds.size === 0 || targetKinds.has('wave_terminal')) {
+      _ensureWaveTerminalReason(coordinator, recorder, runId);
+    }
+    const reasons = [];
     for (const reason of coordinator._attentionReasons) {
       if (reason.seq <= afterCursor) continue;
       // A DEPLOYMENT-level reason (runId null — the #316 provider-degrade fold is the first) is a
@@ -1339,29 +1429,61 @@ export function _attentionPage(coordinator, recorder, runId, targetKinds, afterC
       if (targetKinds.size > 0 && !targetKinds.has(reason.kind)) continue;
       reasons.push({ ...reason });
     }
-    if (reviewAuthority && (targetKinds.size === 0 || targetKinds.has('candidacy_review'))) {
-      let queue;
-      try {
-        queue = recorder.coordination.knowledgeCandidateQueue?.({}) ?? { count: 0, candidates: [] };
-      } catch {
-        queue = { count: 0, candidates: [] };
-      }
-      if ((queue.count ?? 0) > 0 && !reasons.some((reason) => reason.kind === 'candidacy_review')) {
-        reasons.push({
-          seq: ++coordinator._attentionCursor,
-          kind: 'candidacy_review',
-          runId,
-          mintEpoch: ++coordinator._attentionMintEpoch,
-          count: queue.count,
-          candidates: (queue.candidates ?? []).map((row) => row.id),
-          windowMs: 0,
-          mintedAt: coordinator._now(),
-        });
-      }
-    }
     reasons.sort((a, b) => a.seq - b.seq);
     return reasons;
   }
+
+// B2 (orchestrator-wake contract D1.2): the candidacy_review is a STABLE-IDENTITY reason —
+// minted ONCE when a review authority first pages a run while the repo-scoped candidacy queue
+// is non-empty, refreshed IN PLACE (count/candidates, seq unchanged) only when the queue count
+// changes, and paged by the same seq filter as every other reason. The per-page live mint this
+// projection carried before re-delivered the same candidacy on every read with a fresh seq,
+// which made the wake's honest empty unreachable.
+function _ensureCandidacyReason(coordinator, recorder, runId, wanted) {
+  if (!wanted) return;
+  let queue;
+  try {
+    queue = recorder.coordination.knowledgeCandidateQueue?.({}) ?? { count: 0, candidates: [] };
+  } catch {
+    queue = { count: 0, candidates: [] };
+  }
+  if ((queue.count ?? 0) <= 0) return;
+  const standing = coordinator._attentionReasons.find((reason) => reason.kind === 'candidacy_review');
+  const candidates = (queue.candidates ?? []).map((row) => row.id);
+  if (!standing) {
+    coordinator._attentionReasons.push({
+      seq: ++coordinator._attentionCursor,
+      kind: 'candidacy_review',
+      runId,
+      mintEpoch: ++coordinator._attentionMintEpoch,
+      count: queue.count,
+      candidates,
+      windowMs: 0,
+      mintedAt: coordinator._now(),
+    });
+    _notifyAttention(coordinator, runId);
+  } else if (standing.count !== queue.count) {
+    standing.count = queue.count;
+    standing.candidates = candidates;
+    _notifyAttention(coordinator, runId);
+  }
+}
+
+// D1.2/G9: a closed #132 registry row for the paged run's bound wave is a wake cause — read
+// from the registry projection, never re-derived, minted once per waveId with a stable
+// identity and refreshed in place.
+function _ensureWaveTerminalReason(coordinator, recorder, runId) {
+  const waveId = _waveIdOf(coordinator, recorder, runId);
+  if (waveId === null || typeof recorder.coordination.waveRegistry !== 'function') return;
+  const row = recorder.coordination.waveRegistry().find((entry) => entry?.waveId === waveId) ?? null;
+  if (row?.state !== 'closed') return;
+  _mintStandingWakeReason(coordinator, {
+    kind: 'wave_terminal',
+    runId,
+    identity: `wave_terminal:${waveId}`,
+    detail: { waveId, closedAtEventSeq: row.closedAtEventSeq ?? null },
+  });
+}
 
 export function _mintMemberTerminal(coordinator, recorder, handle, task, result) {
     const runId = task?.runId ?? null;
@@ -1387,10 +1509,14 @@ export function _mintMemberTerminal(coordinator, recorder, handle, task, result)
       // A storm has no singular member identity — drop the singular fields.
       delete last.workerId;
       delete last.role;
+      // D1.6: the coalesced count update is a reason-only change (no store append when the
+      // task is already terminal) — the notifier carries it to any parked wake.
+      _notifyAttention(coordinator, runId);
       return;
     }
     reason.perPhase = { run: 1 };
     coordinator._attentionReasons.push(reason);
+    _notifyAttention(coordinator, runId);
   }
 
 export async function _send(coordinator, recorder, workerId, message, mode, opts = {}) {
@@ -1534,6 +1660,12 @@ export function _observeEmergencyTerminal(coordinator, recorder, event, sourceVe
 
 export function _coordTransition(coordinator, recorder, task, to, key, evidence = null, actor = 'policy') {
     if (!recorder.coordination || !task) return null;
+    // Issue #71 (F7/D1.6): a blocking interaction park mints its `answer_*` wake reason and
+    // finishes the reasons notifier BEFORE any store work — the park itself can be
+    // store-invisible, and the wake must observe it regardless.
+    if (to === 'input_required' && evidence?.interaction) {
+      _mintInteractionWake(coordinator, task, evidence.interaction);
+    }
     const durable = recorder.coordination.task(task.id);
     if (!durable || durable.status === to) return durable;
     const result = recorder.coordination.transitionTask(task.id, to, task.coordinationVersion ?? durable.version, { actor, key }, evidence);
@@ -2006,6 +2138,17 @@ export function _recordUsage(coordinator, recorder, handle, event) {
           used: { ...handle.budgetUsed }, limits: { tokens: tokenLimit, usd: usdLimit }, ratio,
           dimensions: { tokens: tokenRatio, usd: usdRatio },
         },
+      });
+      // B3/OQ-2 (orchestrator-wake contract D1.2): the digest budget alarm is
+      // orchestrator-relevant, so the threshold fire mints a standing `budget_alarm` wake
+      // reason (one row per worker+threshold, refreshed in place) and finishes the reasons
+      // notifier. The wake reads it; it is never answered in place.
+      _mintStandingWakeReason(coordinator, {
+        kind: 'budget_alarm',
+        runId: task?.runId ?? null,
+        workerId: handle.id,
+        identity: `budget_alarm:${handle.id}:${threshold}`,
+        detail: { threshold, hardStop, ratio },
       });
       if (hardStop) {
         const dimension = tokenRatio >= usdRatio ? 'tokens' : 'usd';
