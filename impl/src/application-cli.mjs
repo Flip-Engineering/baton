@@ -14,6 +14,7 @@ import { FRAME_LIMITS, FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
+import { honestLivenessProjection } from './route-liveness.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
 
 import {
@@ -41,6 +42,15 @@ import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 //     documents (scripts/surface-divergence-ledger.json, the eight facade ports of #87+#48 and
 //     waves.compile of #170). The surface conformance, the parity matrix and CLI.md pin this
 //     projection, so it stays the byte-stable card view while dispatch follows the bus.
+/** #167 (D2 wire law): one readiness row's honest {verdict, probedAt} projection, re-added by the
+ * CLI's own doctor read — the served card already carries the two fields, and this re-add keeps a
+ * direct in-process read (or a card served by an older resident) honest without a second
+ * staleness derivation (`route-liveness.mjs` owns the law). */
+function withHonestLiveness(row) {
+  if (!row || typeof row !== 'object') return row;
+  return { ...row, ...honestLivenessProjection(row.liveness ?? null) };
+}
+
 function cliDispatchTransports() {
   const admitted = new Set(webAdmittedCommandNames());
   const dispatchAliases = applicationOperationAliasMap();
@@ -4796,6 +4806,10 @@ export function parseBatonCli(rawArgs) {
 
 export class BatonWebClient {
   #token;
+  // #167 (A2): the operator's one-shot on-demand probe request (`baton doctor --check`). A request
+  // rather than a doctor() parameter because `doctor()` is the fixed reading verb every caller
+  // shares; the request is consumed by the next doctor read and never re-fires.
+  #forceProbe = false;
 
   constructor(options) {
     // socketPath is optional: a local resident's wake attachment rides the owner-only Unix socket
@@ -4856,6 +4870,11 @@ export class BatonWebClient {
     this.sleep = options.sleep;
     this.frameFor = options.frameFor ?? null;
   }
+
+  /** #167 (A2/D1 trigger 3): mark this client's NEXT doctor read as the operator's on-demand probe
+   * trigger. The served card refreshes exactly the stale routes once (its own cache discipline
+   * decides staleness), so a repeated `baton doctor --check` costs no extra provider turn. */
+  requestForceProbe() { this.#forceProbe = true; }
   _headers(json = false) {
     return { authorization: `Bearer ${this.#token}`, origin: this.origin, ...(json ? { 'content-type': 'application/json' } : {}) };
   }
@@ -4972,10 +4991,25 @@ export class BatonWebClient {
 
   async doctor() {
     const readiness = await this._readiness();
-    const card = await this._json('/v1/application-card', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
+    // #167 (A2/D1 trigger 3): a `requestForceProbe()` request rides the operator path to the served
+    // card, which refreshes exactly the stale routes ONCE through the deployment's own probe handle —
+    // this is the read `baton doctor --check` triggers, and the cache discipline decides what is
+    // stale. One-shot: the request is consumed here.
+    const forceProbe = this.#forceProbe === true;
+    this.#forceProbe = false;
+    const card = await this._json(
+      `/v1/application-card${forceProbe ? '?forceProbe=1' : ''}`,
+      { headers: { ...this._headers(), 'sec-fetch-site': 'none' } },
+    );
     const deployment = record(card?.application?.readiness)
       ? card.application.readiness : null;
-    const routes = Array.isArray(deployment?.routes) ? deployment.routes : [];
+    // #167 (D2 wire law): the honest {verdict, probedAt} projection is re-added on THIS read too, so
+    // a consumer of the CLI's doctor sees it whether the card carried it or not.
+    const routes = Array.isArray(deployment?.routes)
+      ? deployment.routes.map((row) => {
+        const { verdict, probedAt } = withHonestLiveness(row);
+        return { ...row, verdict, probedAt };
+      }) : [];
     // Issue #476: the stopping section #467 puts on the served card, carried through verbatim —
     // the reading consumer renders the state and the waits the stop holds, and never re-derives
     // either. Null (never absent) for a resident that is not stopping.
@@ -5624,7 +5658,12 @@ async function runSwarmIntegrateCli(parsed, client) {
 
 export async function runBatonCli(parsed, client, options = {}) {
   if (parsed.kind === 'help') return { help: BATON_CLI_HELP };
-  if (parsed.kind === 'doctor') return client.doctor();
+  if (parsed.kind === 'doctor') {
+    // #167 (A2): `baton doctor --check` is the operator's on-demand probe trigger — the request is
+    // handed to the reading verb, which forwards it to the served card.
+    if (parsed.check === true) client.requestForceProbe();
+    return client.doctor();
+  }
   if (parsed.kind === 'route') {
     const doctor = await client.doctor();
     const routes = servedCliRoutes(doctor);
