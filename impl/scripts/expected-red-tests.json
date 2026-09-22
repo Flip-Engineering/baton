@@ -569,47 +569,11 @@
       "reason": "#161"
     },
     {
-      "key": "test/orchestrator-wake-red.test.mjs :: ACTIONS-SLICE (§I H6/F6): the wake actions builder slices the ACTIONS operand to MAX_ATTENTION and spills the head+digest",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: ANSWER-FROM-WAKE (§B D2.2/W-3): answering the wake item receipts applied",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: AUTHORITY-RUN-SCOPED (§E D3/F5): a live lease on run A never authorizes run B's wake",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: BLOCKING-ESCALATES (§F W-5): a blocking question escalates as an answer_question actionable item",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: CANDIDACY-HONEST-EMPTY (§D D1.3/B2): with a live candidacy queue the honest empty is REACHABLE",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: CANDIDACY-REFRESH (§D B2): a queue-count change refreshes the SAME candidacy_review in place",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: CANDIDACY-WAKE (§D D1.2/B2): a board-close candidacy wakes the review authority",
+      "key": "test/orchestrator-wake-red.test.mjs :: AUTHORITY-RUN-SCOPED (§E D3/F5): a live lease on run A never authorizes run B\\'s wake",
       "reason": "#71"
     },
     {
       "key": "test/orchestrator-wake-red.test.mjs :: CLI-GRAMMAR (§H D4): baton run attention wait parses the wake verb with both cursors",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: CURSOR-SHAPE (§C B1): storeCursor and reasonsCursor are distinct continuation tokens",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: DECISION-FIRST-SHAPE (§B D2.1): actions[0] mirrors projectDecisionAttention plus the answer address",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: DECISION-PARK-WAKES (§B D2/W-1): a decision park wakes a waiter registered before the park",
       "reason": "#71"
     },
     {
@@ -629,51 +593,7 @@
       "reason": "#71"
     },
     {
-      "key": "test/orchestrator-wake-red.test.mjs :: OVERSIZE-REFUSAL (§I D6): a wake whose serialized payload exceeds the frame cap refuses the pinned code",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: REASONS-ALONE (§C D1.3): a reason wake is reason-only, and the honest-empty continuation echoes the cursors",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: REPLY-NO-WAKE (§F W-5): a reply hop advances the store but the wake honest-empties",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: RETURN-TRIP (§C B1/D1.6): a return-trip orchestrator still sees member_terminal with the prior cursors",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: REVALIDATED (§B D2.3/F4): a decision answered between delivery trips is never re-delivered (stale-payload revalidation)",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: TWO-WAITERS (§E D3): the wave-owner and a lease holder both wake; no claim-on-read",
-      "reason": "#71"
-    },
-    {
       "key": "test/orchestrator-wake-red.test.mjs :: WAIT-DISPATCH (§A): attention.wait dispatches; malformed closures refuse attention_wait_invalid before state",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WAIT-HONEST-EMPTY (§A D1.3): a quiet run honest-empties with both cursors unchanged, and the wake HELD a waitAfter",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WAIT-INVALID (§K D6): the NEW attention_wait_invalid code is refused by name, never a generic code",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WAIT-PLAN-APPROVAL (§A D2.1): a plan awaiting approval wakes the waiter with plan_approval",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WAKE-ABORT (§H H7/F3): an in-flight wake aborted by the transport settles the wake-cancelled receipt",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WAKE-REASONS-SET (§G W-6): the closed wake-reason set is the frozen ACTUAL-sorted eight",
       "reason": "#71"
     },
     {
@@ -682,10 +602,6 @@
     },
     {
       "key": "test/orchestrator-wake-red.test.mjs :: WEB-ENVELOPE (§H D4): the web command envelope admits attention_wait",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WORKER-REFUSED (§E D3/F5): a worker principal cannot call the wake — even claiming an orchestrator class",
       "reason": "#71"
     },
     {
