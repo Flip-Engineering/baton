@@ -2704,12 +2704,14 @@ export async function reconcileProviderProcessing(coordinator, recorder, process
 
 export async function reapRunScratchpads(coordinator, recorder, runId) {
     coordinator.tick();
-    const deadline = Date.now() + coordinator._drainPolicy.timeoutMs;
+    // #403: the window rides the coordinator's OWN clock, so a fixture clock (or a recovered
+    // member's reading) expires it — the host clock is not the authority here.
+    const deadline = coordinator._now() + coordinator._drainPolicy.timeoutMs;
     const describe = (receipt) => ({
       code: 'coordinator_scratchpad_reap_incomplete',
       detail: { runId, remainingPartitions: receipt?.remainingPartitions ?? null, remainingEntries: receipt?.remainingEntries ?? null },
     });
-    let receipt = recorder.coordination.reapRunScratchpads(runId);
+    let receipt = recorder.coordination.reapRunScratchpads(runId, { now: () => coordinator._now() });
     let previousProgress = null;
     while (receipt.result === 'partial') {
       const progress = `${receipt.remainingPartitions}:${receipt.remainingEntries}`;
@@ -2717,7 +2719,7 @@ export async function reapRunScratchpads(coordinator, recorder, runId) {
         throw Object.assign(new Error('run scratchpad reap stopped advancing between passes'), describe(receipt));
       }
       previousProgress = progress;
-      if (Date.now() >= deadline) {
+      if (coordinator._now() >= deadline) {
         throw Object.assign(new Error('run scratchpad reap did not converge before its deadline'), describe(receipt));
       }
       await coordinator._sleep(0);
