@@ -32,7 +32,7 @@ What changed, per the review:
   validate-and-commit is permitted.
 - **M-9 reduced to ownership preservation.** Waiting, serializable transactions and compatible
   subdivisions are valid coordination; conflicting unauthorized mutation is the ban.
-- **New M-15: no silent abandonment.** The CX-6 rejection was unsound — Codex's counterexample
+- **New M-17: no silent abandonment.** The CX-6 rejection was unsound — Codex's counterexample
   (accept, receipt, then detach from every scheduler without a terminal disposition; M-10 and
   M-12 both hold) shows the gap. The narrow prohibition is adopted.
 - **Status labels replace the blanket `runtime` mark**: `extracted` (enforced today, with the
@@ -99,8 +99,9 @@ report about an artifact whose own tree state is unrecorded (unrelated dirty fil
 irrelevant).
 Binding reason: review and verification apply to an exact version; a merge is the act that
 matters.
-Evidence: CL-03, CL-04 (scoped), CL-08, CL-12 (completeness half), CL-13 (green and current-head
-halves), CL-15 (authority), PM-11 (attribution binding).
+Evidence: CL-03, CL-08, CL-12 (completeness half), CL-13 (green and current-head halves), CL-15
+(authority), PM-11 (attribution binding); the artifact-scoped dirty-tree clause is proposed
+(CL-04's truthful-status stamp is a policy row, carried in the design notes).
 
 **M-3b · No unauthorized duplicate logical effect under one operation identity.** [extracted]
 Forbidden: one operation identity producing the same logical effect twice — a second landing of
@@ -150,8 +151,10 @@ points are tested, the generalized rule is the proposal.
 **M-8 · No effect, publication, delegation or grant beyond valid authority.** [partly enforced]
 Forbidden: performing an effect, publishing, delegating or granting beyond the authority valid
 for it — including granting beyond an explicitly held granting authority (a provisioning role
-may grant without personally executing), fail-open scope handling, and a read-only observer
-claiming that its own request performed a change it merely reports.
+may grant without personally executing), fail-open scope handling, a read-only observer
+claiming that its own request performed a change it merely reports, and a disposition, release
+or cancel reaching any resource instance or generation other than the one the authority was
+issued for.
 Binding reason: one unguarded path undoes the permission model; delegation stays open under
 stated granting authority.
 Evidence: PM-08, AB-10, AB-11, CAP-12, PR-01 (fail-open), AB-06 (valid-authority transfer),
@@ -174,8 +177,8 @@ stated with its derivation, and leaves the remainder available with processing c
 physical shortage can justify waiting or a truthful failure; explicit cancellation and the work's
 own stopping condition are separate semantics.
 Binding reason: arbitrary cutoffs are hidden stop buttons (ruling #541).
-Evidence: DEV-1, CAP-2, CAP-3, CAP-15 (as adjudicated), PROP-1, and the audit rows AB-12, CAP-8,
-CAP-17, LEDG-14, WAKE-12.
+Evidence: DEV-1, CAP-2, CAP-3, CAP-15 (as adjudicated), PROP-1, AB-12; the cutoff-audit rows
+CAP-17 and LEDG-14 are policy and implementation material, carried in the design notes.
 
 **M-11 · Caller input must not fabricate established facts.** [extracted]
 Forbidden: caller input manufacturing established execution, verification or publication facts.
@@ -237,15 +240,19 @@ specifications stay in the design notes).
 ## Disposition and reduction record (repairs)
 
 The row-by-row verdict table of revision 5 stands, with these repairs: CAP-3's verdict now reads
-"reduced → M-10 and the adopted M-17" (the pointed-at M-18 exists again, narrowed); CS-02's
+"reduced → M-10 and the adopted abandonment entry"; CS-02's
 verdict reads "reduced → boundary-decoder obligations; the associated flagged entry was
 withdrawn" (removing the embedded "rejected" so the mechanical count and the tally agree);
 PM-10's and LEDG-17's routes now name M-7/M-8 and the interface clause respectively. Verdict
 precedence for mechanical counting: a row is `rejected` if its verdict contains "rejected",
 else `reduced` if it contains "reduced", else `kept`. Mechanical count of this revision's
-record: kept 49, reduced 26, rejected 58, retired 1, evidence block 1 — 135 rows, each
+record: kept 47, reduced 29, rejected 57, retired 1, evidence block 1 — 135 rows, each
 accounted for; the demoted material lives in `docs/bend2/laws-design-notes.md`, the historical
-extraction at `23d3b857`.
+extraction at `23d3b857`. Reference closure for withdrawn or renumbered marks, in both
+documents: M-6 → the exact-instance clause of the authority boundary (M-8); M-3 → M-3a, M-3b,
+M-3c; M-15 → deferred (design notes, DEV-6); M-16 → excluded (AGENTS.md, DEV-7); revision 5's
+flagged interface entry → the interface clause of the authority boundary; "M-18" was a
+revision-4-era pointer, superseded by the adopted abandonment entry (M-17).
 
 ---
 
