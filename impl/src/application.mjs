@@ -33,6 +33,7 @@ import {
   APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap,
   canonicalOperationFields, canonicalOperationForCommand,
   PROGRESS_SILENCE_THRESHOLD_MS, projectTypedTerminalCause,
+  WAKE_REASONS,
 } from './application-semantics.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { projectRunTimelinePage } from './run-timeline.mjs';
@@ -8491,6 +8492,10 @@ export class BatonApplication {
     if (name === 'run.message.send') return this.messageSend(args, principal);
     if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
+    // Issue #71 (contract D1): the orchestrator attention wake — a direct port like its
+    // attention.watch sibling (the byte-stable command-table key set gains no key), with the
+    // lane's own closed normalizer and scope authority.
+    if (name === 'attention.wait') return this.attentionWait(args, principal);
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
     if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
     if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
@@ -8675,6 +8680,236 @@ export class BatonApplication {
       return this.shutdown(principal);
     }
     throw applicationError(`unsupported application command ${name}`, 'application_command_unavailable');
+  }
+
+  // attention.wait — issue #71 (orchestrator-wake-2026-08-07/contract.md D1): the orchestrator
+  // wake. A long-poll on the coordination store's waitAfter composed with the orchestrator's
+  // attention page (the lane's own scope authority is the sole seam, like attentionWatch).
+  // timeoutMs is only the transport bound: the loop wakes on a store advance or on the reasons
+  // notifier (D1.6), re-pages the composed surface, and delivers the decision-first payload
+  // (D2). The honest empty on the bound is `{woken: false, timedOut: true}` with BOTH cursors
+  // unchanged — a true continuation (D2.5), never a fabricated reason.
+  async attentionWait(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeAttentionWait(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'attention wait principal');
+    // D3.1: the lane's own scope authority — the wave-owner principal always, a live
+    // run-orchestrator lease holder for THIS run, never any-live-lease (F5).
+    if (!this.driver.coordinator._attentionScopeAuthorized(principal, request.runId)) {
+      throw applicationError('attention scope is forbidden', 'attention_scope_forbidden');
+    }
+    const coordination = this.driver.coordination;
+    const storeHead = () => (typeof coordination.eventCursor === 'function'
+      ? coordination.eventCursor() : coordination.events().length);
+    if (request.afterCursor.storeCursor > storeHead()) {
+      throw applicationError('attention wait store cursor is ahead of this deployment', 'attention_wait_invalid');
+    }
+    const deadline = Date.now() + request.timeoutMs;
+    let anchor = request.afterCursor.storeCursor;
+    for (;;) {
+      // The waiter registers BEFORE the page: a wake-worthy mint landing inside the page build
+      // resolves the notifier, and the race below re-pages instead of parking past it.
+      const waiter = this.driver.coordinator.attentionWaiter(request.runId);
+      try {
+        const page = await this._wakeComposedPage(request.runId, principal, request);
+        const bounded = page.actions;
+        if (bounded.length > 0 || page.reasons.length > 0) {
+          const payload = {
+            schemaVersion: 1,
+            woken: true,
+            runId: request.runId,
+            storeCursor: storeHead(),
+            reasonsCursor: page.reasonsCursor,
+            actions: bounded.slice(0, MAX_ATTENTION),
+            reasons: page.reasons,
+            waitingOn: page.waitingOn,
+            wave: page.wave,
+            timedOut: false,
+          };
+          // H6/F6: the bounded actions head spills with a digest — the remainder is
+          // disclosed, never silently dropped, and drains by paging the surface in batches.
+          if (page.actions.length > MAX_ATTENTION) {
+            payload.actionsSpilled = {
+              count: page.actions.length,
+              digest: digest(page.actions.map((item) => [item.kind, item.requestId ?? item.planDigest ?? null])),
+            };
+          }
+          if (Buffer.byteLength(JSON.stringify(payload)) > page.maxResponseBytes) {
+            throw applicationError('attention wait response exceeds deployment policy',
+              'application_attention_wait_oversize');
+          }
+          return deepFreeze(payload);
+        }
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          // D1.3: the honest empty — both cursors unchanged, a true continuation.
+          return deepFreeze({
+            woken: false,
+            timedOut: true,
+            storeCursor: request.afterCursor.storeCursor,
+            reasonsCursor: request.afterCursor.reasonsCursor,
+            actions: [],
+            reasons: [],
+          });
+        }
+        const storeWait = Promise.resolve(coordination.waitAfter(anchor, Math.ceil(remaining),
+          request.signal !== undefined ? { signal: request.signal } : {}));
+        storeWait.catch(() => {}); // the race's loser may reject on abort — never unhandled
+        await Promise.race([storeWait, waiter.promise]);
+      } catch (cause) {
+        if (cause?.code === 'coordination_wait_aborted') {
+          // H7/F3: a transport abort settles the wake-cancelled receipt — never the raw
+          // store code, never a generic error.
+          throw applicationError('attention wait was cancelled', 'application_attention_wait_cancelled');
+        }
+        throw cause;
+      } finally {
+        waiter.dispose();
+      }
+      anchor = storeHead();
+    }
+  }
+
+  _normalizeAttentionWait(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'afterCursor', 'timeoutMs', 'kind', 'signal'].includes(key))) {
+      throw applicationError('attention wait request is invalid', 'attention_wait_invalid');
+    }
+    if (!validId(value.runId)) {
+      throw applicationError('attention wait runId is invalid', 'attention_wait_invalid');
+    }
+    const afterCursor = value.afterCursor;
+    if (!afterCursor || typeof afterCursor !== 'object' || Array.isArray(afterCursor)
+      || Object.keys(afterCursor).sort().join(',') !== 'reasonsCursor,storeCursor'
+      || !Number.isSafeInteger(afterCursor.storeCursor) || afterCursor.storeCursor < 0
+      || !Number.isSafeInteger(afterCursor.reasonsCursor) || afterCursor.reasonsCursor < 0) {
+      throw applicationError('attention wait afterCursor is invalid', 'attention_wait_invalid');
+    }
+    if (!Number.isSafeInteger(value.timeoutMs) || value.timeoutMs <= 0) {
+      throw applicationError('attention wait timeoutMs is invalid', 'attention_wait_invalid');
+    }
+    if (value.kind !== undefined && !WAKE_REASONS.includes(value.kind)) {
+      throw applicationError('attention wait kind is invalid', 'attention_wait_invalid');
+    }
+    if (value.signal !== undefined && !(value.signal instanceof AbortSignal)) {
+      throw applicationError('attention wait signal is invalid', 'attention_wait_invalid');
+    }
+    // Shallow freeze ONLY: the request carries the caller's AbortSignal (the H7 transport
+    // cancellation token) and a frozen signal cannot abort — the signal is never deep-frozen.
+    return Object.freeze({
+      runId: value.runId,
+      afterCursor: deepFreeze({
+        storeCursor: afterCursor.storeCursor, reasonsCursor: afterCursor.reasonsCursor,
+      }),
+      timeoutMs: value.timeoutMs,
+      ...(value.kind !== undefined ? { kind: value.kind } : {}),
+      ...(value.signal !== undefined ? { signal: value.signal } : {}),
+    });
+  }
+
+  // D2: the composed orchestrator surface — actionable items FIRST (the blocking-interaction
+  // lane plus a plan awaiting approval), attention reasons past the reasons cursor (the B1
+  // split keeps the two cursor spaces independent), the per-member waitingOn delta, and the
+  // #132 registry row projection for the run's wave. Every item revalidates LIVE at delivery
+  // (D2.3/F4): a decision answered between delivery trips is never re-delivered.
+  async _wakeComposedPage(runId, principal, request) {
+    const kind = request.kind;
+    const targetKinds = new Set(kind === undefined ? [] : [kind]);
+    const reasons = this.driver.coordinator._attentionPage(
+      runId, targetKinds, request.afterCursor.reasonsCursor, principal,
+    );
+    const reasonsCursor = reasons.length > 0
+      ? reasons.reduce((max, reason) => Math.max(max, reason.seq), request.afterCursor.reasonsCursor)
+      : request.afterCursor.reasonsCursor;
+    let run = null;
+    try { run = this._findRun(runId); } catch { run = null; }
+    const actions = [];
+    let phase = 'running';
+    if (run !== null) {
+      let projection = null;
+      try { projection = await this._goalPlanStatus(run, this.principals.observer); } catch { projection = null; }
+      if (projection !== null && !projection.approval && run.plan?.digest) {
+        phase = 'awaiting_plan_approval';
+        actions.push({
+          kind: 'plan_approval',
+          runId,
+          planDigest: run.plan.digest,
+          answer: { command: 'run.approve', runId, planDigest: run.plan.digest },
+        });
+      }
+      actions.push(...this._wakeInteractionActions(runId, run));
+    }
+    const narrowed = kind === undefined ? actions : actions.filter((item) => item.kind === kind);
+    const waitingOn = run === null ? [] : this._wakeWaitingOn(runId, run, phase, narrowed);
+    return {
+      actions: narrowed,
+      reasons,
+      reasonsCursor,
+      waitingOn,
+      wave: this._wakeWaveProjection(runId),
+      maxResponseBytes: run?.profile?.followPolicy?.maxResponseBytes ?? MAX_RUN_VIEW_BYTES,
+    };
+  }
+
+  // D2.1: every blocking interaction mirrors its run-view projection verbatim plus the
+  // direct-answer address — the orchestrator answers FROM the wake (D2.2/W-3).
+  _wakeInteractionActions(runId, run) {
+    const { workers } = runWorkerOwnership(this.driver, runId);
+    const actions = [];
+    for (const entry of projectDecisionAttention(this.driver.coordinator, workers)) {
+      actions.push({ ...entry, runId, answer: { command: 'run.answer', runId, requestId: entry.requestId } });
+    }
+    const runWorkerIds = new Set(workers.map((handle) => handle.id));
+    const handlesById = new Map(workers.map((handle) => [handle.id, handle]));
+    const story = this.driver.story.snapshot();
+    for (const [workerId, worker] of Object.entries(story.workers)) {
+      if (!runWorkerIds.has(workerId)) continue;
+      for (const request of worker.questionsPending ?? []) {
+        const requestId = request.msgId ?? handlesById.get(workerId)?.pendingQuestionId ?? null;
+        if (requestId === null) continue;
+        actions.push({
+          kind: 'answer_question', runId, workerId, requestId,
+          question: boundedAttentionText(request.question),
+          answer: { command: 'run.answer', runId, requestId },
+        });
+      }
+      for (const request of worker.approvalsPending ?? []) {
+        const requestId = request.id ?? handlesById.get(workerId)?.pendingApprovalId ?? null;
+        if (requestId === null) continue;
+        actions.push({
+          kind: 'answer_approval', runId, workerId, requestId,
+          approvalKind: request.kind,
+          answer: { command: 'run.answer', runId, requestId },
+        });
+      }
+    }
+    return actions;
+  }
+
+  // D1.4: the member's waitingOn value rides the payload as a delta — the closed five stay
+  // closed (G7); a blocking interaction owns the member (honest null), exactly as the #10
+  // run-view projection decides it.
+  _wakeWaitingOn(runId, run, phase, actions) {
+    const blockedInteraction = projectBlockedInteraction(phase, actions);
+    const delta = projectWaitingOn(this.driver, run, phase, null, runWorkerOwnership(this.driver, runId).workers, blockedInteraction);
+    return [{ runId, kind: delta?.kind ?? null }];
+  }
+
+  // D2/G9: the #132 registry row projection for the run's bound wave; a run bound to no
+  // registered wave is its own live wake scope, open while it runs.
+  _wakeWaveProjection(runId) {
+    const coordination = this.driver.coordination;
+    const waveId = coordination.waveBinding?.(runId)?.waveId
+      ?? (typeof coordination.waveRegistry === 'function'
+        ? coordination.waveRegistry().find((row) => (
+          row?.state === 'open' && Array.isArray(row?.roster)
+            && row.roster.some((member) => member?.runId === runId)))?.waveId ?? null
+        : null);
+    const row = waveId != null && typeof coordination.waveRegistry === 'function'
+      ? coordination.waveRegistry().find((entry) => entry?.waveId === waveId) ?? null
+      : null;
+    return { waveId: waveId ?? runId, state: row?.state ?? 'open' };
   }
 
   async answer(runId, requestId, rawAnswer, rawPrincipal) {
@@ -9125,6 +9360,7 @@ export class BatonApplication {
     }, { principalId: principal.principalId, sessionId: principal.sessionId });
     return deepFreeze({ schemaVersion: 1, ...page });
   }
+
 
   // run.scratchpad.read — Decision 6: the #33 accessor with the BD3-A renderer law projected.
   async scratchpadRead(rawRequest, rawPrincipal) {
