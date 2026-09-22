@@ -1346,3 +1346,51 @@ test('BD-8 (no regression): a claim-absent checkpoint still rides the unproducti
   assert.equal(receipt.nudges.length, 1, 'the pause is nudged exactly once (requestId dedup), then the budget stops nudging');
   assert.equal(receipt.claims.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// A4 (#148 driver law) — repeated auth failure stops the drive, never the stall clock.
+// ---------------------------------------------------------------------------
+
+test('A4 (#148): three consecutive auth failures on a member stop the loop with auth_stopped', async () => {
+  let polls = 0;
+  const wave = fakeWave({
+    soul: {
+      status: () => {
+        polls += 1;
+        throw Object.assign(new Error('recipient lease is gone'), { code: 'unauthenticated' });
+      },
+    },
+  });
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY, pollIntervalMs: 5,
+  }).run({ members: wave.members });
+
+  assert.equal(polls, 3, 'the loop stops on the third consecutive auth failure — no fourth pump');
+  assert.equal(receipt.basis, 'auth_stopped', 'an authority loss is its own basis, never stall');
+  assert.deepEqual(receipt.authStop, { role: 'soul', code: 'unauthenticated', failures: 3 });
+  assert.equal(receipt.statusFailures.length, 3, 'every non-ok read is logged');
+  assert.equal(receipt.statusFailures[0].role, 'soul');
+  assert.equal(receipt.statusFailures[0].code, 'unauthenticated');
+  assert.equal(receipt.statusFailures[0].message, 'recipient lease is gone');
+  assert.equal(typeof receipt.statusFailures[0].at, 'string');
+});
+
+test('A4 (#148): a clean read breaks the consecutive run — two auth failures then a terminal read completes', async () => {
+  let polls = 0;
+  const wave = fakeWave({
+    soul: {
+      status: () => {
+        polls += 1;
+        if (polls < 3) throw Object.assign(new Error('denied'), { code: 'application_unauthorized' });
+        return terminalView();
+      },
+    },
+  });
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY, pollIntervalMs: 5,
+  }).run({ members: wave.members });
+
+  assert.equal(receipt.basis, 'completed', 'two auth failures interrupted by a clean read never stop the drive');
+  assert.equal(receipt.authStop, null);
+  assert.equal(receipt.statusFailures.length, 2);
+});

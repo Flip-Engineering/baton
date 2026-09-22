@@ -509,6 +509,20 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // longer holds its independent siblings' receipts: the loop ends when every unsettled
     // member has been individually quiet for a full stallTimeoutMs.
     const memberProgress = new Map(); // role -> { digest, lastProgressAt, lastProgressIso }
+    // A4 (#148 driver law): the L5 status read never launders an auth refusal into a stall
+    // signal. Auth-class failures are logged with the full envelope and counted per member;
+    // K consecutive auth failures on one member stop the loop instead of pumping the
+    // refusal to the deadline blind.
+    const AUTH_FAILURE_CODES = new Set([
+      'application_unauthorized',
+      'unauthenticated',
+      'run_orchestrator_lease_not_found',
+      'run_orchestrator_lease_revoked',
+      'run_orchestrator_lease_expired',
+    ]);
+    const repeatedAuthFailuresByRole = new Map(); // role -> consecutive auth-failure count
+    const statusFailures = []; // every non-ok L5 status read, oldest-first, bounded at 64 rows
+    let authStop = null; // { role, code, failures } — set when repeated auth stops the loop
     let basis = null;
     let stalls = [];
     let waiting = [];
@@ -639,11 +653,31 @@ export function createWaveDriver(baton, rawPolicy = null) {
             terminal = outline.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING;
             markerDigest = stallMarker(outline);
             if (Number.isSafeInteger(outline.cursor)) cursor = outline.cursor;
-          } catch {
+            // A4: a clean read breaks the member's consecutive auth-failure run.
+            repeatedAuthFailuresByRole.delete(role);
+          } catch (error) {
             // L5/D10: a transient status failure contributes 'unavailable' (a marker CHANGE from
             // the prior real digest → resets the wave-level clock); only CONSECUTIVE unavailable
             // polls leave the marker stable and count toward stall.
             markerDigest = 'unavailable';
+            // A4 (#148 driver law): the non-ok envelope is logged whole, and an auth-class
+            // failure counts against the member — a member that keeps refusing auth has not
+            // stalled, it has lost authority. A non-auth failure resets that member's count.
+            const failureCode = error?.code ?? null;
+            if (statusFailures.length < 64) {
+              statusFailures.push({
+                role, code: failureCode, message: String(error?.message ?? error),
+                at: new Date().toISOString(),
+              });
+            }
+            const authFailure = failureCode !== null && AUTH_FAILURE_CODES.has(failureCode);
+            if (authFailure) {
+              const failures = (repeatedAuthFailuresByRole.get(role) ?? 0) + 1;
+              repeatedAuthFailuresByRole.set(role, failures);
+              if (failures >= 3) authStop = { role, code: failureCode, failures };
+            } else {
+              repeatedAuthFailuresByRole.delete(role);
+            }
           }
           if (outline.knowledge) memberKnowledge.set(role, outline.knowledge);
           // #396: the member's OWN clock — a digest change is its own observed progress and
@@ -688,6 +722,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
             classByRole.set(role, phase === SUCCESS_RESTING || terminal ? 'terminal' : 'settled');
           }
         }
+
+        // A4 (#148 driver law): repeated auth failure stops the drive — a member refusing
+        // auth three polls running has lost authority, not stalled, so the loop breaks with
+        // the auth_stopped basis instead of pumping the refusal into the stall clock.
+        if (authStop !== null) { basis = 'auth_stopped'; break; }
 
         // #396: no roster-wide clock is kept — each member's own digest change already reset
         // ITS clock above, and a sibling-only cursor movement is stripped from every digest,
@@ -961,6 +1000,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
       // behind a real dependency (never stalled). Both are empty on a clean completion.
       stalls,
       waiting,
+      // A4 (#148 driver law): the auth stop names its member, code and count, and every
+      // non-ok L5 status read rides statusFailures whole (bounded at 64 rows).
+      authStop,
+      statusFailures,
       nudges,
       claims,
       // Bidirectional v2 rule 3: one driver-evidence line per fired decision callback.
