@@ -61,6 +61,16 @@ export const WAITING_ON_KINDS = Object.freeze([
   'capacity_ceiling', 'dispatch_pending', 'plan_approval', 'provider_stalled', 'spawning',
 ]);
 
+// Issue #71 (orchestrator-wake-2026-08-07/contract.md D1.2): the closed set of wake reason
+// kinds the orchestrator attention wake (`attention.wait`) reports — the blocking-interaction
+// lane (answer_*), the two coordinator attention reasons (member_terminal, candidacy_review),
+// the digest budget alarm, and the two state-derived wake causes (plan_approval,
+// wave_terminal). Frozen AND written in ACTUAL sorted order, matching the WAITING_ON_KINDS
+// discipline: the suite's deepEqual pin fails on any comparator-derived re-ordering.
+export const WAKE_REASONS = Object.freeze([
+  'answer_approval', 'answer_decision', 'answer_question', 'budget_alarm', 'candidacy_review', 'member_terminal', 'plan_approval', 'wave_terminal',
+]);
+
 // §7.1 generated mapping. `closed` maps to null: it is a dead string with no live emitter.
 export const LEGACY_RUN_PHASE_MAP = Object.freeze({
   awaiting_plan_approval: 'awaiting_approval',
