@@ -1192,7 +1192,7 @@
         {
           "name": "_providerBrief",
           "ordinal": 0,
-          "size": 3,
+          "size": 5,
           "seam": "observation",
           "evidence": [
             "observation:brief_port"
@@ -3958,6 +3958,75 @@
           "seam": "observation",
           "evidence": [
             "observation:observation_port"
+          ]
+        },
+        {
+          "name": "_citedReplObjects",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:observation_port"
+          ]
+        },
+        {
+          "name": "_assertReplObjectsServed",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_resolveReplSpill",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:observation_port"
+          ]
+        },
+        {
+          "name": "_replManifestReview",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:observation_port"
+          ]
+        },
+        {
+          "name": "_assertReplReviewProjection",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:projection_name",
+            "observation:ledger_name",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_admitSharedFanout",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:runtime_admission_port"
+          ]
+        },
+        {
+          "name": "_promoteReplObject",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:runtime_admission_port"
           ]
         },
         {
@@ -11859,6 +11928,44 @@
           ]
         },
         {
+          "name": "admitReplFanout",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:admission_port"
+          ]
+        },
+        {
+          "name": "replManifestAdmissions",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_port"
+          ]
+        },
+        {
+          "name": "holdsRunOrchestratorLease",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_port"
+          ]
+        },
+        {
+          "name": "reapRunReplBindings",
+          "ordinal": 0,
+          "size": 1,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "_knowledgeFailure",
           "ordinal": 0,
           "size": 1,
@@ -14249,6 +14356,15 @@
           ]
         },
         {
+          "name": "parseReplCitation",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "scratchpadScopeKey",
           "ordinal": 0,
           "size": 1,
@@ -15901,7 +16017,7 @@
         {
           "name": "providerBrief",
           "ordinal": 0,
-          "size": 100,
+          "size": 115,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -16879,7 +16995,11 @@
         {
           "name": "_apply",
           "ordinal": 0,
+<<<<<<< ours
           "size": 1278,
+=======
+          "size": 1287,
+>>>>>>> theirs
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -18251,6 +18371,43 @@
           "seam": "observation",
           "evidence": [
             "observation:projection_name"
+          ]
+        },
+        {
+          "name": "replManifestAdmissions",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "holdsRunOrchestratorLease",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "reapRunReplBindings",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
+          "name": "projectReplBindingView",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:record_name"
           ]
         },
         {
@@ -19637,12 +19794,21 @@
         {
           "name": "admitReplManifest",
           "ordinal": 0,
-          "size": 113,
+          "size": 138,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
             "observation:store_append",
             "observation:projection_name"
+          ]
+        },
+        {
+          "name": "admitReplFanout",
+          "ordinal": 0,
+          "size": 68,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
           ]
         },
         {
@@ -20009,7 +20175,7 @@
         {
           "name": "admitReplBinding",
           "ordinal": 0,
-          "size": 101,
+          "size": 117,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -22749,6 +22915,65 @@
           ]
         },
         {
+          "name": "contextReadRefusal",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "boundedReplHead",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "replObjectEntry",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_citedReplObjects",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_resolveReplSpill",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "admission:normalize_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_replManifestReview",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "observation",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "_lastDeathCertEvidence",
           "ordinal": 0,
           "size": 35,
@@ -23757,6 +23982,88 @@
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_admitSharedFanout",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_promoteReplObject",
+          "ordinal": 0,
+          "size": 21,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "assertReplObjectAddressed",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "assertReplObjectResolved",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "mintReplObjectSpill",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:durable_read"
+          ]
+        },
+        {
+          "name": "replOversizedRefusal",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name"
+          ]
+        },
+        {
+          "name": "_assertReplObjectsServed",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_assertReplReviewProjection",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:policy_gate",
+            "observation:projection_name",
+            "observation:ledger_name",
             "observation:durable_read"
           ]
         },
