@@ -1145,10 +1145,6 @@
       "reason": "design"
     },
     {
-      "key": "test/phase87-semantic-action-authority.test.mjs :: SA4: Web client and MCP bridge preflight use the exact remote semantic mutation scope",
-      "reason": "#227"
-    },
-    {
       "key": "test/phase92-route-discovery-red.test.mjs :: P92-RD1: CLI-observed Claude login is ready without a credentials file and Kimi-through-Claude is explicitly unconfigured",
       "reason": "#293"
     },

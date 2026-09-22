@@ -236,11 +236,11 @@ test('RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are expor
 
 // ── RG-02 — the application profile tools/list closure (D1) ───────────────────────────────────
 
-test('RG-02 RED: application tools/list is 49 and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)', async () => {
+test('RG-02 RED: application tools/list is the served ordinary table and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)', async () => {
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 49, 'application tools/list count 49 (stage: application-tools-count-49)');
+  assert.equal(names.length, 56, 'application tools/list count 56 (stage: application-tools-count-49)'); // composition (final landing): 35 base legacy + 14 lifecycle siblings + 3 wakes (issue #294 registry-mandated) + 2 message lane (issue #206) + 2 harvest pair (issue #99/#179) = 56
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling set derives from the pre-spread
   // uncoveredCommands() export — never from the grown served set (empty of uncovered at green) —
   // and the count ties to composition (35 HEAD ordinary tools + the 14 lifecycle siblings), so a
@@ -248,8 +248,8 @@ test('RG-02 RED: application tools/list is 49 and includes every pre-spread-unco
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 35 + uncovered.length,
-    'application tools/list count ties to composition: 35 + 14 = 49 (stage: application-count-composition)');
+  assert.equal(names.length, 35 + uncovered.length + 3 + 2 + 2,
+    'application tools/list count ties to composition: 35 + 14 + 3 wakes + 2 message + 2 pair = 56 (stage: application-count-composition)');
   const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp).sort();
   const missing = siblingTools.filter((tool) => !names.includes(tool));
   assert.deepEqual(missing, [],
@@ -466,11 +466,11 @@ test('RG-08 RED: fleet_run_resume_work/_retry_verification dispatch, typed refus
 
 // ── RG-09 — the combined profile closure (D1 + D2) ─────────────────────────────────────────────
 
-test('RG-09 RED: combined tools/list is 102 with the 14 siblings leading the ordinary prefix (stage: combined-102-includes-siblings)', async () => {
+test('RG-09 RED: combined tools/list is the served combined table with the 14 siblings leading the ordinary prefix (stage: combined-102-includes-siblings)', async () => {
   const { server } = setup({ surface: 'combined' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 102, 'combined tools/list count 102 (stage: combined-102-includes-siblings)');
+  assert.equal(names.length, 109, 'combined tools/list count 109 (stage: combined-102-includes-siblings)');
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling checks derive from the pre-spread
   // uncoveredCommands() export — never the grown served set (empty at green) — and the count ties
   // to composition (86 HEAD combined + 2 D2 fleet tools + 14 siblings), so a bare 102 of arbitrary
@@ -478,8 +478,8 @@ test('RG-09 RED: combined tools/list is 102 with the 14 siblings leading the ord
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 86 + 2 + uncovered.length,
-    'combined count ties to composition: 86 + 2 fleet + 14 siblings (stage: combined-count-composition)');
+  assert.equal(names.length, 86 + 2 + uncovered.length + 3 + 2 + 2,
+    'combined count ties to composition: 86 + 2 fleet + 14 siblings + 3 wakes + 2 message + 2 pair (stage: combined-count-composition)');
   assert.ok(names.includes('fleet_run_resume_work'), 'combined serves fleet_run_resume_work');
   assert.ok(names.includes('fleet_run_retry_verification'), 'combined serves fleet_run_retry_verification');
   const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp);
@@ -530,20 +530,20 @@ test('RG-10c RED: renderMcpToolInventory renders the 5 non-canonical ops to thei
 
 // ── RG-11-R — the regenerated artifact encodes the final counts (D4 item 3) ────────────────────
 
-test('RG-11-R RED: the surface-inventory artifact encodes mcp.application 49 / mcp.combined 102, tied to composition (stage: artifact-counts-49-102)', () => {
+test('RG-11-R RED: the surface-inventory artifact encodes the measured mcp.application / mcp.combined counts, tied to composition (stage: artifact-counts-49-102)', () => {
   const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
-  assert.equal(artifact.counts.mcpApplicationTools, 49, 'artifact mcp.application count 49 (stage: artifact-counts-49-102)');
-  assert.equal(artifact.counts.mcpCombinedTools, 102, 'artifact mcp.combined count 102 (stage: artifact-counts-49-102)');
+  assert.equal(artifact.counts.mcpApplicationTools, 56, 'artifact mcp.application count 56 (stage: artifact-counts-49-102)');
+  assert.equal(artifact.counts.mcpCombinedTools, 109, 'artifact mcp.combined count 109 (stage: artifact-counts-49-102)');
   // Fold (blue-team #4 — SHALLOW): the committed counts also tie to composition (35 + 14 /
   // 86 + 2 + 14), so an arbitrary self-consistent 49/102 (artifact == live, both wrong) cannot
   // pass without the pre-spread 14 being the actual uncovered set.
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(artifact.counts.mcpApplicationTools, 35 + uncovered.length,
-    'artifact mcp.application ties to composition: 35 + 14 (stage: artifact-application-composition)');
-  assert.equal(artifact.counts.mcpCombinedTools, 86 + 2 + uncovered.length,
-    'artifact mcp.combined ties to composition: 86 + 2 + 14 (stage: artifact-combined-composition)');
+  assert.equal(artifact.counts.mcpApplicationTools, 35 + uncovered.length + 3 + 2 + 2,
+    'artifact mcp.application ties to composition: 35 + 14 + 3 wakes + 2 message + 2 pair (stage: artifact-application-composition)');
+  assert.equal(artifact.counts.mcpCombinedTools, 86 + 2 + uncovered.length + 3 + 2 + 2,
+    'artifact mcp.combined ties to composition: 86 + 2 + 14 + 3 wakes + 2 message + 2 pair (stage: artifact-combined-composition)');
 });
 
 // ── RG-P1 (PIN) — the conformance gate stays a citizen ──────────────────────────────────────────

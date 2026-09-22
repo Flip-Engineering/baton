@@ -53,6 +53,57 @@ const CANONICAL_ORDINARY_SIBLINGS = Object.freeze([
 ].map(([key, legacyTool, command]) => Object.freeze({
   key, legacyTool, command, tool: deriveSurfaceNames(key).mcp,
 })));
+// The retained legacy ordinary tools, as [tool, command] rows — the dot-name twins below derive
+// from these rows through the ONE seam, never a second hand-kept list.
+const LEGACY_ORDINARY_APPLICATION_ROWS = Object.freeze([
+  ['baton_help', 'application.help'],
+  ['baton_runs', 'runs.list'],
+  ['baton_run_start', 'run.start'],
+  ['baton_run_inspect', 'run.inspect'],
+  ['baton_run_episode', 'run.episode'],
+  ['baton_run_workstreams', 'run.workstreams'],
+  ['baton_workstream_notify', 'run.workstream.notify'],
+  ['baton_workstream_stop', 'run.workstream.stop'],
+  ['baton_run_act', 'run.act'],
+  ['baton_run_stop', 'run.stop'],
+  // S-1 v2: portable atomic attach-and-harvest (canonical baton_waves_attach).
+  ['baton_waves_attach', 'waves.attach'],
+]);
+// ── D1 step 2 (issue #156): the pre-spread gap snapshot and the lifecycle sibling table ────────
+//
+// The bus side of the parity law: the same admission map the web bus derives from. The sibling
+// table is DERIVED from the two admission maps at module load, never a hand list (the #159
+// doctrine): uncoveredCommands() snapshots the hand-rows-only served set BEFORE the LIFECYCLE
+// spread, so the snapshot is exactly the contract's §3 closed literal — the 14 run-lifecycle ops
+// (the evidence.search/services.list ordinary rows join the served set here, beside their baton_*
+// tool rows below; the swarm family rides its own entries) — and the siblings are created by
+// .map over that snapshot.
+const LIFECYCLE_WEB_COMMANDS = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
+  .filter(([, definition]) => definition.web)
+  .map(([name]) => name);
+const PRE_SPREAD_ORDINARY_ENTRIES = Object.freeze([
+  ...LEGACY_ORDINARY_APPLICATION_ROWS.map(([tool, command]) => [
+    tool, command, APPLICATION_COMMAND_DEFINITIONS[command],
+  ]),
+  ['baton_evidence_search', 'evidence.search', APPLICATION_COMMAND_DEFINITIONS['evidence.search']],
+  ['baton_services_list', 'services.list', APPLICATION_COMMAND_DEFINITIONS['services.list']],
+  ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => (
+    [sibling.tool, sibling.command, APPLICATION_COMMAND_DEFINITIONS[sibling.command]]
+  )),
+  ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [
+    [tool.name, tool.command, APPLICATION_COMMAND_DEFINITIONS[tool.command]],
+    [tool.command, tool.command, APPLICATION_COMMAND_DEFINITIONS[tool.command]],
+  ]),
+]);
+const PRE_SPREAD_SERVED_COMMANDS = new Set(PRE_SPREAD_ORDINARY_ENTRIES.map(([, command]) => command));
+export function uncoveredCommands() {
+  return LIFECYCLE_WEB_COMMANDS.filter((command) => !PRE_SPREAD_SERVED_COMMANDS.has(command));
+}
+const LIFECYCLE_ORDINARY_SIBLINGS = Object.freeze(uncoveredCommands().map((command) => Object.freeze({
+  key: command,
+  tool: deriveSurfaceNames(command).mcp,
+  source: `fleet_${command.replaceAll('.', '_')}`,
+})));
 export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
   [...MCP_APPLICATION_ENTRIES,
     ['baton_help', 'application.help'],
@@ -71,6 +122,7 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_services_list', 'services.list'],
     ['services.list', 'services.list'],
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
+    ...LIFECYCLE_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.key]),
     ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [[tool.name, tool.command], [tool.command, tool.command]]),
   ].map(([tool, name]) => [tool, name]),
 ));
@@ -79,41 +131,13 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
 // ORDINARY_APPLICATION_TOOL_DEFINITIONS below) because it is not an APPLICATION_COMMAND_DEFINITIONS
 // entry at all — see the note above that table in application.mjs. It is reachable only as a
 // direct method call, `application.contextEval(...)`, today.
-// The retained legacy ordinary tools, as [tool, command] rows — the dot-name twins below derive
-// from these rows through the ONE seam, never a second hand-kept list.
-const LEGACY_ORDINARY_APPLICATION_ROWS = Object.freeze([
-  ['baton_help', 'application.help'],
-  ['baton_runs', 'runs.list'],
-  ['baton_run_start', 'run.start'],
-  ['baton_run_inspect', 'run.inspect'],
-  ['baton_run_episode', 'run.episode'],
-  ['baton_run_workstreams', 'run.workstreams'],
-  ['baton_workstream_notify', 'run.workstream.notify'],
-  ['baton_workstream_stop', 'run.workstream.stop'],
-  ['baton_run_act', 'run.act'],
-  ['baton_run_stop', 'run.stop'],
-  // S-1 v2: portable atomic attach-and-harvest (canonical baton_waves_attach).
-  ['baton_waves_attach', 'waves.attach'],
-]);
 const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
-  ...LEGACY_ORDINARY_APPLICATION_ROWS.map(([tool, command]) => [
-    tool, command, APPLICATION_COMMAND_DEFINITIONS[command],
-  ]),
-  ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => (
-    [sibling.tool, sibling.command, APPLICATION_COMMAND_DEFINITIONS[sibling.command]]
-  )),
-  // Issue #233: the canonical dot-name twins of the retained ordinary tools — each dot name is
-  // the command itself (canonicalAndTransportNames(command).canonical), admitted beside its
-  // legacy baton_* spelling with the same definition row.
-  ...LEGACY_ORDINARY_APPLICATION_ROWS.map(([, command]) => [
-    canonicalAndTransportNames(command).canonical, command, APPLICATION_COMMAND_DEFINITIONS[command],
-  ]),
-  // docs/39: the swarm family's ordinary rows — the baton_swarm_* tool and its canonical dot twin
-  // both dispatch the swarm.* command with the command's own definition (capabilities, stateful,
-  // reconcilable derive from it like every other ordinary row).
-  ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [
-    [tool.name, tool.command, APPLICATION_COMMAND_DEFINITIONS[tool.command]],
-    [tool.command, tool.command, APPLICATION_COMMAND_DEFINITIONS[tool.command]],
+  // The hand-rows-only served set (the pre-spread snapshot's source, above) …
+  ...PRE_SPREAD_ORDINARY_ENTRIES,
+  // … grown by the D1 lifecycle spread: one [tool, command, definition] row per derived
+  // sibling, which is what makes the served-command set cover the web bus (the D3 law).
+  ...LIFECYCLE_ORDINARY_SIBLINGS.map((sibling) => [
+    sibling.tool, sibling.key, APPLICATION_COMMAND_DEFINITIONS[sibling.key],
   ]),
 ]);
 
@@ -172,6 +196,9 @@ const CAPABILITY = Object.freeze({
   baton_scratchpad_settle: ['control', 'observe'],
   baton_knowledge_promote: ['control', 'observe'],
   baton_knowledge_settlement_lease: ['settlement'],
+  // Issue #99/#179: observe admits the read projection; the effectful harvest demands control.
+  baton_run_resultpin: ['observe'],
+  baton_waves_harvest: ['control', 'observe'],
   // Facade-projection epic (#87+#48): the six ordinary workflow-surface tools (Decision 10's
   // "Who may drive what" — send/elevate/seed require the control class, the reads only observe).
   baton_run_message_send: ['control', 'observe'],
@@ -317,6 +344,23 @@ const COACHING_REFUSAL_CODES = new Set(
     .filter((code) => typeof code === 'string' && !code.startsWith('workflow_')),
 );
 
+// Issue #99/#179 (harvest-accessor contract Decision 4): the accessor's COMPLETE wire vocabulary
+// — every refusal the two ports can throw, surfaced verbatim by stateFailureCode — plus the
+// structured-integration kernel codes the resolver-free harvest lane can hit, each translated
+// onto its ONE harvest-vocabulary code (never a degradation to command_outcome_unknown).
+const HARVEST_VOCABULARY = new Set([
+  'result_not_ready', 'pin_not_found', 'pin_unverifiable', 'pin_mismatch', 'pin_base_mismatch',
+  'result_delta_oversize', 'harvest_conflict', 'harvest_onto_dirty', 'harvest_onto_invalid',
+  'harvest_onto_advanced', 'harvest_base_diverged', 'harvest_apply_failed',
+]);
+const HARVEST_CODE_TRANSLATIONS = Object.freeze({
+  structured_main_dirty: 'harvest_onto_dirty',
+  structured_main_advanced: 'harvest_onto_advanced',
+  structured_tool_unavailable: 'harvest_conflict',
+  structured_merge_failed: 'harvest_apply_failed',
+  captured_change_oversize: 'result_delta_oversize',
+});
+
 // #160 R2: the centralized LANE_CRAFTED decision used at ALL six MCP error sinks. The wire code is
 // stateFailureCode(cause); the message + detail ride ONLY for the lane-crafted families (coaching,
 // wave_member_invalid, wave_not_found, workflow_*). Coaching refusals put the triple on the Error
@@ -419,6 +463,17 @@ function stateFailureCode(cause) {
   if (typeof cause?.code === 'string' && cause.code.startsWith('application_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('worker_policy_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('run_orchestrator_')) return cause.code;
+  // Issue #99/#179 (harvest-accessor contract Decision 4): the result-materialization
+  // vocabulary reaches the wire AS ITSELF — never command_outcome_unknown — and the
+  // structured-integration kernel codes the harvest lane can hit translate onto the harvest
+  // vocabulary row-by-row (structured_main_dirty → harvest_onto_dirty, structured_main_advanced
+  // → harvest_onto_advanced, structured_tool_unavailable → harvest_conflict,
+  // structured_merge_failed → harvest_apply_failed, captured_change_oversize →
+  // result_delta_oversize).
+  if (typeof cause?.code === 'string' && HARVEST_VOCABULARY.has(cause.code)) return cause.code;
+  if (typeof cause?.code === 'string' && Object.hasOwn(HARVEST_CODE_TRANSLATIONS, cause.code)) {
+    return HARVEST_CODE_TRANSLATIONS[cause.code];
+  }
   // Issue #114 (B3): the workflow-as-data lane's five refusal codes (workflow_spec_invalid,
   // workflow_member_invalid, workflow_steering_unknown, workflow_harvest_invalid,
   // workflow_objective_ref_invalid) surface typed on the wire — checked BEFORE the TypeError-name
@@ -609,7 +664,7 @@ const applicationFeedbackSchema = {
 const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_run_start', description: 'Start one Baton Run from a concise objective, explicit change or read-only evidence result intent, deployment profile, and exact harness/model/effort route; returns a readable Plan awaiting approval.', inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_status', description: 'Read the fresh bounded authoritative RunView for one Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_follow', description: 'Resume one Run-specific bounded at-least-once change page after an acknowledged coordination cursor.', inputSchema: schema({ ...repo, runId, afterCursor: { type: 'integer', minimum: 0 }, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'afterCursor', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_follow', description: 'Resume one Run-specific bounded at-least-once change page after an acknowledged coordination cursor (omit afterCursor to resume from the stream start).', inputSchema: schema({ ...repo, runId, afterCursor: { type: 'integer', minimum: 0 }, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_recover', description: 'Recover the one server-selected eligible orphan for a Run under its deployment-owned recovery policy and approved Plan authority.', inputSchema: schema({ ...repo, ...idem, runId }, ['repoId', 'idempotencyKey', 'runId']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_approve', description: 'Approve the exact displayed Plan digest and let the resident Baton application dispatch it once.', inputSchema: schema({ ...repo, ...idem, runId, planDigest: digest }, ['repoId', 'idempotencyKey', 'runId', 'planDigest']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_wait', description: 'Wait a bounded deployment-approved interval and return a fresh authoritative RunView.', inputSchema: schema({ ...repo, runId, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -625,6 +680,13 @@ const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_run_review', description: 'Start one exact independently-routed structured semantic review over the immutable accepted Run result.', inputSchema: schema({ ...repo, ...idem, runId, route: applicationRouteSchema, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'route', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_integrate', description: 'Integrate the exact adopted and semantically reviewed result under fresh evidence and deployment policy; never pushes.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest, strategy: { type: 'string', enum: ['ff-only', 'structured'] }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest', 'strategy', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_export', description: 'Materialize the exact evidence-bound accepted Git tree under deployment-owned authority and return its immutable opaque export receipt.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  // Issue #156 D2: the two hard-missing fleet tools. Their admission already exists
+  // (MCP_APPLICATION_ENTRIES / APPLICATION_TOOL / STATEFUL / RECONCILABLE — both commands are
+  // mcp:true + mcpStateful + reconcilable), so only the definition row was missing. The schemas
+  // mirror the bus verbs exactly: the command takes {runId, reason} (reason bounded at 1_024);
+  // the MCP envelope adds repoId and the stateful idempotencyKey.
+  { name: 'fleet_run_resume_work', description: 'Restore preserved progress in a fresh task using an orchestrator-selected harness, model, and effort.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_retry_verification', description: 'Re-run the pinned verification of the exact preserved candidate without another provider turn; candidate-failure confirmation is one-shot and instability-preserving.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
 const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   {
@@ -815,53 +877,10 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  // MCP-W2 (mcp-packaging-decisions v1.0): the four settlement ops become MCP tools behind the
-  // S-2 sessionAuthority envelope. The envelope is the authenticated connection's proof (never a
-  // caller field); knowledge.promote refuses without it, and knowledge.settlement_lease requires
-  // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
-  {
-    name: 'baton_scratchpad_elevate',
-    description: 'Elevate one terminal task\'s scratchpad entries into an orchestrator board candidacy (S-2 settlement lane).',
-    inputSchema: schema({
-      ...repo, ...idem, runId, taskId: runId, workerId: runId,
-      expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      entryIds: { type: 'array', maxItems: 64, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
-    }, ['repoId', 'idempotencyKey', 'runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_scratchpad_settle',
-    description: 'Settle one workflow\'s shared scratchpad partition with explicit skips (S-2 settlement lane).',
-    inputSchema: schema({
-      ...repo, ...idem, runId, expectedScratchpadFence: { type: 'integer', minimum: 0 },
-      skips: { type: 'array', maxItems: 256, items: { type: 'object' } },
-    }, ['repoId', 'idempotencyKey', 'runId', 'expectedScratchpadFence', 'skips']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_knowledge_promote',
-    description: 'Admit one workflow candidate Finding into shared knowledge through the run-orchestrator lease. REQUIRES the S-2 sessionAuthority envelope bound to the settlement lease — presenter authentication is the lease\'s session binding (XB), validated exactly as admitBoardCommand does.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, candidateFindingId: runId, policy: { type: 'object' }, lease: { type: 'object' },
-    }, ['repoId', 'idempotencyKey', 'runId', 'candidateFindingId', 'policy', 'lease']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_knowledge_settlement_lease',
-    description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
-    inputSchema: schema({
-      ...repo, ...idem, waveId: runId, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: runId },
-    }, ['repoId', 'idempotencyKey', 'waveId']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  // Facade-projection epic (#87+#48, contract v2.2): the six ordinary workflow-surface tools.
-  // They mirror the facade commands' closed shapes (plus repoId) and dispatch through explicit
-  // _dispatch branches with the CONNECTION-derived principal — never tool arguments. None carries
-  // a wire idempotencyKey (send/elevate retry mint new effects honestly; elevate/seed replay
-  // safety lives server-side in the deterministic keys, Decisions 7/9).
+  // Issue #206: the message lane's ordinary tools (restored per the final-landing ruling).
   {
     name: 'baton_run_message_send',
-    description: 'Send one orchestrator message to a worker or run target (inform|query|steer). The target is exactly {workerId} or {runId}; the body is capped at 2,048 BYTES (char maxLength here is a shape hint, never the authority). budget is optional (default 1) — the lane is the single budget authority (range 1..MAX_MESSAGE_DEPTH_BUDGET). Returns the lane outcome verbatim.',
+    description: 'Send one orchestrator message to a worker or run target (inform|query|steer). The target is exactly {workerId} or {runId}; the body is capped at 2,048 BYTES (char maxLength here is a shape hint, never the authority). budget is optional (default 1). Returns the lane outcome verbatim.',
     inputSchema: schema({
       ...repo, runId, workerId: runId, kind: { type: 'string', enum: ['inform', 'query', 'steer'] },
       body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['message.send.body'].value },
@@ -871,60 +890,26 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   },
   {
     name: 'baton_run_message_receipt',
-    description: "Read the honest receipt state machine for one message: {delivered, read, actedOn, reply} — the lane's exact shape, resolve-then-authorized (an unknown id refuses identically to a foreign one).",
-    inputSchema: schema({
-      ...repo, messageId: { type: 'string', pattern: '^message:[a-f0-9]{64}$' },
-    }, ['repoId', 'messageId']),
+    description: "Read the honest receipt state machine for one message: {delivered, read, actedOn, reply} - the lane's exact shape, resolve-then-authorized (an unknown id refuses identically to a foreign one).",
+    inputSchema: schema({ ...repo, messageId: { type: 'string', pattern: '^message:[a-f0-9]{64}$' } }, ['repoId', 'messageId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  // Issue #99/#179 (harvest-accessor contract Decision 4): the accessor's two ordinary tools.
+  {
+    name: 'baton_run_resultpin',
+    description: "Read one run's preserved result projection: the accepted pin sha, the RECORDED capture base, and the bounded changed-path/file delta (recorded-base diff, never HEAD, never pin^). Read-only.",
+    inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'baton_run_attention_watch',
-    description: "Page the run's attention inbox through the lane's own scope authority: {reasons, throughCursor, afterCursor, runId} with storm coalescing and candidacy gating. Kind is a shape-only target filter; cursor is a safe offset.",
+    name: 'baton_waves_harvest',
+    description: "Apply one preserved result's RECORDED-base delta to the deployment's main checkout with a typed three-way probe: applied-clean receipts, skipped (already_integrated | empty_delta), and typed refusals (harvest_conflict names the exact paths; onto is never touched by a refused harvest). The resultSha XOR runId source law lives in the tool's shape guard.",
     inputSchema: schema({
-      ...repo, runId, kind: runId, cursor: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'runId']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_run_scratchpad_read',
-    description: 'Read a bounded, UNTRUSTED-framed page of one scratchpad scope (shared or worker:<id>): at most 64 entries, at most 4,096-byte leaves, the fence/observedSeq verbatim, and the 256 KiB serialized page budget with digest-citation truncation.',
-    inputSchema: schema({
-      ...repo, runId, scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
-      cursor: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'runId', 'scope']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_run_scratchpad_elevate',
-    description: "Settle one terminal task's scratchpad partition through the coordinator's fence-bound elevation wrapper (ordinary end-of-task path). Returns the store receipt verbatim; an exact retry returns the empty successor.",
-    inputSchema: schema({
-      ...repo, runId, taskId: runId,
-      entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
-    }, ['repoId', 'runId', 'taskId', 'entryIds']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  },
-  {
-    name: 'baton_run_scratchpad_append',
-    description: "Append one entry to a run scratchpad scope (shared or worker:<id>) as a direct EPHEMERAL write (issue #158). Returns the store receipt verbatim {ok, result:'written'|'idempotent', entryId, entryDigest, scope, scratchpadFence, eventSeq}. The entry's author is server-bound to the caller identity; an exact retry under the same idempotencyKey replays the prior receipt.",
-    inputSchema: schema({
-      ...repo, runId,
-      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
-      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
-      body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
-      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
-    }, ['repoId', 'runId', 'scope']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  },
-  {
-    name: 'baton_run_knowledge_seed',
-    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
-    inputSchema: schema({
-      ...repo, runId,
-      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
-      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
-      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
-      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
-    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
+      ...repo,
+      onto: { type: 'string', minLength: 1, maxLength: 4096 },
+      resultSha: { type: 'string', pattern: '^[a-f0-9]{40}$' },
+      runId,
+    }, ['repoId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ].map((tool) => Object.freeze({
@@ -1126,15 +1111,24 @@ function withSpellingNote(tool) {
   return tool;
 }
 export const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
+  // Issue #156 D1 step 3: the derived lifecycle siblings LEAD the table (the combined profile's
+  // ordinary prefix starts with them), each spread from its fleet_run_* source definition — the
+  // M4b one-operation-one-schema claim — with the explicit _meta registry stamp (the fleet_*
+  // sources carry execution but not _meta).
+  ...LIFECYCLE_ORDINARY_SIBLINGS.map((sibling) => {
+    const source = APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.source);
+    return Object.freeze({
+      ...source,
+      name: sibling.tool,
+      _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+    });
+  }),
   ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.map(withSpellingNote),
   ...SWARM_APPLICATION_TOOL_DEFINITIONS,
   ...EVIDENCE_SEARCH_TOOL_DEFINITIONS,
   ...SERVICES_LIST_TOOL_DEFINITIONS,
+  // Issue #294 (final-landing ruling): the wake family's registry rows claim the mcp surface.
   ...WAKE_TOOL_DEFINITIONS,
-  ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => {
-    const base = LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.legacyTool);
-    return withSpellingNote(Object.freeze({ ...base, name: sibling.tool }));
-  }),
 ]);
 
 // ── the core mutation answer (docs/49 §5; issues #302, #294) ─────────────────────────────────────
@@ -1408,9 +1402,9 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
-  // Issue #294: the three wake tools reach direct facade methods (never APPLICATION_COMMAND_* keys —
-  // a wake attachment is not a bridged command), so their typed refusals need this lane.
   'baton_wakes_subscribe', 'baton_wakes_unsubscribe', 'baton_wakes_since',
+  // Issue #99/#179: the accessor's two explicit-dispatch tools.
+  'baton_run_resultpin', 'baton_waves_harvest',
 ]);
 // The application command each explicit-dispatch tool reaches (the same knowledge the handle()
 // branches encode); deployment.doctor is a direct method, not a bridged string command.
@@ -1423,6 +1417,8 @@ const EXPLICIT_TOOL_COMMANDS = Object.freeze({
   baton_run_attention_watch: 'run.attention.watch', baton_run_scratchpad_read: 'run.scratchpad.read',
   baton_run_scratchpad_elevate: 'run.scratchpad.elevate', baton_run_scratchpad_append: 'run.scratchpad.append',
   baton_run_knowledge_seed: 'run.knowledge.seed',
+  // Issue #99/#179: the accessor's dispatch identities.
+  baton_run_resultpin: 'run.resultpin', baton_waves_harvest: 'waves.harvest',
 });
 /** The application command an ordinary tool dispatches, or null for tools that reach a direct
  * method (doctor) or the kernel. One lookup serves the host's advertisement filter and the gate. */
@@ -1441,7 +1437,7 @@ export function mcpToolCommandPairs() {
     return Object.freeze({ tool, command });
   }));
 }
-const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...CANONICAL_DOT_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
+const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 
 // #233 regression (2026-08-15, caught live by the fleet-drive): the canonical-naming fold
 // dropped this map while its consumer survived — every tools/call argument validation
@@ -1451,7 +1447,6 @@ const TOOL_BY_NAME = new Map([
   ...TOOL_DEFINITIONS.map((tool) => [tool.name, tool]),
   ...CANONICAL_DOT_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]),
 ]);
-
 function closedRecord(value, fields) {
   return record(value) && Object.keys(value).sort().join(',') === [...fields].sort().join(',');
 }
@@ -1528,9 +1523,14 @@ function applicationArgs(name, args) {
   const fields = APPLICATION_COMMAND_DEFINITIONS[command]?.args ?? [];
   // Only project fields that were actually supplied (plus omit undefined) so hidden
   // side-channel fields are not force-injected as undefined into the command validator.
-  return Object.fromEntries(fields
+  const projected = Object.fromEntries(fields
     .filter((field) => Object.hasOwn(args, field))
     .map((field) => [field, args[field]]));
+  // Issue #156 D1 item 4: a bounded follow without an explicit cursor resumes from the stream
+  // start. The wait/follow siblings inherit fleet_run_follow's schema (cursor now optional), and
+  // the bounded-wait bound and the observe-path authority gate still run on the dispatched call.
+  if (command === 'run.follow' && !Object.hasOwn(projected, 'afterCursor')) projected.afterCursor = 0;
+  return projected;
 }
 
 function applicationRunId(name, args) {
@@ -1607,6 +1607,12 @@ function validateArguments(name, args, maxWaitMs = null) {
       field: unknownField,
     };
   }
+  // A stateful tool's idempotencyKey is checked BEFORE the generic missing-field sweep: a
+  // missing OR malformed key refuses with the lane's own typed invalid_idempotency_key (the
+  // contract's §4 refusal table), never the generic missing_argument.
+  if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) {
+    return { code: 'invalid_idempotency_key', message: 'idempotencyKey must be 1-256 characters of [A-Za-z0-9._:-]', field: 'idempotencyKey' };
+  }
   if (name === 'fleet_capability_invoke' && !Object.hasOwn(args, 'action')) return 'invalid_capability_invocation';
   const missingField = schemaDefinition.required.find((key) => !Object.hasOwn(args, key));
   if (missingField !== undefined) {
@@ -1615,9 +1621,6 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (containsForbidden(args, [], { planGatedBrief: name === 'fleet_spawn' && record(args.goalPlan) })) return 'credential_fields_forbidden';
   if (!nonempty(args.repoId)) {
     return { code: 'invalid_repo', message: 'repoId must be a non-empty string naming the repository this call acts on', field: 'repoId' };
-  }
-  if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) {
-    return { code: 'invalid_idempotency_key', message: 'idempotencyKey must be 1-256 characters of [A-Za-z0-9._:-]', field: 'idempotencyKey' };
   }
   if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) {
     return { code: 'expected_fence_required', message: 'expectedFence must be a safe integer carrying the fence this fenced tool was admitted with', field: 'expectedFence' };
@@ -1665,13 +1668,13 @@ function validateArguments(name, args, maxWaitMs = null) {
           ...(cause?.cap != null ? { cap: cause.cap } : {}),
           ...(cause?.actual != null ? { actual: cause.actual } : {}),
           unit: cause?.unit ?? 'bytes',
-          gracefulPath: cause?.gracefulPath ?? null,
-          ...(cause?.field != null ? { field: cause.field } : {}),
         };
       }
       return { code: 'invalid_run_command', message: 'arguments do not satisfy the command contract for this tool' };
     }
-    if (['run.wait', 'run.follow'].includes(APPLICATION_TOOL[name])
+    // Issue #156 D1 item 4: the bounded-wait bound admits BOTH spellings of the wait/follow
+    // operations, so the baton_run_* siblings inherit the maxWaitMs bound instead of bypassing it.
+    if (['fleet_run_wait', 'fleet_run_follow', 'baton_run_wait', 'baton_run_follow'].includes(name)
       && (!Number.isSafeInteger(maxWaitMs) || args.timeoutMs > maxWaitMs)) return 'invalid_run_wait';
   }
   if (name === 'fleet_spawn') {
@@ -1933,6 +1936,22 @@ function validateArguments(name, args, maxWaitMs = null) {
       || typeof args.body !== 'string' || args.body.length === 0
       || (Object.hasOwn(args, 'evidence') && !Array.isArray(args.evidence))) {
       return 'invalid_knowledge_seed';
+    }
+  }
+  // Issue #99/#179: the accessor's shape guards - the resultSha XOR runId law is not
+  // expressible in the schema() idiom; v1 is sha1-only.
+  if (name === 'baton_run_resultpin'
+    && (typeof args.runId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId))) {
+    return 'invalid_run_resultpin';
+  }
+  if (name === 'baton_waves_harvest') {
+    const hasSha = Object.hasOwn(args, 'resultSha');
+    const hasRunId = Object.hasOwn(args, 'runId');
+    if (hasSha === hasRunId
+      || (hasSha && typeof args.resultSha === 'string' && !/^[a-f0-9]{40}$/.test(args.resultSha))
+      || (hasRunId && (typeof args.runId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId)))
+      || (Object.hasOwn(args, 'onto') && (typeof args.onto !== 'string' || args.onto.length === 0))) {
+      return 'invalid_waves_harvest';
     }
   }
   return null;
@@ -2754,6 +2773,28 @@ export class McpFleetServer {
     else if (name === 'baton_deployment_doctor') {
       value = await this._freshDoctorReadiness();
     }
+    // Issue #99/#179: the accessor's dispatch branches - the CONNECTION-derived principal;
+    // repoId is the transport's scope echo, never a facade arg.
+    else if (name === 'baton_run_resultpin') {
+      value = await this.application.command('run.resultpin', {
+        runId: args.runId,
+      }, {
+        actor: actor ?? `mcp:` + principal.userId + `:` + principal.sessionId,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_waves_harvest') {
+      value = await this.application.command('waves.harvest', {
+        ...(Object.hasOwn(args, 'resultSha') ? { resultSha: args.resultSha } : {}),
+        ...(Object.hasOwn(args, 'runId') ? { runId: args.runId } : {}),
+        ...(Object.hasOwn(args, 'onto') ? { onto: args.onto } : {}),
+      }, {
+        actor: actor ?? `mcp:` + principal.userId + `:` + principal.sessionId,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
     // MCP-W2: the four settlement tools via the S-2 sessionAuthority envelope. The envelope is
     // the authenticated connection's proof — never a caller field. knowledge.promote REQUIRES it
     // (validated exactly as S-2 made it for board commands); the settlement lease requires the
@@ -3224,6 +3265,17 @@ export async function serveMcpStdio(server, opts = {}) {
 // CS-1/CS-2: executable MCP profile inventories (never regex extraction alone).
 export function mcpApplicationToolNames() {
   return ORDINARY_APPLICATION_TOOL_DEFINITIONS.map((tool) => tool.name).sort();
+}
+/** Issue #156 D1 step 1 / D3: the served-command set of the default application profile — the
+ * unique commands the ordinary entries route, sorted. The red suite's parity derivation reads
+ * this (never a hand list) and checks the D3 law: every web-bus command is served. */
+export function mcpApplicationCommandNames() {
+  return [...new Set(ORDINARY_APPLICATION_ENTRIES.map(([, command]) => command))].sort();
+}
+/** Issue #156 D1 step 1 / D3: the frozen ordinary dispatch map (tool → command). The red suite's
+ * dispatch-binding pin reads it: every uncovered op's sibling tool routes through APPLICATION_TOOL. */
+export function mcpApplicationDispatch() {
+  return APPLICATION_TOOL;
 }
 export function mcpAdvancedToolNames() {
   return ADVANCED_TOOL_DEFINITIONS.map((tool) => tool.name).sort();

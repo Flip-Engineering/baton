@@ -74,6 +74,8 @@ const CLI_CARD_LEDGERED_PORTS = Object.freeze([
   'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
   'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
   'waves.compile',
+  // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
+  'run.resultpin', 'waves.harvest',
 ]);
 export const CLI_WEB_COMMANDS = new Set(CLI_DISPATCH_TRANSPORTS.filter((name) => (
   (Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, name)
@@ -4147,6 +4149,28 @@ export function parseBatonCli(rawArgs) {
         idempotencyKey,
       };
     }
+    // Issue #99/#179 (harvest-accessor contract Decision 5): `baton waves harvest
+    // RESULT_SHA|RUN_ID [--onto PATH]` → waves.harvest. The resultSha XOR runId source law is
+    // enforced at parse (exactly one positional source); a 40-hex source is the resultSha, any
+    // other valid id is the runId — the facade's closed shape remains the second gate.
+    if (action === 'harvest') {
+      const source = args.length > 0 && !args[0].startsWith('--') ? args.shift() : null;
+      const onto = take(args, '--onto');
+      noRemainder(args);
+      const isSha = typeof source === 'string' && /^[a-f0-9]{40}$/u.test(source);
+      if (source === null
+        || (!isSha && (typeof source !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/u.test(source)))) {
+        throw cliError('waves harvest requires exactly one result sha or run id source', 'cli_invalid');
+      }
+      return {
+        kind: 'command', command: 'waves.harvest', name: 'waves.harvest',
+        args: {
+          ...(isSha ? { resultSha: source } : { runId: source }),
+          ...(onto === null ? {} : { onto }),
+        },
+        idempotencyKey,
+      };
+    }
     if (action !== 'attach') {
       throw cliError('expected waves list, progress, start, send, stop, attach, run, or compile', 'cli_command_unavailable');
     }
@@ -4396,6 +4420,7 @@ export function parseBatonCli(rawArgs) {
   }
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
+    'resultpin',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
   // The closed first-token set (contract D1): the lifecycle dispatch set, the facade nouns, the
@@ -4414,6 +4439,13 @@ export function parseBatonCli(rawArgs) {
     return parseStart(args, action, idempotencyKey, 'change');
   }
   const runId = id(args.shift(), 'Run ID');
+  // Issue #99/#179 (harvest-accessor contract Decision 5): the read lane's single-token run verb —
+  // `baton run resultpin RUN_ID` → command run.resultpin. The occupied episode spelling
+  // `baton run result RUN_ID` is UNTOUCHED (the branch below keeps topic='result').
+  if (action === 'resultpin') {
+    noRemainder(args);
+    return { kind: 'command', name: 'run.resultpin', args: { runId }, idempotencyKey };
+  }
   if (action === 'episode' || action === 'result') {
     const topic = action === 'result' ? 'result'
       : args[0] && !args[0].startsWith('--') ? args.shift() : 'outline';
