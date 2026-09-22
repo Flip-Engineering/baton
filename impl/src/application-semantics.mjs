@@ -115,6 +115,16 @@ export function applicationTerminal(phase) {
   return APPLICATION_TERMINAL_CANONICAL.has(canonicalRunPhase(phase));
 }
 
+// Issue #164 (D3.1, DR-1(a)): the WAIT-LOCAL durable-stop terminal-truth predicate. An admitted
+// stop — the run's phase reads 'stopping' from the stop admission until the completion ceremony
+// lands 'stopped' — is terminal truth FOR WAIT PURPOSES ONLY: a run.wait caller returns the
+// already-projected view instead of burning its budget across blind cycles. The canonical
+// predicates above and the closed phase literal sets stay untouched (the A8/A9 pins — additive-
+// only law): 'stopping' remains non-terminal everywhere else.
+export function waitDurableStopTruth(phase) {
+  return phase === 'stopping';
+}
+
 export const APPLICATION_LIFECYCLE_ENUMS = Object.freeze({
   runPhases: CANONICAL_RUN_PHASES,
   memberStates: CANONICAL_MEMBER_STATES,

@@ -385,6 +385,11 @@ const PLAN_VERIFICATION_FIELDS = new Set(['command', 'arguments', 'cwd', 'envAll
 const PLAN_GATE_FIELDS = new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
 const PLAN_BRIEF_FIELDS = new Set(['goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone', 'verification', 'budget', 'providerTurns', 'capabilities', 'effects']);
 const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout']);
+// Issue #164 (D1.2, the refusal table): the transport principal's own lifetime renewal lane —
+// the ONE path a caller re-probes with a fresh credential. It names the web 401 `unauthenticated`
+// refusal (including the post-wait reauth on the wait verbs); the `forbidden` scope death never
+// carries it (P-FORBIDDEN).
+const TRANSPORT_RENEWAL = Object.freeze({ path: '/v1/auth/refresh' });
 const OIDC_START_PATH = '/v1/auth/oidc/start';
 const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
 
@@ -408,13 +413,14 @@ function result(status, body) { return Object.freeze({ status, body: Object.free
 // (`retryable`) and the remedy (`action`) are the SAME keys the MCP wire and BatonControlError
 // already carry, so a refusal never has to be re-invented per seam. A refusal that states neither
 // keeps its byte-stable shape.
-function errorBody(code, message, { field = null, detail = null, retryable = null, action = null } = {}) {
+function errorBody(code, message, { field = null, detail = null, retryable = null, action = null, renewal = null } = {}) {
   return {
     code, message,
     ...(field == null ? {} : { field }),
     ...(detail == null ? {} : { detail }),
     ...(retryable == null ? {} : { retryable: retryable === true }),
     ...(action == null ? {} : { action }),
+    ...(renewal == null ? {} : { renewal }),
   };
 }
 function error(status, code, message = code, field = null, options = {}) {
@@ -1854,7 +1860,9 @@ export class WebNorthbound {
     if (!this.repoIds.has(envelope.repoId) || !Array.isArray(principal.repoIds) || !principal.repoIds.includes(envelope.repoId)) {
       return error(403, 'forbidden', `forbidden: ${commandClass} refused by the repoId precondition`, 'repoId');
     }
-    if (this.isPrincipalActive && !this.isPrincipalActive(principal, { repoId: envelope.repoId })) return error(401, 'unauthenticated');
+    if (this.isPrincipalActive && !this.isPrincipalActive(principal, { repoId: envelope.repoId })) {
+      return error(401, 'unauthenticated', 'unauthenticated', null, { renewal: TRANSPORT_RENEWAL });
+    }
     const requiredCapabilities = Array.isArray(COMMAND_CAPABILITY[envelope.command])
       ? COMMAND_CAPABILITY[envelope.command]
       : [COMMAND_CAPABILITY[envelope.command]];
