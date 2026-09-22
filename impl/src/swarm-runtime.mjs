@@ -6010,6 +6010,10 @@ export class SwarmRuntime {
       inReplyTo: payload.inReplyTo ?? null,
       state: delivery.state ?? 'delivered', lane: clone(delivery.lane ?? null),
       reason: delivery.reason ?? null,
+      // Issue #557: a park on a one-shot harness can never clear. The mark rides the row where the
+      // state is written, so a sender that reads this notification — or any later read of it — can
+      // tell a delivery that will never arrive from one that has not arrived yet.
+      ...(delivery.terminal === true ? { terminal: true } : {}),
       delivered: delivery.state === 'delivered' ? true : null,
       read, actedOn: null,
       reply: replies[0] ?? null, replies,
@@ -6075,7 +6079,7 @@ export class SwarmRuntime {
         // harness takes no mid-turn delivery is durable where that seat's brief will find it.
         park = this._parkGuidance(target.swarm.swarmId, target.participant, frame, principal, args, guidance);
         messageId = park.result?.messageId ?? null;
-        delivery = { state: 'parked', lane: null, reason: 'harness_one_shot' };
+        delivery = { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true };
       } else {
         // The lane receipt is durable coordination log, not process state: the newest nudge/steer
         // row for this binding past the pre-call cursor is the row THIS delivery wrote.
