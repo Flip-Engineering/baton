@@ -249,7 +249,7 @@ export function validKnowledgeContradictionPolicy(policy) {
   if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
   return policy.maxScanEvents <= 1_000_000 && policy.maxScanEdges <= 1_000_000 && policy.maxItems <= 100_000
     && policy.maxSnippetBytes <= 64 * 1024 && policy.maxEvidenceRefs <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
-    && policy.maxReasonBytes <= 64 * 1024 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+    && policy.maxReasonBytes <= 64 * 1024 && policy.maxBatchBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && policy.maxResultBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value;
 }
 
 export function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
@@ -361,7 +361,7 @@ export function _ttlTarget(store, decision) {
 /** Moved from `CoordinationStore._providerAdverseCeilings` (issue #259 slice 1). State: `this._reusePolicyTransitions`, passed explicitly. */
 export function _providerAdverseCeilings(state, repoId) {
   const transition = [...state].reverse().find((item) => item.repoId === repoId);
-  return transition?.ceilings ?? { maxDecisionTargets: 100_000, maxGuardTargets: 100_000, maxAffectedReads: 1_000_000, maxStateRows: 1_000_000, maxEventBytes: 64 * 1024 * 1024 };
+  return transition?.ceilings ?? { maxDecisionTargets: 100_000, maxGuardTargets: 100_000, maxAffectedReads: 1_000_000, maxStateRows: 1_000_000, maxEventBytes: FRAME_LIMITS['knowledge.policy_event_max_bytes'].value };
 }
 
 /** Moved from `CoordinationStore._providerContribution` (issue #259 slice 1). Reads no store state. */

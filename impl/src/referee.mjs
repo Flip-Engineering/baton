@@ -372,7 +372,7 @@ export async function verify(task, result, sandbox, opts = {}) {
     );
   }
 
-  const timeoutMs = task.verification.timeoutMs ?? 120000;
+  const timeoutMs = task.verification.timeoutMs ?? FRAME_LIMITS['verification.run_timeout_ms'].value;
   const runtime = opts.runtime ?? defaultVerificationRuntime();
   const abortError = () => Object.assign(new Error('verification was cancelled by its caller before completing'), { code: 'verification_aborted' });
   if (opts.signal?.aborted) throw abortError();

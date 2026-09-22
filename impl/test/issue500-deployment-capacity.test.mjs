@@ -258,11 +258,10 @@ test('500-caps-H: the bounds with no hermetic seam keep their live literals (sou
   // MAX_MUSE_AUTH_FILE_BYTES read FRAME_LIMITS['credential.file'].value (#500, ea9040d6) rather
   // than a live literal; issue500-credential-divergence.test.mjs S500-2 pins that reference.
   count(/const GROK_AUTH_EARLY_INVALIDATION_MS = 5 \* 60 \* 1000;/u, 'grok early invalidation window', 1);
-  count(/const WORKSPACE_OBSERVATION_BYTE_QUANTUM = 64 \* 1024 \* 1024;/u, 'workspace byte quantum', 1);
-  count(/const WORKSPACE_OBSERVATION_INODE_QUANTUM = 10_000;/u, 'workspace inode quantum', 1);
+  count(/const WORKSPACE_OBSERVATION_BYTE_QUANTUM = FRAME_LIMITS\['workspace\.observation_quantum_bytes'\]\.value;/u, 'workspace byte quantum (registry row, #377 landing two)', 1);
   count(/const PROVIDER_REFUSAL_TEXT_BYTES = 1024;/u, 'published provider refusal text bound', 1);
   count(/commandTimeoutMs: rawResident\.commandTimeoutMs \?\? 30_000,/u, 'resident command deadline default', 1);
-  count(/stopDeadlineMs: 15_000,/u, 'stop deadline', 1);
+  count(/stopDeadlineMs: FRAME_LIMITS\['run\.stop_deadline_ms'\]\.value,/u, 'stop deadline (registry row, #498 landing two)', 1);
   count(/progressNudgeWindowMs: 300_000,/u, 'steering nudge window', 1);
   count(/drainPolicy: \{ maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 \},/u, 'drain policy', 1);
   count(/budgetPolicy: \{ terminalGraceMs: 2_000, \.\.\.budgetPolicy \},/u, 'budget terminal grace default', 1);

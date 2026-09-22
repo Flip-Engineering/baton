@@ -71,8 +71,8 @@ const DEFAULT_BUDGET = Object.freeze({
 // provider-stall outer backstop, so the two surfaces share one coherent stall vocabulary. Nothing
 // in DEFAULT_BUDGET feeds this; a future wall-budget change can never silently change the stall.
 const DEFAULT_WATCHDOG = Object.freeze({
-  stallMs: 20 * 60_000,                       // strictly < DEFAULT_BUDGET.wallMin * 60_000 (480 min)
-  blockingInteractionTimeoutMs: 20 * 60_000,  // the null-deadline default for blocking interactions (D3)
+  stallMs: FRAME_LIMITS['driver.stall_ms'].value,                       // strictly < DEFAULT_BUDGET.wallMin * 60_000 (480 min)
+  blockingInteractionTimeoutMs: FRAME_LIMITS['driver.blocking_interaction_ms'].value,  // the null-deadline default for blocking interactions (D3)
   loopThreshold: 3,
   loopAction: 'escalate',                     // issue #258: evidence for the orchestrator, never a direct stop
   stallAction: 'escalate',                    // was 'interrupt' — D4 rung 1, never a direct stop
@@ -95,7 +95,7 @@ const DEFAULT_WORKTREE_CAPACITY = Object.freeze({
   // #500: operator-declared allowances with no derivation elsewhere in the tree — sizing a
   // real fleet's growth headroom is an operator judgment. The #500 pin test records the
   // shipped 64 MiB / 10 000-inode values.
-  runtimeReserveBytes: 64 * 1024 * 1024,
+  runtimeReserveBytes: FRAME_LIMITS['workspace.reserve_bytes'].value,
   runtimeReserveInodes: 10_000,
 });
 
@@ -108,8 +108,8 @@ const DEPENDENCY_PROJECTION_LIMITS = Object.freeze({
   maxMappings: 128,
   maxFiles: 1_000_000,
   maxDirectories: 250_000,
-  maxBytes: 2 * 1024 * 1024 * 1024,
-  maxFileBytes: 512 * 1024 * 1024,
+  maxBytes: FRAME_LIMITS['workspace.capacity_max_bytes'].value,
+  maxFileBytes: FRAME_LIMITS['workspace.file_max_bytes'].value,
   maxPathBytes: 4096,
   maxDepth: 256,
 });
@@ -1111,8 +1111,8 @@ function measureRuntimeFootprint(roots) {
 // equal-state projections stay deeply equal across reads and the verdict errs conservative
 // (the #35 discipline). Operator-declared steps with no derivation elsewhere; the #500 pin
 // test records the live values.
-const WORKSPACE_OBSERVATION_BYTE_QUANTUM = 64 * 1024 * 1024;
-const WORKSPACE_OBSERVATION_INODE_QUANTUM = 10_000;
+const WORKSPACE_OBSERVATION_BYTE_QUANTUM = FRAME_LIMITS['workspace.observation_quantum_bytes'].value;
+const WORKSPACE_OBSERVATION_INODE_QUANTUM = FRAME_LIMITS['workspace.observation_quantum_inodes'].value;
 
 function workspaceCapacityReadiness(repoRoot, policy, observe, floor = null) {
   let observation;
@@ -6474,8 +6474,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   for (const field of ['probeTimeoutMs', 'failureWindowMs']) {
     if (rawLiveness[field] !== undefined
       && (!Number.isSafeInteger(rawLiveness[field]) || rawLiveness[field] <= 0
-        || rawLiveness[field] > 120_000)) {
-      throw deploymentError(`advanced liveness.${field} must be a positive safe integer ≤ 120000`);
+        || rawLiveness[field] > FRAME_LIMITS['route.probe_deadline_ms'].value)) {
+      throw deploymentError(`advanced liveness.${field} must be a positive safe integer ≤ ${FRAME_LIMITS['route.probe_deadline_ms'].value}`);
     }
   }
   const adapters = advanced.adapters
@@ -6711,7 +6711,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // bounded attempts STOP_WAIT_ATTEMPT_BOUND names (above) before the stop proceeds with
     // the worker named abandoned. Operator-declared with no derivation elsewhere; the #500
     // pin test records the value.
-    stopDeadlineMs: 15_000,
+    stopDeadlineMs: FRAME_LIMITS['run.stop_deadline_ms'].value,
     // TG3: the bounded steering-cycle window — a deployment knob, never stallTimeoutMs (the
     // layer confusion in v0.9 is corrected; the stall watchdog is issue #67).
     // #500: 5 min between steering nudges; operator-declared with no derivation elsewhere in
@@ -6789,8 +6789,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     coordination: driver.coordination,
     log: driver.log,
     now: rawLiveness.now ?? Date.now,
-    probeTimeoutMs: rawLiveness.probeTimeoutMs ?? 120_000,
-    failureWindowMs: rawLiveness.failureWindowMs ?? 10 * 60 * 1000,
+    probeTimeoutMs: rawLiveness.probeTimeoutMs ?? FRAME_LIMITS['route.probe_deadline_ms'].value,
+    failureWindowMs: rawLiveness.failureWindowMs ?? FRAME_LIMITS['route.failure_window_ms'].value,
   });
   // #341 part 2: ONE ledger-derived provider-refusal index for this deployment, built here where
   // the ledger, the adapter cards and the route inventory are all in hand. The readiness rows, the

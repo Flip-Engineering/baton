@@ -1,4 +1,5 @@
 import { createHash, createHmac, createPublicKey, sign as edSign, timingSafeEqual, verify as edVerify } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -27,7 +28,7 @@ export class HmacAdvisoryWebhookSource {
     const ceilings = opts.ceilings;
     const ceilingFields = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes', 'maxHeaderCount', 'maxHeaderBytes', 'maxClockSkewMs'];
     if (!exactKeys(ceilings, ceilingFields) || Object.values(ceilings).some((value) => !Number.isSafeInteger(value) || value <= 0)
-      || ceilings.maxDeliveryBytes > 16 * 1024 * 1024 || ceilings.maxCoordinates > 10_000 || ceilings.maxAdvisoryIds > 100_000 || ceilings.maxIdentityBytes > 4_096
+      || ceilings.maxDeliveryBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value || ceilings.maxCoordinates > 10_000 || ceilings.maxAdvisoryIds > 100_000 || ceilings.maxIdentityBytes > 4_096
       || ceilings.maxHeaderCount > 256 || ceilings.maxHeaderBytes > 256 * 1024 || ceilings.maxClockSkewMs > 24 * 60 * 60 * 1_000) throw new TypeError('HMAC advisory webhook ceilings are invalid');
     this.providerId = opts.providerId; this.adapterId = opts.adapterId; this.version = opts.version; this.secret = Buffer.from(opts.secret); this.keyFingerprint = opts.keyFingerprint;
     this.callback = Object.freeze({ ...opts.callback }); this.privateCas = opts.privateCas; this.ceilings = Object.freeze({ ...ceilings }); this.now = opts.now ?? Date.now;
