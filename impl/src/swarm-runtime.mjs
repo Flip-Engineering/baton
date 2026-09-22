@@ -109,6 +109,24 @@ function boundedStderrTail(raw) {
   return crashedStderrTail(session);
 }
 
+/** The per-file rows a gate run STREAMED before it died (#546, option a): each "# file <path>
+ * (N ms)" block the runner printed is a real result — pass/fail counts and all — so an
+ * interrupted run names what it judged beside what its death left unreported, instead of
+ * leaving the landing a blank timeout with verdictLine null. */
+function partialFilesJudged(stream) {
+  const marks = [...stream.matchAll(/# file (\S+) \((\d+) ms[^)]*\)/g)];
+  return marks.map((mark, index) => {
+    const from = mark.index + mark[0].length;
+    const to = index + 1 < marks.length ? marks[index + 1].index : stream.length;
+    const block = stream.slice(from, to);
+    return {
+      file: mark[1],
+      pass: Number((block.match(/# pass (\d+)/) ?? [])[1] ?? 0),
+      fail: Number((block.match(/# fail (\d+)/) ?? [])[1] ?? 0),
+    };
+  });
+}
+
 /** The default regenerators: the three the repository always runs, each told to WRITE.
  *
  * Issue #459: each one is an out-of-process child of the resident's supervised pool — never a
@@ -166,13 +184,28 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
       // same bounded, redacted derivation the regenerator refusal carries (issue #451). No
       // resident-side wall clock arms on this child (#546): a landing waits for the runner's
       // verdict — its own per-file progress deadline is the judged liveness law that guarantees
-      // one arrives — so an unjudged gate run can only mean the runner exited without verdict.
+      // one arrives — so an unjudged run is either a clean exit without a verdict file
+      // (suite-did-not-judge) or a runner that lost its process mid-flight; the latter reports
+      // a NAMED PARTIAL verdict (root decision on #546, option a): the per-file rows the runner
+      // streamed before it died are real results, so the record names them and the files its
+      // death left unreported, with a partial verdictLine — never suite-timed-out with
+      // verdictLine null.
+      const interrupted = result.signal !== null && result.signal !== undefined;
+      const filesJudged = interrupted ? partialFilesJudged(`${result.stdout}\n${result.stderr}`) : [];
+      const reported = new Set(filesJudged.map((row) => row.file));
       return {
         files,
-        verdictLine: null,
+        verdictLine: interrupted
+          ? `partial — interrupted by ${result.signal}; ${filesJudged.length} of ${files.length} file(s) reported before the run died`
+          : null,
         unexpected: [{
-          row: 'suite-did-not-judge',
+          row: interrupted ? 'gate-run-interrupted' : 'suite-did-not-judge',
           script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
+          ...(interrupted ? {
+            signal: result.signal,
+            filesJudged,
+            filesUnreported: files.filter((file) => !reported.has(file)),
+          } : {}),
           stderrTail,
         }],
         stderrTail, exit,
