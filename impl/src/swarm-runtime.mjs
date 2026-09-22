@@ -7,6 +7,7 @@ import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PRO
   swarmEncodedReportBody } from './swarm-contract.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
+import { routeQuotaScope } from './provider-faults.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
   contributionContractConflict,
@@ -109,6 +110,24 @@ function boundedStderrTail(raw) {
   return crashedStderrTail(session);
 }
 
+/** The per-file rows a gate run STREAMED before it died (#546, option a): each "# file <path>
+ * (N ms)" block the runner printed is a real result — pass/fail counts and all — so an
+ * interrupted run names what it judged beside what its death left unreported, instead of
+ * leaving the landing a blank timeout with verdictLine null. */
+function partialFilesJudged(stream) {
+  const marks = [...stream.matchAll(/# file (\S+) \((\d+) ms[^)]*\)/g)];
+  return marks.map((mark, index) => {
+    const from = mark.index + mark[0].length;
+    const to = index + 1 < marks.length ? marks[index + 1].index : stream.length;
+    const block = stream.slice(from, to);
+    return {
+      file: mark[1],
+      pass: Number((block.match(/# pass (\d+)/) ?? [])[1] ?? 0),
+      fail: Number((block.match(/# fail (\d+)/) ?? [])[1] ?? 0),
+    };
+  });
+}
+
 /** The default regenerators: the three the repository always runs, each told to WRITE.
  *
  * Issue #459: each one is an out-of-process child of the resident's supervised pool — never a
@@ -166,13 +185,28 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
       // same bounded, redacted derivation the regenerator refusal carries (issue #451). No
       // resident-side wall clock arms on this child (#546): a landing waits for the runner's
       // verdict — its own per-file progress deadline is the judged liveness law that guarantees
-      // one arrives — so an unjudged gate run can only mean the runner exited without verdict.
+      // one arrives — so an unjudged run is either a clean exit without a verdict file
+      // (suite-did-not-judge) or a runner that lost its process mid-flight; the latter reports
+      // a NAMED PARTIAL verdict (root decision on #546, option a): the per-file rows the runner
+      // streamed before it died are real results, so the record names them and the files its
+      // death left unreported, with a partial verdictLine — never suite-timed-out with
+      // verdictLine null.
+      const interrupted = result.signal !== null && result.signal !== undefined;
+      const filesJudged = interrupted ? partialFilesJudged(`${result.stdout}\n${result.stderr}`) : [];
+      const reported = new Set(filesJudged.map((row) => row.file));
       return {
         files,
-        verdictLine: null,
+        verdictLine: interrupted
+          ? `partial — interrupted by ${result.signal}; ${filesJudged.length} of ${files.length} file(s) reported before the run died`
+          : null,
         unexpected: [{
-          row: 'suite-did-not-judge',
+          row: interrupted ? 'gate-run-interrupted' : 'suite-did-not-judge',
           script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
+          ...(interrupted ? {
+            signal: result.signal,
+            filesJudged,
+            filesUnreported: files.filter((file) => !reported.has(file)),
+          } : {}),
           stderrTail,
         }],
         stderrTail, exit,
@@ -316,6 +350,10 @@ function foldGuidanceRows(events) {
         state: payload.kind === 'swarm.guidance_parked'
           ? (cleared === null ? 'parked' : 'delivered')
           : payload.delivery?.state ?? 'delivered',
+        // #557: the durable row records whether this park can ever clear; the fold CARRIES that
+        // fact rather than recomputing it, so the receipt, this row and a seat brief all derive
+        // it from the one place it is written.
+        ...(payload.delivery?.terminal === true ? { terminal: true } : {}),
         lane: payload.delivery?.lane ?? null,
         reason: payload.delivery?.reason ?? payload.reason ?? null,
         deliveredTo: cleared?.payload?.deliveredTo ?? null,
@@ -488,7 +526,7 @@ const ROUTE_PROBE_DEADLINE_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
 
 /** The route identity the probe rows are keyed by — the exact coordinates, JSON-spelled, so no
  * label spelling can make two routes collide. */
-const routeProbeRouteKey = (route) => JSON.stringify([route.harness, route.model, route.effort]);
+const routeProbeScopeKey = (route) => routeQuotaScope(route) ?? JSON.stringify([route.harness, route.model, route.effort]);
 
 /** #475: the episode one degrade row is a fact about — the instant it clears (the provider's own
  * reset, else the probe instant its fault's window derived), or the instant it OPENED when it
@@ -513,7 +551,7 @@ const routeProbeEpisodeAt = (degrade) => {
  * dead seat hold the window forever. Keyed, the fact survives a runtime restart: the next recruit
  * reads it and refuses. */
 const routeProbeAdmissionKey = (route, episodeAt, attempt = 1) => {
-  const base = `route.probe_admitted:${hash([routeProbeRouteKey(route), episodeAt])}`;
+  const base = `route.probe_admitted:${hash([routeProbeScopeKey(route), episodeAt])}`;
   return attempt === 1 ? base : `${base}:${attempt}`;
 };
 
@@ -1630,6 +1668,8 @@ export class SwarmRuntime {
     // Issue #296: the deployment's landing authority — `{repoRoot, regenerate?, runGates?}`. Null on
     // a host that holds no git authority to land with, in which case `swarm.integrate` refuses
     // `swarm_command_unavailable` rather than pretending.
+    // Issue #558: `publishRemote` rides the same authority — the deployment's DECLARED shared
+    // remote, null when it declares none (a real landing then refuses instead of staying local).
     integration = null }) {
     Object.assign(this, {
       store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
@@ -2529,9 +2569,9 @@ export class SwarmRuntime {
    * index the entry keeps (`_readRouteProbeLedger`), so a route read costs no ledger walk. */
   _routeProbeEpisodeRecovered(route, episodeAt) {
     this._readRouteProbeLedger();
-    const routeKey = routeProbeRouteKey(route);
+    const routeKey = routeProbeScopeKey(route);
     for (const [, recovery] of this._routeProbeLedger.recovered) {
-      if (recovery.episodeAt === episodeAt && routeProbeRouteKey(recovery.route) === routeKey) {
+      if (recovery.episodeAt === episodeAt && routeProbeScopeKey(recovery.route) === routeKey) {
         return true;
       }
     }
@@ -2590,7 +2630,7 @@ export class SwarmRuntime {
     // recruit that admitted it indexes it directly) is never counted twice by the next delta read —
     // which would mint a phantom second attempt for one probe.
     if (ledger.probesByKey.has(row.key)) return;
-    const routeKey = routeProbeRouteKey(row.route);
+    const routeKey = routeProbeScopeKey(row.route);
     const siblings = ledger.probes.get(routeKey) ?? [];
     const indexed = Object.freeze({
       ...row, attempt: siblings.filter((probe) => probe.episodeAt === row.episodeAt).length + 1,
@@ -2674,7 +2714,7 @@ export class SwarmRuntime {
 
   /** #475: the probes the ledger holds for one route's episode, oldest first. */
   _routeProbeAttempts(route, episodeAt) {
-    const rows = this._routeProbeLedger.probes.get(routeProbeRouteKey(route)) ?? [];
+    const rows = this._routeProbeLedger.probes.get(routeProbeScopeKey(route)) ?? [];
     return rows.filter((probe) => probe.episodeAt === episodeAt);
   }
 
@@ -2736,7 +2776,7 @@ export class SwarmRuntime {
    * the route failed on its own, and the new episode's own `resetAt` rides beside it. */
   _routeProbeFailure(route) {
     this._readRouteProbeLedger();
-    const attempts = this._routeProbeLedger.probes.get(routeProbeRouteKey(route)) ?? [];
+    const attempts = this._routeProbeLedger.probes.get(routeProbeScopeKey(route)) ?? [];
     const latest = attempts.at(-1) ?? null;
     if (latest === null) return null;
     const seat = this._probeSeatState(latest);
@@ -2920,13 +2960,13 @@ export class SwarmRuntime {
     const ledger = this._routeProbeLedger;
     if (ledger.probesByKey.size === 0) return;
     const retired = rows === null ? null
-      : new Map(rows.map((row) => [routeProbeRouteKey(row.route), row]));
+      : new Map(rows.map((row) => [routeProbeScopeKey(row.route), row]));
     for (const [probeKey, probe] of ledger.probesByKey) {
       if (ledger.recovered.has(probeKey)) continue;
       const answer = this._probeAnswer(probe);
       if (answer !== null) { this._recordRouteRecovered(probe, answer); continue; }
       if (retired === null) continue;
-      const row = retired.get(routeProbeRouteKey(probe.route)) ?? null;
+      const row = retired.get(routeProbeScopeKey(probe.route)) ?? null;
       // Still degraded (or the route table does not answer for it): nothing has been settled.
       if (row === null || row.degraded != null) continue;
       this._recordRouteRecovered(probe, { at: new Date().toISOString() });
@@ -6298,7 +6338,7 @@ export class SwarmRuntime {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
     const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
-      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot' }), message };
+      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true }), message };
     const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
       { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;
@@ -6315,7 +6355,7 @@ export class SwarmRuntime {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
     const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
-      guidance, { state: 'parked', lane: null, reason }), message };
+      guidance, { state: 'parked', lane: null, reason, ...(reason === 'harness_one_shot' ? { terminal: true } : {}) }), message };
     const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
       { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;
@@ -7405,6 +7445,9 @@ export class SwarmRuntime {
     if (typeof error.script === 'string') detail.script = error.script;
     if (Number.isSafeInteger(error.exit)) detail.exit = error.exit;
     if (typeof error.stderrTail === 'string' && error.stderrTail.length > 0) detail.stderrTail = error.stderrTail;
+    // Issue #558: whether the failed publish rolled the local fast-forward back — the fact that
+    // tells a reader whether the target holds an unpublished squash.
+    if (typeof error.rolledBack === 'boolean') detail.rolledBack = error.rolledBack;
     // Issue #459: the gate run could not take the host verify lease. The queue facts and the holder
     // the wait was behind are the whole actionable content of that refusal.
     if (error.detail && typeof error.detail === 'object' && !Array.isArray(error.detail)) {
@@ -7454,6 +7497,14 @@ export class SwarmRuntime {
       // never blocked and never half-ran a gate set: it refuses, and the scratch checkout is gone.
       case 'integrate_gates_busy':
         refuse(message, 'integrate_gates_busy', detail); break;
+      // Issue #558: the landing cannot publish — the deployment declares no shared remote, or
+      // the declared remote was unreachable or refused the push (the local move is rolled back,
+      // so the target holds no unpublished squash). A landing that cannot publish never reports
+      // a local success.
+      case 'integrate_publish_undeclared':
+        refuse(message, 'integrate_publish_undeclared', detail); break;
+      case 'integrate_publish_failed':
+        refuse(message, 'integrate_publish_failed', detail); break;
       case 'integrate_target_moved':
         refuse(message, 'integrate_target_moved', detail); break;
       case 'integrate_change_invalid':
@@ -7586,6 +7637,9 @@ export class SwarmRuntime {
         target,
         commitSha: tip,
         message,
+        // Issue #558: the deployment's declared shared remote — the landing publishes the landed
+        // ref to it after the fast-forward, and refuses typed when it cannot.
+        publishRemote: authority.publishRemote ?? null,
         // Issue #451: the SAME dependency directories the deployment configures for lane
         // worktrees. Omitted, the worktree authority derives them from where the installs
         // actually sit — the integration checkout never guesses at a root-only `node_modules`.

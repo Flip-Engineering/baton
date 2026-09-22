@@ -3448,13 +3448,53 @@ export function _recordProviderQuotaBlock(coordinator, recorder, handle, fault, 
     return block;
   }
 
+/** #550: a death this deployment can NAME but not as a provider fault. A codex worker that
+ * crashed, was killed or exited abnormally carries a terminal cause whose kind is not
+ * `provider_failure`, so `_mintProviderFaultDeath` returns null for it and NOTHING was recorded
+ * anywhere: the seat read with `leftReason` and `fault` both null, and the operator could not tell
+ * a crash from an OOM kill from a CLI bug — three participants died that way on one route in
+ * swarm-bend2-20260921.
+ *
+ * The observation is recorded into the SAME ledger the provider-fault path writes, so
+ * `providerFaultDeathFor` answers for this death too and the swarm runtime folds its seat-level
+ * fault row. It deliberately does NOT mint a provider-fault attention reason and does NOT fold a
+ * route degrade: the diagnostic is real, the route fact is not claimed, and inventing one would
+ * pause recruits on a route the death said nothing about. */
+export function _recordUnclassifiedDeath(coordinator, recorder, handle, task) {
+    const cause = handle?.terminalCause ?? null;
+    if (!cause || cause.kind === 'provider_failure') return null;
+    if (handle.unclassifiedDeathSeq !== undefined && handle.unclassifiedDeathSeq !== null) return null;
+    const seq = ++coordinator._attentionCursor;
+    handle.unclassifiedDeathSeq = seq;
+    coordinator._providerFaultDeaths ??= new Map();
+    coordinator._providerFaultDeaths.set(handle.id, Object.freeze({
+      workerId: handle.id,
+      taskId: task?.id ?? handle.taskId ?? null,
+      runId: task?.runId ?? handle.runId ?? null,
+      seq,
+      at: new Date(coordinator._now()).toISOString(),
+      code: typeof cause.code === 'string' && cause.code.length > 0
+        ? cause.code : 'worker_died_without_fault',
+      route: null,
+      resetAt: null,
+      resetAtText: null,
+      snapshotSha: null,
+    }));
+    return Object.freeze({ workerId: handle.id, seq, code: 'worker_died_without_fault' });
+  }
+
 export function _settleTransportDeath(coordinator, recorder, handle, task, stopEvent = null) {
     if (!handle) return null;
     coordinator._settleObservedNativeChildren(handle, stopEvent);
-    return coordinator._mintProviderFaultDeath(handle, task ?? coordinator._tasks.get(handle.taskId), {
-      preservation: (task ?? coordinator._tasks.get(handle.taskId))?.progressPreservation ?? null,
+    const resolved = task ?? coordinator._tasks.get(handle.taskId);
+    const minted = coordinator._mintProviderFaultDeath(handle, resolved, {
+      preservation: resolved?.progressPreservation ?? null,
       retention: handle.preservationFailure ?? null,
     });
+    // #550: when this was NOT a provider fault the seat used to settle silently. Record the
+    // unclassified death instead, so the diagnostic is visible without a route claim.
+    if (minted === null) _recordUnclassifiedDeath(coordinator, recorder, handle, resolved);
+    return minted;
   }
 
 export function _mintProviderFaultDeath(coordinator, recorder, handle, task, { preservation = null, retention = null } = {}) {
