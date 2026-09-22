@@ -784,7 +784,8 @@ test('H1-tools (stage: tools absent): the two ordinary tools register with close
   assert.ok(combined.includes('baton_run_resultpin'), 'combined surface gains baton_run_resultpin');
   assert.ok(combined.includes('baton_waves_harvest'), 'combined surface gains baton_waves_harvest');
   assert.equal(new Set(combined).size, combined.length, 'the combined table carries no duplicate spellings');
-  assert.equal(combined.length, 109, 'measured combined total');
+  assert.equal(combined.length, 149,
+    'measured combined total (56 ordinary + the advanced and reflex families + the 40 canonical dot twins)');
   const { server } = mockAppServer();
   await initialized(server);
   const list = await wireRequest(server, 2, 'tools/list', {});
