@@ -290,7 +290,10 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
     assert.equal(sha(readFileSync(join(root, 'events.jsonl'))),
       '0baa9c18c598e1face7da42bf9e773a6d29588fdfa56f00322e383963d1927ea');
     assert.equal(sha(readFileSync(join(root, 'projection.checkpoint'))),
-      '05ae87e4e892b208ad57cbfef32e397b0429b0a3c4508a5bd31be4268b3b0dc4');
+      // #177 moved this pin: the checkpoint's writer-lease state now carries the acquisition
+      // boundary the holder recorded and the recovered/reclaimed flags a stale-lease recovery
+      // exposes, so the same six events serialize to a different bounded checkpoint.
+      'a3c561371c766feb32f4cde09a93ec7785df5047eadc070c366b2608fa1da7b6');
 
     assert.equal(store.releaseWriterLease({ requireOwned: true }), true);
     assert.equal(existsSync(join(root, 'writer.lease')), false);
