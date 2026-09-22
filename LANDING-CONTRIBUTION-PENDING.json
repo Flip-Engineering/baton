@@ -1,0 +1,6 @@
+{ "pending": "swarm.contribution_recorded publish blocked by host ENOSPC (ledger append refused); retry with: node $BATON_SWARM_CLIENT swarm.update -- event swarm.contribution_recorded; then swarm.integrate contributionId + target master; then git ls-remote to confirm publish",
+  "commit": "689260bc7ca6ed7acecc2a850e579adb332c0ec1", "branch": "baton/ws-4c493b8f4acbc4de0e9f91ddc72e526d",
+  "base": "65c913f0df143ec8d01f999047ca5cfdf6f03a51",
+  "subject": "Issues #497/#530/#418 (+ the mechanical half of #498): transport, process and credential families join the limits registry, and the numeric-constant lint closes the audit partition",
+  "items": ["issue497-transport-rows delivered", "issue498-timing-retype-half delivered", "issue530-validation-maxima delivered", "issue418-numeric-constant-lint delivered", "issue498-timing-residue not_delivered (next landing; lint table is the work list)", "issue377-byte-families not_delivered (next landing; lint table is the work list)"],
+  "blocker": "host disk 96-97% full; full suite ENOSPC-dies; ledger appends intermittently refused" }
