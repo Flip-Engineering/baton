@@ -1,0 +1,9 @@
+{
+  "pid": 21623,
+  "reply": "uds:/tmp/cc-socks/21623.sock",
+  "control": "/tmp/cc-socks/21623.control.sock",
+  "session_id": "7c72f137-7943-4a2a-b6cb-500a0dfa866d",
+  "routing": "live-session-discovery",
+  "startup_replay": false,
+  "target": "uds:/tmp/cc-socks/56366.sock"
+}
