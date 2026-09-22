@@ -243,7 +243,10 @@ function deploymentError(message) {
  * refuse here, at open, never first at landing time. */
 export function normalizeIntegrationPublishRemote(value) {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'string' || value.length === 0 || value.length > 2048
+  // A non-empty string with no NUL or line breaks, like the module's other path-valued
+  // declarations (hostCapacity.root, the credential cmd/path fields): the bound that matters
+  // is attempt-safety at push time, and an over-long value fails there typed.
+  if (typeof value !== 'string' || value.length === 0
     || value.includes('\0') || /[\r\n]/u.test(value)) {
     throw deploymentError('advanced integration publishRemote must be one non-empty remote URL or path');
   }

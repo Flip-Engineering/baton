@@ -1643,8 +1643,6 @@ export function createDriver(opts) {
     coordination,
     repoRoot: opts.repoRoot,
     repoId: deploymentRepoId,
-    // Issue #558: the declared shared remote the landing authority publishes to (null declares none).
-    integrationPublishRemote,
     scratchOraclePolicy: opts.scratchOraclePolicy,
     reuseDecisionPolicy: opts.reuseDecisionPolicy,
     resolveEnvironmentRef: opts.reuseDecisionPolicy === undefined ? null : ({ repoId, indexEpoch, overlayDigest, lockfileDigest }) => {
@@ -1882,6 +1880,8 @@ export function createDriver(opts) {
   return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, ready, close, closeAsync, drainAndClose, standingLaws,
     // The deployment checkout root: the swarm situation projection's git authority (#318) derives
     // the swarm's base commit and the rows landed since from it.
-    repoRoot: opts.repoRoot };
+    repoRoot: opts.repoRoot,
+    // Issue #558: the declared shared remote the landing authority publishes to (null declares none).
+    integrationPublishRemote };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }
