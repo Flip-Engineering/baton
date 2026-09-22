@@ -228,11 +228,28 @@ function normalizeContextPackageRequest(raw) {
   }
   return Object.freeze({ name: raw.name, branches: Object.freeze(branches) });
 }
+// Issue #71 (orchestrator-wake contract D4.2): the wake rides the command envelope as a
+// run_follow-class transport — a bounded request/response long-poll, never the poll-based
+// /v1/events SSE. Direct-port admission (the lane's own closed normalizer is the argument
+// authority); the web ceiling applies with the wake-named refusal (OQ-4). Both spellings derive
+// through the ONE seam like every direct-port row.
+const ATTENTION_WAIT_WEB_ROWS = Object.freeze([
+  ['attention.wait', Object.freeze(['observe']), Object.freeze(['runId', 'afterCursor', 'timeoutMs'])],
+]);
+const ATTENTION_WAIT_WEB_ENTRIES = Object.freeze(ATTENTION_WAIT_WEB_ROWS.flatMap(([name, capabilities, args]) => {
+  const { canonical, web } = canonicalAndTransportNames(name);
+  return [[web, name, capabilities, args], [canonical, name, capabilities, args]];
+}));
+const ATTENTION_WAIT_ARG_FIELDS = Object.freeze(Object.fromEntries(
+  ATTENTION_WAIT_WEB_ENTRIES.map(([transport, , , args]) => [transport, new Set(args)]),
+));
+const ATTENTION_WAIT_COMMANDS = new Set(ATTENTION_WAIT_WEB_ENTRIES.map(([transport]) => transport));
 const WEB_DIRECT_PORT_COMMANDS = new Set([
   ...WAVE_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...WORKFLOW_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...DEPLOYMENT_WEB_ENTRIES.map(([transport]) => transport),
   ...CONTEXT_PACKAGE_COMMANDS,
+  ...ATTENTION_WAIT_COMMANDS,
 ]);
 const WORKFLOW_DOT_WEB_ENTRIES = Object.freeze(WORKFLOW_WEB_ENTRIES
   .map(([transport, name, capabilities]) => [name, name, capabilities]));
@@ -271,6 +288,7 @@ const COMMAND_CAPABILITY = Object.freeze({
   ...Object.fromEntries(WAVE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(WAVE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(ATTENTION_WAIT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(DEPLOYMENT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(CONTEXT_PACKAGE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
@@ -291,6 +309,8 @@ const READ_ONLY_COMMANDS = new Set([
   // read-only lanes are named beside it, both spellings, exactly like WAVE_DOT_WEB_ENTRIES.
   'run_message_receipt', 'run.message.receipt',
   'run_attention_watch', 'run.attention.watch',
+  // Issue #71: the wake is a read — an honest empty is a result, never a mutation (D1.3/D3.3).
+  ...ATTENTION_WAIT_COMMANDS,
   'run_scratchpad_read', 'run.scratchpad.read',
   'run_board_read', 'run.board.read',
 ]);
@@ -340,6 +360,7 @@ const ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(Object.entries(CONTEXT_PACKAGE_ARG_FIELDS)),
+  ...ATTENTION_WAIT_ARG_FIELDS,
 });
 const ACCEPTED_ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(Object.entries(ARG_FIELDS).map(([transport, fields]) => [transport, fields])),
@@ -368,6 +389,10 @@ const APPLICATION_COMMAND = Object.freeze({
   // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
   // WAVE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
   run_scratchpad_append: 'run.scratchpad.append',
+  // Issue #71 (D4.2): the wake transport resolves to its lane; the APPLICATION_COMMAND spread
+  // above derives it too — the literal pins the routing beside the table like its sibling.
+  attention_wait: 'attention.wait',
+  'attention.wait': 'attention.wait',
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -1168,6 +1193,14 @@ function validateEnvelope(envelope) {
   // asked for 120 s after 30 s with no marker — now refuses the same way, structured: the field,
   // the ceiling value and the remedy. A declared value that is not a number cannot exceed the
   // ceiling, so it keeps the dispatch arm's own historical coercion.
+  // Issue #71 (D4.2/OQ-4): the web wake's transport ceiling — the SAME row the other wait arms
+  // read — refuses by the wake-named code. A longer held wake is a web-surface bound to raise
+  // there, never in the lane. Direct ports skip the application-validator block above, so this
+  // arm is where the wake draws its ceiling.
+  if (ATTENTION_WAIT_COMMANDS.has(envelope.command)
+    && envelope.args.timeoutMs > WEB_WAIT_CEILING_ROW.value) {
+    return webWaitCeilingRefusalCode('application_attention');
+  }
   if (envelope.command === 'wait' && Number(envelope.args.timeoutMs) > WEB_WAIT_CEILING_ROW.value) {
     const requested = Number(envelope.args.timeoutMs);
     return {

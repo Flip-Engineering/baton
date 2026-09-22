@@ -2186,6 +2186,11 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.wait', 'mcp.baton', 'baton_run_wait'],
   ['run.resume_work', 'mcp.baton', 'baton_run_resume_work'],
   ['run.retry_verification', 'mcp.baton', 'baton_run_retry_verification'],
+  // Issue #71: the orchestrator wake is a direct port with no canonical operation row, so its
+  // ordinary MCP spelling and the bridge-floor dot spelling resolve through these rows (the same
+  // posture the five non-canonical baton_run_* siblings ride above).
+  ['attention.wait', 'mcp.baton', 'baton_attention_wait'],
+  ['attention.wait', 'mcp.web-bridge', 'attention.wait'],
   ['run.adopt', 'mcp.fleet', 'fleet_run_adopt'],
   ['run.answer', 'mcp.fleet', 'fleet_run_answer'],
   ['run.approve', 'mcp.fleet', 'fleet_run_approve'],

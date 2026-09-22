@@ -5,9 +5,9 @@
     "canonicalOperations": 97,
     "cliWebCommands": 57,
     "parserLifecycleActions": 30,
-    "mcpApplicationTools": 56,
+    "mcpApplicationTools": 57,
     "mcpAdvancedTools": 19,
-    "mcpCombinedTools": 109,
+    "mcpCombinedTools": 110,
     "mcpDispatchTools": 111,
     "webBusCommands": 46,
     "applicationCommandDefinitions": 41
@@ -152,6 +152,7 @@
       "baton_run_message_receipt",
       "baton_run_resultpin",
       "baton_waves_harvest",
+      "baton_attention_wait",
       "baton_swarm_list",
       "baton_swarm_create",
       "baton_swarm_view",
@@ -193,6 +194,7 @@
       "fleet_wait"
     ],
     "mcp.combined": [
+      "baton_attention_wait",
       "baton_board_close",
       "baton_board_drop",
       "baton_board_post",

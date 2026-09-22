@@ -1,22 +1,22 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, WEB_WAIT_CEILING_ROW, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY,
   SURFACING_MATRIX_KEYS,
+  WAKE_REASONS,
   canonicalAndTransportNames,
   canonicalOperationForCommand,
   deriveSurfaceNames,
 } from './application-semantics.mjs';
-import { compileWavefile } from './workflow-dsl.mjs';
-import { SWARM_MCP_TOOL_DEFINITIONS } from './swarm-surface.mjs';
 import { EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
 import { SERVICES_LIST_INPUT_SCHEMA } from './provider-services.mjs';
 
+import { SWARM_MCP_TOOL_DEFINITIONS } from './swarm-surface.mjs';
 // Issue #233 (canonical naming unification): every mcp-flagged application definition is
 // admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
 // canonical dot-name (the definition key, the durable identity) beside its derived fleet_*
@@ -204,7 +204,9 @@ const CAPABILITY = Object.freeze({
   baton_run_message_send: ['control', 'observe'],
   baton_run_message_receipt: ['observe'],
   baton_run_attention_watch: ['observe'],
-  baton_run_scratchpad_read: ['observe'],
+  // Issue #71 (D4.1): the wake is a read — the observe class; the answering capability rides
+  // the answer commands the wake items address, never the wake itself.
+  baton_attention_wait: ['observe'],
   baton_run_scratchpad_elevate: ['control', 'observe'],
   baton_run_scratchpad_append: ['control', 'observe'],
   baton_run_knowledge_seed: ['control', 'observe'],
@@ -527,6 +529,9 @@ function stateFailureCode(cause) {
   // slice 1 owns the context_eval/decision codes in this same rule. Missing/changed artifact
   // bytes collapse to the one typed `artifact_unavailable` tool error, never a silent recompute.
   if (['attention_scope_forbidden', 'attention_scope_invalid', 'attention_target_invalid'].includes(cause?.code)) return cause.code;
+  // Issue #71 (H8/D6): the wake lane's malformed-request refusal surfaces typed — it has no
+  // application_ prefix, so without this row it would degrade to command_outcome_unknown.
+  if (cause?.code === 'attention_wait_invalid') return cause.code;
   // Facade-projection epic (#87+#48): the scratchpad-settlement family (scratchpad_cursor_stale is
   // deliberately NOT mapped — the fence CAS is not projected, Decision 6).
   if (['scratchpad_settlement_invalid', 'scratchpad_settlement_conflict', 'scratchpad_settlement_not_ready',
@@ -911,6 +916,22 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
       runId,
     }, ['repoId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  // Issue #71 (orchestrator-wake contract D4.1/H7): the orchestrator wake on the ordinary
+  // surface beside its attention.watch sibling. Observe-class; the split cursor
+  // {storeCursor, reasonsCursor} is the B1 wire shape, never one folded token; the TIGHT
+  // ceiling guard below (the web 30s precedent) bounds timeoutMs, and a connection close
+  // aborts the in-flight wait through its signal.
+  {
+    name: 'baton_attention_wait',
+    description: 'Long-poll the orchestrator attention wake for one Run: actionable items first (a plan awaiting approval, pending decisions, questions, and approvals, each carrying its run.answer address) beside the closed wake reasons, and the honest empty {woken:false, timedOut:true} with both cursors unchanged on the transport bound.',
+    inputSchema: schema({
+      ...repo, runId,
+      afterCursor: schema({ storeCursor: { type: 'integer', minimum: 0 }, reasonsCursor: { type: 'integer', minimum: 0 } }, ['storeCursor', 'reasonsCursor']),
+      timeoutMs: { type: 'integer', minimum: 1 },
+      kind: { type: 'string', enum: WAKE_REASONS },
+    }, ['repoId', 'runId', 'afterCursor', 'timeoutMs']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ].map((tool) => Object.freeze({
   ...tool,
@@ -1381,12 +1402,10 @@ const MATRIX_REFLEX_TOOL_DEFINITIONS = Object.freeze(SURFACING_MATRIX_MCP_ROWS.m
     execution: Object.freeze({ taskSupport: 'forbidden' }),
   });
 }));
-// The combined reflex table = the legacy context_eval + the full matrix projection.
-// baton_decision_answer moved to the ORDINARY table at MCP-W1 (v1.0.1 adjudication), so the
-// interleaved legacy[1] splice is gone.
 const REFLEX_TOOL_DEFINITIONS = Object.freeze([
   LEGACY_REFLEX_TOOL_DEFINITIONS[0], ...MATRIX_REFLEX_TOOL_DEFINITIONS,
 ]);
+
 // Read-only reflex tool names needing typed-error reach through the observe-path error gate
 // (Part F rule 12) — merged across both slices.
 const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
@@ -1400,6 +1419,7 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
   'baton_knowledge_settlement_lease',
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+  'baton_attention_wait',
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
   'baton_wakes_subscribe', 'baton_wakes_unsubscribe', 'baton_wakes_since',
@@ -1419,6 +1439,8 @@ const EXPLICIT_TOOL_COMMANDS = Object.freeze({
   baton_run_knowledge_seed: 'run.knowledge.seed',
   // Issue #99/#179: the accessor's dispatch identities.
   baton_run_resultpin: 'run.resultpin', baton_waves_harvest: 'waves.harvest',
+  // Issue #71: the orchestrator wake's dispatch identity (a direct port, no table key).
+  baton_attention_wait: 'attention.wait',
 });
 /** The application command an ordinary tool dispatches, or null for tools that reach a direct
  * method (doctor) or the kernel. One lookup serves the host's advertisement filter and the gate. */
@@ -1677,10 +1699,13 @@ function validateArguments(name, args, maxWaitMs = null) {
     if (['fleet_run_wait', 'fleet_run_follow', 'baton_run_wait', 'baton_run_follow'].includes(name)
       && (!Number.isSafeInteger(maxWaitMs) || args.timeoutMs > maxWaitMs)) return 'invalid_run_wait';
   }
+  // Issue #71 (D4.1/H7): the wake's MCP ceiling is TIGHT — the web 30s precedent, not the
+  // deployment maxWaitMs — because a held tools/call lane on the stdio channel is the wake's
+  // primary blast radius. A connection close aborts the in-flight wait through its signal.
+  if (name === 'baton_attention_wait'
+    && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs > WEB_WAIT_CEILING_ROW.value)) return 'invalid_run_wait';
   if (name === 'fleet_spawn') {
     if (!nonempty(args.harness) || !record(args.brief)) return 'invalid_spawn';
-    if (Object.hasOwn(args, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')) return 'invalid_run_id';
-    if (Object.hasOwn(args, 'model') && !nonempty(args.model)) return 'invalid_model';
     if (Object.hasOwn(args, 'effort') && !nonempty(args.effort)) return 'invalid_effort';
     if (Object.hasOwn(args, 'modelPolicy') && !record(args.modelPolicy)) return 'invalid_model_policy';
     if (record(args.modelPolicy)) {
@@ -1898,6 +1923,18 @@ function validateArguments(name, args, maxWaitMs = null) {
       || (Object.hasOwn(args, 'kind') && (typeof args.kind !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(args.kind)))
       || (Object.hasOwn(args, 'cursor') && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))) {
       return 'invalid_attention_watch';
+    }
+  }
+  if (name === 'baton_attention_wait') {
+    const afterCursor = record(args.afterCursor) ? args.afterCursor : null;
+    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
+      || afterCursor === null
+      || !Number.isSafeInteger(afterCursor.storeCursor) || afterCursor.storeCursor < 0
+      || !Number.isSafeInteger(afterCursor.reasonsCursor) || afterCursor.reasonsCursor < 0
+      || !Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0
+      || (Object.hasOwn(args, 'kind') && (typeof args.kind !== 'string'
+        || !WAKE_REASONS.includes(args.kind)))) {
+      return 'invalid_attention_wait';
     }
   }
   if (name === 'baton_run_scratchpad_read') {
@@ -2887,6 +2924,20 @@ export class McpFleetServer {
           throw cause;
         }
       }
+    }
+    else if (name === 'baton_attention_wait') {
+      // Issue #71 (D4.1): the wake dispatches to the lane with its connection-derived
+      // principal; a transport close maps to the lane's cancelled receipt through the
+      // AbortSignal the lane threads into the store's waitAfter.
+      value = await this.application.command('attention.wait', {
+        runId: args.runId,
+        afterCursor: args.afterCursor,
+        timeoutMs: args.timeoutMs,
+        ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'baton_run_scratchpad_read') {
       value = await this.application.command('run.scratchpad.read', {
