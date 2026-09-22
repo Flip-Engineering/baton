@@ -1257,6 +1257,76 @@ test('W3-signal (stage[policy-missing:signal-on-members-done]): when a named rol
   }
 });
 
+// #175 — the naming trap. `signalOnMembersDone.roles` is the WATCHED set whose terminality
+// fires the signal; the recipients are the COMPLEMENT (workflow-interpreter.mjs:927-939 builds
+// recipients = [...handles.keys()].filter((role) => !signalRoles.has(role))). The pinned
+// semantics are correct — the defect was that no author-facing surface stated the direction,
+// so the field name invites reading `roles` as the recipient list. This row pins BOTH halves:
+// the delivery lands on the complement only, and the wavefile contract states the direction
+// where an author reads it.
+test('W3-signal-complement (#175): recipients are the complement of roles — the watched set is never messaged, and the contract states the direction', async (t) => {
+  // The author-facing direction statement: the contract's signalOnMembersDone bullet must name
+  // roles as the watched set and the recipients as the complement. Red-first: this assertion
+  // fails until the direction is stated in the wavefile surface.
+  const contract = readFileSync(new URL(
+    '../../docs/reference/evidence/workflow-as-data-2026-08-06/workflow-as-data-contract.md',
+    import.meta.url,
+  ), 'utf8');
+  const bulletStart = contract.indexOf('- `signalOnMembersDone`');
+  assert.ok(bulletStart >= 0, 'fixture: the contract carries a signalOnMembersDone steering bullet');
+  const nextBlock = contract.indexOf('\n**', bulletStart);
+  const bullet = contract.slice(bulletStart, nextBlock === -1 ? undefined : nextBlock);
+  assert.match(bullet, /watched/i,
+    '#175: the signalOnMembersDone bullet states that roles is the WATCHED set whose terminality fires the signal');
+  assert.match(bullet, /complement/i,
+    '#175: the signalOnMembersDone bullet states that the recipients are the COMPLEMENT of roles — the field name invites reading roles as the recipient list, and the surface must say otherwise');
+
+  const fx = await wadFixture(t, {
+    adapter: new TrackingMarkerAdapter({
+      harness: 'mock',
+      scenariosByMarker: {
+        'w3c-lead': { outcome: 'completed', edits: [{ path: 'reports/w3c-lead.md', content: 'lead done\n' }] },
+        'w3c-worker-a': { outcome: 'completed', edits: [{ path: 'reports/w3c-worker-a.md', content: 'a done\n', delayMs: 100 }] },
+        'w3c-worker-b': { outcome: 'completed', edits: [{ path: 'reports/w3c-worker-b.md', content: 'b done\n', delayMs: 100 }] },
+      },
+    }),
+  });
+  writeObjective(fx.repo, 'w3c-lead', 'write the lead report, then finish');
+  writeObjective(fx.repo, 'w3c-worker-a', 'write report a slowly, then finish');
+  writeObjective(fx.repo, 'w3c-worker-b', 'write report b slowly, then finish');
+  const spec = validSpec({
+    idempotencyKey: 'w3-signal-complement',
+    members: [wadMember('w3c-lead'), wadMember('w3c-worker-a'), wadMember('w3c-worker-b')],
+    steering: {
+      signalOnMembersDone: {
+        roles: ['w3c-lead'],
+        message: { kind: 'query', body: 'the lead is done — complement only' },
+      },
+    },
+  });
+  const receipt = await driveLane(fx.baton, 'policy-missing:signal-on-members-done', spec);
+  const events = (receipt.steering ?? []).filter((event) => event.trigger === 'signalOnMembersDone');
+  assert.ok(events.length >= 1, '#175: the signal fires when the watched role reaches terminal');
+  assert.deepEqual(
+    [...new Set(events.flatMap((event) => event.recipients ?? []))].sort(),
+    ['w3c-worker-a', 'w3c-worker-b'],
+    '#175: the receipt names the recipients as the COMPLEMENT of roles — the watched role is not a recipient',
+  );
+  // F3 wire proof: the [MESSAGE frame reached each complement member and never the watched role.
+  const markerOf = new Map(fx.adapter.calls.spawn.map((call) => [call.worker, call.marker]));
+  const frames = fx.adapter.calls.prompt.filter((call) => typeof call.message === 'string'
+    && call.message.includes('the lead is done'));
+  assert.ok(frames.every((call) => call.message.includes('[MESSAGE ')),
+    '#175: the signal rode the coordinator [MESSAGE delivery frame');
+  const framedMarkers = [...new Set(frames.map((call) => markerOf.get(call.worker) ?? null))].sort();
+  assert.deepEqual(framedMarkers, ['w3c-worker-a', 'w3c-worker-b'],
+    '#175: the signal was delivered to the complement members and never to the watched role');
+  assert.equal(receipt.outcomes.length, 3, 'all three members settle');
+  for (const outcome of receipt.outcomes) {
+    assert.ok(outcome.terminal === true || outcome.phase === 'result_ready', `${outcome.role} settles`);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // W4 — harvest paths recover with per-path receipts; a mustContain mismatch is a named miss.
 // ---------------------------------------------------------------------------

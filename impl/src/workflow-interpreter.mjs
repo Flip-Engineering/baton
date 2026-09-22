@@ -924,7 +924,10 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
   while (pending.size > 0) {
     await Promise.all([...pending].map((role) => processMember(role)));
 
-    // 8. signalOnMembersDone — when the named roles are terminal, signal the remaining members.
+    // 8. signalOnMembersDone — `roles` is the WATCHED set whose terminality fires this signal;
+    // the signal is delivered to the COMPLEMENT (every member not named in roles), never to a
+    // watched role. The field name invites reading roles as the recipient list (#175); it is the
+    // watched set — the wavefile contract states the same direction where authors read it.
     if (st.signalOnMembersDone && !s.signaled && signalRoles.size > 0
       && [...signalRoles].every((role) => doneRoles.has(role) || !handles.has(role))) {
       s.signaled = true;
