@@ -1,6 +1,7 @@
 // Canonical authority ordering. JavaScript's relational string comparison is defined over UTF-16
 // code units and is independent of host locale/ICU configuration. Keep display collation elsewhere.
 
+import { FRAME_LIMITS } from './limits.mjs';
 export const CANONICAL_ORDER_VERSION = 1;
 export const CANONICAL_CASE_FOLD_VERSION = 1;
 // Issue #500: the canonical-order implementation ceilings. A deployment-supplied policy
@@ -14,9 +15,9 @@ export const CANONICAL_CASE_FOLD_VERSION = 1;
 // moving one moves every policy judged against it.
 const MAX_CANONICAL_ITEMS = 1_000_000;
 const MAX_CANONICAL_DEPTH = 256;
-const MAX_LEDGER_BYTES = 1024 * 1024 * 1024;
-const MAX_EVENT_BYTES = 16 * 1024 * 1024;
-const MAX_RECEIPT_BYTES = 1024 * 1024;
+const MAX_LEDGER_BYTES = FRAME_LIMITS['ledger.replay_max_bytes'].value;
+const MAX_EVENT_BYTES = FRAME_LIMITS['ledger.event_max_bytes'].value;
+const MAX_RECEIPT_BYTES = FRAME_LIMITS['ledger.receipt_max_bytes'].value;
 
 function closedOptions(value, fields, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)

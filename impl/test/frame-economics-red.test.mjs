@@ -501,6 +501,33 @@ const SUBSTRATE_LANES = Object.freeze([
   // over. Its sibling deadline row (route.probe_deadline_ms, unit ms) is pinned by the #375 suite
   // itself, because A3 reads every listed substrate row as BYTES and an ms row must not weaken it.
   ['route.probe_capture', 2048],
+<<<<<<< HEAD
+=======
+  // #497: the wave progress snapshot's serialization ceiling — the corridor default minus the
+  // wire frame (7 MiB), declared once in the registry and read by wave.mjs; the harvest
+  // changedFiles page (one quarter of the wire frame, #89) joins the scan the same way.
+  ['wave.progress_bytes', 7340032],
+  ['harvest.changed_files_page_bytes', 262144],
+  // #497/#498/#377 (landing two): the byte families whose sites fully migrated join the scan —
+  // ledger event/receipt, provider frame, knowledge policy artifact/event, advisory header,
+  // atlas source/artifact, workspace capacity/reserve/quantum/file, review report/preverdict,
+  // and the credential cache file.
+  ['ledger.event_max_bytes', 16777216],
+  ['ledger.receipt_max_bytes', 1048576],
+  ['provider.wire_frame_bytes', 16777216],
+  ['knowledge.policy_artifact_max_bytes', 16777216],
+  ['knowledge.policy_event_max_bytes', 67108864],
+  ['advisory.header_max_bytes', 262144],
+  ['atlas.source_max_bytes', 16777216],
+  ['atlas.artifact_max_bytes', 67108864],
+  ['workspace.capacity_max_bytes', 2147483648],
+  ['workspace.reserve_bytes', 67108864],
+  ['workspace.observation_quantum_bytes', 67108864],
+  ['workspace.file_max_bytes', 536870912],
+  ['review.report_max_bytes', 16777216],
+  ['review.preverdict_read_bytes', 16777216],
+  ['credential.cache_file_bytes', 65536],
+>>>>>>> a0abb7f8 (Issues #498/#377: the timing and byte families the systemic sweep flagged join the limits registry — limits.mjs v1.5.0)
 ]);
 // spill.body (1 MiB) is the one substrate row that mints a refusal (blocker 3).
 
@@ -1642,8 +1669,37 @@ const STORE_EXEMPTIONS = Object.freeze([
 ]);
 
 const F_EXEMPTIONS = Object.freeze([
+<<<<<<< HEAD
   ['acp-json-rpc-process.mjs', /maxFrameBytes = options\.maxFrameBytes \?\? 1024 \* 1024/u, 'uncataloged: sibling-transport frame bound'],
   ['adapter.mjs', /maxWireFrameBytes: 1024 \* 1024/u, 'uncataloged: sibling-transport frame bound'],
+=======
+  // #497/#498/#377 landing two: the 64 KiB / 64 MiB / 2 GiB magnitudes are now cataloged values, so
+  // every same-magnitude DIFFERENT-meaning bound is named here (AS-6 identity/shape class, exec
+  // buffers, per-file read guards). The next registration pass shrinks this block.
+  ['application.mjs', /validText\(rendered, 64 \* 1024\)|maxOutputBytes: 64 \* 1024/u, 'uncataloged: rendered-text validator and default output bound'],
+  ['application-deployment.mjs', /Math\.max\(64 \* 1024 \* 1024, Math\.ceil\(bytes \* 2\) \+ \(64 \* 1024 \* 1024\)\)/u, 'uncataloged: atlas default floor (the artifact-ceiling magnitude, floor semantics)'],
+  ['atlas-representation-producer.mjs', /maxSourceRefBytes > 64 \* 1024/u, 'uncataloged: representation source-ref bound'],
+  ['capability-registry.mjs', /64 \* 1024/u, 'uncataloged: idempotency record headroom over the envelope'],
+  ['claude-session.mjs', /maxBuffer: 64 \* 1024|<= 64 \* 1024/u, 'uncataloged: version/doctor probe buffers and status shape'],
+  ['cli-adapters.mjs', /maxBuffer: 64 \* 1024/u, 'uncataloged: probe buffer'],
+  ['cairn-run-scorecard.mjs', /maxQueryBytes > 64 \* 1024|maxSnippetBytes > 64 \* 1024|maxReasonBytes > 64 \* 1024/u, 'uncataloged: recall query/snippet/reason bounds'],
+  ['coordination-internals.mjs', /maxSnippetBytes <= 64 \* 1024|maxReasonBytes <= 64 \* 1024/u, 'uncataloged: snippet/reason policy bounds'],
+  ['coordination-ledger.mjs', /maxQueryBytes <= 64 \* 1024|maxSnippetBytes <= 64 \* 1024/u, 'uncataloged: recall query/snippet bounds'],
+  ['index.mjs', /maxBytes > 16 \* 1024 \* 1024|maxBuffer: 16 \* 1024 \* 1024/u, 'uncataloged: captured-file seam and git read ceilings (#377 next pass)'],
+  ['lsp-pool.mjs', /perServerMemoryBytes: 512 \* 1024 \* 1024/u, 'uncataloged: per-server memory allowance'],
+  ['npm-proposal-resolver.mjs', /maxBuffer: 16 \* 1024 \* 1024/u, 'uncataloged: ps probe buffer'],
+  ['resident-authority.mjs', /64 \* 1024/u, 'uncataloged: authority file read bounds'],
+  ['result-export.mjs', /Math\.max\(64 \* 1024/u, 'uncataloged: metadata ceiling arithmetic'],
+  ['run-timeline.mjs', /maxBytes = 64 \* 1024/u, 'uncataloged: timeline read default'],
+  ['runtime-admission.mjs', /config\.maxBytes > 16 \* 1024 \* 1024|maxConstraintBytes.*64 \* 1024/u, 'uncataloged: provider-read ceiling and constraint policy bound'],
+  ['result-export.mjs', /maxBuffer: options\.maxBuffer \?\? 16 \* 1024 \* 1024/u, 'uncataloged: export probe buffer'],
+  ['web-northbound.mjs', /maxBodyBytes \?\? 64 \* 1024/u, 'uncataloged: request body bound'],
+  ['web-oidc.mjs', /claimsBytes > 64 \* 1024/u, 'uncataloged: OIDC claims bound'],
+  ['workflow-interpreter.mjs', /OBJECTIVE_REF_MAX_BYTES = 64 \* 1024/u, 'uncataloged: objective reference bound'],
+  ['worktree.mjs', /stat\.size > 64 \* 1024|gitdirStat\.size > 64 \* 1024/u, 'uncataloged: worktree file read guards'],
+  ['harvest-accessor.mjs', /maxBuffer: 64 \* 1024 \* 1024|1024 \* 1024 \* 1024/u, 'uncataloged: git batch read ceilings (#377 next pass)'],
+  ['wake-stream.mjs', /65_536/u, 'uncataloged: websocket frame-header length vocabulary (RFC 6455 wire form)'],
+>>>>>>> a0abb7f8 (Issues #498/#377: the timing and byte families the systemic sweep flagged join the limits registry — limits.mjs v1.5.0)
   ['advisory-feed-registry.mjs', /\{1,2048\}\$/u, 'uncataloged: URL path id-class regex (AS-6)'],
   ['advisory-feed-registry.mjs', /maxIdentityBytes <= 4_096/u, 'uncataloged: advisory card ceilings'],
   ['advisory-feed-registry.mjs', /maxHeaderBytes <= 256 \* 1024/u, 'uncataloged: advisory header ceilings'],
