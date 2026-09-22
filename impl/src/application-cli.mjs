@@ -5684,7 +5684,6 @@ export async function runBatonCli(parsed, client, options = {}) {
   }
   if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
   if (parsed.kind === 'wake_page') return readDeploymentWakePage(parsed, client);
-  if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_watch_filtered') return watchSwarmFiltered(parsed, client);
   if (parsed.kind === 'stream') {
     // Issue #365: the entry passes `{signal, onFollowPage}` for every streaming verb — the SAME
