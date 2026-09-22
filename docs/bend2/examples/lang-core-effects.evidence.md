@@ -27,8 +27,9 @@ The def is `Core.double`, so:
 | `lang-core-effects.c` | `Term core_double_run(Env e, Term* f, IoWork* w)` — reads the U32 argument as the word `(u32)f[0]`, returns the answer as a `Term`; plus a constructor registering `io_eff(CID_CORE_DOUBLE, core_double_run, 0)` |
 | `lang-core-effects.js` | `function core_double(n) { ... }` — the argument arrives as a JS number, the answer returns as a number |
 
-Both names derive mechanically from the def name: host function lowercased with dots to
-underscores, CID uppercased the same way. The def body is just the two imports:
+The JavaScript host function derives mechanically from the def name: lowercased with dots to
+underscores. The C run function's identifier is application-chosen; the CID derives from the def
+name in uppercase with dots changed to underscores. The def body is just the two imports:
 
 ```python
 def Core.double(n: U32) -> IO(U32):
