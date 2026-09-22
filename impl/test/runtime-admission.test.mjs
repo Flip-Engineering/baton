@@ -42,7 +42,7 @@ const MAP_FILE = 'impl/scripts/seam-inventory.json';
 const read = (relative) => readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8');
 const parseOf = (text) => parse(Lang.JavaScript, text).root();
 
-const ARITIES = Object.freeze({"constructor":1,"_assertTickable":0,"_assertReadable":0,"_withAuthorityOp":1,"_acquireAuthorityOp":0,"_trackAuthorityPromise":1,"_fleetDrainOwnsShutdown":0,"_assertOperational":0,"closeAuthority":0,"_drainFailure":1,"reopenAdmission":0,"_ownsLocalResources":1,"_hasPendingInteractionAuthority":0,"_resolveInteractionAuthority":2,"_refuseInteractionFrameId":1,"_resolvePauseAuthority":2,"_admitPauseRecord":5,"captureContribution":1,"observedNativeSubagents":1,"checkContribution":1,"_reservePauseRecord":1,"_withPauseReservation":2,"_isAuthorityCheckout":2,"_capacityWorkerGone":1,"_resolveVendor":1,"_admitResolvedVendor":1,"_selectAutoRoute":1,"_configuredCeiling":1,"_resolveExplicitRoute":1,"_semanticTargetMatches":3,"_providerCapabilityRefusal":2,"_bindStrictProviderGovernance":2,"_admitProviderTurn":3,"_admitContextPackCitations":1,"_derivePendingAttentionItems":1,"_assertAttentionPushServed":2,"_goalPlanAuth":4,"defineGoal":2,"proposePlan":2,"approvePlan":2,"goalPlanStatus":2,"preserveResult":2,"verificationRuntimeDigest":0,"_normalizeResumeRequest":1,"retryVerification":2,"materializeAcceptedResult":3,"_assertNoCycle":2,"attentionFollow":0,"_attentionScopeAuthorized":2,"guideParticipant":2,"send":3,"prepareSemanticInterrupt":1,"_resolveStopRequests":2,"_safeTurnEpoch":1,"_ensureRuntimeScope":1,"_bestEffort":2,"_bestEffortSync":2,"_noteFailure":2,"_normalizeUsage":2,"_validateTerminalUsageSeal":2,"_onStopConfirmed":2,"_sessionPreservationReceipt":2,"observeStopAbsence":1,"claimInteraction":1,"interactionStatus":1,"result":1,"capabilityCards":0,"routeCards":0,"advisoryFeedCards":0,"receiveProviderDelivery":2,"receiveProviderWebhook":2,"invokeCapability":3,"reverifyCapability":4,"invokeCapabilityNorthbound":5,"reverifyCapabilityNorthbound":6,"decideReuse":1,"recheckReuseDecision":1,"_renderCodeOrientation":1,"_answerCodeOrient":4,"admitBoardCommand":1,"admitWorkerBoardCommand":3,"admitReplManifest":2,"admitWorkflowFinding":4,"admitReplBinding":1,"list":0,"localResourceOwnership":1,"wait":0,"_queueTransientProviderTurnRetry":4,"_deriveWorkerStatus":1});
+const ARITIES = Object.freeze({"constructor":1,"_assertTickable":0,"_assertReadable":0,"_withAuthorityOp":1,"_acquireAuthorityOp":0,"_trackAuthorityPromise":1,"_fleetDrainOwnsShutdown":0,"_assertOperational":0,"closeAuthority":0,"_drainFailure":1,"reopenAdmission":0,"_ownsLocalResources":1,"_hasPendingInteractionAuthority":0,"_resolveInteractionAuthority":2,"_refuseInteractionFrameId":1,"_resolvePauseAuthority":2,"_admitPauseRecord":5,"captureContribution":1,"observedNativeSubagents":1,"checkContribution":1,"_reservePauseRecord":1,"_withPauseReservation":2,"_isAuthorityCheckout":2,"_capacityWorkerGone":1,"_resolveVendor":1,"_admitResolvedVendor":1,"_selectAutoRoute":1,"_configuredCeiling":1,"_resolveExplicitRoute":1,"_semanticTargetMatches":3,"_providerCapabilityRefusal":2,"_bindStrictProviderGovernance":2,"_admitProviderTurn":3,"_admitContextPackCitations":1,"_derivePendingAttentionItems":1,"_assertAttentionPushServed":2,"_goalPlanAuth":4,"defineGoal":2,"proposePlan":2,"approvePlan":2,"goalPlanStatus":2,"preserveResult":2,"verificationRuntimeDigest":0,"_normalizeResumeRequest":1,"retryVerification":2,"materializeAcceptedResult":3,"_assertNoCycle":2,"attentionFollow":0,"_attentionScopeAuthorized":2,"guideParticipant":2,"send":3,"prepareSemanticInterrupt":1,"_resolveStopRequests":2,"_safeTurnEpoch":1,"_ensureRuntimeScope":1,"_bestEffort":2,"_bestEffortSync":2,"_noteFailure":2,"_normalizeUsage":2,"_validateTerminalUsageSeal":2,"_onStopConfirmed":2,"_sessionPreservationReceipt":2,"observeStopAbsence":1,"claimInteraction":1,"interactionStatus":1,"result":1,"capabilityCards":0,"routeCards":0,"advisoryFeedCards":0,"receiveProviderDelivery":2,"receiveProviderWebhook":2,"invokeCapability":3,"reverifyCapability":4,"invokeCapabilityNorthbound":5,"reverifyCapabilityNorthbound":6,"decideReuse":1,"recheckReuseDecision":1,"_renderCodeOrientation":1,"_answerCodeOrient":4,"admitBoardCommand":1,"admitWorkerBoardCommand":3,"admitReplManifest":2,"admitWorkflowFinding":4,"admitReplBinding":1,"list":0,"localResourceOwnership":1,"wait":0,"_queueTransientProviderTurnRetry":4,"_deriveWorkerStatus":1,"_admitSharedFanout":1,"_promoteReplObject":2,"_assertReplObjectsServed":2,"_assertReplReviewProjection":1});
 
 const RELOCATED_CLASSES = Object.freeze(['DependencyCycleError', 'SupervisedProcesses']);
 
@@ -61,7 +61,7 @@ const REEXPORTED = Object.freeze(['DependencyCycleError', 'SupervisedProcesses',
  * constructor records nothing through the port — it composes it — so its boundary is
  * (coordinator, opts) and it is not counted here. Slice 12's admission prefixes add their own:
  * _admitDelivery's two stale_rejected appends and two sealed-Run coordination reads. */
-const REROUTE_TOTALS = Object.freeze({ logAppend: 7, mapEvent: 4, coordRecord: 1, coordination: 31 });
+const REROUTE_TOTALS = Object.freeze({ logAppend: 7, mapEvent: 4, coordRecord: 1, coordination: 40 });
 
 test('RA1: the module imports neither monolith and keeps no implicit receiver outside the relocated classes', () => {
   const root = parseOf(read(MEMBER_FILE));
@@ -88,7 +88,7 @@ test('RA2: every runtime_admission_port delegate keeps the member name, paramete
   const delegated = coordinatorFile.members
     .filter((member) => member.evidence.includes('admission:runtime_admission_port'))
     .map((member) => member.name);
-  assert.equal(delegated.length, 89, `expected the 89 moved delegates in the map, found ${delegated.length}`);
+  assert.equal(delegated.length, 93, `expected the 93 moved delegates in the map, found ${delegated.length}`);
 
   const memberRoot = parseOf(read(MEMBER_FILE));
   const memberParams = new Map();
@@ -212,8 +212,8 @@ test('RA5: the map sees the move', () => {
   const map = JSON.parse(read(MAP_FILE));
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-admission target');
-  assert.equal(target.members.length, 102,
-    'the module target carries the 89 bodies, the 10 relocated helper functions, and slice 12\'s three admission prefixes');
+  assert.equal(target.members.length, 110,
+    'the module target carries the moved bodies, the relocated helper functions, and the admission prefixes; issue #69 added the shared fan-out, the promotion facade, and the cited-REPL-object serving guards');
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegates = coordinatorFile.members.filter((member) => member.evidence.includes('admission:runtime_admission_port'));
   for (const member of delegates) {
