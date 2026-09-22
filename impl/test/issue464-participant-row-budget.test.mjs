@@ -200,8 +200,8 @@ test('464-b: a 36-seat swarm\'s participants projection fits one frame', async (
   const bytes = swarmViewBridgeFrameBytes(answer);
   assert.ok(bytes <= CEILING.value,
     `the participants projection of a ${SEATS}-seat swarm fits the ${CEILING.lane} frame (measured ${bytes} B against ${CEILING.value} B) — measured 2.3 MB at HEAD`);
-  assert.equal((answer.participants ?? []).length, SEATS,
-    'the whole roster is served: a seat\'s first look answers every peer (#464 item 2)');
+  assert.equal((answer.participants ?? []).length, SEATS + 1,
+    'the whole roster is served, the synthesized root row included (docs/46 §5.1): a seat\'s first look answers every peer (#464 item 2)');
   assert.equal(answer.page?.next ?? null, null,
     'and no cursor is left: the roster did not have to be walked in pages');
   const roles = (answer.participants ?? []).map((row) => Buffer.byteLength(row.role ?? ''));
@@ -220,7 +220,7 @@ test('464-c: the CLI\'s full view of that fixture stays under the frame', async 
   const bytes = swarmViewBridgeFrameBytes(answer);
   assert.ok(bytes <= CEILING.value,
     `the CLI's full view of a ${SEATS}-seat swarm stays under the ${CEILING.lane} frame (measured ${bytes} B against ${CEILING.value} B) — measured 4.66 MB at HEAD`);
-  assert.equal((answer.participants ?? []).length, SEATS, 'and it carries every seat');
+  assert.equal((answer.participants ?? []).length, SEATS + 1, 'and it carries every seat plus the root row (docs/46 §5.1)');
 });
 
 // ── 464-d: no attention row re-renders a seat's objective ──────────────────────────────────────
@@ -237,7 +237,7 @@ test('464-d: an attention row names its seat; the objective is reached by refere
   await f.recruit('seat-6', objective(6));
 
   const view = await f.call('view', { projection: 'attention' });
-  const rows = view.attention ?? [];
+  const rows = view.attention?.rows ?? [];
   const notice = rows.find((row) => row.kind === 'unreviewed_contribution' && row.participantId === 'seat-0') ?? null;
   assert.ok(notice, 'the attention row for the seat exists (the fixture really mints one)');
   for (const row of rows) {

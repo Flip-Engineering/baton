@@ -230,10 +230,14 @@ test('every projected row family carries its seq and ts; a solo live checkout sh
   assert.equal(Object.keys(view.couplings).length >= 1, true);
 
   // Without a deliberate share, every live participant holds its own checkout: custody is
-  // projected the same way, with shared: false and exactly one holder.
+  // projected the same way, with shared: false and exactly one holder. The root row (docs/46
+  // §5.1, issue #274) is a derived actor row and carries no workspace at all.
   for (const row of view.participants) {
+    if (row.participantId === 'root') continue;
     assert.match(row.workspace.physicalOwnerId, /^ws-[a-f0-9]{32}$/u, `${row.participantId} names its physical checkout`);
     assert.equal(row.workspace.shared, false);
     assert.equal(row.workspace.holderCount, 1);
   }
+  assert.equal('workspace' in view.participants.find((row) => row.participantId === 'root'), false,
+    'the root row carries no workspace (docs/46 §5.4)');
 });

@@ -245,18 +245,6 @@
       "reason": "#566"
     },
     {
-      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: the attention coverage envelope not landed): attention carries its coverage — examined seats are named",
-      "reason": "#268"
-    },
-    {
-      "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: the root participant row not landed): the root is a participant row and its acts render attributed",
-      "reason": "#268"
-    },
-    {
-      "key": "test/issue268-visibility-red.test.mjs :: #364 RED (stage: SWARM_PARTICIPANT_RUNTIME_STATES not exported): the closed runtime state set is exported and every surface reads the ONE derivation",
-      "reason": "#364"
-    },
-    {
       "key": "test/issue499-schema-counts.test.mjs :: 499-M1: each schema file carries exactly one surviving bare 64 (the triaged entryIds batch)",
       "reason": "#566"
     },

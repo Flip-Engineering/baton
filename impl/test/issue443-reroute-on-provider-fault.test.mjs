@@ -217,7 +217,7 @@ test('443-a1: a provider-fault death records ONE reroute_proposed row naming the
   assert.equal(alpha.reroute.policy, 'manual');
 
   // The attention projection names the act, not only the fault.
-  const attention = view.attention.filter((row) => row.kind === 'reroute_proposed');
+  const attention = view.attention.rows.filter((row) => row.kind === 'reroute_proposed');
   assert.equal(attention.length, 1, 'the proposal pages the swarm once');
   assert.equal(attention[0].participantId, 'alpha');
   assert.deepEqual({ ...attention[0].next }, {
@@ -380,7 +380,7 @@ test('443-b3: an auto-rerouted successor under the default continuation policy p
     .filter((row) => row.payload.participantId === successorId);
   assert.equal(requests.length, 1, 'the question is recorded for the auto-rerouted successor');
   assert.equal(requests[0].payload.predecessor, 'alpha');
-  const attention = view.attention.find((row) => row.kind === 'resume_decision_required'
+  const attention = view.attention.rows.find((row) => row.kind === 'resume_decision_required'
     && row.participantId === successorId);
   assert.ok(attention, 'and the view pages the orchestrator for it');
 
@@ -438,12 +438,12 @@ test('443-d1: with no candidate the proposal is empty and the attention row name
   assert.deepEqual(proposal.candidates, [], 'nothing to bind is an empty decision, never a guess');
   assert.equal(proposal.excluded.length, 1);
 
-  const attention = view.attention.filter((row) => row.kind === 'reroute_no_candidate');
+  const attention = view.attention.rows.filter((row) => row.kind === 'reroute_no_candidate');
   assert.equal(attention.length, 1, 'the wait pages once');
   assert.equal(attention[0].participantId, 'alpha');
   assert.equal(attention[0].resetAt, RESET_AT);
   assert.equal(attention[0].next, `wait until ${RESET_AT} or add a route`);
-  assert.deepEqual(view.attention.filter((row) => row.kind === 'reroute_proposed'), [],
+  assert.deepEqual(view.attention.rows.filter((row) => row.kind === 'reroute_proposed'), [],
     'a proposal with no candidate is not also reported as one');
 });
 

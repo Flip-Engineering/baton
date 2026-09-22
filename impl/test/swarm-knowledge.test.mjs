@@ -227,9 +227,12 @@ test('the brief names each knowledge verb with its one situation and the swarm s
   const view = await swarm.view({ participantId: 'gamma' });
   const gammaRow = view.participants.find((row) => row.participantId === 'gamma');
   assert.ok(gammaRow.brief, 'the composed brief is written onto the join');
-  // The situation projection: peers with scopes, contracts, commits since base (from git).
+  // The situation projection: peers, contracts, commits since base (from git). docs/46 §4
+  // (issue #274): alpha is a `swarm`-class peer of gamma — identity, role and the liveness word
+  // only, never the scope.
   assert.match(gammaRow.brief, /## Swarm situation/);
-  assert.match(gammaRow.brief, /- alpha — Build A — scope: impl\/\*\*/);
+  assert.match(gammaRow.brief, /- alpha — Build A; working/);
+  assert.doesNotMatch(gammaRow.brief, /- alpha — Build A — scope:/);
   assert.match(gammaRow.brief, /artifact:iface/);
   assert.match(gammaRow.brief, /Commits landed on the target since the base/);
   assert.match(gammaRow.brief, /land: iface implementation/);

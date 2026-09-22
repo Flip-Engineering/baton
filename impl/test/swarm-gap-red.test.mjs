@@ -90,7 +90,7 @@ test('S-E6 RED (stage: attention-request-leak): an unconfirmed operation row nev
     request: { swarmId: swarm.id, participantId: 'reader', message: secret, idempotencyKey: 'gap-op-1' }, basis: null,
   }, { actor: 'direct:root', key: 'gap-op-1' });
   const view = await readerHandle.view();
-  const parked = view.attention.filter((row) => row.kind === 'operation_unconfirmed');
+  const parked = view.attention.rows.filter((row) => row.kind === 'operation_unconfirmed');
   assert.ok(parked.length > 0, 'the in-flight operation is visible as attention');
   for (const row of parked) {
     assert.equal(Object.hasOwn(row, 'request'), false,

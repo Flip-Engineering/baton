@@ -52,7 +52,8 @@ function familyClient() {
       if (name === 'swarm.view' && args.swarmId === 'swarm:s1' && args.projection === 'attention') {
         return {
           swarmId: 'swarm:s1',
-          attention: [{ kind: 'coupling_writer_gone', participantId: 'flip2', next: { event: 'swarm.coupling_updated', action: 'release' } }],
+          // docs/46 §6 (issue #274): the view's attention is the {rows, coverage} envelope.
+          attention: { rows: [{ kind: 'coupling_writer_gone', participantId: 'flip2', next: { event: 'swarm.coupling_updated', action: 'release' } }], coverage: { examined: ['flip2'], unexamined: [] } },
         };
       }
       throw Object.assign(new Error(`unknown command ${name}`), { code: 'cli_command_unavailable' });

@@ -14,7 +14,8 @@ import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionCo
   isContributionContractBody, projectContributionContract, validateContributionContract,
   validateContributionContractMode } from './contribution-contract.mjs';
 import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES,
-  SWARM_POLICY_FIELDS, SWARM_RESUME_CONTINUATION_MODES, resumeDecisionPending } from './swarm-state.mjs';
+  SWARM_POLICY_FIELDS, SWARM_RESUME_CONTINUATION_MODES, resumeDecisionPending,
+  SWARM_RESERVED_PARTICIPANT_IDS } from './swarm-state.mjs';
 // Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
 // minting a code outside it is a construction-time error.
 import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
@@ -1116,6 +1117,33 @@ export const SWARM_LIVE_RUNTIME_STATES = Object.freeze(['pending', 'working', 'b
 /** The state a participant with no current worker binding is in — not a coordinator status. */
 export const SWARM_UNBOUND_RUNTIME_STATE = 'unbound';
 
+/** docs/46 §1.1/§5.2 (#364, #274): the closed state set every surface validates a participant
+ * `runtime.state` against — the live list, the ended-without-settlement readings, the settled
+ * and lost states (#364), the unbound absence, and `root`, the actor row the view synthesizes
+ * (the resident answering the view IS the liveness evidence). Consumers validate against this
+ * table, never a hard-coded list. */
+export const SWARM_PARTICIPANT_RUNTIME_STATES = Object.freeze([
+  ...SWARM_LIVE_RUNTIME_STATES,
+  'dead', 'exited',
+  'completed',
+  'lost',
+  'unbound',
+  'root',
+]);
+
+/** docs/46 §5.1 (issue #274): the ONE synthesized root row. DERIVED per view, never folded,
+ * never recruited (`root` is a reserved name — swarm-state.mjs membership validation), and
+ * carried by no membership event. It is an ACTOR row: the orchestrator the swarm was created
+ * by, so its reviews, guides and stops render against a participant row instead of a null.
+ * The seat-only fields (`runId`, `workspace`, `activity`, `usage`, the brief reach) are ABSENT
+ * on it, not null-filled — the root has no worker log (docs/46 §5.4). */
+const rootParticipantRow = () => Object.freeze({
+  participantId: 'root',
+  role: 'root',
+  status: 'active',
+  permissions: Object.freeze([...SWARM_PERMISSIONS]),
+  runtime: Object.freeze({ workerId: null, state: 'root', live: true, turn: null }),
+});
 export function swarmParticipantLiveness(worker, pausedTurns = 0) {
   const state = worker?.status ?? SWARM_UNBOUND_RUNTIME_STATE;
   const live = SWARM_LIVE_RUNTIME_STATES.includes(state);
@@ -1553,7 +1581,6 @@ const seatCheckpointRows = (swarm, headSeq) => {
   }
   return checkpoints;
 };
-
 /** Issue #489: take whole rendered BLOCKS under one byte budget — the ONE rule the situation
  * section's age-scaling lists (the published contracts, the commits since the base) are bounded
  * by. A block is kept whole or not at all (a hand-off is cited verbatim, #310 — never clipped
@@ -1573,14 +1600,15 @@ function takeSituationBlocks(blocks, budget) {
   return { lines, taken };
 }
 
-/** docs/45 §6: ONE "peers now" line, rendered from the read's own rows (`_peersRead`) — the
- * work a seat holds (by assignment or by claim), the write turn it holds on a lease, the paths
- * it claims and the checkout they are held on, and its last checkpoint: the captured revision
- * when it has one, else its latest contribution, else recorded absence. A seat holding nothing
- * says so; nothing here is inferred from prose.
- * Exported (issue #441 lane C) so the brief's `Peers now:` block and every reader of a peer row
- * render ONE spelling: the parity pin drives this function over `run.peers.read`'s own rows. */
-export const renderPeerNowLine = (peer) => {
+
+/** docs/45 §6: the clauses of ONE "peers now" line, rendered from the read's own rows
+ * (`_peersRead`) — the work a seat holds (by assignment or by claim), the write turn it holds
+ * on a lease, the paths it claims and the checkout they are held on, and its last checkpoint:
+ * the captured revision when it has one, else its latest contribution, else recorded absence.
+ * A seat holding nothing says so; nothing here is inferred from prose. Exported (issue #441
+ * lane C) so the brief's `Peers now:` block and every reader of a peer row render ONE
+ * spelling; docs/46 §4's brief ladder composes the SAME clauses by relationship class. */
+export const peerNowClauses = (peer) => {
   const held = [
     ...peer.holds.filter((row) => row.kind === 'work').map((row) => `${row.workId} (assigned)`),
     ...peer.holds.filter((row) => row.kind === 'claim' && typeof row.workId === 'string')
@@ -1599,8 +1627,12 @@ export const renderPeerNowLine = (peer) => {
       ? `${peer.lastContribution.contributionId} (seq ${peer.lastContribution.seq}, ${peer.lastContribution.ts})`
       : null;
   clauses.push(checkpoint === null ? 'last checkpoint: none recorded' : `last checkpoint ${checkpoint}`);
-  return `- ${peer.participantId} — ${clauses.join('; ')}`;
+  return clauses;
 };
+
+/** docs/45 §6: ONE "peers now" line — the ONE renderer the brief's `Peers now:` block and the
+ * `run.peers.read` parity pin share. */
+export const renderPeerNowLine = (peer) => `- ${peer.participantId} — ${peerNowClauses(peer).join('; ')}`;
 
 /** docs/47 §5 (#441 item 1): ONE path-claim example, derived from the VALIDATOR's own schema
  * (`swarm-event-schemas.mjs`) — the field examples the bridge serves the contract with, never a
@@ -3350,6 +3382,42 @@ export class SwarmRuntime {
     return ancestorsOf(rightId).has(leftId) || ancestorsOf(leftId).has(rightId);
   }
 
+  /** docs/46 §4 (issue #274): the ONE relationship derivation the recruit brief's exposure
+   * ladder reads — the class a (seat, peer) pair stands in, strongest first (§4.1), consumed by
+   * `_composeRecruitBrief`, never by a second renderer. `seat` is the composed seat's resolved
+   * facts `{participantId, parentId, workspaceId, groups}` — a seat being recruited is not in
+   * the fold yet, so the parent it joins under (the resume orchestrator), the checkout it
+   * deliberately shares and its group rosters ride in. `repository` is the cross-swarm class;
+   * a single swarm's own roster never mints it (the brief's cross-swarm exposure stays the
+   * `scopeOverlap` receipt, §4.2), and the class is answered only when the peer names another
+   * swarm. */
+  _peerExposure(swarm, seat, peer) {
+    const peerSwarm = typeof peer.swarmId === 'string' ? peer.swarmId : swarm.swarmId;
+    if (peerSwarm !== swarm.swarmId) return 'repository';
+    if (peer.participantId === seat.participantId) return 'self';
+    // subtree: either seat the other's ancestor by `parentId` (§4.1) — the same walk
+    // `_delegationRelated` runs, seeded with the parent the composed seat will join under.
+    const ancestorsOf = (id, seedParent) => {
+      const seen = new Set();
+      let current = id === seat.participantId ? seedParent
+        : swarm.participants?.[id]?.parentId ?? null;
+      while (typeof current === 'string' && !seen.has(current)) {
+        seen.add(current);
+        current = swarm.participants?.[current]?.parentId ?? null;
+      }
+      return seen;
+    };
+    const seatAncestors = ancestorsOf(seat.participantId, seat.parentId ?? null);
+    if (seatAncestors.has(peer.participantId)
+      || ancestorsOf(peer.participantId).has(seat.participantId)) return 'subtree';
+    if ((seat.workspaceId ?? null) !== null && peer.workspaceId === seat.workspaceId) return 'checkout';
+    const seatGroups = seat.groups ?? new Set();
+    for (const group of Object.values(swarm.groups ?? {})) {
+      if (seatGroups.has(group.groupId) && (group.members ?? []).includes(peer.participantId)) return 'group';
+    }
+    return 'swarm';
+  }
+
   /** Issue #464: the participant row's `brief` projection. The row carries the TEXT where this
    * caller is entitled to it — today's rule, unchanged: the participantId-scoped read's own
    * seat, the one brief a recruiter wrote FOR that reading — and the REACH
@@ -4385,6 +4453,10 @@ export class SwarmRuntime {
       }
       return changedByWorker.get(worker.id);
     };
+    // docs/46 §6 (issue #274): what the attention derivation LOOKED AT this read — filled by
+    // the per-seat loop below, rendered as the `coverage` half of the attention envelope.
+    const coverageExamined = new Set();
+    const coverageUnexamined = [];
     const boundSeqByParticipant = new Map();
     const joinedSeqByParticipant = new Map();
     // Every brief composition this swarm has recorded, in ledger order — the cadence the
@@ -4430,6 +4502,17 @@ export class SwarmRuntime {
       const worker = this._workerFor(row, workers);
       if (!worker) continue;
       const changed = changedOf(worker);
+      // docs/46 §6.2 (issue #274): the coverage truth rides the rows. A seat whose required
+      // facts were readable was EXAMINED; a seat with a recorded checkout whose change set is
+      // unreadable was NOT — the foreign-changes and unpublished-turn checks skipped, and the
+      // seat is named with them (reason `worktree_unreadable`) instead of passing for examined.
+      // A seat with no recorded checkout has no fact to read: evaluated, and examined.
+      coverageExamined.add(row.participantId);
+      if (changed === null && checkoutOf(worker) !== null) {
+        coverageUnexamined.push({ participantId: row.participantId,
+          checks: Object.freeze(['worktree_foreign_changes', 'turn_ended_without_contribution']),
+          reason: 'worktree_unreadable' });
+      }
       // #357: paths in the seat's own change set but outside its declared scope — the
       // shared-stash swap of 2026-09-17 read as silence until a contribution paragraph said
       // so twenty minutes later. A seat with no declared scope has no outside; an unreadable
@@ -4557,6 +4640,19 @@ export class SwarmRuntime {
       }
       return typeof row.participantId === 'string' && scopeSubtree.includes(row.participantId) ? [row] : [];
     });
+    // docs/46 §6 (issue #274): the envelope — `rows` are the array above, byte-identical to
+    // the pre-envelope derivation; `coverage` names what the derivation examined and what it
+    // could not. A scoped view scopes coverage exactly as it scopes rows (§6.4): the same
+    // subtree filter applies to both lists.
+    const coverage = {
+      examined: [...coverageExamined].sort(compareCanonicalStrings),
+      unexamined: coverageUnexamined
+        .sort((left, right) => compareCanonicalStrings(left.participantId, right.participantId)),
+    };
+    const scopedCoverage = !scope ? coverage : {
+      examined: coverage.examined.filter((participantId) => scopeSubtree.includes(participantId)),
+      unexamined: coverage.unexamined.filter((row) => scopeSubtree.includes(row.participantId)),
+    };
     const availableActions = Object.entries(COMMAND_PERMISSIONS)
       .filter(([, permission]) => permissions.includes(permission)).map(([command]) => command);
     if (permissions.includes('contribute') && !availableActions.includes('swarm.check')) availableActions.push('swarm.check');
@@ -4682,6 +4778,28 @@ export class SwarmRuntime {
       ? participants.filter((row) => scopeSubtree.includes(row.participantId))
         .map((row) => (row.participantId === scope.participantId ? row : { ...row, role: null, briefWithheld: true }))
       : participants;
+    // docs/46 §5.3 (issue #274): the ONE attribution render the view's actor-bearing rows read.
+    // An actor is EXTERNAL when it names neither a seat nor any seat's own acting identity —
+    // the swarm's creator, or any other principal the deployment acted as. A seat's acting
+    // identity is its participant id, or the `worker:<id>` principal its bound Run answers as;
+    // a participant row's own `actor` is the JOIN's actor (usually the recruiter) and names no
+    // seat. External acts render against the root row: `actor: 'root'`, and
+    // `reviewerId: 'root'` where the durable row kept the null. Seat-authored rows are
+    // byte-identical to the fold.
+    const seatIds = new Set(Object.values(swarm.participants).map((row) => row.participantId));
+    const seatRunIds = new Set(Object.values(swarm.participants)
+      .map((row) => row.runId).filter((runId) => typeof runId === 'string'));
+    const seatActors = new Set(workers
+      .filter((worker) => seatRunIds.has(worker.runId))
+      .map((worker) => `worker:${worker.id}`));
+    const renderRootAttribution = (row) => {
+      if (typeof row?.actor !== 'string' || seatIds.has(row.actor) || seatActors.has(row.actor)) return row;
+      return {
+        ...row,
+        ...(row.reviewerId === null || row.reviewerId === undefined ? { reviewerId: 'root' } : {}),
+        actor: 'root',
+      };
+    };
     const view = {
       ...clone(swarm),
       // Issue #443: the swarm-level policy the view RENDERS is the resolved one — the fields an
@@ -4689,7 +4807,11 @@ export class SwarmRuntime {
       // the ONE derivation the re-route itself reads. A swarm that never declared a policy still
       // reads what a fault would do.
       policy: this._policyOf(swarm),
-      participants: scopedParticipants,
+      // docs/46 §5.1 (issue #274): the root is a participant row on EVERY view, in EVERY scope
+      // (§5.5) — appended here, at the one place a view is built, so every derivation above
+      // (organization rows, contribution targets, admission, the attention coverage) reads the
+      // fold's roster and never the actor row. The root holds no work and joins no roster.
+      participants: [...scopedParticipants, rootParticipantRow()],
       work: keep(workEntries, ([workId]) => scopeWorkIds.has(workId)),
       assignments: keep(Object.entries(swarm.assignments ?? {}), ([, assignment]) => scopeSubtree.includes(assignment.participantId)
         || scopeWorkIds.has(assignment.workId)),
@@ -4733,7 +4855,14 @@ export class SwarmRuntime {
           seq: queued.seq, ts: queued.ts } } : projected;
       }),
       ...noteRows],
-      reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
+      // docs/46 §5.3 (issue #274): the view renders attribution. The durable review row keeps
+      // `reviewerId: null` with `actor: <principal>` (swarm-state.mjs assertAttribution,
+      // unchanged); here an external principal's act — the swarm's creator's, or any actor with
+      // no seat — projects `reviewerId: 'root'` / `actor: 'root'` against the root row, so the
+      // null never reaches a reader. A review by a seat is untouched.
+      reviews: Object.fromEntries(Object.entries(keep(Object.entries(swarm.reviews ?? {}),
+        ([contributionId]) => scopedContributionIds.has(contributionId)))
+        .map(([contributionId, rows]) => [contributionId, rows.map(renderRootAttribution)])),
       // docs/45 §2/§3, §8: the holds seats take for themselves and the work splits they accept by
       // arriving are ARRAY collections (the one shape, #302) read with the same scoped-read
       // intersection the other collections use — a claim follows its holder's subtree or the work
@@ -4769,7 +4898,11 @@ export class SwarmRuntime {
         }
         const roster = swarm.groups?.[record.groupId]?.members ?? record.members ?? [];
         return roster.some((member) => scopeSubtree.includes(member));
-      }),
+      })
+        // docs/46 §5.3 (issue #274): a holder-release (and every other act recorded here) whose
+        // actor is an external principal renders `actor: 'root'` — `releasedBy` keeps the fold's
+        // spelling, which names a seat or the acting principal (issue #292).
+        .map(renderRootAttribution),
       // The shared context every participant is recruited with is swarm-wide by construction, so a
       // scoped view carries it; an entry written for ONE group follows that group's roster, and is
       // visible to the members who can read the group it belongs to (2026-09-14 audit S-G5).
@@ -4789,11 +4922,14 @@ export class SwarmRuntime {
       // landed since the base, and the caller's predecessor when it is a successor — the SAME
       // derivation the recruit brief's situation blocks render, served as data.
       ...(carriesSituation ? { situation: this._situation(swarm, caller, undefined, scopeSubtree) } : {}),
+      // docs/46 §6.1 (issue #274): attention is the envelope — `rows` keep the array's content,
+      // `coverage` names what the derivation examined and what it could not (§6.2), both scoped
+      // by the same subtree filter. Consumers iterate `attention.rows` (the §9 cutover).
+      availableActions, attention: { rows: scopedAttention, coverage: scopedCoverage },
       // The caller's own standing refusal rides the FRAME, so it is answered whatever projection
       // was asked for — and so the entry can tell that a successful read just retired one.
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions],
         lastRefusal: caller ? lastRefusal(caller.participantId) : null },
-      availableActions, attention: scopedAttention,
       // #329 (+ #269 item 2): host admission per recruited seat and per check (queued /
       // admitted / timed_out with the dimension and numbers), the rows the recruit_queued /
       // recruit_queue_timeout and check_queued / check_queue_timeout attention derives from.
@@ -6907,26 +7043,82 @@ export class SwarmRuntime {
       blocks.push(`Your work item is ${args.workId}${held ? ` — ${held.objective}` : ''}: report progress on it with swarm.work_updated through your bridge.`);
     }
     const situation = [];
-    const peers = Object.values(swarm.participants)
-      .filter((row) => this._canAct(row) && row.participantId !== args.participantId)
-      .map((row) => ({ participantId: row.participantId, role: row.role ?? null, scope: row.scope ?? null,
-        sibling: Boolean(caller && row.parentId && caller.parentId === row.parentId && row.parentId !== null) }));
-    if (peers.length > 0) {
+    // docs/46 §4 (issue #274): the exposure ladder. What a peer's line carries derives from the
+    // ONE relationship derivation (`_peerExposure`, §4.1) and the per-class exposure table
+    // (§4.2): a `subtree`/`checkout` peer reads the docs/45 §6 peers-now line in full (identity,
+    // role, scope, held work and claims, last checkpoint, liveness word); a `group` peer drops
+    // the claims and the checkpoint; a `swarm` peer — no relationship beyond shared membership —
+    // reads identity, role and the liveness word only, never scope, never held work. A
+    // `repository` peer takes no line here at all (the cross-swarm exposure stays the
+    // `scopeOverlap` receipt), and a seat `_canAct` rejects is never listed as a working peer:
+    // gone seats are named once, in the settled-history count below (§4.2 rule 1). Liveness
+    // words come from `swarmParticipantLiveness` verbatim (§4.2 rule 2).
+    const seatFacts = {
+      participantId: args.participantId,
+      parentId: predecessor !== null ? this._resumeOrchestrator(swarm, caller, predecessor, args) : null,
+      workspaceId: (args.shareWorkspaceWith !== undefined
+        ? swarm.participants?.[args.shareWorkspaceWith]?.workspaceId ?? null : null)
+        ?? (typeof predecessorWorkspace?.workspaceId === 'string' ? predecessorWorkspace.workspaceId : null),
+      groups: new Set(),
+    };
+    const briefWorkers = this.coordinator.list();
+    const briefRuntime = (row) => {
+      const worker = this._workerFor(row, briefWorkers);
+      const paused = worker !== null && typeof this.coordinator.pausedTurns === 'function'
+        ? this.coordinator.pausedTurns({ workerId: worker.id }).length : 0;
+      const settledRow = this._runtimeLostCurrent(row) !== null || this._participantFaultCurrent(row) !== null;
+      const liveness = settledRow ? { state: 'lost', live: false, turn: null }
+        : swarmParticipantLiveness(worker, paused);
+      return { workerId: worker?.id ?? null, state: liveness.state, turn: liveness.turn, live: liveness.live };
+    };
+    const rosterPeers = Object.values(swarm.participants)
+      .filter((row) => row.participantId !== args.participantId)
+      .map((row) => {
+        const runtime = briefRuntime(row);
+        return { row, runtime, exposure: this._peerExposure(swarm, seatFacts, row),
+          canAct: this._canAct({ ...row, runtime }) };
+      });
+    const workingPeers = rosterPeers.filter((peer) => peer.canAct && peer.exposure !== 'repository');
+    const gonePeers = rosterPeers.filter((peer) => peer.row.status === 'active' && !peer.canAct);
+    // The peers-now rows the ladder reads its held-work and checkpoint clauses from — the SAME
+    // derivation the seat read serves (`_peersRead`, #441 lane B), never a second peers
+    // computation, and never a live repository read (the section is durable rows only, #438).
+    const peersNow = this._peersRead(swarm, { participantId: args.participantId }, ledger);
+    const nowByPeer = new Map(peersNow.peers.map((peer) => [peer.participantId, peer]));
+    if (workingPeers.length > 0) {
       situation.push('Peers (the seats already working beside you):');
-      for (const peer of peers) {
-        situation.push(`- ${peer.participantId}${peer.sibling ? ' (sibling)' : ''}${peer.role ? ` — ${peer.role}` : ''}${peer.scope ? ` — scope: ${peer.scope.join(', ')}` : ''}`);
+      for (const peer of workingPeers) {
+        const { row, runtime, exposure } = peer;
+        const sibling = Boolean(caller && row.parentId && caller.parentId === row.parentId && row.parentId !== null);
+        const clauses = [];
+        if (row.role) clauses.push(row.role);
+        const graded = exposure === 'subtree' || exposure === 'checkout' || exposure === 'group';
+        if (graded && Array.isArray(row.scope) && row.scope.length > 0) {
+          clauses.push(`scope: ${row.scope.join(', ')}`);
+        }
+        if (graded) {
+          const now = nowByPeer.get(row.participantId) ?? null;
+          if (now !== null) {
+            const nowClauses = peerNowClauses(now);
+            clauses.push(...(exposure === 'group' ? nowClauses.slice(0, 1) : nowClauses));
+          }
+        }
+        clauses.push(runtime.state);
+        situation.push(`- ${row.participantId}${sibling ? ' (sibling)' : ''} — ${clauses.join('; ')}`);
       }
     }
-    // docs/45 §6 (#423): "peers now" — what the other seats that can act hold RIGHT NOW, the
-    // paths they claim on their checkout, and where each one's last checkpoint is. It is the
-    // SAME derivation the seat read serves (`_peersRead`, #441 lane B), rendered here for the
-    // seat being recruited — never a second peers computation, and never a live repository read
-    // (the section is durable rows only, #438). `omitted` is said out loud: a bounded list is
-    // never a silently short one.
-    const peersNow = this._peersRead(swarm, { participantId: args.participantId }, ledger);
-    if (peersNow.peers.length > 0) {
+    // docs/45 §6 (#423) as gated by docs/46 §4: the peers-now lines are unchanged for the
+    // classes that carry them (`subtree`/`checkout`); the classes whose exposure ends below the
+    // line take no line here. `omitted` is said out loud: a bounded list is never a silently
+    // short one.
+    const carryingPeers = peersNow.peers.filter((peer) => {
+      const row = swarm.participants[peer.participantId];
+      return row !== undefined
+        && ['subtree', 'checkout'].includes(this._peerExposure(swarm, seatFacts, row));
+    });
+    if (carryingPeers.length > 0) {
       situation.push('Peers now:');
-      for (const peer of peersNow.peers) situation.push(renderPeerNowLine(peer));
+      for (const peer of carryingPeers) situation.push(renderPeerNowLine(peer));
       if (peersNow.omitted > 0) {
         situation.push(`- ${peersNow.omitted} further seat${peersNow.omitted === 1 ? '' : 's'} not shown`
           + ` (this section is bounded by ${FRAME_LIMITS['view.seat_read.items'].lane} = ${FRAME_LIMITS['view.seat_read.items'].value}; read the rest with run.peers.read)`);
@@ -6981,6 +7173,15 @@ export class SwarmRuntime {
         + ` ha${settled.length === 1 ? 's' : 've'} completed or stopped since the base;`
         + ' their contributions are on the view —'
         + ` ${SWARM_SETTLED_REASONS.map((reason) => `${settledBy.get(reason)} ${reason}`).join(', ')};`
+        + ` read the seats with swarm view ${swarm.swarmId} --projection participants`);
+    }
+    // docs/46 §4.2 rule 1 (issue #274): the gone-not-settled count. A seat whose membership is
+    // still active but whose runtime the ONE liveness derivation calls dead or lost is never
+    // listed as a working peer, so the brief names how many there are instead of letting them
+    // vanish — the settled history keeps its own line and bytes.
+    if (gonePeers.length > 0) {
+      situation.push(`${gonePeers.length} seat${gonePeers.length === 1 ? '' : 's'} with membership still active`
+        + ` ${gonePeers.length === 1 ? 'is' : 'are'} gone (runtime dead or lost — not working peers);`
         + ` read the seats with swarm view ${swarm.swarmId} --projection participants`);
     }
     // Issue #441 (lane C): what the swarm holds, counted by the ONE contributions derivation's
@@ -8092,7 +8293,12 @@ export class SwarmRuntime {
       if (args.event === 'swarm.contribution_reviewed') {
         const actor = this._actorOf(caller, principal);
         if (payload.reviewerId && payload.reviewerId !== actor) refuse('Review author does not match caller', 'swarm_author_mismatch');
-        payload.reviewerId = actor;
+        // docs/46 §5.3 (issue #274): a seat's review is attributed to the seat; an external
+        // orchestrator's review records NO reviewerId at all — the durable row keeps
+        // `reviewerId: null` with `actor: <principal>` (assertAttribution, unchanged), and the
+        // VIEW renders the attribution against the root row, so the null never reaches a reader.
+        if (caller) payload.reviewerId = caller.participantId;
+        else delete payload.reviewerId;
       }
       if (args.event === 'swarm.coupling_updated' && payload.action === 'release') {
         const actor = this._actorOf(caller, principal);
@@ -8370,6 +8576,17 @@ export class SwarmRuntime {
         }
         // Re-read the swarm INSIDE the effect: a rolled-back seat from an earlier attempt must be
         // seen as it is now, not as the dispatch entry snapshot had it.
+        // docs/46 §5.1 (issue #274): `root` is the swarm's creator — the view derives its actor
+        // row, so no seat may wear the name. Refused BEFORE any effect (no shared-checkout
+        // resolution, no admission queueing), with the closed-set membership refusal shape.
+        if (SWARM_RESERVED_PARTICIPANT_IDS.includes(args.participantId)) {
+          refuse(`Swarm participant id '${args.participantId}' is reserved: the root is the swarm's creator and is derived per view, never recruited`,
+            'swarm_command_invalid', {
+              field: 'participantId', rule: 'reserved',
+              reserved: Object.freeze([...SWARM_RESERVED_PARTICIPANT_IDS]),
+              participantId: args.participantId,
+            });
+        }
         const current = this._swarm(args.swarmId);
         // The deliberate shared checkout is resolved inside the effect, before any membership is
         // written: an absent, departed, or process-less source refuses with nothing recorded, so

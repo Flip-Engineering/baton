@@ -200,11 +200,11 @@ test('464b-c: a 36-seat swarm whose seats are busier than the bound still answer
   // roster rides one frame again.
   const f = await linked(t, { seats: 36, commitsPerSeat: 200, maxFrameBytes: WIRE_FRAME });
   const whole = await f.call('view', { projection: 'participants' });
-  assert.equal(whole.participants.length, 36);
+  assert.equal(whole.participants.length, 37, '36 seats plus the synthesized root row (docs/46 §5.1)');
 
   const answer = await f.send('swarm.view', { swarmId: SWARM, projection: 'participants' });
   assert.equal(answer.projection, 'participants');
-  assert.equal(answer.participants.length, 36, 'every seat answers in the ONE frame');
+  assert.equal(answer.participants.length, 37, 'every seat answers in the ONE frame, root row included');
   assert.equal(answer.page?.next ?? null, null, 'no cursor: nothing of the roster was left for a second page');
   assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, result: answer })) <= WIRE_FRAME,
     'and the answer fits the frame it was measured against');

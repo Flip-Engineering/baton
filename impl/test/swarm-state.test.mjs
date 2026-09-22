@@ -275,16 +275,20 @@ describe('recruitment and regrouping', () => {
     const swarms = fresh();
     fold(swarms, [
       e('swarm.created', { swarmId: 'sw1', purpose: 'collab' }),
-      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'root', role: 'coordinator', runId: 'run-root' }),
+      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'lead', role: 'coordinator', runId: 'run-lead' }),
       e('swarm.participant_joined', {
         swarmId: 'sw1', participantId: 'scout', role: 'investigator',
-        parentId: 'root', permissions: ['read', 'contribute'],
+        parentId: 'lead', permissions: ['read', 'contribute'],
       }),
     ]);
     const swarm = swarms.get('sw1');
-    assert.equal(swarm.participants['root'].role, 'coordinator');
-    assert.equal(swarm.participants['root'].runId, 'run-root');
-    assert.equal(swarm.participants['scout'].parentId, 'root');
+    // `root` is a reserved id (docs/46 §5.1): the fold refuses a join wearing it.
+    assert.throws(() => fold(swarms, [
+      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'root', role: 'coordinator' }),
+    ]), (error) => error.code === 'participant_reserved');
+    assert.equal(swarm.participants['lead'].role, 'coordinator');
+    assert.equal(swarm.participants['lead'].runId, 'run-lead');
+    assert.equal(swarm.participants['scout'].parentId, 'lead');
     assert.deepEqual(swarm.participants['scout'].permissions, ['read', 'contribute']);
     assert.equal(swarm.participants['scout'].status, 'active');
   });

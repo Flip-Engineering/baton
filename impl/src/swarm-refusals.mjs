@@ -68,6 +68,9 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   swarm_duplicate: row(409, ['fold'], 'the event creates a swarm the deployment already holds'),
   participant_duplicate: row(409, ['fold'], 'the seat already exists in this swarm (a left seat rolled back as recruit_refused may re-join)'),
   swarm_participant_exists: row(409, ['runtime'], 'the seat already exists in this swarm'),
+  // docs/46 §5.1 (issue #274): `root` is the swarm's creator — a derived actor row, never a
+  // recruited seat — so a join wearing a reserved id refuses the same way a duplicate does.
+  participant_reserved: row(409, ['fold'], 'the participant id is reserved (the root row is derived per view, never recruited)'),
   participant_not_active: row(409, ['fold'], 'the named seat exists but is not active, so it cannot take this role'),
   version_conflict: row(409, ['fold'], 'the request states an expectedVersion the current row does not carry'),
   swarm_already_arrived: row(409, ['fold'], 'the seat has already arrived at this synchronization point, or already consented to this proposal'),

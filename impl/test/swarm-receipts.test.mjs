@@ -135,7 +135,7 @@ test('#302 every swarm mutation answers with a receipt, and only view:true carri
     [{ collection: 'participants', id: 'builder', seq: recruited.receipt.event.seq + 1 }],
     'the join and its binding land as one changed participants row, written by the binding event');
   assert.deepEqual(recruited.next, { command: 'swarm.guide', args: { swarmId: 'baton', participantId: 'builder' } });
-  assert.equal(recruited.view.participants.length, 1, 'view: true carries the whole refreshed view');
+  assert.equal(recruited.view.participants.length, 2, 'view: true carries the whole refreshed view, the root row included (docs/46 §5.1)');
 
   // update
   const updated = await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'g', members: ['builder'] } });
@@ -204,7 +204,9 @@ test('#302 one collection shape rides every read path: view, watch, bridge, and 
     contributions: Array.isArray(view.contributions),
     groups: Array.isArray(view.groups),
     couplings: Array.isArray(view.couplings),
-    attention: Array.isArray(view.attention),
+    // docs/46 §6 (issue #274): attention is the {rows, coverage} envelope — the rows stay the
+      // array collection the one-shape rule pins.
+      attention: Array.isArray(view.attention?.rows),
     workKeyed: view.work !== null && !Array.isArray(view.work),
     assignmentsKeyed: view.assignments !== null && !Array.isArray(view.assignments),
     reviewsKeyed: view.reviews !== null && !Array.isArray(view.reviews),
@@ -350,11 +352,11 @@ test('#308 a refused operation settles its attention row, and in-flight rows nev
     .then(() => null, (error) => error);
   assert.equal(refused.code, 'application_route_not_allowed');
   const view = await f.call('view');
-  const settled = view.attention.find((row) => row.kind === 'operation_refused');
+  const settled = view.attention.rows.find((row) => row.kind === 'operation_refused');
   assert.ok(settled, 'the refused operation has a settled attention row');
   assert.equal(settled.state, 'refused');
   assert.equal(settled.code, refused.code);
-  assert.equal(view.attention.some((row) => row.kind === 'operation_unconfirmed' && row.operationKey === settled.operationKey), false,
+  assert.equal(view.attention.rows.some((row) => row.kind === 'operation_unconfirmed' && row.operationKey === settled.operationKey), false,
     'the row no longer claims the outcome is unconfirmed');
   // The durable in-flight row carries the request DIGEST, never the request body.
   const requested = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'

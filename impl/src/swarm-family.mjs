@@ -84,8 +84,10 @@ export async function readSwarmFamily(client, {
       ...(roster.ok ? {} : { rosterRefusal: { code: roster.error?.code ?? 'swarm_family_refused', message: roster.error?.message ?? 'swarm.view(participants) refused' } }),
       participants,
     });
-    if (notices.ok && Array.isArray(notices.value?.attention)) {
-      for (const item of notices.value.attention.slice(0, attentionLimit)) {
+    // docs/46 §9 cutover (issue #274): the view's attention is the {rows, coverage} envelope;
+    // the family carries the rows with their swarm coordinate.
+    if (notices.ok && Array.isArray(notices.value?.attention?.rows)) {
+      for (const item of notices.value.attention.rows.slice(0, attentionLimit)) {
         attention.push({ swarmId, ...(item ?? {}) });
       }
     }
