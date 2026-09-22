@@ -1513,7 +1513,7 @@ evidence block 1 — 135 rows, each accounted for.
 | LEDG-12 | kept → M-5 | passes |
 | LEDG-13 | rejected | failed Q3: consistent resolution is required; the grammar table is an interface |
 | LEDG-14 | rejected | failed Q3: bounded memory is required; the literal 256 is tuning |
-| LEDG-15 | kept → M-5 | passes |
+| LEDG-15 | kept → M-3a (the stale-evidence prohibition; the gate-purity mechanism stays in these notes) | passes |
 | LEDG-16 | kept → M-5 | passes |
 | LEDG-17 | rejected | failed independence: carried by the interface clause of the authority boundary (M-7/M-8 in revision 6); returns if Codex shows an uncovered failure |
 | LEDG-18 | rejected | failed Q3: session integrity is required; the second ledger and byte format are mechanisms |
@@ -1541,7 +1541,7 @@ evidence block 1 — 135 rows, each accounted for.
 | AB-01 | rejected | failed Q3: total deterministic matching is required; the glob dialect is one representation |
 | AB-02 | reduced → M-8 scope | failed Q3: lexical rules are necessary and do not establish containment |
 | AB-03 | rejected | failed Q3: unambiguous targets are required; the list form is subordinate |
-| AB-04 | kept → M-9 | passes |
+| AB-04 | kept → M-8 (absorbed with M-9) | passes |
 | AB-05 | reduced → M-7 and the exact-instance clause of the authority boundary (M-8 in revision 6) | failed independence: carried by the binding entries |
 | AB-06 | reduced → M-8 | failed Q4: valid-authority transfer is the law; revocation and recovery scopes are owed |
 | AB-07 | rejected | failed Q3: truthful provenance is required; the reserved-prefix strategy is a recording choice |
@@ -1587,8 +1587,8 @@ evidence block 1 — 135 rows, each accounted for.
 | DEV-3 | kept → M-13 | passes (operator ruling) |
 | DEV-4 | kept → M-14 | passes (operator ruling) |
 | DEV-5 | kept → M-3 | passes (operator ruling; chronology and exclusive publication split into development controls) |
-| DEV-6 | kept → M-15 | passes (operator ruling; precise meanings owed) |
-| DEV-7 | kept → M-16 | passes (operator ruling) |
+| DEV-6 | kept → M-15 — superseded: deferred (the instruction is preserved above) | passes (operator ruling; precise meanings owed) |
+| DEV-7 | kept → M-16 — superseded: excluded (AGENTS.md owns the prose rule) | passes (operator ruling) |
 
 Family verdicts: CX-1 → reduced to M-1 · CX-2 → kept as M-2 · CX-3 → reduced to M-3 · CX-4 →
 rejected, failed independence (its divergence ban restates M-7 and M-8 applied per interface;
