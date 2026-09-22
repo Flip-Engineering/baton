@@ -270,9 +270,20 @@ const DEFAULT_PLAN_POLICY = Object.freeze({ maxFocusTasks: 4 });
 // (H2.1/H2.3), never this seam. Non-plan verbs keep the permissive deployment default — they are
 // not this row's subject. The capability-carrying review seat (principal('plan-review')) is what
 // the string-seat facade (which recognizes only the 'orchestrator' string) cannot admit.
-async function planAuthorize(command, principal, runId, subject) {
-  if (!command.startsWith('plan.')) return true;
-  return principal?.principalId === 'orchestrator' || principal?.principalId === 'plan-review';
+// H2.1 — the plan:* power is enforced in the deployment authorize (the restricting
+// restrictingReadAuthorize shape the #74 fold landed). The deployment authorize is called with ONE
+// request object ({command, principal, repoId, runId, subject}) — the shape application.mjs's
+// `_authorize` seam composes and the resident's own restrictor destructures. The orchestrator seat
+// and the review seat hold the power; a worker's own-task/subtree admission is the lane's ownership
+// composition (H2.1/H2.3), never this seam. Non-plan verbs keep the permissive deployment default —
+// they are not this row's subject. The capability-carrying review seat (principal('plan-review')) is
+// what the string-seat facade (which recognizes only the 'orchestrator' string) cannot admit.
+async function planAuthorize(request = {}) {
+  const command = typeof request === 'string' ? request : request?.command;
+  const who = typeof request === 'string' ? undefined : request?.principal;
+  if (typeof command !== 'string' || !command.startsWith('plan.')) return true;
+  const principalId = who?.principalId ?? who;
+  return principalId === 'orchestrator' || principalId === 'plan-review';
 }
 
 let envelopeSeq = 0;
@@ -623,7 +634,7 @@ test('M1: plan.write with plan.minted mints the plan and plan.read round-trips i
   const host = await hostFixture(t);
   const campaignId = 'campaign-161-m1';
   const planId = planIdFor('m1', campaignId);
-  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo');
+  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo', { owner: ownedBy('alpha', 'run:r1', 'wave:w1') });
   const outcome = await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alpha.id])), principal('orchestrator'), 'stage: plan-write-port-missing');
   assert.equal(outcome.status, 'plan_minted',
     'the mint resolves {status: \'plan_minted\'}');
@@ -651,7 +662,7 @@ test('M2: a retry of the same mint key + content returns the prior event — exa
   const host = await hostFixture(t);
   const campaignId = 'campaign-161-m2';
   const planId = planIdFor('m2', campaignId);
-  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo');
+  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo', { owner: ownedBy('alpha', 'run:r1', 'wave:w1') });
   const body = planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alpha.id]), `plan.minted:${planId}`);
   const first = await planWrite(host, body, principal('orchestrator'), 'stage: plan-write-port-missing');
   const second = await planWrite(host, body, principal('orchestrator'), 'stage: plan-write-port-missing');
@@ -673,11 +684,11 @@ test('M3: changed content under the same mint key refuses plan_replay_conflict',
   const host = await hostFixture(t);
   const campaignId = 'campaign-161-m3';
   const planId = planIdFor('m3', campaignId);
-  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo');
+  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo', { owner: ownedBy('alpha', 'run:r1', 'wave:w1') });
   const firstBody = planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alpha.id]), `plan.minted:${planId}`);
   await planWrite(host, firstBody, principal('orchestrator'), 'stage: plan-write-port-missing');
 
-  const beta = task(taskIdFor(planId, 'write the beta report', ownedBy('beta', 'run:r1', 'wave:w1')), 'write the beta report', 'todo');
+  const beta = task(taskIdFor(planId, 'write the beta report', ownedBy('beta', 'run:r1', 'wave:w1')), 'write the beta report', 'todo', { owner: ownedBy('beta', 'run:r1', 'wave:w1') });
   const conflicting = planWriteBody(planId, mintMutation(planId, campaignId, [beta], [beta.id]), `plan.minted:${planId}`);
   await planWriteRefusal(host, conflicting, principal('orchestrator'),
     'stage: plan-write-port-missing', 'plan_replay_conflict');
