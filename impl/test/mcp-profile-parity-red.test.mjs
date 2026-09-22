@@ -240,7 +240,7 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 57, 'application tools/list count 57 (stage: application-tools-count-49)'); // composition (final landing): 35 base legacy + 14 lifecycle siblings + 3 wakes (issue #294 registry-mandated) + 2 message lane (issue #206) + 2 harvest pair (issue #99/#179) + 1 #314 seed-leg source (issue #555) + 7 memory-family rows (#555 composition correction) = 57
+  assert.equal(names.length, 65, 'application tools/list count 65 (stage: application-tools-count-49)'); // composition (final landing): 35 base legacy + 14 lifecycle siblings + 3 wakes (issue #294 registry-mandated) + 2 message lane (issue #206) + 2 harvest pair (issue #99/#179) + 1 #314 seed-leg source (issue #555) + 7 memory-family rows (#555 composition correction) = 57
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling set derives from the pre-spread
   // uncoveredCommands() export — never from the grown served set (empty of uncovered at green) —
   // and the count ties to composition (35 HEAD ordinary tools + the 14 lifecycle siblings), so a
@@ -248,8 +248,8 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 36 + uncovered.length + 3 + 2 + 2,
-    'application tools/list count ties to composition: 36 base (35 + the #314 seed leg) + 14 lifecycle + 3 wakes + 2 message + 2 harvest pair = 57 (stage: application-count-composition)');
+  assert.equal(names.length, 44 + uncovered.length + 3 + 2 + 2,
+    'application tools/list count ties to composition: 36 base (35 + the #314 seed leg) + 14 lifecycle + 3 wakes + 2 message + 2 harvest pair = 65 (stage: application-count-composition)');
   const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp).sort();
   const missing = siblingTools.filter((tool) => !names.includes(tool));
   assert.deepEqual(missing, [],
@@ -470,7 +470,7 @@ test('RG-09 RED: combined tools/list is the served combined table with the 14 si
   const { server } = setup({ surface: 'combined' });
   await initialized(server);
   const names = (await request(server, 2, 'tools/list', {})).result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 110, 'combined tools/list count 110 (stage: combined-102-includes-siblings)');
+  assert.equal(names.length, 118, 'combined tools/list count 118 (stage: combined-102-includes-siblings)');
   // Fold (blue-team #2/#4 — SHALLOW/vacuity): the sibling checks derive from the pre-spread
   // uncoveredCommands() export — never the grown served set (empty at green) — and the count ties
   // to composition (86 HEAD combined + 2 D2 fleet tools + 14 siblings), so a bare 102 of arbitrary
@@ -478,7 +478,7 @@ test('RG-09 RED: combined tools/list is the served combined table with the 14 si
   assert.equal(typeof mcpNorthbound.uncoveredCommands, 'function',
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
-  assert.equal(names.length, 87 + 2 + uncovered.length + 3 + 2 + 2,
+  assert.equal(names.length, 95 + 2 + uncovered.length + 3 + 2 + 2,
     'combined count ties to composition: 87 + 2 fleet + 14 siblings + 3 wakes + 2 message + 2 pair + 1 seed (stage: combined-count-composition)');
   assert.ok(names.includes('fleet_run_resume_work'), 'combined serves fleet_run_resume_work');
   assert.ok(names.includes('fleet_run_retry_verification'), 'combined serves fleet_run_retry_verification');

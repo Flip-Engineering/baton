@@ -118,10 +118,6 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_run_stop', 'run.stop'],
     ['baton_waves_attach', 'waves.attach'],
     ['baton_evidence_search', 'evidence.search'],
-    ['evidence.search', 'evidence.search'],
-    ['baton_services_list', 'services.list'],
-    ['services.list', 'services.list'],
-    ['baton_run_knowledge_seed', 'run.knowledge.seed'],
     ['baton_run_scratchpad_append', 'run.scratchpad.append'],
     ['baton_knowledge_promote', 'knowledge.promote'],
     ['baton_knowledge_settlement_lease', 'knowledge.settlement_lease'],
@@ -130,6 +126,10 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_run_scratchpad_elevate', 'run.scratchpad.elevate'],
     ['baton_scratchpad_elevate', 'scratchpad.elevate'],
     ['baton_scratchpad_settle', 'scratchpad.settle'],
+    ['evidence.search', 'evidence.search'],
+    ['baton_services_list', 'services.list'],
+    ['services.list', 'services.list'],
+    ['baton_run_knowledge_seed', 'run.knowledge.seed'],
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
     ...LIFECYCLE_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.key]),
     ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [[tool.name, tool.command], [tool.command, tool.command]]),
@@ -1133,6 +1133,79 @@ const RESTORED_MEMORY_FAMILY_TOOL_DEFINITIONS = Object.freeze([
       body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
       evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
     }, ['repoId', 'runId', 'type', 'grounding', 'body']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_scratchpad_append',
+    description: "Append one entry to a run scratchpad scope (shared or worker:<id>) as a direct EPHEMERAL write (issue #158). Returns the store receipt verbatim {ok, result:'written'|'idempotent', entryId, entryDigest, scope, scratchpadFence, eventSeq}. The entry's author is server-bound to the caller identity; an exact retry under the same idempotencyKey replays the prior receipt.",
+    inputSchema: schema({
+      ...repo, runId,
+      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
+      body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
+      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
+    }, ['repoId', 'runId', 'scope']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'baton_knowledge_promote',
+    description: 'Admit one workflow candidate Finding into shared knowledge through the run-orchestrator lease. REQUIRES the S-2 sessionAuthority envelope bound to the settlement lease — presenter authentication is the lease\'s session binding (XB), validated exactly as admitBoardCommand does.',
+    inputSchema: schema({
+      ...repo, ...idem, runId, candidateFindingId: runId, policy: { type: 'object' }, lease: { type: 'object' },
+    }, ['repoId', 'idempotencyKey', 'runId', 'candidateFindingId', 'policy', 'lease']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_knowledge_settlement_lease',
+    description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
+    inputSchema: schema({
+      ...repo, ...idem, waveId: runId, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: runId },
+    }, ['repoId', 'idempotencyKey', 'waveId']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_attention_watch',
+    description: "Page the run's attention inbox through the lane's own scope authority: {reasons, throughCursor, afterCursor, runId} with storm coalescing and candidacy gating. Kind is a shape-only target filter; cursor is a safe offset.",
+    inputSchema: schema({
+      ...repo, runId, kind: runId, cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_scratchpad_elevate',
+    description: "Settle one terminal task's scratchpad partition through the coordinator's fence-bound elevation wrapper (ordinary end-of-task path). Returns the store receipt verbatim; an exact retry returns the empty successor.",
+    inputSchema: schema({
+      ...repo, runId, taskId: runId,
+      entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+    }, ['repoId', 'runId', 'taskId', 'entryIds']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_scratchpad_read',
+    description: 'Read a bounded, UNTRUSTED-framed page of one scratchpad scope (shared or worker:<id>): at most 64 entries, at most 4,096-byte leaves, the fence/observedSeq verbatim, and the 256 KiB serialized page budget with digest-citation truncation.',
+    inputSchema: schema({
+      ...repo, runId, scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'runId', 'scope']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_scratchpad_elevate',
+    description: 'Elevate one terminal task\'s scratchpad entries into an orchestrator board candidacy (S-2 settlement lane).',
+    inputSchema: schema({
+      ...repo, ...idem, runId, taskId: runId, workerId: runId,
+      expectedScratchpadFence: { type: 'integer', minimum: 0 },
+      entryIds: { type: 'array', maxItems: 64, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+    }, ['repoId', 'idempotencyKey', 'runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_scratchpad_settle',
+    description: 'Settle one workflow\'s shared scratchpad partition with explicit skips (S-2 settlement lane).',
+    inputSchema: schema({
+      ...repo, ...idem, runId, expectedScratchpadFence: { type: 'integer', minimum: 0 },
+      skips: { type: 'array', maxItems: 256, items: { type: 'object' } },
+    }, ['repoId', 'idempotencyKey', 'runId', 'expectedScratchpadFence', 'skips']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ].map((tool) => Object.freeze({
