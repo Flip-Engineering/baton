@@ -2880,27 +2880,18 @@ export class McpFleetServer {
       }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'baton_run_attention_watch') {
-      try {
-        value = await this.application.command('run.attention.watch', {
-          runId: args.runId,
-          ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
-          ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
-        }, {
-          actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-          principalId: principal.userId, sessionId: principal.sessionId,
-        }, this._applicationDispatchContext(args, callId, principal));
-      } catch (cause) {
-        // Decision 5's transport authority: a control-capable connection principal is the
-        // deployment orchestrator the lane recognizes — page the run (empty for unknown/unauthorized
-        // scopes) instead of surfacing attention_scope_forbidden. Observe-only principals keep the
-        // lane's refusal byte-identically (FP-15 pins that wire).
-        if (cause?.code === 'attention_scope_forbidden' && Array.isArray(principal.capabilities)
-          && principal.capabilities.includes('control')) {
-          value = { schemaVersion: 1, runId: args.runId, afterCursor: 0, throughCursor: 0, reasons: [] };
-        } else {
-          throw cause;
-        }
-      }
+      // #108: the lane's own scope refusal surfaces AS ITSELF for every principal — a
+      // control-capable connection is not paged an empty {afterCursor: 0, throughCursor: 0}
+      // fallback that silently rewinds its cursor and never errors. Authorized watchers page;
+      // unauthorized scopes draw the byte-identical attention_scope_forbidden refusal.
+      value = await this.application.command('run.attention.watch', {
+        runId: args.runId,
+        ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
+        ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'baton_run_scratchpad_read') {
       value = await this.application.command('run.scratchpad.read', {

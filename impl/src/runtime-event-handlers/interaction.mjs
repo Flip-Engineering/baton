@@ -56,13 +56,16 @@ const requestId = ctx.payload?.requestId;
           escalated: false,
         };
         const evidence = recorder.mapEvent(askedEvent);
-        if (ctx.payload?.blocking !== false) {
-          if (task) {
-            coordinator._coordTransition(task, 'input_required', `task.input_required:${task.id}:${askedEvent.seq}`, { ...evidence, interaction: { kind: 'question', requestId, blocking: true } });
-          }
-        } else {
-          recorder.recordDriver('input.requested', { taskId: task?.id ?? null, workerId: ctx.workerId, kind: 'question', requestId, blocking: false, evidence }, `driver.input_requested:${ctx.handle.taskId}:${askedEvent.seq}`, ctx.actor ?? 'worker');
+        const blocking = ctx.payload?.blocking !== false;
+        if (blocking && task) {
+          coordinator._coordTransition(task, 'input_required', `task.input_required:${task.id}:${askedEvent.seq}`, { ...evidence, interaction: { kind: 'question', requestId, blocking: true } });
         }
+        // #255: the ask reaches the coordination ledger as a durable attention row — the
+        // #243 last mile — and pages on the run's attention projection beside the family's
+        // own settled/expired rows. The key is per (task, asked seq), so a replayed
+        // admission idempotently re-records one row.
+        recorder.recordDriver('question.asked', { runId: task?.runId ?? null, taskId: task?.id ?? null, workerId: ctx.workerId, requestId, interactionKind: 'question', blocking, evidence }, `driver.question_asked:${ctx.handle.taskId}:${askedEvent.seq}`, ctx.actor ?? 'worker');
+        coordinator._mintInteractionRequested(ctx.handle, task, requestId, 'question', blocking);
         coordinator._pending.set(requestId, record);
         coordinator._activeInteractionIds.add(requestId);
         if (ctx.payload?.blocking !== false) {
@@ -106,13 +109,13 @@ const requestId = ctx.payload?.requestId;
           deadlineAt: coordinator._now() + coordinator._approvalTimeoutMs,
         };
         const evidence = recorder.mapEvent(askedEvent);
-        if (ctx.payload?.blocking !== false) {
-          if (task) {
-            coordinator._coordTransition(task, 'input_required', `task.input_required:${task.id}:${askedEvent.seq}`, { ...evidence, interaction: { kind: 'approval', requestId, blocking: true } });
-          }
-        } else {
-          recorder.recordDriver('input.requested', { taskId: task?.id ?? null, workerId: ctx.workerId, kind: 'approval', requestId, blocking: false, evidence }, `driver.input_requested:${ctx.handle.taskId}:${askedEvent.seq}`, ctx.actor ?? 'worker');
+        const blocking = ctx.payload?.blocking !== false;
+        if (blocking && task) {
+          coordinator._coordTransition(task, 'input_required', `task.input_required:${task.id}:${askedEvent.seq}`, { ...evidence, interaction: { kind: 'approval', requestId, blocking: true } });
         }
+        // #255: the same durable attention row and projection mint the question arm records.
+        recorder.recordDriver('approval.requested', { runId: task?.runId ?? null, taskId: task?.id ?? null, workerId: ctx.workerId, requestId, interactionKind: 'approval', blocking, evidence }, `driver.approval_requested:${ctx.handle.taskId}:${askedEvent.seq}`, ctx.actor ?? 'worker');
+        coordinator._mintInteractionRequested(ctx.handle, task, requestId, 'approval', blocking);
         coordinator._pending.set(requestId, record);
         coordinator._activeInteractionIds.add(requestId);
         if (ctx.payload?.blocking !== false) {
@@ -225,6 +228,10 @@ export function decisionRequested(coordinator, recorder, ctx) {
         if (task) {
           coordinator._coordTransition(task, 'input_required', `task.input_required:${task.id}:${askedEvent.seq}`, { ...evidence, interaction: { kind: 'decision', requestId, blocking: true } });
         }
+        // #255: the same durable attention row and projection mint the question arm records
+        // (F6: v1 decisions are always blocking).
+        recorder.recordDriver('decision.requested', { runId: task?.runId ?? null, taskId: task?.id ?? null, workerId: ctx.workerId, requestId, interactionKind: 'decision', blocking: true, evidence }, `driver.decision_requested:${ctx.handle.taskId}:${askedEvent.seq}`, ctx.actor ?? 'worker');
+        coordinator._mintInteractionRequested(ctx.handle, task, requestId, 'decision', true);
         coordinator._pending.set(requestId, record);
         coordinator._activeInteractionIds.add(requestId);
         ctx.handle.status = 'blocked';

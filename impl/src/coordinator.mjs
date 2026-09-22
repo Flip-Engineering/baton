@@ -5215,6 +5215,12 @@ export class Coordinator {
     return runtimeObservation._mintInteractionExpired(this, this._recorder, handle, task, requestId, effectiveDeadlineAt);
   }
 
+  /** #255 receipt: the interaction_requested attention reason — the pending ask the attention
+   * plane pages until the family's settled/expired row supersedes it. */
+  _mintInteractionRequested(handle, task, requestId, interactionKind, blocking) {
+    return runtimeObservation._mintInteractionRequested(this, this._recorder, handle, task, requestId, interactionKind, blocking);
+  }
+
   // A native harness can withdraw its own question without an answer. Reuse the durable
   // interaction supersession event, keeping the answering reservation single-consumer.
     async _cancelNativeQuestion(workerId, requestId) {

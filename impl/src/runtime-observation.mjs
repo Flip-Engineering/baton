@@ -2363,6 +2363,21 @@ export function _expireQuestion(coordinator, recorder, requestId, record, effect
     return { ok: true, result: 'expired' };
   }
 
+export function _mintInteractionRequested(coordinator, recorder, handle, task, requestId, interactionKind, blocking) {
+    coordinator._attentionReasons.push({
+      seq: ++coordinator._attentionCursor,
+      kind: 'interaction_requested',
+      runId: task?.runId ?? null,
+      mintEpoch: ++coordinator._attentionMintEpoch,
+      requestId,
+      interactionKind,
+      workerId: handle?.id ?? null,
+      blocking: blocking !== false,
+      windowMs: 0,
+      mintedAt: coordinator._now(),
+    });
+  }
+
 export function _mintInteractionExpired(coordinator, recorder, handle, task, requestId, effectiveDeadlineAt) {
     coordinator._attentionReasons.push({
       seq: ++coordinator._attentionCursor,
