@@ -102,6 +102,14 @@ function runnerSource({ sleepMs, green, unexpected, markerPath, die = false }) {
     + `unexpected: ${JSON.stringify(unexpected)}, expectedRed: 0 }));\n`;
 }
 
+/** The runner for the unjudged row (#551): it writes its marker, then exits without writing the
+ * verdict document — the shape a landing sees when the supervisor is lost mid-verification. */
+function unjudgedRunnerSource(markerPath) {
+  return "import { writeFileSync } from 'node:fs';\n"
+    + `writeFileSync(${JSON.stringify(markerPath)}, 'finished\\n');\n`
+    + 'process.exit(0);\n';
+}
+
 const contractBody = ({ subject, sha, observedHead, rebasedOnto }) => ({
   subject,
   base: { observedHead, rebasedOnto },
@@ -151,7 +159,9 @@ async function world(t, { gate = {} } = {}) {
   for (const script of REGENERATORS) {
     write(repo, script, regeneratorSource(`${script.split('/').at(-1).replace(/\.mjs$/u, '')}.json`));
   }
-  write(repo, 'impl/scripts/run-suite.mjs', runnerSource({ sleepMs, green, unexpected, markerPath, die }));
+  write(repo, 'impl/scripts/run-suite.mjs', gate.noVerdict === true
+    ? unjudgedRunnerSource(markerPath)
+    : runnerSource({ sleepMs, green, unexpected, markerPath, die }));
   // The install the repository actually carries, under a sub-directory (#451): the integration
   // checkout links it and writes the projection-exclude file beside the checkout, which is the
   // one file a sweep has to remove besides the checkout itself.
@@ -572,4 +582,27 @@ test('459i: a gate run whose runner dies mid-flight reports the named partial ve
   assert.equal(existsSync(join(w.wtRoot, 'integrate-contribution-1.projection.exclude')), false,
     'and so is the projection-exclude file');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
+});
+
+test('459j: an unjudged gate run keeps the verdict path its row names (#551)', needsGit, async (t) => {
+  // The runner writes its marker and exits without writing the verdict document: the shape a landing
+  // sees when the supervisor is lost mid-verification. The path the row carries is where a verdict
+  // written after this incarnation stopped waiting would land, so the directory survives the
+  // refusal and the row names it — the one recoverable fact #551 found being deleted.
+  const w = await world(t, { gate: { sleepMs: 0, green: true, noVerdict: true } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integration().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing settles on the unjudged run');
+  assert.equal(error.code, 'integrate_gates_red');
+  const failures = w.failureRows();
+  assert.equal(failures.length, 1, 'the unjudged run leaves its outcome in the record');
+  const row = failures[0].detail.unexpected[0];
+  assert.equal(row.row, 'suite-did-not-judge', 'the run that judged nothing is named, never a timeout');
+  assert.match(String(row.verdictPath ?? ''), /verdict\.json$/u, 'the row names the verdict document path');
+  assert.equal(existsSync(dirname(row.verdictPath)), true,
+    'the directory a late verdict would land in survives the refusal');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
+  rmSync(dirname(row.verdictPath), { recursive: true, force: true });
 });
