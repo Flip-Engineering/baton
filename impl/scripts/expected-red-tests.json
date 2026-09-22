@@ -38,10 +38,6 @@
       "reason": "#164"
     },
     {
-      "key": "test/blind-waits-red.test.mjs :: A4 RED: the driver pump loop L5/D10 catch blanket-swallows status failures — no auth-stop guard in the CODE (the #148 instance's shape)",
-      "reason": "#148"
-    },
-    {
       "key": "test/blind-waits-red.test.mjs :: P-APP RED: the APPLICATION-layer run.wait refusal keeps application_unauthorized AND names the app-layer renewal — never the transport /v1/auth/refresh lane (D1.2(a))",
       "reason": "#164"
     },
