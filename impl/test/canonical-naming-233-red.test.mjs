@@ -61,6 +61,9 @@ const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
   // --issue path uses — admitted on the web lane (web-northbound.mjs ~169) since wave 13; the
   // underscore spellings are derived from these names like every other row here.
   'package.admit', 'package.attach',
+  // Issue #99: the harvest accessor's direct ports — admitted on the web lane
+  // (web-northbound.mjs HARVEST_WEB_ROWS), both spellings derived like every other row here.
+  'run.resultpin', 'waves.harvest',
 ]);
 
 // The retained legacy MCP spellings for mcp:true definitions (hand baton_* ordinary tools).
