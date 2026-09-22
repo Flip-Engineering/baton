@@ -4858,9 +4858,14 @@ export function _normalizeContextPackage(store, fields, integrity = false) {
     || !/^[A-Za-z0-9._:@-]+$/u.test(raw.provenance.principalId)) {
     fail('context package provenance principalId is invalid');
   }
-  if (!store._contextProgramPolicy) fail('Context Program authority is unavailable', 'context_package_unavailable');
+  // #526: the recorded row carries its own `policyDigest`. The live authority is required at
+  // ADMISSION (integrity false); the FOLD judges the recorded row by its own content — the digest
+  // it recorded, in the shape a live authority writes — and never re-judges its manifest for size
+  // (the #366 rule: a recorded row is never re-judged for size on replay).
+  const authority = store._contextProgramPolicy;
+  if (!authority && !integrity) fail('Context Program authority is unavailable', 'context_package_unavailable');
   if (!Array.isArray(raw.branches) || raw.branches.length === 0
-    || raw.branches.length > store._contextProgramPolicy.maxManifestBranches) {
+    || (!integrity && raw.branches.length > authority.maxManifestBranches)) {
     fail('context package branches are invalid');
   }
   const branches = raw.branches.map((branch) => store._normalizeContextPackageBranch(branch, integrity))
@@ -4869,7 +4874,7 @@ export function _normalizeContextPackage(store, fields, integrity = false) {
     fail('context package branches must have unique names', 'package_branch_name_conflict');
   }
   if (!/^[a-f0-9]{64}$/.test(raw.policyDigest ?? '')
-    || raw.policyDigest !== store._contextProgramPolicy.policyDigest) {
+    || (!integrity && raw.policyDigest !== authority.policyDigest)) {
     fail('context package policy differs from the normalization authority');
   }
   const body = {
