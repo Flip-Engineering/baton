@@ -69,6 +69,7 @@ import * as runtimeEffects from './runtime-effects.mjs';
 import * as runtimeObservation from './runtime-observation.mjs';
 import * as runtimeAdmission from './runtime-admission.mjs';
 import * as runtimeApi from './runtime-api.mjs';
+import * as runtimeRedrive from './runtime-redrive.mjs';
 import * as eventHandlers from './runtime-event-handlers/dispatcher.mjs';
 import { capBytesToScalar } from './runtime-event-handlers/observation-events.mjs';
 import { WorkerNotFoundError } from './runtime-api.mjs';
@@ -84,6 +85,7 @@ import { ModelSelectionError, PublicationError, WORKTREE_FAILURE, normalizeRunId
 export { ModelSelectionError, PublicationError };
 import { KILL_RULES, LOGICAL_CALL_PHASES, ORIENTATION_DELIVERY, PUSH_REFUSAL_CODES, REARM_KINDS, RUN_TIMELINE_OPERATIONAL_KINDS, IntegrationError, SessionSelectionError, TERMINAL_TASK_STATUSES, addSafeTokenCounts, boundedProcessObservation, canonical, canonicalDigest, cardSupportsSession, decisionRef, deepFreeze, logicalCallTransition, minimalBrief, normalizeSessionRequest, officialCoordinateMatches, providerProcessingFailureCode, replayProviderGovernanceRoute, startupReconcilerNext, startupReconcilerRecord, throwIfProviderCancelled, typedTerminalCode, validLogicalCallId, validLogicalCallPhase, validWorkspaceOwnerBoundPayload, workspaceOwnerExpectation } from './runtime-recovery.mjs';
 export { PUSH_REFUSAL_CODES, REARM_KINDS, IntegrationError, SessionSelectionError } from './runtime-recovery.mjs';
+export { REDRIVE_REFUSAL_CODES, REDRIVE_SCOPES } from './runtime-redrive.mjs';
 
 
 
@@ -1893,6 +1895,35 @@ export class Coordinator {
    * prototype position, so every call site and every prototype-level exercise is untouched. */
   _providerBrief(brief, workerId = null) {
     return runtimeBriefing.providerBrief(this, brief, workerId, canonicalDigest);
+  }
+
+  // =========================================================================
+  // Issue #59 — re-drive continuity (D1-D4). A dead attempt's closed state (terminal cause,
+  // refusal evidence, scratchpad projection, checkpoint-pin digests) is carried into a re-driven
+  // member's provider-facing brief as the named `## Re-drive continuity` section, under the
+  // closed UNTRUSTED_RE_DRIVE frame: evidence to verify, never authority. The carry is opt-in
+  // per re-drive (the closed `{sourceRunId, scopes}` option), the source is resolved from the
+  // store's own records, and every refusal is typed — never a silent accept, never a silent drop.
+  // The admission, the serializer and the refusal family live in runtime-redrive.mjs; these
+  // delegates keep the member names the seam's callers use.
+  // =========================================================================
+
+  /** The carry admission: admits the closed option, validates the source's role and wave-chain
+   * relation against the store's own records, gathers the named scopes and composes the block —
+   * or returns null when no carry was declared. */
+  _redriveContinuity(memberId, carryForward) {
+    return runtimeRedrive.redriveContinuity(this, this._recorder, memberId, carryForward);
+  }
+
+  /** The ONE closed serializer for a carried block: within-block order, the unframable refusal,
+   * the item/byte bounds, the digest-cited spill, and the stash the provider seam reads. */
+  _composeContinuity(memberId, continuity) {
+    return runtimeRedrive.composeContinuity(this, this._recorder, memberId, continuity);
+  }
+
+  /** The composed block this member's admission stashed, or null when it carries nothing. */
+  _continuityForMember(memberId) {
+    return runtimeRedrive.continuityForMember(this, memberId);
   }
 
   // =========================================================================

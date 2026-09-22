@@ -21,7 +21,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
-import { renderAttentionSection } from './messages.mjs';
+import { renderAttentionSection, renderCitedReplObjectsSection, renderContinuitySection } from './messages.mjs';
 import { advertisesBatonControlSurface } from './control-surface-unification.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 
@@ -598,9 +598,18 @@ export function renderBrief(brief, dialect) {
       }
     }
   }
-  // Issue #79 (D1): the worker-delivery push block lands AFTER the last data-bearing section
-  // (`## Ambient knowledge`) so the `## Verification` contract keeps its position. Absent when
-  // there is nothing to serve (the empty-pending-set pin).
+  // Issue #59 (D2/R9): the ONE total order for the carried-content sections is
+  // `## Ambient knowledge` → `## Re-drive continuity` → `## Cited REPL objects` →
+  // `## Pending attention`. Ambient knowledge and re-drive continuity are both context evidence
+  // ("here is what you should know") and sit together first; cited REPL objects are
+  // orchestrator-authored input data the worker needs before acting; pending attention is
+  // operational push about the worker's own lane traffic and stays the final lines. The
+  // `## Verification` contract keeps its position ahead of all of them, and every section is
+  // absent when it has nothing to serve (the #89 frame-waste law).
+  const continuity = renderContinuitySection(brief.continuity);
+  if (continuity) lines.push(continuity);
+  const replObjects = renderCitedReplObjectsSection(brief.replObjects);
+  if (replObjects) lines.push(replObjects);
   const attention = renderAttentionSection(brief.attention);
   if (attention) lines.push(attention);
   return lines.join('\n');

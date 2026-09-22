@@ -21,6 +21,7 @@ import { PROVIDER_FAULT_CODES, routeQuotaScope } from './provider-faults.mjs';
 import { providerGovernanceRoute } from './provider-governance.mjs';
 import * as runtimeBriefing from './runtime-briefing.mjs';
 import { PublicationError, WORKTREE_FAILURE } from './runtime-effects.mjs';
+import { observeSteeringEvidence } from './runtime-redrive.mjs';
 import {
   CLOSED_VERIFIER_DIAGNOSTICS, CLOSED_VERIFIER_EXECUTIONS, CLOSED_VERIFIER_OWNERS,
   CLOSED_VERIFIER_OUTCOMES, KILL_RULES, REARM_KINDS, TERMINAL_TASK_STATUSES, addSafeTokenCounts,
@@ -2570,6 +2571,10 @@ export function writeScratchpad(coordinator, recorder, workerId, entry, opts = {
       }, {
         actor: 'worker', principalId: workerId, key: opts.idempotencyKey,
       });
+      // Issue #59 (D4/GT8): the receipt's own content digest is the evidence that answers this
+      // attempt's carried checkpoint — the TG2 law in runtime-redrive.mjs. The observation runs on
+      // the coordinator's real write path, so a receipt that never landed answers nothing.
+      observeSteeringEvidence(coordinator, workerId, receipt.contentDigest ?? receipt.entry?.contentDigest ?? null);
       return {
         ok: true, result: receipt.result, entryId: receipt.entryId,
         entryDigest: receipt.entryDigest, scope: receipt.scope,
@@ -2800,7 +2805,10 @@ export function _renderContextRead(coordinator, recorder, { kind, items, spill }
         body: spill?.body ?? '',
       };
       const deliverable = `[CONTEXT_READ_RESULT spill]\n${frame}\n${JSON.stringify({ body: spill?.body ?? '' })}`;
-      return { rendered, deliverable, truncated: false };
+      // The answer leads with the rendered frame's own fields — the frame is the read's trust
+      // boundary, so a caller reads `answer.frame` without unwrapping — while `rendered` keeps the
+      // object the receipt cites and the delivered text share (BD3-A).
+      return { ...rendered, rendered, deliverable, truncated: false };
     }
     if (kind === 'code') return coordinator._renderCodeOrientation(items);
     const frame = {

@@ -266,6 +266,12 @@ const VIEW = Object.freeze({
   // row is a RENDER-side shed flag (OQ1), never a wire cap.
   'view.attention_push.items': { lane: 'view.attention_push.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
   'view.attention_push.bytes': { lane: 'view.attention_push.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
+  // Issue #59 (D1): the re-drive continuity block's own bounds. The ITEM count is the block's
+  // wire bound (8, the #79/#69 precedent); overflow degrades to a digest-cited spill, never a
+  // truncation. The BYTE row is a RENDER-side shed flag (the full carried text rides the spill),
+  // exactly as `view.attention_push.bytes` sheds for #79.
+  'view.continuity.items': { lane: 'view.continuity.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
+  'view.continuity.bytes': { lane: 'view.continuity.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
   'view.blocked_interaction_summary.bytes': { lane: 'view.blocked_interaction_summary.bytes', class: 'view', value: 160, unit: 'bytes', graceful: 'shed-flagged' },
   'view.knowledge_slice.items': { lane: 'view.knowledge_slice.items', class: 'view', value: 8, unit: 'items', graceful: 'shed-flagged' },
   'view.knowledge_slice.bytes': { lane: 'view.knowledge_slice.bytes', class: 'view', value: 2048, unit: 'bytes', graceful: 'shed-flagged' },
@@ -435,7 +441,7 @@ const COUNTS = Object.freeze({
  * graceful, enforcedAt?, refusalCode?}. */
 export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION, ...COUNTS });
 
-export const FRAME_LIMITS_VERSION = '1.3.0';
+export const FRAME_LIMITS_VERSION = '1.4.0';
 
 /** Issue #105 (D1/B-3): the closed conversational depth ceiling for reply chains — a per-branch
  * depth cap (never per-subtree), declared per send, default 1. The derivation: the scanner's

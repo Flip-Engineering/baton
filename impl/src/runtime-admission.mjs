@@ -13,6 +13,7 @@
 // _providerBrief is not here: it is already slice 3's briefing-port delegate, and a second hop
 // would be noise.
 
+import { armSteeringCycle } from './runtime-redrive.mjs';
 
 import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
@@ -969,6 +970,10 @@ export function _admitPauseRecord(coordinator, recorder, handle, task, terminalE
       // and replay share one shape (replay seeds origin from the event payload).
       origin,
     };
+    // Issue #59 (D4/GT8): a member whose re-drive carried a dead attempt's state parks on this
+    // checkpoint with that carry as the evidence to answer — its own distinct scratchpad receipt
+    // resolves the park (armSteeringCycle arms only a member that actually carries something).
+    armSteeringCycle(coordinator, workerId, record);
     coordinator._pausedTurns.set(pauseId, record);
     coordinator._coordTransition(task, 'paused', `task.paused:${task.id}:${terminalEvent.seq}`,
       recorder.mapEvent(pausedEvent), 'policy');
