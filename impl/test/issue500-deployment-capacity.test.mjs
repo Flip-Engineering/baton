@@ -266,6 +266,10 @@ test('500-caps-H: the bounds with no hermetic seam keep their live literals (sou
   count(/progressNudgeWindowMs: 300_000,/u, 'steering nudge window', 1);
   count(/drainPolicy: \{ maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 \},/u, 'drain policy', 1);
   count(/budgetPolicy: \{ terminalGraceMs: 2_000, \.\.\.budgetPolicy \},/u, 'budget terminal grace default', 1);
-  count(/const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 \* 1024 \* 1024;/u, 'deployment wire frame default', 1);
+  // #497: the corridor moved into the registry — the floor and ceiling are row reads, and the
+  // default is half the ceiling row, so no corridor literal survives in this module.
+  count(/const MIN_ADAPTER_WIRE_FRAME_BYTES = FRAME_LIMITS\['adapter\.wire_frame_min'\]\.value;/u, 'wire-frame corridor floor (registry row)', 1);
+  count(/const MAX_ADAPTER_WIRE_FRAME_BYTES = FRAME_LIMITS\['adapter\.wire_frame_max'\]\.value;/u, 'wire-frame corridor ceiling (registry row)', 1);
+  count(/const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = MAX_ADAPTER_WIRE_FRAME_BYTES \/ 2;/u, 'deployment wire frame default (half the ceiling row)', 1);
   count(/maxOutputBytes: 1024 \* 1024,/u, 'verification capture output ceiling', 1);
 });

@@ -2010,11 +2010,11 @@ export class McpFleetServer {
     }
     this.boundRepoId = this.bindApplicationContext ? [...this.repoIds][0] : null;
     this.now = opts.now ?? Date.now;
-    this.maxWaitMs = opts.maxWaitMs ?? 25_000;
+    this.maxWaitMs = opts.maxWaitMs ?? FRAME_LIMITS['mcp.wait_default_ms'].value;
     // A deployment-derived frame ceiling is normally injected; a server without one degrades to
     // the documented 256 KiB default (the MP18 stdio factory and the descriptor-driven path rely
     // on this posture).
-    this.maxMessageBytes = opts.maxMessageBytes ?? 256 * 1024;
+    this.maxMessageBytes = opts.maxMessageBytes ?? FRAME_LIMITS['mcp.message_bytes'].value;
     if (!Number.isSafeInteger(this.maxWaitMs) || this.maxWaitMs <= 0) throw new TypeError('maxWaitMs must be a positive safe integer');
     if (!Number.isSafeInteger(this.maxMessageBytes) || this.maxMessageBytes <= 0) throw new TypeError('maxMessageBytes must be a deployment-derived positive safe integer');
     // Issue #294: server-initiated frames ride the SAME transport as responses. A server whose

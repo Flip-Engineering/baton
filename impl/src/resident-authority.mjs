@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { FRAME_LIMITS } from './limits.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, lstatSync,
@@ -44,7 +45,7 @@ function privateDirectory(path, ownerUid) {
 function processStartIdentity(pid) {
   try {
     const output = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: 1_000,
+      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: FRAME_LIMITS['process.ps_probe_ms'].value,
     }).trim();
     return output && Buffer.byteLength(output) <= 256 ? output : null;
   } catch { return null; }

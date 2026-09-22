@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
 import { spawn } from 'node:child_process';
 import {
   chmodSync, closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync,
@@ -72,7 +73,7 @@ function defaultFileRead(path) {
 /** The advisory lockfile: O_CREAT|O_EXCL, 0600, typed timeout. The lock timeout is a real-clock
  * resource bound (the credential-lockfile timeout row the suite explicitly permits) — never a
  * work control. */
-async function acquireLock(path, { timeoutMs = 30_000, pollMs = 10 } = {}) {
+async function acquireLock(path, { timeoutMs = FRAME_LIMITS['credential.cache_timeout_ms'].value, pollMs = FRAME_LIMITS['credential.cache_poll_ms'].value } = {}) {
   const started = Date.now();
   for (;;) {
     let descriptor;
@@ -169,7 +170,7 @@ function atomicPersist(path, wire) {
  * from the same target. cmdEnv merges suite/test seams (e.g. the fixture sentinel + TMPDIR) into
  * the child's scoped env — the claude sibling's env is fully scoped. */
 function defaultGrokRefreshRuntime({
-  cmd, cmdArgs = [], cmdEnv = {}, credential, directory, timeoutMs = 30_000,
+  cmd, cmdArgs = [], cmdEnv = {}, credential, directory, timeoutMs = FRAME_LIMITS['credential.cache_timeout_ms'].value,
 }) {
   const grokPath = join(directory, '.grok', 'auth.json');
   mkdirSync(join(directory, '.grok'), { recursive: true, mode: 0o700 });
