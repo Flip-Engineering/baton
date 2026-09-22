@@ -1593,9 +1593,11 @@ evidence block 1 — 135 rows, each accounted for.
 Family verdicts: CX-1 → reduced to M-1 · CX-2 → kept as M-2 · CX-3 → reduced to M-3 · CX-4 →
 rejected, failed independence (its divergence ban restates M-7 and M-8 applied per interface;
 returns as its own entry if Codex shows an uncovered failure) · CX-5 → split into M-5 and M-10 ·
-CX-6 → split: the continuation prohibition rejected (failed the prohibition test — a positive
-obligation; the stranding behaviors are already banned by M-10 and M-12), the ready-work half
-rejected as a scheduler design duty, both recorded in `laws-design-notes.md`.
+CX-6 → split: the continuation prohibition was rejected here as a positive obligation [SUPERSEDED
+2026-09-22: Codex's r5/r8 reviews disproved that reasoning — the counterexample escapes M-10 and
+M-12 — and the narrow prohibition was incorporated into the candidate set as M-17 (no silent
+abandonment of accepted, unsettled work); the ready-work half remains design guidance], both
+recorded in `laws-design-notes.md`.
 
 Family verdicts (carried): CX-1 reduced to the receipt/intent entry · CX-2 kept as the
 uncertainty entry · CX-3 reduced to the publication-evidence entry · CX-4 rejected, its full
@@ -1608,4 +1610,4 @@ authority boundary (M-8 in revision 6); M-3 → M-3a, M-3b, M-3c; M-15 → defer
 instruction preserved above); M-16 → excluded (AGENTS.md, DEV-7); revision 5's flagged
 interface entry → the interface clause of the authority boundary.
 
-Superseded-row annotations (2026-09-22, per the r6 review): the DEV-6 row above is superseded — M-15 is DEFERRED, not kept, and the operator instruction is preserved in these notes; the DEV-7 row is superseded — M-16 is EXCLUDED from the application laws, and the prose rule stays in AGENTS.md and document review; the PM-10 row routes its guarantee to the independence premise of the publication-evidence entry. The family-verdicts paragraph and its old CX-6 rejection below the table are historical — revision 6 adopted the narrow no-silent-abandonment prohibition (M-17 in revision 6 numbering), and the operative set is the 17-entry list in laws-proposed.md (revision 8 onward).
+Superseded-row annotations (2026-09-22, per the r6 review): the DEV-6 row above is superseded — M-15 is DEFERRED, not kept, and the operator instruction is preserved in these notes; the DEV-7 row is superseded — M-16 is EXCLUDED from the application laws, and the prose rule stays in AGENTS.md and document review; the PM-10 row routes its guarantee to the independence premise of the publication-evidence entry. The family-verdicts paragraph and its old CX-6 rejection below the table are historical — revision 6 INCORPORATED the narrow no-silent-abandonment prohibition into the candidate set as M-17 (no operator approval is cited), and the operative set is the 16-entry list in laws-proposed.md (revision 9 onward, after absorbing M-9).
