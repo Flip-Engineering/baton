@@ -2512,7 +2512,21 @@ export class SwarmRuntime {
     const participantId = this._attributedParticipant(args.swarmId, principal, context);
     const requested = this.store.priorCoordinationEvent(key);
     if (requested && requested.payload.requestDigest !== requestDigest) {
-      refuse('Swarm operation identity already names another request', 'swarm_replay_conflict');
+      // #511: the identity names a request that already landed under another body, so the refusal
+      // carries that request's own outcome — the command, the seat it resolved to and the row it
+      // was recorded at — beside the readback, never a bare collision.
+      refuse('Swarm operation identity already names another request', 'swarm_replay_conflict', {
+        prior: {
+          command: typeof requested.payload.command === 'string' ? requested.payload.command : null,
+          participantId: typeof requested.payload.participantId === 'string' ? requested.payload.participantId : null,
+          seq: Number.isSafeInteger(requested.seq) ? requested.seq : null,
+          ts: typeof requested.ts === 'string' ? requested.ts : null,
+          operationKey: key,
+        },
+        next: 'read that operation back with `baton swarm view` (or `swarm notifications` for a '
+          + 'recruit) before retrying: the same idempotencyKey repeats the original request or is '
+          + 'replaced with a new one',
+      });
     }
     const completed = this.store.priorCoordinationEvent(`${key}:completed`);
     if (completed) return clone(completed.payload.result);
