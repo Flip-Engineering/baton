@@ -77,6 +77,9 @@ const SWARM_VIEW_SLICED_FIELDS = Object.freeze([
   'claims', 'proposals',
   // Issue #311: the deployment-level situation block — one derived object, sliced like the rest.
   'situation',
+  // Issues #552/#554: the landing pipeline — the one derived block a reader acts on, sliced like
+  // the rest, so a projection that does not ask for it never pays its bytes.
+  'pipeline',
 ]);
 // How a projection narrows a participant row it carries: `whole` is the row the view built, and a
 // named slice keeps the seat's identity plus the one field the projection is about.
@@ -111,6 +114,12 @@ export const SWARM_VIEW_PROJECTIONS = Object.freeze({
   // reference, never the body), the commits landed on the target since the base, and the viewing
   // seat's predecessor when it is a successor. Served as data; the brief renders the same rows.
   situation: Object.freeze({ rows: Object.freeze(['situation']), participant: null }),
+  // Issues #552/#554: the landing pipeline a reader acts on — the contributions waiting on a
+  // review beside the roster that can give it, the accepted rows that are valid `swarm integrate`
+  // targets, and the `needsFromOthers` obligations still open. ONE bounded row (the caps live in
+  // swarm-runtime.mjs, what they drop is counted), so the question is asked instead of derived by
+  // sweeping every contribution and cross-referencing every commit.
+  pipeline: Object.freeze({ rows: Object.freeze(['pipeline']), participant: null }),
 });
 export const SWARM_VIEW_PROJECTION_NAMES = Object.freeze(Object.keys(SWARM_VIEW_PROJECTIONS));
 
