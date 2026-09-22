@@ -40,6 +40,9 @@ import { KimiAcpCli } from './kimi-acp.mjs';
 import { MAX_STDERR_TAIL_BYTES, MuseCli } from './cli-adapters.mjs';
 import { OmpRpcCli } from './omp-rpc.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import {
+  seatAtomsForRoutes, seatCeiling, seatDeferredByVendor, seatObservedAtEventSeq, seatVendor,
+} from './seat-telemetry.mjs';
 import { normalizeWorktreeCapacityPolicy, workspaceCapacityPressure, WorktreeCapacityError } from './worktree-capacity.mjs';
 import { deriveHostCapacity, hostCapacityObservation, HostCapacityAuthority } from './host-capacity.mjs';
 import { RuntimeIsolation, runtimeIdentity } from './runtime-isolation.mjs';
@@ -3634,6 +3637,19 @@ class BatonDeployment {
       ledgerHeadSeq: coordination.ledgerHeadSeq(),
       epochLag: coordination.ledgerHeadSeq() - briefingHead.observedSeq,
     } : null;
+    // #146 (D2.1/D1): the fleet seat projection — one closed D1 atom per readiness route, in
+    // readiness route order, as an ENUMERABLE sibling of `routes` (the DP5 route row shape stays
+    // untouched). Each atom reads the single occupancy source above (`#occupancyFor`), so
+    // `routes[i].occupancy` and `seats[i]` can never disagree about the same route; every count is
+    // null where the allocator binds no single vendor. `observedAtEventSeq` labels the
+    // ledger-derived parts and each atom's `inFlightRevision` labels its live count (D3).
+    const coordinator = this.#driver?.coordinator ?? null;
+    const seats = seatAtomsForRoutes({
+      coordinator,
+      routes: this.#readiness.routes,
+      stateOf: (route, index) => routes[index].state,
+      deferredByVendor: seatDeferredByVendor(coordination),
+    });
     // #295 item 4: the composed document's verdict is derived from the SAME rows it publishes —
     // a route its provider exhausted is not ready for a recruit, so the open-time verdict can
     // never sit beside fresh blocked rows.
@@ -3649,7 +3665,8 @@ class BatonDeployment {
     // composed with THIS read's own profile map, so a route's usage row and doctor row agree.
     const routeUsage = this.#routeUsageRows(routes, profiles);
     const base = {
-      ...this.#readiness, ready, routes, routeUsage,
+      ...this.#readiness, ready, routes, routeUsage, seats,
+      observedAtEventSeq: seatObservedAtEventSeq(coordination),
       // #317 (docs/50 D5): the services section rides the doctor beside routeUsage — present only
       // when the deployment declares services, so the composed document's shape is unchanged for
       // a deployment without the section (D7).
@@ -3861,18 +3878,24 @@ class BatonDeployment {
     return { liveness, occupancy: this.#occupancyFor(route) };
   }
 
-  /** RT-7: the coordinator's real seat count plus the card's CONFIGURED ceiling — or `null` when
-   * no unique card matches (ambiguous/unmatched route) or the card declares no limit. Absence is
-   * never projected as a number: the old `: 1` fabricated a policy nobody configured (audit F3). */
+  /** RT-7 + #146 (B2): the coordinator's real seat count beside the resolved card's CONFIGURED
+   * ceiling, for the ONE vendor the allocator binds this route to. Absence is never projected as a
+   * number: a route the allocator cannot bind to a single vendor (ambiguous, unmatched, or a host
+   * with no coordinator) reads `{inFlight: null, concurrencyCeiling: null}` — the old `: 1` and the
+   * harness-keyed count both fabricated a policy nobody configured (audit F3).
+   *
+   * This is the single occupancy source: the doctor row's non-enumerable `occupancy`, the `seats`
+   * atom's `inFlight`/`ceiling`, and `publicRosterRow`'s enumerable `occupancy` all read it, so two
+   * fields of one response can never disagree about a route's seats. */
   #occupancyFor(route) {
-    const match = this.#liveness?.adapterFor(route);
-    const vendor = match?.vendor ?? route.harness;
-    const inFlight = typeof this.#driver.coordinator?._inFlightCount === 'function'
-      ? this.#driver.coordinator._inFlightCount(vendor) : 0;
-    const ceiling = match
-      ? normalizeConcurrencyCeiling(match.adapter.card()?.concurrencyCeiling, `${vendor} concurrencyCeiling`)
-      : null;
-    return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
+    const coordinator = this.#driver?.coordinator ?? null;
+    const vendor = seatVendor(coordinator, route);
+    if (vendor === null) return Object.freeze({ inFlight: null, concurrencyCeiling: null });
+    return Object.freeze({
+      inFlight: typeof coordinator._inFlightCount === 'function'
+        ? coordinator._inFlightCount(vendor) : null,
+      concurrencyCeiling: seatCeiling(coordinator, vendor),
+    });
   }
 
   /** #341: the per-route usage row — turns, tokens, usd, the card's concurrency ceiling, and the
