@@ -779,12 +779,16 @@ test('H1-tools (stage: tools absent): the two ordinary tools register with close
   // siblings + swarm + evidence + services + the 3 wakes + the message pair + the harvest pair),
   // asserted dupes-free; the MEASURED totals ride as the redundant secondary asserts below.
   assert.equal(new Set(names).size, names.length, 'the ordinary table carries no duplicate spellings');
-  assert.equal(names.length, 56, 'measured ordinary total (composition in mcp-northbound ORDINARY_APPLICATION_TOOL_DEFINITIONS)');
+  // The measured totals follow the composition: the restored baton_run_knowledge_seed row (which
+  // d1288fd9 displaced, and which run.knowledge.seed's registry surface requires) sits in both
+  // tables, so ordinary reads 57 and combined reads 110 here. A tree that also carries the
+  // canonical dot-twin family (#233) reads those totals plus the twin count.
+  assert.equal(names.length, 57, 'measured ordinary total (composition in mcp-northbound ORDINARY_APPLICATION_TOOL_DEFINITIONS)');
   const combined = mcpCombinedToolNames();
   assert.ok(combined.includes('baton_run_resultpin'), 'combined surface gains baton_run_resultpin');
   assert.ok(combined.includes('baton_waves_harvest'), 'combined surface gains baton_waves_harvest');
   assert.equal(new Set(combined).size, combined.length, 'the combined table carries no duplicate spellings');
-  assert.equal(combined.length, 109, 'measured combined total');
+  assert.equal(combined.length, 110, 'measured combined total');
   const { server } = mockAppServer();
   await initialized(server);
   const list = await wireRequest(server, 2, 'tools/list', {});
