@@ -20,6 +20,7 @@
     "test/phase91-semantic-interrupt-preservation-red.test.mjs",
     "test/readiness-credentials-red.test.mjs",
     "test/worktree-capacity-contention.test.mjs",
-    "test/issue462-handoff-env-scoped.test.mjs"
+    "test/issue462-handoff-env-scoped.test.mjs",
+    "test/issue360-drain-releases-settled.test.mjs"
   ]
 }
