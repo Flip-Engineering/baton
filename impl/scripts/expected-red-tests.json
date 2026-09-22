@@ -265,38 +265,6 @@
       "reason": "#261"
     },
     {
-      "key": "test/nested-orchestration-red.test.mjs :: R1 RED (stage: connection-mint-missing): mintChildAuthority mints a FRESH child profile + token",
-      "reason": "#12"
-    },
-    {
-      "key": "test/nested-orchestration-red.test.mjs :: R2 RED (stage: connection-projection-missing): RuntimeIsolation.create projects the child connection onto the posture",
-      "reason": "#12"
-    },
-    {
-      "key": "test/nested-orchestration-red.test.mjs :: R3 RED (stage: xdg-delete-missing): the child runtime env scrubs XDG_CONFIG_HOME",
-      "reason": "#12"
-    },
-    {
-      "key": "test/nested-orchestration-red.test.mjs :: R4 RED (stage: runstop-carveout-missing): transport run_stop admits a lease-bound child on its OWN subtree",
-      "reason": "#12"
-    },
-    {
-      "key": "test/nested-orchestration-red.test.mjs :: R5 RED (stage: legacy-refusal-missing): worker:-prefixed principals refuse the legacy operator set per family",
-      "reason": "#12"
-    },
-    {
-      "key": "test/nested-orchestration-red.test.mjs :: R6 RED (stage: lane-scope-binding-missing): the six workflow lanes refuse foreign runs with the one constant",
-      "reason": "#12"
-    },
-    {
-      "key": "test/nested-orchestration-red.test.mjs :: R7 RED (stage: terminal-revoke-missing): revokeChildAuthority revokes the child lease + session on a terminal parent",
-      "reason": "#12"
-    },
-    {
-      "key": "test/nested-orchestration-red.test.mjs :: R8 RED (stage: orphan-sweep-missing): sweepChildOrphans revokes orphaned child authorities on startup",
-      "reason": "#12"
-    },
-    {
       "key": "test/orchestrator-plan-object-red.test.mjs :: A1: a row member reads its OWN task and transitions it to done — admitted",
       "reason": "#161"
     },
@@ -1669,6 +1637,10 @@
     {
       "file": "test/member-wedge-boundary-red.test.mjs",
       "reason": "#278"
+    },
+    {
+      "file": "test/nested-orchestration-red.test.mjs",
+      "reason": "#12"
     },
     {
       "file": "test/omp-answer-red.test.mjs",
