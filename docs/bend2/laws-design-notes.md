@@ -1472,14 +1472,14 @@ evidence block 1 — 135 rows, each accounted for.
 | CAP-4 | rejected (policy) | failed Q2: a workload choice, and the extraction overstated the source (derived share, not measured cost) |
 | CAP-5 | rejected (policy) | failed Q2: a chosen fallback with operation-specific justification |
 | CAP-6 | kept → M-2 | passes |
-| CAP-7 | kept → M-6 | passes |
+| CAP-7 | kept → the exact-instance clause of the authority boundary (M-8 in revision 6) | passes |
 | CAP-8 | reduced → M-10 | failed Q3: the closed shape is construction hygiene; the byte ceiling is an unjustified cutoff |
 | CAP-9 | rejected | failed Q1: housekeeping design, not a forbidden behavior |
 | CAP-10 | rejected (policy) | failed Q2: one recovery response among possible ones |
 | CAP-11 | rejected (policy) | failed Q2: tunable scheduling |
 | CAP-12 | kept → M-8 | passes |
 | CAP-13 | rejected | failed Q3: exclusive accounting is required; the seal, root and lock are mechanisms |
-| CAP-14 | kept → M-6 | passes |
+| CAP-14 | kept → the exact-instance clause of the authority boundary (M-8 in revision 6) | passes |
 | CAP-15 | reduced → M-10 | failed Q3: the terminal refusal dies under the no-cutoff ruling; the bounded queue survives (adjudicated wording) |
 | CAP-16 | rejected | failed Q3/independence: agreement is the property, one predicate is an organization |
 | CAP-17 | rejected (policy) | failed Q6: conflicts with the no-cutoff ruling; retire or state as an operator exception |
@@ -1542,7 +1542,7 @@ evidence block 1 — 135 rows, each accounted for.
 | AB-02 | reduced → M-8 scope | failed Q3: lexical rules are necessary and do not establish containment |
 | AB-03 | rejected | failed Q3: unambiguous targets are required; the list form is subordinate |
 | AB-04 | kept → M-9 | passes |
-| AB-05 | reduced → M-6 and M-7 | failed independence: carried by the binding entries |
+| AB-05 | reduced → M-7 and the exact-instance clause of the authority boundary (M-8 in revision 6) | failed independence: carried by the binding entries |
 | AB-06 | reduced → M-8 | failed Q4: valid-authority transfer is the law; revocation and recovery scopes are owed |
 | AB-07 | rejected | failed Q3: truthful provenance is required; the reserved-prefix strategy is a recording choice |
 | AB-08 | rejected | failed Q3: the distinction is required; the exemptions are mechanism |
@@ -1602,3 +1602,8 @@ uncertainty entry · CX-3 reduced to the publication-evidence entry · CX-4 reje
 theorem in the design notes above · CX-5 split into the history-preservation and no-cutoff
 entries · CX-6 split, the narrow no-silent-abandonment prohibition adopted in revision 6 and
 the ready-work half recorded here as design guidance.
+
+Reference closure for withdrawn or renumbered marks: M-6 → the exact-instance clause of the
+authority boundary (M-8 in revision 6); M-3 → M-3a, M-3b, M-3c; M-15 → deferred (DEV-6, the
+instruction preserved above); M-16 → excluded (AGENTS.md, DEV-7); revision 5's flagged
+interface entry → the interface clause of the authority boundary.
