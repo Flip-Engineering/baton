@@ -1451,7 +1451,7 @@ document is the pre-approval register.
 Verdict precedence for mechanical counting: a row is rejected if its verdict contains
 "rejected", else reduced if it contains "reduced", else kept. Repairs applied per the r5
 review: CAP-3 now points at the adopted narrow abandonment entry; CS-02 and LEDG-17 name their
-surviving homes. Mechanical count after repairs: kept 49, reduced 26, rejected 58, retired 1,
+surviving homes. Mechanical count after repairs: kept 47, reduced 29, rejected 57, retired 1,
 evidence block 1 — 135 rows, each accounted for.
 
 | CUST-1 | kept → M-4 | passes |
@@ -1561,7 +1561,7 @@ evidence block 1 — 135 rows, each accounted for.
 | PM-07 | reduced → M-7 | failed Q4: membership currency is part of authority validity |
 | PM-08 | kept → M-8 | passes |
 | PM-09 | rejected (policy) | failed Q3: the table evolves under a versioned policy contract |
-| PM-10 | reduced → M-3 scope | failed Q3: independence of authority is the guarantee; label inequality is not proof — the inequality proposition route is owed |
+| PM-10 | reduced → the independence premise of the publication-evidence entry; the inequality-proposition route is owed | failed Q3: independence of authority is the guarantee; label inequality is not proof — the inequality proposition route is owed |
 | PM-11 | kept → M-7 | passes |
 | CL-01 | rejected (policy) | failed Q3: explicit form is required; the six-key heuristic is compatibility |
 | CL-02 | kept → M-7 | passes |
@@ -1607,3 +1607,5 @@ Reference closure for withdrawn or renumbered marks: M-6 → the exact-instance 
 authority boundary (M-8 in revision 6); M-3 → M-3a, M-3b, M-3c; M-15 → deferred (DEV-6, the
 instruction preserved above); M-16 → excluded (AGENTS.md, DEV-7); revision 5's flagged
 interface entry → the interface clause of the authority boundary.
+
+Superseded-row annotations (2026-09-22, per the r6 review): the DEV-6 row above is superseded — M-15 is DEFERRED, not kept, and the operator instruction is preserved in these notes; the DEV-7 row is superseded — M-16 is EXCLUDED from the application laws, and the prose rule stays in AGENTS.md and document review; the PM-10 row routes its guarantee to the independence premise of the publication-evidence entry. The family-verdicts paragraph and its old CX-6 rejection below the table are historical — revision 6 adopted the narrow no-silent-abandonment prohibition (M-17 in revision 6 numbering), and the operative set is the 17-entry list in laws-proposed.md (revision 8 onward).
