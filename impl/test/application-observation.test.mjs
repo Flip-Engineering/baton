@@ -20,8 +20,10 @@
 //      CLI/MCP/Web consumers import from it; the 31 shared import bindings re-import
 //      from their original modules.
 //   5. THE MAP SEES THE MOVE — the committed artifact carries the application-observation target
-//      with 175 members, application.mjs stays at 237, and every moved delegate keeps
-//      observation through the application_observation_port rule.
+//      with 175 members, application.mjs stays at 241 (237 plus the four members the #99/#555
+//      result-materialization landing d1288fd9 added: resultPin, wavesHarvest, _resultRecordForRun,
+//      _attributingTaskRecord), and every moved delegate keeps observation through the
+//      application_observation_port rule.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -155,7 +157,7 @@ test('AO5: the map sees the move — a new target, the host unchanged, every del
   assert.ok(target, 'the committed artifact must carry the application-observation target');
   assert.equal(target.members.length, 175);
   const hostFile = map.files.find((file) => file.file === HOST_FILE);
-  assert.equal(hostFile.members.length, 237, 'application.mjs keeps every member as delegates');
+  assert.equal(hostFile.members.length, 241, 'application.mjs keeps every member as delegates');
   for (const member of hostFile.members) {
     if (!Object.hasOwn(ARITIES, member.name)) continue;
     assert.ok(member.evidence.includes('observation:application_observation_port'),

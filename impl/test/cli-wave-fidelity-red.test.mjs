@@ -339,8 +339,14 @@ function minimalWaveCliInvocation(key) {
   const required = [...(operation.inputSchema?.required ?? [])];
   // waves.run: specPath is the CLI's positional id even though the schema required set is
   // ['idempotencyKey'] only (issue #114 lane); it rides argv positionally per N6.
+  // waves.harvest: the source law is exactly one of resultSha|runId — an XOR the schema's required
+  // set cannot carry — and the CLI branch takes that one source positionally (#99/#179 Decision 5:
+  // "baton waves harvest RESULT_SHA|RUN_ID [--onto PATH]", application-cli.mjs harvest branch).
+  // Same class as waves.run's specPath and waves.stop's reason below: an argument the CLI branch
+  // requires and the registry schema cannot spell.
   const positional = required.find((field) => WAVE_CLI_POSITIONAL_ID_FIELDS.includes(field))
-    ?? (key === 'waves.run' ? 'specPath' : null);
+    ?? (key === 'waves.run' ? 'specPath' : null)
+    ?? (key === 'waves.harvest' ? 'runId' : null);
   // waves.stop: the schema required set omits reason (contract OQ1 — the schema row requires
   // ['runId'] only), but the CLI branch requires --reason to match the dispatcher
   // (application.mjs:11900/11967-11968).
