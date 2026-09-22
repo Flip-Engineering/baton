@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "note": "Files that spawn real processes or bound their waits by wall clock run in the serial lane (--test-concurrency=1) so the parallel lane's CPU contention cannot turn them into hangs; every other file runs in the parallel lane. Membership follows observed cancellations (issue #260 / #257), not guesses.",
+  "note": "Files that spawn real processes or bound their waits by wall clock run in the serial lane (--test-concurrency=1) so the parallel lane's CPU contention cannot turn them into hangs; every other file runs in the parallel lane. Membership follows observed cancellations (issue #260 / #257), not guesses. The five files after issue360-drain-releases-settled joined on 2026-09-21: one 9-lane run of the whole suite on a contended host (load1m 25, two sibling suites running) hung issue467-stop-converges for 603 s and ran six wall-clock rows red across the files below, and each of the five passes alone through the runner.",
   "serial": [
     "test/board-workerhalf-red.test.mjs",
     "test/coordinator.test.mjs",
@@ -19,6 +19,13 @@
     "test/phase8-correctness.test.mjs",
     "test/phase91-semantic-interrupt-preservation-red.test.mjs",
     "test/readiness-credentials-red.test.mjs",
-    "test/worktree-capacity-contention.test.mjs"
+    "test/worktree-capacity-contention.test.mjs",
+    "test/issue462-handoff-env-scoped.test.mjs",
+    "test/issue360-drain-releases-settled.test.mjs",
+    "test/issue306a-reincarnate.test.mjs",
+    "test/issue351-open-liveness.test.mjs",
+    "test/issue383-child-pipe-error.test.mjs",
+    "test/issue390-context-call-stopping.test.mjs",
+    "test/issue467-stop-converges.test.mjs"
   ]
 }

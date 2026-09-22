@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
-import { wrapProse } from './messages.mjs';
+import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
   goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
@@ -75,7 +75,6 @@ import {
   READ_ONLY_RESULT_DEFINITION,
   RESULT_POLICY_CONSTRAINT_PREFIX,
   RUN_VIEW_SHED_STEPS,
-  SECRET_SHAPED_TEXT,
   VERDICT_CORRECTIVE_TABLE,
   VERIFIER_DIAGNOSTIC_CODES,
   VERIFIER_DURATION_BOUND_MS,

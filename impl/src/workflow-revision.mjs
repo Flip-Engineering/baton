@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { SECRET_SHAPED_TEXT } from './messages.mjs';
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -20,13 +21,6 @@ function exact(value, fields, label) {
     fail(`${label} has unknown or missing fields`);
   }
 }
-
-const SECRET_SHAPED_TEXT = Object.freeze([
-  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u,
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/iu,
-  /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/u,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u,
-]);
 
 function text(value, maxBytes, label) {
   if (typeof value !== 'string' || value.includes('\0')) fail(`${label} is invalid`);

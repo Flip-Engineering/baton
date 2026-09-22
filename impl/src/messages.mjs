@@ -518,14 +518,26 @@ export const MAX_ATTENTION_TEXT_BYTES = FRAME_LIMITS['view.attention_text.bytes'
 /** OQ2 marker: a capped attention snippet carries this literal marker instead of being silent. */
 export const ATTENTION_TRUNCATION_MARKER = '[truncated]';
 
+/** The ONE secret-shape pattern set (#548). The patterns are deliberately NON-global: this set is
+ * consumed both as a predicate (`secretShapedText`, and every `some((pattern) => pattern.test(..))`
+ * caller) and as a redactor, and a `g` flag makes `.test()` STATEFUL — consecutive calls over one
+ * string then alternate true/false and leak on every other call. Whole-string redaction rebuilds a
+ * global RegExp from the pattern's own source at the redaction site instead, so every occurrence is
+ * still replaced and nothing has to remember to reset `lastIndex`. */
 export const SECRET_SHAPED_TEXT = Object.freeze([
-  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/gu,
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/giu,
-  /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/gu,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/gu,
-  /\bAKIA[A-Z0-9]{16}\b/gu,
-  /\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/gu,
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u,
+  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/iu,
+  /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/u,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u,
+  /\bAKIA[A-Z0-9]{16}\b/u,
+  /\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/u,
 ]);
+
+/** Whether a text carries a credential-shaped value, judged by the ONE pattern set above. Stateless
+ * by construction: the patterns carry no `g` flag, so this is safe to call repeatedly. */
+export function secretShapedText(value) {
+  return typeof value === 'string' && SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value));
+}
 
 /** Cap a string at maxBytes without splitting a UTF-8 scalar. */
 function capBytes(text, maxBytes) {
@@ -547,7 +559,9 @@ export function boundedAttentionText(value, maxBytes = MAX_ATTENTION_TEXT_BYTES)
   const text = typeof value === 'string' ? value : String(value ?? '');
   const normalized = text.normalize('NFKC');
   let redacted = normalized;
-  for (const pattern of SECRET_SHAPED_TEXT) { pattern.lastIndex = 0; redacted = redacted.replace(pattern, '[redacted]'); }
+  for (const pattern of SECRET_SHAPED_TEXT) {
+    redacted = redacted.replace(new RegExp(pattern.source, `${pattern.flags}g`), '[redacted]');
+  }
   const capped = capBytes(redacted, maxBytes);
   if (!capped.truncated) return capped.text;
   const markerBytes = Buffer.byteLength(ATTENTION_TRUNCATION_MARKER);
