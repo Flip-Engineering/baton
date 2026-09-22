@@ -41,6 +41,24 @@ import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 //     documents (scripts/surface-divergence-ledger.json, the eight facade ports of #87+#48 and
 //     waves.compile of #170). The surface conformance, the parity matrix and CLI.md pin this
 //     projection, so it stays the byte-stable card view while dispatch follows the bus.
+// The transports the resident's WIRE CARD covers beyond the application command table: the six
+// wave direct ports (the same set surface-conformance.mjs pins as WAVE_DIRECT_PORT_VERBS and the
+// docs call the web.bus card) and the direct ports whose divergence from that projection the
+// ledger documents (the eight facade ports of #87+#48, waves.compile of #170, and the #161 plan
+// verbs). The gate asserts the ledger's cli rows and this list agree.
+const CLI_CARD_WAVE_PORTS = Object.freeze([
+  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
+]);
+const CLI_CARD_LEDGERED_PORTS = Object.freeze([
+  'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
+  'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
+  'waves.compile',
+  // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
+  'run.resultpin', 'waves.harvest',
+  // Issue #161 (D3.2/D3.4): the plan object's two direct ports — served on the embedded, CLI and
+  // MCP surfaces; the web envelope refuses both spellings and the ledger documents it.
+  'plan.read', 'plan.write',
+]);
 function cliDispatchTransports() {
   const admitted = new Set(webAdmittedCommandNames());
   const dispatchAliases = applicationOperationAliasMap();
@@ -59,24 +77,15 @@ function cliDispatchTransports() {
       if (admitted.has(candidate) || admitted.has(candidate.replaceAll('.', '_'))) names.add(candidate);
     }
   }
+  // The direct ports the CLI serves although the web bus admits no transport for them: the parser
+  // compiles their verbs and the divergence ledger documents the refusal (the #161 plan pair is
+  // the current such set; the bus-admitted direct ports above need no ledger row and stay out).
+  for (const name of CLI_CARD_LEDGERED_PORTS) {
+    if (!admitted.has(name) && !admitted.has(name.replaceAll('.', '_'))) names.add(name);
+  }
   return names;
 }
 const CLI_DISPATCH_TRANSPORTS = Object.freeze([...cliDispatchTransports()].sort());
-// The transports the resident's WIRE CARD covers beyond the application command table: the six
-// wave direct ports (the same set surface-conformance.mjs pins as WAVE_DIRECT_PORT_VERBS and the
-// docs call the web.bus card) and the direct ports whose divergence from that projection the
-// ledger documents (the eight facade ports of #87+#48 plus waves.compile of #170). The gate
-// asserts the ledger's cli rows and this list agree.
-const CLI_CARD_WAVE_PORTS = Object.freeze([
-  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
-]);
-const CLI_CARD_LEDGERED_PORTS = Object.freeze([
-  'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
-  'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
-  'waves.compile',
-  // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
-  'run.resultpin', 'waves.harvest',
-]);
 export const CLI_WEB_COMMANDS = new Set(CLI_DISPATCH_TRANSPORTS.filter((name) => (
   (Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, name)
     && APPLICATION_COMMAND_DEFINITIONS[name].web === true)
@@ -1544,6 +1553,11 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     token: 'run', verb: 'baton run', argv: Object.freeze(['run', 'view', 'RUN_ID']), kind: 'command',
     parser: 'baton-cli',
     summary: 'Start a Run from an objective, or observe, steer, review, adopt and export one (`baton help run`).',
+  }),
+  Object.freeze({
+    token: 'plan', verb: 'baton plan read PLAN_ID',
+    argv: Object.freeze(['plan', 'read', 'PLAN_ID']), kind: 'command', parser: 'baton-cli',
+    summary: 'Read the orchestrator campaign plan, or land one idempotency-keyed mutation (`baton plan write PLAN_ID --mutation JSON`).',
   }),
   Object.freeze({
     token: 'review', verb: 'baton review OBJECTIVE',
@@ -4235,6 +4249,27 @@ export function parseBatonCli(rawArgs) {
       },
       idempotencyKey,
     };
+  }
+  // #161 (D3.2): the plan object's two CLI verbs — `baton plan read PLAN_ID` and
+  // `baton plan write PLAN_ID --mutation JSON`. The parser validates the transport shape only
+  // (the plan ID is an identifier, the mutation is JSON); the plan lane refuses a body that is
+  // not one of the closed mutations, so the deployment owns the shape law and the CLI never
+  // teaches a second copy of it.
+  if (args[0] === 'plan') {
+    args.shift();
+    const sub = args.shift();
+    if (sub !== 'read' && sub !== 'write') throw cliError('expected plan read or plan write');
+    const planId = id(args.shift(), 'plan ID');
+    if (sub === 'read') {
+      noRemainder(args);
+      return { kind: 'command', name: 'plan.read', args: { planId }, idempotencyKey };
+    }
+    const mutationRaw = take(args, '--mutation', { required: true });
+    noRemainder(args);
+    let mutation;
+    try { mutation = JSON.parse(mutationRaw); } catch { mutation = null; }
+    if (mutation === null) throw cliError('--mutation must be JSON carrying the closed plan mutation shape');
+    return { kind: 'command', name: 'plan.write', args: { planId, mutation }, idempotencyKey };
   }
   if (args.shift() !== 'run') {
     // #340: the refusal names the CLOSED top-level verb set (CLI_TOP_LEVEL_VERBS) — the same rows

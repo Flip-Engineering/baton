@@ -319,6 +319,8 @@ that owns the runs, never over a borrowed bridge session.
 | `deployment.doctor` | `ordinary` | `baton_deployment_doctor` | idempotent |
 | `evidence.search` | `ordinary` | `baton_evidence_search` | idempotent |
 | `application.help` | `ordinary` | `baton_help` | idempotent |
+| `plan.read` | `ordinary` | `baton_plan_read` | idempotent |
+| `plan.write` | `ordinary` | `baton_plan_write` | effectful |
 | `run.do` | `ordinary` | `baton_run_act` | destructive |
 | `run.adopt` | `ordinary` | `baton_run_adopt` | effectful |
 | `run.answer` | `ordinary` | `baton_run_answer` | effectful |

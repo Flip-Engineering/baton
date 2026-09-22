@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "generatedBy": "impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact",
   "counts": {
-    "canonicalOperations": 97,
-    "cliWebCommands": 57,
+    "canonicalOperations": 99,
+    "cliWebCommands": 59,
     "parserLifecycleActions": 30,
-    "mcpApplicationTools": 56,
+    "mcpApplicationTools": 58,
     "mcpAdvancedTools": 19,
-    "mcpCombinedTools": 109,
+    "mcpCombinedTools": 111,
     "mcpDispatchTools": 111,
     "webBusCommands": 46,
     "applicationCommandDefinitions": 41
@@ -59,6 +59,8 @@
     "cli.ordinary": [
       "application.help",
       "evidence.search",
+      "plan.read",
+      "plan.write",
       "run.answer",
       "run.approve",
       "run.attention.watch",
@@ -167,6 +169,8 @@
       "baton_swarm_stop",
       "baton_evidence_search",
       "baton_services_list",
+      "baton_plan_read",
+      "baton_plan_write",
       "baton_wakes_subscribe",
       "baton_wakes_unsubscribe",
       "baton_wakes_since"
@@ -210,6 +214,8 @@
       "baton_package_admit",
       "baton_package_attach",
       "baton_package_read",
+      "baton_plan_read",
+      "baton_plan_write",
       "baton_repl_cite",
       "baton_run_act",
       "baton_run_adopt",
