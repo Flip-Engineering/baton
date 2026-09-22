@@ -16,6 +16,7 @@ import { compileWavefile } from './workflow-dsl.mjs';
 import { SWARM_MCP_TOOL_DEFINITIONS } from './swarm-surface.mjs';
 import { EVIDENCE_SEARCH_INPUT_SCHEMA } from './evidence-search.mjs';
 import { SERVICES_LIST_INPUT_SCHEMA } from './provider-services.mjs';
+import { honestLivenessProjection } from './route-liveness.mjs';
 
 // Issue #233 (canonical naming unification): every mcp-flagged application definition is
 // admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
@@ -3158,7 +3159,18 @@ export class McpFleetServer {
     } else {
       readiness = Object.freeze({ schemaVersion: 1, routes: [], workspace: Object.freeze({ state: 'ready' }) });
     }
-    return this._sanitizeDoctorReadiness(readiness);
+    // #167 (D2 wire law): the MCP result is a serializing transport too — the honest
+    // {verdict, probedAt} projection is re-added per route row here, so `deployment.doctor` over MCP
+    // carries the same honest signal the doctor row does (the non-enumerable liveness sibling does
+    // not survive the frame).
+    const rows = Array.isArray(readiness?.routes)
+      ? readiness.routes.map((row) => {
+        const { verdict, probedAt } = honestLivenessProjection(row?.liveness ?? null);
+        return row && typeof row === 'object' ? { ...row, verdict, probedAt } : { verdict, probedAt };
+      })
+      : null;
+    const projected = rows === null ? readiness : { ...readiness, routes: rows };
+    return this._sanitizeDoctorReadiness(projected);
   }
 
   // Strips credential-shaped VALUES from the readiness projection (never the metadata fields —

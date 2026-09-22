@@ -22,7 +22,7 @@ import {
   resolveServiceCredentialValue, serviceCredentialReference, serviceForRoute, serviceStateOf,
 } from './provider-services.mjs';
 import { ProviderQuotaAuthority, routeQuotaKey } from './route-quota.mjs';
-import { RouteLiveness } from './route-liveness.mjs';
+import { RouteLiveness, honestLivenessProjection } from './route-liveness.mjs';
 import { matchProviderRefusal, PROVIDER_RESET_AT_FROM_TEXT } from './adapter.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { GOAL_PLAN_CEILINGS } from './goal-plan.mjs';
@@ -2022,7 +2022,7 @@ function publicRouteRuntime(card) {
 // the same whitelist-projector discipline (bounded, vendor-neutral atoms; no executable paths, no
 // credential values, no private runtime paths, no provider tokens). The liveness/occupancy/learning
 // fields carry only the bounded atoms the projection functions already produce.
-function publicRosterRow(route, { static: staticFields, liveness, occupancy, learning }) {
+function publicRosterRow(route, { static: staticFields, liveness, occupancy, learning, verdict, probedAt }) {
   return Object.freeze({
     harness: route.harness,
     model: route.model,
@@ -2032,8 +2032,22 @@ function publicRosterRow(route, { static: staticFields, liveness, occupancy, lea
     liveness,
     occupancy,
     learning,
+    // #167 (D2): present only when the deployment declares the liveness tier (the same additive
+    // rule as the doctor row) — the honest verdict never lives as a private sibling class.
+    ...(verdict === undefined ? {} : { verdict, probedAt }),
   });
 }
+
+/** #167 (G1/D2): the static readiness substrate as the roster row publishes it — the same closed
+ * atom ({state, code?, summary?}), read from the composed row the doctor already built. */
+function staticReadinessAtom(row) {
+  return Object.freeze({
+    state: row.state,
+    ...(row.code ? { code: row.code } : {}),
+    ...(row.summary ? { summary: row.summary } : {}),
+  });
+}
+
 
 // §4.2.2 fold F-2: the fleet_roster OPERATION's provenance envelope — claimed on the operation's
 // own registration/result envelope (the route.advice envelope precedent), never as fields of the
@@ -3301,6 +3315,12 @@ class BatonDeployment {
   #claudeCredentialProbe = null;
   #grokCredentialProbe = null;
   #liveness = null;
+  // #167 (D2): whether this deployment DECLARES the liveness tier (advanced.liveness). A declared
+  // tier publishes the honest {verdict, probedAt} projection ENUMERABLY on the doctor route row and
+  // the roster row (JSON-surviving, so an operator-wire reader sees it); an undeclared deployment
+  // keeps the DP5 closed enumerable row (contract-146 A8 pins that byte-unchanged shape) and
+  // reaches liveness only through the non-enumerable sibling.
+  #livenessDeclared = false;
   #adapters = {};
   #routes = [];
   #routeQuota = null;
@@ -3382,6 +3402,7 @@ class BatonDeployment {
     this.#contextSourceAdmit = typeof deployment.contextSourceAdmit === "function" ? deployment.contextSourceAdmit : null;
     this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
+    this.#livenessDeclared = deployment.livenessDeclared === true;
     this.#routeQuota = deployment.routeQuota ?? null;
     this.#routeRefusals = deployment.refusals ?? null;
     this.#routeDegrades = deployment.degrades ?? null;
@@ -3560,6 +3581,16 @@ class BatonDeployment {
         composed.service = this.#serviceForRoute(registryRoute ?? row)?.provider ?? null;
       }
       Object.defineProperty(composed, 'liveness', { value: live.liveness, enumerable: false });
+      // #167 (D2 wire law): the honest projection is ENUMERABLE on the doctor route row when this
+      // deployment declares the liveness tier, so Object.keys/JSON.stringify carry it to every
+      // operator-wire reader without reaching into the non-enumerable sibling.
+      if (this.#livenessDeclared) Object.assign(composed, honestLivenessProjection(live.liveness));
+      // #167 (G1): the static substrate in the roster row's own atom shape ({state, code?,
+      // summary?}) — a non-enumerable sibling, so the pre-existing enumerable doctor row keeps the
+      // DP5 closed set while a consumer reads the static axis without re-deriving it.
+      Object.defineProperty(composed, 'static', {
+        value: staticReadinessAtom(row), enumerable: false,
+      });
       Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
       // #341 part 2: the last refusal THIS deployment's ledger holds for the route — published by
       // the same non-enumerable pattern (a reader sees it; the pre-existing serialized row shape
@@ -3987,7 +4018,10 @@ class BatonDeployment {
         : Object.freeze({ state: 'unobserved', credentialKey: null });
       const occupancy = this.#occupancyFor(route);
       const learning = this.#learningFor(route);
-      return publicRosterRow(route, { static: staticFields, liveness, occupancy, learning });
+      return publicRosterRow(route, {
+        static: staticFields, liveness, occupancy, learning,
+        ...(this.#livenessDeclared ? honestLivenessProjection(liveness) : {}),
+      });
     }));
     const observations = this.#driver.coordination.routeObservations();
     return Object.freeze({
@@ -4017,7 +4051,11 @@ class BatonDeployment {
     this.#assertAdmitsTurns();
     if (Array.isArray(requests)) {
       for (const request of requests) {
-        if (record(request)) this.#assertRouteReady(request);
+        if (!record(request)) continue;
+        this.#assertRouteReady(request);
+        // #167 (A6/D1 trigger 1): the liveness gate is CONSULTED on every provider-spawn surface
+        // before any real turn — additive to assertRouteReady, never a replacement for it.
+        await this.#livenessGate(request);
       }
     }
     return this.#baton.runs.startMany(requests);
@@ -4027,7 +4065,9 @@ class BatonDeployment {
     this.#assertAdmitsTurns();
     if (record(options) && Array.isArray(options.team)) {
       for (const member of options.team) {
-        if (record(member) && record(member.exact)) this.#assertRouteReady({ exact: member.exact });
+        if (!(record(member) && record(member.exact))) continue;
+        this.#assertRouteReady({ exact: member.exact });
+        await this.#livenessGate({ exact: member.exact });
       }
     }
     return this.#baton.workflow(objective, options);
@@ -4036,6 +4076,7 @@ class BatonDeployment {
   async explore(objective, options = {}) {
     this.#assertAdmitsTurns();
     this.#assertRouteReady(options);
+    await this.#livenessGate(options);
     return this.#baton.explore(objective, options);
   }
 
@@ -4043,7 +4084,9 @@ class BatonDeployment {
     this.#assertAdmitsTurns();
     if (record(options) && Array.isArray(options.routes)) {
       for (const exact of options.routes) {
-        if (record(exact)) this.#assertRouteReady({ exact });
+        if (!record(exact)) continue;
+        this.#assertRouteReady({ exact });
+        await this.#livenessGate({ exact });
       }
     }
     return this.#baton.review(objective, options);
@@ -6908,6 +6951,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       reincarnationAuthority,
       reincarnationHandoff,
       liveness: livenessController,
+      // #167 (D2): whether the liveness tier was DECLARED (advanced.liveness) — the discriminator
+      // the honest enumerable {verdict, probedAt} projection rides, so an undeclared deployment
+      // keeps the DP5 closed enumerable row contract-146 A8 pins.
+      livenessDeclared: Object.keys(rawLiveness).length > 0,
       claudeCredentialProbe,
       credentialLifetime,
       claudeCredentialCache,

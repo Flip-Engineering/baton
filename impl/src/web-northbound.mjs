@@ -18,6 +18,7 @@ import { projectSwarmView, SWARM_VIEW_PROJECTIONS } from './swarm-contract.mjs';
 // the runtime raises; the fold status table below is DERIVED from it, never hand-kept.
 import { SWARM_REFUSAL_CODES } from './swarm-refusals.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalAndTransportNames } from './application-semantics.mjs';
+import { honestLivenessProjection } from './route-liveness.mjs';
 import {
   WakeStream, attachmentClosedFrame, attachmentClosedReason, deriveWakeFrame, parseWakeFilter, wakeClassRow,
 } from './wake-stream.mjs';
@@ -387,6 +388,16 @@ const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logo
 const OIDC_START_PATH = '/v1/auth/oidc/start';
 const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
 
+
+/** #167 (D2 wire law): one readiness row's honest {verdict, probedAt} projection, re-added
+ * EXPLICITLY by every northbound transport. The doctor row's non-enumerable siblings (liveness,
+ * occupancy) do not survive a JSON round-trip, so the transport reads them by property access
+ * BEFORE serialization and adds the two fields a reading consumer must see. ONE derivation: this
+ * module never re-implements the staleness law (`route-liveness.mjs` owns it). */
+function withHonestLiveness(row) {
+  if (!row || typeof row !== 'object') return row;
+  return { ...row, ...honestLivenessProjection(row.liveness ?? null) };
+}
 function json(value) { return JSON.parse(JSON.stringify(value)); }
 function transportCapability(value) {
   const copy = json(value);
@@ -2520,7 +2531,7 @@ export class WebNorthbound {
       return this._handleOidcCallback(req, res, url, origin);
     }
     if (req.method === 'GET' && (['/v1/session', '/v1/application-card'].includes(url.pathname) || operatorAsset(url.pathname))) {
-      return this._handleOperatorRead(req, res, url.pathname, origin);
+      return this._handleOperatorRead(req, res, url, origin);
     }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/commands/')) {
       return this._handleCommandStatus(req, res, url, origin);
@@ -2836,7 +2847,7 @@ export class WebNorthbound {
     };
   }
 
-  async _handleOperatorRead(req, res, pathname, origin) {
+  async _handleOperatorRead(req, res, url, origin) {
     const ctx = this._oidcContext(req, origin);
     let principal;
     try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
@@ -2856,11 +2867,11 @@ export class WebNorthbound {
     }
     try {
       this._audit('operator_read_authorized', { ...ctx, principal }, {
-        resourceClass: pathname === '/v1/session' ? 'session' : pathname === '/v1/application-card' ? 'application_card' : 'asset',
+        resourceClass: url.pathname === '/v1/session' ? 'session' : url.pathname === '/v1/application-card' ? 'application_card' : 'asset',
       });
     }
     catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-    if (pathname === '/v1/session') {
+    if (url.pathname === '/v1/session') {
       return this._write(res, result(200, {
         ok: true,
         identity: {
@@ -2870,16 +2881,40 @@ export class WebNorthbound {
         expiresAt: principal.expiresAt,
       }));
     }
-    if (pathname === '/v1/application-card') {
+    if (url.pathname === '/v1/application-card') {
       if (!this.application) return this._write(res, applicationUnavailableRefusal('run application unavailable'));
-      const card = this.application.card();
+      let card = this.application.card();
+      // #167 (A2/D1 trigger 3): the operator's on-demand forced probe. `forceProbe` refreshes every
+      // stale route ONCE through the deployment's own probe handle — the cache discipline decides
+      // what is stale (a fresh window is never re-probed), so a repeated `baton doctor --check`
+      // costs no extra provider turn. The card is re-read after the probes so the served rows carry
+      // the refreshed verdicts.
+      if (url.searchParams?.get('forceProbe') === '1') {
+        for (const row of card?.readiness?.routes ?? []) {
+          if (typeof row?.liveness?.probe !== 'function') continue;
+          try { await row.liveness.probe(); } catch { /* the refreshed row projects the failure */ }
+        }
+        card = this.application.card();
+      }
       // Epic #103 (D6c): the web card is the reading consumer's TRANSPORT — the CLI is a child
       // process that reads the doctor sibling by property access AFTER an HTTP JSON round-trip,
       // and non-enumerable properties do not survive JSON.stringify. So the route reads the
       // non-enumerable sibling itself and adds the ONE named additive field to the served shape.
-      const readiness = card?.readiness && typeof card.readiness === 'object' && !Array.isArray(card.readiness)
-        ? { ...card.readiness, briefing: card.readiness.briefing ?? null }
-        : (card?.readiness ?? null);
+      // #167 (D2 wire law): the same transport law re-adds the honest liveness {verdict, probedAt}
+      // projection per route row, so a serializing reader sees the honest signal.
+      const source = card?.readiness && typeof card.readiness === 'object' && !Array.isArray(card.readiness)
+        ? card.readiness : null;
+      const readiness = source === null ? (card?.readiness ?? null) : {
+        ...source,
+        ...(Array.isArray(source.routes)
+          ? {
+            routes: source.routes.map((row) => {
+              const { verdict, probedAt } = withHonestLiveness(row);
+              return { ...row, verdict, probedAt };
+            }),
+          } : {}),
+        briefing: source.briefing ?? null,
+      };
       return this._write(res, result(200, {
         ok: true,
         // D1.4/F1 — the card advertises the admitted lane BY DERIVATION from the same transport
@@ -2890,7 +2925,7 @@ export class WebNorthbound {
         application: { ...card, readiness, commands: webCardCommandNames() },
       }));
     }
-    const asset = operatorAsset(pathname);
+    const asset = operatorAsset(url.pathname);
     const body = asset.body;
     const headers = {
       'content-type': asset.type, 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store',
