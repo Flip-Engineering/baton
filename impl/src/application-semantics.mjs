@@ -2402,6 +2402,32 @@ const PROVIDER_TERMINAL_GUIDANCE = freeze({
     remediation: 'Check Baton route readiness and the harness-native status, then retry. If it repeats, inspect the Run\'s bounded evidence.',
     retryable: true,
   },
+  // #167 (D1/G6): the bounded actual-inference probe's typed verdict vocabulary. A probe outcome is
+  // a provider fact with its own remedy — it never collapses into GENERIC_PROVIDER_TERMINAL_GUIDANCE.
+  provider_unreachable: {
+    category: 'provider_runtime',
+    summary: 'The bounded liveness probe reached no provider turn: the route is unreachable.',
+    remediation: 'Check the harness-native status outside Baton, rerun baton doctor --check, then retry the Run.',
+    retryable: true,
+  },
+  probe_content_mismatch: {
+    category: 'provider_protocol',
+    summary: 'The bounded liveness probe answered, but the turn did not carry the expected content line.',
+    remediation: 'Inspect the probe receipt\'s captured head, confirm the exact route serves the configured model, rerun baton doctor --check, then retry the Run.',
+    retryable: true,
+  },
+  probe_oversize: {
+    category: 'provider_protocol',
+    summary: 'The liveness probe refused before dispatch: the probe prompt exceeded its declared byte bound.',
+    remediation: 'Shorten the exact model identifier so the probe prompt fits its declared bound, then retry the Run.',
+    retryable: true,
+  },
+  provider_quota: {
+    category: 'provider_capacity',
+    summary: 'The provider refused the route on quota or capacity (HTTP 402 / insufficient_quota).',
+    remediation: 'Operator surface only: this route is excluded from the automatic re-probe cadence until the provider\'s own quota window clears. Check the provider plan or select another exact route, then retry the Run.',
+    retryable: true,
+  },
 });
 
 const GENERIC_PROVIDER_TERMINAL_GUIDANCE = freeze({
