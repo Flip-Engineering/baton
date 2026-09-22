@@ -309,142 +309,6 @@
       "reason": "#159"
     },
     {
-      "key": "test/harvest-accessor-red.test.mjs :: A1-resultpin-dispatch (stage: ports absent): run.resultpin dispatches ahead of the command table",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: A2-harvest-dispatch (stage: ports absent): waves.harvest dispatches for both XOR sources",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: A3-resultpin-closure (stage: ports absent): shape failures refuse application_run_resultpin_invalid before authorize",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: A4-harvest-closure (stage: ports absent): shape failures refuse application_waves_harvest_invalid before authorize",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: B1-stale-base (stage: projection absent): the projection owns the RECORDED-base diff after main advances",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: C1-projection (stage: projection absent): ready/resultSha/baseSha/changedPaths/changedFiles oracles",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: C2-truncation (stage: projection absent): an oversize changedFiles page truncates with digest + cursor",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: D1-midflight (stage: projection absent): a pre-approval run reads result_not_ready",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: D2-failed (stage: projection absent): a terminal-failed run reads result_not_ready; the checkpoint is pinned",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: D3-released-pin (stage: projection absent): a released result ref reads pin_not_found",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: D4-retargeted-pin (stage: projection absent): a re-pointed result ref reads pin_mismatch",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: D5-unverifiable (stage: projection absent): an unresolvable pin reads pin_unverifiable",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: D6-foreign-run (stage: ports absent): the host policy refuses an unauthorized run",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: E1-harvest-receipt (stage: harvest absent): onto rules, applied-clean, then already_integrated",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: E2-harvest-runid (stage: harvest absent): the runId source resolves the same receipt",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: F1-three-way-survival (stage: harvest absent): a divergent untouched file survives the clean apply",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: F2-three-way-conflict (stage: harvest absent): a touched-file divergent edit refuses harvest_conflict naming the paths",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: G2-empty-delta (stage: harvest absent): a net-zero self-committed pin is skipped/empty_delta",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: H1-tools (stage: tools absent): the two ordinary tools register with closed schemas, _meta digests, and honest annotations",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: H2-dispatch (stage: tools absent): baton_run_resultpin dispatches the facade command with the CONNECTION principal",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: H3-vocabulary (stage: wire vocabulary absent): all 12 new refusal codes reach the wire AS THEMSELVES",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: H4-translations (stage: wire vocabulary absent): the kernel codes map to the harvest vocabulary",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: H5-capabilities (stage: tools absent): observe admits run.resultpin; waves.harvest demands control",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: I1-cli-parse (stage: CLI verb absent): the new verbs parse to the pinned command shapes",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: I3-cli-web (stage: CLI verb absent): the dispatch gate admits both new keys",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: I4-registry (stage: rows absent): two canonical operations with pinned profiles, surfaces, capabilities, names",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: J1-unpinned-sha (stage: harvest absent): a real commit without an ownership pin refuses pin_not_found",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: J2-runid-reverification (stage: harvest absent): a released recorded ref refuses pin_not_found on the runId source",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: K1-multi-pin (stage: projection absent): two ceremonies own distinct pins, each resolved by its own run",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: K2-released-coexists (stage: projection absent): releasing one pin leaves the other live",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: L1-receipt-honesty (stage: harvest absent): applied-clean certifies the recorded diff after main advanced",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: L2-diverged (stage: harvest absent): a rewound main refuses harvest_base_diverged naming the four shas",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: N1-control-policy (stage: ports absent): the host policy owns both commands",
-      "reason": "#99"
-    },
-    {
-      "key": "test/harvest-accessor-red.test.mjs :: N2-pre-gate (stage: ports absent): shape failures dispatch ahead of the recursive-session gate",
-      "reason": "#99"
-    },
-    {
       "key": "test/issue10-blocked-interaction-red.test.mjs :: AX1-F: a burst of provider tool-call/message telemetry does not advance lastProgress while a run is otherwise idle",
       "reason": "#10"
     },
@@ -1981,6 +1845,10 @@
     {
       "file": "test/grammar-m4b-red.test.mjs",
       "reason": "#43"
+    },
+    {
+      "file": "test/harvest-accessor-red.test.mjs",
+      "reason": "#99"
     },
     {
       "file": "test/harvest-recovery-red.test.mjs",
