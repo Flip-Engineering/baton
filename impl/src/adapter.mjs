@@ -21,7 +21,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
-import { renderAttentionSection } from './messages.mjs';
+import { renderAttentionSection, renderReplObjectsSection } from './messages.mjs';
 import { advertisesBatonControlSurface } from './control-surface-unification.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 
@@ -598,6 +598,12 @@ export function renderBrief(brief, dialect) {
       }
     }
   }
+  // Issue #69 (D2/D7): the cited REPL objects — orchestrator-authored context objects the brief
+  // cites by address. They are INPUT data, so they land after the recalled knowledge slice and
+  // before the operational push; the `## Verification` contract above keeps its position. Absent
+  // when there is nothing to serve (the absence-on-empty pin).
+  const cited = renderReplObjectsSection(brief.replObjects);
+  if (cited) lines.push(cited);
   // Issue #79 (D1): the worker-delivery push block lands AFTER the last data-bearing section
   // (`## Ambient knowledge`) so the `## Verification` contract keeps its position. Absent when
   // there is nothing to serve (the empty-pending-set pin).
