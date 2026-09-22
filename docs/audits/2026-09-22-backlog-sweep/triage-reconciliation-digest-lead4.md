@@ -56,6 +56,97 @@ No lane is staffed for any of the six external clusters as of this writing. The 
 assigned issues carry no pinned row; the sweep's state for each of them stands unchanged, with #510
 moving from its pinned set to landed as the table above records.
 
+The `Rows` column counts pinned rows whose manifest `reason` names that issue. A file can also pin
+rows for other issues: `worker-verdict-surface-red` pins 13 keys in total of which one is `#79`'s
+`C5`, and `issue268-visibility-red` pins 3 of which one is `#364`'s.
+
+## Lane briefs for the six clusters
+
+Measured at master `65c913f0` from `cwd=impl`. Each row name carries the stage it waits on, and the
+stage names the missing behavior, so the row set is the lane's specification. For
+`worker-verdict-surface-red` and `feedback-forge-hardening-red` the failing set was compared against
+the pinned keys row by row and no failing row is unpinned; in the other four the failing count
+equals or is below the file's pinned-key count. None of the six files is declared converged in the
+manifest, so this red is expected-red and carries none of the suite's unexpected set.
+
+### #61 — `test/worker-verdict-surface-red.test.mjs`, 17 pass / 13 fail
+
+- `C5` (stage `push-verdict-missing`): the `#79` `gate_verdict` push carries check/corrective.
+- `D1`-`D12` (stages `live-composition-missing`, `worktree-harvest-policy-missing`,
+  `underrived-refusal-missing`, `unenforced-refusal-missing`, `epoch-missing`): the objective block
+  is composed from live policy. `applicationProfile` declares a `worktreeHarvestPolicy`; a
+  boundary-commit deployment never ships the no-commit line, an orchestrator-harvest deployment
+  ships it under its named source; an underrived requested line refuses
+  `objective_constraint_underrived`; a line naming an unenforced bound refuses
+  `objective_constraint_unenforced`; `wire_frame` ships only when the size census shows a file over
+  ~1500 lines; the block is a pure function of live policy frozen at admission, with a suppression
+  epoch derived from the profile digest and the admission SHA; the served block drives the real
+  recipe objective render seam and the static list is retired.
+
+### #165 — `test/launch-validation-red.test.mjs`, 3 pass / 9 fail
+
+- `A1`, `A4`, `A4-object` (stages `d1a-directory-refused`, `d1b-admission-directory`,
+  `d1b-admission-directory-object`): a directory `--targets`, and a directory-valued
+  `harvest.paths` entry in both its string and `{path, mustContain}` forms, refuse before the wave
+  starts and at admission.
+- `A2` (stage `d2a-coverage-refused`): a brief deliverable absent from `--targets` refuses exit 2
+  and names the uncovered set.
+- `A3`, `A3-nearmiss` (stages `d2-grammar-prose`, `d2-grammar-nearmiss-heading`): prose inside
+  `## Deliverables`, and a `### Deliverables` heading with no `## Deliverables` section, refuse
+  `deliverables_malformed` naming the line.
+- `A5` (stage `d3-transport-code-survival`): the directory-harvest refusal code reaches CLI, MCP and
+  web without a transport-side re-spelling.
+- `A7` (stage `d2b-objective-render-coverage`): the coverage check also fires at the objective
+  render.
+- `S1` (stage `static-launch-refusal-tokens`): the four driver launch-refusal tokens exist in the
+  driver source.
+
+### #73 — `test/feedback-forge-hardening-red.test.mjs`, 5 pass / 11 fail
+
+Its 12 pinned keys are 8 `#73` rows, 3 `credential` rows (`P2`, `P6`, `P8`) and one `#538` row
+(`P3`, which passes).
+
+- `R1`-`R8` (stages `expect_typed_refusal`, `expect_derived_record`,
+  `expect_coaching_derived_false`, `select_candidate_no_crash`, `literal_12_field_closed`,
+  `expect_pre_hardening_record_excluded`, `expect_second_run_refused`,
+  `expect_gate_unbound_typed`): a forged verdict with no gate referent refuses typed `gate_unbound`;
+  a verdict with a real referent is `derived:true` and seq-bound; coaching feedback records
+  `derived:false` and `gateEventSeq:null`; a verdict packet in the revision set does not crash
+  select/revise; one 12-field closed projection carries the derived flag; a persisted pre-hardening
+  gate-shaped record is excluded per-record while later records project; the referent boundary is
+  candidate-scoped; `gate_unbound` is typed in `application.mjs` and preserved verbatim through the
+  web and MCP facades.
+
+### #6 — `test/phase67-change-aware-inspect.test.mjs`, 4 pass / 4 fail
+
+All four are unpinned-name rows about the change-aware inspect wait: deriving its bounded wait from
+deployment policy when the continuation omits machinery, waiting once on a durable notification and
+returning a changed bounded outline, waiting through another run's notification until this run
+durably changes, and marking timeout with its terminal state.
+
+### #268 — `test/issue268-visibility-red.test.mjs`, 2 pass / 3 fail
+
+- `#268` stages: the root is a participant row and its acts render attributed; attention carries its
+  coverage, naming the seats examined.
+- `#364` stage `SWARM_PARTICIPANT_RUNTIME_STATES not exported`: the closed runtime state set is
+  exported and every surface reads the one derivation.
+
+### #24 — `test/kg-activation-red.test.mjs`, 5 pass / 1 fail
+
+`KG-A5`: the admit gate's lease binding and refusal taxonomy are unchanged and no auto-admit call
+site exists. The row scans every `impl/src/*.mjs` for the bare token `admitWorkflowFinding` and
+finds `runtime-admission.mjs` (where the gate's body moved under #259) and `runtime-observation.mjs`
+(whose `promoteWorkflowFinding` resolves the coordinator wrapper indirectly). Deciding whether the
+whole-source token scan or the delegation is the defect is the lane's first question; the
+predecessor recorded the same boundary.
+
+## Staffing
+
+The six clusters are unstaffed. Recruiting a seat needs swarm authority this seat no longer holds;
+`recovery-digest-lead4.md` at the deployment root records the re-admission step. Two clusters are
+the digest swarm's own and already have verified commits: #69 (`d37f0416`) and #59 (`99b17ea5`),
+landing in that order.
+
 ## The twelve issues the sweep could not read
 
 The sweep found no commit, test, doc, script or review naming these. The root's assignment carries a
