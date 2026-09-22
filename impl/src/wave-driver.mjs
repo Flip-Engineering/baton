@@ -509,6 +509,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // longer holds its independent siblings' receipts: the loop ends when every unsettled
     // member has been individually quiet for a full stallTimeoutMs.
     const memberProgress = new Map(); // role -> { digest, lastProgressAt, lastProgressIso }
+    // #216 (drive-pump): a settled member's terminal (or claimed) read is its LAST pump read —
+    // the snapshot is reused on every later poll. Terminality is monotonic and a claimed member
+    // is settled for this loop, so re-reading them measures nothing new while every read
+    // re-resolves the member's preserved-result ref with its own git spawn (the _buildView
+    // preserved branch, application.mjs:5349-5353).
+    const settledViews = new Map(); // role -> { phase, terminal, outline, markerDigest, cursor }
     let basis = null;
     let stalls = [];
     let waiting = [];
@@ -632,18 +638,30 @@ export function createWaveDriver(baton, rawPolicy = null) {
           let outline = {};
           let markerDigest = 'unavailable';
           let cursor = null;
-          try {
-            const status = await runHandle.status();
-            outline = status?.view ?? status ?? {};
-            phase = canonicalRunPhase(outline.phase) ?? null;
-            terminal = outline.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING;
-            markerDigest = stallMarker(outline);
-            if (Number.isSafeInteger(outline.cursor)) cursor = outline.cursor;
-          } catch {
-            // L5/D10: a transient status failure contributes 'unavailable' (a marker CHANGE from
-            // the prior real digest → resets the wave-level clock); only CONSECUTIVE unavailable
-            // polls leave the marker stable and count toward stall.
-            markerDigest = 'unavailable';
+          // #216 (drive-pump): a member settled in a prior poll is NOT re-read — the snapshot
+          // feeds this poll exactly as a fresh read would (terminality is monotonic; a claimed
+          // member is settled), so the pump pays one preserved-result resolve per settled
+          // member, never one per poll.
+          const settledView = settledViews.get(role);
+          if (settledView) {
+            ({ phase, terminal, outline, markerDigest, cursor } = settledView);
+          } else {
+            try {
+              const status = await runHandle.status();
+              outline = status?.view ?? status ?? {};
+              phase = canonicalRunPhase(outline.phase) ?? null;
+              terminal = outline.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING;
+              markerDigest = stallMarker(outline);
+              if (Number.isSafeInteger(outline.cursor)) cursor = outline.cursor;
+            } catch {
+              // L5/D10: a transient status failure contributes 'unavailable' (a marker CHANGE from
+              // the prior real digest → resets the wave-level clock); only CONSECUTIVE unavailable
+              // polls leave the marker stable and count toward stall.
+              markerDigest = 'unavailable';
+            }
+            if (terminal || memberState.get(role)?.claimed === true) {
+              settledViews.set(role, { phase, terminal, outline, markerDigest, cursor });
+            }
           }
           if (outline.knowledge) memberKnowledge.set(role, outline.knowledge);
           // #396: the member's OWN clock — a digest change is its own observed progress and

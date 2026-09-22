@@ -28,7 +28,7 @@ import test from 'node:test';
 
 import { BatonApplication } from '../src/application.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
-import { bindBaton, createDriver } from '../src/index.mjs';
+import { bindBaton, createDriver, createWaveDriver } from '../src/index.mjs';
 import { createWave } from '../src/wave.mjs';
 
 const REPO = 'repo-git-batch';
@@ -222,6 +222,92 @@ test('GB-1 (stage[git-batch-resolution-missing]): a waves.list page resolves N c
   assert.equal(inspected[0].state, 'pinned', 'the batched resolution reads the exact pinned sha');
   assert.equal(inspected[0].resolved, memberResult.capturedSha, 'the batched resolution returns the exact captured sha');
   assert.equal(inspected[0].ref, memberResult.retainedResultRef);
+});
+
+
+test('GB-2 (stage[drive-pump-per-member-resolve]): the wave pump reads a settled member ONCE — after a member\'s terminal status read, its preserved ref is resolved by at most ONE further status read (the wave\'s settle observation), never per poll', async (t) => {
+  const repo = root('repo');
+  const logDir = root('log');
+  mkdirSync(join(repo, 'reports'), { recursive: true });
+  // Three members complete immediately; the slow member keeps the wave open across many polls
+  // (its edits are delay-spaced, and every edit event wakes the pump early). While it runs, the
+  // pump re-reads the three settled members on every poll — at HEAD each of those reads resolves
+  // the member's preserved-result ref with its own git spawn (the _buildView preserved branch).
+  const scenarios = {
+    m0: { outcome: 'completed', edits: [{ path: 'reports/m0.md', content: 'm0 report\n' }] },
+    m1: { outcome: 'completed', edits: [{ path: 'reports/m1.md', content: 'm1 report\n' }] },
+    m2: { outcome: 'completed', edits: [{ path: 'reports/m2.md', content: 'm2 report\n' }] },
+    slow: {
+      outcome: 'completed',
+      edits: [0, 1, 2, 3, 4].map((index) => ({ path: `reports/slow-${index}.md`, content: `slow ${index}\n`, delayMs: 150 })),
+    },
+  };
+  const driver = createDriver({
+    repoRoot: repo, repoId: REPO, logDir,
+    adapters: { mock: markerAdapter(scenarios) },
+    stopDeadlineMs: 2_000,
+    watchdog: { stallMs: 5 * 60_000, loopThreshold: 0, scopeAction: 'kill' },
+    goalPlanAuthority: { policy: GOAL_PLAN_POLICY, authorize: async () => true },
+  });
+  const application = new BatonApplication({
+    driver,
+    repoId: REPO,
+    profiles: { default: PROFILE },
+    defaults: { profile: 'default', route: null },
+    principals: {
+      planner: principal('gb2-planner'),
+      dispatcher: principal('gb2-dispatcher'),
+      observer: principal('gb2-observer'),
+    },
+    authorize: async () => true,
+  });
+  const baton = bindBaton(application, principal('gb2-owner'));
+  t.after(async () => {
+    try { await application.shutdown(principal('gb2-cleanup')); } catch { /* best effort */ }
+    try { await driver.coordination?.releaseWriterLease?.(); } catch { /* best effort */ }
+    try { await driver.closeAuthority?.(); } catch { /* best effort */ }
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+  });
+
+  // The classified spy: every preserved-ref resolution counts, attributed to its caller class.
+  // BatonRun.status resolutions are the pump loop's per-poll member reads plus the wave's ONE
+  // settle observation; the other classes (BatonApplication.inspect harvest section reads,
+  // BatonRun.stop, the completion trust gate's _pinAcceptedResult) are surfaces this row does
+  // not pin, so they are counted separately and only for the fixture lower bound.
+  const manager = driver.coordinator._worktrees;
+  const realResolveResult = manager.resolveResult.bind(manager);
+  const realResolveResults = typeof manager.resolveResults === 'function' ? manager.resolveResults.bind(manager) : null;
+  const statusReadResolvesByRef = new Map();
+  const allResolutionsByRef = new Map();
+  const classifyCaller = () => {
+    const stack = new Error().stack;
+    return stack.includes('BatonRun.status') ? 'status' : 'other';
+  };
+  const count = (ref, cls) => {
+    allResolutionsByRef.set(ref, (allResolutionsByRef.get(ref) ?? 0) + 1);
+    if (cls === 'status') statusReadResolvesByRef.set(ref, (statusReadResolvesByRef.get(ref) ?? 0) + 1);
+  };
+  manager.resolveResult = async (ref) => { count(ref, classifyCaller()); return realResolveResult(ref); };
+  if (realResolveResults) {
+    manager.resolveResults = async (refs) => {
+      const cls = classifyCaller();
+      for (const ref of refs) count(ref, cls);
+      return realResolveResults(refs);
+    };
+  }
+
+  const receipt = await createWaveDriver(baton, {
+    steering: 'nudge-on-checkpoint', pollIntervalMs: 15, stallTimeoutMs: 20_000, settleTimeoutMs: 30_000,
+    finalization: 'none', unproductiveNudgeBudget: 1, saltObjectives: true, preflight: false,
+  }).run({ repoRoot: repo, members: [member('m0'), member('m1'), member('m2'), member('slow')] });
+  assert.equal(receipt.basis, 'completed', 'fixture: the wave completes (the slow member finishes its scripted edits)');
+  assert.equal(receipt.outcomes.length, 4, 'fixture: every member got an outcome');
+  assert.ok(allResolutionsByRef.size >= 4,
+    `fixture: every completed member's preserved ref was resolved at least once (the path this pin measures ran) — saw ${allResolutionsByRef.size} distinct refs`);
+  const hottestStatus = [...statusReadResolvesByRef.values()].reduce((max, count) => Math.max(max, count), 0);
+  assert.ok(hottestStatus <= 2,
+    `stage[drive-pump-per-member-resolve]: a settled member's preserved ref was resolved ${hottestStatus} times by status reads in one drive — the pump re-reads every terminal member on every poll (the wave-driver.mjs member loop has no terminal-member skip), so each poll's status build re-resolves the member's preserved result with its own git spawn; the fix reads a settled member once and reuses that read`);
 });
 
 async function captureResult(fn) {
