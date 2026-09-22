@@ -242,6 +242,22 @@ function deploymentError(message) {
   return Object.assign(new TypeError(message), { code: 'deployment_config_invalid' });
 }
 
+/** Issue #558: the deployment's DECLARED shared remote for landings — the value
+ * `advanced.integration.publishRemote` names. A declaration, never an inference: it is not read
+ * from `origin` (a resident origin has pointed at a local checkout instead of the shared
+ * remote) and not derived from repoId (a hash of the local git dir path, distinct per clone).
+ * Null when the deployment declares none, in which case a real landing refuses
+ * `integrate_publish_undeclared` instead of reporting a local success. Malformed declarations
+ * refuse here, at open, never first at landing time. */
+export function normalizeIntegrationPublishRemote(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048
+    || value.includes('\0') || /[\r\n]/u.test(value)) {
+    throw deploymentError('advanced integration publishRemote must be one non-empty remote URL or path');
+  }
+  return value;
+}
+
 function deploymentPreflightError(message) {
   return Object.assign(new Error(message), { code: 'deployment_preflight_failed' });
 }
@@ -3843,6 +3859,9 @@ class BatonDeployment {
       let turns = 0;
       let tokens = 0;
       let usd = 0;
+      // #545: the LAST rate-limit answer this route's provider gave, read on the walk that already
+      // visits every token row of the route — the provider's own statement about the account.
+      let rateLimits = null;
       if (log) {
         for (const worker of log.workers()) {
           for (const ev of log.byKind(worker, 'lifecycle.turn_started')) {
@@ -3852,6 +3871,9 @@ class BatonDeployment {
             if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort) {
               tokens += typeof ev.payload?.tokens === 'number' ? ev.payload.tokens : 0;
               usd += typeof ev.payload?.usd === 'number' ? ev.payload.usd : 0;
+              if (ev.payload?.source === 'rateLimit' && record(ev.payload.rateLimits)) {
+                rateLimits = { limits: ev.payload.rateLimits, at: ev.ts };
+              }
             }
           }
         }
@@ -3886,13 +3908,24 @@ class BatonDeployment {
       const quotaWindow = declaredUsage === null ? null : Object.freeze({
         kind: declaredUsage.windowKind ?? 'unknown', periodMs: declaredUsage.windowMs,
       });
+      // #545: the provider's OWN remaining usage rides the quota axis, so a route whose account was
+      // measured says how much is left in the window the provider itself reported, and when. A
+      // route nothing measured carries remaining: null — the absence is stated rather than left
+      // for a reader to read as an unqualified 'ready'. The percent is derived from the provider's
+      // own usedPercent, never from a token count this side invents.
+      const primary = record(rateLimits?.limits?.primary) ? rateLimits.limits.primary : null;
+      const quotaObservations = Object.freeze({
+        remaining: primary !== null && Number.isFinite(primary.usedPercent)
+          ? Math.max(0, 100 - primary.usedPercent) : null,
+        observedAt: typeof rateLimits?.at === 'string' ? rateLimits.at : null,
+      });
       const quota = quotaRefused
         ? Object.freeze({
-          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt,
+          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt, ...quotaObservations,
           ...(quotaWindow === null ? {} : { window: quotaWindow }),
         })
         : Object.freeze({
-          state: 'ok', resetAt: null,
+          state: 'ok', resetAt: null, ...quotaObservations,
           ...(quotaWindow === null ? {} : { window: quotaWindow }),
         });
       const occupancy = this.#occupancyFor(route);
@@ -6220,7 +6253,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  // Issue #558: the declared shared remote landings publish to, validated at open.
+  const rawIntegration = advanced.integration ?? {};
+  closed(rawIntegration, ['publishRemote'], 'advanced integration');
+  const integrationPublishRemote = normalizeIntegrationPublishRemote(rawIntegration.publishRemote);
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -6635,6 +6672,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     routeQuotaAuthority: routeQuota,
     repoRoot: repository.root,
     repoId: repository.repoId,
+    // Issue #558: the declared shared remote, carried to the landing authority (null when the
+    // deployment declares none — a real landing then refuses instead of staying local).
+    ...(integrationPublishRemote === null ? {} : { integrationPublishRemote }),
     deploymentBaseSha: snapshot.sha,
     logDir: stateRoot,
     adapters,

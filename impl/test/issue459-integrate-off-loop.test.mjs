@@ -85,9 +85,17 @@ function regeneratorSource(artifact) {
  * sleep the row asked for, records WHEN it finished (the marker the rows date their observations
  * against), then writes the verdict document the deployment's expected-red manifest would have
  * judged — green, or red with the unexpected rows the row names. */
-function runnerSource({ sleepMs, green, unexpected, markerPath }) {
+function runnerSource({ sleepMs, green, unexpected, markerPath, die = false }) {
+  // The die mode: stream two REAL per-file result blocks the way run-suite prints them, then
+  // kill the runner's own process before any marker or verdict exists — a run that lost its
+  // supervisor mid-flight, exactly the shape #546's partial verdict names.
+  const dieLeg = die
+    ? "process.stderr.write('# file test/gate-a.test.mjs (10 ms)\\n# tests 2\\n# pass 2\\n# fail 0\\n# file test/gate-b.test.mjs (5 ms)\\n# tests 1\\n# pass 0\\n# fail 1\\n');\n"
+      + "process.kill(process.pid, 'SIGKILL');\n"
+    : '';
   return "import { writeFileSync } from 'node:fs';\n"
     + `await new Promise((resolve) => setTimeout(resolve, ${sleepMs}));\n`
+    + dieLeg
     + `writeFileSync(${JSON.stringify(markerPath)}, 'finished\\n');\n`
     + 'const verdictPath = process.env.BATON_SUITE_VERDICT_FILE;\n'
     + `writeFileSync(verdictPath, JSON.stringify({ green: ${green}, passed: 3, `
@@ -117,7 +125,7 @@ const contractBody = ({ subject, sha, observedHead, rebasedOnto }) => ({
  */
 async function world(t, { gate = {} } = {}) {
   const {
-    sleepMs = 0, green = true, unexpected = [],
+    sleepMs = 0, green = true, unexpected = [], die = false,
   } = gate;
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue459-'));
   const repo = join(directory, 'repo');
@@ -143,7 +151,7 @@ async function world(t, { gate = {} } = {}) {
   for (const script of REGENERATORS) {
     write(repo, script, regeneratorSource(`${script.split('/').at(-1).replace(/\.mjs$/u, '')}.json`));
   }
-  write(repo, 'impl/scripts/run-suite.mjs', runnerSource({ sleepMs, green, unexpected, markerPath }));
+  write(repo, 'impl/scripts/run-suite.mjs', runnerSource({ sleepMs, green, unexpected, markerPath, die }));
   // The install the repository actually carries, under a sub-directory (#451): the integration
   // checkout links it and writes the projection-exclude file beside the checkout, which is the
   // one file a sweep has to remove besides the checkout itself.
@@ -163,6 +171,11 @@ async function world(t, { gate = {} } = {}) {
   const tip = git(repo, 'rev-parse', 'HEAD');
   git(repo, 'checkout', '-q', 'master');
   const targetHead = git(repo, 'rev-parse', 'master');
+
+  // Issue #558: the deployment's declared shared remote — a bare repository this landing
+  // publishes the landed ref to after the fast-forward.
+  const publishRemote = join(directory, 'shared.git');
+  execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
 
   const store = new CoordinationStore(join(directory, 'ledger'));
   // At HEAD the pool does not exist: the row then runs the deployment exactly as HEAD wires it and
@@ -186,7 +199,7 @@ async function world(t, { gate = {} } = {}) {
     prepareRun: (request) => request,
     startRun: async () => { throw new Error('no native runs in this fixture'); },
     stopRun: async () => {},
-    integration: { repoRoot: repo },
+    integration: { repoRoot: repo, publishRemote },
   });
   t.after(() => {
     runtime.close();
@@ -224,7 +237,7 @@ async function world(t, { gate = {} } = {}) {
   const leftoverCheckouts = () => (existsSync(wtRoot) ? readdirSync(wtRoot) : [])
     .filter((name) => name.startsWith('integrate-') && !name.endsWith('.projection.exclude'));
   return {
-    directory, repo, store, runtime, pool, hostCapacity, capacityRoot, integration, markerPath,
+    directory, repo, publishRemote, store, runtime, pool, hostCapacity, capacityRoot, integration, markerPath,
     tip, targetHead, observedHead,
     driverRows, integrateDriverRows, failureRows, sweptRows, wtRoot, leftoverCheckouts,
   };
@@ -386,7 +399,7 @@ test('459e: a leftover integrate-* checkout is swept when the resident opens, an
     prepareRun: (request) => request,
     startRun: async () => { throw new Error('no native runs in this fixture'); },
     stopRun: async () => {},
-    integration: { repoRoot: w.repo },
+    integration: { repoRoot: w.repo, publishRemote: w.publishRemote },
   });
   t.after(() => opened.close());
 
@@ -527,4 +540,36 @@ test('459h: an integrate with no target lands on the deployment\'s own branch an
   assert.equal(answer.integration.targetHeadAfter, git(w.repo, 'rev-parse', 'master'),
     'the landing moved the branch the receipt names');
   assert.deepEqual(w.failureRows(), [], 'nothing was refused');
+});
+
+test('459i: a gate run whose runner dies mid-flight reports the named partial verdict (#546)', needsGit, async (t) => {
+  // The runner streams two real per-file result blocks, then dies by its own hand before any
+  // marker or verdict exists. The landing records a NAMED PARTIAL verdict — the rows the run
+  // judged and the files its death left unreported — never suite-timed-out with verdictLine
+  // null, and never a wall-clock kill (there is none to arm, #546).
+  const w = await world(t, { gate: { sleepMs: 0, green: true, die: true } });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integration().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing settles on the interrupted run');
+  assert.equal(error.code, 'integrate_gates_red');
+  const failures = w.failureRows();
+  assert.equal(failures.length, 1, 'the interrupted run leaves its outcome in the record');
+  assert.equal(failures[0].code, 'integrate_gates_red');
+  const row = failures[0].detail.unexpected[0];
+  assert.equal(row.row, 'gate-run-interrupted', 'a NAMED partial verdict, never suite-timed-out');
+  assert.equal(row.signal, 'SIGKILL');
+  assert.deepEqual(row.filesJudged, [
+    { file: 'test/gate-a.test.mjs', pass: 2, fail: 0 },
+    { file: 'test/gate-b.test.mjs', pass: 0, fail: 1 },
+  ], 'the partial verdict names the files the run judged before it died');
+  assert.ok(Array.isArray(row.filesUnreported) && !row.filesUnreported.includes('test/gate-a.test.mjs'),
+    'the files the death left unreported are named beside the judged ones');
+  assert.match(String(failures[0].detail.verdictLine ?? ''), /^partial — interrupted by SIGKILL; 2 of \d+ file\(s\) reported/u,
+    'the verdict line says partial with the counts, never null');
+  assert.deepEqual(w.leftoverCheckouts(), [], 'the scratch checkout is gone');
+  assert.equal(existsSync(join(w.wtRoot, 'integrate-contribution-1.projection.exclude')), false,
+    'and so is the projection-exclude file');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'nothing moved');
 });

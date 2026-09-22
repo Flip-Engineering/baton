@@ -351,7 +351,7 @@ test('a guide to a one-shot seat parks durably and answers with its own row', as
     seq: guided.receipt.event.seq, kind: 'swarm.guidance_parked', participantId: 'builder',
     from: { kind: 'root', participantId: null }, sentAt: guided.receipt.event.ts,
     priority: 'next_boundary', inReplyTo: null, messageId: guided.guide.messageId,
-    delivery: { state: 'parked', lane: null, reason: 'harness_one_shot' },
+    delivery: { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true },
   }, 'the parked receipt IS the row the guide wrote, with the whole provenance on it');
   assert.match(guided.guide.messageId, /^message:[a-f0-9]{64}$/);
   assert.deepEqual(guided.result, { ok: true, result: 'parked',
@@ -369,7 +369,7 @@ test('a guide to a one-shot seat parks durably and answers with its own row', as
   assert.equal(parked[0].payload.actor, 'owner', 'the raw actor rides the row the relationship was read from');
   assert.deepEqual(parked[0].payload.from, { kind: 'root', participantId: null });
   assert.deepEqual(parked[0].payload.delivery,
-    { state: 'parked', lane: null, reason: 'harness_one_shot' });
+    { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true });
   assert.equal(f.store.eventsView().some((event) => event.kind === 'message.delivered'), false,
     'the park itself wakes no guidance_delivered');
 
@@ -379,7 +379,7 @@ test('a guide to a one-shot seat parks durably and answers with its own row', as
     seq: parked[0].seq, ts: parked[0].ts, kind: 'swarm.guidance_parked',
     messageId: guided.guide.messageId, from: { kind: 'root', participantId: null },
     priority: 'next_boundary', thread: { root: parked[0].seq, parent: null },
-    delivery: { state: 'parked', lane: null, reason: 'harness_one_shot', deliveredTo: null, at: null },
+    delivery: { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true, deliveredTo: null, at: null },
   }]);
 });
 

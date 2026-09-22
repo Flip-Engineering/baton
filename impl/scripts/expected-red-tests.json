@@ -213,10 +213,6 @@
       "reason": "#460"
     },
     {
-      "key": "test/issue545-quota-scope-read.test.mjs :: 545-c: the route row carries remaining usage from the provider, and unknown remaining is not `ready`",
-      "reason": "#545"
-    },
-    {
       "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
       "reason": "#24"
     },

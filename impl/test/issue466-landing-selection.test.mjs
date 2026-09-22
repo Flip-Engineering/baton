@@ -149,6 +149,11 @@ async function world(t, { purpose = 'land the lane (#443)', packageIssue = null 
   git(repo, 'checkout', '-q', 'master');
   const targetHead = git(repo, 'rev-parse', 'master');
 
+  // Issue #558: the deployment's declared shared remote — a bare repository this landing
+  // publishes the landed ref to after the fast-forward.
+  const publishRemote = join(directory, 'shared.git');
+  execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
+
   const resolver = { sources: new Map(), artifacts: new Map() };
   const store = new CoordinationStore(join(directory, 'ledger'), {
     repoId: 'repo-issue466', deploymentBaseSha: '1'.repeat(40),
@@ -177,6 +182,7 @@ async function world(t, { purpose = 'land the lane (#443)', packageIssue = null 
     stopRun: async () => {},
     integration: {
       repoRoot: repo,
+      publishRemote,
       // The deployment's regenerators are the fixture's no-op: `changed` stays exactly the lane's
       // delta, which is what the shared-function comparison in (c) is computed against.
       regenerate: async () => {},
