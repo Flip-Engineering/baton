@@ -39,6 +39,7 @@ export const ORDINARY_COMMANDS = Object.freeze([
   'run.review', 'run.integrate', 'run.export', 'run.recover',
   'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
+  'attention.wait',
   'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.board.post', 'run.board.read', 'run.knowledge.seed',
   'runs.list',

@@ -39,7 +39,9 @@ test('WIRE-CARD-COVERAGE: every bridge-required ordinary command is advertised b
   const waveEntries = ['waves.start', 'waves.progress', 'waves.send', 'waves.stop',
     'waves.list', 'waves.run', 'waves.compile', 'run.scratchpad.append'];
   const workflowEntries = WORKFLOW_EIGHT;
-  const advertised = new Set([...webEntries, ...waveEntries, ...workflowEntries]);
+  // Issue #71: the orchestrator wake bridges beside run.attention.watch (ORDINARY_COMMANDS grew).
+  const attentionWaitEntry = 'attention.wait';
+  const advertised = new Set([...webEntries, ...waveEntries, ...workflowEntries, attentionWaitEntry]);
 
   const missing = ordinary.filter((c) => !advertised.has(c));
   assert.deepEqual(missing, [], `the wire card must advertise every bridge-required command (missing: ${JSON.stringify(missing)})`);

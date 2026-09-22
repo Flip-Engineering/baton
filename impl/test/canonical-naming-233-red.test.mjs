@@ -61,6 +61,8 @@ const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
   // --issue path uses — admitted on the web lane (web-northbound.mjs ~169) since wave 13; the
   // underscore spellings are derived from these names like every other row here.
   'package.admit', 'package.attach',
+  // Issue #71: the orchestrator wake rides the command envelope as a direct port.
+  'attention.wait',
 ]);
 
 // The retained legacy MCP spellings for mcp:true definitions (hand baton_* ordinary tools).
