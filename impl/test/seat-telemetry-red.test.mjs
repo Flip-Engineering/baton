@@ -44,6 +44,12 @@ import assert from 'node:assert/strict';
 
 import { MockAdapter, BatonApplication, bindBaton, createDriver, openBaton } from '../src/index.mjs';
 
+// The suite runner spawns a test file with cwd = `impl/`, so a path written relative to the
+// checkout root must resolve against THIS file, never the cwd — otherwise every read below
+// opens `impl/impl/src/...` and the row dies of ENOENT before it can measure its subject.
+// `application-observation.test.mjs` resolves the same way.
+const repoRead = (relative) => readFileSync(new URL('../../' + relative, import.meta.url), 'utf8');
+
 const REPO_ID = 'repo-seat-telemetry-146';
 const ROUTE = Object.freeze({ harness: 'mock', model: 'mock-model', effort: 'low' });
 const ROUTE2 = Object.freeze({ harness: 'mock', model: 'mock-model-2', effort: 'low' });
@@ -236,7 +242,7 @@ test('A-L (lint): blocking-decision dispatch holds a working seat; ceiling-skip 
     'lint: the receipt names the allocator-resolved vendor (ceiling-skip is vendor-scoped)');
 
   // Premise: the discriminator depends on routeMatches gating adapterFor on pausability.
-  const liveness = readFileSync(join('impl', 'src', 'route-liveness.mjs'), 'utf8');
+  const liveness = repoRead('impl/src/route-liveness.mjs');
   assert.ok(/turnCompletion\s*!==\s*'pausable'/u.test(liveness),
     'lint: routeMatches gates on turnCompletion pausable — a non-pausable MockAdapter is invisible to adapterFor, so the parallel binding can never match the allocator');
 });
@@ -441,7 +447,7 @@ test('A5 (stage: seats-freshness-label-missing): seats-bearing reads carry obser
   // Source: the three NUL-free surfaces carry no observedAtEventSeq today (RED).
   const surfaces = ['application-deployment.mjs', 'mcp-northbound.mjs', 'application-cli.mjs'];
   for (const file of surfaces) {
-    const source = readFileSync(join('impl', 'src', file), 'utf8');
+    const source = repoRead('impl/src/' + file);
     assert.ok(source.includes('observedAtEventSeq'),
       `stage: source-marker-absent — ${file} carries no observedAtEventSeq at HEAD (contract-146 A5 RED)`);
   }
@@ -474,8 +480,8 @@ test('A6 (stage: doctor-seats-missing): two routes resolving to the same adapter
 // ---------------------------------------------------------------------------
 
 test('A7 (stage: surface-teaching-missing): baton_deployment_doctor names seats + the split staleness; baton_waves_list names capacity; the CLI doctor helps with the closed field set', async () => {
-  const mcp = readFileSync(join('impl', 'src', 'mcp-northbound.mjs'), 'utf8');
-  const cli = readFileSync(join('impl', 'src', 'application-cli.mjs'), 'utf8');
+  const mcp = repoRead('impl/src/mcp-northbound.mjs');
+  const cli = repoRead('impl/src/application-cli.mjs');
 
   const doctorTool = mcp.slice(mcp.indexOf('baton_deployment_doctor'), mcp.indexOf('baton_decision_answer'));
   assert.ok(/seats/u.test(doctorTool),
@@ -658,7 +664,7 @@ test('A10 (stage: doctor-seats-missing): routes[i].occupancy.inFlight === seats[
 test('A11 (stage: inFlightRevision-missing): the live inFlight component carries a per-atom inFlightRevision — the vendor\'s incarnation-local handle-revision counter, never a clock', async () => {
   const surfaces = ['application-deployment.mjs', 'mcp-northbound.mjs', 'application-cli.mjs'];
   for (const file of surfaces) {
-    const source = readFileSync(join('impl', 'src', file), 'utf8');
+    const source = repoRead('impl/src/' + file);
     assert.ok(source.includes('inFlightRevision'),
       `stage: inFlightRevision-missing — ${file} carries no inFlightRevision at HEAD (contract-146 A11 RED; B3)`);
     // Guard (passes at HEAD): wherever the counter is derived it must never be a clock.
