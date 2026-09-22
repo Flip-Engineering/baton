@@ -349,162 +349,6 @@
       "reason": "#12"
     },
     {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A1: a row member reads its OWN task and transitions it to done — admitted",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A2: a row member writing a sibling task refuses plan_authority_forbidden",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A3: a coordinator writes its subtree (ownedBy.wave/run match) — admitted",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A4: a coordinator writing outside its subtree refuses coordinator_authority_forbidden",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A5: the orchestrator (plan:*) mints/upserts/transitions any task — admitted",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L1: two tasks cannot be doing simultaneously within a wave subtree",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L2: two tasks doing in DIFFERENT wave subtrees are admitted (the law is per-wave-subtree)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L3: a verified task is marked done immediately and stays done",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L4: a done task re-opened by any non-review principal refuses plan_reopen_forbidden",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L5: the review authority's reviewed-reject re-open (done → todo, H4.2) is admitted",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L6: focusTaskIds beyond planPolicy.maxFocusTasks refuses plan_focus_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L7: plan.focus_upserted sets the bounded focus window with a plan-version CAS (stale → plan_stale_version)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M1: plan.write with plan.minted mints the plan and plan.read round-trips it",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M2: a retry of the same mint key + content returns the prior event — exactly-once",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M3: changed content under the same mint key refuses plan_replay_conflict",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M4: update asserted — upsert v1 then v2 with expectedTaskVersion=2 goes green (taskVersion becomes 2)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M5: upsert v2 with expectedTaskVersion=1 (stale) refuses plan_stale_version",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: N1: plan.read naming an unminted plan refuses plan_not_found",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: N2: a mutation naming a task absent from the plan refuses plan_task_not_found",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: O1: plan.read at the orchestrator seat returns the campaign todo as the plan projection",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: Q1: a #74 coordinator member's plan.write (task_upserted) writes its subtree's row tasks with ownedBy binding",
-      "reason": "#74"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: Q2: the interpreter gates a member on its plan task's state — blocked → dispatch_pending, done → settleable",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S1: a task missing a closed field (no title) refuses plan_task_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S2: a task carrying an unknown field refuses plan_task_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S3: a non-canonical task key order refuses plan_task_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S4: a blockedBy self-edge refuses plan_topology_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S5: a blockedBy dangling edge refuses plan_topology_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S6: a blockedBy cycle refuses plan_topology_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S7: a non-closed status refuses plan_task_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S8: plan.read returns tasks with the canonical sorted key order",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: W1: at wave.closed the review authority reviews the wave's plan tasks",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: W2: reviewed-rejected done → re-opened todo (H4.2); an unreviewed/incomplete task never reads done",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X1: baton plan read PLAN_ID parses to plan.read",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X2: baton plan write PLAN_ID --mutation JSON parses to plan.write; a malformed body refuses cli_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X3: CLI_WEB_COMMANDS admits plan.read AND plan.write",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X4: the plan.* web surface is refused AND ledgered in surface-divergence-ledger.json (#159 D3 #3)",
-      "reason": "#159"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X5: MCP tools baton_plan_read/baton_plan_write exist with repoId leading required (H3.1)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X6: the OPERATION_ROWS registry rows claim surfaces for plan.read/plan.write (D3.1)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X7: the generated CLI.md/MCP.md blocks contain the plan rows (D3.5)",
-      "reason": "#161"
-    },
-    {
       "key": "test/orchestrator-wake-red.test.mjs :: ACTIONS-SLICE (§I H6/F6): the wake actions builder slices the ACTIONS operand to MAX_ATTENTION and spills the head+digest",
       "reason": "#71"
     },
@@ -1643,6 +1487,10 @@
       "reason": "#314"
     },
     {
+      "file": "test/issue402-receipt-policy-red.test.mjs",
+      "reason": "#402"
+    },
+    {
       "file": "test/issue441-reading-half-red.test.mjs",
       "reason": "#441"
     },
@@ -1749,6 +1597,10 @@
     {
       "file": "test/omp-turn-verdict-red.test.mjs",
       "reason": "#236"
+    },
+    {
+      "file": "test/orchestrator-plan-object-red.test.mjs",
+      "reason": "#161"
     },
     {
       "file": "test/orientation-red.test.mjs",

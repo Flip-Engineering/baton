@@ -228,14 +228,34 @@ function normalizeContextPackageRequest(raw) {
   }
   return Object.freeze({ name: raw.name, branches: Object.freeze(branches) });
 }
+// Issue #161 (D3.2/D3.4): the plan object's two direct ports. The family publishes NO derived web
+// transport — the underscore wire names plan_read/plan_write stay refused (the divergence ledger
+// documents that) — while the canonical names plan.read/plan.write are admitted on the resident's
+// bus: the MCP tools dispatch them over the bridge, and the CLI reaches them. The port's own
+// closed normalizer (orchestrator-plan.mjs admitPlanWrite / readPlanObject) is the argument
+// authority, so like the wave and workflow direct ports these names skip
+// validateApplicationCommandArgs. The `web` surface claim stays off the registry rows: the web
+// surface serves no transport name for the family.
+const PLAN_WEB_ENTRIES = Object.freeze([
+  ['plan.read', 'plan.read', Object.freeze(['observe'])],
+  ['plan.write', 'plan.write', Object.freeze(['control', 'observe'])],
+]);
+const PLAN_ARG_FIELDS = Object.freeze({
+  'plan.read': new Set(['planId']),
+  'plan.write': new Set(['planId', 'idempotencyKey', 'mutation']),
+});
 const WEB_DIRECT_PORT_COMMANDS = new Set([
   ...WAVE_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...WORKFLOW_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...DEPLOYMENT_WEB_ENTRIES.map(([transport]) => transport),
   ...CONTEXT_PACKAGE_COMMANDS,
+  // Issue #161: the plan pair rides the same direct-port admission (orchestrator-plan.mjs is the
+  // argument authority).
+  ...PLAN_WEB_ENTRIES.map(([transport]) => transport),
 ]);
 const WORKFLOW_DOT_WEB_ENTRIES = Object.freeze(WORKFLOW_WEB_ENTRIES
   .map(([transport, name, capabilities]) => [name, name, capabilities]));
+
 
 // S-1 v2 R-WG-3: advertised web ARG_FIELDS exclude transportHidden fields; the validator still
 // accepts them (acceptance set = advertised ∪ transportHidden).
@@ -275,6 +295,8 @@ const COMMAND_CAPABILITY = Object.freeze({
   ...Object.fromEntries(DEPLOYMENT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(CONTEXT_PACKAGE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(CONTEXT_PACKAGE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  // Issue #161: the plan pair, canonical spelling only (PLAN_WEB_ENTRIES).
+  ...Object.fromEntries(PLAN_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
@@ -289,6 +311,8 @@ const READ_ONLY_COMMANDS = new Set([
   // Issue #344: the workflow direct-port reads ride no definition row (their argument authority
   // is the port normalizer), so the mcpStateful derivation above cannot see them — the four
   // read-only lanes are named beside it, both spellings, exactly like WAVE_DOT_WEB_ENTRIES.
+  // Issue #161: plan.read is a read lane — its envelope carries no idempotency key.
+  'plan.read',
   'run_message_receipt', 'run.message.receipt',
   'run_attention_watch', 'run.attention.watch',
   'run_scratchpad_read', 'run.scratchpad.read',
@@ -340,6 +364,9 @@ const ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(Object.entries(CONTEXT_PACKAGE_ARG_FIELDS)),
+  // Issue #161: the plan pair's closed accepted sets (the port's normalizer is the argument
+  // authority; the set is what the envelope admits, so a bridged plan.write can carry its body).
+  ...Object.fromEntries(Object.entries(PLAN_ARG_FIELDS)),
 });
 const ACCEPTED_ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(Object.entries(ARG_FIELDS).map(([transport, fields]) => [transport, fields])),
@@ -368,6 +395,9 @@ const APPLICATION_COMMAND = Object.freeze({
   // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
   // WAVE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
   run_scratchpad_append: 'run.scratchpad.append',
+  // Issue #161: the plan pair dispatches to its own direct ports under the canonical spelling (the
+  // family publishes no derived web transport, so there is no underscore twin to map).
+  'plan.read': 'plan.read', 'plan.write': 'plan.write',
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
