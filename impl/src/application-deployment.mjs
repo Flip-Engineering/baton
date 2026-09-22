@@ -242,6 +242,22 @@ function deploymentError(message) {
   return Object.assign(new TypeError(message), { code: 'deployment_config_invalid' });
 }
 
+/** Issue #558: the deployment's DECLARED shared remote for landings — the value
+ * `advanced.integration.publishRemote` names. A declaration, never an inference: it is not read
+ * from `origin` (a resident origin has pointed at a local checkout instead of the shared
+ * remote) and not derived from repoId (a hash of the local git dir path, distinct per clone).
+ * Null when the deployment declares none, in which case a real landing refuses
+ * `integrate_publish_undeclared` instead of reporting a local success. Malformed declarations
+ * refuse here, at open, never first at landing time. */
+export function normalizeIntegrationPublishRemote(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048
+    || value.includes('\0') || /[\r\n]/u.test(value)) {
+    throw deploymentError('advanced integration publishRemote must be one non-empty remote URL or path');
+  }
+  return value;
+}
+
 function deploymentPreflightError(message) {
   return Object.assign(new Error(message), { code: 'deployment_preflight_failed' });
 }
@@ -6220,7 +6236,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  // Issue #558: the declared shared remote landings publish to, validated at open.
+  const rawIntegration = advanced.integration ?? {};
+  closed(rawIntegration, ['publishRemote'], 'advanced integration');
+  const integrationPublishRemote = normalizeIntegrationPublishRemote(rawIntegration.publishRemote);
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -6635,6 +6655,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     routeQuotaAuthority: routeQuota,
     repoRoot: repository.root,
     repoId: repository.repoId,
+    // Issue #558: the declared shared remote, carried to the landing authority (null when the
+    // deployment declares none — a real landing then refuses instead of staying local).
+    ...(integrationPublishRemote === null ? {} : { integrationPublishRemote }),
     deploymentBaseSha: snapshot.sha,
     logDir: stateRoot,
     adapters,

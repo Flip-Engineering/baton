@@ -4411,7 +4411,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 104,
+          "size": 111,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -12597,7 +12597,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 52,
+          "size": 54,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -14041,7 +14041,7 @@
         {
           "name": "_landingFailureDetail",
           "ordinal": 0,
-          "size": 43,
+          "size": 46,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -14050,7 +14050,7 @@
         {
           "name": "_refuseLanding",
           "ordinal": 0,
-          "size": 30,
+          "size": 38,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
@@ -14068,7 +14068,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 224,
+          "size": 227,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
