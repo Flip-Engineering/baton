@@ -6,7 +6,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-const MAX_CREDENTIAL_BYTES = 64 * 1024;
+const MAX_CREDENTIAL_BYTES = FRAME_LIMITS['credential.cache_file_bytes'].value;
 const MAX_MS_EPOCH = 8_640_000_000_000_000;
 const flights = new Map();
 

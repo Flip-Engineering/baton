@@ -1077,7 +1077,7 @@ export async function openBatonWebConnection(options = {}) {
     // Issue #294: the wake attachment rides the transport the commands ride. A local resident's
     // owner-only Unix socket is where its wake feed lives too, so the client carries it.
     ...(connection.socketPath === undefined ? {} : { socketPath: connection.socketPath }),
-    commandTimeoutMs: options.commandTimeoutMs ?? 120_000,
+    commandTimeoutMs: options.commandTimeoutMs ?? FRAME_LIMITS['bridge.command_timeout_ms'].value,
     pollMs: options.pollMs ?? 250,
     // Issue #349: the bridge is the caller that answers under the MCP wire frame, so it DECLARES
     // that frame on the swarm.view envelopes it forwards — the one declaration that lets the

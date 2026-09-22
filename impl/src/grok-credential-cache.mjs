@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 // #11 ClaudeCredentialCache built, vendor-adjusted to grok's HOME-relative write-back target
 // (`directory/.grok/auth.json`, never the claude flat sibling).
 
-const MAX_CREDENTIAL_BYTES = 64 * 1024;
+const MAX_CREDENTIAL_BYTES = FRAME_LIMITS['credential.cache_file_bytes'].value;
 const MAX_MS_EPOCH = 8_640_000_000_000_000;
 const flights = new Map();
 

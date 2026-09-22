@@ -4,6 +4,7 @@
 
 import { createHash } from 'node:crypto';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const POLICY_FIELDS = Object.freeze([
   'schemaVersion',
@@ -16,8 +17,8 @@ const ROUTE_FIELDS = Object.freeze(['harness', 'model', 'effort', 'terminalReser
 const RESERVE_FIELDS = Object.freeze(['tokens', 'usd']);
 const MAX_ROUTES = 1024;
 const MAX_IDENTIFIER_BYTES = 128;
-const MAX_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
-const MAX_CALLS_PER_TURN = 100_000;
+const MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['provider.wire_frame_bytes'].value;
+const MAX_CALLS_PER_TURN = FRAME_LIMITS['provider.max_calls_per_turn'].value;
 const MAX_TERMINAL_RESERVE_TOKENS = 100_000_000;
 const MAX_TERMINAL_RESERVE_USD = 1_000_000;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;

@@ -3,6 +3,7 @@ import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readF
 import { join, resolve } from 'node:path';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 import { parseRouteTupleKey } from './route-tuple.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const INTERVENTIONS = new Set([
@@ -50,14 +51,14 @@ export class CairnRunScorecard {
     if ((this.routeAdvisor === null) !== (this.routeAdvice === null)) throw new TypeError('Cairn route advice requires router and ceilings together');
     if (this.routeAdvisor && (typeof this.routeAdvisor.advice !== 'function' || typeof this.routeAdvisor.policy !== 'function' || typeof this.routeAdvisor.snapshot !== 'function' || typeof this.coordination.routeObservations !== 'function'
       || !this.routeAdvice || Object.keys(this.routeAdvice).sort().join(',') !== ['maxBytes', 'maxCandidates', 'maxRows', 'maxTaskTypeBytes'].sort().join(',')
-      || Object.values(this.routeAdvice).some((value) => !Number.isSafeInteger(value) || value <= 0) || this.routeAdvice.maxCandidates > 10_000 || this.routeAdvice.maxRows > 10_000 || this.routeAdvice.maxRows < this.routeAdvice.maxCandidates || this.routeAdvice.maxTaskTypeBytes > 4_096 || this.routeAdvice.maxBytes > 16 * 1024 * 1024)) throw new TypeError('Cairn route advice configuration is invalid');
+      || Object.values(this.routeAdvice).some((value) => !Number.isSafeInteger(value) || value <= 0) || this.routeAdvice.maxCandidates > 10_000 || this.routeAdvice.maxRows > 10_000 || this.routeAdvice.maxRows < this.routeAdvice.maxCandidates || this.routeAdvice.maxTaskTypeBytes > 4_096 || this.routeAdvice.maxBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value)) throw new TypeError('Cairn route advice configuration is invalid');
     this.knowledgeAuditPolicy = opts.knowledgeAuditPolicy ? clone(opts.knowledgeAuditPolicy) : null;
     if (this.knowledgeAuditPolicy) {
       const names = ['repoId', 'maxStateRows', 'maxNodes', 'maxEdges', 'maxEvidenceRefs', 'maxAuditSamples', 'maxTraceDepth', 'maxTraceRows', 'maxArtifactBytes', 'maxResultBytes'];
       const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeAuditPolicy;
       if (Object.keys(p).sort().join(',') !== names.sort().join(',') || typeof p.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(p.repoId)
         || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxNodes > p.maxStateRows || p.maxEdges > p.maxStateRows || p.maxAuditSamples > p.maxStateRows || p.maxTraceRows > p.maxStateRows || p.maxEvidenceRefs > 1_000_000 || p.maxEvidenceRefs > p.maxStateRows * 64
-        || p.maxTraceDepth > 64 || p.maxStateRows > 1_000_000 || p.maxArtifactBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || p.maxTraceDepth > 64 || p.maxStateRows > 1_000_000 || p.maxArtifactBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value || p.maxResultBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
         || typeof this.coordination.auditKnowledge !== 'function' || typeof this.coordination.traceKnowledgeBounded !== 'function' || typeof this.coordination.observationTime !== 'function') throw new TypeError('Cairn causal audit configuration is invalid');
       this.knowledgeAuditPolicy = Object.freeze(p); this.knowledgePolicyDigest = sha256(stable(p));
     }
@@ -67,8 +68,8 @@ export class CairnRunScorecard {
       const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeRecallPolicy;
       if (!this.knowledgeAuditPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId
         || typeof p.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(p.repoId) || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0)
-        || p.maxQueryBytes > 64 * 1024 || p.maxQueryTerms > 1_024 || p.maxCandidates > 100_000 || p.maxCandidateBytes > 64 * 1024 * 1024
-        || p.maxResults > 1_000 || p.maxGraphDepth > 64 || p.maxGraphRows > 1_000_000 || p.maxSnippetBytes > 64 * 1024 || p.maxReceiptBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || p.maxQueryBytes > 64 * 1024 || p.maxQueryTerms > 1_024 || p.maxCandidates > 100_000 || p.maxCandidateBytes > FRAME_LIMITS['knowledge.policy_event_max_bytes'].value
+        || p.maxResults > 1_000 || p.maxGraphDepth > 64 || p.maxGraphRows > 1_000_000 || p.maxSnippetBytes > 64 * 1024 || p.maxReceiptBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value || p.maxResultBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
         || typeof this.coordination.recallKnowledgeBounded !== 'function' || typeof this.coordination.reverifyKnowledgeRecall !== 'function') throw new TypeError('Cairn recall configuration is invalid');
       this.knowledgeRecallPolicy = Object.freeze(p); this.knowledgeRecallPolicyDigest = sha256(stable(p));
     }
@@ -76,7 +77,7 @@ export class CairnRunScorecard {
     if (this.knowledgeRecallAssessmentPolicy) {
       const names = ['repoId', 'maxScanEvents', 'maxReceipts', 'maxNodeRefs', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeRecallAssessmentPolicy;
       if (!this.knowledgeAuditPolicy || !this.knowledgeRecallPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId || p.repoId !== this.knowledgeRecallPolicy.repoId
-        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxScanEvents > 1_000_000 || p.maxReceipts > 100_000 || p.maxNodeRefs > 1_000_000 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxScanEvents > 1_000_000 || p.maxReceipts > 100_000 || p.maxNodeRefs > 1_000_000 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value || p.maxResultBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
         || typeof this.coordination.assessKnowledgeRecallBatch !== 'function' || typeof this.coordination.reverifyKnowledgeRecallAssessment !== 'function') throw new TypeError('Cairn recall assessment configuration is invalid');
       this.knowledgeRecallAssessmentPolicy = Object.freeze(p); this.knowledgeRecallAssessmentPolicyDigest = sha256(stable(p));
     }
@@ -86,7 +87,7 @@ export class CairnRunScorecard {
       const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgePromotionPolicy;
       if (!this.knowledgeAuditPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId
         || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.minScratchReaders > 1_000 || p.maxScanEvents > 1_000_000 || p.maxCandidates > 100_000
-        || p.maxCandidateBytes > 64 * 1024 * 1024 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || p.maxCandidateBytes > FRAME_LIMITS['knowledge.policy_event_max_bytes'].value || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value || p.maxResultBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
         || typeof this.coordination.promoteKnowledgeBatch !== 'function' || typeof this.coordination.reverifyKnowledgePromotion !== 'function' || typeof this.coordination.reverifyKnowledgePromotionNoOp !== 'function') throw new TypeError('Cairn promotion configuration is invalid');
       this.knowledgePromotionPolicy = Object.freeze(p); this.knowledgePromotionPolicyDigest = sha256(stable(p));
     }
@@ -94,7 +95,7 @@ export class CairnRunScorecard {
     if (this.knowledgeScratchCorrectionPolicy) {
       const names = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxAffectedReads', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeScratchCorrectionPolicy;
       if (!this.knowledgeAuditPolicy || !this.knowledgePromotionPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId || p.repoId !== this.knowledgePromotionPolicy.repoId || p.minScratchReaders !== this.knowledgePromotionPolicy.minScratchReaders
-        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.minScratchReaders > 1_000 || p.maxScanEvents > 1_000_000 || p.maxAffectedReads > 1_000_000 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.minScratchReaders > 1_000 || p.maxScanEvents > 1_000_000 || p.maxAffectedReads > 1_000_000 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value || p.maxResultBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
         || typeof this.coordination.correctScratchKnowledge !== 'function' || typeof this.coordination.reverifyScratchCorrection !== 'function') throw new TypeError('Cairn Scratch correction configuration is invalid');
       this.knowledgeScratchCorrectionPolicy = Object.freeze(p); this.knowledgeScratchCorrectionPolicyDigest = sha256(stable(p));
     }
@@ -102,7 +103,7 @@ export class CairnRunScorecard {
     if (this.knowledgeContradictionPolicy) {
       const names = ['repoId', 'maxScanEvents', 'maxScanEdges', 'maxItems', 'maxSnippetBytes', 'maxEvidenceRefs', 'maxAffectedReads', 'maxReasonBytes', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeContradictionPolicy;
       if (!this.knowledgeAuditPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId
-        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxScanEvents > 1_000_000 || p.maxScanEdges > 1_000_000 || p.maxItems > 100_000 || p.maxSnippetBytes > 64 * 1024 || p.maxEvidenceRefs > 1_000_000 || p.maxAffectedReads > 1_000_000 || p.maxReasonBytes > 64 * 1024 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxScanEvents > 1_000_000 || p.maxScanEdges > 1_000_000 || p.maxItems > 100_000 || p.maxSnippetBytes > 64 * 1024 || p.maxEvidenceRefs > 1_000_000 || p.maxAffectedReads > 1_000_000 || p.maxReasonBytes > 64 * 1024 || p.maxBatchBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value || p.maxResultBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
         || typeof this.coordination.listKnowledgeContradictions !== 'function' || typeof this.coordination.resolveKnowledgeContradictionBounded !== 'function' || typeof this.coordination.reverifyKnowledgeContradictionResolution !== 'function') throw new TypeError('Cairn contradiction configuration is invalid');
       this.knowledgeContradictionPolicy = Object.freeze(p); this.knowledgeContradictionPolicyDigest = sha256(stable(p));
     }

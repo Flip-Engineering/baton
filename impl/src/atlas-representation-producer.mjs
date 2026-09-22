@@ -3,6 +3,7 @@ import {
   chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const PRODUCER_NAME = 'atlas-representation-producer';
 const OPERATION = 'representation.produce';
@@ -65,9 +66,9 @@ function validatePolicy(value) {
     || POLICY_FIELDS.filter((key) => !['schemaVersion', 'repoId'].includes(key)).some((key) => !Number.isSafeInteger(policy[key]) || policy[key] <= 0)
     || policy.maxArgumentBytes > 1024 * 1024 || policy.maxSourceRefs > 256 || policy.maxSourceRefBytes > 64 * 1024
     || policy.maxEvidenceRefs < 2 || policy.maxEvidenceRefs > 1024
-    || policy.maxReceiptBytes > 16 * 1024 * 1024 || policy.maxGraphBatchBytes > 16 * 1024 * 1024
+    || policy.maxReceiptBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value || policy.maxGraphBatchBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value
     || policy.maxResultItems > 1024 || policy.maxResultRefs > 256
-    || policy.maxResultBytes > 16 * 1024 * 1024) throw new TypeError('representation production policy is invalid');
+    || policy.maxResultBytes > FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value) throw new TypeError('representation production policy is invalid');
   return Object.freeze(policy);
 }
 function validateEnvironment(kind, value, repoId) {
