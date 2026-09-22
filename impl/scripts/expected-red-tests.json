@@ -1009,42 +1009,6 @@
       "reason": "#72"
     },
     {
-      "key": "test/readiness-honesty-red.test.mjs :: A1a (stage: enumerable honest projection): a static-only doctor row reads unverified with probedAt null — never self-relabeled probe-verified — and the fields survive JSON.stringify; a fresh content-verified probe reads probe-verified with probedAt = recorded verifiedAt (D2 cardinal law + wire law)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A1b (stage: roster honest projection): the fleet_roster row carries the same {verdict, probedAt} projection — the liveness class is not a private sibling (D2 shape)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A1c (stage: northbound re-add): the operator wire surfaces — /v1/application-card, the CLI doctor read, deployment.doctor — re-add verdict + probedAt so a JSON round-trip cannot strip them (D2 wire law, blocker 3)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A2 (stage: on-demand forced probe): baton doctor --check forces exactly one fresh probe per stale route through the OPERATOR path — baton.mjs → BatonWebClient.doctor() → a /v1/application-card forced-probe parameter (D1 trigger 3, blocker 2)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A3 (stage: typed refusal vocabulary): provider_unreachable, probe_content_mismatch, probe_oversize, and provider_quota each have a PROVIDER_TERMINAL_GUIDANCE row with {category, summary, remediation, retryable} — and a probe verdict never collapses to the generic (G6, refusal vocabulary)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A4 (stage: quota/capacity death class): a probe whose output carries the quota/capacity wire — HTTP 402 / insufficient_quota — classifies to the typed provider_quota verdict, distinct from provider_unreachable and probe_content_mismatch, and excludes the automatic re-probe cadence (D1, refusal vocabulary, OQ3)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A5 (stage: honest-projection refusal): a failed verdict refuses wave preflight with wave_driver_route_unready BEFORE any member spawn, and the driver never substitutes a route (D3)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A6 (stage: spawn-gate coverage): #livenessGate is consulted on every provider-spawn surface — run, startMany, workflow, explore, review — before any real turn, exactly as assertRouteReady already is (D1 trigger 1, blocker 4)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: V-stale (stage: lapsed-window verdict): the honest verdict follows the staleness law — a lapsed verified window reads verdict unverified, NEVER stale probe-verified, with probedAt retaining the last recorded measurement (D2 staleness law, P-stale twin)",
-      "reason": "#167"
-    },
-    {
       "key": "test/redrive-continuity-red.test.mjs :: A1 (RED): renderBrief does not emit `## Re-drive continuity` for a brief carrying continuity (stage: renderBrief-continuity-missing)",
       "reason": "#59"
     },
@@ -2029,6 +1993,10 @@
     {
       "file": "test/readiness-honesty-234-red.test.mjs",
       "reason": "#230"
+    },
+    {
+      "file": "test/readiness-honesty-red.test.mjs",
+      "reason": "#167"
     },
     {
       "file": "test/reap-on-terminal-red.test.mjs",

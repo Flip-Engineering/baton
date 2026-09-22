@@ -32,6 +32,11 @@ const TERMINAL_KINDS = new Set([
   'lifecycle.turn_completed', 'lifecycle.process_closed', 'lifecycle.crashed', 'lifecycle.exited',
 ]);
 const GROK_REMEDY = 'Grok authentication has expired. Run the ordinary `grok login` flow to refresh authentication, then reopen Baton.';
+// #167 (D1/A4): the provider's quota/capacity wire. A turn (completed or failed) whose output
+// carries it is a provider_quota verdict — a capacity death, distinct from provider_unreachable
+// and probe_content_mismatch, and the ONE class excluded from the automatic re-probe cadence.
+const QUOTA_WIRE = /(http\s*402|insufficient_quota|quota|capacity|overloaded|limit exceeded)/iu;
+function quotaWire(output) { return QUOTA_WIRE.test(String(output ?? '')); }
 
 function routeKey(route) {
   return JSON.stringify([route.harness, route.model, route.effort]);
@@ -179,8 +184,13 @@ export class RouteLiveness {
     const row = this._cache.get(key);
     const now = this.now();
     if (row?.state === 'verified' && row.expiresAt > now) return row;
-    if (row?.state === 'failed' && now - row.failedAt < this.failureWindowMs) {
-      throw blockedError(row);
+    if (row?.state === 'failed') {
+      // #167 (A4/OQ3): a quota/capacity death is an OPERATOR surface only — a quota-dead route is
+      // never re-probed on the automatic failureWindowMs cadence (when the provider's own window
+      // clears is the provider's fact, not a deadline Baton invents). Every other failure re-probes
+      // once the failure window passes.
+      if (row.code === 'provider_quota') throw blockedError(row);
+      if (now - row.failedAt < this.failureWindowMs) throw blockedError(row);
     }
     // A route whose adapter cannot execute a probe (no provider ever started) is honest-unsupported:
     // the tier is additive, so it must never block a route it cannot measure.
@@ -284,6 +294,13 @@ export class RouteLiveness {
       if (probeLineOccurs(capture, expectedLine)) {
         return this._verify(route, credentialKey, started, probeId, { truncated });
       }
+      // #167 (D1/A4): a completed turn that carries the provider's quota/capacity wire is a
+      // capacity death, never a content mismatch — classified before the mismatch branch.
+      if (quotaWire(output)) {
+        return this._fail(route, credentialKey, 'provider_quota', started, probeId, {
+          blocking: pending.sawSpawned,
+        });
+      }
       return this._fail(route, credentialKey, 'probe_content_mismatch', started, probeId, {
         blocking: pending.sawSpawned,
         detail: {
@@ -296,6 +313,11 @@ export class RouteLiveness {
     }
     if (/invalid_grant|revok/iu.test(output)) {
       return this._fail(route, credentialKey, 'authentication_refresh_required', started, probeId, { blocking: true });
+    }
+    // #167 (A4): a FAILED turn carrying the same quota/capacity wire classifies provider_quota,
+    // never the generic unreachable fallback — the two deaths have different remedies.
+    if (quotaWire(output)) {
+      return this._fail(route, credentialKey, 'provider_quota', started, probeId, { blocking: pending.sawSpawned });
     }
     return this._fail(route, credentialKey, 'provider_unreachable', started, probeId, { blocking: pending.sawSpawned });
   }
@@ -470,4 +492,23 @@ export class RouteLiveness {
     }
     return Object.freeze(liveness);
   }
+}
+
+/** #167 (D2): the honest liveness projection every readiness-wire reader sees — the closed verdict
+ * vocabulary plus the CONTENT-DERIVED measurement instant. `probedAt` is the recorded
+ * verifiedAt/failedAt, never a TTL guess; it is retained after the verified window lapses (OQ5) and
+ * is null when nothing was measured at all. The staleness law is this module's `project()`: a
+ * lapsed window reads `unverified`, so a stale window can never read `probe-verified`. ONE
+ * derivation, read by the doctor rows, the roster rows and every northbound transport that must
+ * re-add the two fields a JSON round-trip would otherwise keep (they are enumerable, but a
+ * transport that rebuilds a row must carry them explicitly). */
+export const READINESS_VERDICTS = Object.freeze(['probe-verified', 'unverified', 'failed']);
+export function honestLivenessProjection(liveness) {
+  const state = liveness?.state;
+  const measured = Number.isFinite(liveness?.verifiedAt) ? liveness.verifiedAt
+    : Number.isFinite(liveness?.failedAt) ? liveness.failedAt : null;
+  return Object.freeze({
+    verdict: state === 'verified' ? 'probe-verified' : state === 'failed' ? 'failed' : 'unverified',
+    probedAt: measured === null ? null : new Date(measured).toISOString(),
+  });
 }
