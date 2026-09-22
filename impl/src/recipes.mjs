@@ -18,6 +18,7 @@
 // a different key mints a fresh manifest with a fresh salt.
 
 import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { createWaveDriver } from './wave-driver.mjs';
@@ -574,6 +575,161 @@ async function implementContract(baton, invocation) {
   return runRecipe(baton, recipe, { task, ...runOptions });
 }
 
+// ---------------------------------------------------------------------------
+// fleet_bakeoff (#126) — N candidates on ONE contract, then a referee judge.
+//
+// The shipped recipe drives one wave, and a wave starts every member together (wave.mjs:307-312):
+// a referee card rendered into the candidates' wave begins its turn before any candidate has
+// produced work to judge. This composition therefore runs two waves through `runRecipe`: wave 1
+// renders the N members from one objectiveTemplate, wave 2 carries each candidate's preserved
+// result to the referee, and the referee's own pinned report is read back onto the result roster.
+// The rules, the schemas, the manifest identity and the driver stay the shipped ones (rule 3).
+//
+// A candidate artifact is read from its result ref through git, the read wave.mjs's own pin
+// resolution makes. When that read cannot answer, the roster entry carries the typed reason
+// (`no_repository_root`, `no_result_sha`, `report_not_in_result`, `report_oversize`,
+// `report_read_failed`), so an unread artifact is visible as an unread artifact.
+// ---------------------------------------------------------------------------
+
+const BAKEOFF_FIELDS = Object.freeze([
+  'name', 'version', 'task', 'idempotencyKey', 'contract', 'candidates', 'referee', 'policy',
+]);
+const BAKEOFF_REFEREE_FIELDS = Object.freeze(['role', 'exact', 'scope', 'report']);
+const BAKEOFF_MIN_CANDIDATES = 2;
+// The read bound is the objective lane (limits.mjs wave.member.objective) — the lane a candidate
+// report rides into the referee's objective.
+const BAKEOFF_ARTIFACT_BYTES = FRAME_LIMITS['wave.member.objective'].value;
+const BAKEOFF_REFEREE_TASK = [
+  'You are the referee of a fleet bakeoff. Every candidate below ran the SAME contract; for each',
+  'candidate the preserved result is named by its sha and its report path, and the report text is',
+  'reproduced. Rank the candidates against that contract and give the reasons for the ranking.',
+  'Write your verdict to {report}: that file is what the bakeoff result carries.',
+].join('\n');
+
+// One git read, the same discipline wave.mjs uses for pins. Absence is typed: a missing repository
+// root, a missing result, a path that is not in the result tree, or an artifact past the lane all
+// report a reason instead of an empty verdict.
+function pinnedText(repoRoot, resultSha, reportPath) {
+  if (typeof repoRoot !== 'string' || repoRoot.length === 0) return { text: null, reason: 'no_repository_root' };
+  if (typeof resultSha !== 'string' || !/^[a-f0-9]{40}$/u.test(resultSha)) return { text: null, reason: 'no_result_sha' };
+  if (typeof reportPath !== 'string' || reportPath.length === 0) return { text: null, reason: 'no_report_path' };
+  try {
+    return {
+      text: execFileSync('/usr/bin/git', ['show', `${resultSha}:${reportPath}`], {
+        cwd: repoRoot, encoding: 'utf8', maxBuffer: BAKEOFF_ARTIFACT_BYTES,
+      }),
+      reason: null,
+    };
+  } catch (error) {
+    if (error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return { text: null, reason: 'report_oversize' };
+    return { text: null, reason: error?.status === 128 ? 'report_not_in_result' : 'report_read_failed' };
+  }
+}
+
+async function bakeoff(baton, invocation, { repoRoot = null } = {}) {
+  if (!invocation || typeof invocation !== 'object' || Array.isArray(invocation)) {
+    throw recipeError('bakeoff invocation must be an object', 'recipe_options_invalid');
+  }
+  for (const key of Object.keys(invocation)) {
+    if (!BAKEOFF_FIELDS.includes(key)) throw recipeError(`bakeoff option "${key}" is unknown`, 'recipe_options_invalid');
+  }
+  const { name = 'fleet_bakeoff', version = '1', task, contract, candidates, referee, policy = {} } = invocation;
+  if (typeof invocation.idempotencyKey !== 'string' || !IDEMPOTENCY_PATTERN.test(invocation.idempotencyKey)) {
+    throw recipeError('bakeoff "idempotencyKey" is invalid', 'recipe_idempotency_invalid');
+  }
+  if (!Array.isArray(candidates) || candidates.length < BAKEOFF_MIN_CANDIDATES) {
+    throw recipeError(`bakeoff requires at least ${BAKEOFF_MIN_CANDIDATES} candidates`, 'recipe_schema_invalid');
+  }
+  if (!referee || typeof referee !== 'object' || Array.isArray(referee)) {
+    throw recipeError('bakeoff requires a "referee" card', 'recipe_schema_invalid');
+  }
+  for (const key of Object.keys(referee)) {
+    if (!BAKEOFF_REFEREE_FIELDS.includes(key)) throw recipeError(`bakeoff referee "${key}" is unknown`, 'recipe_schema_invalid');
+  }
+  if (typeof referee.report !== 'string' || referee.report.trim().length === 0) {
+    throw recipeError('bakeoff referee requires "report" — the file its verdict is read from', 'recipe_schema_invalid');
+  }
+
+  // Wave 1 — N candidates on ONE contract. Every card carries the SAME objectiveTemplate, so the
+  // rule-1 admission gate validates one contract and the renderer salts one objective per member.
+  const candidatesRecipe = admitRecipe({
+    name, version,
+    members: candidates.map((candidate) => ({ ...candidate, objectiveTemplate: contract })),
+    policy,
+  });
+  const candidatesRun = await runRecipe(baton, candidatesRecipe, {
+    task, idempotencyKey: `${invocation.idempotencyKey}:candidates`,
+  });
+  const admittedContract = candidatesRecipe.members[0].objectiveTemplate;
+  const resolvedContract = resolveTask(admittedContract.task, task);
+  const renderedByRole = new Map(candidatesRun.manifest.renderedMembers.map((member) => [member.role, member]));
+  const outcomeByRole = new Map(candidatesRun.outcomes.map((outcome) => [outcome.role, outcome]));
+  const roster = candidatesRecipe.members.map((member) => {
+    const rendered = renderedByRole.get(member.role);
+    const outcome = outcomeByRole.get(member.role);
+    return Object.freeze({
+      role: member.role,
+      objective: rendered?.objective ?? null,
+      report: member.report ?? null,
+      phase: outcome?.phase ?? 'missing',
+      terminal: outcome?.terminal === true,
+      resultSha: outcome?.resultSha ?? null,
+    });
+  });
+  const evidence = roster.map((entry) => ({ entry, read: pinnedText(repoRoot, entry.resultSha, entry.report) }));
+
+  // Wave 2 — the referee. Its objective is composed from the roster the candidates actually
+  // produced, so the judge is handed their preserved results rather than a promise of them.
+  const refereeReport = referee.report.trim();
+  const refereeTask = [
+    BAKEOFF_REFEREE_TASK.replace('{report}', refereeReport),
+    '', 'CONTRACT', resolvedContract, ...admittedContract.constraints,
+    '', 'CANDIDATE EVIDENCE',
+    ...evidence.flatMap(({ entry, read }) => [
+      `## ${entry.role}`,
+      `result: ${entry.resultSha ?? 'unavailable'}`,
+      `report: ${entry.report ?? 'none'}`,
+      'report text:',
+      read.text ?? `(unreadable: ${read.reason})`,
+      '',
+    ]),
+  ].join('\n');
+  const refereeRecipe = admitRecipe({
+    name: `${name}:referee`, version,
+    members: [{ ...referee, objectiveTemplate: { task: refereeTask, constraints: [] } }],
+    policy,
+  });
+  const refereeRun = await runRecipe(baton, refereeRecipe, {
+    idempotencyKey: `${invocation.idempotencyKey}:referee`,
+  });
+  const refereeOutcome = refereeRun.outcomes[0] ?? null;
+  const verdict = pinnedText(repoRoot, refereeOutcome?.resultSha ?? null, refereeReport);
+
+  return Object.freeze({
+    ...refereeRun,
+    bakeoff: Object.freeze({
+      name, version,
+      contract: Object.freeze({
+        task: resolvedContract,
+        constraints: admittedContract.constraints,
+        digest: createHash('sha256')
+          .update(canonicalJson({ task: resolvedContract, constraints: admittedContract.constraints }))
+          .digest('hex'),
+      }),
+      candidates: Object.freeze(roster),
+      referee: Object.freeze({
+        role: refereeRecipe.members[0].role,
+        objective: refereeRun.manifest.renderedMembers[0].objective,
+        report: refereeReport,
+        phase: refereeOutcome?.phase ?? 'missing',
+        resultSha: refereeOutcome?.resultSha ?? null,
+        verdict: verdict.text,
+        verdictReason: verdict.reason,
+      }),
+    }),
+  });
+}
+
 // Rule 3: baton.recipes is an embedded-facade library over the shipped driver. The facade is
 // derived from the BatonClient (the bindBaton surface), not a new command family.
 export function createRecipes(baton, repoRoot = null) {
@@ -587,6 +743,9 @@ export function createRecipes(baton, repoRoot = null) {
     // Issue #114 — the workflow-as-data interpreter lane (D2). The spec is data + closed run options
     // over the same wave machinery; repoRoot rides in so the D4 harvest can read the authoritative sha.
     runWorkflow: (spec, invocation = {}) => runWorkflow(baton, spec, { repoRoot: boundRepoRoot, ...invocation }),
+    // Issue #126 — fleet_bakeoff (docs/09 F3, docs/07 M1): N candidates on ONE contract, then a
+    // referee whose verdict the result roster carries. repoRoot rides in for the pinned artifact reads.
+    bakeoff: (invocation) => bakeoff(baton, invocation, { repoRoot: boundRepoRoot }),
   });
 }
 
