@@ -3187,7 +3187,11 @@ export class McpFleetServer {
         .filter(([, child]) => !secretShaped(child))
         .map(([key, child]) => [key, walk(child)]));
     };
-    return normalized(walk(value));
+    // #72 (§4.2): the prescriptive warnings ride the doctor as a NON-enumerable sibling, which the
+    // Object.entries walk cannot see. Materialize the ONE named additive as an enumerable metadata
+    // field first — the same named field the web card and the CLI carry — and let the walk and the
+    // sanitizer treat it like every other section.
+    return normalized(walk({ ...value, warnings: value.warnings ?? null }));
   }
 
   _readContextPackage(packageDigest) {

@@ -423,6 +423,10 @@ try {
           deployment: remote.deployment,
           routes: remote.routes,
           briefing: remote.briefing ?? null,
+          // #72 (§4.2): the prescriptive warnings ride the remote `--check` render as the same ONE
+          // named additive field the served card, the MCP doctor and the local `--depth` outline
+          // carry; the local branch above already carries them on `local.warnings`.
+          warnings: remote.warnings ?? null,
           application: remote.application,
           ...(stopping === null ? {} : {
             next: [{
