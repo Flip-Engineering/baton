@@ -22,7 +22,7 @@ import { MAX_STDERR_TAIL_BYTES } from './cli-adapters.mjs';
 import { normalizeBrowserUseUrl } from './browser-use.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { goalPlanDigest, GoalPlanValidationError, normalizeGoalPlanContext } from './goal-plan.mjs';
-import { composeFrameLimitRefusal, FRAME_LIMITS, frameLimitRefusalPath } from './limits.mjs';
+import { composeFrameLimitRefusal, FRAME_LIMITS, frameLimitRefusalPath, WEB_WAIT_DEFAULT_MS } from './limits.mjs';
 import { boundedAttentionText, isAttentionSpillItem, replObjectLine, replObjectRefusal, shedReplObjects, wrapProse } from './messages.mjs';
 import { nativeSubagentView } from './native-subagent-view.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
@@ -2553,7 +2553,7 @@ export function localResourceOwnership(coordinator, recorder, workerId) {
     return Object.freeze({ owned: coordinator._ownsLocalResources(handle) });
   }
 
-export async function wait(coordinator, recorder, timeoutMs = 25000) {
+export async function wait(coordinator, recorder, timeoutMs = WEB_WAIT_DEFAULT_MS) {
     coordinator._assertReadable();
     const deadline = Date.now() + timeoutMs;
 

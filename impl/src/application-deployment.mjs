@@ -1696,14 +1696,15 @@ function museCommand() {
   throw deploymentError('Muse route requires a compatible muse executable with exec --json support');
 }
 
-/** Issue #28: deliberate wire ceilings are deployment-owned (64KiB–16MiB governance range). */
-const MIN_ADAPTER_WIRE_FRAME_BYTES = 64 * 1024;
-const MAX_ADAPTER_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
-// #500 (extending the #28 pin): the deployment default inside that corridor is 8 MiB — what
-// the claude-session families resolve to when neither advanced.adapterOptions nor
-// BATON_CLAUDE_MAX_WIRE_FRAME_BYTES speaks. Operator-declared; the #500 pin test records all
-// three bounds.
-const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 * 1024 * 1024;
+/** Issue #28: deliberate wire ceilings are deployment-owned; since #497 the corridor's floor,
+ * ceiling and derived default are registry rows (limits.mjs) — this module reads them and the
+ * #500 pin test records all three bounds. */
+const MIN_ADAPTER_WIRE_FRAME_BYTES = FRAME_LIMITS['adapter.wire_frame_min'].value;
+const MAX_ADAPTER_WIRE_FRAME_BYTES = FRAME_LIMITS['adapter.wire_frame_max'].value;
+// #500 (extending the #28 pin): the deployment default inside that corridor is 8 MiB — half the
+// ceiling — what the claude-session families resolve to when neither advanced.adapterOptions nor
+// BATON_CLAUDE_MAX_WIRE_FRAME_BYTES speaks.
+const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = MAX_ADAPTER_WIRE_FRAME_BYTES / 2;
 
 /**
  * `advanced.adapterOptions` is the deployment CALLER's channel for adapter configuration.

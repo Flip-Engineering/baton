@@ -24,7 +24,7 @@ import {
 import {
   attentionItemLine, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse } from './messages.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath, WEB_WAIT_DEFAULT_MS } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { observeAdapterEvents } from './adapter.mjs';
@@ -6134,7 +6134,7 @@ export class Coordinator {
   // Command: wait()
   // =========================================================================
 
-    wait(timeoutMs = 25000) {
+    wait(timeoutMs = WEB_WAIT_DEFAULT_MS) {
     return runtimeAdmission.wait(this, this._recorder, timeoutMs);
   }
 

@@ -6,7 +6,7 @@ import { readSwarmFamily } from './swarm-family.mjs';
 import { ProductionConvergenceRuntime } from './production-convergence.mjs';
 import { installProductionWebConvergence } from './production-web-convergence.mjs';
 import { prepareApplicationSurfaceInvocation } from './surface-capability-catalog.mjs';
-import { WEB_WAIT_CEILING_ROW } from './limits.mjs';
+import { WEB_WAIT_CEILING_ROW, WEB_WAIT_DEFAULT_MS } from './limits.mjs';
 import {
   assertSurfaceCapabilityNameClosure,
   resolveSurfaceCapability,
@@ -115,7 +115,7 @@ function validateWatchArgs(args, target) {
   }
   const maximum = Math.min(WEB_WAIT_CEILING_ROW.value, Number.isSafeInteger(target.commandTimeoutMs)
     ? target.commandTimeoutMs : WEB_WAIT_CEILING_ROW.value);
-  const timeoutMs = args.timeoutMs ?? Math.min(25_000, maximum);
+  const timeoutMs = args.timeoutMs ?? Math.min(WEB_WAIT_DEFAULT_MS, maximum);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > maximum) {
     throw new BatonControlError('surface_watch_invalid', `timeoutMs must be between 1 and ${maximum}`, {
       field: 'timeoutMs', detail: { maximum },
