@@ -448,6 +448,7 @@ The zero-assembly deployment registers these route families (`baton doctor` for 
 | Harness | Model(s) | Efforts | Ready when |
 |---|---|---|---|
 | `codex` | `gpt-5.6-sol` | minimal/low/medium/high/xhigh | `~/.codex/auth.json` present |
+| `codex` | `gpt-6-astra` | minimal/low/medium/high/xhigh | `~/.codex/auth.json` present |
 | `kimi-code` | `kimi-code/k3` | low/high/max | kimi credential files present with a ready authentication state |
 | `grok` | `grok-4.5` | low/medium/high | `~/.grok/auth.json` present with a ready authentication state |
 | `claude-code` | `claude-opus-4-6` | low/medium/high/xhigh/max | bounded version + auth status probes |

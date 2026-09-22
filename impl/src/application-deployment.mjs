@@ -200,11 +200,19 @@ export function deepseekCredentialProjection(repoRoot) {
   });
 }
 
+const CODEX_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh']);
+const CODEX_MODELS = Object.freeze([
+  { model: 'gpt-5.6-sol', aaSlug: 'gpt-5-6-sol', openRouterId: 'openai/gpt-5.6-sol' },
+  { model: 'gpt-6-astra', aaSlug: 'gpt-6-astra', openRouterId: 'openai/gpt-6-astra' },
+]);
+const codexRoutes = () => CODEX_MODELS.flatMap(({ model, aaSlug, openRouterId }) => (
+  CODEX_EFFORTS.map((effort) => Object.freeze({
+    harness: 'codex', model, effort, aaSlug, billing: 'subscription', openRouterId,
+  }))
+));
+
 const DEFAULT_ROUTES = Object.freeze([
-  ...['minimal', 'low', 'medium', 'high', 'xhigh'].map((effort) => Object.freeze({
-    harness: 'codex', model: 'gpt-5.6-sol', effort,
-    aaSlug: 'gpt-5-6-sol', billing: 'subscription', openRouterId: 'openai/gpt-5.6-sol',
-  })),
+  ...codexRoutes(),
   ...['low', 'high', 'max'].map((effort) => Object.freeze({
     harness: 'kimi-code', model: 'kimi-code/k3', effort,
     aaSlug: 'kimi-k3', billing: 'subscription', openRouterId: 'moonshotai/kimi-k3',
