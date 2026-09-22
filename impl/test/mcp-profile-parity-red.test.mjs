@@ -249,7 +249,7 @@ test('RG-02 RED: application tools/list is the served ordinary table and include
     'uncoveredCommands export exists (stage: uncovered-set-export)');
   const uncovered = mcpNorthbound.uncoveredCommands();
   assert.equal(names.length, 36 + uncovered.length + 3 + 2 + 2,
-    'application tools/list count ties to composition: 36 base (35 + the #314 seed leg) + 14 lifecycle + 3 wakes + 2 message + 2 harvest pair = 57 (stage: application-count-composition)');
+    'application tools/list count ties to composition: 36 base (35 + the #314 seed leg) + 14 lifecycle + 3 wakes + 2 message + 2 harvest pair = 65 (stage: application-count-composition)');
   const siblingTools = uncovered.map((command) => deriveSurfaceNames(command).mcp).sort();
   const missing = siblingTools.filter((tool) => !names.includes(tool));
   assert.deepEqual(missing, [],
