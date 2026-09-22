@@ -1513,126 +1513,6 @@
       "reason": "#67"
     },
     {
-      "key": "test/suite-resource-governance-red.test.mjs :: A1 (RG-03): absent BATON_SUITE_CALIBRATION yields null and the byte-identical idle default",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: A2 (RG-03/RG-04): scaledTimeout scales by the record factor",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: A3 (RG-04/RG-06): a synthetic high probe yields factor > 1; a quiet host is byte-identical to today",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: A4 (RG-05/D1.5): measureCalibration returns the closed record shape; the baseline is recorded or unrecorded",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: A5 (D1.2): the factor is a continuous sub-saturation multiplier, never a saturation step",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: A6 (D1): a calibrated deadline is NEVER shorter than the honest static floor",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: A7 (RG-05/D1.1/B5): the probe is sampled exactly K=5 times, sequentially — a hardcoded baseline cannot pass",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: A8 (RG-05/D1.5/B3): the baseline comes from the recorded receipt — a present receipt records, an absent one is honest null",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: B1 (RG-01): the gate emits one baton suite calibration: stderr line with the closed key set",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: B2 (RG-02): the spawned test child receives the identical BATON_SUITE_CALIBRATION record",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: B3 (RG-07): the load-context receipt survives a failing child — the line and env are outcome-independent",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: C1 (RG-09): deriveTestConcurrency preserves the idle default and sheds under load",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: C2 (RG-09): the gate passes a derived --test-concurrency — behavioral, observed via the child runner argv",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: C3 (D3.2): the wrapper's STOP path is load-aware — grace scales by the factor",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: C4 (D3.2): the gate derives no whole-run budget from the calibration — the operator's signal is the only backstop",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: D1 (RG-08): the cause-class vocabulary is the closed 5, in ACTUAL sorted order",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: D2 (RG-08/D2.2): classifyCause names exactly one closed class for a confirmed load-flake",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: D3 (RG-08/D2.2): an unknown class — including the merged timer_coalescing — is refused",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: D4 (RG-13/B1): a load-exposed real race is a REAL BUG — the outcome never lands, no cause class",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: D5 (D2.4): no cause class without its load-context receipt",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: E1 (RG-10): a malformed BATON_SUITE_CALIBRATION refuses child-side with suite_calibration_invalid",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: E2 (RG-10/D1.1): a forced probe failure refuses with suite_calibration_unavailable naming the measurement",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: E3 (RG-10/D4): a throwing load read refuses with suite_calibration_unavailable naming loadavg",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: F1 (RG-12/D4): the load-aware markers form a closed literal set in ACTUAL order",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: F2 (RG-12/D1.4/B2): the G4 membership table is closed and decidable",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: F3 (RG-12): an absolute-timing or floor-raw row is excluded from derivation — all six G4 members",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: F4 (RG-12/D4): the unmarked default derives — the flake cluster is the load-aware default",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: G1 (D1.4/B6): a deadline re-arms on any new event — liveness evidence, not elapsed-time scaling",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: H1 (RG-07/§3): the record names factor, load, and probeMs inside the closed key set",
-      "reason": "#77"
-    },
-    {
-      "key": "test/suite-resource-governance-red.test.mjs :: H2 (§3): every closed literal is its own .sort() result — ACTUAL order, localeCompare banned",
-      "reason": "#77"
-    },
-    {
       "key": "test/swarm-gap-red.test.mjs :: S-G11 RED (stage: contribution-unbound): a plain-text contribution binds what it names",
       "reason": "S-G11"
     },
@@ -2405,6 +2285,10 @@
     {
       "file": "test/suite-hygiene-red.test.mjs",
       "reason": "#40"
+    },
+    {
+      "file": "test/suite-resource-governance-red.test.mjs",
+      "reason": "#77"
     },
     {
       "file": "test/surface-conformance-red.test.mjs",
