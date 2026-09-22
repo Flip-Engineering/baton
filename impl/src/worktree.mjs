@@ -2373,17 +2373,34 @@ export async function landContribution(repoRoot, request) {
       try {
         gitFile(['push', publishRemote, `${squashSha}:${ref}`], repoRoot,
           { stdio: 'pipe' }, { GIT_TERMINAL_PROMPT: '0' });
+        // Issue #556: read the DECLARED destination back. A push reports success against whatever
+        // its URL resolved to, so a landing could publish somewhere else — an intermediate
+        // checkout, a push-only rewrite — while every in-process signal read as a real publish.
+        // The landed ref has to be the tip the declared destination itself reports.
+        const observedTip = publishedTip(repoRoot, publishRemote, ref);
+        if (observedTip !== squashSha) {
+          throw Object.assign(new Error(`${publishRemote} reports ${observedTip ?? 'no tip'} at ${ref}`), {
+            code: 'integrate_publish_unverified', observedTip,
+          });
+        }
       } catch (error) {
         let rolledBack = false;
         try {
           gitFile(['update-ref', ref, targetHeadBefore, squashSha], repoRoot, { stdio: 'pipe' });
           rolledBack = true;
         } catch { /* the refusal below still answers; rolledBack: false names the state */ }
+        // #556: a destination that does not report the landed squash is refused under its own code
+        // and names the tip it did report; a push that failed keeps #558's vocabulary.
+        const unverified = error?.code === 'integrate_publish_unverified';
         throw Object.assign(
-          mergeError(`the declared shared remote could not publish ${target}; declare a reachable remote with advanced.integration.publishRemote`, 'integrate_publish_failed'),
+          mergeError(unverified
+            ? `the declared shared remote does not report the landed ${target}; the push to it is unverified`
+            : `the declared shared remote could not publish ${target}; declare a reachable remote with advanced.integration.publishRemote`,
+            unverified ? 'integrate_publish_unverified' : 'integrate_publish_failed'),
           {
             script: 'git push',
             ...(Number.isSafeInteger(error.status) ? { exit: error.status } : {}),
+            ...(unverified ? { observedTip: error.observedTip ?? null } : {}),
             stderrTail: redactPushTail(gitStepTail(error)),
             rolledBack,
           },
@@ -2440,6 +2457,17 @@ function gitStepTail(error) {
   const stderr = Buffer.isBuffer(error?.stderr) ? error.stderr.toString('utf8') : String(error?.stderr ?? '');
   const text = stderr.trim().length > 0 ? stderr.trim() : String(error?.message ?? error);
   return text.slice(-GIT_STEP_TAIL_BYTES);
+}
+
+/** Issue #556: the tip one ref holds AT a destination, read from that destination. An absent ref
+ * answers null; a destination that cannot be read throws, and the caller composes the refusal. The
+ * read names the same value the push named, so a rewrite that redirects only the push — a
+ * pushInsteadOf rule, a mirror that drops the ref — lands here as a mismatch. */
+function publishedTip(repoRoot, remote, ref) {
+  const out = gitFile(['ls-remote', remote, ref], repoRoot,
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' });
+  const line = String(out).split('\n').map((row) => row.trim()).find((row) => row.length > 0) ?? null;
+  return line === null ? null : line.split(/\s+/u)[0] ?? null;
 }
 
 /** #453: the bounded cause of a failed snapshot carry — kept on the error so the refusal that
