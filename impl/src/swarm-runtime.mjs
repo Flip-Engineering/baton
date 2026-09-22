@@ -6600,6 +6600,17 @@ export class SwarmRuntime {
     if (guided?.ok !== true && this._midTurnGuidanceUnsupported(worker)) {
       return this._parkGuidance(swarmId, participant, message, principal, args, guidance);
     }
+    // Issue #534: a lane that answers worker_not_active has nobody home — the seat's worker
+    // is idle, exited, or between incarnations. Recording a refused delivery drops the
+    // message on a seat that WILL act again (its next exec, or its resume-from successor's
+    // brief), so the guidance parks durably under the lane's own reason — the #337 guarantee
+    // extended past the one-shot harness (and past the null-worker park above) to every seat
+    // that is momentarily not there. Any other lane refusal keeps the refused delivery: the
+    // lane took nothing and said why.
+    if (guided?.ok !== true && guided?.result === 'worker_not_active') {
+      return this._parkGuidanceWithReason(swarmId, participant, message, principal, args,
+        guidance, 'worker_not_active');
+    }
     // The lane receipt is durable coordination log, not process state: deliveries are serialized
     // per worker, so the newest nudge/steer row for this binding past the pre-call cursor is the
     // row THIS delivery wrote — named by the receipt's own row, never copied in.
@@ -8954,9 +8965,7 @@ export class SwarmRuntime {
     if (command === 'swarm.guide') {
       const result = await this._once(command, args, principal, async () => {
         // Issue #273: the provenance is resolved BEFORE anything is sent — the relationship the
-        // sender has in THIS swarm (the coordinator's ONE namespace derivation plus the seat's
-        // standing here) and the row this guidance answers (a seq the swarm must hold). A guide
-        // that answers a row this swarm does not hold refuses here, having sent nothing.
+        // sender has in THIS swarm and the row this guidance answers.
         const guidance = {
           from: guidanceFromRelationship(this._swarm(args.swarmId), principal.actor),
           priority: args.priority ?? SWARM_GUIDANCE_DEFAULT_PRIORITY,

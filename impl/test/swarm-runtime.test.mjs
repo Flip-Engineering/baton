@@ -383,29 +383,37 @@ test('a guide to a one-shot seat parks durably and answers with its own row', as
   }]);
 });
 
-// Issue #337 × #273: a harness that CAN deliver mid-turn keeps the delivery path — a refusal there
-// never parks, and the receipt still names the guide's own row, this time a REFUSED delivery.
-test('a refused delivery on a deliverable harness never parks, and still answers with its row', async (t) => {
+// Issue #337 × #273 × #534: a harness that CAN deliver mid-turn keeps the delivery path — and
+// when the lane itself answers worker_not_active, nobody home took the message, so the guidance
+// parks durably under the lane's own reason: the seat's next exec composes it, and a resume-from
+// successor inherits it in its brief. The row never lets a message die in a refused delivery.
+test('a worker_not_active lane refusal parks the guidance under the lane\'s own reason', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Live guidance path' });
   await f.recruit('builder');
   f.ports.coordinator.guideParticipant = async () => ({ ok: false, result: 'worker_not_active' });
 
   const guided = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
-  assert.deepEqual(guided.result, { ok: false, result: 'worker_not_active' });
-  assert.equal(guided.guide.kind, 'swarm.guidance_sent', 'the guide still leaves its own row');
+  assert.deepEqual(guided.result, { ok: true, result: 'parked', reason: 'worker_not_active',
+    messageId: guided.guide.messageId });
+  assert.equal(guided.guide.kind, 'swarm.guidance_parked', 'the guide leaves its parked row');
   assert.deepEqual(guided.guide.delivery,
-    { state: 'refused', lane: null, reason: 'worker_not_active' },
-    'the row says the lane took nothing — a dropped message is never silent');
+    { state: 'parked', lane: null, reason: 'worker_not_active' },
+    'the row says nobody home took it — and that it waits, composed into the next brief');
   assert.deepEqual(guided.next, { command: 'swarm.watch', args: { swarmId: 'baton' },
-    observation: { wakeClass: 'paused', participantId: 'builder' } });
-  assert.equal(f.store.eventsView().some((event) => event.kind === 'driver.recorded'
-    && event.payload?.kind === 'swarm.guidance_parked'), false);
+    observation: { wakeClass: 'guidance_delivered', participantId: 'builder' } },
+    'next names the delivery that clears the park');
+  const parked = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
+    && event.payload?.kind === 'swarm.guidance_parked');
+  assert.equal(parked.length, 1, 'exactly one durable park');
+  assert.equal(parked[0].payload.delivery.reason, 'worker_not_active');
 });
 
 // Issue #337: the card's steer/prompt verbs decide, never the harness name — a seat whose
-// vendor is NAMED like a one-shot but whose card delivers keeps the live path, and a seat
-// under a novel name whose card names both verbs unsupported parks.
+// vendor is NAMED like a one-shot but whose card delivers keeps the live path (the lane is
+// really tried; a park under the lane's answer names worker_not_active, never
+// harness_one_shot), and a seat under a novel name whose card names both verbs unsupported
+// parks under the harness rule.
 test('one-shot detection reads card verbs, never the harness name', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Verb-decided parking' });
@@ -413,8 +421,11 @@ test('one-shot detection reads card verbs, never the harness name', async (t) =>
   f.workers[0].vendor = 'muse';
   f.ports.coordinator.guideParticipant = async () => ({ ok: false, result: 'worker_not_active' });
   const live = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
-  assert.equal(live.guide.delivery.state, 'refused',
-    'a muse-named seat with a deliverable card keeps the delivery path — nothing parks');
+  assert.deepEqual(live.result, { ok: true, result: 'parked', reason: 'worker_not_active',
+    messageId: live.guide.messageId },
+    'a muse-named seat with a deliverable card keeps the delivery path — the park names the lane\'s own answer');
+  assert.equal(live.guide.delivery.reason, 'worker_not_active');
+  assert.equal(live.guide.delivery.state, 'parked');
 
   f.workers[0].vendor = 'shiny-new-harness';
   f.cards.set('shiny-new-harness', { prompt: 'unsupported', steer: 'unsupported' });
@@ -422,6 +433,8 @@ test('one-shot detection reads card verbs, never the harness name', async (t) =>
   const parked = await f.call('guide', { participantId: 'builder', message: 'Hold the shape.' });
   assert.equal(parked.guide.delivery.state, 'parked',
     'an unknown-named seat with unsupported verbs parks');
+  assert.equal(parked.result.reason, 'harness_one_shot',
+    'the card-unsupported park keeps the harness reason');
 });
 
 // Issue #337: parked guidance composes into the --resume-from successor's brief in the Swarm

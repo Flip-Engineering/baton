@@ -3789,6 +3789,16 @@
           ]
         },
         {
+          "name": "resolveDoubt",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "_bumpInteractionGeneration",
           "ordinal": 0,
           "size": 3,
@@ -4433,6 +4443,44 @@
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "_resultRecordForRun",
+          "ordinal": 0,
+          "size": 33,
+          "seam": "recovery",
+          "evidence": [
+            "delegates:observation",
+            "delegates:recovery"
+          ]
+        },
+        {
+          "name": "resultPin",
+          "ordinal": 0,
+          "size": 36,
+          "seam": "surface",
+          "evidence": [
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "wavesHarvest",
+          "ordinal": 0,
+          "size": 114,
+          "seam": "surface",
+          "evidence": [
+            "admission:typed_refusal",
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "_attributingTaskRecord",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -6209,7 +6257,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 226,
+          "size": 235,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
@@ -6229,7 +6277,7 @@
         {
           "name": "_settlementCommand",
           "ordinal": 0,
-          "size": 22,
+          "size": 55,
           "seam": "surface",
           "evidence": [
             "observation:record_name",
@@ -13854,7 +13902,7 @@
         {
           "name": "_deliverGuidance",
           "ordinal": 0,
-          "size": 22,
+          "size": 33,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -14058,7 +14106,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1213,
+          "size": 1211,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -16396,7 +16444,7 @@
         {
           "name": "_resetProjection",
           "ordinal": 0,
-          "size": 92,
+          "size": 95,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -16831,7 +16879,7 @@
         {
           "name": "_apply",
           "ordinal": 0,
-          "size": 1252,
+          "size": 1278,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -17440,10 +17488,57 @@
         {
           "name": "sweepSettlementLeases",
           "ordinal": 0,
-          "size": 46,
+          "size": 76,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "doubtIdentity",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "doubtsProjection",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "raiseSettlementDoubt",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "observation",
+          "evidence": [
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "settlementReviewAuthority",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "resolveSettlementDoubt",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:store_append"
           ]
         },
         {
@@ -17937,7 +18032,7 @@
         {
           "name": "elevateTaskScratchpad",
           "ordinal": 0,
-          "size": 152,
+          "size": 165,
           "seam": "observation",
           "evidence": [
             "observation:store_append"
@@ -22517,11 +22612,12 @@
         {
           "name": "settlementLease",
           "ordinal": 0,
-          "size": 93,
+          "size": 109,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
-            "observation:durable_read"
+            "observation:durable_read",
+            "observation:ledger_port"
           ]
         },
         {

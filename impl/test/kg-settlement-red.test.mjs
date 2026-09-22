@@ -341,7 +341,7 @@ test('KS3: knowledge.settlement_lease materializes the bundle with the session d
 // KS4 — D3: the settle-window hook, end to end (stage: hook missing)
 // ===========================================================================
 
-test('KS4: the hook elevates note+plan, candidacies notes with exact title/detail, and surfaces receipt + outline', async (t) => {
+test('KS4: the hook elevates note+plan+doubt (issue #66 v1.1), candidacies notes with exact title/detail, and surfaces receipt + outline', async (t) => {
   const noteText = `the lease binds a working orchestrator parent — ${'χ'.repeat(90)} — tail beyond the title cap`;
   const writes = [
     { entry: { kind: 'note', text: noteText }, expectedFence: 'current', idempotencyKey: 'ks4-note' },
@@ -352,10 +352,13 @@ test('KS4: the hook elevates note+plan, candidacies notes with exact title/detai
   const runRow = store.snapshot().tasks.find((task) => task.assignee === 'w-1');
   const runId = runRow.runId;
   const shared = store.scratchpadSnapshot(runId, 'shared');
-  assert.deepEqual(shared.entries.map((entry) => entry.kind).sort(), ['note', 'plan']);
+  assert.deepEqual(shared.entries.map((entry) => entry.kind).sort(), ['doubt', 'note', 'plan'],
+    'the settle selection is exactly note/plan/doubt — the doubt elevates with them (issue #66 D1)');
   const noteShared = shared.entries.find((entry) => entry.kind === 'note');
   assert.ok(noteShared.scratchFactId, 'the note mints a scratch fact (D4.3)');
   assert.equal(shared.entries.find((entry) => entry.kind === 'plan')?.scratchFactId ?? null, null);
+  assert.equal(shared.entries.find((entry) => entry.kind === 'doubt')?.scratchFactId ?? null, null,
+    'a doubt never mints a bridge scratch fact (issue #66 GT2)');
   // Candidacy: exact title (≤120 bytes of stripped text, derived from the note head), exact
   // detail (full note text), pinned key.
   const board = store.boardSnapshot(`wave-settlement:${WAVE_ID}`);
@@ -573,10 +576,11 @@ test('KS7: partial state admit+revoke-done (crash after step 2) completes withou
 });
 
 // ===========================================================================
-// KS8 — D4 lanes incl. link, with dispositions receipted (stage: hook missing)
+// KS8 — D4 lanes incl. link, with dispositions receipted; amended for issue #66 v1.1 (the
+// settle selection is exactly note/plan/doubt — the link alone is orchestrator_skipped)
 // ===========================================================================
 
-test('KS8: shared kinds are exactly note+plan; doubt+link carry orchestrator_skipped dispositions', async (t) => {
+test('KS8: shared kinds are exactly note/plan/doubt; a link carries the orchestrator_skipped disposition (issue #66 v1.1)', async (t) => {
   const writes = [
     { entry: { kind: 'note', text: 'n' }, expectedFence: 'current', idempotencyKey: 'ks8-note' },
     { entry: { kind: 'plan', objective: 'p', steps: [{ text: 's', state: 'todo' }], supersedes: null }, expectedFence: 'current', idempotencyKey: 'ks8-plan' },
@@ -586,12 +590,12 @@ test('KS8: shared kinds are exactly note+plan; doubt+link carry orchestrator_ski
   const { store } = await ritualWave(t, writes);
   const runRow = store.snapshot().tasks.find((task) => task.assignee === 'w-1');
   const shared = store.scratchpadSnapshot(runRow.runId, 'shared');
-  assert.deepEqual(shared.entries.map((entry) => entry.kind).sort(), ['note', 'plan'],
-    'note+plan elevate; doubt AND link are skipped');
+  assert.deepEqual(shared.entries.map((entry) => entry.kind).sort(), ['doubt', 'note', 'plan'],
+    'note+plan+doubt elevate; the link is the only kind never selected');
   const reap = store.events().find((event) => event.kind === 'scratchpad.partition_reaped'
     && event.payload?.basis === 'task_settled');
   const skipped = (reap?.payload?.dispositions ?? []).filter((row) => row.result === 'not_elevated');
-  assert.equal(skipped.length, 2, 'doubt and link are both dispositioned');
+  assert.equal(skipped.length, 1, 'the link is the one dispositioned skip');
   for (const row of skipped) assert.equal(row.reasonCode, 'orchestrator_skipped', 'the skip is receipted, not silent');
   const board = store.boardSnapshot(`wave-settlement:${WAVE_ID}`);
   assert.equal(board.items.length, 1, 'only the note candidates');

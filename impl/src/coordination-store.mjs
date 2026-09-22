@@ -2454,7 +2454,7 @@ export class CoordinationStore {
       types: [...types].sort(), grounding: [...grounding].sort(), seedNodeIds: [...eligibleSeeds].sort(),
       limit: request.limit, observedSeq: projectFence, asOf: observedAt,
     });
-    const cacheKey = `${repoId} ${projectFence} ${canonicalDigest(query)} ${canonicalDigest(previewPolicy)}`;
+    const cacheKey = `${repoId}\0${projectFence}\0${canonicalDigest(query)}\0${canonicalDigest(previewPolicy)}`;
     const hit = this._previewCache.get(cacheKey);
     if (hit !== undefined) { this._previewCache.delete(cacheKey); this._previewCache.set(cacheKey, hit); return hit; }
 
