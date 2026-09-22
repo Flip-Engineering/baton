@@ -949,7 +949,7 @@ export class CoordinationStore {
 
   _runStopContextTargets(targetRunIds) { return coordinationLedger._runStopContextTargets(this, targetRunIds); }
 
-  _runStopTargets(runId, throughSeq = this._events.length, contextVersion = 3) { return coordinationLedger._runStopTargets(this, runId, throughSeq, contextVersion); }
+  _runStopTargets(runId, throughSeq = this._events.length, contextVersion = 3, scoped = this._runLineagePolicy !== null) { return coordinationLedger._runStopTargets(this, runId, throughSeq, contextVersion, scoped); }
 
   _validSessionPreservationReceipt(receipt, allowHistorical = false) { return coordinationLedger._validSessionPreservationReceipt(receipt, allowHistorical); }
   _validPreservedContinuationReceipt(receipt) {
