@@ -1609,6 +1609,15 @@ export function _validateRunControlSettlement(store, p, event, integrity = false
   return control;
 }
 
+/** Issue #560: whether a RECORDED stop admission carries the run-lineage scope — the three fields
+ * (`scope`, `throughSeq`, `targetRunIds`) a policy-carrying writer adds. The fold reads the scope
+ * from the row itself (see `_validateRunStopAdmission`), so the read-only probes that assemble a
+ * store with no policies fold such a row from its own bytes. */
+function recordedRunStopScope(p) {
+  return typeof p === 'object' && p !== null
+    && Object.hasOwn(p, 'scope') && Object.hasOwn(p, 'throughSeq') && Object.hasOwn(p, 'targetRunIds');
+}
+
 export function _validateRunStopAdmission(store, p, event, integrity = false) {
   const fail = (message, code = 'run_stop_integrity') => {
     throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
@@ -1618,7 +1627,13 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
     'targetContextSessionIds', 'targetContextCellIds',
     ...(version >= 3 ? ['targetContextCallIds'] : []),
   ] : [];
-  const fields = store._runLineagePolicy
+  // Issue #560: which field set this admission is judged against. LIVE admission answers to the
+  // configured policy, its authority. The FOLD (integrity) reads the scope from the row it folds:
+  // a recorded row replays from its own bytes (#325/#504), so a store assembled without the
+  // deployment's policies folds a lineage-scoped stop exactly as it was recorded, instead of
+  // reporting `run_stop_integrity` and having the doctor propose a quarantine it cannot justify.
+  const scoped = integrity ? recordedRunStopScope(p) : store._runLineagePolicy !== null;
+  const fields = scoped
     ? ['schemaVersion', 'scope', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'throughSeq', 'targetRunIds', 'targetTaskIds', 'targetWorkerIds', 'targetDigest', ...contextFields]
     : ['schemaVersion', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'targetTaskIds', 'targetWorkerIds', 'targetDigest', ...contextFields];
   if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || ![1, 2, 3].includes(version)
@@ -1626,7 +1641,7 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
     || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.targetDigest ?? '')
     || !Array.isArray(p.targetTaskIds) || !Array.isArray(p.targetWorkerIds)
     || p.targetTaskIds.some((id) => !boundedText(id, 4_096)) || p.targetWorkerIds.some((id) => !validRunId(id))
-    || (store._runLineagePolicy && (p.scope !== 'run_subtree'
+    || (scoped && (p.scope !== 'run_subtree'
       || !Number.isSafeInteger(p.throughSeq) || p.throughSeq !== event.seq - 1
       || !Array.isArray(p.targetRunIds) || p.targetRunIds.length === 0 || p.targetRunIds.length > 1_000_000
       || p.targetRunIds.some((id) => !validRunId(id))))
@@ -1661,7 +1676,7 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
     && (version < 3 || JSON.stringify([...p.targetContextCallIds].sort(compareCanonicalStrings))
       === JSON.stringify(p.targetContextCallIds))
   );
-  const digestCore = store._runLineagePolicy ? {
+  const digestCore = scoped ? {
     throughSeq: p.throughSeq, targetRunIds: p.targetRunIds,
     targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds,
     ...(version >= 2 ? {
@@ -1682,7 +1697,7 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
     || JSON.stringify([...p.targetWorkerIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetWorkerIds)
     || !contextCanonical
     || p.requestDigest !== canonicalDigest({ repoId: p.repoId, runId: p.runId, reasonDigest: p.reasonDigest })
-    || (store._runLineagePolicy
+    || (scoped
       ? (new Set(p.targetRunIds).size !== p.targetRunIds.length
         || JSON.stringify([...p.targetRunIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetRunIds)
         || p.targetDigest !== canonicalDigest(digestCore))
@@ -1691,9 +1706,9 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
   }
   if (event.idempotencyKey !== `run.stop:${p.runId}` || !boundedText(event.actor, 256)) fail('run stop authority is invalid');
   const targets = store._runStopTargets(
-    p.runId, store._runLineagePolicy ? p.throughSeq : undefined, version,
+    p.runId, scoped ? p.throughSeq : undefined, version, scoped,
   );
-  const observed = store._runLineagePolicy ? {
+  const observed = scoped ? {
     scope: p.scope, throughSeq: p.throughSeq, targetRunIds: p.targetRunIds,
     targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds, targetDigest: p.targetDigest,
     ...(version >= 2 ? {
