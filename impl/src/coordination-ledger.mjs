@@ -1862,8 +1862,11 @@ export function _runStopContextTargets(store, targetRunIds) {
   return { targetContextSessionIds, targetContextCellIds, targetContextCallIds };
 }
 
-export function _runStopTargets(store, runId, throughSeq = store._events.length, contextVersion = 3) {
-  const targetRunIds = store._runLineagePolicy
+export function _runStopTargets(store, runId, throughSeq = store._events.length, contextVersion = 3,
+  // #526: the caller that folds a recorded row passes the shape THAT ROW carries; the live policy
+  // stays the default so the admission lane's derivation is unchanged.
+  lineage = Boolean(store._runLineagePolicy)) {
+  const targetRunIds = lineage
     ? [...new Set([runId, ...store.runDescendants(runId).map((row) => row.childRunId)])].sort(compareCanonicalStrings)
     : [runId];
   const targetRunSet = new Set(targetRunIds);
@@ -1888,7 +1891,7 @@ export function _runStopTargets(store, runId, throughSeq = store._events.length,
   const hasContextTargets = contextTargets.targetContextSessionIds.length > 0
     || contextTargets.targetContextCellIds.length > 0
     || (contextTargets.targetContextCallIds?.length ?? 0) > 0;
-  if (store._runLineagePolicy) {
+  if (lineage) {
     const core = {
       throughSeq, targetRunIds, targetTaskIds, targetWorkerIds,
       ...(hasContextTargets ? contextTargets : {}),

@@ -1617,7 +1617,16 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
     'targetContextSessionIds', 'targetContextCellIds',
     ...(version >= 3 ? ['targetContextCallIds'] : []),
   ] : [];
-  const fields = store._runLineagePolicy
+  // #526: the recorded row carries its own shape. The live run-lineage policy selects the shape at
+  // ADMISSION (integrity false); the FOLD judges a recorded row by the fields it carries — the
+  // lineage shape's own signature is scope/throughSeq/targetRunIds — because a cold replay (the
+  // read-only probe behind `baton doctor`) carries no live policy to read. Whichever shape the row
+  // carries is the shape its digest core, its target derivation and its observed snapshot are
+  // judged in, so the admission lane and the fold lane cannot drift apart.
+  const lineage = integrity && p && typeof p === 'object' && !Array.isArray(p)
+    ? Object.hasOwn(p, 'scope') || Object.hasOwn(p, 'throughSeq') || Object.hasOwn(p, 'targetRunIds')
+    : Boolean(store._runLineagePolicy);
+  const fields = lineage
     ? ['schemaVersion', 'scope', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'throughSeq', 'targetRunIds', 'targetTaskIds', 'targetWorkerIds', 'targetDigest', ...contextFields]
     : ['schemaVersion', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'targetTaskIds', 'targetWorkerIds', 'targetDigest', ...contextFields];
   if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || ![1, 2, 3].includes(version)
@@ -1625,7 +1634,7 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
     || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.targetDigest ?? '')
     || !Array.isArray(p.targetTaskIds) || !Array.isArray(p.targetWorkerIds)
     || p.targetTaskIds.some((id) => !boundedText(id, 4_096)) || p.targetWorkerIds.some((id) => !validRunId(id))
-    || (store._runLineagePolicy && (p.scope !== 'run_subtree'
+    || (lineage && (p.scope !== 'run_subtree'
       || !Number.isSafeInteger(p.throughSeq) || p.throughSeq !== event.seq - 1
       || !Array.isArray(p.targetRunIds) || p.targetRunIds.length === 0 || p.targetRunIds.length > 1_000_000
       || p.targetRunIds.some((id) => !validRunId(id))))
@@ -1660,7 +1669,7 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
     && (version < 3 || JSON.stringify([...p.targetContextCallIds].sort(compareCanonicalStrings))
       === JSON.stringify(p.targetContextCallIds))
   );
-  const digestCore = store._runLineagePolicy ? {
+  const digestCore = lineage ? {
     throughSeq: p.throughSeq, targetRunIds: p.targetRunIds,
     targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds,
     ...(version >= 2 ? {
@@ -1680,19 +1689,17 @@ export function _validateRunStopAdmission(store, p, event, integrity = false) {
     || JSON.stringify([...p.targetTaskIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetTaskIds)
     || JSON.stringify([...p.targetWorkerIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetWorkerIds)
     || !contextCanonical
+    || (lineage && (new Set(p.targetRunIds).size !== p.targetRunIds.length
+      || JSON.stringify([...p.targetRunIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetRunIds)))
     || p.requestDigest !== canonicalDigest({ repoId: p.repoId, runId: p.runId, reasonDigest: p.reasonDigest })
-    || (store._runLineagePolicy
-      ? (new Set(p.targetRunIds).size !== p.targetRunIds.length
-        || JSON.stringify([...p.targetRunIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetRunIds)
-        || p.targetDigest !== canonicalDigest(digestCore))
-      : p.targetDigest !== canonicalDigest(digestCore))) {
+    || p.targetDigest !== canonicalDigest(digestCore)) {
     fail('run stop admission binding is invalid');
   }
   if (event.idempotencyKey !== `run.stop:${p.runId}` || !boundedText(event.actor, 256)) fail('run stop authority is invalid');
   const targets = store._runStopTargets(
-    p.runId, store._runLineagePolicy ? p.throughSeq : undefined, version,
+    p.runId, lineage ? p.throughSeq : undefined, version, lineage,
   );
-  const observed = store._runLineagePolicy ? {
+  const observed = lineage ? {
     scope: p.scope, throughSeq: p.throughSeq, targetRunIds: p.targetRunIds,
     targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds, targetDigest: p.targetDigest,
     ...(version >= 2 ? {
@@ -4857,9 +4864,14 @@ export function _normalizeContextPackage(store, fields, integrity = false) {
     || !/^[A-Za-z0-9._:@-]+$/u.test(raw.provenance.principalId)) {
     fail('context package provenance principalId is invalid');
   }
-  if (!store._contextProgramPolicy) fail('Context Program authority is unavailable', 'context_package_unavailable');
+  // #526: the recorded row carries its own `policyDigest`. The live authority is required at
+  // ADMISSION (integrity false); the FOLD judges the recorded row by its own content — the digest
+  // it recorded, in the shape a live authority writes — and never re-judges its manifest for size
+  // (the #366 rule: a recorded row is never re-judged for size on replay).
+  const authority = store._contextProgramPolicy;
+  if (!authority && !integrity) fail('Context Program authority is unavailable', 'context_package_unavailable');
   if (!Array.isArray(raw.branches) || raw.branches.length === 0
-    || raw.branches.length > store._contextProgramPolicy.maxManifestBranches) {
+    || (!integrity && raw.branches.length > authority.maxManifestBranches)) {
     fail('context package branches are invalid');
   }
   const branches = raw.branches.map((branch) => store._normalizeContextPackageBranch(branch, integrity))
@@ -4868,7 +4880,7 @@ export function _normalizeContextPackage(store, fields, integrity = false) {
     fail('context package branches must have unique names', 'package_branch_name_conflict');
   }
   if (!/^[a-f0-9]{64}$/.test(raw.policyDigest ?? '')
-    || raw.policyDigest !== store._contextProgramPolicy.policyDigest) {
+    || (!integrity && raw.policyDigest !== authority.policyDigest)) {
     fail('context package policy differs from the normalization authority');
   }
   const body = {
