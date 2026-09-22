@@ -1322,6 +1322,32 @@ const CANONICAL_OPERATION_SPECS = [
     }, []),
     authority: 'The deployment reads its own service declarations, route readiness and usage accounting; the model list is pulled live from the service endpoint where one answers.',
   }],
+  // Issue #161: the orchestrator's plan object as a first-class baton citizen. TWO canonical
+  // operations — the campaign-plan read and the idempotency-keyed mutation lane — each serving
+  // the embedded, CLI and MCP surfaces from THIS row (their names derive from the key, their wire
+  // schemas are the lane's closed shapes). The plan family is deliberately NOT a web transport
+  // (D3.4, the facade verbs' posture): the web envelope refuses both spellings, and the
+  // divergence is ledgered in scripts/surface-divergence-ledger.json.
+  ['plan.read', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli', 'mcp'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton plan read PLAN_ID',
+    inputSchema: objectSchema({
+      planId: { type: 'string', pattern: '^plan:[a-f0-9]{32}$' },
+    }, ['planId']),
+    authority: 'The plan projection is read against the replay-derived plan-object fold; the deployment authorize gates the plan:* power and the lane composes worker ownership.',
+  }],
+  ['plan.write', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli', 'mcp'], effect: 'control',
+    capabilities: ['control'], outputView: 'outline', helpTopic: 'run', idempotent: true,
+    example: 'baton plan write PLAN_ID --mutation JSON',
+    inputSchema: objectSchema({
+      planId: { type: 'string', pattern: '^plan:[a-f0-9]{32}$' },
+      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
+      mutation: { type: 'object' },
+    }, ['planId', 'mutation']),
+    authority: 'The plan:* power resolves through the deployment authorize (the orchestrator seat and the capability-carrying review seat); a coordinator owns its wave subtree and a row member the task it owns (H2.1/H2.3), never this seam.',
+  }],
   ...SWARM_COMMAND_ROWS.map((row) => [row.command, {
     example: SWARM_OPERATION_EXAMPLES[row.command],
     inputSchema: SWARM_COMMAND_SCHEMAS[row.command],
