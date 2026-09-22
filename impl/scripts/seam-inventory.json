@@ -3789,6 +3789,16 @@
           ]
         },
         {
+          "name": "resolveDoubt",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "_bumpInteractionGeneration",
           "ordinal": 0,
           "size": 3,
@@ -6209,7 +6219,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 226,
+          "size": 227,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
@@ -6229,7 +6239,7 @@
         {
           "name": "_settlementCommand",
           "ordinal": 0,
-          "size": 22,
+          "size": 55,
           "seam": "surface",
           "evidence": [
             "observation:record_name",
@@ -16358,7 +16368,7 @@
         {
           "name": "_resetProjection",
           "ordinal": 0,
-          "size": 92,
+          "size": 95,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -16793,7 +16803,7 @@
         {
           "name": "_apply",
           "ordinal": 0,
-          "size": 1252,
+          "size": 1278,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -17402,10 +17412,57 @@
         {
           "name": "sweepSettlementLeases",
           "ordinal": 0,
-          "size": 46,
+          "size": 76,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "doubtIdentity",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "doubtsProjection",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "raiseSettlementDoubt",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "observation",
+          "evidence": [
+            "observation:store_append"
+          ]
+        },
+        {
+          "name": "settlementReviewAuthority",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "resolveSettlementDoubt",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "observation",
+          "evidence": [
+            "admission:normalize_name",
+            "observation:store_append"
           ]
         },
         {
@@ -17899,7 +17956,7 @@
         {
           "name": "elevateTaskScratchpad",
           "ordinal": 0,
-          "size": 152,
+          "size": 165,
           "seam": "observation",
           "evidence": [
             "observation:store_append"
@@ -22479,11 +22536,12 @@
         {
           "name": "settlementLease",
           "ordinal": 0,
-          "size": 93,
+          "size": 109,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
-            "observation:durable_read"
+            "observation:durable_read",
+            "observation:ledger_port"
           ]
         },
         {

@@ -1648,6 +1648,31 @@ const CANONICAL_OPERATION_SPECS = [
     authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
     liveMethod: 'settlementLease',
   }],
+  // Issue #66 (D4): answer or dismiss one raised doubt. Embedded-only like its settlement
+  // siblings; the resolve authority is the server-re-derived run-orchestrator lease — never a
+  // caller field — so the row's serverDerived names the session fields alone.
+  ['knowledge.promote_doubt', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, doubtId: id, disposition: { type: 'string', enum: ['answered', 'dismissed'] },
+      resolution: { type: 'string', maxLength: FRAME_LIMITS['doubt.resolution.bytes'].value },
+      dismissalReason: { type: 'string', enum: ['deferred', 'duplicate', 'out_of_scope', 'unfounded'] },
+    }, ['runId', 'doubtId', 'disposition']),
+    authorityFields: ['disposition', 'doubtId', 'runId'], serverDerived: ['actor', 'principalId', 'sessionId'],
+    liveMethod: 'resolveDoubt',
+  }],
+  // Issue #66 (D3): the orchestrator-addressed open-doubts read. Embedded-only, wave-scoped;
+  // the liveMethod is deliberately not pinned — the read dispatches through the direct-port
+  // branch and projects the store's folded doubt records, it never auto-routes to a gate.
+  ['knowledge.doubts', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'observe', capabilities: ['observe'],
+    outputView: 'section', helpTopic: 'run', inputSchema: objectSchema({
+      waveId: id, state: { type: 'string', enum: ['reviewed', 'answered', 'dismissed', 'carried'] },
+      before: { type: 'object' },
+      limit: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['view.open_doubts.items'].value },
+    }, ['waveId']),
+    authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
+  }],
   ['knowledge.recall', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',
     capabilities: ['observe'], outputView: 'section', helpTopic: 'run',

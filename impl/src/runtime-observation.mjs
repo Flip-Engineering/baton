@@ -10,6 +10,7 @@
 
 
 import { canonicalDigest } from './coordination-internals.mjs';
+import * as coordinationLedger from './coordination-ledger.mjs';
 import { ContributionService } from './contribution-service.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import {
@@ -3020,21 +3021,22 @@ export function settlementLease(coordinator, recorder, waveId, session, options 
     const workerId = `settlement-worker:${waveId}`;
     const board = `wave-settlement:${waveId}`;
     const errors = [];
-    try { recorder.coordination.sweepSettlementLeases(coordinator._repoId, { maxLeases: 16, currentWaveId: waveId }); }
-    catch (error) { errors.push({ member: null, step: 'sweep', code: error?.code ?? 'settlement_sweep_failed' }); }
     const members = Array.isArray(options.members) ? options.members : null;
     // Candidacy is derived from each member's SHARED partition — not the elevate return — so that a
     // re-drive (whose worker partition is already reaped) still re-derives the exact same candidate
     // set and completes any board post a crash left missing (exactly-once, KS5).
     const elevatedNotes = [];
+    let openDoubts = 0;
     if (members) {
       for (const memberRunId of members) {
         try {
           const task = coordinator._settlementMemberTask(memberRunId);
           if (!task) { errors.push({ member: memberRunId, step: 'elevate', code: 'settlement_member_task_missing' }); continue; }
           const workerScope = `worker:${task.assignee ?? task.reservedWorkerId}`;
+          // The settle selection is exactly note/plan/doubt — the doubt kind is discriminated
+          // here (issue #66 D1); a link is never selected, never elevated.
           const selected = recorder.coordination.scratchpadSnapshot(memberRunId, workerScope).entries
-            .filter((entry) => entry.kind === 'note' || entry.kind === 'plan').map((entry) => entry.entryId);
+            .filter((entry) => entry.kind === 'note' || entry.kind === 'plan' || entry.kind === 'doubt').map((entry) => entry.entryId);
           // Elevation runs only while the worker partition still holds entries (the first pass); a
           // re-drive replays the reap idempotently, so skipping here never re-elevates.
           if (selected.length > 0) {
@@ -3046,6 +3048,14 @@ export function settlementLease(coordinator, recorder, waveId, session, options 
           for (const entry of recorder.coordination.scratchpadSnapshot(memberRunId, 'shared').entries) {
             if (entry.kind === 'note') {
               elevatedNotes.push({ member: memberRunId, sharedEntryId: entry.entryId, text: entry.content?.text ?? '' });
+            } else if (entry.kind === 'doubt') {
+              // Issue #66 (D2): every shared doubt of the wave rides the review ledger exactly
+              // once — the idempotency key names the wave and the shared entry, and a doubtId
+              // already on the ledger is never re-raised under a later wave.
+              const raised = coordinationLedger.raiseSettlementDoubt(recorder.coordination,
+                { runId: memberRunId, waveId, sharedEntryId: entry.entryId },
+                { actor: 'orchestrator', key: `knowledge.doubt_raised:${waveId}:${entry.entryId}` });
+              if (raised.ok) openDoubts += 1;
             }
           }
         } catch (error) {
@@ -3053,7 +3063,13 @@ export function settlementLease(coordinator, recorder, waveId, session, options 
         }
       }
     }
-    const materialize = members === null || elevatedNotes.length >= 1;
+    // Issue #66 (D5): the raise scan runs BEFORE the carry sweep in one settle invocation —
+    // the wave's own doubts are on the review ledger before a stale window's open doubts carry.
+    try { recorder.coordination.sweepSettlementLeases(coordinator._repoId, { maxLeases: 16, currentWaveId: waveId }); }
+    catch (error) { errors.push({ member: null, step: 'sweep', code: error?.code ?? 'settlement_sweep_failed' }); }
+    // Issue #66: a wave that raised doubts materializes its review window too — a raised
+    // doubt without a live lease could never be answered and would only ever carry.
+    const materialize = members === null || elevatedNotes.length >= 1 || openDoubts >= 1;
     let lease = null;
     if (materialize) {
       const taskReceipt = recorder.coordination.createAndClaimSettlementTask(
@@ -3102,11 +3118,11 @@ export function settlementLease(coordinator, recorder, waveId, session, options 
     return Object.freeze({
       runId, taskId, lease,
       candidatesAwaitingAdmission: elevatedNotes.length,
+      openDoubts,
       settlementRunId: materialize ? runId : null,
       errors,
     });
   }
-
 export function _bumpInteractionGeneration(coordinator, recorder, taskId) {
     if (typeof taskId !== 'string' || taskId.length === 0) return;
     coordinator._interactionGeneration.set(taskId, (coordinator._interactionGeneration.get(taskId) ?? 0) + 1);

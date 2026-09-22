@@ -138,129 +138,13 @@
       "reason": "#70"
     },
     {
-      "key": "test/doubt-review-red.test.mjs :: A1: a doubt-kind entry elevates to the shared partition (RED — note+plan-only selection)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: A3: a doubt-heavy batch refuses the derived sub-cap as a whole (RED — no sub-cap prevalidation)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: A4: the settle selection is exactly note/plan/doubt — a link is never selected (RED — the selection does not discriminate the doubt kind)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: A5: a note batch that leaves < 128 note/plan slots refuses the derived floor (RED — no sub-cap prevalidation)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: B1: the settle ritual mints knowledge.doubt_raised with the full worker frame (RED — no doubt event kind)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: B2: answered and dismissed transitions are receipted (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: B3: a doubt still reviewed when its lease revokes carries (RED — sweep has no doubt handling)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: B4: re-driving the same wave mints the same doubtId exactly-once (RED — no doubt events to replay)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: C1: the doubt projection folds into snapshot().knowledge and the registry row exists (RED — knowledge.doubts absent)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: C2: the settle receipt carries knowledge.openDoubts zero as 0, never missing (RED — no openDoubts field)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: C3: knowledge.doubts returns bounded, sorted, UNTRUSTED-framed records (RED — application_command_unavailable)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: C4: the read refuses a caller holding neither the lease nor the orchestrator authority (RED — command missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: C5: the three D7 frame rows land in the ONE registry (RED — rows absent from FRAME_LIMITS)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: C6: the read is wave-scoped — a cross-run doubt never leaks and every record carries the requested waveId (RED — command missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: C7: an answered record renders resolution wrapHubDerived and non-null context wrapProse (RED — command missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: C8: the surface sheds, sorts, and pages by keyset; the state filter partitions (RED — command missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: D1: an answered doubt is receipted with the push coordinates (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: D2: a dismissed doubt is receipted with the closed reason and never pushes (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: D3: a forged resolution from a non-authority refuses typed (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: D4: a worker self-resolution never auto-closes the doubt (RED — no doubt record to keep reviewed)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: D5: the resolve authority is the server-re-derived lease, never a caller field (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: D6: answer/dismiss mints no Finding, KG node, board item, workflow_admitted, or scratch-fact (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: E1: the raise scan runs BEFORE the carry sweep in one settle invocation (RED — no raise to order)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: E2: an elevated-but-unraised doubt is receipted by the widened carry (RED — sweep has no doubt handling)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: E3: the settle success path never silently drops a doubt — the reap dispositions it elevated, never its tombstone (RED — the reap is its tombstone at HEAD)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: F1: the resolved event addresses the DOUBTING worker, never a different worker (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: K1: the promote_doubt and doubts registry rows land with the pinned shape (RED — rows missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: K2: the 9-code refusal family is surface-constant in ACTUAL sorted order (RED — coordinatorNs.DOUBT_REFUSAL_CODES missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: K3: the refusal family fires typed in each named scenario (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
-      "key": "test/doubt-review-red.test.mjs :: K4: the three surface-only refusal codes fire in their named scenarios (RED — coordinator.resolveDoubt missing)",
-      "reason": "#66"
-    },
-    {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
+      "reason": "#538"
     },
     {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
@@ -1822,10 +1706,6 @@
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
       "reason": "#87"
-    },
-    {
-      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
-      "reason": "#538"
     }
   ],
   "converged": [
@@ -1940,6 +1820,10 @@
     {
       "file": "test/doc-truth-conformance-red.test.mjs",
       "reason": "#159"
+    },
+    {
+      "file": "test/doubt-review-red.test.mjs",
+      "reason": "#66"
     },
     {
       "file": "test/durable-retry-red.test.mjs",
