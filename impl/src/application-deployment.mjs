@@ -3859,6 +3859,9 @@ class BatonDeployment {
       let turns = 0;
       let tokens = 0;
       let usd = 0;
+      // #545: the LAST rate-limit answer this route's provider gave, read on the walk that already
+      // visits every token row of the route — the provider's own statement about the account.
+      let rateLimits = null;
       if (log) {
         for (const worker of log.workers()) {
           for (const ev of log.byKind(worker, 'lifecycle.turn_started')) {
@@ -3868,6 +3871,9 @@ class BatonDeployment {
             if (ev.harnessResolved === route.harness && ev.modelResolved === route.model && ev.effortResolved === route.effort) {
               tokens += typeof ev.payload?.tokens === 'number' ? ev.payload.tokens : 0;
               usd += typeof ev.payload?.usd === 'number' ? ev.payload.usd : 0;
+              if (ev.payload?.source === 'rateLimit' && record(ev.payload.rateLimits)) {
+                rateLimits = { limits: ev.payload.rateLimits, at: ev.ts };
+              }
             }
           }
         }
@@ -3902,13 +3908,24 @@ class BatonDeployment {
       const quotaWindow = declaredUsage === null ? null : Object.freeze({
         kind: declaredUsage.windowKind ?? 'unknown', periodMs: declaredUsage.windowMs,
       });
+      // #545: the provider's OWN remaining usage rides the quota axis, so a route whose account was
+      // measured says how much is left in the window the provider itself reported, and when. A
+      // route nothing measured carries remaining: null — the absence is stated rather than left
+      // for a reader to read as an unqualified 'ready'. The percent is derived from the provider's
+      // own usedPercent, never from a token count this side invents.
+      const primary = record(rateLimits?.limits?.primary) ? rateLimits.limits.primary : null;
+      const quotaObservations = Object.freeze({
+        remaining: primary !== null && Number.isFinite(primary.usedPercent)
+          ? Math.max(0, 100 - primary.usedPercent) : null,
+        observedAt: typeof rateLimits?.at === 'string' ? rateLimits.at : null,
+      });
       const quota = quotaRefused
         ? Object.freeze({
-          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt,
+          state: 'exhausted', resetAt: quotaBlock?.resetAt ?? resetAt, ...quotaObservations,
           ...(quotaWindow === null ? {} : { window: quotaWindow }),
         })
         : Object.freeze({
-          state: 'ok', resetAt: null,
+          state: 'ok', resetAt: null, ...quotaObservations,
           ...(quotaWindow === null ? {} : { window: quotaWindow }),
         });
       const occupancy = this.#occupancyFor(route);

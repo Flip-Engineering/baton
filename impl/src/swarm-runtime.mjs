@@ -7,6 +7,7 @@ import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PRO
   swarmEncodedReportBody } from './swarm-contract.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
+import { routeQuotaScope } from './provider-faults.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionContractBriefSection,
   contributionContractConflict,
@@ -349,6 +350,10 @@ function foldGuidanceRows(events) {
         state: payload.kind === 'swarm.guidance_parked'
           ? (cleared === null ? 'parked' : 'delivered')
           : payload.delivery?.state ?? 'delivered',
+        // #557: the durable row records whether this park can ever clear; the fold CARRIES that
+        // fact rather than recomputing it, so the receipt, this row and a seat brief all derive
+        // it from the one place it is written.
+        ...(payload.delivery?.terminal === true ? { terminal: true } : {}),
         lane: payload.delivery?.lane ?? null,
         reason: payload.delivery?.reason ?? payload.reason ?? null,
         deliveredTo: cleared?.payload?.deliveredTo ?? null,
@@ -521,7 +526,7 @@ const ROUTE_PROBE_DEADLINE_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
 
 /** The route identity the probe rows are keyed by — the exact coordinates, JSON-spelled, so no
  * label spelling can make two routes collide. */
-const routeProbeRouteKey = (route) => JSON.stringify([route.harness, route.model, route.effort]);
+const routeProbeScopeKey = (route) => routeQuotaScope(route) ?? JSON.stringify([route.harness, route.model, route.effort]);
 
 /** #475: the episode one degrade row is a fact about — the instant it clears (the provider's own
  * reset, else the probe instant its fault's window derived), or the instant it OPENED when it
@@ -546,7 +551,7 @@ const routeProbeEpisodeAt = (degrade) => {
  * dead seat hold the window forever. Keyed, the fact survives a runtime restart: the next recruit
  * reads it and refuses. */
 const routeProbeAdmissionKey = (route, episodeAt, attempt = 1) => {
-  const base = `route.probe_admitted:${hash([routeProbeRouteKey(route), episodeAt])}`;
+  const base = `route.probe_admitted:${hash([routeProbeScopeKey(route), episodeAt])}`;
   return attempt === 1 ? base : `${base}:${attempt}`;
 };
 
@@ -2564,9 +2569,9 @@ export class SwarmRuntime {
    * index the entry keeps (`_readRouteProbeLedger`), so a route read costs no ledger walk. */
   _routeProbeEpisodeRecovered(route, episodeAt) {
     this._readRouteProbeLedger();
-    const routeKey = routeProbeRouteKey(route);
+    const routeKey = routeProbeScopeKey(route);
     for (const [, recovery] of this._routeProbeLedger.recovered) {
-      if (recovery.episodeAt === episodeAt && routeProbeRouteKey(recovery.route) === routeKey) {
+      if (recovery.episodeAt === episodeAt && routeProbeScopeKey(recovery.route) === routeKey) {
         return true;
       }
     }
@@ -2625,7 +2630,7 @@ export class SwarmRuntime {
     // recruit that admitted it indexes it directly) is never counted twice by the next delta read —
     // which would mint a phantom second attempt for one probe.
     if (ledger.probesByKey.has(row.key)) return;
-    const routeKey = routeProbeRouteKey(row.route);
+    const routeKey = routeProbeScopeKey(row.route);
     const siblings = ledger.probes.get(routeKey) ?? [];
     const indexed = Object.freeze({
       ...row, attempt: siblings.filter((probe) => probe.episodeAt === row.episodeAt).length + 1,
@@ -2709,7 +2714,7 @@ export class SwarmRuntime {
 
   /** #475: the probes the ledger holds for one route's episode, oldest first. */
   _routeProbeAttempts(route, episodeAt) {
-    const rows = this._routeProbeLedger.probes.get(routeProbeRouteKey(route)) ?? [];
+    const rows = this._routeProbeLedger.probes.get(routeProbeScopeKey(route)) ?? [];
     return rows.filter((probe) => probe.episodeAt === episodeAt);
   }
 
@@ -2771,7 +2776,7 @@ export class SwarmRuntime {
    * the route failed on its own, and the new episode's own `resetAt` rides beside it. */
   _routeProbeFailure(route) {
     this._readRouteProbeLedger();
-    const attempts = this._routeProbeLedger.probes.get(routeProbeRouteKey(route)) ?? [];
+    const attempts = this._routeProbeLedger.probes.get(routeProbeScopeKey(route)) ?? [];
     const latest = attempts.at(-1) ?? null;
     if (latest === null) return null;
     const seat = this._probeSeatState(latest);
@@ -2955,13 +2960,13 @@ export class SwarmRuntime {
     const ledger = this._routeProbeLedger;
     if (ledger.probesByKey.size === 0) return;
     const retired = rows === null ? null
-      : new Map(rows.map((row) => [routeProbeRouteKey(row.route), row]));
+      : new Map(rows.map((row) => [routeProbeScopeKey(row.route), row]));
     for (const [probeKey, probe] of ledger.probesByKey) {
       if (ledger.recovered.has(probeKey)) continue;
       const answer = this._probeAnswer(probe);
       if (answer !== null) { this._recordRouteRecovered(probe, answer); continue; }
       if (retired === null) continue;
-      const row = retired.get(routeProbeRouteKey(probe.route)) ?? null;
+      const row = retired.get(routeProbeScopeKey(probe.route)) ?? null;
       // Still degraded (or the route table does not answer for it): nothing has been settled.
       if (row === null || row.degraded != null) continue;
       this._recordRouteRecovered(probe, { at: new Date().toISOString() });
@@ -6333,7 +6338,7 @@ export class SwarmRuntime {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
     const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
-      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot' }), message };
+      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true }), message };
     const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
       { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;
@@ -6350,7 +6355,7 @@ export class SwarmRuntime {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
     const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
-      guidance, { state: 'parked', lane: null, reason }), message };
+      guidance, { state: 'parked', lane: null, reason, ...(reason === 'harness_one_shot' ? { terminal: true } : {}) }), message };
     const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
       { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;
