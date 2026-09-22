@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { BatonApplication, GlmSessionCli, bindBaton, createDriver, openBaton } from '../src/index.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 import {
   observeProcessGroupIdentity, processAuthorityState, processGroupAlive,
 } from '../src/process-lifecycle.mjs';
@@ -72,6 +73,12 @@ const principal = (id) => ({
   actor: `issue5:${id}`, principalId: id, sessionId: `${id}-session`,
 });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// The bound every seeded-controller wait in this file takes: the registry row the deployment's own
+// probe deadline reads (#460, docs/42 §8 — a fixture await is bounded and named, and its bound is a
+// number the suite already declares rather than a new one). A bound miss carries WAIT_UNSETTLED, so
+// a wait that never settled is read as a broken fixture and never as a deployment refusal.
+const WAIT_BOUND_MS = FRAME_LIMITS['route.probe_deadline_ms'].value;
+const WAIT_UNSETTLED = 'fixture_wait_unsettled';
 const diagnostic = (label, value) => `${label}: ${JSON.stringify(value, null, 2)}`;
 
 function canonical(value) {
@@ -119,10 +126,16 @@ function adapter({ lifecycleBarrier = null } = {}) {
   });
 }
 
-function readJsonLine(child, label, timeoutMs = 5_000) {
+// The seed's OWN evidence resolves this wait: the JSON line it writes once both provider
+// generations are ready, or its terminal state when it exits first. Nothing races the seed's
+// condition — under load the wait simply takes longer — and only the declared bound above ends a
+// seed that never produces either, with WAIT_UNSETTLED rather than a bare timeout.
+function readJsonLine(child, label, boundMs = WAIT_BOUND_MS) {
   return new Promise((resolve, reject) => {
     let stdout = '';
-    const timer = setTimeout(() => finish(new Error(`timeout waiting for ${label}`)), timeoutMs);
+    const timer = setTimeout(() => finish(Object.assign(
+      new Error(`${label}: never settled within ${boundMs}ms`), { code: WAIT_UNSETTLED },
+    )), boundMs);
     const finish = (error, value) => {
       clearTimeout(timer);
       child.stdout.off('data', onData);
@@ -1104,16 +1117,16 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
     `const card = adapter.card.bind(adapter); adapter.card = () => ({ ...card(), concurrencyCeiling: 2 });`,
     `const deployment = await openBaton({ repo: ${JSON.stringify(repo)}, advanced: { deploymentRoot: ${JSON.stringify(deploymentRoot)}, routes: [route], adapters: { [route.harness]: adapter }, verification: { command: 'true', arguments: [] } } });`,
     `const readyWorkers = new Set();`,
-    `let resolveReady;`,
-    `const providersReady = new Promise((resolve) => { resolveReady = resolve; });`,
+    `let resolveReady; let rejectReady;`,
+    `const providersReady = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });`,
     `const deliver = adapter._cb;`,
-    `adapter.onEvent((event) => { deliver(event); if (event.kind === 'lifecycle.spawned') { readyWorkers.add(event.worker); if (readyWorkers.size === 2) resolveReady(); } });`,
+    `adapter.onEvent((event) => { deliver(event); if (event.kind === 'lifecycle.spawned') { readyWorkers.add(event.worker); if (readyWorkers.size === 2) resolveReady(); } if (event.kind === 'lifecycle.crashed') rejectReady(new Error('a seed provider crashed before both generations were ready: ' + JSON.stringify(event.payload ?? null))); });`,
     `const group = await deployment.startMany([`,
     `  { runId: 'run-issue5-dead-a', objective: 'HOLD_UNTIL_INTERRUPT dead generation A', exact: route },`,
     `  { runId: 'run-issue5-dead-b', objective: 'HOLD_UNTIL_INTERRUPT dead generation B', exact: route },`,
     `]);`,
     `await Promise.all(group.runs.map((run) => run.approve()));`,
-    `await Promise.race([providersReady, new Promise((_, reject) => setTimeout(() => reject(new Error('seed providers did not become ready')), 5000))]);`,
+    `await providersReady;`,
     `process.stdout.write(JSON.stringify({ runs: group.runs.map((run) => run.id), sessions: [...adapter._sessions.values()].map((session) => ({ workerId: session.worker, pid: session.pid, generation: session.processGeneration })) }) + '\\n');`,
     `process.stdin.setEncoding('utf8');`,
     `for await (const command of process.stdin) { if (command.trim() === 'crash') process.exit(0); }`,
@@ -1144,7 +1157,7 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
     diagnostic('seed controller crash barrier', { seedCode, seedSignal, seeded }));
   await until(() => ownedProcesses.every(({ processRef, authority }) => (
     processAuthorityState(processRef, authority) === 'absent'
-  )), 'both seeded exact process identities to be absent');
+  )), 'both seeded exact process identities to be absent', WAIT_BOUND_MS);
 
   const staleWorktrees = readdirSync(join(repo, '.baton', 'wt'))
     .filter((name) => !name.includes('.'));
