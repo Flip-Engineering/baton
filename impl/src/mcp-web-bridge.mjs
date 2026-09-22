@@ -29,7 +29,9 @@ import { WAKE_CLASSES, parseWakeFilter, wakeMatches } from './wake-stream.mjs';
 // five-verb allowlist forced every harness to hand-roll a BatonWebClient proxy. The wire card
 // (doctor.application.commands) is the authority: every listed command EXCEPT shutdown
 // (never proxied — host-side lifecycle only).
-const ORDINARY_COMMANDS = Object.freeze([
+// Exported for the surface audit (#533): the audit row derives from THIS constant — the one
+// table the bridge admits by — instead of re-scraping this file's text and pinning a stale copy.
+export const ORDINARY_COMMANDS = Object.freeze([
   'application.help',
   'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
   'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',

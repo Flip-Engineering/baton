@@ -297,6 +297,14 @@ const PERMANENT_TOOL_CAUSES = Object.freeze({
     message: 'the swarm view answer exceeds this deployment\'s wire frame',
     remedy: 'narrow the read (a `participantId`, a `projection`, or walk the pages with `cursor` — each page names page {cursor, next, total, served, ceiling}); the same read refuses for the same reason',
   }),
+  // Issue #202 / D5 (contract-launch 2026-08-14/redrive3): the doctor lane produced a NON-RECORD
+  // readiness — an upstream shape fault, minted at _sanitizeDoctorReadiness. Replaying the call
+  // against this resident replays the same producer shape, so the refusal states its permanent
+  // verdict and the repair — never the transient fallthrough a retry cannot satisfy.
+  deployment_readiness_invalid: Object.freeze({
+    message: 'the doctor lane produced a readiness that is not a record',
+    remedy: 'the readiness producer behind this deployment (a doctorReadiness hook or the application facade\'s doctor) returned a bare value; repair or remove the producer and restart the resident — no retry can succeed against this one',
+  }),
 });
 const TRANSIENT_FALLTHROUGH_ACTION = 'retry once; a refusal that repeats is a resident defect rather than a request fault — inspect the resident (`baton doctor --check`) and report the refusal code';
 // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family —
@@ -3116,7 +3124,17 @@ export class McpFleetServer {
   // source kind / expiry class ride; token material does not). Same discipline as the
   // SECRET_SHAPED_TEXT redactor in application.mjs, applied at the MCP surface.
   _sanitizeDoctorReadiness(value) {
-    if (!record(value)) return value;
+    // D5 (contract-launch 2026-08-14/redrive3): a NON-RECORD readiness REFUSES typed at this seam —
+    // the #202 class. A verbatim pass-through would serialize as the `{result: <text>}` envelope
+    // (GT-L10); the closed refusal shape is `{actual: typeof}` (contract §3). wireSafe carries the
+    // composed message + detail through the observe-path mapping, and the PERMANENT_TOOL_CAUSES row
+    // states the verdict: the producer is broken, and no retry repairs it.
+    if (!record(value)) {
+      throw Object.assign(
+        new Error(`deployment_readiness_invalid: the doctor lane produced a ${typeof value} readiness where a record is required`),
+        { code: 'deployment_readiness_invalid', wireSafe: true, detail: { actual: typeof value } },
+      );
+    }
     const secretShaped = (child) => typeof child === 'string' && (
       /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/u.test(child)
       || /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u.test(child)

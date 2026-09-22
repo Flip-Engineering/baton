@@ -1637,10 +1637,6 @@
       "reason": "#77"
     },
     {
-      "key": "test/surface-audit-smoke.test.mjs :: SA2: known anchors from each dialect are present",
-      "reason": "#43"
-    },
-    {
       "key": "test/swarm-gap-red.test.mjs :: S-G11 RED (stage: contribution-unbound): a plain-text contribution binds what it names",
       "reason": "S-G11"
     },

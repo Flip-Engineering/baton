@@ -512,3 +512,19 @@ test('459h: an integrate with no target lands on the deployment\'s own branch an
     'the landing moved the branch the receipt names');
   assert.deepEqual(w.failureRows(), [], 'nothing was refused');
 });
+
+// ── (h) an omitted --onto lands on the deployment's own branch (#43 AX) ──────────────────────────
+
+test('459h: an integrate with no target lands on the deployment\'s own branch and the contract admits the omission', needsGit, async (t) => {
+  const w = await world(t, { gate: { sleepMs: 0, green: true } });
+  // The CLI's usage renders --onto optional ([--onto]); the surface must agree with it.
+  assert.equal(validateSwarmCommand('swarm.integrate',
+    { swarmId: 's1', contributionId: 'contribution:1', idempotencyKey: 'i459:default-target' }), true,
+    'an omitted target admits at the contract');
+  const answer = await w.integration({ target: undefined, idempotencyKey: 'i459:default-target' });
+  assert.equal(answer.integration.target, 'master',
+    'the receipt names the deployment\'s own branch — the ONE derivation the #438 target facts read');
+  assert.equal(answer.integration.targetHeadAfter, git(w.repo, 'rev-parse', 'master'),
+    'the landing moved the branch the receipt names');
+  assert.deepEqual(w.failureRows(), [], 'nothing was refused');
+});
