@@ -148,6 +148,13 @@ async function defaultIntegrationRegenerate(dir, { pool = null } = {}) {
 async function defaultIntegrationGates(dir, files, context, { pool = null, holder = null, leaseAuthority = null } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), 'baton-integrate-'));
   const verdictPath = join(scratch, 'verdict.json');
+  // #551: a verdict the runner wrote can OUTLIVE the supervisor that watched it. A resident
+  // reincarnation mid-verification takes both the child handle (the pool holds children in
+  // process-state, never durable) and the in-process result with it, so the landing sees no
+  // document and cannot tell a run that judged nothing from a run whose supervisor was lost. The
+  // scratch is therefore KEPT when no document was read, and its path rides the no-verdict row, so
+  // a successor incarnation can read the verdict the runner wrote after the supervisor died.
+  let judged = false;
   try {
     const result = await runSupervisedGateRun({
       file: INTEGRATION_GATE_RUNNER, dir, files, pool, holder, leaseAuthority,
@@ -160,20 +167,28 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
     try {
       document = JSON.parse(readFileSync(verdictPath, 'utf8'));
     } catch { document = null; }
+    judged = document !== null;
     if (document === null) {
       // A runner that died before it could judge is not a green gate set. Never a bare "failed":
       // the row names the script, its exit status and the #326 tail of what the runner said — the
       // same bounded, redacted derivation the regenerator refusal carries (issue #451). No
       // resident-side wall clock arms on this child (#546): a landing waits for the runner's
       // verdict — its own per-file progress deadline is the judged liveness law that guarantees
-      // one arrives — so an unjudged gate run can only mean the runner exited without verdict.
+      // one arrives. An unjudged run has TWO causes, and they are not the same fact: the runner
+      // exited without judging, or the SUPERVISOR was lost (a reincarnation mid-verification takes
+      // the child handle and the in-process result, #551). Neither is a timeout, so the row says
+      // `suite-did-not-judge` in both cases and carries the verdict path a reader can check.
       return {
         files,
         verdictLine: null,
+        // #551: where the verdict would be, so a successor can read one that arrives after this
+        // incarnation stops waiting. A lost supervisor is not a timeout: the row says the run did
+        // not judge, and names the file a reader can check before concluding the run never finished.
+        verdictPath,
         unexpected: [{
           row: 'suite-did-not-judge',
           script: INTEGRATION_GATE_RUNNER, exitStatus: exit,
-          stderrTail,
+          stderrTail, verdictPath,
         }],
         stderrTail, exit,
       };
@@ -188,7 +203,9 @@ async function defaultIntegrationGates(dir, files, context, { pool = null, holde
       stderrTail, exit,
     };
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    // #551: the scratch is removed only when the verdict was read — an unjudged run keeps its
+    // directory so the verdict it may still write is findable by the path the row above carries.
+    if (judged) rmSync(scratch, { recursive: true, force: true });
   }
 }
 
