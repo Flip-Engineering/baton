@@ -124,7 +124,7 @@ export const KIND = Object.freeze({
   ERROR: 'error',
 });
 
-export const DEFAULT_STALL_MS = 120_000;
+export const DEFAULT_STALL_MS = FRAME_LIMITS['watchdog.stall_ms'].value;
 export const DEFAULT_LOOP_REPEAT_THRESHOLD = 3;
 export const BUDGET_THRESHOLDS = Object.freeze([0.5, 0.8, 1.0]);
 export const MAX_ACTION_SIGNATURE_WINDOW = 10;
