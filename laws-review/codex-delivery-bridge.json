@@ -1,0 +1,7 @@
+{
+  "pid": 95927,
+  "reply": "uds:/tmp/cc-socks/95927.sock",
+  "control": "/tmp/cc-socks/95927.control.sock",
+  "target": "uds:/tmp/cc-socks/1448.sock",
+  "session_id": "7c72f137-7943-4a2a-b6cb-500a0dfa866d"
+}

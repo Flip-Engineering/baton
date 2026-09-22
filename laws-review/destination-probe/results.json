@@ -1,0 +1,16 @@
+[
+  {
+    "case": "good",
+    "exit_code": 0,
+    "stdout": "All terms check.\n",
+    "stderr": "",
+    "law_sha256": "40a3c4e4ee5ddacac282f63797977306673480cca3cf864b876defa94fab99cd"
+  },
+  {
+    "case": "wrong-destination",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "Error:\n- expected : False{}\n- observed : True{}\nLocation: LAWS.destinations_match\n 9 |     case Pub.Shared{} Pub.Intermediate{}:\n10>|       {==}\n11 |     case Pub.Intermediate{} Pub.Shared{}:\n",
+    "law_sha256": "40a3c4e4ee5ddacac282f63797977306673480cca3cf864b876defa94fab99cd"
+  }
+]
