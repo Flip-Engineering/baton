@@ -17,6 +17,9 @@ import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
 
 import {
+  composeLocalPrescriptiveWarnings, observeLocalWorkspace, PRESCRIPTIVE_DOCTOR_DEFAULTS,
+} from './prescriptive-doctor.mjs';
+import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, SWARM_VIEW_PROJECTION_NAMES,
   swarmCliCommand, SWARM_REPORT_BODY_VERBS, SWARM_REPORT_BODY_RULE, SWARM_REPORT_BODY_ADMITTED,
   swarmEncodedReportBody, swarmReportBodyRefusalMessage,
@@ -972,6 +975,32 @@ function readInstalledSelector(path) {
   return installed;
 }
 
+/** #72 (§4.1 W6, #137): the resident authority this repository has selected while it has not
+ * published its profile yet — the state in which `baton serve` has installed its schema-v2
+ * selector but the connection is not usable. Null when no selector is installed, when the
+ * selector is not a resident publication, or when the published profile is already on disk (a
+ * resident that finished its startup, whose setup answer the ordinary branch owns). The read is
+ * local files only; it never opens the token file and never reaches the network. */
+function residentSetupWindow(commonDir, configRoot) {
+  let selector;
+  try {
+    selector = JSON.parse(readFileSync(join(commonDir, 'baton', 'connection.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!record(selector) || selector.schemaVersion !== 2 || selector.transport !== 'local'
+    || !nonempty(selector.profile)) return null;
+  const published = join(configRoot, 'baton', 'connections', `${selector.profile}.json`);
+  if (existsSync(published)) return null;
+  return Object.freeze({
+    profile: selector.profile,
+    deploymentId: typeof selector.deploymentId === 'string' ? selector.deploymentId : null,
+    incarnation: typeof selector.incarnation === 'string' ? selector.incarnation : null,
+    startedAt: typeof selector.startedAt === 'string' ? selector.startedAt : null,
+    stage: 'start→listen→self-check→publish',
+  });
+}
+
 function installRepositorySelector(commonDir, selector, ownerUid) {
   const directory = join(commonDir, 'baton');
   const target = join(directory, 'connection.json');
@@ -1047,6 +1076,24 @@ export async function setupBatonConnection({
   const configRoot = connectionConfigRoot(env, home);
   const profiles = setupProfileNames(configRoot);
   if (profile !== null) id(profile, 'connection profile');
+  // #72 (§4.1 W6, #137): a repository whose selector names a resident authority that has not
+  // published its profile yet is mid-startup (`start → listen → self-check → publish`).
+  // `create_profile` here would race the resident's own self-publication (#100's startup
+  // capacity-lock race), so the answer names that window and the poll instead. A resident whose
+  // profile IS published falls through to the ordinary branch unchanged, and a checkout with no
+  // resident selector never reaches this read.
+  const residentWindow = residentSetupWindow(commonDir, configRoot);
+  if (profile === null && residentWindow !== null) {
+    return Object.freeze({
+      schemaVersion: 1, state: 'resident_starting',
+      outline: Object.freeze({
+        repository: 'ready', profiles: 'missing', connection: 'stale_authority',
+      }),
+      resident: residentWindow,
+      profiles: Object.freeze(profiles),
+      next: Object.freeze([{ action: 'wait_for_publication', command: 'baton doctor --check' }]),
+    });
+  }
   if (profile === null && profiles.length !== 1) {
     return Object.freeze({
       schemaVersion: 1, state: 'needs_user_input',
@@ -1078,7 +1125,7 @@ export async function setupBatonConnection({
 
 /** Read-only local diagnosis. It deliberately never opens the bearer-token file or contacts the
  * remote application; `doctor --check` performs those explicit deeper checks separately. */
-export function inspectBatonConnection({
+function inspectBatonConnectionOutline({
   cwd = process.cwd(), env = process.env, home = env.HOME,
   ownerUid = typeof process.getuid === 'function' ? process.getuid() : null,
   depth = 'outline',
@@ -1253,6 +1300,42 @@ export function inspectBatonConnection({
     ...(depth === 'evidence' ? { evidence: Object.freeze({ selector: 'valid', profile: 'valid', credential: 'not_opened', remote: 'not_contacted' }) } : {}),
     next: Object.freeze([{ action: 'check', command: 'baton doctor --check' }]),
   });
+}
+
+/** #72 (§4.2): the doctor's local read. `inspectBatonConnectionOutline` is the outline; the
+ * prescriptive warnings ride beside it as ONE named field, composed from the detections whose
+ * reads are local — the ghost-worktree census, the stale writer lease, the disk-floor approach
+ * band, the result-pin census and the resident-not-published window. W3 (credential TTL) and W7
+ * (route last auth failure) read the served deployment's own credential probes and route
+ * observations, so they appear only on the remote `--check` and MCP surfaces. */
+export function inspectBatonConnection(options = {}) {
+  const outline = inspectBatonConnectionOutline(options);
+  return Object.freeze({ ...outline, warnings: localPrescriptiveWarnings(options, outline) });
+}
+
+/** The local subset's reads. The coordination store root is the ONE this CLI's own quarantine and
+ * doctor-coordination seams already resolve (the git common dir's
+ * `baton/application-v3/state/coordination`), so the stale-writer-lease read is the same store a
+ * local `baton serve` writes. Every read is guarded: a checkout without the store, the capacity
+ * ledger or a resident authority omits that warning and never fails the read. */
+function localPrescriptiveWarnings(options, outline) {
+  try {
+    const cwd = options.cwd ?? process.cwd();
+    let metadata;
+    try { metadata = findRepositoryMetadata(cwd); } catch { return Object.freeze([]); }
+    const root = metadata.repositoryRoot;
+    return composeLocalPrescriptiveWarnings({
+      root,
+      policy: PRESCRIPTIVE_DOCTOR_DEFAULTS,
+      storeRoot: join(metadata.commonDir, 'baton', 'application-v3', 'state', 'coordination'),
+      workspace: observeLocalWorkspace(root),
+      repoRoot: root,
+      authorityRoot: join(metadata.commonDir, 'baton'),
+      publicOutlineState: outline.state === 'configured' ? 'published' : 'private',
+    });
+  } catch {
+    return Object.freeze([]);
+  }
 }
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -4959,6 +5042,9 @@ export class BatonWebClient {
       // adds the ONE named additive briefing field (never a text render). Property access reads
       // the sibling; an absent pack is an honest null (D5b/B5).
       briefing: deployment?.briefing ?? null,
+      // #72 (§4.2): the same reading-consumer rule for the prescriptive warnings — the served
+      // readiness carries the ONE named enumerable additive, and an absent one is an honest null.
+      warnings: deployment?.warnings ?? null,
       application: card.application,
     };
   }

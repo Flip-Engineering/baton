@@ -957,55 +957,7 @@
       "reason": "#293"
     },
     {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-1 (stage: warning surface missing): catalog closure + closed row schema in ACTUAL code-unit order; localeCompare banned (§4.1, §4.4, B8)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-10 (stage: W6 missing): resident-not-published fires while the authority outline is private; the diagnosis reports the resident-starting state; the #137 create_profile misdirection on setupBatonConnection is closed (§4.1 W6, §4.2, B.2, findings 1a/1b/1c)",
-      "reason": "#137"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-11 (stage: W7 missing): the route last-auth-failure detection fires on the HIGHEST-eventSeq failed auth result — order-discriminating fixtures prove a per-route max accessor, not a last-element read (§4.1 W7, finding 3)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-12 (stage: detection source missing): no warning mints an elapsed-time wall-clock control beyond the pre-existing honest reads (§3, §4.1, B5)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-13 (stage: warning surface missing): every detection is FAIL-OPEN — a throwing detection omits its warning and never throws, byte-identical to the warning-free fixture (§4.1, §4.2, B3)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-2 (stage: warning surface missing): warnings NEVER block — blocking codes never appear in warnings; the preflight consumer does not read warnings in v1 (§4.2)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-3 (stage: warning surface missing): surface compose, not duplicate — ONE named warnings field, non-enumerable sibling, byte-stable serialize on the REAL doctorReadiness surface, identical rows across the served web card, and the local-depth subset (§4.2, B4, OQ1, #103 D6, findings 2/6/7/10)",
-      "reason": "#103"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-4 (stage: warning surface missing): every warning next is non-empty, references a real verb/command/named doc anchor, and reduces the cause; the ghost verb and ghost git verb are rejected (§4.3, B1, B7, #136, finding 4)",
-      "reason": "#136"
-    },
-    {
       "key": "test/prescriptive-doctor-red.test.mjs :: PT-5 (stage: W1 missing): the ghost-worktree census fires on unregistered residue, applies the live-owner discriminator, honors the reserved-fraction disjunct, and is quiet on a clean tree (§4.1 W1, precision law, findings 5/8a)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-6 (stage: W2 missing): the stale-writer-lease detection fires on a dead pid and a pidStart mismatch, and is quiet on a live lease (§4.1 W2, B6)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-7 (stage: W3 missing): credential TTL is metadata-only — claude stale and the grok early-invalidation window fire; a fresh credential is quiet; no token material is emitted (§4.1 W3, B5, §3)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-8 (stage: W4 missing): the disk-floor approach band fires above the floor; below the floor the block fires and the warning is SUPPRESSED; at/above the band neither (§4.1 W4, B2)",
-      "reason": "#72"
-    },
-    {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-9 (stage: W5 missing): the result-pin census fires above the configured bound across BOTH namespaces and is quiet below it (§4.1 W5, B7, finding 8b)",
       "reason": "#72"
     },
     {
