@@ -309,16 +309,18 @@ test('441b-c: peers.read lists the other live seat with its checkpoint, never th
   assert.ok(spawnCount() > viewBefore, 'the whole-record view: its live base reads still spawn (the control)');
 });
 
-test('441b-d: the closed seat verb set and the brief teach exactly the three new read verbs', () => {
+test('441b-d: the closed seat verb set and the brief teach exactly the read verbs it declares', () => {
   assert.ok(SWARM_SEAT_READ_COMMAND_NAMES !== null && SWARM_SEAT_READ_COMMANDS !== null,
     'the seat read verb table must exist in swarm-runtime.mjs (issue #441 lane B)');
   assert.ok(SWARM_SEAT_VERB_NAMES !== null,
     'the advertised seat verb set must exist in swarm-native-access.mjs (issue #441 lane B)');
   const names = [...SWARM_SEAT_READ_COMMAND_NAMES].sort();
-  assert.deepEqual(names, ['run.contributions.read', 'run.package.read', 'run.peers.read']);
+  // #358 item 2 added run.spill.read to the #441 lane B table; the row's law is that the table and
+  // the advertised set agree name for name, so the list moves with the table.
+  assert.deepEqual(names, ['run.contributions.read', 'run.package.read', 'run.peers.read', 'run.spill.read']);
   assert.deepEqual([...SWARM_SEAT_VERB_NAMES].sort(),
     [...SWARM_KNOWLEDGE_COMMAND_NAMES, ...names].sort(),
-    'the advertised seat verb set is the knowledge verbs plus exactly these three');
+    'the advertised seat verb set is the knowledge verbs plus exactly these read verbs');
   for (const name of names) {
     assert.equal(SWARM_SEAT_READ_COMMANDS[name].permission, 'read', `${name} is a read verb`);
     assert.match(SWARM_NATIVE_GUIDANCE, new RegExp(`\\n- ${name} \\[read\\] — \\S`, 'u'),

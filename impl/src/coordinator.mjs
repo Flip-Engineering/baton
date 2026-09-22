@@ -3395,8 +3395,10 @@ export class Coordinator {
       // never the full materialized body (that would void the 2,048 cap for the worker's frame
       // budget), never head-only without the resolution lane.
       const author = sender === 'orchestrator' ? '' : ` from=${sender}`;
+      // #358 (item 2): the marker names the verb that reads it — `run.spill.read` on the seat's own
+      // bridge — so a worker holding the citation can fetch the body instead of hunting for a file.
       const framed = spilled
-        ? `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(spillRecord.head)} [SPILLED ${JSON.stringify({ spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill })}]`
+        ? `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(spillRecord.head)} [SPILLED ${JSON.stringify({ spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill, read: 'run.spill.read' })}]`
         : `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(body)}`;
       const slot = auth.workerId
         ? this._deliverPeerMessage(handle, record, framed).then((ok) => ({ ok }))

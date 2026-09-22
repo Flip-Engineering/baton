@@ -200,6 +200,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   package_not_attached_to_run: row(403, ['runtime'], 'the context package digest is not attached to the caller\'s run or its swarm'),
   swarm_context_package_not_found: row(404, ['runtime'], 'the request names a context package this deployment does not hold'),
   swarm_context_package_branch_not_found: row(404, ['runtime'], 'the request names a branch the context package does not carry'),
+  // #358 item 2: the seat-side spill read. A `[SPILLED …]` marker's id is content-addressed, so an
+  // id this deployment never minted is a not-found: the refusal names the marker the caller
+  // followed so the citation, not the transport, is what gets fixed.
+  swarm_spill_not_found: row(404, ['runtime'], 'the request names a spill this deployment does not hold'),
 });
 
 // The spelling pairs that are the SAME rule under two names (fold spelling first) — both stay as

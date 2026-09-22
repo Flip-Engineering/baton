@@ -1290,6 +1290,19 @@ export const SWARM_SEAT_READ_COMMANDS = Object.freeze({
     fields: Object.freeze({}),
     required: Object.freeze([]),
   }),
+  // Issue #358 (item 2): the spill read. A brief or a delivered peer message whose body did not fit
+  // its lane carries a `[SPILLED {...}]` marker whose `spill` id is the durable identity of the
+  // body the seat did not receive; this verb resolves it through the deployment's ONE spill reader,
+  // so the seat follows the marker instead of hunting the filesystem for the artifact.
+  'run.spill.read': Object.freeze({
+    permission: 'read', identityFields: Object.freeze(['runId']),
+    situation: 'read the body a [SPILLED …] marker cited — pass the marker\u2019s own `spill` id',
+    fields: Object.freeze({
+      spillId: Object.freeze({ type: 'string', pattern: '^spill:sha256:[a-f0-9]{64}$',
+        description: 'the `spill` field of the [SPILLED …] marker your brief or a message carried' }),
+    }),
+    required: Object.freeze(['spillId']),
+  }),
 });
 export const SWARM_SEAT_READ_COMMAND_NAMES = Object.freeze(Object.keys(SWARM_SEAT_READ_COMMANDS));
 
@@ -5232,10 +5245,10 @@ export class SwarmRuntime {
       rows, cursor, truncated };
   }
 
-  /** The seat read verbs (#441 lane B). Admission is the SAME closed contract the bridge ran
-   * before dispatch, re-run here as the authority; the caller resolves through the ONE membership
-   * resolution every other command uses, and the run/swarm identity is the token's — never the
-   * request's. All three answer the caller's own swarm; none of them writes anything. */
+  /** The seat read verbs (#441 lane B, #358 item 2). Admission is the SAME closed contract the
+   * bridge ran before dispatch, re-run here as the authority; the caller resolves through the ONE
+   * membership resolution every other command uses, and the run/swarm identity is the token's —
+   * never the request's. All of them answer the caller's own swarm; none of them writes anything. */
   async _seatReadDispatch(command, args, principal, context) {
     validateSwarmSeatReadCommand(command, args);
     const swarm = this._swarm(args.swarmId);
@@ -5247,7 +5260,26 @@ export class SwarmRuntime {
     }
     if (command === 'run.package.read') return this._packageRead(swarm, args, caller);
     if (command === 'run.contributions.read') return this._contributionsRead(swarm, args);
+    if (command === 'run.spill.read') return this._spillRead(args);
     return this._peersRead(swarm, caller, this.store.eventsView());
+  }
+
+  /** `run.spill.read` (#358 item 2): the body a `[SPILLED …]` marker cited. The marker rides the
+   * delivery the over-cap body could not — a brief's objective, a peer message — and its `spill` id
+   * is content-addressed (the digest of the body itself), so the marker IS the address and this
+   * verb the fetch. The read goes through the store's ONE spill reader; an id this deployment never
+   * minted refuses typed rather than answering an empty body, and the refusal names the marker the
+   * caller was following. */
+  _spillRead(args) {
+    const spill = this.store._resolvedSpill(args.spillId) ?? null;
+    if (spill === null) {
+      refuse('This spill is not held by the deployment', 'swarm_spill_not_found', {
+        spillId: args.spillId, rule: 'spill-known',
+        correction: 'read the `spill` id the [SPILLED …] marker named — run.spill.read answers only ids this deployment minted',
+      });
+    }
+    return { spillId: spill.spillId, digest: spill.digest, bytes: spill.bytes,
+      lane: spill.lane ?? null, body: spill.body };
   }
 
   /** `run.package.read` (#441 item 1): the package's branch list, or ONE branch's text.
@@ -5714,8 +5746,10 @@ export class SwarmRuntime {
       delivered: delivery.state === 'delivered' ? true : null,
       read, actedOn: null,
       reply: replies[0] ?? null, replies,
+      // #358 (item 2): a spilled receipt names the read verb beside the spill id.
       ...(payload.spilled === true
-        ? { body: payload.message, bytes: payload.bytes, digest: payload.digest, spill: payload.spill }
+        ? { body: payload.message, bytes: payload.bytes, digest: payload.digest, spill: payload.spill,
+          read: payload.read ?? 'run.spill.read' }
         : { body: payload.message }),
     };
   }
@@ -5754,9 +5788,11 @@ export class SwarmRuntime {
       args.message, args.idempotencyKey])}`;
     const guidance = { from, priority, inReplyTo };
     const body = this._notificationBody(args.message, receiptId, principal.actor);
+    // #358 (item 2): the marker names the verb that reads it, so the seat the message addressed can
+    // follow the citation instead of hunting the artifact on disk.
     const citation = body.spilled === null ? ''
       : ` [SPILLED ${JSON.stringify({ spilled: true, bytes: body.spilled.bytes,
-        digest: body.spilled.digest, spill: body.spilled.spill })}]`;
+        digest: body.spilled.digest, spill: body.spilled.spill, read: 'run.spill.read' })}]`;
     // The provenance the issue asks for rides the DELIVERED text itself, in the run layer's own
     // peer-message shape: who sent it, from which swarm, when — before the body a reader judges.
     const frame = `[NOTIFY ${receiptId} from=${from.participantId ?? 'root'}@${from.swarmId}`
@@ -5834,8 +5870,10 @@ export class SwarmRuntime {
         { actor, key: `swarm-notify-spill:${receiptId}` }) : null;
     const spill = minted?.spill ?? null;
     if (spill === null) throw peerBodyRefusal(lane, bytes, ceiling);
+    // #358 (item 2): the spilled shape carries the verb that reads it, so the receipt a seat reads
+    // back is as followable as the delivered marker.
     return Object.freeze({ head: capBytesToScalar(message, lane.value), spilled: {
-      bytes, digest: spill.digest, spill: spill.spillId } });
+      bytes, digest: spill.digest, spill: spill.spillId, read: 'run.spill.read' } });
   }
 
   /** `swarm.notifications` (#311 item 2): the peer messages this swarm holds, each in the run

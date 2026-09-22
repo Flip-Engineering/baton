@@ -1878,7 +1878,7 @@
         {
           "name": "sendMessage",
           "ordinal": 0,
-          "size": 161,
+          "size": 163,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -4924,7 +4924,7 @@
         {
           "name": "start",
           "ordinal": 0,
-          "size": 259,
+          "size": 262,
           "seam": "surface",
           "evidence": [
             "effect:action_verb",
@@ -13612,7 +13612,16 @@
         {
           "name": "_seatReadDispatch",
           "ordinal": 0,
-          "size": 13,
+          "size": 14,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_spillRead",
+          "ordinal": 0,
+          "size": 11,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -13713,7 +13722,7 @@
         {
           "name": "_notificationReceipt",
           "ordinal": 0,
-          "size": 18,
+          "size": 20,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -13732,7 +13741,7 @@
         {
           "name": "_notify",
           "ordinal": 0,
-          "size": 60,
+          "size": 62,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -13750,7 +13759,7 @@
         {
           "name": "_notificationBody",
           "ordinal": 1,
-          "size": 14,
+          "size": 16,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
