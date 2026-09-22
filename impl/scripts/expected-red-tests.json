@@ -1201,55 +1201,11 @@
       "reason": "#158"
     },
     {
-      "key": "test/seat-telemetry-red.test.mjs :: A1 (stage: doctor-seats-missing): deployment.doctor carries an enumerable seats array, one closed D1 atom per readiness route in route order, observedAtEventSeq, and the card inherits seats (D2.4)",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A10 (stage: doctor-seats-missing): routes[i].occupancy.inFlight === seats[i].inFlight for every readiness route — matched (same numbers) and auto-ambiguous (same null)",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A11 (stage: inFlightRevision-missing): the live inFlight component carries a per-atom inFlightRevision — the vendor's incarnation-local handle-revision counter, never a clock",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A2 (stage: capacity-deferred-missing): a ceiling-skipped wave member reads deferred === 1 on the wave capacity atom, deduped by route key — the §D5 Arm-1 aggregate, never the mint-time-frozen inFlight",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A3 (stage: waves-capacity-missing): object-roster waves render the capacity block via _runWaveRoute; run-less legacy string-roster waves render capacity: [] — the honest object-roster answer",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A4 (stage: doctor-seats-missing): an auto route with >1 eligible candidate, or 0 eligible (saturated), reads all-null — never a fabricated number",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A5 (stage: seats-freshness-label-missing): seats-bearing reads carry observedAtEventSeq = a ledger event seq (never wall time); the source surfaces carry no marker at HEAD",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A6 (stage: doctor-seats-missing): two routes resolving to the same adapter read IDENTICAL counts — the record never claims per-route independence",
-      "reason": "#146"
-    },
-    {
       "key": "test/seat-telemetry-red.test.mjs :: A7 (stage: surface-teaching-missing): baton_deployment_doctor names seats + the split staleness; baton_waves_list names capacity; the CLI doctor helps with the closed field set",
       "reason": "#146"
     },
     {
       "key": "test/seat-telemetry-red.test.mjs :: A8 (stage: doctor-seats-missing): the doctor's enumerable route rows stay the DP5 closed set while seats/observedAtEventSeq land as additive siblings, and the occupancy VALUE for an auto-ambiguous route corrects numeric → null",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A9-1 (stage: capacity-inflight-missing): a wave member dispatched with vendorRequested X reads the counts of X via _resolveExplicitRoute — never adapterFor, never a different vendor",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A9-2 (stage: doctor-seats-missing): doctor/generic path — an auto route with >1 eligible candidate reads all-null (the router pick is unpredictable from route identity alone)",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A9-3 (stage: doctor-seats-missing): doctor/generic path — an auto route with exactly ONE eligible candidate reads that candidate's counts",
       "reason": "#146"
     },
     {
