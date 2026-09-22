@@ -316,6 +316,10 @@ function foldGuidanceRows(events) {
         state: payload.kind === 'swarm.guidance_parked'
           ? (cleared === null ? 'parked' : 'delivered')
           : payload.delivery?.state ?? 'delivered',
+        // #557: the durable row records whether this park can ever clear; the fold CARRIES that
+        // fact rather than recomputing it, so the receipt, this row and a seat brief all derive
+        // it from the one place it is written.
+        ...(payload.delivery?.terminal === true ? { terminal: true } : {}),
         lane: payload.delivery?.lane ?? null,
         reason: payload.delivery?.reason ?? payload.reason ?? null,
         deliveredTo: cleared?.payload?.deliveredTo ?? null,
@@ -6298,7 +6302,7 @@ export class SwarmRuntime {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
     const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
-      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot' }), message };
+      guidance, { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true }), message };
     const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
       { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;
@@ -6315,7 +6319,7 @@ export class SwarmRuntime {
     const messageId = `message:${hash(['swarm.guidance_parked', swarmId, participant.participantId,
       message, args.idempotencyKey])}`;
     const payload = { ...this._guidancePayload(swarmId, participant.participantId, messageId, principal,
-      guidance, { state: 'parked', lane: null, reason }), message };
+      guidance, { state: 'parked', lane: null, reason, ...(reason === 'harness_one_shot' ? { terminal: true } : {}) }), message };
     const recorded = this.store.recordDriver('swarm.guidance_parked', payload,
       { actor: principal.actor, key: `swarm-guidance-park:${messageId}` });
     const event = recorded.event;

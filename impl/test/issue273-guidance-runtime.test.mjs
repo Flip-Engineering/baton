@@ -219,7 +219,7 @@ test('273-c: a one-shot seat parks at either priority, and the park stays durabl
   const parked = await f.call('guide', { participantId: 'builder', message: 'Hold the shape.', priority: 'now' });
   assert.equal(parked.receipt.event.kind, 'swarm.guidance_parked');
   assert.equal(parked.guide.priority, 'now');
-  assert.deepEqual(parked.guide.delivery, { state: 'parked', lane: null, reason: 'harness_one_shot' });
+  assert.deepEqual(parked.guide.delivery, { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true });
   assert.deepEqual(parked.next.observation, { wakeClass: 'guidance_delivered', participantId: 'builder' });
   const rows = await f.guidanceFor('builder');
   assert.deepEqual(rows.map((row) => row.delivery.state), ['parked']);
@@ -323,7 +323,7 @@ test('273-f: the CLI rendering names the seat, the priority, where it landed and
 
   const parked = swarmGuideRendering({
     guide: { seq: 7, participantId: 'builder', priority: 'next_boundary',
-      delivery: { state: 'parked', lane: null, reason: 'harness_one_shot' } },
+      delivery: { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true } },
     next: { command: 'swarm.watch', args: { swarmId: 'baton' },
       observation: { wakeClass: 'guidance_delivered', participantId: 'builder' } },
   });
