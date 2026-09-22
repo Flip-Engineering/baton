@@ -19,7 +19,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { MAX_STDERR_TAIL_BYTES } from './cli-adapters.mjs';
 import { normalizeBrowserUseUrl } from './browser-use.mjs';
-import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import { normalizeConcurrencyCeiling, seatCeilingReason } from './concurrency-policy.mjs';
 import { goalPlanDigest, GoalPlanValidationError, normalizeGoalPlanContext } from './goal-plan.mjs';
 import { composeFrameLimitRefusal, FRAME_LIMITS, frameLimitRefusalPath } from './limits.mjs';
 import { boundedAttentionText, isAttentionSpillItem, wrapProse } from './messages.mjs';
@@ -1149,7 +1149,11 @@ export function _admitResolvedVendor(coordinator, recorder, selection) {
     const vendor = selection.vendor;
     const inFlight = coordinator._inFlightCount(vendor);
     const ceiling = coordinator._configuredCeiling(vendor);
-    if (ceiling !== null && inFlight >= ceiling) return { outcome: 'deferred', vendor, ceiling, inFlight };
+    // Issue #221: the deferral names its reason, read from the same seat-ceiling predicate the
+    // pre-cap applies (seatCeilingReason) — the queue is visible with its gate, not only its numbers.
+    if (ceiling !== null && inFlight >= ceiling) {
+      return { outcome: 'deferred', vendor, ceiling, inFlight, reason: seatCeilingReason(ceiling, inFlight) };
+    }
     return { outcome: 'selected', selection };
   }
 

@@ -23,7 +23,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 
-import { applicationTerminal, canonicalRunPhase } from './application-semantics.mjs';
+import {
+  applicationTerminal, canonicalRunPhase, SPAWN_WINDOW_CONFIRMATION_READS, typedTerminalEvidence,
+} from './application-semantics.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 
 const SUCCESS_RESTING = 'result_ready';
@@ -625,6 +627,9 @@ export function createWaveDriver(baton, rawPolicy = null) {
         const waitingOnByRole = new Map();
         const gatedByRole = new Map();
         const statusInfo = new Map();
+        // #199: consecutive failed-phase status reads WITHOUT typed terminal evidence per member —
+        // the spawn-confirmation window's evidence count (never a wall clock).
+        const spawnWindowStreak = new Map();
         const runs = wave.runs;
         for (const [role, runHandle] of runs) {
           let phase = null;
@@ -636,7 +641,19 @@ export function createWaveDriver(baton, rawPolicy = null) {
             const status = await runHandle.status();
             outline = status?.view ?? status ?? {};
             phase = canonicalRunPhase(outline.phase) ?? null;
-            terminal = outline.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING;
+            // #199: the failed class is terminal ONLY on typed terminal evidence; a suspect read
+            // defers and counts, and only SPAWN_WINDOW_CONFIRMATION_READS consecutive suspect reads
+            // confirm the failed verdict (the 3794b583 evidence-count law).
+            const failedEvidence = phase === 'failed' ? typedTerminalEvidence(outline) : null;
+            terminal = outline.terminal === true || failedEvidence !== null
+              || (phase !== 'failed' && applicationTerminal(phase)) || phase === SUCCESS_RESTING;
+            if (phase === 'failed' && failedEvidence === null) {
+              const streak = (spawnWindowStreak.get(role) ?? 0) + 1;
+              spawnWindowStreak.set(role, streak);
+              if (streak >= SPAWN_WINDOW_CONFIRMATION_READS) terminal = true;
+            } else {
+              spawnWindowStreak.delete(role);
+            }
             markerDigest = stallMarker(outline);
             if (Number.isSafeInteger(outline.cursor)) cursor = outline.cursor;
           } catch {
@@ -893,7 +910,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
                   const status = await runHandle.status();
                   const view = status?.view ?? status ?? {};
                   const phase = canonicalRunPhase(view.phase) ?? null;
-                  if (view.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING) recovered += 1;
+                  // #199: the re-read uses the same failed-class gate — a suspect read races the
+                  // spawn window and never settles the stall basis on its own.
+                  const failedEvidence = phase === 'failed' ? typedTerminalEvidence(view) : null;
+                  if (view.terminal === true || failedEvidence !== null
+                    || (phase !== 'failed' && applicationTerminal(phase)) || phase === SUCCESS_RESTING) recovered += 1;
                 } catch { /* an unreadable member counts as unrecovered */ }
               }
             }

@@ -13,6 +13,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { serialize } from 'node:v8';
 import { CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
+import { SEAT_CEILING_REASON } from './concurrency-policy.mjs';
 import { COORDINATION_QUARANTINE_FILE, COORDINATION_QUARANTINE_TEMP_PREFIX, CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, PROJECTION_CHECKPOINT_FIELDS, PROJECTION_LEDGER_FIELDS, SCRATCHPAD_SCOPE, SEGMENT_FILE_SUFFIX, TERMINAL, boundedText, canonicalBytes, canonicalDigest, clone, digest, eventTime, freeze, promotionActor, recallBody, replFenceKey, scratchpadScopeKey, sha256Bytes, validKnowledgeContradictionPolicy, validRunId, validUnicodeScalarString } from './coordination-internals.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { frameWebContent, referencesWebFetchHandle, wrapHubDerived, wrapProse } from './messages.mjs';
@@ -5633,15 +5634,20 @@ export function recordDriver(store, kind, payload, auth) {
 }
 
 export function deferTaskDispatch(store, fields, auth) {
+  // `reason` (issue #221) is the deferral's own recorded gate: the closed seat-ceiling reason, or
+  // null. It is OPTIONAL so a receipt minted before this field replayed byte-identically, and a
+  // value outside the closed vocabulary refuses rather than landing unreadable telemetry.
+  const reason = fields?.reason ?? null;
   if (!fields || typeof fields !== 'object' || Array.isArray(fields)
     || typeof fields.taskId !== 'string' || fields.taskId.length === 0
     || typeof fields.vendor !== 'string' || fields.vendor.length === 0
     || !Number.isSafeInteger(fields.ceiling) || fields.ceiling < 0
     || !Number.isSafeInteger(fields.inFlight) || fields.inFlight < 0
-    || !Number.isSafeInteger(fields.taskCreatedSeq) || fields.taskCreatedSeq <= 0) {
+    || !Number.isSafeInteger(fields.taskCreatedSeq) || fields.taskCreatedSeq <= 0
+    || (reason !== null && reason !== SEAT_CEILING_REASON)) {
     throw new CoordinationRefusal('task dispatch deferral receipt is invalid', 'dispatch_deferral_invalid');
   }
-  const event = store._append('task.dispatch_deferred', clone(fields), auth);
+  const event = store._append('task.dispatch_deferred', clone({ ...fields, reason }), auth);
   return { ok: true, event: clone(event) };
 }
 

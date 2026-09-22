@@ -5,7 +5,7 @@
 // the coordinator receiver is explicit. One-way: family modules import no sibling family module.
 
 import {
-  processAuthorityPayload, validProcessClosedPayload, validProcessReadyPayload,
+  ownedHarnessRetry, processAuthorityPayload, validProcessClosedPayload, validProcessReadyPayload,
   validProcessReapUnconfirmedPayload, validProcessStartedPayload,
 } from '../process-lifecycle.mjs';
 import {
@@ -19,7 +19,10 @@ const valid = ctx.actor === 'worker' && validProcessStartedPayload(ctx.payload)
           && ctx.payload.generation === ctx.handle.processGeneration
           && (!ctx.handle.processRef || ctx.handle.processRef.state === 'closed' || ctx.handle.processRef.state === 'unconfirmed_after_restart');
         if (!valid) {
-          ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: coordinator._safeTurnEpoch(ctx.handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(ctx.event, 'invalid_process_start') });
+          const ownedRetry = ctx.actor === 'worker' && ownedHarnessRetry(ctx.handle, ctx.payload);
+          if (!ownedRetry) {
+            ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: coordinator._safeTurnEpoch(ctx.handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(ctx.event, 'invalid_process_start') });
+          }
           const lateCurrentStart = ctx.actor === 'worker' && validProcessStartedPayload(ctx.payload)
             && ctx.handle.currentIncarnation === true && ctx.payload.generation === ctx.handle.processGeneration
             && (!ctx.handle.processRef || ctx.handle.processRef.state === 'closed' || ctx.handle.processRef.state === 'unconfirmed_after_restart');
@@ -32,6 +35,23 @@ const valid = ctx.actor === 'worker' && validProcessStartedPayload(ctx.payload)
             ctx.handle.recoveredProcessAuthority = false;
             ctx.handle.localAuthority = true;
             coordinator._stopInBackground(ctx.handle, 'kill', KILL_RULES.processObservationRefused);
+          } else if (ownedRetry) {
+            // #199 (the double-spawn window): the first process is still `initializing` and the
+            // coordinator's own spawn is still being confirmed, so this second start is the harness
+            // retry the coordinator owns. Reacquire its exact transport identity and keep the member
+            // working — never an attribution refusal, never a kill, never a new claim.
+            ctx.handle.processRef = { generation: ctx.payload.generation, pid: ctx.payload.pid, processGroupId: ctx.payload.processGroupId, state: 'initializing', ready: false, startedSeq: null, closedSeq: null };
+            ctx.handle.processAuthority = null;
+            ctx.handle.recoveredProcessAuthority = false;
+            ctx.handle.localAuthority = true;
+            const retryAuthority = processAuthorityPayload(ctx.handle.processRef);
+            if (retryAuthority) {
+              ctx.appendAttributed({
+                worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch,
+                kind: 'lifecycle.process_authority', actor: 'policy', payload: retryAuthority,
+              });
+              ctx.handle.processAuthority = { ...retryAuthority };
+            }
           } else if (!['dead', 'stopping', 'exited'].includes(ctx.handle.status)) coordinator._stopInBackground(ctx.handle, 'kill', KILL_RULES.processObservationRefused);
           return
         }

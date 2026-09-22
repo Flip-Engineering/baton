@@ -292,7 +292,10 @@ export function _firstSaturatedCandidate(coordinator, cards, inFlight) {
       const ceiling = normalizeConcurrencyCeiling(cards[name].concurrencyCeiling, `${name} concurrencyCeiling`);
       if (ceiling === null) continue;
       const active = inFlight[name] ?? 0;
-      if (active >= ceiling) return { vendor: name, ceiling, inFlight: active };
+      // The reason is read from the same predicate the pre-cap applied, so the deferral names the
+      // gate that actually decided — never a number re-derived by a second scan (issue #221).
+      const reason = seatCeilingReason(ceiling, active);
+      if (reason !== null) return { vendor: name, ceiling, inFlight: active, reason };
     }
     return null;
   }

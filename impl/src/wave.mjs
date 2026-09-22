@@ -11,7 +11,9 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
 
-import { applicationTerminal, canonicalRunPhase } from './application-semantics.mjs';
+import {
+  applicationTerminal, canonicalRunPhase, SPAWN_WINDOW_CONFIRMATION_READS, typedTerminalEvidence,
+} from './application-semantics.mjs';
 
 // docs/36 §7.1/L4: terminality is the registry predicate — the wave no longer hand-maintains its
 // own union (the F5 divergence where it omitted `denied`/`closed` is gone). `result_ready` is the
@@ -198,7 +200,12 @@ function preseedReport(repoRoot, member, salt) {
 }
 
 function terminalFrom(outline) {
-  return outline?.terminal === true || applicationTerminal(outline?.phase);
+  if (outline?.terminal === true) return true;
+  // Issue #199: a failed phase is terminal only on typed terminal evidence (the task's failed
+  // transition with cause, the process-close family, or a member's own startError) — never on a
+  // bare status read racing the spawn-confirmation window.
+  if (canonicalRunPhase(outline?.phase) === 'failed') return typedTerminalEvidence(outline) !== null;
+  return applicationTerminal(outline?.phase);
 }
 
 function attentionFrom(outline) {
@@ -656,6 +663,9 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         const record = {
           observed: false, phase: null, resting: false, terminal: false,
           narrative: null, attention: null, resultSha: null, observationError: null,
+          // #199: consecutive failed-phase reads WITHOUT typed terminal evidence — the
+          // spawn-confirmation window's evidence count (never a clock).
+          spawnWindowStreak: 0,
           // #396: the member's OWN named wait (its waitingOn projection, if any) — retained
           // per member alongside the last good observation, never withheld behind a sibling.
           waitingOn: null,
@@ -668,11 +678,18 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
             const phase = canonicalRunPhase(outline.phase) ?? null;
             record.observed = true;
             record.phase = phase;
+            // #199: a failed phase WITHOUT typed terminal evidence is a read racing the
+            // spawn-confirmation window — it defers to the next poll, and only
+            // SPAWN_WINDOW_CONFIRMATION_READS consecutive suspect reads confirm the failed verdict
+            // (the evidence-count law, never a wall clock).
+            const suspect = phase === 'failed' && typedTerminalEvidence(outline) === null;
+            record.spawnWindowStreak = suspect ? record.spawnWindowStreak + 1 : 0;
+            const confirmed = record.spawnWindowStreak >= SPAWN_WINDOW_CONFIRMATION_READS;
             // `resting` is the loop's settle condition (terminal or the provider-settled resting
             // state, which is not application-terminal); `terminal` is the receipt's own claim,
             // exactly as before: a resting member still reports terminal:false.
-            record.resting = terminalFrom(outline) || phase === SUCCESS_RESTING;
-            record.terminal = terminalFrom(outline);
+            record.resting = terminalFrom(outline) || phase === SUCCESS_RESTING || confirmed;
+            record.terminal = terminalFrom(outline) || confirmed;
             record.narrative = outline.narrative ?? null;
             record.attention = attentionFrom(outline);
             record.waitingOn = outline.waitingOn ?? null;

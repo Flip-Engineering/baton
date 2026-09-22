@@ -29,6 +29,23 @@ export function withinConcurrencyCeiling(ceiling, inFlight) {
   return active < limit;
 }
 
+/**
+ * The ONE closed reason a seat-ceiling deferral carries on its durable receipt
+ * (`task.dispatch_deferred`). It is the router's own word for the same fact
+ * (AdaptiveRouter.advice's row reason), so the pre-cap, the advice row and the deferral all name
+ * one vocabulary. It names the GATE — a configured seat ceiling — never provider-side
+ * backpressure, which is a different class and never a deferral.
+ */
+export const SEAT_CEILING_REASON = 'concurrency_saturated';
+
+/** The seat-ceiling verdict for one candidate, read from the SAME predicate the pre-cap uses:
+ * null when no configured ceiling gates it, else SEAT_CEILING_REASON. A deferral therefore names
+ * the reason the gate actually decided on, never a number derived by a second scan.
+ * @returns {string|null} */
+export function seatCeilingReason(ceiling, inFlight) {
+  return withinConcurrencyCeiling(ceiling, inFlight) ? null : SEAT_CEILING_REASON;
+}
+
 function describe(value) {
   if (typeof value === 'string') return JSON.stringify(value);
   if (typeof value === 'bigint') return `${value}n`;

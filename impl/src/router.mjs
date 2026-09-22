@@ -16,7 +16,7 @@
  * `concurrencyCeiling: null` means "no configured limit" and is always eligible.
  */
 
-import { withinConcurrencyCeiling } from './concurrency-policy.mjs';
+import { SEAT_CEILING_REASON, withinConcurrencyCeiling } from './concurrency-policy.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -315,7 +315,7 @@ export class AdaptiveRouter {
       mode: effectiveMode, selected,
       rows: projected.map((row) => {
         const score = !row.eligible ? null : effectiveMode === 'round-robin' ? null : row.decayed.count < this.minSamplesForAdaptive - EPSILON ? this.defaultPriorSuccessRate : scoreCandidate(row.decayed, totalDecayedCount, { explorationConstant: this.explorationConstant, defaultPriorSuccessRate: this.defaultPriorSuccessRate });
-        return { modelVersion: row.candidate.modelVersion, family: row.candidate.family, eligible: row.eligible, weight: row.decayed.weight, count: row.decayed.count, rate: row.rate, score, seededFrom: row.seededFrom, selected: row.candidate.modelVersion === selected, reason: !row.eligible ? 'concurrency_saturated' : row.candidate.modelVersion === selected ? (effectiveMode === 'round-robin' ? 'round_robin_selected' : 'highest_adaptive_score') : (effectiveMode === 'round-robin' ? 'round_robin_not_selected' : 'lower_adaptive_score') };
+        return { modelVersion: row.candidate.modelVersion, family: row.candidate.family, eligible: row.eligible, weight: row.decayed.weight, count: row.decayed.count, rate: row.rate, score, seededFrom: row.seededFrom, selected: row.candidate.modelVersion === selected, reason: !row.eligible ? SEAT_CEILING_REASON : row.candidate.modelVersion === selected ? (effectiveMode === 'round-robin' ? 'round_robin_selected' : 'highest_adaptive_score') : (effectiveMode === 'round-robin' ? 'round_robin_not_selected' : 'lower_adaptive_score') };
       }),
     };
   }

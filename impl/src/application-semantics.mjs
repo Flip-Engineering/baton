@@ -115,6 +115,29 @@ export function applicationTerminal(phase) {
   return APPLICATION_TERMINAL_CANONICAL.has(canonicalRunPhase(phase));
 }
 
+// Issue #199 (the spawn-confirmation window). A member's run view can read `phase: 'failed'`
+// while its process is still alive: the harness's double-spawn (spawn -> process_started ->
+// session re-spawn) makes a status read that races the window. A FAILED phase is therefore
+// terminal only when the read itself carries the durable cause — the view's typed
+// `terminalCause` (the task's failed transition with cause, or the process-close family), or
+// the plan node's durable `terminalOutcome` with `accepted: false`. A failed phase with
+// neither is a suspect read: it defers, and only SPAWN_WINDOW_CONFIRMATION_READS consecutive
+// suspect reads confirm it (the evidence-count law of the worktree tri-state read, 3794b583 —
+// a count of observations, never a clock). The success-resting terminals are untouched: only
+// the FAILED class can be produced by the spawn window.
+export const SPAWN_WINDOW_CONFIRMATION_READS = 3;
+export function typedTerminalEvidence(viewOrOutline) {
+  if (!viewOrOutline || typeof viewOrOutline !== 'object') return null;
+  const cause = viewOrOutline.terminalCause;
+  if (cause && typeof cause === 'object' && typeof cause.kind === 'string' && cause.kind.length > 0
+    && typeof cause.code === 'string' && cause.code.length > 0) return cause;
+  const node = Array.isArray(viewOrOutline.nodes) ? viewOrOutline.nodes[0] : null;
+  const outcome = node?.terminalOutcome ?? null;
+  if (outcome && typeof outcome === 'object' && outcome.accepted === false
+    && typeof outcome.status === 'string' && outcome.status.length > 0) return outcome;
+  return null;
+}
+
 export const APPLICATION_LIFECYCLE_ENUMS = Object.freeze({
   runPhases: CANONICAL_RUN_PHASES,
   memberStates: CANONICAL_MEMBER_STATES,

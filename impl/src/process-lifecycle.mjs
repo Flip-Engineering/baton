@@ -15,6 +15,32 @@ const RECOVERY_REAPED_KEYS = ['generation', 'pid', 'pidStart', 'processGroupId',
 const exactKeys = (value, expected) => value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).sort().join('\0') === [...expected].sort().join('\0');
 const positiveSafe = (value) => Number.isSafeInteger(value) && value > 0;
+/**
+ * Issue #199 (the spawn-confirmation window). A worker-actor `lifecycle.spawned` (or a
+ * `lifecycle.process_started`) whose process identity does not match the coordinator's bound
+ * `processRef` is normally refused as foreign. Inside the coordinator's OWN spawn-confirmation
+ * window that verdict is wrong for a harness retry: the adapter is still answering the spawn the
+ * coordinator asked for, so a second process identity for the same worker is a retry the
+ * coordinator owns. This predicate names exactly that window and nothing wider:
+ *
+ *   - the coordinator's own spawn is still being confirmed (`nativeSpawnPending` /
+ *     `recoverySpawnPending`), AND
+ *   - the first process is bound but not yet ready (`processRef.state === 'initializing'`), AND
+ *   - the retry does not testify to a STALE generation (never older than the coordinator's own).
+ *
+ * An owned retry BINDS to the same member — the process identity advances, no new claim is
+ * minted, and no attribution kill is issued. A process start with nothing bound yet, or one
+ * testifying an older generation, is not an owned retry: the strict attribution gates keep
+ * refusing it exactly as before.
+ */
+export function ownedHarnessRetry(handle, payload) {
+  if (!handle || !payload || typeof payload !== 'object') return false;
+  const generation = payload.processGeneration ?? payload.generation ?? null;
+  if (generation !== null && generation !== undefined
+    && (!Number.isSafeInteger(generation) || generation < handle.processGeneration)) return false;
+  if (handle.nativeSpawnPending !== true && handle.recoverySpawnPending !== true) return false;
+  return handle.processRef?.state === 'initializing';
+}
 
 export function processGroupAlive(processGroupId) {
   if (!positiveSafe(processGroupId)) return false;

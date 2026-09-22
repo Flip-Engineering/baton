@@ -730,7 +730,7 @@ export function _deferTaskDispatch(coordinator, recorder, task, deferral) {
     try {
       return recorder.coordination.deferTaskDispatch({
         taskId: task.id, vendor: deferral.vendor, ceiling: deferral.ceiling,
-        inFlight: deferral.inFlight, taskCreatedSeq,
+        inFlight: deferral.inFlight, reason: deferral.reason ?? null, taskCreatedSeq,
       }, {
         actor: 'orchestrator',
         key: `task.dispatch_deferred:${task.id}:${taskCreatedSeq}`,

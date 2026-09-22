@@ -24,6 +24,8 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 // the lane's W5 transitive-graph law (no reachable module runs a top-level wave start) holds.
 import { FRAME_LIMITS } from './limits.mjs';
 
+import { SPAWN_WINDOW_CONFIRMATION_READS, typedTerminalEvidence } from './application-semantics.mjs';
+
 // ---------------------------------------------------------------------------
 // Refusal vocabulary (D — field/role-named, recursive).
 // ---------------------------------------------------------------------------
@@ -526,6 +528,14 @@ async function readView(handle, needStatus = false) {
   // progressClass projects as the { class, silenceMs, meaningfulEventAt } object on the outline;
   // the view flattens the class string.
   const progressProjection = io.progressClass ?? so.progressClass ?? null;
+  // #199: the failed class is terminal ONLY on typed terminal evidence — the view's typed
+  // terminal cause (the task's failed transition with cause, or the process-close family), or the
+  // plan node's durable terminalOutcome with accepted:false. A failed phase with neither is a
+  // status read racing the spawn-confirmation window, and driveLane defers it to the next poll.
+  const typedEvidence = phase === 'failed' ? typedTerminalEvidence({
+    terminalCause: io.terminalCause ?? so.terminalCause ?? null,
+    nodes: Array.isArray(so.nodes) ? so.nodes : null,
+  }) : null;
   return {
     phase,
     observationClosed,
@@ -535,7 +545,8 @@ async function readView(handle, needStatus = false) {
     workerId,
     planDigest,
     task: so.task ?? null,
-    terminal: insp?.terminal === true || io.terminal === true || so.terminal === true || TERMINAL_PHASES.has(phase ?? ''),
+    terminal: (insp?.terminal === true || io.terminal === true || so.terminal === true
+      || TERMINAL_PHASES.has(phase ?? '')) && (phase !== 'failed' || typedEvidence !== null),
     terminalStatus: so.terminalOutcome?.status ?? io.terminalOutcome?.status ?? null,
     lastProgress: io.lastProgress ?? null,
     silenceMs: Number.isSafeInteger(io.silenceMs) ? io.silenceMs
@@ -546,7 +557,9 @@ async function readView(handle, needStatus = false) {
 }
 
 const TERMINAL_PHASES = new Set(['work_completed', 'completed', 'result_ready', 'cancelled', 'failed', 'stopped', 'denied', 'closed']);
-const isTerminal = (v) => v.terminal === true || TERMINAL_PHASES.has(v.phase ?? '') || v.terminalStatus === 'completed';
+// #199: the terminal flag readView returns already folds the failed-class gate, so this predicate
+// never re-derives terminality from a bare phase.
+const isTerminal = (v) => v.terminal === true || v.terminalStatus === 'completed';
 
 // Terminality and success are different facts. Stopped, cancelled, failed and unknown
 // members never establish successful work, even if cleanup later captures their files.
@@ -632,6 +645,9 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     approved: new Set(), messaged: new Map(), msgAttempts: new Map(), msgDone: new Set(),
     elevated: new Set(), nudgedReqs: new Set(), nudgedRoles: new Set(), claimedRoles: new Set(),
     answeredKeys: new Set(), handledDecisionKeys: new Set(), deniedDecisionKeys: new Set(), awaitingDecisionByRole: new Map(), signaled: false,
+    // #199: members the drive declared failed by the evidence-count confirmation (their last read
+    // may still be a window race), so the settle receipt carries the declared verdict.
+    confirmedFailed: new Set(),
   };
 
   // Independent members continue until each reports terminality. Attention may return
@@ -694,7 +710,9 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     const pre = preOutcome.get(member.role) ?? { phase: null, terminal: false, resultSha: null };
     const handle = handles.get(member.role) ?? null;
     let phase = pre.phase;
-    let terminal = pre.terminal;
+    // #199: a member the drive confirmed failed by the evidence count is terminal even when its
+    // last read still races the spawn window — the confirmation IS the declared verdict.
+    let terminal = pre.terminal || steeringState.confirmedFailed.has(member.role);
     if (!terminal && handle) {
       const view = await readView(handle);
       phase = view.phase ?? phase;
@@ -854,6 +872,10 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
 
   const unreadable = new Set();
   const closedObservers = new Set();
+  // #199: consecutive failed-phase reads WITHOUT typed terminal evidence per member — the
+  // spawn-confirmation window's evidence count (never a clock). A suspect read DEFERS; only the
+  // evidence-count streak declares the member failed.
+  const spawnWindowReads = new Map();
   let exit = null;
 
   async function processMember(role) {
@@ -904,6 +926,27 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
     // 5. elevateWhenNotes — read the worker tier, elevate once per (runId, role).
     if (st.elevateWhenNotes && !s.elevated.has(role)) await tryElevate(handle, role, v, st.elevateWhenNotes, steering, s);
 
+
+    // #199: a failed phase WITHOUT typed terminal evidence is a status read racing the
+    // spawn-confirmation window — the member may still be working (the harness's double-spawn:
+    // spawn -> process_started -> session re-spawn). Defer to the next poll; only
+    // SPAWN_WINDOW_CONFIRMATION_READS consecutive suspect reads declare the failed verdict, and
+    // that declaration is the deliberate reap: wave.close stops every member and its receipt is
+    // recorded beside this row, so no live orphan outlives a failure the interpreter declared.
+    if (v.phase === 'failed' && v.terminal !== true) {
+      const reads = (spawnWindowReads.get(role) ?? 0) + 1;
+      spawnWindowReads.set(role, reads);
+      if (reads < SPAWN_WINDOW_CONFIRMATION_READS) {
+        steering.push({ evidence: 'wave_member_spawn_window', role, phase: 'failed', reads });
+        return;
+      }
+      steering.push({ evidence: 'wave_member_terminal_confirmed', role, phase: 'failed', reads });
+      s.confirmedFailed.add(role);
+      spawnWindowReads.delete(role);
+      pending.delete(role); doneRoles.add(role); unreadable.delete(role);
+      return;
+    }
+    spawnWindowReads.delete(role);
     // A failed member settles itself; independent survivors continue being driven.
     if (isTerminal(v)) {
       pending.delete(role); doneRoles.add(role);
