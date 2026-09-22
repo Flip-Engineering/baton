@@ -3478,9 +3478,10 @@ export class Coordinator {
     return runtimeObservation._isReviewAuthority(this, this._recorder, principal, runId);
   }
 
-  /** Assemble the cursor-chained page. candidacy_review is derived LIVE from the store's
-   * candidacy queue and disclosed ONLY to the review authority — any other viewer sees
-   * nothing even when a candidacy exists. */
+  /** Assemble the cursor-chained page. candidacy_review is a STABLE-IDENTITY reason (#71 B2):
+   * minted once while the repo-scoped queue is non-empty, refreshed in place on a queue-count
+   * change, and disclosed ONLY to the review authority — any other viewer sees nothing even
+   * when a candidacy exists. */
     _attentionPage(runId, targetKinds, afterCursor, principal) {
     return runtimeObservation._attentionPage(this, this._recorder, runId, targetKinds, afterCursor, principal);
   }
@@ -3490,6 +3491,17 @@ export class Coordinator {
    * its member identity (workerId/role). Every reason is epoch-marked terminal-at-mint. */
     _mintMemberTerminal(handle, task, result) {
     return runtimeObservation._mintMemberTerminal(this, this._recorder, handle, task, result);
+  }
+
+  /** Issue #71 (D1.6): the reasons notifier — an in-flight `attention.wait` parks on the
+   * store's waitAfter AND on this notifier, so a reason-only mint wakes without a store
+   * append. Registration returns the waiter with its explicit disposer. */
+    attentionWaiter(runId) {
+    return runtimeObservation._attentionWaiter(this, runId);
+  }
+
+    notifyAttention(runId) {
+    return runtimeObservation._notifyAttention(this, runId);
   }
 
   /** Guidance reaches a worker as a typed frame that names its sender and the time it was sent
