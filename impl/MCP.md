@@ -330,6 +330,7 @@ that owns the runs, never over a borrowed bridge session.
 | `run.follow` | `ordinary` | `baton_run_follow` | idempotent |
 | `run.view` | `ordinary` | `baton_run_inspect` | idempotent |
 | `run.integrate` | `ordinary` | `baton_run_integrate` | destructive |
+| `run.knowledge.seed` | `ordinary` | `baton_run_knowledge_seed` | effectful |
 | `run.message.receipt` | `ordinary` | `baton_run_message_receipt` | idempotent |
 | `run.message.send` | `ordinary` | `baton_run_message_send` | effectful |
 | `run.recover` | `ordinary` | `baton_run_recover` | effectful |

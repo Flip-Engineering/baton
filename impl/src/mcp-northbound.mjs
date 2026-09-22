@@ -894,6 +894,22 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({ ...repo, messageId: { type: 'string', pattern: '^message:[a-f0-9]{64}$' } }, ['repoId', 'messageId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // #156 regression repair: this row was displaced by the harvest-accessor landing (d1288fd9) —
+  // run.knowledge.seed claims the mcp surface in the registry and the core table projects this
+  // tool as the baton_knowledge seed verb's dispatch leg, so its absence left mcp-core-tools'
+  // projection incomplete (the bridge refused to start).
+  {
+    name: 'baton_run_knowledge_seed',
+    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
+    inputSchema: schema({
+      ...repo, runId,
+      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
+      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
+      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
+    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   // Issue #99/#179 (harvest-accessor contract Decision 4): the accessor's two ordinary tools.
   {
     name: 'baton_run_resultpin',
