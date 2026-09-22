@@ -1614,6 +1614,8 @@ export class SwarmRuntime {
     // Issue #296: the deployment's landing authority — `{repoRoot, regenerate?, runGates?}`. Null on
     // a host that holds no git authority to land with, in which case `swarm.integrate` refuses
     // `swarm_command_unavailable` rather than pretending.
+    // Issue #558: `publishRemote` rides the same authority — the deployment's DECLARED shared
+    // remote, null when it declares none (a real landing then refuses instead of staying local).
     integration = null }) {
     Object.assign(this, {
       store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit, lastCrash,
@@ -7253,6 +7255,9 @@ export class SwarmRuntime {
     if (typeof error.script === 'string') detail.script = error.script;
     if (Number.isSafeInteger(error.exit)) detail.exit = error.exit;
     if (typeof error.stderrTail === 'string' && error.stderrTail.length > 0) detail.stderrTail = error.stderrTail;
+    // Issue #558: whether the failed publish rolled the local fast-forward back — the fact that
+    // tells a reader whether the target holds an unpublished squash.
+    if (typeof error.rolledBack === 'boolean') detail.rolledBack = error.rolledBack;
     // Issue #459: the gate run could not take the host verify lease. The queue facts and the holder
     // the wait was behind are the whole actionable content of that refusal.
     if (error.detail && typeof error.detail === 'object' && !Array.isArray(error.detail)) {
@@ -7302,6 +7307,14 @@ export class SwarmRuntime {
       // never blocked and never half-ran a gate set: it refuses, and the scratch checkout is gone.
       case 'integrate_gates_busy':
         refuse(message, 'integrate_gates_busy', detail); break;
+      // Issue #558: the landing cannot publish — the deployment declares no shared remote, or
+      // the declared remote was unreachable or refused the push (the local move is rolled back,
+      // so the target holds no unpublished squash). A landing that cannot publish never reports
+      // a local success.
+      case 'integrate_publish_undeclared':
+        refuse(message, 'integrate_publish_undeclared', detail); break;
+      case 'integrate_publish_failed':
+        refuse(message, 'integrate_publish_failed', detail); break;
       case 'integrate_target_moved':
         refuse(message, 'integrate_target_moved', detail); break;
       case 'integrate_change_invalid':
@@ -7429,6 +7442,9 @@ export class SwarmRuntime {
         target: args.target,
         commitSha: tip,
         message,
+        // Issue #558: the deployment's declared shared remote — the landing publishes the landed
+        // ref to it after the fast-forward, and refuses typed when it cannot.
+        publishRemote: authority.publishRemote ?? null,
         // Issue #451: the SAME dependency directories the deployment configures for lane
         // worktrees. Omitted, the worktree authority derives them from where the installs
         // actually sit — the integration checkout never guesses at a root-only `node_modules`.

@@ -138,6 +138,13 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // landing never blocked on it (the resident answers throughout) and never half-ran a gate set:
   // it refuses typed, naming the holder the request waited behind, and the scratch checkout goes.
   integrate_gates_busy: row(409, ['runtime'], 'the host verify lease could not be taken within its bound, so the gate run never started'),
+  // Issue #558: the landing publishes the landed ref to the deployment's DECLARED shared remote
+  // after the fast-forward. A landing that cannot publish refuses instead of reporting a local
+  // success: no declaration (`advanced.integration.publishRemote` absent), or the declared
+  // remote unreachable or refusing the push (the local move is rolled back, so the target holds
+  // no unpublished squash).
+  integrate_publish_undeclared: row(409, ['runtime'], 'the deployment declares no shared remote for landings, so the landed ref has nowhere to publish'),
+  integrate_publish_failed: row(409, ['runtime'], 'the declared shared remote could not be reached or refused the push, so the landing did not complete'),
   // Issue #473: the coordinator's own run-stop leg. `swarm.stop` drives it through the injected
   // `stopRun` port, so a run whose stop does not converge inside its bound reached the operator as
   // 503 `temporarily_unavailable` "retry once" — the #430 narration named this exact gap. Both

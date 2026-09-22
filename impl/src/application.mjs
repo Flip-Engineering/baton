@@ -2190,8 +2190,15 @@ export class BatonApplication {
       // Issue #296: the deployment's landing authority — the repository the driver holds; the
       // runtime derives regenerate/runGates itself. Null on a driver without a repository root,
       // and swarm.integrate then refuses swarm_command_unavailable.
+      // Issue #558: the declared shared remote rides the same authority (null when the
+      // deployment declares none — a real landing then refuses instead of staying local).
       integration: typeof this.driver?.repoRoot === 'string' && this.driver.repoRoot.length > 0
-        ? { repoRoot: this.driver.repoRoot } : null,
+        ? {
+          repoRoot: this.driver.repoRoot,
+          publishRemote: typeof this.driver?.integrationPublishRemote === 'string'
+            && this.driver.integrationPublishRemote.length > 0
+            ? this.driver.integrationPublishRemote : null,
+        } : null,
       // Issue #326: the participant row's crash fact reads the seat's own durable ledger —
       // the same log the debug leg projects — never a second store. Null when unreadable.
       lastCrash: (workerId) => {

@@ -309,12 +309,21 @@ async function serveDeployment(rawDeployment, admittedTrigger = null) {
 }
 
 /** The serve leg both `baton serve` and `baton quarantine --restart` (issue #505) run: open
- * this checkout's deployment and host it until a trigger ends the process. */
+ * this checkout's deployment and host it until a trigger ends the process. Issue #558: the
+ * shared remote landings publish to is declared here, from `BATON_PUBLISH_REMOTE` — a
+ * declaration, never inferred from `origin`. Unset, the deployment opens without one and a real
+ * landing refuses instead of reporting a local success. */
 async function serveCheckout() {
   const openSignals = admitOpenSignals();
   let deployment;
-  try { deployment = await openBaton({ repo: process.cwd() }); }
-  finally { openSignals.release(); }
+  const publishRemote = typeof process.env.BATON_PUBLISH_REMOTE === 'string'
+    && process.env.BATON_PUBLISH_REMOTE.length > 0 ? process.env.BATON_PUBLISH_REMOTE : undefined;
+  try {
+    deployment = await openBaton({
+      repo: process.cwd(),
+      ...(publishRemote === undefined ? {} : { advanced: { integration: { publishRemote } } }),
+    });
+  } finally { openSignals.release(); }
   await serveDeployment(deployment, openSignals.pendingTrigger());
 }
 

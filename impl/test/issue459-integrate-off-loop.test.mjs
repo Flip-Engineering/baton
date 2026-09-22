@@ -163,6 +163,11 @@ async function world(t, { gate = {} } = {}) {
   git(repo, 'checkout', '-q', 'master');
   const targetHead = git(repo, 'rev-parse', 'master');
 
+  // Issue #558: the deployment's declared shared remote — a bare repository this landing
+  // publishes the landed ref to after the fast-forward.
+  const publishRemote = join(directory, 'shared.git');
+  execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
+
   const store = new CoordinationStore(join(directory, 'ledger'));
   // At HEAD the pool does not exist: the row then runs the deployment exactly as HEAD wires it and
   // fails on its OWN assertion (the stall, the missing row, the missing sweep) rather than on a
@@ -185,7 +190,7 @@ async function world(t, { gate = {} } = {}) {
     prepareRun: (request) => request,
     startRun: async () => { throw new Error('no native runs in this fixture'); },
     stopRun: async () => {},
-    integration: { repoRoot: repo },
+    integration: { repoRoot: repo, publishRemote },
   });
   t.after(() => {
     runtime.close();
@@ -223,7 +228,7 @@ async function world(t, { gate = {} } = {}) {
   const leftoverCheckouts = () => (existsSync(wtRoot) ? readdirSync(wtRoot) : [])
     .filter((name) => name.startsWith('integrate-') && !name.endsWith('.projection.exclude'));
   return {
-    directory, repo, store, runtime, pool, hostCapacity, capacityRoot, integration, markerPath,
+    directory, repo, publishRemote, store, runtime, pool, hostCapacity, capacityRoot, integration, markerPath,
     tip, targetHead, observedHead,
     driverRows, integrateDriverRows, failureRows, sweptRows, wtRoot, leftoverCheckouts,
   };
@@ -385,7 +390,7 @@ test('459e: a leftover integrate-* checkout is swept when the resident opens, an
     prepareRun: (request) => request,
     startRun: async () => { throw new Error('no native runs in this fixture'); },
     stopRun: async () => {},
-    integration: { repoRoot: w.repo },
+    integration: { repoRoot: w.repo, publishRemote: w.publishRemote },
   });
   t.after(() => opened.close());
 
