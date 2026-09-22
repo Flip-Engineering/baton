@@ -71,7 +71,7 @@ function validKnowledgeWorkflowAdmissionPolicy(policy) {
   if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
   const numeric = KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS.filter((name) => name !== 'repoId');
   if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
-  return policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+  return policy.maxBatchBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && policy.maxResultBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value;
 }
 
 function validResultSha(value) { return typeof value === 'string' && /^[a-f0-9]{40,64}$/u.test(value); }
@@ -1004,7 +1004,7 @@ export function _validateReusePolicyPayload(store, p, event, integrity = false) 
   if (p.requestDigest !== expectedRequestDigest) fail('reuse policy request identity is invalid');
   const ceilings = p.ceilings;
   if (!ceilings || Object.keys(ceilings).sort().join(',') !== ['maxDecisionTargets', 'maxGuardTargets', 'maxAffectedReads', 'maxStateRows', 'maxObservedPolicyHashes', 'maxEventBytes'].sort().join(',')
-    || Object.values(ceilings).some((value) => !Number.isSafeInteger(value) || value <= 0) || ceilings.maxDecisionTargets > 100_000 || ceilings.maxGuardTargets > 100_000 || ceilings.maxAffectedReads > 1_000_000 || ceilings.maxStateRows > 10_000_000 || ceilings.maxObservedPolicyHashes > 100_000 || ceilings.maxEventBytes > 64 * 1024 * 1024) fail('reuse policy ceilings are invalid', 'reuse_policy_oversize');
+    || Object.values(ceilings).some((value) => !Number.isSafeInteger(value) || value <= 0) || ceilings.maxDecisionTargets > 100_000 || ceilings.maxGuardTargets > 100_000 || ceilings.maxAffectedReads > 1_000_000 || ceilings.maxStateRows > 10_000_000 || ceilings.maxObservedPolicyHashes > 100_000 || ceilings.maxEventBytes > FRAME_LIMITS['knowledge.policy_event_max_bytes'].value) fail('reuse policy ceilings are invalid', 'reuse_policy_oversize');
   const expected = store._reusePolicyTargets(p.repoId, policy.hash, ceilings);
   if (canonicalDigest(expected.decisionTargets) !== canonicalDigest(p.decisionTargets) || canonicalDigest(expected.bindingTargets) !== canonicalDigest(p.bindingTargets) || canonicalDigest(expected.findingTargets) !== canonicalDigest(p.findingTargets) || canonicalDigest(expected.guardTargets) !== canonicalDigest(p.guardTargets) || canonicalDigest(expected.priorConstraintTarget) !== canonicalDigest(p.priorConstraintTarget) || canonicalDigest(expected.observedPolicyHashes) !== canonicalDigest(p.observedPolicyHashes) || expected.examinedStateRows !== p.examinedStateRows || expected.derivationOverflow !== p.derivationOverflow) fail('reuse policy target projection is invalid');
   const affectedReads = [...p.decisionTargets, ...p.bindingTargets, ...p.findingTargets, ...(p.priorConstraintTarget ? [p.priorConstraintTarget] : [])].reduce((sum, target) => sum + target.affectedReadEvents.length, 0) + p.guardTargets.reduce((sum, target) => sum + target.affectedRiskFindingReadEvents.length, 0);
