@@ -273,7 +273,10 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/coordination-ledger.mjs': 278,
   'impl/src/coordination-admission.mjs': 180,
   'impl/src/runtime-recovery.mjs': 65,
-  'impl/src/coordination-ledger-writes.mjs': 31,
+  // #177 added five members to the writer-lease region (the holder facts, the busy-refusal
+  // composer, the recovery writer, the boundary stamp, and the deferred settlement the store
+  // calls after its replay): 31 -> 36.
+  'impl/src/coordination-ledger-writes.mjs': 36,
   'impl/src/runtime-effects.mjs': 10,
   'impl/src/runtime-observation.mjs': 151,
   'impl/src/runtime-admission.mjs': 102,
