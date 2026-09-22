@@ -1048,7 +1048,7 @@ function normalizeReviewPolicy(value) {
   }
   if (value.mode !== 'required' || !Array.isArray(value.routes) || value.routes.length === 0 || value.routes.length > 64
     || !safeScopePath(value.reportPath) || !Number.isSafeInteger(value.maxFindings) || value.maxFindings <= 0 || value.maxFindings > 1_024
-    || !Number.isSafeInteger(value.maxReportBytes) || value.maxReportBytes < 256 || value.maxReportBytes > 16 * 1024 * 1024) {
+    || !Number.isSafeInteger(value.maxReportBytes) || value.maxReportBytes < 256 || value.maxReportBytes > FRAME_LIMITS['review.report_max_bytes'].value) {
     throw applicationError('profile reviewPolicy is invalid', 'application_profile_invalid');
   }
   const routes = value.routes.map((route) => normalizeRoute(route, 'application_profile_invalid'));

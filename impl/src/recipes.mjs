@@ -63,9 +63,9 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 const DEFAULT_RECIPE_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   finalization: 'none',
-  pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
-  settleTimeoutMs: 5_000,
+  pollIntervalMs: FRAME_LIMITS['driver.poll_ms'].value,
+  stallTimeoutMs: FRAME_LIMITS['driver.stall_ms'].value,
+  settleTimeoutMs: FRAME_LIMITS['driver.settle_ms'].value,
   unproductiveNudgeBudget: 1,
   preflight: true,
 });
@@ -544,8 +544,8 @@ const IMPLEMENT_CONSTRAINTS = Object.freeze([
 const IMPLEMENT_DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   finalization: 'claim-on-stall',
-  pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
+  pollIntervalMs: FRAME_LIMITS['driver.poll_ms'].value,
+  stallTimeoutMs: FRAME_LIMITS['driver.stall_ms'].value,
   settleTimeoutMs: 15_000,
   unproductiveNudgeBudget: 1,
   preflight: true,
