@@ -1412,15 +1412,23 @@ export class OmpRpcCli {
   async kill(worker) {
     const session = this._sessions.get(worker);
     if (!session?.process) return { ok: true, terminal: true };
-    if (session.process.processClose?.confirmed) return { ok: true, terminal: true };
+    // No owned group authority (no pid-bearing child) or an already reaped generation: no stop
+    // confirmation event can ever follow, so the Ack IS the confirmation (the Ack vocabulary's
+    // `terminal:true`, the same proof codex-appserver.mjs:1149 reads).
+    if (!session.process.processClose || session.process.processClose.confirmed) return { ok: true, terminal: true };
     session.killing = true;
     session.controlGeneration = (session.controlGeneration ?? 0) + 1;
     session.pendingInterrupt = null;
     const terminalCause = session.setupFailed ? 'setup' : session.process.failure ? 'process_error' : null;
-    void session.process.kill({
-      kind: 'kill.confirmed',
-      payload: { ...(terminalCause ? { terminalCause } : {}), usageSeal: this._usageSeal(session) },
-    });
-    return { ok: true };
+    const payload = { ...(terminalCause ? { terminalCause } : {}), usageSeal: this._usageSeal(session) };
+    void session.process.kill({ kind: 'kill.confirmed', payload });
+    // A-G3: the Ack reports the latch's own observation — a stop the process has not confirmed
+    // is unconfirmed (confirmed:false with the latch's reason, close_pending while no close fact
+    // exists yet), never a bare ok that reads as done. The confirmation itself still arrives as
+    // kill.confirmed once the group probe said ESRCH; the unconfirmed receipt is
+    // lifecycle.process_reap_unconfirmed.
+    const auth = await session.process.processClose.authorizeStop('kill.confirmed', payload);
+    if (auth?.confirmed === true) return { ok: true, terminal: true };
+    return { ok: true, confirmed: false, reason: auth?.reason ?? 'close_pending' };
   }
 }
