@@ -760,6 +760,12 @@ export class CoordinationStore {
     return coordinationInternals.runOrchestratorLease(this._runOrchestratorLeases, leaseId);
   }
 
+  /** Issue #12 (the nested-orchestration rung): every run-orchestrator lease row this store
+   * holds — the listing the child-authority mint and the startup orphan sweep read. */
+  runOrchestratorLeases() {
+    return coordinationInternals.runOrchestratorLeases(this._runOrchestratorLeases);
+  }
+
   activeRunOrchestratorLeaseForSession(fields) { return coordinationLedger.activeRunOrchestratorLeaseForSession(this, fields); }
 
   admitRunLineage(fields, auth) { return coordinationAdmission.admitRunLineage(this, fields, auth); }

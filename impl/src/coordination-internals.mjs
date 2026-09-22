@@ -302,6 +302,13 @@ export function runOrchestratorLease(state, leaseId) {
   return clone(state.get(leaseId) ?? null);
 }
 
+/** Issue #12 (the nested-orchestration rung): every run-orchestrator lease row this store holds,
+ * insertion order. The child-authority mint resolves a parent task's live lease from it, and the
+ * startup orphan sweep walks it. State: `this._runOrchestratorLeases`, passed explicitly. */
+export function runOrchestratorLeases(state) {
+  return freeze([...state.values()].map(clone));
+}
+
 /** Moved from `CoordinationStore.runLineage` (issue #259 slice 1). State: `this._runLineages`, passed explicitly. */
 export function runLineage(state, runId) { return clone(state.get(runId) ?? null); }
 

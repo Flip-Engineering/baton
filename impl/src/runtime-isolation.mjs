@@ -84,6 +84,35 @@ function recordValue(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** Issue #12 (the nested-orchestration rung): the child connection projection a lease is minted
+ * under, normalized for the posture. The projection is a POINTER — the profile and the token file
+ * INSIDE the worker-private runtime — never the credential: a value carrying `token` refuses
+ * outright, and both relative paths must stay inside the runtime root (an absolute path or a `..`
+ * escape refuses), so the posture a status surface publishes can never carry a host path or a
+ * secret. Absent (null/undefined) means the lease was not minted under a child connection. */
+function connectionProjectionOf(value) {
+  if (value === null || value === undefined) return null;
+  if (!recordValue(value)) throw new TypeError('connectionProjection must be an object');
+  if (Object.hasOwn(value, 'token')) {
+    throw new TypeError('connectionProjection must never carry a token: it names the credential file (mode 0600 inside the worker-private runtime), never the credential');
+  }
+  if (value.schemaVersion !== 1) throw new TypeError('connectionProjection.schemaVersion must be 1');
+  const fields = {};
+  for (const field of ['profile', 'tokenFile', 'url', 'origin']) {
+    if (typeof value[field] !== 'string' || value[field].length === 0) {
+      throw new TypeError(`connectionProjection.${field} must be a non-empty string`);
+    }
+    fields[field] = value[field];
+  }
+  for (const field of ['profile', 'tokenFile']) {
+    const relative = fields[field];
+    if (isAbsolute(relative) || relative === '..' || relative.startsWith(`..${sep}`)) {
+      throw new TypeError(`connectionProjection.${field} must stay inside the worker-private runtime`);
+    }
+  }
+  return Object.freeze({ schemaVersion: 1, ...fields });
+}
+
 /** Atomic, owner-only write of one credential document. */
 function writeCredentialDocument(config, document) {
   const target = join(config, ...document.relativePath.split('/'));
@@ -388,7 +417,7 @@ export class RuntimeIsolation {
     // pre-worktree capacity refusal leaves no runtime filesystem authority behind.
   }
 
-  create(workerId, selection) {
+  create(workerId, selection, opts = {}) {
     const { family, surface, authPosture, adapterCredentialState } = runtimeIdentity(selection);
     const root = privateDir(join(this.root, workerId));
     const home = privateDir(join(root, 'home'));
@@ -421,7 +450,7 @@ export class RuntimeIsolation {
     // #346: the lease is registered BEFORE any credential is written, so a refresh that lands
     // between the two writes re-projects into this lease rather than skipping it.
     this.leases.set(workerId, Object.freeze({ family, surface, config, writerFile, commitSpool, checkoutFile }));
-
+    const connectionProjection = connectionProjectionOf(recordValue(opts) ? opts.connectionProjection : null);
     const env = {};
     for (const [key, value] of Object.entries(this.baseEnv)) {
       if (value === undefined) continue;
@@ -440,6 +469,12 @@ export class RuntimeIsolation {
     delete env.CODEX_HOME;
     delete env.GROK_HOME;
     delete env.KIMI_CODE_HOME;
+    // Issue #12 (the nested-orchestration rung): the child runtime never inherits the
+    // orchestrator's XDG_CONFIG_HOME. The connection discovery contract resolves a connection
+    // profile from that variable when it is set, so an inherited value would make the child read
+    // the PARENT's connection profile instead of the projection minted for it. A surface whose
+    // own resolution needs the variable (muse, below) sets it explicitly, after this delete.
+    delete env.XDG_CONFIG_HOME;
     if (surface === 'codex') env.CODEX_HOME = config;
     else if (surface === 'grok') env.GROK_HOME = config;
     else if (surface === 'kimi-code') env.KIMI_CODE_HOME = config;
@@ -562,6 +597,12 @@ export class RuntimeIsolation {
         // runtime.scope_created, so the record of the wrapper rides that event.
         git: Object.freeze({ mechanism: 'wrapper', refuses: Object.freeze(['stash']) }),
         permissions: Object.freeze({ directories: '0700', credentialFiles: '0600' }),
+        // Issue #12 (the nested-orchestration rung): a child lease minted under a connection
+        // projection PUBLISHES that projection on the posture, so status/debug surfaces can
+        // attest which profile the runtime was minted under. The projection names the profile
+        // and its 0600 token file RELATIVE to the worker-private runtime; it never carries the
+        // token (connectionProjectionOf refuses one), and never a host path.
+        ...(connectionProjection === null ? {} : { connectionProjection }),
         sandboxPolicy: 'full-access-private-runtime-only',
         active: true,
       }),

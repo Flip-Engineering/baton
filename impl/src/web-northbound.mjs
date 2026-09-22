@@ -276,6 +276,14 @@ const COMMAND_CAPABILITY = Object.freeze({
   ...Object.fromEntries(CONTEXT_PACKAGE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(CONTEXT_PACKAGE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
 });
+
+// Issue #12 (the nested-orchestration rung): the legacy operator families a `worker:`-prefixed
+// principal never reaches. The refusal is an IDENTITY boundary (per family), so a worker holding
+// the full operator capability set still refuses here — never a capability-shaped refusal.
+const WORKER_LEGACY_FAMILIES = new Set([
+  'spawn', 'scratch_oracle', 'send', 'interrupt', 'kill', 'drain', 'respond',
+  'capability_invoke', 'reuse_decide', 'reuse_recheck',
+]);
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
   ...[...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES]
@@ -1844,14 +1852,51 @@ export class WebNorthbound {
       return error(403, 'forbidden', `forbidden: ${commandClass} refused by the repoId precondition`, 'repoId');
     }
     if (this.isPrincipalActive && !this.isPrincipalActive(principal, { repoId: envelope.repoId })) return error(401, 'unauthenticated');
+    // Issue #12 (the nested-orchestration rung): the worker identity boundary. A `worker:`-prefixed
+    // principal never reaches a legacy operator family — per family, and never as a
+    // capability-shaped refusal, because the boundary is identity, not capability.
+    if (WORKER_LEGACY_FAMILIES.has(envelope.command)
+      && typeof principal.userId === 'string' && principal.userId.startsWith('worker:')) {
+      return error(403, 'worker_legacy_command_forbidden',
+        `forbidden: worker principal refused legacy ${envelope.command}`, 'identity');
+    }
     const requiredCapabilities = Array.isArray(COMMAND_CAPABILITY[envelope.command])
       ? COMMAND_CAPABILITY[envelope.command]
       : [COMMAND_CAPABILITY[envelope.command]];
-    if (!Array.isArray(principal.capabilities)
-      || !requiredCapabilities.every((capability) => principal.capabilities.includes(capability))) {
+    const missingCapability = !Array.isArray(principal.capabilities)
+      || !requiredCapabilities.every((capability) => principal.capabilities.includes(capability));
+    // Issue #12: the lease-subtree stop carve-out (_leaseSubtreeStop) is NARROW — one command, a
+    // live lease held by the caller's own session, and a target inside that lease's own subtree.
+    // Every other missing-capability refusal keeps the capability precondition exactly as before.
+    if (missingCapability && !this._leaseSubtreeStop(ctx, envelope)) {
       return error(403, 'forbidden', `forbidden: ${commandClass} refused by the capability precondition`, 'capability');
     }
     return null;
+  }
+
+  /** Issue #12 (the nested-orchestration rung): a principal holding a LIVE run-orchestrator lease
+   * may stop a run inside that lease's OWN subtree without the operator `emergency_stop`
+   * capability — the lease's subtree scope is the authority the lease proves. Anything else (a
+   * different command, no lease, a run outside the subtree) is not the carve-out. */
+  _leaseSubtreeStop(ctx, envelope) {
+    if (APPLICATION_COMMAND[envelope.command] !== 'run.stop') return false;
+    const store = this.coordination;
+    if (typeof store?.runOrchestratorLeases !== 'function' || typeof store?.runLineage !== 'function') return false;
+    const principal = ctx.principal ?? {};
+    // The lease binds the IDENTITY (its session principal), not one credential: a rotated or
+    // re-bound session of the same principal is the same authority, so the lookup keys on the
+    // principal the transport already authenticated. The subtree bound below is what narrows the
+    // carve-out — never the presence of a lease alone.
+    const lease = store.runOrchestratorLeases().find((row) => row.status === 'active'
+      && row.repoId === envelope.repoId
+      && row.session.principalId === principal.userId);
+    if (!lease) return false;
+    const args = envelope.args ?? {};
+    const target = typeof args.runId === 'string' && args.runId.length > 0 ? args.runId : envelope.runId;
+    if (typeof target !== 'string' || target.length === 0) return false;
+    if (target === lease.parent.runId) return true;
+    const lineage = store.runLineage(target);
+    return Array.isArray(lineage?.ancestors) && lineage.ancestors.includes(lease.parent.runId);
   }
 
   _postWaitAuthorization(ctx, envelope) {

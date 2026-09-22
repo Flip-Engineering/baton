@@ -165,6 +165,7 @@ export {
 export { projectRunTimelinePage, RunTimelineError } from './run-timeline.mjs';
 export { renderVerificationExecution } from './verification-presentation.mjs';
 export { DEFAULT_RUN_LINEAGE_POLICY, normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES, RUN_ORCHESTRATOR_REVOCATION_REASONS } from './run-lineage.mjs';
+export { mintChildAuthority, revokeChildAuthority, sweepChildOrphans } from './connection-authority.mjs';
 export { WebNorthbound, createAuthenticatedWebServer, createLocalAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
 export { createLocalSocketFetch } from './local-web-transport.mjs';
 export { WebEventStream } from './web-stream.mjs';

@@ -202,6 +202,14 @@ const MAX_REPL_VIEW_BYTES = FRAME_LIMITS['view.repl.bytes'].value;
 const MAX_REPL_BINDING_ITEMS = 512;
 const MAX_REVIEW_SOURCE_BYTES = FRAME_LIMITS['view.review_source.bytes'].value;
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
+// Issue #12 (the nested-orchestration rung): the six workflow lanes a lease-bound child drives.
+// A child's commands in these lanes are bound to its run-orchestrator lease's OWN subtree (see
+// _assertLeaseSubtreeScope); attention.watch is deliberately absent — that lane carries its own
+// landed scope law (attention_scope_forbidden).
+const CHILD_SCOPE_LANES = Object.freeze(new Set([
+  'run.message.send', 'run.message.receipt',
+  'run.scratchpad.read', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
+]));
 // #153 follow-on (2026-08-13): the production cadence for the shipped waves.run path when the
 // caller omits driver options — mirrors the wave driver's documented production policy
 // (wave-driver.mjs DEFAULT_POLICY: a multi-hour wave). The interpreter's own DEFAULT_DRIVER
@@ -2704,6 +2712,10 @@ export class BatonApplication {
   }
 
   async _authorize(command, principal, runId, subject = {}) {
+    // Issue #12 (the nested-orchestration rung): a lease-bound child's lane commands are bound to
+    // the lease's OWN subtree — the binding runs BEFORE the deployment's authorize policy, so the
+    // vacuous-admit seam a driver default installs cannot widen a child past its lease.
+    if (CHILD_SCOPE_LANES.has(command)) this._assertLeaseSubtreeScope(principal, runId);
     const allowed = await (this._authorizationScope?.getStore() ?? this.authorize)(deepFreeze({
       command,
       principal: clone(principal),
@@ -2712,6 +2724,28 @@ export class BatonApplication {
       subject: clone(subject),
     }));
     if (allowed !== true) throw applicationError('application command is not authorized', 'application_unauthorized');
+  }
+
+  /** Issue #12 (the nested-orchestration rung): the six workflow lanes a lease-bound child drives
+   * are scoped to its lease's subtree. When the caller's session holds a LIVE run-orchestrator
+   * lease, a target run outside that subtree refuses with the ONE constant every scope refusal
+   * uses (`application_unauthorized` — never an existence leak: an unknown, a foreign, and an
+   * out-of-subtree target are indistinguishable). A principal holding no lease — the operator, a
+   * seat, an observer — is untouched: this binds children, never the operator path. The lane's own
+   * scope law (attention.watch's `attention_scope_forbidden`) is deliberately NOT in this set. */
+  _assertLeaseSubtreeScope(principal, runId) {
+    if (typeof runId !== 'string' || runId.length === 0) return;
+    const coordination = this.driver?.coordination;
+    if (typeof coordination?.runOrchestratorLeases !== 'function'
+      || typeof coordination?.runLineage !== 'function') return;
+    const lease = coordination.runOrchestratorLeases().find((row) => row.status === 'active'
+      && row.session.principalId === principal?.principalId
+      && row.session.sessionId === principal?.sessionId);
+    if (!lease) return;
+    if (runId === lease.parent.runId) return;
+    const lineage = coordination.runLineage(runId);
+    if (Array.isArray(lineage?.ancestors) && lineage.ancestors.includes(lease.parent.runId)) return;
+    throw applicationError('application command is not authorized', 'application_unauthorized');
   }
   // Issue #74 (D2/A5): the coordinator authority boundary. A coordinator-seat principal (a worker
   // seat, principalId `worker:<id>` — the G9 seat class that never holds `approve`) reaching a
