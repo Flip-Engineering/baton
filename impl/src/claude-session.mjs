@@ -299,7 +299,7 @@ function resultUsage(obj, counterId, priorCumulativeUsdNanos = null) {
   };
 }
 
-const CREDENTIAL_MAX_BYTES = 16 * 1024;
+const CREDENTIAL_MAX_BYTES = FRAME_LIMITS['credential.file'].value;
 const KIMI_MODEL = 'kimi-k3[1m]';
 const KIMI_BASE_URL = 'https://api.moonshot.ai/anthropic';
 const KIMI_PROVIDER_ENV = Object.freeze([
@@ -869,7 +869,7 @@ export class ClaudeSessionCli {
       processGeneration,
       processClosedEmitted: false,
       processClosePending: false,
-      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
+      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : FRAME_LIMITS['process.reap_timeout_ms'].value,
       timeoutFailure: null,
       processFailure: null,
       buf: '',

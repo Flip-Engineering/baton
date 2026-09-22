@@ -12,6 +12,7 @@
 
 
 import { execFileSync } from 'node:child_process';
+import { FRAME_LIMITS } from './limits.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync,
@@ -104,7 +105,7 @@ function validRepresentationPolicy(policy) {
 function writerProcessStartIdentity(pid) {
   try {
     const value = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: 1_000,
+      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: FRAME_LIMITS['process.ps_probe_ms'].value,
     }).trim();
     return value && Buffer.byteLength(value) <= 256 ? value : null;
   } catch { return null; }

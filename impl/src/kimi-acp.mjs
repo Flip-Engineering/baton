@@ -11,8 +11,8 @@ import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest 
 import { FRAME_LIMITS } from './limits.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
-const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
-const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;
+const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = FRAME_LIMITS['acp.event_payload_bytes'].value;
+const DEFAULT_STREAM_CHUNK_BYTES = FRAME_LIMITS['stream.omp.flush'].value;
 
 function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };

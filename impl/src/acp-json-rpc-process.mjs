@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { ProcessCloseReapLatch } from './process-lifecycle.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 export class AcpProtocolError extends Error {
   constructor(message, code = 'acp_protocol_error') {
@@ -37,11 +38,11 @@ export class AcpJsonRpcProcess {
     this.cwd = options.cwd;
     this.env = options.env;
     this.setupTimeoutMs = options.setupTimeoutMs;
-    this.maxFrameBytes = options.maxFrameBytes ?? 1024 * 1024;
+    this.maxFrameBytes = options.maxFrameBytes ?? FRAME_LIMITS['wire.frame'].value;
     if (!Number.isSafeInteger(this.maxFrameBytes) || this.maxFrameBytes <= 0) {
       throw new TypeError('AcpJsonRpcProcess: maxFrameBytes must be a positive safe integer');
     }
-    this.reapTimeoutMs = options.reapTimeoutMs ?? 2000;
+    this.reapTimeoutMs = options.reapTimeoutMs ?? FRAME_LIMITS['process.reap_timeout_ms'].value;
     if (!Number.isSafeInteger(this.reapTimeoutMs) || this.reapTimeoutMs <= 0) {
       throw new TypeError('AcpJsonRpcProcess: reapTimeoutMs must be a positive safe integer');
     }

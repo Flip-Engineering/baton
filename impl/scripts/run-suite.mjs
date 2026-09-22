@@ -8,6 +8,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { lintDefaultTestDirectory } from './fixture-clock-lint.mjs';
+import { lintDefaultSourceDirectory } from './numeric-constant-lint.mjs';
 import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mjs';
 import {
   computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, isHang,
@@ -153,6 +154,18 @@ const clockFindings = lintDefaultTestDirectory();
 if (clockFindings.length > 0) {
   for (const finding of clockFindings) {
     process.stderr.write(`fixture-clock-lint: ${finding.file}:${finding.line}: ${finding.reason}\n`);
+  }
+  process.exit(1);
+}
+
+// Issue #418: an arbitrary bound must be visible the moment it is written — the standing
+// numeric-constant lint scans every impl/src module (the partition the audit lanes' closed
+// lists left uncovered) and refuses any bound-shaped constant outside the registry, the
+// operator env channel, a named pragma, or the lint's own named residue table.
+const numericFindings = lintDefaultSourceDirectory();
+if (numericFindings.length > 0) {
+  for (const finding of numericFindings) {
+    process.stderr.write(`numeric-constant-lint: ${finding.file}:${finding.line}: ${finding.constants} — ${finding.reason}\n`);
   }
   process.exit(1);
 }
