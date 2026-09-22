@@ -1618,7 +1618,11 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
         if (opts.model) trailerLines.push(`Baton-Model: ${opts.model}`);
         if (opts.effort) trailerLines.push(`Baton-Effort: ${opts.effort}`);
         const message = `baton snapshot: ${taskId}\n\n${trailerLines.join('\n')}\n`;
-        sh('git', ['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir);
+        // The capture commit states its committer like every git commit here (the landing law:
+        // localGitEnv blanks the global config, so the identities are stated or the commit does
+        // not happen) — the snapshot stays hermetic on a host with no git identity of its own.
+        gitFile(['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir, { stdio: 'pipe' },
+          { GIT_COMMITTER_NAME: authorName, GIT_COMMITTER_EMAIL: authorEmail });
         snapshotted = true;
       }
     } catch (error) {

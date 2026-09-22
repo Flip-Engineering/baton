@@ -248,7 +248,15 @@ function mockUsage(scenario, counterId) {
 function localGitEnv() {
   const env = {};
   for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
-  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  // localGitEnv blanks the global config, so the identities are stated here or the commit does
+  // not happen (the worktree.mjs landing law). The mock's edit commits carry their author on
+  // the --author flag; the committer is stated here so the fixture commits stay hermetic on a
+  // host that carries no git identity of its own.
+  return {
+    ...env,
+    GIT_COMMITTER_NAME: 'Baton Mock Worker', GIT_COMMITTER_EMAIL: 'baton-mock@localhost',
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+  };
 }
 
 function localGit(args, cwd, opts = {}) {
