@@ -1802,7 +1802,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves harvest run:1 --onto /srv/checkout',
     inputSchema: objectSchema({
-      onto: { type: 'string', minLength: 1, maxLength: 4096 },
+      onto: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['waves.harvest.onto'].value },
       resultSha: { type: 'string', pattern: '^[a-f0-9]{40}' + String.fromCharCode(36) },
       runId: id,
     }, []),

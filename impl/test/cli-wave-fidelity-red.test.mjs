@@ -339,8 +339,12 @@ function minimalWaveCliInvocation(key) {
   const required = [...(operation.inputSchema?.required ?? [])];
   // waves.run: specPath is the CLI's positional id even though the schema required set is
   // ['idempotencyKey'] only (issue #114 lane); it rides argv positionally per N6.
+  // waves.harvest (#99): the XOR source has an empty schema required set — the CLI's minimal
+  // invocation carries the runId source positionally (the 40-hex resultSha source is the other
+  // spelling; the facade owns the exactly-one law).
   const positional = required.find((field) => WAVE_CLI_POSITIONAL_ID_FIELDS.includes(field))
-    ?? (key === 'waves.run' ? 'specPath' : null);
+    ?? (key === 'waves.run' ? 'specPath' : null)
+    ?? (key === 'waves.harvest' ? 'runId' : null);
   // waves.stop: the schema required set omits reason (contract OQ1 — the schema row requires
   // ['runId'] only), but the CLI branch requires --reason to match the dispatcher
   // (application.mjs:11900/11967-11968).
