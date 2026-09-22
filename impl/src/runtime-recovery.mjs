@@ -1550,7 +1550,9 @@ export async function _recover(coordinator, recorder, workerId, opts = {}) {
     recoveryEffectStarted = true;
     const attempt = Promise.resolve().then(() => adapter.spawn(workerId, attachBrief, {
       worktree: context.worktree,
-      timeoutMs: task.brief?.budget?.wallMin ? task.brief.budget.wallMin * 60000 : undefined,
+      // #163 law (operator ruling): no wall-time clock feeds a member's fate. The ordinary spawn
+      // seam (runtime-effects.mjs) passes no timeoutMs for the same reason — the brief's advisory
+      // wall budget stays admitted but inert here too.
       model: handle.modelResolved ?? undefined,
       reasoningEffort: handle.effortResolved ?? undefined,
       workerPolicy: recoveryWorkerPolicyResolution ?? undefined,
@@ -1964,7 +1966,9 @@ export async function _reattachPreservedSession(coordinator, recorder, handle, t
     });
     const spawned = Promise.resolve().then(() => adapter.spawn(workerId, task.brief, {
       worktree: context.worktree,
-      timeoutMs: task.brief?.budget?.wallMin ? task.brief.budget.wallMin * 60_000 : undefined,
+      // #163 law (operator ruling): no wall-time clock feeds a member's fate. The ordinary spawn
+      // seam (runtime-effects.mjs) passes no timeoutMs for the same reason — the brief's advisory
+      // wall budget stays admitted but inert here too.
       model: handle.modelResolved ?? undefined,
       reasoningEffort: handle.effortResolved ?? undefined,
       workerPolicy: handle.workerPolicyResolution ?? undefined,
