@@ -55,7 +55,10 @@ function clientFor(connection) {
     // The wake attachment (client.wakes) rides the same owner-only socket the commands ride; the
     // fetch wrapper below carries it for commands, the client needs it by name for the stream.
     ...(connection.transport === 'local' ? { socketPath: connection.socketPath } : {}),
-    commandTimeoutMs: integer(process.env.BATON_COMMAND_TIMEOUT_MS, 30_000),
+    // #541 sweep: the command bound is OPERATOR-DECLARED or none. Unset, the CLI waits for the
+    // deployment's answer — a wall clock never cuts an agent's admitted command off; a pinned
+    // BATON_COMMAND_TIMEOUT_MS arms the bound and the cli_command_pending receipt with it.
+    commandTimeoutMs: integer(process.env.BATON_COMMAND_TIMEOUT_MS, null),
     pollMs: integer(process.env.BATON_COMMAND_POLL_MS, 250),
     fetchImpl: connection.transport === 'local'
       ? createLocalSocketFetch({ socketPath: connection.socketPath, baseUrl: connection.baseUrl })
