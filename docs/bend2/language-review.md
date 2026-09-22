@@ -20,6 +20,12 @@ and evidence pointer.
   def serves `List<U32>` and a list of closures. Evidence:
   `examples/lang-core-types.evidence.md` (the positive program prints `"49 42 2"`; the affine-reuse
   and closure-copy refusals print the expected/observed pair).
+- **LANG-F-26 — Affinity bounds use; it enforces no cleanup.** A dropped affine value is free
+  ("dropping one is always free", the guide's quantity section): `leak(l: L.Lease)` answers 42
+  with `release` never called, while reusing the same value twice is refused with "consumed more
+  than once". At-most-once is the whole obligation; a release path, issuance discipline or
+  resource identity are program properties the checker does not see. Evidence:
+  `examples/lang-cap-probes.evidence.md` (probe b).
 - **LANG-F-02 — Termination is checked by shrinking arguments.** A recursive call must pass a
   smaller part of an input obtained by pattern matching; mutual recursion is refused (two defs
   cannot see each other), and the guide names the replacements: a `Nat` fuel argument, or one def
@@ -37,6 +43,14 @@ and evidence pointer.
   by `match`, the recursive call as induction hypothesis, and `%e : P` rewrites are the whole
   toolkit. Evidence: `examples/lang-core-imports.evidence.md` (steps 1–3);
   `examples/lang-core-types.bend` uses `law` headers to document each claim it runs.
+- **LANG-F-27 — A stated law separates a required property from a result's shape.** A pure
+  `add_review(history, r)` answering `[r]` checks and runs — the list type pins the answer's
+  shape and relates it to nothing — while the concrete law
+  `{add_review([1, 2], 3) == [1, 2, 3] : List<U32>}` rejects that implementation (expected `[3]`,
+  observed `[1, 2, 3]`) and accepts the appending one. A law body sees only names defined above
+  it in the same file. The binding form for Baton2 quantifies over every history; the concrete
+  equality is the mechanism demonstration. Evidence: `examples/lang-cap-probes.evidence.md`
+  (probe c); programs `lang-cap-history.bend`, `lang-cap-history-law.bend`.
 
 ## 2. Effects and the IO model
 
@@ -70,8 +84,18 @@ and evidence pointer.
 - **LANG-F-09 — Handles are affine and opaque, and the handle types are closed.** Every effect on
   a handle hands it back beside its result, and a handle type must be one of Base's handle laws
   (`File`, `Socket`, `Listener`); a user-defined handle type is a `WONTFIX.txt` entry at this pin.
-  Evidence: `examples/lang-core-errors.evidence.md`; `reference/upstream/guide/EFFECTS.md`,
+  The guide's guarantee — no program can forge or reuse one — is a statement about these Base
+  handle types, whose constructors sit outside the language's surface. Evidence:
+  `examples/lang-core-errors.evidence.md`; `reference/upstream/guide/EFFECTS.md`,
   "The C side"; `reference/upstream/WONTFIX.txt`.
+- **LANG-F-28 — A user-declared affine record is ordinary data, and an unforgeable capability is
+  a named prerequisite.** A type's constructors export with its module: an importing module builds
+  `L.Lease{999}` directly and `release` answers it (probe a), and two defs can both return the
+  same `Custody` type (probe e). Naming a type `Lease` or `Capability` establishes no provenance,
+  no unique producer and no single reader. A Baton2 lease or capability therefore needs a named
+  language prerequisite — the `WONTFIX.txt` handle-law reservation is one Base keeps for itself —
+  or a proof-indexed encoding shown and tested at the pin. Evidence:
+  `examples/lang-cap-probes.evidence.md` (probes a, e).
 
 ## 3. What the runtime parallelizes and what the programmer writes
 
@@ -159,6 +183,11 @@ and evidence pointer.
   the handle either way. `IO.try` is the fail-fast form (exit code 2 with the errno message) and
   `IO.die` carries a caller-chosen code. Evidence: `examples/lang-core-errors.evidence.md`;
   `examples/lang-host-foreign.bend` (exit status surfaced as `Fail`).
+- **LANG-F-29 — A receipt-shaped result pins no write ordering or persistence.** A def whose
+  return type is the receipt's constructor can sleep, write nothing, and still answer
+  `Receipt{1}`; the acknowledged path does not exist afterwards. Durability before acknowledgment
+  is an effect-path property that needs its own law over the transition and failure-injection
+  evidence on the host effect. Evidence: `examples/lang-cap-probes.evidence.md` (probe d).
 - **LANG-F-22 — Checker refusals name the coordinates.** Every refusal in the evidence corpus
   prints expected/observed terms, the def, and the offending line (affine reuse, closure copy,
   computed scrutinee, mutual recursion, unprovable reflexivity, do-block destructuring, absent
@@ -199,14 +228,15 @@ LANG-F-16, LANG-F-17); none of the prerequisites calls for a JavaScript host.
 | LANG-CAP-02 | TCP client and server | **Supported by Base.** `TCP.listen/accept` (server) and `TCP.connect/send/recv` (client) plus `TCP.poll` and `Socket.close`; a loopback request/response pair ran on all three lanes. | `examples/lang-host-interop.evidence.md` (steps 2–3, 5) |
 | LANG-CAP-03 | UDP client and server | **Supported by Base.** `UDP.bind/send_to/recv_from/poll`; a loopback datagram ran on all three lanes. | `examples/lang-host-interop.evidence.md` (steps 2–3, 5) |
 | LANG-CAP-04 | Environment, argv, time, sleep, randomness | **Supported by Base.** `IO.get_env` answers `Result` per variable (set and unset both observed), `IO.args`, `IO.now`, `IO.sleep`, `IO.random_u32`. | `examples/lang-host-interop.evidence.md` (steps 2, 5) |
-| LANG-CAP-05 | Process spawn; streaming stdout and stderr; exit status; signals and kill | **Unsupported by Base; prerequisite: an authored C effect family.** The pin ships no process surface (LANG-F-15). A `popen`-style foreign effect captures whole stdout and reports the exit status (LANG-F-16) and proves the route needs no JavaScript (LANG-F-17); it blocks the one event loop for the command's life and carries no handle, stream, signal or kill. The runtime supplies the primitives the family needs — `io_work` (helper thread) and `io_wait_on`/`IO_READ` (descriptor parking) — so the work is the C family itself: spawn without stalling the loop, one parked read per output pipe, `waitpid` status, and signal/kill by identifier. A process handle is outside Base's handle laws at this pin (LANG-F-09, a `WONTFIX.txt` entry), so the family carries its identifiers as ordinary values or the handle-law set grows; both shapes stay inside the proven effect contract. | `examples/lang-host-foreign.evidence.md`; `examples/c-only-spawn.evidence.md`; `reference/upstream/guide/EFFECTS.md` |
+| LANG-CAP-05 | Process spawn; streaming stdout and stderr; exit status; signals and kill | **Unsupported by Base; prerequisite: an authored C effect family.** The pin ships no process surface (LANG-F-15). A `popen`-style foreign effect captures whole stdout and reports the exit status (LANG-F-16) and proves the route needs no JavaScript (LANG-F-17); it blocks the one event loop for the command's life and carries no handle, stream, signal or kill. The runtime supplies the primitives the family needs — `io_work` (helper thread) and `io_wait_on`/`IO_READ` (descriptor parking) — so the work is the C family itself: spawn without stalling the loop, one parked read per output pipe, `waitpid` status, and signal/kill by identifier. A process handle is outside Base's handle laws at this pin (LANG-F-09 and LANG-F-28: a `WONTFIX.txt` entry, and a user-declared affine record is forgeable data), so the family carries its identifiers as ordinary values or the handle-law set grows; both shapes stay inside the proven effect contract. A Baton2 capability over those identifiers is a named language prerequisite or a proof-indexed encoding (LANG-F-28). | `examples/lang-host-foreign.evidence.md`; `examples/c-only-spawn.evidence.md`; `examples/lang-cap-probes.evidence.md`; `reference/upstream/guide/EFFECTS.md` |
 | LANG-CAP-06 | JSON encode/parse | **Unsupported as a library surface; prerequisite: a module authored in Bend2.** `bend base Json` refuses, and the pinned upstream test header states the runtime dies on the missing surface while building its JSON reading on `List` and `String` from Base. Encoding and parsing over `List`/`String`/`Map` is work in the Bend2 source tree — a work item with laws — and a C JSON library is also reachable through the proven effect contract. This prerequisite gates bridge frames and provider protocol payloads. | `examples/lang-host-interop.evidence.md` (step 6); `examples/lang-host-tooling.evidence.md` (step 7) |
 | LANG-CAP-07 | Invoking git | **Prerequisite: LANG-CAP-05, then LANG-CAP-06.** git runs as a subprocess; nothing in the pin adds a gap beyond the process family, and porcelain output that needs structured parsing rides the JSON module. Exit status handling is demonstrated by the foreign spawn effect. | `examples/lang-host-foreign.evidence.md` |
 | LANG-CAP-08 | Transport between Baton processes | **Supported by Base for the bytes; framing is a work item.** A Base TCP listener and client supply loopback transport between processes (LANG-CAP-02); the `baton.bridge.v1` message framing rides the JSON module (LANG-CAP-06) on top of it. UDP is available for lossy channels. | `examples/lang-host-interop.evidence.md` |
 
 Stated plainly, the pin cannot: spawn, stream, wait on, signal or kill an operating-system
 process from any Base effect; parse or emit JSON from any Base module; define a new handle type;
-check a program without the Hub on a cold cache unless every import is vendored; or debug,
+make a user-declared record unforgeable or force a release path (LANG-F-26, LANG-F-28); check a
+program without the Hub on a cold cache unless every import is vendored; or debug,
 profile, REPL or incrementally build anything (LANG-F-25). The native build of Base's C halves
 plus authored C effects is the JavaScript-free artifact; the interpreter and `-o x.js` lanes need
 bun (LANG-F-18) and are development tools.
@@ -225,3 +255,7 @@ bun (LANG-F-18) and are development tools.
 - Baton's scheduler-shaped needs map onto proven primitives: parallel calls for pure policy work
   (LANG-F-10, LANG-F-11), `IO.fork`/`IO.join` for concurrent computations (LANG-F-07), and
   one-parked-read-per-descriptor C effects for streaming child output (LANG-CAP-05).
+- The laws document cites LANG-F-26..29 for what the type system gives and withholds: at-most-once
+  use with free drops, shape-preserving folds that keep nothing, forgeable user records, and
+  receipt variants that pin no durability. A capability, custody or receipt law that rests on more
+  than this names its language prerequisite or its proof-indexed encoding.
