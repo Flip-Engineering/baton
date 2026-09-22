@@ -1,5 +1,4 @@
 import {
-  CORE_TOOL_NAMES,
   coreMetaAlias,
   coreMovedTo,
   coreToolDefinitions,
@@ -774,7 +773,11 @@ export function wrapProductionMcpServer(server, {
   // core verb-tools instead of the flat table; `advanced`/`combined` keep the landed merge.
   const coreSurface = server.surface === 'application';
   const coreTools = coreSurface ? coreSurfaceTools(server) : null;
-  const coreNames = new Set(coreTools === null ? [] : CORE_TOOL_NAMES);
+  // The core surface's dispatch guard is exactly what it advertises: the core verb-tools. A flat
+  // spelling reaching this surface must fall through to the movedTo refusal (issue314-g), and
+  // CORE_TOOL_NAMES records the flat ordinary table now (the committed inventory artifact's
+  // application count), so the guard reads the tools it lists rather than that table's names.
+  const coreNames = new Set(coreTools === null ? [] : coreTools.map((tool) => tool.name));
   const listedTools = async () => (coreSurface ? coreTools : [
     ...(server.toolDefinitions ?? []),
     ...COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS,
