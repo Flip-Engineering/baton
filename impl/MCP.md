@@ -315,6 +315,7 @@ that owns the runs, never over a borrowed bridge session.
 
 | Operation | Profile | MCP tool | Annotation |
 |---|---|---|---|
+| `attention.wait` | `ordinary` | `baton_attention_wait` | idempotent |
 | `run.answer` | `ordinary` | `baton_decision_answer` | effectful |
 | `deployment.doctor` | `ordinary` | `baton_deployment_doctor` | idempotent |
 | `evidence.search` | `ordinary` | `baton_evidence_search` | idempotent |

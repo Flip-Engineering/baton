@@ -4278,8 +4278,42 @@ export function parseBatonCli(rawArgs) {
     throw cliError(`unexpected argument ${sub}`);
   }
   if (action === 'attention') {
-    if (args.shift() !== 'watch') throw cliError('expected attention watch');
+    const sub = args.shift();
+    if (sub !== 'watch' && sub !== 'wait') throw cliError('expected attention watch');
     const runIdValue = id(args.shift(), 'Run ID');
+    if (sub === 'wait') {
+      // Issue #71 (D4.3): `baton run attention wait RUN [--timeout MS] [--store-cursor N]
+      // [--reasons-cursor N] [--kind KIND]` — blocks on the wake and renders the decision-first
+      // payload; the honest empty exits 0, never a fabricated reason.
+      const rawTimeout = take(args, '--timeout');
+      const rawStoreCursor = take(args, '--store-cursor');
+      const rawReasonsCursor = take(args, '--reasons-cursor');
+      const kind = take(args, '--kind');
+      noRemainder(args);
+      if (kind !== null) id(kind, 'attention kind');
+      if (rawTimeout !== null && (!Number.isSafeInteger(Number(rawTimeout)) || Number(rawTimeout) <= 0)) {
+        throw cliError('--timeout must be a positive integer');
+      }
+      const positiveCursor = (raw, flag) => {
+        if (raw !== null && (!Number.isSafeInteger(Number(raw)) || Number(raw) < 0)) {
+          throw cliError(`${flag} must be a non-negative integer`);
+        }
+        return raw === null ? null : Number(raw);
+      };
+      const storeCursor = positiveCursor(rawStoreCursor, '--store-cursor');
+      const reasonsCursor = positiveCursor(rawReasonsCursor, '--reasons-cursor');
+      return {
+        kind: 'command', name: 'attention.wait',
+        args: {
+          runId: runIdValue,
+          ...(rawTimeout === null ? {} : { timeoutMs: Number(rawTimeout) }),
+          ...(storeCursor === null ? {} : { storeCursor }),
+          ...(reasonsCursor === null ? {} : { reasonsCursor }),
+          ...(kind === null ? {} : { kind }),
+        },
+        idempotencyKey,
+      };
+    }
     const kind = take(args, '--kind');
     const rawCursor = take(args, '--cursor');
     noRemainder(args);
@@ -5036,7 +5070,6 @@ export class BatonWebClient {
     const bus = cliBusCommand(name);
     if (!cliDispatches(bus)) throw cliError(`unsupported Run command ${name}`, 'cli_command_unavailable');
     id(idempotencyKey, 'idempotency key');
-    const command = bus.replaceAll('.', '_');
     const runId = bus === 'run.start' ? args.intent.runId ?? null : args.runId;
     // List continuation (2026-09-14 audit, U-E10/U-I9): the server pages by its own byte ceiling
     // and names the cursor in the response's `continuation`; the client drains pages until the
@@ -5048,6 +5081,13 @@ export class BatonWebClient {
     // sends no frame and receives whole answers).
     const declaredFrame = this.frameFor === null ? null : this.frameFor(bus);
     const LIST_CONTINUATION = new Set(['runs.list', 'waves.list']);
+    const command = bus.replaceAll('.', '_');
+    // Issue #71: the wake's CLI grammar carries the flat cursors the contract pins; the wire
+    // envelope carries the B1 split-cursor block the lane serves.
+    if (bus === 'attention.wait') {
+      const { storeCursor = 0, reasonsCursor = 0, ...wakeRest } = args ?? {};
+      args = { ...wakeRest, afterCursor: { storeCursor, reasonsCursor } };
+    }
     if (LIST_CONTINUATION.has(bus)) {
       let pageArgs = { ...args };
       let drained = [];

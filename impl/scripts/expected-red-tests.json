@@ -509,35 +509,7 @@
       "reason": "#71"
     },
     {
-      "key": "test/orchestrator-wake-red.test.mjs :: CLI-GRAMMAR (§H D4): baton run attention wait parses the wake verb with both cursors",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: MCP-ALLOWLIST (§K H8): the stateFailureCode allowlist carries attention_wait_invalid",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: MCP-CEILING (§H D4/F3): the wake tool joins the TIGHT ceiling guard beside invalid_run_wait",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: MCP-SCHEMA-CAPABILITY (§H D4): the wake tool carries the split-cursor schema and the observe capability",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: MCP-TOOL (§H D4): the ordinary MCP tool row advertises baton_attention_wait",
-      "reason": "#71"
-    },
-    {
       "key": "test/orchestrator-wake-red.test.mjs :: WAIT-DISPATCH (§A): attention.wait dispatches; malformed closures refuse attention_wait_invalid before state",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WEB-CEILING (§H D4): a web wake past the 30s ceiling refuses by the pinned code",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WEB-ENVELOPE (§H D4): the web command envelope admits attention_wait",
       "reason": "#71"
     },
     {
