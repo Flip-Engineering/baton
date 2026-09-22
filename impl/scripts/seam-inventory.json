@@ -1523,7 +1523,7 @@
         {
           "name": "_validateSessionContext",
           "ordinal": 0,
-          "size": 19,
+          "size": 15,
           "seam": "effect",
           "evidence": [
             "effect:worktree_authority",
@@ -13449,7 +13449,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1108,
+          "size": 1102,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13684,7 +13684,7 @@
         {
           "name": "_notificationReceipt",
           "ordinal": 0,
-          "size": 22,
+          "size": 18,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -14068,7 +14068,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 232,
+          "size": 227,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -16787,7 +16787,7 @@
         {
           "name": "_runStopTargets",
           "ordinal": 0,
-          "size": 40,
+          "size": 43,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -19022,18 +19022,9 @@
           ]
         },
         {
-          "name": "recordedRunStopScope",
-          "ordinal": 0,
-          "size": 4,
-          "seam": "observation",
-          "evidence": [
-            "observation:record_name"
-          ]
-        },
-        {
           "name": "_validateRunStopAdmission",
           "ordinal": 0,
-          "size": 110,
+          "size": 111,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -19562,7 +19553,7 @@
         {
           "name": "_normalizeContextPackage",
           "ordinal": 0,
-          "size": 51,
+          "size": 56,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
