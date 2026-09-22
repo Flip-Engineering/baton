@@ -101,9 +101,13 @@ class PausableWaveAdapter extends MockAdapter {
   _scenarioForTurn(script, index) {
     const turn = script[index] ?? script.at(-1) ?? { edits: [] };
     return {
-      outcome: 'completed',
+      outcome: turn.outcome ?? 'completed',
       summary: `pausable turn ${index}`,
       edits: (turn.edits ?? []).map((edit) => ({ ...edit })),
+      // #106 rows: a scripted scratchpad note (the onNotes lane) and a scripted blocking ask
+      // (the onDecision lane) ride the turn through to the mock's scenario machinery.
+      ...(turn.note ? { note: turn.note } : {}),
+      ...(turn.ask ? { ask: turn.ask } : {}),
     };
   }
 
@@ -140,11 +144,47 @@ class PausableWaveAdapter extends MockAdapter {
   }
 }
 
+// #106 rows: the pausable adapter with a calls ledger (the workflow-as-data-red
+// TrackingMarkerAdapter idiom) so a declarative lane's wire delivery is provable, and a
+// note-writing variant that emits one coordinator-routed scratchpad.write after its first
+// applied edit (the wad NoteWritingAdapter idiom).
+class LedgerPausableAdapter extends PausableWaveAdapter {
+  constructor(config = {}) {
+    super(config);
+    this.calls = { spawn: [], prompt: [] };
+  }
+
+  async spawn(worker, brief, options = {}) {
+    this.calls.spawn.push({ worker, brief });
+    return super.spawn(worker, brief, options);
+  }
+
+  async prompt(worker, message, mode) {
+    this.calls.prompt.push({ worker, message, mode });
+    return super.prompt(worker, message, mode);
+  }
+}
+
+class NotePausableAdapter extends LedgerPausableAdapter {
+  async _applyEdit(session, editArg) {
+    const result = await super._applyEdit(session, editArg);
+    if (session.scenario?.note && !this._noteWritten?.has(session.worker)) {
+      this._noteWritten = this._noteWritten ?? new Set();
+      this._noteWritten.add(session.worker);
+      this._emit(session, 'scratchpad.write', {
+        entry: { kind: 'note', text: session.scenario.note },
+        idempotencyKey: `wdp-note-${session.worker}`,
+      });
+    }
+    return result;
+  }
+}
+
 function harness(t, scriptsByMarker, options = {}) {
   const repo = root('repo');
   const logDir = root('log');
   mkdirSync(join(repo, 'reports'), { recursive: true });
-  const adapter = new PausableWaveAdapter({ harness: 'mock', scriptsByMarker });
+  const adapter = new (options.adapterClass ?? PausableWaveAdapter)({ harness: 'mock', scriptsByMarker });
   const driver = createDriver({
     repoRoot: repo,
     repoId,
@@ -543,4 +583,99 @@ test("D11: expectedFence 'current' resolves to the live worker fence for a Run-b
   const unknown = driver.coordinator.writeScratchpad(workerId, entry, { expectedFence: 'sometimes', idempotencyKey: 'd11:unknown' });
   assert.deepEqual(unknown, { ok: false, result: 'scratchpad_write_invalid' });
 
+});
+
+// ---------------------------------------------------------------------------
+// #106 — the declarative lane field set: the wavefile steering vocabulary available to the
+// shipped driver policy. One receipted row per lane; every row is red-first (the fields are
+// unknown policy fields until the lane set lands) and receipts on receipt.declarative[].
+// ---------------------------------------------------------------------------
+
+test('D12 (#106): the declarative onSpawn lane messages each member once on first live — receipted with a DELIVERED messageId, bounded to 3 attempts', async (t) => {
+  const scriptsByMarker = { default: [{ edits: [{ ...edit('worker', 1), delayMs: 150 }] }] };
+  const { baton, repo, adapter } = harness(t, scriptsByMarker, { adapterClass: LedgerPausableAdapter });
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    onSpawn: { kind: 'query', body: 'begin from the shared brief' },
+  }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
+  assert.equal(receipt.basis, 'completed');
+  const rows = (receipt.declarative ?? []).filter((row) => row.lane === 'onSpawn');
+  assert.ok(rows.some((row) => row.role === 'worker' && row.delivered > 0 && typeof row.messageId === 'string'),
+    `#106: the onSpawn lane receipts a DELIVERED message for the member — got ${JSON.stringify(rows)}`);
+  assert.ok(rows.every((row) => row.evidence !== 'steering_message_undelivered'), 'no undelivered evidence in this row');
+  // F3 wire proof: the message reached the worker as a coordinator [MESSAGE delivery frame.
+  const markerOf = new Map(adapter.calls.spawn.map((call) => [call.worker, /marker:([a-z-]+)\)/.exec(call.brief?.goal ?? '')?.[1] ?? null]));
+  const frames = adapter.calls.prompt.filter((call) => typeof call.message === 'string' && call.message.includes('begin from the shared brief'));
+  assert.ok(frames.length >= 1 && frames.every((call) => markerOf.get(call.worker) === 'worker' && call.message.includes('[MESSAGE ')),
+    '#106: the onSpawn message rode a [MESSAGE frame to the member');
+});
+
+test('D13 (#106): the declarative onNotes lane elevates the member\'s matching scratchpad entries once — receipted with entryIds', async (t) => {
+  // The noted member settles by claim; the slow sibling keeps the loop alive across the claim,
+  // so the elevation retry that succeeds once the noted member's task settles still lands inside
+  // the drive (the settlement refusal holds until the task settles).
+  const scriptsByMarker = {
+    noted: [{ edits: [{ ...edit('noted', 1), delayMs: 150 }], note: 'elevate this note' }],
+    slow: [{ edits: [{ ...edit('slow', 1), delayMs: 500 }] }],
+  };
+  const { baton, repo } = harness(t, scriptsByMarker, { adapterClass: NotePausableAdapter });
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, stallTimeoutMs: 10_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    onNotes: { kinds: ['note'], maxEntries: 3 },
+  }).run({ repoRoot: repo, members: [member('noted', 'write the noted report and note it'), member('slow', 'write the slow report slowly')] });
+  assert.equal(receipt.basis, 'completed');
+  const rows = (receipt.declarative ?? []).filter((row) => row.lane === 'onNotes');
+  assert.ok(rows.some((row) => row.role === 'noted' && Array.isArray(row.entryIds) && row.entryIds.length >= 1),
+    `#106: the onNotes lane receipts the elevated entryIds — got ${JSON.stringify(rows)}`);
+  const elevated = rows.filter((row) => row.entryIds);
+  assert.equal(elevated.length, 1, 'elevation is exactly once per member per wave (the (runId, role) dedup)');
+});
+test('D14 (#106): the declarative onDecision lane answers a pending decision from the closed policy map — first-match-wins, receipted, invalid options refused', async (t) => {
+  const scriptsByMarker = {
+    default: [{
+      edits: [edit('worker', 1)],
+      ask: {
+        kind: 'decision', question: 'Which path?',
+        options: [{ id: 'opt-a', label: 'A', summary: null }, { id: 'opt-b', label: 'B', summary: null }],
+        allowFreeResponse: false, recommended: null, deadlineMs: 120000, afterEditIndex: 1,
+        onAnswerEdits: [{ path: 'reports/worker-after.md', content: 'after answer\n' }],
+      },
+    }],
+  };
+  const { baton, repo } = harness(t, scriptsByMarker);
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, stallTimeoutMs: 10_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    onDecision: { policy: { 'Which path?': 'opt-b' } },
+  }).run({ repoRoot: repo, members: [member('worker', 'write the worker report, then decide')] });
+  assert.equal(receipt.basis, 'completed');
+  const rows = (receipt.declarative ?? []).filter((row) => row.lane === 'onDecision');
+  assert.ok(rows.some((row) => row.outcome === 'answered' && row.optionId === 'opt-b'),
+    `#106: the declarative onDecision lane answers opt-b and receipts it — got ${JSON.stringify(rows)}`);
+  assert.ok(rows.every((row) => ['answered', 'deferred', 'refused', 'denied'].includes(row.outcome)),
+    'every decision lane row carries a closed outcome');
+});
+
+test('D15 (#106): the declarative onMemberRest lane fires when the watched roles rest and signals the COMPLEMENT — roles is the watched set (#175), receipted with doneRoles and recipients', async (t) => {
+  const scriptsByMarker = {
+    // The watched lead reaches REAL terminality mid-drive (a failed outcome finalizes — the
+    // pausable card would park it forever, and the stall-claim break would leave the rest lane
+    // no poll to fire on); the worker stays live to receive the complement signal.
+    lead: [{ outcome: 'failed' }],
+    worker: [{ edits: [{ ...edit('worker', 1), delayMs: 200 }] }],
+  };
+  const { baton, repo, adapter } = harness(t, scriptsByMarker, { adapterClass: LedgerPausableAdapter });
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, stallTimeoutMs: 10_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    onMemberRest: { roles: ['lead'], message: { kind: 'query', body: 'the lead is done — complement only' } },
+  }).run({ repoRoot: repo, members: [member('lead', 'write the lead report'), member('worker', 'write the worker report slowly')] });
+  assert.equal(receipt.basis, 'completed');
+  const rows = (receipt.declarative ?? []).filter((row) => row.lane === 'onMemberRest');
+  assert.ok(rows.some((row) => JSON.stringify([...(row.doneRoles ?? [])].sort()) === JSON.stringify(['lead'])
+    && JSON.stringify([...(row.recipients ?? [])].sort()) === JSON.stringify(['worker'])),
+    `#106: the onMemberRest receipt names the watched role done and the COMPLEMENT recipient — got ${JSON.stringify(rows)}`);
+  // F3 wire proof: the rest signal reached the complement member and never the watched role.
+  const markerOf = new Map(adapter.calls.spawn.map((call) => [call.worker, /marker:([a-z-]+)\)/.exec(call.brief?.goal ?? '')?.[1] ?? null]));
+  const frames = adapter.calls.prompt.filter((call) => typeof call.message === 'string' && call.message.includes('the lead is done'));
+  assert.deepEqual([...new Set(frames.map((call) => markerOf.get(call.worker) ?? null))].sort(), ['worker'],
+    '#106/#175: the rest signal rode [MESSAGE frames to the complement member and never to the watched role');
 });
