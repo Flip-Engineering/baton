@@ -1,24 +1,20 @@
-# Baton's laws proposed for the operator's approval — revision 8 (r6-review narrowing, destination prohibition adopted)
+# Baton's laws proposed for the operator's approval — revision 9 (Codex-cleared candidate set, presented for the operator's decision)
 
-Provenance: work-bend2-laws, pillar 3 of issue #539. Revision 8 applies Codex's review of
-revision 6 (`codex-minimal-review-r6.md`): the remaining semantic gaps are closed — M-4 scoped
-to both custody and preservation obligations, M-5's validation-mechanics clause split out, M-8's
-exact-instance binding written down with the observer clause routed to M-3c, M-14's body made
-to require the safe explanation, M-17's continuation owner and authorized suspension defined —
-and the operator's #556 finding is formalized as a new independent prohibition (M-18, no
-substitution of a publication destination) with Codex's checked probe as the proof-shape model.
-Revision 7's audit fixes (tally normalization, evidence citations, reference closure) are
-retained. Status labels are corrected: M-5 and M-10 are partly enforced, with the surviving
-WAKE-5 legacy violation explicit at the extraction base. It supersedes revisions 1 to 7
-(revision 7 landed as `6638a471`). Still a minimal contract of inviolables for agentic
-development — not a correctness specification — and still no `laws.bend` entries and no rewrite
-implementation.
+Provenance: work-bend2-laws, pillar 3 of issue #539. Revision 9 applies Codex's clearance of
+revision 8 (`codex-minimal-review-r8.md`, 2026-09-22): the substantive r6 counterexamples are
+addressed, M-17 and M-18 pass as independent prohibitions, and the one admission-level
+consolidation — absorbing M-9 into M-8 — is applied here together with the three presentation
+corrections. The result is 16 independent entries, presented to the operator for per-entry
+decision; the count is a consequence of the overlap review, not a target. M-17 and M-18 are
+incorporated into the candidate set as proposed — they are not adopted until the operator
+approves them. Revision 8 landed as `fabfef59` (integrated at `60901316`). Still no `laws.bend`
+entries and no rewrite implementation.
 
 What changed, per the r6 review:
 
-- **M-18 adopted.** No substitution of a publication destination — the #556 incident
-  formalized. Codex independently verified the proof shape against the pinned 2.0.25 compiler
-  (a destination-matching law passes; the mismatching dispatch is rejected).
+- **M-18 incorporated (proposed).** No substitution of a publication destination — the #556
+  incident formalized. Codex independently verified the proof shape against the pinned 2.0.25
+  compiler (a destination-matching law passes; the mismatching dispatch is rejected).
 - **M-4 scoped to both obligations.** Disposal is banned when it violates current custody or
   preservation — the settled-but-unpreserved counterexample no longer escapes.
 - **M-5 narrowed to logical preservation; the validation-mechanics clause moved.** Using
@@ -52,7 +48,7 @@ post-admission proof-mechanics step, held until the set is validated.)
 
 ---
 
-## The proposed set (17 prohibitions)
+## The proposed set (16 independent entries; M-9 is absorbed into M-8)
 
 **M-1 · No acceptance claim without recoverable matching intent.** [partly enforced]
 Forbidden: acknowledging that managed work has been accepted or recorded unless a recoverable
@@ -77,7 +73,8 @@ Evidence: proposed (CX-2); partial enforcement in the ledger's prospective-fold 
 machinery.
 
 **M-3a · Publication carries its authority and evidence conditions for the actual artifact and
-target.** [extracted; the evidence-staleness clause is proposed]
+target.** [partly enforced; two clauses are proposed — the evidence-staleness prohibition and
+the artifact-scoped dirty-tree requirement]
 Forbidden: publishing an artifact or moving a target when the applicable review, verification or
 repository-authority conditions for that actual artifact version and target state are not
 satisfied — including a claimed revision that does not resolve in the named repository, a report
@@ -147,21 +144,16 @@ earlier instance cannot authorize an effect on its replacement (generation count
 implementation, not a required design); including granting beyond an explicitly held granting
 authority (a provisioning role may grant without personally executing), fail-open scope
 handling, and exclusive-claim coordination that fails to preserve the approved ownership
-semantics.
+semantics. Permitted coordination includes waiting for the holder, serializable transactions,
+and compatible subdivisions of the resource (absorbing M-9, whose identifier is retained for
+traceability).
 Binding reason: one unguarded path undoes the permission model; delegation stays open under
 stated granting authority.
 Evidence: PM-08, AB-10, AB-11, CAP-12, PR-01 (fail-open), AB-06 (valid-authority transfer),
-CL-15, AB-12 (enlargement half), CAP-7, CAP-14, AB-05 (the exact-instance clause). Partly
-enforced: several points tested, the granting-authority separation is proposed.
+CL-15, AB-12 (enlargement half), CAP-7, CAP-14, AB-05 (the exact-instance clause), AB-04 (the
+exclusive-claim guarantee). Partly enforced: several points tested, the granting-authority
+separation is proposed.
 
-**M-9 · No conflicting unauthorized mutation of an exclusively claimed resource.** [extracted]
-Forbidden: mutating an exclusively claimed resource in conflict with its claim, without the
-claim's coordination rule — which may be waiting for the holder, a serializable transaction, or
-a compatible subdivision of the resource.
-Binding reason: silent overlap destroys work; the response is design freedom, the exclusivity is
-not. This entry is a specified part of valid authority (M-8); a counterexample requiring a
-distinct invariant would reopen it as its own law.
-Evidence: AB-04.
 
 **M-10 · No cutoff of valid requested work or owed data without a physically-derived, stated
 bound.** [partly enforced — the WAKE-5 drop persisted at the extraction base and is retired per
@@ -252,39 +244,42 @@ Evidence: proposed — the #556 incident and the operator direction relayed 2026
 - **M-6 (exact-instance dispositions) — absorbed** into M-8 as the exact resource, generation
   and time-of-effect binding clause of the authority boundary (Codex: it may be a necessary
   clause rather than a separate law); the clause is written into M-8's forbidden text above.
+- **M-9 (exclusive claims) — absorbed** into M-8, which already forbids exclusive-claim
+  coordination that fails to preserve the approved ownership semantics; AB-04 is its evidence
+  row, and its identifier is retained for traceability.
 
 ---
 
 ## Disposition and reduction record (repairs)
 
 The row-by-row verdict table of revision 5 stands, with these repairs: CAP-3's verdict now reads
-"reduced → M-10 and the adopted abandonment entry"; CS-02's verdict reads "reduced →
-boundary-decoder obligations; the associated flagged entry was withdrawn" (removing the embedded
-"rejected" so the mechanical count and the tally agree); PM-10's and LEDG-17's routes now name
-M-7/M-8 and the interface clause respectively. Verdict precedence for mechanical counting: a row
-is `reduced` if its verdict contains "reduced", else `rejected` if it contains "rejected", else
-`kept`. Mechanical count of the carried record: kept 47, reduced 29, rejected 57, retired 1,
-evidence block 1 — 135 rows, each accounted for; the demoted material lives in
-`docs/bend2/laws-design-notes.md`, the historical extraction at `23d3b857`. Reference closure
-for withdrawn or renumbered marks, in both documents: M-6 → the exact-instance clause of the
-authority boundary (M-8); M-3 → M-3a, M-3b, M-3c; M-15 → deferred (design notes, DEV-6); M-16 →
-excluded (AGENTS.md, DEV-7); revision 5's flagged interface entry → the interface clause of the
-authority boundary; the revision-4-era "M-18" pointer is superseded — M-18 now names the
-destination prohibition above.
+"reduced → M-10 and the adopted abandonment entry" (M-17 in this revision's numbering); CS-02's
+verdict reads "reduced → boundary-decoder obligations; the associated flagged entry was
+withdrawn" (removing the embedded "rejected" so the mechanical count and the tally agree);
+PM-10's and LEDG-17's routes now name M-7/M-8 and the interface clause respectively. Verdict
+precedence for mechanical counting: a row is `reduced` if its verdict contains "reduced", else
+`rejected` if it contains "rejected", else `kept`. Mechanical count of the carried record: kept
+47, reduced 29, rejected 57, retired 1, evidence block 1 — 135 rows, each accounted for; the
+demoted material lives in `docs/bend2/laws-design-notes.md`, the historical extraction at
+`23d3b857`. Reference closure for withdrawn or renumbered marks, in both documents: M-6 → the
+exact-instance clause of the authority boundary (M-8); M-9 → absorbed into M-8 (AB-04 is its
+evidence row); M-3 → M-3a, M-3b, M-3c; M-15 → deferred (design notes, DEV-6); M-16 → excluded
+(AGENTS.md, DEV-7); revision 5's flagged interface entry → the interface clause of the authority
+boundary.
 
 ---
 
-## Held for Codex
+## Presented for the operator's decision
 
-Per the standing instruction, this revision is held for Codex before the operator. The questions:
+Codex's r8 review cleared this set: the substantive r6 counterexamples are addressed, M-17 and
+M-18 pass as independent prohibitions, M-9 is absorbed into M-8 as required, and no further
+broad review round is needed unless the behavioral meaning changes. The set above now goes to
+the operator for a per-entry decision.
 
-1. Do the narrowed entries (M-1, M-3a/b/c, M-7, M-8, M-9, M-12, M-14) now state single
-   restrictions that bind every otherwise-valid implementation?
-2. Is the adopted M-17 the right narrow form of the continuation prohibition, and does its
-   counterexample indeed escape M-10 and M-12?
-3. Is the new M-18 the right independent form of the destination prohibition, and is its proof
-   shape (destination-matching law, Codex's probe) the one the operator's #556 finding needs?
-4. Are the status labels (extracted / partly enforced / proposed) honest per the cited evidence?
-5. Only after validation: the seven proof-mechanics requirements attach per entry, with compiled
-   examples under `docs/bend2/examples/laws-*`. `laws.bend` stays empty; the lane holds under the
-   pause between reviews.
+What the operator decides on: each of the 16 entries, plus the deferred M-15 (design notes),
+the excluded M-16 (AGENTS.md), and the absorbed M-6/M-9 (retained as clauses of M-4 and M-8).
+On approval, the seven proof-mechanics requirements attach per selected entry — the exact
+proposition, the checked proof against the actual Baton2 transition, a passing and a violating
+implementation, and the external assumptions — with compiled examples under
+`docs/bend2/examples/laws-*`. `laws.bend` stays empty until approvals arrive; the lane holds
+under the pause between reviews.
