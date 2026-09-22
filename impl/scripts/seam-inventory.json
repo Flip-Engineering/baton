@@ -21060,7 +21060,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 209,
+          "size": 213,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
@@ -21123,12 +21123,59 @@
           ]
         },
         {
+          "name": "writerHolderFacts",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "writerBusyRefusal",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordWriterLeaseRecovery",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "claimWriterLease",
           "ordinal": 0,
-          "size": 51,
+          "size": 81,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
+            "effect:filesystem_mutation"
+          ]
+        },
+        {
+          "name": "_settleDeferredWriterLease",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_stampWriterLeaseAcquisitionSeq",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "effect",
+          "evidence": [
             "effect:filesystem_mutation"
           ]
         },
@@ -22500,7 +22547,7 @@
         {
           "name": "contextRead",
           "ordinal": 0,
-          "size": 66,
+          "size": 69,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
@@ -22613,7 +22660,7 @@
         {
           "name": "recordWorkerGeneration",
           "ordinal": 0,
-          "size": 14,
+          "size": 22,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
