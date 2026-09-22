@@ -123,8 +123,8 @@ function isRefusingSpelling(error) {
     || (error?.code === 'cli_invalid' && /expected [a-z ,]+ or [a-z]+/u.test(error?.message ?? ''));
 }
 
-// Source-region pin helper. All pinned sources are NUL-clean (import/read-safe); the NUL-bearing
-// application.mjs / coordination-store.mjs are never whole-file read here.
+// Source-region pin helper. All pinned sources are NUL-clean (import/read-safe), including
+// application.mjs / coordination-store.mjs since #215; they are never whole-file read here.
 function sourceRegion(text, startMarker, endMarker) {
   const start = text.indexOf(startMarker);
   assert.ok(start >= 0, `source region start marker missing: ${startMarker}`);

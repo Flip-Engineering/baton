@@ -1145,10 +1145,6 @@
       "reason": "design"
     },
     {
-      "key": "test/phase87-semantic-action-authority.test.mjs :: SA4: Web client and MCP bridge preflight use the exact remote semantic mutation scope",
-      "reason": "#227"
-    },
-    {
       "key": "test/phase92-route-discovery-red.test.mjs :: P92-RD1: CLI-observed Claude login is ready without a credentials file and Kimi-through-Claude is explicitly unconfigured",
       "reason": "#293"
     },
@@ -1631,10 +1627,6 @@
     {
       "key": "test/suite-resource-governance-red.test.mjs :: H2 (§3): every closed literal is its own .sort() result — ACTUAL order, localeCompare banned",
       "reason": "#77"
-    },
-    {
-      "key": "test/surface-audit-smoke.test.mjs :: SA2: known anchors from each dialect are present",
-      "reason": "#43"
     },
     {
       "key": "test/swarm-gap-red.test.mjs :: S-G11 RED (stage: contribution-unbound): a plain-text contribution binds what it names",

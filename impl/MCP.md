@@ -315,14 +315,62 @@ that owns the runs, never over a borrowed bridge session.
 
 | Operation | Profile | MCP tool | Annotation |
 |---|---|---|---|
-| `baton_deployment {verb: doctor}` | `ordinary` | `baton_deployment` | idempotent |
-| `baton_run {verb: start|view|list|send|stop|answer|do}` | `ordinary` | `baton_run` | destructive |
-| `baton_swarm {verb: create|list|view|update|recruit|guide|capture|check}` | `ordinary` | `baton_swarm` | effectful |
-| `baton_waves {verb: start|list|progress|send|stop}` | `ordinary` | `baton_waves` | destructive |
-| `baton_knowledge {verb: search|seed}` | `ordinary` | `baton_knowledge` | effectful |
-| `baton_wakes {verb: subscribe|since|unsubscribe}` | `ordinary` | `baton_wakes` | effectful |
-| `baton_services {verb: list}` | `ordinary` | `baton_services` | idempotent |
-| `baton_surface {verb: catalog|describe|invoke|snapshot|watch|visualize}` | `ordinary` | `baton_surface` | destructive |
+| `run.answer` | `ordinary` | `baton_decision_answer` | effectful |
+| `deployment.doctor` | `ordinary` | `baton_deployment_doctor` | idempotent |
+| `evidence.search` | `ordinary` | `baton_evidence_search` | idempotent |
+| `application.help` | `ordinary` | `baton_help` | idempotent |
+| `run.do` | `ordinary` | `baton_run_act` | destructive |
+| `run.adopt` | `ordinary` | `baton_run_adopt` | effectful |
+| `run.answer` | `ordinary` | `baton_run_answer` | effectful |
+| `run.approve` | `ordinary` | `baton_run_approve` | effectful |
+| `run.view` | `ordinary` | `baton_run_episode` | idempotent |
+| `run.evidence` | `ordinary` | `baton_run_evidence` | idempotent |
+| `run.export` | `ordinary` | `baton_run_export` | effectful |
+| `run.feedback` | `ordinary` | `baton_run_feedback` | effectful |
+| `run.follow` | `ordinary` | `baton_run_follow` | idempotent |
+| `run.view` | `ordinary` | `baton_run_inspect` | idempotent |
+| `run.integrate` | `ordinary` | `baton_run_integrate` | destructive |
+| `run.message.receipt` | `ordinary` | `baton_run_message_receipt` | idempotent |
+| `run.message.send` | `ordinary` | `baton_run_message_send` | effectful |
+| `run.recover` | `ordinary` | `baton_run_recover` | effectful |
+| `run.resultpin` | `ordinary` | `baton_run_resultpin` | idempotent |
+| `run.resume_work` | `ordinary` | `baton_run_resume_work` | effectful |
+| `run.retry_verification` | `ordinary` | `baton_run_retry_verification` | effectful |
+| `run.review` | `ordinary` | `baton_run_review` | effectful |
+| `run.start` | `ordinary` | `baton_run_start` | effectful |
+| `run.status` | `ordinary` | `baton_run_status` | idempotent |
+| `run.stop` | `ordinary` | `baton_run_stop` | destructive |
+| `run.wait` | `ordinary` | `baton_run_wait` | idempotent |
+| `run.member.view` | `ordinary` | `baton_run_workstreams` | idempotent |
+| `run.list` | `ordinary` | `baton_runs` | idempotent |
+| `services.list` | `ordinary` | `baton_services_list` | idempotent |
+| `swarm.capture` | `ordinary` | `baton_swarm_capture` | effectful |
+| `swarm.check` | `ordinary` | `baton_swarm_check` | effectful |
+| `swarm.create` | `ordinary` | `baton_swarm_create` | effectful |
+| `swarm.guide` | `ordinary` | `baton_swarm_guide` | effectful |
+| `swarm.integrate` | `ordinary` | `baton_swarm_integrate` | destructive |
+| `swarm.list` | `ordinary` | `baton_swarm_list` | idempotent |
+| `swarm.notifications` | `ordinary` | `baton_swarm_notifications` | idempotent |
+| `swarm.notify` | `ordinary` | `baton_swarm_notify` | effectful |
+| `swarm.recruit` | `ordinary` | `baton_swarm_recruit` | effectful |
+| `swarm.stop` | `ordinary` | `baton_swarm_stop` | destructive |
+| `swarm.update` | `ordinary` | `baton_swarm_update` | effectful |
+| `swarm.view` | `ordinary` | `baton_swarm_view` | idempotent |
+| `swarm.watch` | `ordinary` | `baton_swarm_watch` | idempotent |
+| `wakes.since` | `ordinary` | `baton_wakes_since` | idempotent |
+| `wakes.subscribe` | `ordinary` | `baton_wakes_subscribe` | effectful |
+| `wakes.unsubscribe` | `ordinary` | `baton_wakes_unsubscribe` | effectful |
+| `waves.attach` | `ordinary` | `baton_waves_attach` | idempotent |
+| `waves.compile` | `ordinary` | `baton_waves_compile` | idempotent |
+| `waves.harvest` | `ordinary` | `baton_waves_harvest` | effectful |
+| `waves.list` | `ordinary` | `baton_waves_list` | idempotent |
+| `waves.progress` | `ordinary` | `baton_waves_progress` | idempotent |
+| `waves.run` | `ordinary` | `baton_waves_run` | effectful |
+| `waves.send` | `ordinary` | `baton_waves_send` | effectful |
+| `waves.start` | `ordinary` | `baton_waves_start` | effectful |
+| `waves.stop` | `ordinary` | `baton_waves_stop` | destructive |
+| `run.member.send` | `ordinary` | `baton_workstream_notify` | effectful |
+| `run.member.stop` | `ordinary` | `baton_workstream_stop` | destructive |
 
 <!-- END GENERATED: mcp-tool-inventory -->
 

@@ -1788,6 +1788,25 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton doctor --check',
     inputSchema: objectSchema({ depth: { type: 'string', enum: ['outline', 'connection', 'profile', 'evidence'] }, check: { type: 'boolean' } }, []),
   }],
+  // Issue #99/#179 (harvest-accessor contract Decisions 1-5): the result-materialization
+  // accessor's two canonical operations. Direct ports (never APPLICATION_COMMAND_DEFINITIONS
+  // keys); the one-derivation naming law resolves every surface spelling from the key.
+  ['run.resultpin', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run resultpin run:1',
+    inputSchema: objectSchema({ runId: id }, ['runId']),
+  }],
+  ['waves.harvest', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'waves_harvest',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves harvest run:1 --onto /srv/checkout',
+    inputSchema: objectSchema({
+      onto: { type: 'string', minLength: 1, maxLength: 4096 },
+      resultSha: { type: 'string', pattern: '^[a-f0-9]{40}' + String.fromCharCode(36) },
+      runId: id,
+    }, []),
+  }],
   // Issue #306 (the wiring half): the in-place reincarnation verb — the RUNNING resident starts a
   // successor over the same deployment, hands the published connection over, and exits 0 through
   // its own stop path (application.mjs reincarnate()). Published here as a canonical operation
@@ -2125,6 +2144,13 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.member.view', 'mcp.baton', 'baton_run_workstreams'],
   ['run.view', 'mcp.baton', 'baton_run_episode'],
   ['run.view', 'mcp.baton', 'baton_run_inspect'],
+  // Issue #156 D4 item 1: the five non-canonical ops are NOT canonicalOperations keys, so their
+  // baton_run_* siblings resolve through these rows plus the renderer's canonical-miss fallback.
+  ['run.status', 'mcp.baton', 'baton_run_status'],
+  ['run.follow', 'mcp.baton', 'baton_run_follow'],
+  ['run.wait', 'mcp.baton', 'baton_run_wait'],
+  ['run.resume_work', 'mcp.baton', 'baton_run_resume_work'],
+  ['run.retry_verification', 'mcp.baton', 'baton_run_retry_verification'],
   ['run.adopt', 'mcp.fleet', 'fleet_run_adopt'],
   ['run.answer', 'mcp.fleet', 'fleet_run_answer'],
   ['run.approve', 'mcp.fleet', 'fleet_run_approve'],
@@ -2143,6 +2169,10 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.view', 'mcp.fleet', 'fleet_run_status'],
   ['run.view', 'mcp.fleet', 'fleet_run_wait'],
   ['run.watch', 'mcp.fleet', 'fleet_run_follow'],
+  // Issue #156 D2: the two new fleet definitions' spellings resolve here like the rest of the
+  // run family, so the conformance classifier never sees them as novel mcp.fleet names.
+  ['run.resume_work', 'mcp.fleet', 'fleet_run_resume_work'],
+  ['run.retry_verification', 'mcp.fleet', 'fleet_run_retry_verification'],
   ['run.do', 'web', 'run_act'],
   ['run.list', 'web', 'runs_list'],
   ['run.member.send', 'web', 'run_workstream_notify'],

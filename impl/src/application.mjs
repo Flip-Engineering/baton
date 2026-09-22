@@ -28,6 +28,7 @@ import {
 import {
   identifyResultExportRoot, ResultExportLifecycle,
 } from './result-export.mjs';
+import * as harvestAccessor from './harvest-accessor.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap,
   canonicalOperationFields, canonicalOperationForCommand,
@@ -539,7 +540,7 @@ export function projectBoardView(snapshot, viewer = {}, cache = null) {
   // Epic #78 Decision 5/7: the view cache keys on BOTH fence components — a claim/report/expiry
   // advances projectionInputFence without moving boardFence, so a cached pre-claim/pre-report
   // view is never served after worker traffic (BW-14).
-  const cacheKey = `${board} ${role}:${workerId ?? ''} ${boardFence} ${projectionInputFence}`;
+  const cacheKey = `${board}\0${role}:${workerId ?? ''}\0${boardFence}\0${projectionInputFence}`;
   if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
 
   const claimByItem = new Map((snapshot?.claims ?? []).map((claim) => [claim.itemId, claim]));
@@ -2369,6 +2370,234 @@ export class BatonApplication {
       queryDigest: filters.query === null ? null : digest(filters.query),
     });
     return searchDeploymentEvidence(this.driver.coordination, filters);
+  }
+
+  // =========================================================================
+  // Issue #99/#179 — the result-materialization accessor (harvest-accessor contract v1.1).
+  // Two DIRECT PORT methods (never APPLICATION_COMMAND_DEFINITIONS keys — the byte-stable
+  // command-table guard) plus the shared record-backed resolution lane. The recorded capture
+  // base (`task.sessionContext.baseSha`) is the only base authority: never HEAD, never `pin^`
+  // (Decision 3). Both lanes re-verify the physical ownership pin through the single-ref lane
+  // before any projection or apply (Decisions 1-2), and every refusal carries a string .code.
+  // =========================================================================
+
+  /** The record-backed result record for one run: the view's result block names the accepted
+   * pin sha, the plan's first node names the owning task (`view.nodes[0].taskId` — the
+   * ceremony-path coordinate, with the live run's worker handle as the fallback), the physical
+   * pin is re-verified through the single-ref lane, and the recorded base comes off the task's
+   * live worker handle (the same session-context object the coordinator mirrors).
+   * Readiness composition per Decision 1: `result_not_ready` covers mid-flight AND
+   * terminal-failed runs (and checkpoint-only runs — they carry no result block). */
+  async _resultRecordForRun(runId) {
+    let current;
+    try {
+      current = this._findRun(runId, { allowUnavailableProfile: true });
+    } catch {
+      throw harvestAccessor.typedError('run has no preserved result yet', 'result_not_ready');
+    }
+    const view = await this._buildView(current, this.principals.observer, {});
+    const result = view?.result ?? null;
+    const sha = result?.sha ?? null;
+    if (!harvestAccessor.SHA1_HEX.test(sha ?? '')) {
+      throw harvestAccessor.typedError('run has no preserved result yet', 'result_not_ready');
+    }
+    const handles = typeof this.driver.coordinator.list === 'function' ? this.driver.coordinator.list() : [];
+    const nodeTaskId = view?.nodes?.[0]?.taskId ?? null;
+    const handle = (nodeTaskId ? handles.find((row) => row?.taskId === nodeTaskId) : null)
+      ?? handles.find((row) => row?.runId === runId) ?? null;
+    const taskId = handle?.taskId ?? nodeTaskId;
+    if (typeof taskId !== 'string' || taskId.length === 0) {
+      throw harvestAccessor.typedError('run has no preserved result yet', 'result_not_ready');
+    }
+    const ref = harvestAccessor.resultRefOf(sha);
+    const state = await harvestAccessor.verifyPin(this.driver.coordinator._worktrees, ref, sha);
+    if (state === 'missing') throw harvestAccessor.typedError(`the result pin ${ref} is missing`, 'pin_not_found');
+    if (state === 'mismatch') throw harvestAccessor.typedError(`the result pin ${ref} resolves elsewhere`, 'pin_mismatch');
+    if (state === 'unverifiable') throw harvestAccessor.typedError('the physical re-verification lane is unavailable', 'pin_unverifiable');
+    if (state !== 'pinned') throw harvestAccessor.typedError('run has no preserved result yet', 'result_not_ready');
+    const baseSha = handle?.sessionContext?.baseSha ?? null;
+    if (!harvestAccessor.SHA1_HEX.test(baseSha ?? '')) {
+      throw harvestAccessor.typedError('the recorded capture base is unavailable', 'result_not_ready');
+    }
+    return { resultSha: sha, taskId, baseSha, retainedResultRef: ref };
+  }
+
+  /** `run.resultpin` (Decision 1): the recorded-base projection. Closed `{runId}` shape, then
+   * the host-policy seam, then the record. The ancestry gate refuses a corrupted base
+   * attribution (`pin_base_mismatch`) — the accessor never silently proceeds on `pin^`. */
+  async resultPin(rawArgs, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'run.resultpin principal');
+    const args = harvestAccessor.validateResultPinArgs(rawArgs);
+    await this._authorize('run.resultpin', principal, args.runId, {});
+    const record = await this._resultRecordForRun(args.runId);
+    const repoRoot = this.driver.repoRoot;
+    if (!harvestAccessor.isAncestor(repoRoot, record.baseSha, record.resultSha)) {
+      throw harvestAccessor.typedError(
+        `the recorded base ${record.baseSha} is not ancestral to the pin ${record.resultSha}`,
+        'pin_base_mismatch',
+      );
+    }
+    let changedPaths;
+    try {
+      changedPaths = this.driver.coordinator._worktrees.changedPathsAtCommit(record.baseSha, record.resultSha);
+    } catch (error) {
+      if (error?.code === 'captured_change_oversize') {
+        throw harvestAccessor.typedError(
+          'the recorded delta exceeds the 1_024 changed-path cap (gracefulPath: re-issue with a higher maxPaths ≤ 100_000)',
+          'result_delta_oversize',
+        );
+      }
+      throw harvestAccessor.typedError('the recorded delta is unreadable', 'result_not_ready');
+    }
+    const page = harvestAccessor.changedFilesPage(repoRoot, record.resultSha, [...changedPaths]);
+    return {
+      ready: true,
+      resultSha: record.resultSha,
+      baseSha: record.baseSha,
+      changedPaths: [...changedPaths],
+      changedFiles: page.changedFiles,
+      ...(page.truncated ? { truncated: true, changedFilesDigest: page.changedFilesDigest, cursor: page.cursor } : {}),
+    };
+  }
+
+  /** `waves.harvest` (Decision 2): the recorded-base delta applied to the deployment's main
+   * checkout with a typed, ordered precondition chain — onto-invalid → pin verification →
+   * ancestry → onto-dirty → already-contained → base-divergence → empty-delta → probe →
+   * engine stage/finalize. The conflict outcome is a typed refusal (never a silent apply,
+   * never a `conflicted` receipt in v1). */
+  async wavesHarvest(rawArgs, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'waves.harvest principal');
+    const args = harvestAccessor.validateHarvestArgs(rawArgs);
+    await this._authorize('waves.harvest', principal, args.runId ?? null, {});
+    const repoRoot = this.driver.repoRoot;
+    const worktrees = this.driver.coordinator._worktrees;
+    let record;
+    if (args.runId !== undefined) {
+      record = await this._resultRecordForRun(args.runId);
+    } else {
+      // Sha source: the ownership pin must resolve back to the SAME sha (a real-but-unpinned
+      // commit refuses pin_not_found), then the pin is attributed to its completed task record.
+      const ref = harvestAccessor.resultRefOf(args.resultSha);
+      const state = await harvestAccessor.verifyPin(worktrees, ref, args.resultSha);
+      if (state === 'missing') throw harvestAccessor.typedError(`no ownership pin exists at ${ref}`, 'pin_not_found');
+      if (state === 'mismatch') throw harvestAccessor.typedError(`the pin ${ref} resolves elsewhere`, 'pin_mismatch');
+      if (state === 'unverifiable') throw harvestAccessor.typedError('the physical re-verification lane is unavailable', 'pin_unverifiable');
+      const attribution = await this._attributingTaskRecord(args.resultSha);
+      if (!attribution) {
+        throw harvestAccessor.typedError('the pin is not attributed to any completed task record', 'result_not_ready');
+      }
+      record = { resultSha: args.resultSha, taskId: attribution.taskId, baseSha: attribution.baseSha, retainedResultRef: ref };
+    }
+    if (!harvestAccessor.isAncestor(repoRoot, record.baseSha, record.resultSha)) {
+      throw harvestAccessor.typedError(
+        `the recorded base ${record.baseSha} is not ancestral to the pin ${record.resultSha}`,
+        'pin_base_mismatch',
+      );
+    }
+    const onto = harvestAccessor.resolveOnto(args.onto, repoRoot);
+    if (!harvestAccessor.isClean(onto)) {
+      throw harvestAccessor.typedError('the onto checkout is dirty', 'harvest_onto_dirty');
+    }
+    const ontoHeadSha = harvestAccessor.headSha(onto);
+    if (!harvestAccessor.SHA1_HEX.test(ontoHeadSha ?? '')) {
+      throw harvestAccessor.typedError('the onto checkout has no HEAD to harvest onto', 'harvest_onto_invalid');
+    }
+    const skippedReceipt = (reason) => ({
+      ok: true,
+      result: 'skipped',
+      reason,
+      baseSha: record.baseSha,
+      changedPaths: [],
+      resultSha: record.resultSha,
+    });
+    // Precondition 2 — containment precedes divergence: a contained pin is skipped, never
+    // "diverged" (Decision 2).
+    if (harvestAccessor.isAncestor(repoRoot, record.resultSha, ontoHeadSha)) {
+      return skippedReceipt('already_integrated');
+    }
+    // Precondition 3 — the wrong-but-applying-tree trap: the computed merge-base MUST equal the
+    // recorded base, so the APPLIED delta is exactly the receipted delta (Decision 3).
+    const mergeBaseSha = harvestAccessor.mergeBaseOf(repoRoot, ontoHeadSha, record.resultSha);
+    if (mergeBaseSha !== record.baseSha) {
+      throw harvestAccessor.typedError(
+        `the onto checkout is not descended from the recorded base `
+        + `(baseSha ${record.baseSha}, mergeBaseSha ${mergeBaseSha ?? 'none'}, ontoHeadSha ${ontoHeadSha}, resultSha ${record.resultSha})`,
+        'harvest_base_diverged',
+      );
+    }
+    let changedPaths;
+    try {
+      changedPaths = worktrees.changedPathsAtCommit(record.baseSha, record.resultSha);
+    } catch (error) {
+      if (error?.code === 'captured_change_oversize') {
+        throw harvestAccessor.typedError('the recorded delta exceeds the changed-path cap', 'result_delta_oversize');
+      }
+      throw harvestAccessor.typedError('the recorded delta is unreadable', 'result_not_ready');
+    }
+    // Precondition 4 — empty delta, computed BEFORE any stage (Decision 2).
+    if (changedPaths.length === 0) {
+      return { ...skippedReceipt('empty_delta'), changedPaths: [] };
+    }
+    // The probe: non-destructive three-way replay in a throwaway worktree. A clean probe
+    // proceeds to the engine stage; a conflicted probe refuses harvest_conflict naming the
+    // exact paths with onto untouched (Decision 2).
+    const probe = harvestAccessor.probeHarvestConflicts(repoRoot, ontoHeadSha, record.resultSha);
+    if (probe.probe === 'failed') {
+      throw harvestAccessor.typedError('the three-way probe could not run', 'harvest_apply_failed', { cause: 'probe_failed', postEffect: false });
+    }
+    if (probe.probe === 'conflict') {
+      throw Object.assign(
+        new Error(`the harvest conflicts on ${probe.conflicts.map((row) => row.path).join(', ')}`),
+        { code: 'harvest_conflict', conflicts: probe.conflicts, ontoHeadSha, resultSha: record.resultSha },
+      );
+    }
+    let stage;
+    try {
+      stage = await worktrees.stageStructuredIntegration(
+        harvestAccessor.stageTaskId(record.taskId, record.resultSha), record.resultSha,
+      );
+    } catch (error) {
+      if (error?.code === 'structured_already_integrated') return skippedReceipt('already_integrated');
+      throw harvestAccessor.translateEngineError(error);
+    }
+    let finalized;
+    try {
+      finalized = await worktrees.finalizeStructuredIntegration(stage);
+    } catch (error) {
+      throw harvestAccessor.translateEngineError(error);
+    }
+    return {
+      ok: true,
+      result: 'applied-clean',
+      reason: null,
+      afterSha: finalized.afterSha,
+      classes: (finalized.classes ?? []).map((row) => row.class),
+      baseSha: record.baseSha,
+      changedPaths: [...changedPaths],
+      resultSha: record.resultSha,
+    };
+  }
+
+  /** The sha-source attribution: one worker-keyed preservation inspection scan finds the
+   * completed task record whose captured sha IS the pinned sha (the wave driver's
+   * attribution law, admitted only on an exact `capturedSha` match). */
+  async _attributingTaskRecord(resultSha) {
+    const coordinator = this.driver.coordinator;
+    const handles = typeof coordinator.list === 'function' ? coordinator.list() : [];
+    for (const handle of handles) {
+      if (typeof coordinator.inspectPreservedResult !== 'function') break;
+      let state = null;
+      try { state = await coordinator.inspectPreservedResult(handle.id, resultSha); } catch { continue; }
+      if (state?.state === 'pinned') {
+        const baseSha = handle?.sessionContext?.baseSha ?? null;
+        if (harvestAccessor.SHA1_HEX.test(baseSha ?? '')) return { taskId: handle.taskId, baseSha };
+      }
+    }
+    return null;
   }
 
   /** #317 (docs/50): the configured provider services — the deployment's authority when one is
@@ -8171,6 +8400,14 @@ export class BatonApplication {
     // principal validation and authorization every sibling branch below threads.
     if (name === 'evidence.search') return this.evidenceSearch(args, principal);
     if (name === 'services.list') return this.servicesList(args);
+    // Issue #99/#179 (harvest-accessor contract v1.1, Decisions 1-2): the result-materialization
+    // accessor is TWO direct ports — the byte-stable command table gains no keys (the M1 static
+    // guard). Like every direct port they dispatch BEFORE context validation and the
+    // recursive-session gate (the FP-18 pre-gate law), each lane validates its own closed shape
+    // first (application_*_invalid BEFORE any state lookup or authorization), and the host-policy
+    // seam is drawn inside the lane after the shape holds.
+    if (name === 'run.resultpin') return this.resultPin(args, principal);
+    if (name === 'waves.harvest') return this.wavesHarvest(args, principal);
     if (name === 'run.message.send') return this.messageSend(args, principal);
     if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);

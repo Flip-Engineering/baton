@@ -4436,6 +4436,44 @@
           ]
         },
         {
+          "name": "_resultRecordForRun",
+          "ordinal": 0,
+          "size": 33,
+          "seam": "recovery",
+          "evidence": [
+            "delegates:observation",
+            "delegates:recovery"
+          ]
+        },
+        {
+          "name": "resultPin",
+          "ordinal": 0,
+          "size": 36,
+          "seam": "surface",
+          "evidence": [
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "wavesHarvest",
+          "ordinal": 0,
+          "size": 114,
+          "seam": "surface",
+          "evidence": [
+            "admission:typed_refusal",
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "_attributingTaskRecord",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "servicesList",
           "ordinal": 0,
           "size": 8,
@@ -6209,7 +6247,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 226,
+          "size": 234,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
@@ -13854,7 +13892,7 @@
         {
           "name": "_deliverGuidance",
           "ordinal": 0,
-          "size": 22,
+          "size": 33,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -14058,7 +14096,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1213,
+          "size": 1211,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
