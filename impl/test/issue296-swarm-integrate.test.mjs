@@ -121,6 +121,11 @@ async function world(t, {
   }
   const rebasedTip = git(repo, 'rev-parse', 'baton/lane-1');
 
+  // Issue #558: the deployment's declared shared remote — a bare repository this landing
+  // publishes the landed ref to after the fast-forward.
+  const publishRemote = join(directory, 'shared.git');
+  execFileSync('git', ['init', '-q', '--bare', publishRemote], { env: { ...process.env, ...QUIET_GIT_ENV } });
+
   const store = new CoordinationStore(join(directory, 'ledger'));
   const runtime = new SwarmRuntime({
     store,
@@ -135,6 +140,7 @@ async function world(t, {
     // The fixture's regenerator writes a real file, so "folded into the ONE commit" is provable.
     integration: {
       repoRoot: repo,
+      publishRemote,
       regenerate: async (dir) => { write(dir, 'impl/scripts/seam-inventory.json', '{}\n'); },
       runGates: async (dir, files) => ({ files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] }),
     },
