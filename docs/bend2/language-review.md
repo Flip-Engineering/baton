@@ -51,6 +51,13 @@ and evidence pointer.
   it in the same file. The binding form for Baton2 quantifies over every history; the concrete
   equality is the mechanism demonstration. Evidence: `examples/lang-cap-probes.evidence.md`
   (probe c); programs `lang-cap-history.bend`, `lang-cap-history-law.bend`.
+- **LANG-F-30 — The theory's shape at the pin.** `Type : Type` holds with no positivity check;
+  consistency rides the wall between the live mode (code that runs, terminating) and the dead
+  mode (types, erased arguments, equations), and nothing dead counts as live evidence. There are
+  no traits, type classes or macros; templates are closed compile-time substitutions. The
+  runtime's capacity bounds sit outside the theory (LANG-F-31). Evidence:
+  `reference/upstream/guide/GUIDE.md`, "Under the Hood" and "Syntax Reference";
+  `reference/upstream/WONTFIX.txt`.
 
 ## 2. Effects and the IO model
 
@@ -78,12 +85,17 @@ and evidence pointer.
   `f[]`; the `need` values are `0` (run at once), `IO_READ` (park until a handle is readable) and
   `IO_TIME` (park for milliseconds). Blocking work leaves the loop two ways: `io_work(w, call,
   pack)` runs a call on a helper thread, and `io_wait_on(w, fd, POLLIN, more)` parks until a
-  descriptor is ready. The checker names every def that relies on foreign code. All three
-  execution lanes answered identically in the evidence run. Evidence:
+  descriptor is ready; on the JavaScript side a scheduling requirement is a second `_need`
+  function and a parked operation continues through `io_park_on`. The checker verifies the
+  foreign def's Bend signature and names every def that relies on it; the imported C or
+  JavaScript is outside every proof guarantee, and the C names are runtime internals with no ABI
+  promise, so foreign effects rebuild on every toolchain update. All three execution lanes
+  answered identically in the evidence run. Evidence:
   `examples/lang-core-effects.evidence.md`; `reference/upstream/guide/EFFECTS.md`.
 - **LANG-F-09 — Handles are affine and opaque, and the handle types are closed.** Every effect on
   a handle hands it back beside its result, and a handle type must be one of Base's handle laws
-  (`File`, `Socket`, `Listener`); a user-defined handle type is a `WONTFIX.txt` entry at this pin.
+  (`File`, `Socket`, `Listener`); a user-defined handle type is a `WONTFIX.txt` entry at this pin
+  (#825: a user law of kind `Type` counts as open, so a custom effect reuses a Base handle type).
   The guide's guarantee — no program can forge or reuse one — is a statement about these Base
   handle types, whose constructors sit outside the language's surface. Evidence:
   `examples/lang-core-errors.evidence.md`; `reference/upstream/guide/EFFECTS.md`,
@@ -194,6 +206,15 @@ and evidence pointer.
   import, absent Base name). Evidence: `examples/lang-core-types.evidence.md`,
   `examples/lang-core-errors.evidence.md`, `examples/lang-core-imports.evidence.md`,
   `examples/lang-host-interop.evidence.md` (step 6).
+- **LANG-F-31 — Fail-stop conditions sit outside `Result`.** Allocation failure, a `Nat` past
+  2^48-1, an `Array` past block class 31, an unbalanced public `Array` tree, channel deadlock and
+  some GPU failures end the process, and `IO.die`'s halt has no catch operation. Foreign code is
+  checked at its declared Bend signature and never at its implementation, so a `.c` or `.js` half
+  can crash or corrupt what the type system cannot see. Baton2 answers with supervisor restart and
+  durable recovery evidence, and keeps every expected refusal a value through the pure core.
+  Evidence: `reference/upstream/WONTFIX.txt` (#779, #792, #808);
+  `reference/upstream/guide/GUIDE.md`, "IO and Concurrency";
+  `examples/lang-core-effects.evidence.md` (the checker's foreign-code notice).
 
 ## 7. Tooling
 
@@ -211,8 +232,9 @@ and evidence pointer.
 - **LANG-F-25 — The one companion tool is a formatting-only language server.** `tools/bend-fmt-lsp`
   supports full-document formatting over stdio and exposes no diagnostics, completion, hover or
   range formatting. The pinned README adds: no test framework, no debugger, profiler or REPL; one
-  C file per program with no separate compilation or incremental builds; native compilation is
-  slow enough that the JavaScript lane is the fast development loop. Evidence:
+  C file per program with no separate compilation or incremental builds; the C output targets
+  clang only (gcc is not a target, per `WONTFIX.txt`); native compilation is slow enough that the
+  JavaScript lane is the fast development loop. Evidence:
   `examples/lang-host-tooling.evidence.md` (step 7).
 
 ## 8. What Baton needs from the host, effect by effect
@@ -224,22 +246,26 @@ LANG-F-16, LANG-F-17); none of the prerequisites calls for a JavaScript host.
 
 | ID | Baton need | Verdict at the pin | Evidence |
 |---|---|---|---|
-| LANG-CAP-01 | Filesystem read/write/size/close | **Supported by Base.** `File.*` covers open, read (text, bytes, at offset), size, write, close; the C half serves the native build. | `examples/lang-host-interop.evidence.md` (steps 2–3, 5) |
+| LANG-CAP-01 | Filesystem read/write/size/close | **Supported by Base for the file body; prerequisite: authored C effects for the durability and metadata operations.** `File.*` covers open (`r`/`w`/`a`), read (text, bytes, at offset), size, write and close, and the C half serves the native build. The pin ships no directory traversal, stat metadata, permissions, durable sync, atomic rename or publication, links, watches, or safe temporary-file creation; Baton's custody and landing flows need those from the same C-effect family as LANG-CAP-05. | `examples/lang-host-interop.evidence.md` (steps 2–3, 5) |
 | LANG-CAP-02 | TCP client and server | **Supported by Base.** `TCP.listen/accept` (server) and `TCP.connect/send/recv` (client) plus `TCP.poll` and `Socket.close`; a loopback request/response pair ran on all three lanes. | `examples/lang-host-interop.evidence.md` (steps 2–3, 5) |
 | LANG-CAP-03 | UDP client and server | **Supported by Base.** `UDP.bind/send_to/recv_from/poll`; a loopback datagram ran on all three lanes. | `examples/lang-host-interop.evidence.md` (steps 2–3, 5) |
 | LANG-CAP-04 | Environment, argv, time, sleep, randomness | **Supported by Base.** `IO.get_env` answers `Result` per variable (set and unset both observed), `IO.args`, `IO.now`, `IO.sleep`, `IO.random_u32`. | `examples/lang-host-interop.evidence.md` (steps 2, 5) |
 | LANG-CAP-05 | Process spawn; streaming stdout and stderr; exit status; signals and kill | **Unsupported by Base; prerequisite: an authored C effect family.** The pin ships no process surface (LANG-F-15). A `popen`-style foreign effect captures whole stdout and reports the exit status (LANG-F-16) and proves the route needs no JavaScript (LANG-F-17); it blocks the one event loop for the command's life and carries no handle, stream, signal or kill. The runtime supplies the primitives the family needs — `io_work` (helper thread) and `io_wait_on`/`IO_READ` (descriptor parking) — so the work is the C family itself: spawn without stalling the loop, one parked read per output pipe, `waitpid` status, and signal/kill by identifier. A process handle is outside Base's handle laws at this pin (LANG-F-09 and LANG-F-28: a `WONTFIX.txt` entry, and a user-declared affine record is forgeable data), so the family carries its identifiers as ordinary values or the handle-law set grows; both shapes stay inside the proven effect contract. A Baton2 capability over those identifiers is a named language prerequisite or a proof-indexed encoding (LANG-F-28). | `examples/lang-host-foreign.evidence.md`; `examples/c-only-spawn.evidence.md`; `examples/lang-cap-probes.evidence.md`; `reference/upstream/guide/EFFECTS.md` |
-| LANG-CAP-06 | JSON encode/parse | **Unsupported as a library surface; prerequisite: a module authored in Bend2.** `bend base Json` refuses, and the pinned upstream test header states the runtime dies on the missing surface while building its JSON reading on `List` and `String` from Base. Encoding and parsing over `List`/`String`/`Map` is work in the Bend2 source tree — a work item with laws — and a C JSON library is also reachable through the proven effect contract. This prerequisite gates bridge frames and provider protocol payloads. | `examples/lang-host-interop.evidence.md` (step 6); `examples/lang-host-tooling.evidence.md` (step 7) |
+| LANG-CAP-06 | JSON encode/parse | **Unsupported as a library surface; prerequisite: a module authored in Bend2.** `bend base Json` refuses, and the pinned upstream test header states the runtime dies on the missing surface while building its JSON reading on `List` and `String` from Base. Encoding and parsing over `List`/`String`/`Map` is work in the Bend2 source tree — a work item with laws — and a C JSON library is also reachable through the proven effect contract. This prerequisite gates bridge frames and provider protocol payloads. Strings are linked lists of characters at this pin (pinned README, limitations), so the codec and every large-frame path need a bounded byte-buffer representation with explicit UTF-8 conversion. | `examples/lang-host-interop.evidence.md` (step 6); `examples/lang-host-tooling.evidence.md` (step 7) |
 | LANG-CAP-07 | Invoking git | **Prerequisite: LANG-CAP-05, then LANG-CAP-06.** git runs as a subprocess; nothing in the pin adds a gap beyond the process family, and porcelain output that needs structured parsing rides the JSON module. Exit status handling is demonstrated by the foreign spawn effect. | `examples/lang-host-foreign.evidence.md` |
-| LANG-CAP-08 | Transport between Baton processes | **Supported by Base for the bytes; framing is a work item.** A Base TCP listener and client supply loopback transport between processes (LANG-CAP-02); the `baton.bridge.v1` message framing rides the JSON module (LANG-CAP-06) on top of it. UDP is available for lossy channels. | `examples/lang-host-interop.evidence.md` |
+| LANG-CAP-08 | Transport between Baton processes | **Supported by Base for the bytes; framing and the application protocols are work items.** A Base TCP listener and client supply loopback transport between processes (LANG-CAP-02); the `baton.bridge.v1` message framing rides the JSON module (LANG-CAP-06) on top of it. UDP is available for lossy channels. HTTP, HTTPS/TLS and Unix-domain sockets ship no library at the pin (the pinned README: none for now, add as foreigns), so provider clients and any HTTP-framed surface ride the C-effect family or a vendored Bend module. | `examples/lang-host-interop.evidence.md` (steps 2, 5–6) |
+| LANG-CAP-09 | Cancellation, deadlines, race/select, task supervision above the event loop | **Unsupported by Base; prerequisite: authored in the Baton2 core and process family.** No name in the `IO` listing cancels another computation, races two, or sets a deadline (LANG-F-14); computations end by completing, and the program exits or deadlocks. `Chan.close` and the process family's signals (LANG-CAP-05) are the primitives a Baton2 supervisor builds on. | `examples/lang-host-interop.evidence.md` (step 5); `examples/lang-host-concurrency.evidence.md` |
+| LANG-CAP-10 | Hashing, HMAC, secure random bytes, constant-time comparison, signatures | **Unsupported by Base; prerequisite: audited C effects behind a narrow typed boundary.** `IO.random_u32` is the only crypto-adjacent name in the `IO` listing; the token, receipt and digest paths need the rest from the C-effect family, with laws over the Bend-visible shapes. | `examples/lang-host-interop.evidence.md` (step 5) |
 
 Stated plainly, the pin cannot: spawn, stream, wait on, signal or kill an operating-system
 process from any Base effect; parse or emit JSON from any Base module; define a new handle type;
-make a user-declared record unforgeable or force a release path (LANG-F-26, LANG-F-28); check a
-program without the Hub on a cold cache unless every import is vendored; or debug,
-profile, REPL or incrementally build anything (LANG-F-25). The native build of Base's C halves
-plus authored C effects is the JavaScript-free artifact; the interpreter and `-o x.js` lanes need
-bun (LANG-F-18) and are development tools.
+make a user-declared record unforgeable or force a release path (LANG-F-26, LANG-F-28); hash,
+sign, or speak HTTP or TLS from any Base effect; atomically rename, sync, or stat a file; cancel,
+race, or give a deadline to a running computation (LANG-CAP-09, LANG-CAP-10); check a program
+without the Hub on a cold cache unless every import is vendored; or debug, profile, REPL or
+incrementally build anything (LANG-F-25). The native build of Base's C halves plus authored C
+effects is the JavaScript-free artifact; the interpreter and `-o x.js` lanes need bun (LANG-F-18)
+and are development tools.
 
 ## 9. Consequences for the rewrite plan
 
@@ -255,7 +281,12 @@ bun (LANG-F-18) and are development tools.
 - Baton's scheduler-shaped needs map onto proven primitives: parallel calls for pure policy work
   (LANG-F-10, LANG-F-11), `IO.fork`/`IO.join` for concurrent computations (LANG-F-07), and
   one-parked-read-per-descriptor C effects for streaming child output (LANG-CAP-05).
-- The laws document cites LANG-F-26..29 for what the type system gives and withholds: at-most-once
-  use with free drops, shape-preserving folds that keep nothing, forgeable user records, and
-  receipt variants that pin no durability. A capability, custody or receipt law that rests on more
+- The laws document cites LANG-F-26..31 for what the type system gives and withholds: at-most-once
+  use with free drops, shape-preserving folds that keep nothing, forgeable user records, receipt
+  variants that pin no durability, a theory whose consistency rides the live/dead wall, and
+  fail-stop conditions outside `Result`. A capability, custody or receipt law that rests on more
   than this names its language prerequisite or its proof-indexed encoding.
+- The host layer lands behind a conformance gate: dual C/JavaScript tests for every foreign
+  effect, golden protocol vectors, and crash-recovery fixtures run before the JavaScript host
+  retires, because the C names have no ABI promise (LANG-F-08) and the fail-stop conditions
+  (LANG-F-31) are where Baton2's supervision is actually exercised.
