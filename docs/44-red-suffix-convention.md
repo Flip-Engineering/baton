@@ -1,6 +1,6 @@
 # The `-red` test-suffix convention
 
-Baton's suite carries 197 files named `*-red.test.mjs` (impl/test/). The suffix is a naming
+Baton's suite carries the files named `*-red.test.mjs` (impl/test/). The suffix is a naming
 convention with one meaning and a defined lifecycle. This document IS the convention; the manifest
 contract it rides on is [42-suite-legitimacy.md](42-suite-legitimacy.md).
 
@@ -14,9 +14,11 @@ true, and the expected-red manifest
 ([impl/scripts/expected-red-tests.json](../impl/scripts/expected-red-tests.json)) carries the
 reason each failure is expected.
 
-Files WITHOUT the suffix are expected green at every landing. A plain-named test that fails is an
-unexpected failure and turns the suite red — that is the point: the suffix is the ONLY place a
-known failure may live.
+Files WITHOUT the suffix are written green: a red-first pin belongs in a `*-red` file.
+Which rows are still expected red is the manifest's decision, not the filename's
+([42-suite-legitimacy.md](42-suite-legitimacy.md)): the manifest also carries rows in
+plain-named files whose red needs no red-first lifecycle (transient bridges such as #460).
+A failure without a manifest row is an unexpected failure, whatever the filename.
 
 ## The rules
 
@@ -41,8 +43,8 @@ known failure may live.
    that retires the rows.
 4. **Renaming is not the fix.** The 2026-09-14 audit (legibility lane, #284) considered renaming
    the then-160 suffixed files and wrote the convention down instead: the name is load-bearing
-   history (it names the wave that wrote the pin), and renaming 197 files would destroy the
-   audit trail while changing nothing about the work.
+   history (it names the wave that wrote the pin), and renaming every suffixed file would destroy
+   the audit trail while changing nothing about the work.
 5. **New red files need a manifest plan in the same change** as the file: either the rows are
    listed with reasons (a full-suite `--write-expected-red --expected-red-reason <reason>` run,
    which refuses rows it has never listed without one), or the pin ships in a plain-named file.
