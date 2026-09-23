@@ -21,6 +21,8 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 |---|---|---|---|
 | `application.help` | `ordinary` | `baton help` | `baton help` |
 | `evidence.search` | `ordinary` | `baton evidence search` | `baton evidence search SWARM_ID --query TEXT` |
+| `plan.read` | `ordinary` | `baton plan read` | `baton plan read PLAN_ID` |
+| `plan.write` | `ordinary` | `baton plan write` | `baton plan write PLAN_ID --mutation JSON` |
 | `run.answer` | `ordinary` | `baton run answer` | `baton run answer RUN_ID REQUEST_ID --text TEXT` |
 | `run.approve` | `ordinary` | `baton run approve` | `baton run approve RUN_ID --plan DIGEST` |
 | `run.attention.watch` | `ordinary` | `baton run attention watch` | `baton run attention watch RUN_ID --kind member_terminal --cursor 0` |
@@ -93,6 +95,7 @@ unknown-verb refusal names, so the three can never disagree about the verb set a
 | `baton quarantine <SEQ> --reason TEXT [--restart]` | `quarantine 2 --reason participant_not_found` | Record the coordination fold refusal the startup probe reported (issue #290) so the deployment can start, and optionally host the resident afterward (`--restart`). |
 | `baton top` | `top` | The operator seat: a live human view over runs and swarms (docs/38). |
 | `baton run` | `run view RUN_ID` | Start a Run from an objective, or observe, steer, review, adopt and export one (`baton help run`). |
+| `baton plan read PLAN_ID` | `plan read PLAN_ID` | Read the orchestrator campaign plan, or land one idempotency-keyed mutation (`baton plan write PLAN_ID --mutation JSON`). |
 | `baton review OBJECTIVE` | `review objective --exact mock/model-a@low --exact mock/model-b@low` | The objective-first read-only preset: one reviewer/challenger Workflow on two exact routes. |
 | `baton explore OBJECTIVE` | `explore objective` | The single-route read-only evidence preset. |
 | `baton swarm` | `swarm list` | Create, staff, guide and read living swarms (`baton help swarm`). |

@@ -297,6 +297,12 @@ export class AdapterCrashError extends Error {
  *                    confirmation").
  *   terminal absent — the stop is NOT settled: it arrives as an event
  *                    (control.interrupt_confirmed / kill.confirmed) on the onEvent stream.
+ *   confirmed:false — the stop was recorded, but the owning close latch could not confirm it:
+ *                    `reason` names what the bounded reap reported (close_pending while no close
+ *                    fact exists yet). The Ack reports the observation, it is not a confirmation —
+ *                    kill.confirmed / control.interrupt_confirmed still arrives on the
+ *                    onEvent stream, and lifecycle.process_reap_unconfirmed is the receipt of a
+ *                    reap that could not prove the group gone.
  *   result         — never present on an Ack; a turn's result rides the terminal event.
  *
  * The two verbs are asymmetric, and the Ack must not blur it. An interrupt of an idle-but-LIVE

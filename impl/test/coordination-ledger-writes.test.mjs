@@ -62,6 +62,16 @@ const MOVED = Object.freeze([
 const RELOCATED_HELPERS = Object.freeze([
   'nullPrototypeFields', 'validRepresentationPolicy', 'validRoutePolicy', 'writerOwnerState',
   'writerProcessStartIdentity',
+  // #177: the writer-lease honesty helpers — the holder facts a busy refusal and a recovery record
+  // both name, the ONE composer of the former, the ONE writer of the latter, and the boundary
+  // stamp a deferred claim settles after its replay.
+  'writerHolderFacts', 'writerBusyRefusal', '_recordWriterLeaseRecovery', '_stampWriterLeaseAcquisitionSeq',
+]);
+
+/** Module members this lane added that are NOT moved #259 bodies and are exported, so the export
+ * census below names them explicitly rather than folding them into MOVED. */
+const MODULE_ADDITIONS = Object.freeze([
+  '_settleDeferredWriterLease',
 ]);
 
 const CLOCK = () => '2026-09-13T00:00:00.000Z';
@@ -182,18 +192,19 @@ test('CLW2: the committed map, the delegates, and the exports are one bijection'
     'the delegate census is exactly the 26 moved members');
 
   const moduleMembers = map.files.find((file) => file.file === MODULE_ARTIFACT)?.members ?? [];
-  assert.equal(moduleMembers.length, MOVED.length + RELOCATED_HELPERS.length,
-    'the module target carries the 26 moved bodies plus the 5 relocated function helpers');
+  assert.equal(moduleMembers.length, MOVED.length + RELOCATED_HELPERS.length + MODULE_ADDITIONS.length,
+    'the module target carries the 26 moved bodies, the relocated function helpers, and the named additions');
   for (const member of moduleMembers) {
     if (MOVED.some(([name]) => name === member.name)) {
       assert.equal(member.seam, 'effect', `${member.name}: the body keeps its effect seam in the module`);
     } else {
-      assert.ok(RELOCATED_HELPERS.includes(member.name),
-        `${member.name}: an unmapped module member must be a relocated helper`);
+      assert.ok(RELOCATED_HELPERS.includes(member.name) || MODULE_ADDITIONS.includes(member.name),
+        `${member.name}: an unmapped module member must be a relocated helper or a named addition`);
     }
   }
-  assert.deepEqual(Object.keys(coordinationLedgerWrites).sort(), MOVED.map(([name]) => name).sort(),
-    'the module exports exactly the 26 moved members — the relocated primitives stay unexported');
+  assert.deepEqual(Object.keys(coordinationLedgerWrites).sort(),
+    [...MOVED.map(([name]) => name), ...MODULE_ADDITIONS].sort(),
+    'the module exports exactly the 26 moved members plus the named additions — the relocated primitives stay unexported');
 });
 
 test('CLW3: the same input gives the same outcome on two identically seeded stores', () => {
@@ -231,7 +242,11 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
   try {
     const store = new CoordinationStore(root, { clock: CLOCK, checkpointInterval: 16 });
     const lease = store.claimWriterLease();
-    assert.deepEqual(Object.keys(lease).sort(), ['path', 'pid', 'pidStart', 'token']);
+    // #177: the lease carries what a refused claimant and a successor need — the holder identity and
+    // the boundary it acquired at (acquiredAt/acquiredAtEventSeq), whether it reaped a stale holder
+    // (reclaimed/recovered) — beside the four coordinates the release path compares.
+    assert.deepEqual(Object.keys(lease).sort(),
+      ['acquiredAt', 'acquiredAtEventSeq', 'path', 'pid', 'pidStart', 'reclaimed', 'recovered', 'token']);
     assert.equal(lease.pid, process.pid);
 
     const fields = (id, deps = []) => ({ id, brief: { goal: id }, deps, refines: null, taskType: 'test', reservedWorkerId: `w-${id}` });

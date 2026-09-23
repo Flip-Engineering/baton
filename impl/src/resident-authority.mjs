@@ -270,7 +270,11 @@ function acquireLease(root, repoId, deploymentId, ownerUid, now, {
     active = false;
     return true;
   };
-  return Object.freeze({ ...owner, assertHeld, release });
+  // #177: `reclaimed` is the fact this acquisition already computed — a proved-stale holder was
+  // reaped and this lease replaced it. Exposed exactly as `publish()` exposes
+  // `recoveredStaleAuthority`, so "clean acquire" and "reaped a stale holder" are distinguishable
+  // by the successor and by any operator diagnosing a contention death.
+  return Object.freeze({ ...owner, reclaimed, assertHeld, release });
 }
 
 function safeConfigRoot(env, home, ownerUid) {
@@ -545,6 +549,7 @@ export class ResidentAuthority {
       incarnation: this.incarnation,
       startedAt: this.startedAt,
       recoveredStaleAuthority: this._publication?.recoveredStaleAuthority ?? false,
+      recoveredStaleLease: this.lease.reclaimed === true,
       ...(this._publication?.streams === undefined ? {} : { streams: this._publication.streams }),
     });
   }
