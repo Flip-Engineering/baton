@@ -35,6 +35,7 @@ import { join } from 'node:path';
 import {
   HostCapacityAuthority,
   deriveHostCapacity,
+  deriveSwapReserveBytes,
   hostCapacityObservation,
   hostCapacityShortfall,
   parseMemInfoAvailable,
@@ -297,7 +298,29 @@ test('M561-8: a memory shortfall reads observed paging bytes and required share'
   assert.strictEqual(shortfall.unit, 'bytes');
 });
 
-// ── M561-9: the runner names its suite durable exactly when a worker seat started it ─────────────
+// ── M561-10: the worktree floor's swap reserve is the paging debt capped at one share ────────────
+
+test('M561-10: deriveSwapReserveBytes bounds the paging debt by one core share and reads zero without debt', () => {
+  assert.strictEqual(
+    deriveSwapReserveBytes({ totalBytes: 16 * G, availableBytes: 2 * G, swapFreeBytes: 512 * M, cores: 10 }),
+    Math.floor(16 * G / 10),
+    '13.5 GiB committed beyond 512 MiB of swap, capped at the 1.6 GiB share the host funds',
+  );
+  assert.strictEqual(
+    deriveSwapReserveBytes({ totalBytes: 16 * G, availableBytes: 16 * G, swapFreeBytes: 0, cores: 10 }),
+    0, 'no committed-unbacked memory: no reserve',
+  );
+  assert.strictEqual(
+    deriveSwapReserveBytes({ totalBytes: 16 * G, availableBytes: 2 * G, swapFreeBytes: 20 * G, cores: 10 }),
+    0, 'swap headroom alone covers the debt: nothing extra is reserved',
+  );
+  assert.strictEqual(
+    deriveSwapReserveBytes({ totalBytes: null, availableBytes: 2 * G, swapFreeBytes: 512 * M, cores: 10 }),
+    0, 'an unmeasured term reserves nothing — never a guess',
+  );
+});
+
+ // ── M561-9: the runner names its suite durable exactly when a worker seat started it ─────────────
 
 test('M561-9: suiteLeaseDurable is true for a participant holder and false otherwise', () => {
   assert.strictEqual(
