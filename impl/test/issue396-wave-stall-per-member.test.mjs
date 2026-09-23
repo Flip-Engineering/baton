@@ -92,14 +92,16 @@ function liveThenResting(progessLog, livePolls) {
   };
 }
 
-test('(a) two independent members, one progressing: only the silent one reads stalled, with its own instant', async () => {
+test('(a) two independent members, one progressing: explicit stop reports only the silent one as stalled', async () => {
   const log = {};
   const wave = fakeWave({
     alpha: liveThenResting(log, 6),
     beta: { status: () => fakeView({ narrative: 'beta parked' }) },
   });
-  const receipt = await createWaveDriver(wave.baton, { ...POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall');
+  const receipt = await createWaveDriver(wave.baton, {
+    ...POLICY, signal: AbortSignal.timeout(350),
+  }).run({ members: wave.members });
+  assert.equal(receipt.basis, 'aborted');
   assert.ok(Array.isArray(receipt.stalls), 'the stall is attributed per member, never roster-wide');
   assert.equal(receipt.stalls.length, 1, `only the silent member reads stalled: ${JSON.stringify(receipt.stalls)}`);
   assert.equal(receipt.stalls[0].role, 'beta');
@@ -119,8 +121,10 @@ test('(b) a member behind a real dependency reads waiting-on with the dependency
     alpha: liveThenResting(log, 6),
     beta: { status: () => fakeView({ narrative: 'beta queued', waitingOn: WAIT('capacity_ceiling', detail) }) },
   });
-  const receipt = await createWaveDriver(wave.baton, { ...POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'a fully quiet wave still ends stall (the CC-STRIP pin)');
+  const receipt = await createWaveDriver(wave.baton, {
+    ...POLICY, signal: AbortSignal.timeout(350),
+  }).run({ members: wave.members });
+  assert.equal(receipt.basis, 'aborted', 'only the caller stops a live waiting member');
   assert.deepEqual(receipt.stalls, [], 'the waiting member is never read as stalled');
   assert.equal(receipt.waiting.length, 1);
   assert.equal(receipt.waiting[0].role, 'beta');
@@ -160,20 +164,21 @@ test('(d) settle keeps each member’s own wait: a waiting member settles with i
   await wave.close({ reason: '396d cleanup.' });
 });
 
-test('(c) no roster-wide clock: the wave ends on the members’ own clocks, not a shared start', async () => {
+test('(c) no roster-wide clock: a caller stop preserves each member’s own observation clock', async () => {
   const log = {};
   // Alpha progresses well past the stall timeout while beta is silent from the start; the
-  // wave must end on beta's own long-quiet clock promptly after alpha rests — never a full
-  // shared stallTimeoutMs after the last roster movement.
+  // receipt must retain beta's own long-quiet clock after alpha rests.
   const wave = fakeWave({
     alpha: liveThenResting(log, 40),
     beta: { status: () => fakeView({ narrative: 'beta parked' }) },
   });
-  const receipt = await createWaveDriver(wave.baton, { ...POLICY, stallTimeoutMs: 600 }).run({ members: wave.members });
+  const receipt = await createWaveDriver(wave.baton, {
+    ...POLICY, stallTimeoutMs: 600, signal: AbortSignal.timeout(850),
+  }).run({ members: wave.members });
   const returnedAt = Date.now();
-  assert.equal(receipt.basis, 'stall');
+  assert.equal(receipt.basis, 'aborted');
   assert.equal(receipt.stalls.length, 1);
   assert.equal(receipt.stalls[0].role, 'beta');
-  assert.ok(returnedAt - log.settledAt < 300,
-    `no shared start adjudicates: exited ${returnedAt - log.settledAt}ms after the last settler, not a full stallTimeoutMs later`);
+  assert.ok(returnedAt - log.settledAt < 350,
+    `the caller stopped ${returnedAt - log.settledAt}ms after alpha settled while beta retained its own clock`);
 });

@@ -1,16 +1,6 @@
-// Issue #414 — a wave member retired by the unproductivity budget goes quiet with no
-// steering line: name the exhausted budget and the next action.
-//
-// Red-before suite: after K consecutive delivery failures on the same requestId the driver
-// stops nudging that member and lets the stall clock judge — but pushes NO steering/evidence
-// entry. These rows pin (a) the ONE retirement steering row naming role, requestId, budget,
-// count and next; (b) the same retirement on the settle outcome's per-member row; (c) a
-// member whose delivery succeeds records no retirement row.
-//
-// Fixture mirrors wave-driver-policy-red.test.mjs: the PausableWaveAdapter scripts nudge
-// delivery failures (failNudge throws in prompt mode 'turn'; the coordinator catches it as
-// delivery_exception and rolls the pause back onto the SAME requestId, so consecutive
-// failures accumulate in the driver's failuresByRequestId).
+// Issue #572 supersedes #414's nudge-retirement rule. A delivery counter does not decide that
+// live work is done. The wave orchestrator retries the same pause until delivery succeeds or its
+// caller explicitly aborts the drive.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -38,9 +28,10 @@ function principal(id) { return Object.freeze({ actor: 'test', principalId: id, 
 // wave-driver-policy-red.test.mjs:56-141 (turnEpoch +1 per nudge keeps the fence lockstep;
 // a NEW report path per productive turn grows the changedPathsDigest set).
 class PausableWaveAdapter extends MockAdapter {
-  constructor({ scriptsByMarker, ...config } = {}) {
+  constructor({ scriptsByMarker, onNudgeAttempt = null, ...config } = {}) {
     super(config);
     this._scriptsByMarker = scriptsByMarker ?? {};
+    this._onNudgeAttempt = onNudgeAttempt;
   }
 
   card() {
@@ -89,6 +80,7 @@ class PausableWaveAdapter extends MockAdapter {
       const count = (this._turnCount?.get(worker) ?? 0) + 1;
       this._turnCount.set(worker, count);
       const turn = script[count] ?? script.at(-1) ?? { edits: [] };
+      this._onNudgeAttempt?.({ count, worker, failNudge: turn.failNudge === true });
       if (turn.failNudge) {
         throw Object.assign(new Error('pausable adapter: scripted nudge failure'), { code: 'pausable_nudge_failed' });
       }
@@ -110,11 +102,11 @@ class PausableWaveAdapter extends MockAdapter {
   }
 }
 
-function harness(t, scriptsByMarker) {
+function harness(t, scriptsByMarker, { onNudgeAttempt = null } = {}) {
   const repo = root('repo');
   const logDir = root('log');
   mkdirSync(join(repo, 'reports'), { recursive: true });
-  const adapter = new PausableWaveAdapter({ harness: 'mock', scriptsByMarker });
+  const adapter = new PausableWaveAdapter({ harness: 'mock', scriptsByMarker, onNudgeAttempt });
   const driver = createDriver({
     repoRoot: repo,
     repoId,
@@ -208,8 +200,6 @@ const FAST = Object.freeze({
   preflight: false,
 });
 
-// Every nudge delivery fails on the SAME rolled-back pause, so the driver's consecutive
-// delivery-failure budget exhausts and it retires the member from nudging.
 const alwaysFailing = (role) => ({
   default: [
     { edits: [edit(role, 1)] },
@@ -221,9 +211,13 @@ const alwaysFailing = (role) => ({
   ],
 });
 
-async function driveRetired(t) {
-  const { baton, repo } = harness(t, alwaysFailing('worker'));
+async function driveUntilAttempts(t, scriptsByMarker, attempts) {
   const controller = new AbortController();
+  const { baton, repo } = harness(t, scriptsByMarker, {
+    onNudgeAttempt: ({ count }) => {
+      if (count >= attempts) controller.abort();
+    },
+  });
   const backstop = setTimeout(() => controller.abort(), 30_000);
   try {
     return await createWaveDriver(baton, { ...FAST, signal: controller.signal }).run({
@@ -234,48 +228,45 @@ async function driveRetired(t) {
   }
 }
 
-test('414a: after K failed deliveries the steering evidence carries exactly one retirement row naming role, requestId, budget, count and next', async (t) => {
-  const receipt = await driveRetired(t);
-  assert.equal(receipt.basis, 'stall', 'nobody steers the retired member, so the stall clock judges');
+test('572a: delivery failures do not retire a live member', async (t) => {
+  const receipt = await driveUntilAttempts(t, alwaysFailing('worker'), 5);
+  assert.equal(receipt.basis, 'aborted', 'the caller is the authority that stops the drive');
   const failed = receipt.nudges.filter((entry) => entry.role === 'worker' && entry.error);
-  assert.ok(failed.length > 0, 'the scripted delivery failures are recorded');
+  assert.ok(failed.length >= 5, `expected at least five retries, got ${JSON.stringify(receipt.nudges)}`);
   const requestId = failed[0].requestId;
   assert.ok(failed.every((entry) => entry.requestId === requestId), 'every failure is on the same rolled-back pause');
-  const retired = receipt.nudges.filter((entry) => entry.outcome === 'nudge_retired');
-  assert.equal(retired.length, 1, `expected exactly one retirement row, got ${JSON.stringify(receipt.nudges)}`);
-  const row = retired[0];
-  assert.equal(row.role, 'worker');
-  assert.equal(row.requestId, requestId);
-  assert.equal(typeof row.runId, 'string');
-  assert.ok(row.runId.length > 0, 'the retirement names the run it stopped steering');
-  assert.equal(typeof row.budget, 'string');
-  assert.ok(row.budget.length > 0, 'the retirement names the exhausted budget');
-  assert.equal(row.count, failed.length, 'the count that exhausted the budget is the observed failure count — derived, never re-typed');
-  assert.equal(row.message, failed.at(-1).error.message, 'the retirement names the last delivery failure message');
-  assert.equal(typeof row.next, 'string');
-  assert.ok(row.next.includes('worker'), `the next action names the stall clock now judging this member: ${row.next}`);
+  assert.equal(receipt.nudges.some((entry) => entry.outcome === 'nudge_retired'), false);
+  assert.equal(receipt.claims.length, 0, 'delivery failures do not manufacture completion claims');
 });
 
-test('414b: the settle outcome for the retired member carries the same retirement', async (t) => {
-  const receipt = await driveRetired(t);
-  const retired = receipt.nudges.filter((entry) => entry.outcome === 'nudge_retired');
-  assert.equal(retired.length, 1);
-  const outcome = receipt.outcomes.find((entry) => entry.role === 'worker');
-  assert.ok(outcome, 'the retired member settles with a per-member outcome row');
-  assert.deepEqual(outcome.retired, { budget: retired[0].budget, count: retired[0].count },
-    'the settle outcome names the same exhausted budget and count as the steering row');
+test('572b: a delivery can recover after the former three-failure boundary', async (t) => {
+  const script = {
+    default: [
+      { edits: [edit('worker', 1)] },
+      { edits: [edit('worker', 1)], failNudge: true },
+      { edits: [edit('worker', 1)], failNudge: true },
+      { edits: [edit('worker', 1)], failNudge: true },
+      { edits: [edit('worker', 1)], failNudge: true },
+      { edits: [edit('worker', 2)] },
+    ],
+  };
+  const receipt = await driveUntilAttempts(t, script, 5);
+  assert.equal(receipt.basis, 'aborted');
+  const failed = receipt.nudges.filter((entry) => entry.error);
+  const succeeded = receipt.nudges.filter((entry) => !entry.error);
+  assert.equal(failed.length, 4);
+  assert.ok(succeeded.some((entry) => entry.requestId === failed[0].requestId),
+    'the same pause is delivered after four failures');
+  assert.equal(receipt.nudges.some((entry) => entry.outcome === 'nudge_retired'), false);
 });
 
-test('414c: a member whose delivery succeeds records no retirement row', async (t) => {
-  const scriptsByMarker = { default: [{ edits: [edit('worker', 1)] }] }; // tail repeats: frozen path set
-  const { baton, repo } = harness(t, scriptsByMarker);
-  const receipt = await createWaveDriver(baton, {
-    ...FAST, stallTimeoutMs: 60_000, unproductiveNudgeBudget: 1, finalization: 'claim-on-stall',
-  }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
-  assert.equal(receipt.basis, 'completed');
-  assert.ok(receipt.nudges.some((entry) => !entry.error), 'a delivery succeeds in this row');
-  assert.equal(receipt.nudges.filter((entry) => entry.outcome === 'nudge_retired').length, 0,
-    'no retirement row when delivery succeeds');
-  const outcome = receipt.outcomes.find((entry) => entry.role === 'worker');
-  assert.equal(outcome?.retired ?? null, null, 'no retirement on the settle outcome when delivery succeeds');
+test('572c: an unchanged digest does not end or claim a member', async (t) => {
+  const script = { default: [{ edits: [edit('worker', 1)] }] };
+  const receipt = await driveUntilAttempts(t, script, 4);
+  const succeeded = receipt.nudges.filter((entry) => !entry.error);
+  assert.equal(receipt.basis, 'aborted');
+  assert.ok(succeeded.length >= 4, `unchanged turns continue past the old budget: ${JSON.stringify(receipt.nudges)}`);
+  assert.equal(new Set(succeeded.map((entry) => entry.requestId)).size, succeeded.length,
+    'each completed turn is a new orchestrator decision point');
+  assert.equal(receipt.claims.length, 0, 'a repeated digest is observation, not assignment completion');
 });
