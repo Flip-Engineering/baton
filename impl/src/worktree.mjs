@@ -142,6 +142,12 @@ function isClean(dir) {
 function mergeError(message, code, cause) {
   return Object.assign(new StructuredMergeError(message, code), cause ? { cause } : {});
 }
+/** Issue #573: the stderr classes the publish pre-flight reads as AUTHENTICATION failures — every
+ * other `git ls-remote` failure reads as the destination being absent or unreachable. Matched
+ * against the bounded tail (`gitStepTail`), case-insensitively, because the wording differs per
+ * transport: SSH publickey refusals, HTTP credential prompts the hermetic environment cannot
+ * answer, and host-key verification that never reached the credential at all. */
+const GIT_REMOTE_AUTH_FAILURE = /permission denied|publickey|could not read username|could not read password|authentication failed|terminal prompts disabled|no such device or address|host key verification|identity file/i;
 
 function postEffectMergeError(message, cause) {
   return Object.assign(mergeError(message, 'structured_post_effect_inconsistent', cause), { postEffect: true });
@@ -2187,8 +2193,10 @@ export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.b
  * @param {(dir: string, files: string[], context: object) => Promise<{files: string[], verdictLine: string|null, unexpected: any[]}>} [request.runGates]
  * @param {string|null} [request.publishRemote] the deployment's DECLARED shared remote (a URL or
  *   path from `advanced.integration.publishRemote`): the landed ref is pushed to it after the
- *   fast-forward, naming the declared value itself, never a remote name. Null on a dry run or a
- *   deployment that declares none — a real landing without one refuses
+ *   fast-forward, naming the declared value itself, never a remote name. A real landing with one
+ *   pre-flights the remote BEFORE the gate run and refuses typed when the destination does not
+ *   exist, cannot be reached, or cannot authenticate this environment (#573). Null on a dry run
+ *   or a deployment that declares none — a real landing without one refuses
  *   `integrate_publish_undeclared` before anything moves.
  * @param {boolean} [request.dryRun]
  * @param {object} [request.log]
@@ -2217,6 +2225,43 @@ export async function landContribution(repoRoot, request) {
     targetHeadBefore = sh('git', ['rev-parse', '--verify', `${ref}^{commit}`], repoRoot);
   } catch {
     throw mergeError(`the target ${target} is not a local branch of this repository`, 'integrate_change_invalid');
+  }
+  // Issue #558: `publishRemote` is the deployment's DECLARED shared remote — a configuration
+  // value, never `origin` (a resident origin has pointed at a local checkout instead of the
+  // shared remote) and never derived from repoId (a hash of the local git dir path, distinct per
+  // clone). Both flags are read BEFORE the gate run: a real landing with a declared remote
+  // pre-flights that remote (#573 below), and a real landing without one refuses before anything
+  // moves.
+  const dryRun = request.dryRun === true;
+  const publishRemote = typeof request.publishRemote === 'string' && request.publishRemote.length > 0
+    && !request.publishRemote.includes('\0') ? request.publishRemote : null;
+  // Issue #573: the push is the LAST step of a landing, so a declared remote this environment
+  // cannot publish to cost the whole derived gate run before the landing learned it — and the
+  // report was a bare git tail. One `git ls-remote`, in the SAME hermetic environment the push
+  // will run in (localGitEnv, prompts disabled), pre-flights the remote before the scratch
+  // checkout exists and before any gate file runs, and the refusal names which of the two
+  // failed: the destination does not exist or cannot be reached, or it answered but this
+  // environment holds no credential it accepts. The push itself, its rollback and the #558
+  // refusal keep their places: a remote that breaks between pre-flight and push still refuses
+  // `integrate_publish_failed` and rolls the local move back.
+  if (!dryRun && publishRemote !== null) {
+    try {
+      gitFile(['ls-remote', '--heads', publishRemote], repoRoot,
+        { stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' });
+    } catch (error) {
+      const unauthenticated = GIT_REMOTE_AUTH_FAILURE.test(gitStepTail(error));
+      throw Object.assign(
+        mergeError(unauthenticated
+          ? `this environment cannot authenticate to the declared shared remote for ${target}; give the landing's git environment the credential it needs`
+          : `the declared shared remote for ${target} does not exist or cannot be reached; correct the destination named by advanced.integration.publishRemote`,
+        unauthenticated ? 'integrate_publish_unauthenticated' : 'integrate_publish_unreachable'),
+        {
+          script: 'git ls-remote',
+          ...(Number.isSafeInteger(error.status) ? { exit: error.status } : {}),
+          stderrTail: redactPushTail(gitStepTail(error)),
+        },
+      );
+    }
   }
   // The base rule (#296 item 1). Never the contribution's recorded observedHead: once a lane
   // rebases, that commit is an ancestor of nothing on the target and a squash from it would replay
@@ -2342,14 +2387,8 @@ export async function landContribution(repoRoot, request) {
         { verdictLine: gates?.verdictLine ?? null, unexpected },
       );
     }
-    const dryRun = request.dryRun === true;
-    // Issue #558: the declared shared remote — a deployment configuration value, never `origin`
-    // (a resident origin has pointed at a local checkout instead of the shared remote) and never
-    // derived from repoId (a hash of the local git dir path, distinct per clone). A real landing
-    // without one refuses BEFORE anything moves: a landing that cannot publish never reports a
-    // local success. A dry run lands nothing, so it publishes nothing either.
-    const publishRemote = typeof request.publishRemote === 'string' && request.publishRemote.length > 0
-      && !request.publishRemote.includes('\0') ? request.publishRemote : null;
+    // A landing that cannot publish never reports a local success. A dry run lands nothing, so
+    // it publishes nothing either.
     if (!dryRun && publishRemote === null) {
       throw mergeError(
         `the deployment declares no shared remote for landings (advanced.integration.publishRemote), so ${target} cannot be published`,
