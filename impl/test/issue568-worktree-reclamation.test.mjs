@@ -11,7 +11,9 @@ import test from 'node:test';
 import {
   allocatePhysicalWorkspaceOwner, applySnapshotToWorktree, createFromBase,
   markStopped, physicalWorkspaceOwnerReceipt, reap, reconcile,
+  seatLinkedWorktreeOwnershipPath,
 } from '../src/worktree.mjs';
+import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
 
 const testRoot = dirname(fileURLToPath(import.meta.url));
 const git = (cwd, args) => execFileSync('git', args, {
@@ -63,6 +65,28 @@ async function ownedWorkspace(f, before, suffix) {
     f.repo, receipt.physicalOwnerId, f.baseSha, { ownerReceipt: receipt },
   );
   return { receipt: created.ownerReceipt, ...created };
+}
+
+function projectedSeat(f, workspace, workerId = 'issue568-seat') {
+  const runtime = new RuntimeIsolation({
+    repoRoot: f.repo,
+    root: join(f.repo, '.baton', 'runtime-568'),
+    baseEnv: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: join(f.repo, '.operator-home') },
+  });
+  const lease = runtime.create(workerId, { card: { harness: 'omp' } });
+  assert.equal(runtime.projectCheckout(workerId, workspace.dir), true);
+  return { runtime, lease, git: join(lease.paths.bin, 'git') };
+}
+
+function addLinkedWorktree(seat, workspace, path, args = ['--detach']) {
+  execFileSync(seat.git, ['worktree', 'add', ...args, path, 'HEAD'], {
+    cwd: workspace.dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...seat.lease.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+  });
+  return JSON.parse(readFileSync(
+    seatLinkedWorktreeOwnershipPath(dirname(dirname(dirname(workspace.dir))), workspace.receipt.physicalOwnerId),
+    'utf8',
+  ).trim());
 }
 
 function expectedOwner(receipt) {
@@ -161,6 +185,9 @@ test('568-B: active and shared workspaces remain under their existing custody', 
   const active = await ownedWorkspace(f, current, 'active');
   const shared = await ownedWorkspace(f, current, 'shared');
   const activeExpectation = expectedOwner(active.receipt);
+  const sharedSeat = projectedSeat(f, shared, 'issue568-shared-seat');
+  const sharedExternal = join(dirname(f.repo), 'shared-seat-external');
+  addLinkedWorktree(sharedSeat, shared, sharedExternal, ['-b', 'shared-scratch']);
 
   const report = reconcile(f.repo, [active.receipt.physicalOwnerId], {
     ownerAuthority: current,
@@ -175,6 +202,8 @@ test('568-B: active and shared workspaces remain under their existing custody', 
   assert.deepEqual(report.validatedExpectedOwners, [active.receipt.physicalOwnerId]);
   assert.equal(existsSync(active.dir), true, 'the active owner keeps its checkout');
   assert.equal(existsSync(shared.dir), true, 'the shared checkout remains while a holder is live');
+  assert.equal(existsSync(sharedExternal), true,
+    'a linked checkout remains while its physical owner has another live holder');
   assert.ok(report.diagnostics.some((row) => row.physicalOwnerId === shared.receipt.physicalOwnerId
     && row.code === 'workspace_other_holder_live_retained'));
 });
@@ -230,4 +259,122 @@ test('568-D: restart releases a branch-only owner receipt and retains unique bra
   assert.equal(git(f.repo, ['rev-parse', workspace.branch]), evidenceSha,
     'the durable lane branch survives receipt cleanup');
   assert.equal(git(f.repo, ['show', `${workspace.branch}:durable.txt`]), 'durable branch evidence');
+});
+
+test('568-E: restart reclaims a recorded external worktree and preserves dirty detached evidence', async (t) => {
+  const f = fixture(t, 'external-detached');
+  const before = authority('external-deployment', 'controller-before');
+  const after = authority('external-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'external-detached');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'seat-created-external');
+  assert.match(readFileSync(seat.lease.paths.checkoutFile, 'utf8'),
+    new RegExp(`physicalOwnerId=${workspace.receipt.physicalOwnerId}`));
+  const ownership = addLinkedWorktree(seat, workspace, external);
+
+  assert.deepEqual({
+    physicalOwnerId: ownership.physicalOwnerId,
+    ownerCheckout: ownership.ownerCheckout,
+    commonGitDir: ownership.commonGitDir,
+    worktreePath: ownership.worktreePath,
+    worktreeGitDir: ownership.worktreeGitDir,
+  }, {
+    physicalOwnerId: workspace.receipt.physicalOwnerId,
+    ownerCheckout: workspace.dir,
+    commonGitDir: join(f.repo, '.git'),
+    worktreePath: external,
+    worktreeGitDir: ownership.worktreeGitDir,
+  });
+  assert.equal(external.startsWith(join(f.repo, '.baton', 'wt')), false,
+    'the linked worktree is outside the Baton worktree root');
+  writeFileSync(join(external, 'detached-evidence.txt'), 'preserved external evidence\n');
+
+  const events = [];
+  const report = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => true,
+    log: { append: (event) => events.push(event) },
+  });
+
+  assert.deepEqual(report.errors, []);
+  assert.equal(existsSync(external), false, 'the recorded external checkout is reclaimed');
+  assert.equal(existsSync(seatLinkedWorktreeOwnershipPath(
+    f.repo, workspace.receipt.physicalOwnerId,
+  )), false, 'the ownership record is released with the checkout');
+  const reclaimed = events.find((event) => event.kind === 'worktree.linked_reclaimed');
+  assert.match(reclaimed?.payload?.ref ?? '',
+    new RegExp(`^refs/baton/seat-worktrees/${workspace.receipt.physicalOwnerId}/`));
+  assert.equal(git(f.repo, ['show', `${reclaimed.payload.ref}:detached-evidence.txt`]),
+    'preserved external evidence');
+  assert.equal(git(f.repo, ['rev-parse', reclaimed.payload.ref]), reclaimed.payload.sha);
+});
+
+test('568-F: active owner retains its recorded external worktree', async (t) => {
+  const f = fixture(t, 'external-active');
+  const current = authority('external-active-deployment', 'controller-current');
+  const workspace = await ownedWorkspace(f, current, 'external-active');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'active-seat-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'active-scratch']);
+  const expectation = expectedOwner(workspace.receipt);
+
+  const report = reconcile(f.repo, [workspace.receipt.physicalOwnerId], {
+    ownerAuthority: current,
+    snapshotUncommitted: true,
+    expectedOwnerBindings: [expectation],
+  });
+
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(report.validatedExpectedOwners, [workspace.receipt.physicalOwnerId]);
+  assert.equal(existsSync(external), true);
+  assert.equal(git(external, ['branch', '--show-current']), 'active-scratch');
+  assert.equal(existsSync(seatLinkedWorktreeOwnershipPath(
+    f.repo, workspace.receipt.physicalOwnerId,
+  )), true);
+});
+
+test('568-G: a recycled external path is retained because its Git identity no longer matches', async (t) => {
+  const f = fixture(t, 'external-recycled');
+  const before = authority('external-recycled-deployment', 'controller-before');
+  const after = authority('external-recycled-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'external-recycled');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'recycled-seat-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'recycled-scratch']);
+  git(f.repo, ['worktree', 'remove', '--force', external]);
+  mkdirSync(external);
+  writeFileSync(join(external, 'unrelated.txt'), 'new owner content\n');
+
+  const report = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => assert.fail('retained linked content keeps owner capacity'),
+  });
+
+  assert.deepEqual(report.errors, []);
+  assert.ok(report.diagnostics.some((row) => (
+    row.physicalOwnerId === workspace.receipt.physicalOwnerId
+      && row.code === 'linked_worktree_content_retained'
+  )));
+  assert.equal(readFileSync(join(external, 'unrelated.txt'), 'utf8'), 'new owner content\n');
+  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
+});
+
+test('568-H: normal seat stop reclaims its linked worktree and keeps its branch evidence', async (t) => {
+  const f = fixture(t, 'external-stop');
+  const current = authority('external-stop-deployment', 'controller-current');
+  const workspace = await ownedWorkspace(f, current, 'external-stop');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'stopped-seat-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'stopped-scratch']);
+  writeFileSync(join(external, 'stop-evidence.txt'), 'seat stop evidence\n');
+  await markStopped(f.repo, workspace.receipt.physicalOwnerId);
+
+  await reap(f.repo, workspace.receipt.physicalOwnerId, { deleteBranch: true });
+
+  assert.equal(existsSync(external), false);
+  assert.equal(existsSync(workspace.dir), false);
+  assert.equal(git(f.repo, ['show', 'stopped-scratch:stop-evidence.txt']), 'seat stop evidence');
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
 });
