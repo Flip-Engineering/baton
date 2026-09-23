@@ -130,11 +130,17 @@ export function prepareRunStart(objective, options) {
     // 93B: wave binding (waveId/waveRole) + the pre-loop wave.started payload (waveStart) ride
     // run.start; like driverKind they describe who is driving, not what the run is.
     'waveId', 'waveRole', 'waveStart',
+    // #102 Decision 1: the cell declaration the run's nodes are minted from.
+    'cell',
   ]), 'start');
   for (const field of ['runId', 'profile', 'model', 'harness', 'effort', 'driverKind', 'waveId', 'waveRole']) {
     if (options[field] !== undefined && !nonempty(options[field])) {
       throw clientError(`Run ${field} is invalid`);
     }
+  }
+  if (options.cell !== undefined
+    && (!options.cell || typeof options.cell !== 'object' || Array.isArray(options.cell))) {
+    throw clientError('Run cell is invalid');
   }
   if (options.waveStart !== undefined) {
     exactOptions(options.waveStart, new Set(['roster', 'idempotencyKey']), 'wave start');
@@ -170,7 +176,7 @@ export function prepareRunStart(objective, options) {
     throw clientError('manual routing requires model and effort together');
   }
   const intent = { objective: objective.normalize('NFKC').trim(), resultIntent };
-  for (const key of ['runId', 'profile', 'scope', 'driverKind', 'waveId', 'waveRole', 'waveStart']) {
+  for (const key of ['runId', 'profile', 'scope', 'driverKind', 'waveId', 'waveRole', 'waveStart', 'cell']) {
     if (options[key] !== undefined) intent[key] = options[key];
   }
   if (options.exact !== undefined) intent.route = options.exact;

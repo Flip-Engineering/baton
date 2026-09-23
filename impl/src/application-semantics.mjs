@@ -23,6 +23,8 @@ export const CANONICAL_RUN_PHASES = Object.freeze([
   'uncertain', 'verifying', 'result_ready', 'awaiting_selection', 'result_selected',
   'reviewing', 'integrating', 'completed', 'failed', 'inconclusive', 'cancelled', 'stopped',
   'denied', 'stopping',
+  // #102 Decision 6: the cell's quorum-reached partial rest is canonical terminal truth.
+  'degraded',
 ]);
 export const CANONICAL_MEMBER_STATES = Object.freeze([
   'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',
@@ -104,9 +106,13 @@ export function serializeAttentionKind(kind) {
 const PROVIDER_SETTLED_CANONICAL = new Set([
   'result_ready', 'awaiting_selection', 'result_selected',
   'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
+  // #102 Decision 6: the degraded quorum terminal is settled and terminal canonical truth.
+  'degraded',
 ]);
 const APPLICATION_TERMINAL_CANONICAL = new Set([
   'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
+  // #102 Decision 6: the degraded quorum terminal is settled and terminal canonical truth.
+  'degraded',
 ]);
 export function providerSettled(phase) {
   return PROVIDER_SETTLED_CANONICAL.has(canonicalRunPhase(phase));
@@ -1730,8 +1736,19 @@ const CANONICAL_OPERATION_SPECS = [
           role: id,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
           exact: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
+          // #102 Decision 1: a member names EITHER its own exact route OR a closed group seat.
+          // The schema advertises both forms; the XOR itself is the wave admission's own typed
+          // refusal (application.mjs _normalizeWaveStart), so this row stays honest without a
+          // second enforcement copy.
+          group: objectSchema({
+            seat: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
+            size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
+            quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
+            strict: { type: 'boolean' },
+            editing: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
+          }, ['seat', 'size']),
           scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
-        }, ['role', 'objective', 'exact']),
+        }, ['role', 'objective']),
       },
     }, ['idempotencyKey', 'members']),
   }],

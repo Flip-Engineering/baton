@@ -263,7 +263,7 @@ test('SI5 (S-G4): SwarmRuntime is a declared target, mapped across all four seam
 // and a TARGETS edit that loses coverage fails here no matter how many times --write runs.
 const CORPUS_COUNTS = Object.freeze({
   'impl/src/coordinator.mjs': 436,
-  'impl/src/application.mjs': 241,
+  'impl/src/application.mjs': 243,
   'impl/src/coordination-store.mjs': 608,
   'impl/src/swarm-runtime.mjs': 167,
   'impl/src/coordination-internals.mjs': 123,
@@ -278,7 +278,7 @@ const CORPUS_COUNTS = Object.freeze({
   'impl/src/runtime-observation.mjs': 158,
   'impl/src/runtime-admission.mjs': 110,
   'impl/src/runtime-api.mjs': 47,
-  'impl/src/application-observation.mjs': 175,
+  'impl/src/application-observation.mjs': 176,
   'impl/src/runtime-event-handlers/dispatcher.mjs': 1,
   'impl/src/runtime-event-handlers/process-lifecycle.mjs': 4,
   'impl/src/runtime-event-handlers/turn-terminal.mjs': 3,
