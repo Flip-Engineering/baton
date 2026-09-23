@@ -22,6 +22,7 @@ import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs'
 import { SWARM_COMMAND_NAMES } from '../src/swarm-contract.mjs';
 import { CORE_TOOL_NAMES } from '../src/mcp-core-tools.mjs';
 import { mcpCombinedToolNames, McpFleetServer } from '../src/mcp-northbound.mjs';
+import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
 
 /** The byte-stable insertion-order key list of APPLICATION_COMMAND_DEFINITIONS (docs/36 §9 M3:
  * the swarm verbs lead, then the legacy set — a reorder, drop, or addition of a table row moves
@@ -77,7 +78,8 @@ const WAVE_DIRECT_PORT_VERBS = Object.freeze([
 
 /** The web-admitted card projection, sorted: the table's web-admitted command names plus the six
  * wave direct ports — today's web.bus profile (41 names), byte-stable against the committed
- * artifact's `profiles['web.bus']`. */
+ * artifact's `profiles['web.bus']`. The #99/#179 accessor pair rides the web bus WITHOUT being
+ * carded (registry-operation direct ports — see the R7 third arm, #566). */
 export function webCardCommands() {
   return [
     ...commandKeys().filter((name) => APPLICATION_COMMAND_DEFINITIONS[name].web),

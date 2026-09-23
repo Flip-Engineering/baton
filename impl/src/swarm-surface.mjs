@@ -87,6 +87,7 @@ const SWARM_CLI_SWITCH_FIELDS = Object.freeze(['dryRun']);
 
 export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) => {
   const verb = name.slice('swarm.'.length);
+  const properties = SWARM_COMMAND_ROWS.find((row) => row.command === name).properties;
   const positional = {
     'swarm.create': ['purpose'],
     'swarm.view': ['swarmId'],
@@ -112,8 +113,9 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     }));
   const usage = [
     `baton swarm ${verb}`,
-    ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
-    ...flags.map((entry) => entry.switch ? `[${entry.flag}]` : `[${entry.flag} VALUE]`),
+    ...positional.map((field) => `<${properties[field]?.enum?.join('|') ?? kebabCase(field).toUpperCase()}>`),
+    ...flags.map((entry) => entry.switch ? `[${entry.flag}]`
+      : `[${entry.flag} ${properties[entry.field]?.enum?.join('|') ?? 'VALUE'}]`),
     // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch and
     // check verbs both serve it (#313 — the check usage line used to omit what the receipt teaches).
     // The watch leg rides the deployment wake stream, so its usage teaches the stream's own

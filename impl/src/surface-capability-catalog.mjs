@@ -10,6 +10,7 @@ import {
 } from './control-surface-unification.mjs';
 import { BatonControlError, digestValue } from './holistic-runtime.mjs';
 import {
+  ORDINARY_APPLICATION_TOOL_DEFINITIONS,
   mcpAdvancedToolNames,
   mcpApplicationToolNames,
   mcpCombinedToolNames,
@@ -37,6 +38,9 @@ const semanticByKey = new Map(
   APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => [row.key, row]),
 );
 const applicationMcpNames = new Set(mcpApplicationToolNames());
+const applicationMcpModes = new Map(ORDINARY_APPLICATION_TOOL_DEFINITIONS.map((tool) => [
+  tool.name, tool.annotations.readOnlyHint ? 'query' : 'effect',
+]));
 const advancedMcpNames = new Set(mcpAdvancedToolNames());
 const combinedMcpNames = Object.freeze(mcpCombinedToolNames());
 const combinedMcpNameSet = new Set(combinedMcpNames);
@@ -196,6 +200,7 @@ function applicationRow(row) {
 }
 
 function nativeMode(name) {
+  if (applicationMcpModes.has(name)) return applicationMcpModes.get(name);
   return /[._](?:read|list|view|status|progress|compile|receipt|watch|recall|horizon|cite|result|capabilities|wait|episode|follow|inspect|workstreams)$/u.test(name)
     ? 'query' : 'effect';
 }
@@ -328,17 +333,21 @@ const META_ROWS = Object.freeze([
 })));
 
 const APPLICATION_ROWS = Object.freeze(APPLICATION_UNIFIED_COMMAND_REGISTRY.rows().map(applicationRow));
-const APPLICATION_CLAIMED_NAMES = new Set(APPLICATION_ROWS.flatMap((row) => [
-  ...Object.values(row.names ?? {}),
-  ...Object.values(row.aliases ?? {}).flat(),
+// An application row OWNS its identity names (the row id, its semantic key, its declared
+// transport spellings). An entry in an alias list is a compatibility claim, never ownership:
+// a live advertised name an application row merely aliases keeps its native row, and the
+// resolution precedence (canonical > transport > alias) decides which row the name serves
+// (issue #555 core-closure adjudication; #566 — run.status is advertised through the
+// fleet_run_status dot twin while run.view's application.commands lane aliases it).
+const APPLICATION_OWNED_NAMES = new Set(APPLICATION_ROWS.flatMap((row) => [
+  row.id, row.key, ...Object.values(row.names ?? {}),
 ]).filter((name) => typeof name === 'string' && name.length > 0));
 const NATIVE_MCP_ROWS = Object.freeze(combinedMcpNames
   // Advertised MCP tool names are executable command identities, not transport spellings.
-  // Keep every served name no application row claims — an exact semantic key, a declared
-  // transport name, or a registered alias correction owns its name; a compatibility alias
-  // that merely resolves through a broader operation never erases the live command
-  // (issue #555 core-closure adjudication).
-  .filter((name) => !semanticKeys.has(name) && !APPLICATION_CLAIMED_NAMES.has(name))
+  // Keep every served name no application row owns — an exact semantic key or a declared
+  // transport name owns its name; a compatibility alias that merely resolves through a
+  // broader operation never erases the live command.
+  .filter((name) => !semanticKeys.has(name) && !APPLICATION_OWNED_NAMES.has(name))
   .map(nativeMcpRow));
 const NATIVE_CLI_ROWS = Object.freeze((nativeManifest.cliNative ?? []).map(nativeCliRow));
 const ALL_ROWS = Object.freeze([...APPLICATION_ROWS, ...NATIVE_MCP_ROWS, ...NATIVE_CLI_ROWS, ...META_ROWS]);
