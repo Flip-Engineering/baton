@@ -175,10 +175,6 @@
       "prerequisite": "codex/gpt-5.6-sol"
     },
     {
-      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
-      "reason": "#538"
-    },
-    {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
@@ -317,51 +313,11 @@
       "reason": "#566"
     },
     {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are exported (stage: served-set export)",
-      "reason": "#156"
-    },
-    {
       "key": "test/mcp-profile-parity-red.test.mjs :: RG-02 RED: application tools/list is 49 and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)",
       "reason": "#156"
     },
     {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-03 RED: the D3 parity derivation reports no uncovered web-bus command (stage: uncovered-set-empty)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-04 RED: fleet_run_resume_work and fleet_run_retry_verification are served on combined (stage: combined-includes-fleet-resume-retry)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-05 RED: every uncovered bus command has its sibling tool bound in the ordinary dispatch map (stage: dispatch-binds-siblings)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-06 RED: the fleet-sourced lifecycle siblings (12 at the contract floor, 14 after D2) byte-inherit the fleet_run_* wire schema, taskSupport forbidden, _meta stamped (stage: sibling-schema-inherits-source)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-07 RED: the wait/follow sibling list admits the siblings and invalid_run_wait bounds (stage: wait-follow-lists-admit-siblings)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-08 RED: fleet_run_resume_work/_retry_verification dispatch, typed refusal, idempotencyKey required, replay reconciles (stage: fleet-resume-retry-dispatch)",
-      "reason": "#156"
-    },
-    {
       "key": "test/mcp-profile-parity-red.test.mjs :: RG-09 RED: combined tools/list is 102 with the 14 siblings leading the ordinary prefix (stage: combined-102-includes-siblings)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-10a RED: the 5 non-canonical ops have mcp.baton surfaceAlias rows naming the sibling tool (stage: alias-rows-registered)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-10b RED: renderMcpToolInventory has the canonical-miss fallback byte-string in executable source (stage: renderer-fallback-absent)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-10c RED: renderMcpToolInventory renders the 5 non-canonical ops to their operation keys (stage: non-canonical-ops-render-operation-keys)",
       "reason": "#156"
     },
     {
@@ -753,51 +709,11 @@
       "reason": "U-E7"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: an observe-only remote session refuses mutation locally before any Web command",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: independent bridges sharing one remote session derive one stable mutation key",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: replay rechecks Web auth/card truth and refuses registry drift",
-      "reason": "#289"
-    },
-    {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: semantic mutation replay is stable while mismatched identity and malformed outlines fail closed",
       "reason": "#289"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > capability drift",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > expiry drift",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > identity drift",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > repository drift",
-      "reason": "#289"
-    },
-    {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC8: remote Web credentials are not serialized through facade or MCP state",
       "reason": "#289"
     },
     {
