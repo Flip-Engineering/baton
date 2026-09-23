@@ -126,6 +126,16 @@ export function providerBrief(coordinator, brief, workerId = null, digest) {
       ),
     });
   }
+  // Issue #59 (D2/R8): the re-drive continuity block this member's carry admission composed. It
+  // rides the provider-facing value ALONE — the admitted `task.brief` (and the briefDigest pinned
+  // to it) stays byte-stable, which is what lets a continuation match the brief the coordinator
+  // admitted. Absent unless the orchestrator declared a carry on this member's re-drive, so the
+  // renderer omits the section (the absence-on-empty pin).
+  if (typeof workerId === 'string' && workerId.length > 0
+    && typeof coordinator._continuityForMember === 'function') {
+    const continuity = coordinator._continuityForMember(workerId);
+    if (continuity) inner = Object.freeze({ ...inner, continuity });
+  }
   // KG-3 rule 6/6a: augment the provider-facing value with a separate `briefing` block.
   // `briefDigest = canonicalDigest(activeTask.brief)` (:4506) hashes only the inner brief,
   // matched store-side at :2599; a briefing that changes between spawn and recovery cannot
