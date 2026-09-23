@@ -175,10 +175,6 @@
       "prerequisite": "codex/gpt-5.6-sol"
     },
     {
-      "key": "test/feedback-forge-hardening-red.test.mjs :: P3 (PIN): RED-2 closed caller schema — a caller-authored derived flag is refused as invalid",
-      "reason": "#538"
-    },
-    {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P6 (PIN): GREEN-3 coaching feedback is authored and rendered exactly as today",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
@@ -753,51 +749,11 @@
       "reason": "U-E7"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: an observe-only remote session refuses mutation locally before any Web command",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: independent bridges sharing one remote session derive one stable mutation key",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: replay rechecks Web auth/card truth and refuses registry drift",
-      "reason": "#289"
-    },
-    {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: semantic mutation replay is stable while mismatched identity and malformed outlines fail closed",
       "reason": "#289"
     },
     {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > capability drift",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > expiry drift",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > identity drift",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > repository drift",
-      "reason": "#289"
-    },
-    {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
-      "reason": "#289"
-    },
-    {
-      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC8: remote Web credentials are not serialized through facade or MCP state",
       "reason": "#289"
     },
     {
