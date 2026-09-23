@@ -1455,6 +1455,10 @@
       "reason": "#564"
     },
     {
+      "file": "test/issue564-root-wake-undelivered-attention-red.test.mjs",
+      "reason": "#564"
+    },
+    {
       "file": "test/issue62-write-failure-red.test.mjs",
       "reason": "#62"
     },
