@@ -13095,7 +13095,7 @@
         {
           "name": "_withRouteRecovery",
           "ordinal": 0,
-          "size": 12,
+          "size": 16,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name"
@@ -23042,7 +23042,7 @@
         {
           "name": "_recordProviderQuotaBlock",
           "ordinal": 0,
-          "size": 24,
+          "size": 31,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -24625,7 +24625,7 @@
         {
           "name": "_providerRouteOf",
           "ordinal": 0,
-          "size": 7,
+          "size": 12,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
