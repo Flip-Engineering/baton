@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { accessSync, chmodSync, closeSync, constants as fsConstants, existsSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { projectCredentialTree } from './credential-projection.mjs';
+import { seatLinkedWorktreeOwnershipPath } from './worktree.mjs';
 
 const SECRET_NAME = /(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)/i;
 const PROVIDER_OR_INJECTION = /^(ANTHROPIC_|OPENAI_|XAI_|ZAI_|Z_AI_|MOONSHOT_|KIMI_|AWS_|GOOGLE_|GCLOUD_|CLOUD_ML_|AZURE_|FOUNDRY_|GITHUB_|NODE_OPTIONS$|PYTHONPATH$|PYTHONHOME$|RUBYOPT$|PERL5OPT$|BASH_ENV$|ENV$|CDPATH$|GIT_CONFIG|GIT_DIR$|GIT_WORK_TREE$|DYLD_|LD_|.*_PROXY$)/i;
@@ -132,16 +133,37 @@ function writeWriterState(target, state) {
 // (every commit attributed to the seat) rather than dropping a real row; the coordinator
 // records the seat's checkout before its process can reach a commit. Rewritten atomically, so
 // a wrapper reading it mid-write sees the old identity or the new one, never a torn path.
-function writeCheckoutIdentity(target, checkout) {
+function writeCheckoutIdentity(target, checkout, linkedOwnership = null) {
   const value = normalizedCheckout(checkout);
   const temporary = join(dirname(target), `.${process.pid}.${randomBytes(8).toString('hex')}.checkout.tmp`);
   try {
-    writeFileSync(temporary, `checkout=${value ?? ''}\n`, { mode: 0o600, flag: 'wx' });
+    writeFileSync(temporary, [
+      `checkout=${value ?? ''}`,
+      `physicalOwnerId=${linkedOwnership?.physicalOwnerId ?? ''}`,
+      `linkedWorktreeRecord=${linkedOwnership?.recordPath ?? ''}`,
+      '',
+    ].join('\n'), { mode: 0o600, flag: 'wx' });
     chmodSync(temporary, 0o600);
     renameSync(temporary, target);
   } finally {
     rmSync(temporary, { force: true });
   }
+}
+
+function linkedWorktreeOwnershipProjection(repoRoot, checkout) {
+  const value = normalizedCheckout(checkout);
+  if (value === null) return null;
+  const physicalOwnerId = basename(value);
+  if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)) return null;
+  const expected = join(repoRoot, '.baton', 'wt', physicalOwnerId);
+  let observed = value; let expectedObserved = expected;
+  try { observed = realpathSync(value); } catch { /* the checkout may not exist yet */ }
+  try { expectedObserved = realpathSync(expected); } catch { /* compare the absolute spelling */ }
+  if (observed !== expectedObserved) return null;
+  const recordPath = seatLinkedWorktreeOwnershipPath(repoRoot, physicalOwnerId, { createRoot: true });
+  writeFileSync(recordPath, '', { encoding: 'utf8', mode: 0o600, flag: 'a' });
+  chmodSync(recordPath, 0o600);
+  return Object.freeze({ physicalOwnerId, recordPath });
 }
 
 /** The absolute checkout path a lease can record as its own, or null. */
@@ -309,6 +331,39 @@ EOF
     "$_ws" "$_cid" "$_w" "$_sha" "$_at" "$_items" >> "$BATON_COMMIT_SPOOL" 2>/dev/null || true;
   return 0;
 }
+_baton_observe_linked_worktree() {
+  _rg=$1; _created=$2;
+  [ -n "$_created" ] || return 0;
+  _own=''; _owner=''; _record='';
+  if [ -n "$BATON_CHECKOUT_FILE" ] && [ -f "$BATON_CHECKOUT_FILE" ]; then
+    while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+      case "$_k" in
+        checkout) _own=$_v ;;
+        physicalOwnerId) _owner=$_v ;;
+        linkedWorktreeRecord) _record=$_v ;;
+      esac;
+    done < "$BATON_CHECKOUT_FILE";
+  fi;
+  [ -n "$_own" ] && [ -n "$_owner" ] && [ -n "$_record" ] || return 0;
+  [ -f "$_record" ] && [ ! -L "$_record" ] || return 0;
+  _target_common=$(cd "$_target" 2>/dev/null && "$_rg" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0;
+  _owner_common=$(cd "$_own" 2>/dev/null && "$_rg" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0;
+  [ "$_target_common" = "$_owner_common" ] || return 0;
+  case "$_created" in /*) _candidate=$_created ;; *) _candidate="$_target/$_created" ;; esac;
+  _path=$(cd "$_candidate" 2>/dev/null && pwd -P) || return 0;
+  _common=$(cd "$_path" && "$_rg" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0;
+  [ "$_common" = "$_owner_common" ] || return 0;
+  _gitdir=$(cd "$_path" && "$_rg" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 0;
+  _head=$(cd "$_path" && "$_rg" rev-parse HEAD 2>/dev/null) || return 0;
+  _at=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || _at='';
+  _json_escape() { printf '%s' "$1" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/"/\\\\"/g'; }
+  _jowner=$(_json_escape "$_owner"); _jown=$(_json_escape "$_own");
+  _jcommon=$(_json_escape "$_common"); _jpath=$(_json_escape "$_path");
+  _jgitdir=$(_json_escape "$_gitdir"); _jat=$(_json_escape "$_at");
+  printf '{"schemaVersion":1,"physicalOwnerId":"%s","ownerCheckout":"%s","commonGitDir":"%s","worktreePath":"%s","worktreeGitDir":"%s","createdHead":"%s","createdAt":"%s"}\n' \
+    "$_jowner" "$_jown" "$_jcommon" "$_jpath" "$_jgitdir" "$_head" "$_jat" >> "$_record" 2>/dev/null || true;
+  return 0;
+}
 _cmd=""; _skip=0; _pending=''; _gitdir=''; _target=$PWD;
 _baton_chdir() {
   case "$1" in
@@ -338,6 +393,33 @@ for _arg in "$@"; do
     *) _cmd="$_arg"; break ;;
   esac;
 done;
+_worktree_add_path=''; _phase='global'; _skip_add=0; _pending_add='';
+for _arg in "$@"; do
+  if [ "$_skip_add" = "1" ]; then
+    _skip_add=0;
+    if [ "$_phase" = "add" ] && [ -n "$_pending_add" ]; then _pending_add=''; fi;
+    continue;
+  fi;
+  if [ "$_phase" = "global" ]; then
+    case "$_arg" in
+      -C|-c|--git-dir|--work-tree|--namespace) _skip_add=1 ;;
+      -*) ;;
+      worktree) _phase='subcommand' ;;
+      *) break ;;
+    esac;
+    continue;
+  fi;
+  if [ "$_phase" = "subcommand" ]; then
+    case "$_arg" in -*) ;; add) _phase='add' ;; *) break ;; esac;
+    continue;
+  fi;
+  case "$_arg" in
+    -b|-B|--reason|--orphan) _pending_add=1; _skip_add=1 ;;
+    -b?*|-B?*|--reason=*|--orphan=*|-*) ;;
+    --) ;;
+    *) _worktree_add_path=$_arg; break ;;
+  esac;
+done;
 if [ "$_cmd" = "stash" ]; then
   _refuse=1;
   _own='';
@@ -365,6 +447,13 @@ if [ "$_cmd" = "commit" ]; then
   _rc=$?;
   [ "$_rc" -eq 0 ] || exit "$_rc";
   _baton_observe_commit "$_real";
+  exit 0;
+fi;
+if [ -n "$_worktree_add_path" ]; then
+  "$_real" "$@";
+  _rc=$?;
+  [ "$_rc" -eq 0 ] || exit "$_rc";
+  _baton_observe_linked_worktree "$_real" "$_worktree_add_path";
   exit 0;
 fi;
 exec "$_real" "$@"
@@ -414,7 +503,11 @@ export class RuntimeIsolation {
       resolveRealGit(this.baseEnv.PATH ?? process.env.PATH, bin), writerFile, commitSpool, checkoutFile), { mode: 0o700 });
     chmodSync(wrapperPath, 0o700);
     writeWriterState(writerFile, null);
-    writeCheckoutIdentity(checkoutFile, normalizedCheckout(recordValue(selection) ? selection.checkout : null));
+    const initialCheckout = normalizedCheckout(recordValue(selection) ? selection.checkout : null);
+    writeCheckoutIdentity(
+      checkoutFile, initialCheckout,
+      linkedWorktreeOwnershipProjection(this.repoRoot, initialCheckout),
+    );
     // Grok's native sandbox grants its expected ~/.grok tree, not an arbitrary GROK_HOME outside
     // HOME. Keep HOME private and place the projected config at that vendor-native path.
     const config = privateDir(surface === 'grok' ? join(home, '.grok') : join(root, 'config', family));
@@ -594,7 +687,10 @@ export class RuntimeIsolation {
     const value = normalizedCheckout(checkout);
     if (!lease || value === null) return false;
     try {
-      writeCheckoutIdentity(lease.checkoutFile, value);
+      writeCheckoutIdentity(
+        lease.checkoutFile, value,
+        linkedWorktreeOwnershipProjection(this.repoRoot, value),
+      );
       return true;
     } catch { return false; /* the lease's own reconciliation owns a vanished directory */ }
   }
