@@ -3536,10 +3536,16 @@ export function _recordProviderQuotaBlock(coordinator, recorder, handle, fault, 
     if (!fault || fault.code !== PROVIDER_FAULT_CODES.quota) return null;
     const route = fault.detail?.route ?? coordinator._providerRouteOf(handle);
     const resetAt = fault.detail?.resetAt ?? null;
+    // #575: a refusal the provider answered without a reset instant ends at the declared
+    // fault-probe bound, beside the honest `resetAt: null` — the same bound the degrade
+    // episode's probe instant rides, so both facts end together and one probe answers both.
+    const derivedResetAt = resetAt === null
+      ? new Date(coordinator._now() + FRAME_LIMITS['route.fault_probe_ms'].value).toISOString()
+      : null;
     let block = null;
     if (coordinator._providerQuota && route) {
       block = coordinator._providerQuota.record(route, {
-        code: fault.code, resetAt, at: coordinator._now(), workerId: handle.id,
+        code: fault.code, resetAt, derivedResetAt, at: coordinator._now(), workerId: handle.id,
         runId: task?.runId ?? handle.runId ?? null,
       });
     }
@@ -3548,7 +3554,8 @@ export function _recordProviderQuotaBlock(coordinator, recorder, handle, fault, 
         worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
         kind: 'provider.quota_exhausted', actor: 'policy', ...coordinator._routeAttribution(handle, task),
         payload: {
-          code: fault.code, route, resetAt, action: 'block_route_until_reset',
+          code: fault.code, route, resetAt, derivedResetAt,
+          action: 'block_route_until_reset',
           recordedByReadiness: block !== null,
         },
       });
