@@ -234,11 +234,24 @@ function storedEvents(store) {
   throw refusal('wake delivery store has no event reader', 'wake_delivery_store_invalid');
 }
 
+function frameAddress(frame) {
+  const swarmId = typeof frame?.swarmId === 'string' && frame.swarmId.length > 0
+    ? frame.swarmId : null;
+  const runId = typeof frame?.runId === 'string' && frame.runId.length > 0
+    ? frame.runId : null;
+  if (swarmId !== null) return Object.freeze({ swarmId });
+  if (runId !== null) return Object.freeze({ swarmId: null, runId });
+  throw refusal('wake frame identity requires either swarmId or runId', 'wake_frame_identity_invalid');
+}
+
 function sameIdentity(payload, frame) {
+  let address;
+  try { address = frameAddress(frame); } catch { return false; }
   return (payload?.kind === 'wake.root_delivered' || payload?.kind === 'wake.root_undelivered')
     && payload.seq === frame.seq
     && payload.wakeClass === frame.wakeClass
-    && payload.swarmId === frame.swarmId;
+    && payload.swarmId === address.swarmId
+    && (address.runId === undefined || payload.runId === address.runId);
 }
 
 function alreadyRecorded(store, frame) {
@@ -247,10 +260,10 @@ function alreadyRecorded(store, frame) {
 
 function validateIdentity(frame) {
   if (!Number.isSafeInteger(frame?.seq) || frame.seq <= 0
-    || typeof frame?.wakeClass !== 'string' || frame.wakeClass.length === 0
-    || typeof frame?.swarmId !== 'string' || frame.swarmId.length === 0) {
-    throw refusal('wake frame identity requires seq, wakeClass, and swarmId', 'wake_frame_identity_invalid');
+    || typeof frame?.wakeClass !== 'string' || frame.wakeClass.length === 0) {
+    throw refusal('wake frame identity requires seq and wakeClass', 'wake_frame_identity_invalid');
   }
+  return frameAddress(frame);
 }
 
 function recordDelivery(store, kind, payload, identity) {
@@ -270,11 +283,11 @@ const inFlightByStore = new WeakMap();
 
 /** Deliver and durably mark one root wake identity at most once in this runtime. */
 export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
-  validateIdentity(frame);
+  const address = validateIdentity(frame);
   if (store === null || (typeof store !== 'object' && typeof store !== 'function')) {
     throw refusal('wake delivery store is required', 'wake_delivery_store_invalid');
   }
-  const identity = [frame.swarmId, frame.wakeClass, frame.seq];
+  const identity = { seq: frame.seq, wakeClass: frame.wakeClass, ...address };
   const identityKey = JSON.stringify(identity);
   if (alreadyRecorded(store, frame)) return Object.freeze({ delivered: false, duplicate: true });
 
@@ -294,7 +307,7 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
     const wakeCapability = harnessWakeCapability(harness);
     const mechanism = wakeCapability?.mechanism ?? 'none';
     const base = {
-      seq: frame.seq, wakeClass: frame.wakeClass, swarmId: frame.swarmId,
+      seq: frame.seq, wakeClass: frame.wakeClass, ...address,
       harness: typeof harness === 'string' && harness.length > 0 ? harness : 'unknown',
       mechanism,
     };
@@ -368,7 +381,29 @@ function rootAttentionPayload(store, frame) {
   });
 }
 
-function rootWakeBody(payload) {
+function rootTurnReportedPayload(store, frame) {
+  const events = typeof store?.eventsView === 'function'
+    ? store.eventsView(frame.seq, 1)
+    : storedEvents(store);
+  const source = events.find((event) => event?.seq === frame.seq) ?? null;
+  const payload = source?.kind === 'driver.recorded'
+    ? source.payload
+    : source?.kind === 'worker.turn_reported'
+      ? { kind: source.kind, ...(source.payload ?? {}) }
+      : null;
+  if (payload?.kind !== 'worker.turn_reported'
+    || typeof payload.runId !== 'string' || payload.runId.length === 0
+    || payload.runId !== frame.runId) {
+    throw refusal('root_turn_reported frame does not resolve to a worker.turn_reported row',
+      'root_wake_source_invalid');
+  }
+  return Object.freeze({ ...payload });
+}
+
+function rootWakeBody(payload, wakeClass) {
+  if (wakeClass === 'root_turn_reported') {
+    return `Baton root turn report.\n${JSON.stringify(payload, null, 2)}`;
+  }
   return `Baton root attention is owed.\n${JSON.stringify(payload, null, 2)}`;
 }
 
@@ -383,7 +418,7 @@ export async function deliverRootWakeFrame({
   discovery,
   transport,
 }) {
-  if (frame?.wakeClass !== 'root_owed') {
+  if (!['root_owed', 'root_turn_reported'].includes(frame?.wakeClass)) {
     return Object.freeze({ delivered: false, ignored: true });
   }
   const normalizedTarget = normalizeRootWakeTarget(target);
@@ -392,8 +427,10 @@ export async function deliverRootWakeFrame({
     frame,
     target: normalizedTarget,
     deliver: async (context) => {
-      const payload = rootAttentionPayload(store, frame);
-      const body = rootWakeBody(payload);
+      const payload = frame.wakeClass === 'root_turn_reported'
+        ? rootTurnReportedPayload(store, frame)
+        : rootAttentionPayload(store, frame);
+      const body = rootWakeBody(payload, frame.wakeClass);
       if (deliver !== null) {
         if (typeof deliver !== 'function') {
           throw refusal('root wake delivery override must be a function', 'wake_delivery_invalid');
@@ -452,7 +489,7 @@ export function attachRootWakeDelivery({
     store, frame, target: normalizedTarget, deliver, discovery, transport,
   });
   const done = stream.watch(Object.freeze({
-    kinds: new Set(['root_owed']), swarms: null, participants: null, since,
+    kinds: new Set(['root_owed', 'root_turn_reported']), swarms: null, participants: null, since,
   }), {
     signal: controller.signal,
     onFrame: async (frame) => {
