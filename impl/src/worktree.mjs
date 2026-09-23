@@ -148,6 +148,10 @@ function mergeError(message, code, cause) {
  * transport: SSH publickey refusals, HTTP credential prompts the hermetic environment cannot
  * answer, and host-key verification that never reached the credential at all. */
 const GIT_REMOTE_AUTH_FAILURE = /permission denied|publickey|could not read username|could not read password|authentication failed|terminal prompts disabled|no such device or address|host key verification|identity file/i;
+/** Issue #573: the throwaway ref the publish pre-flight names. `--dry-run` writes nothing on
+ * either side, so the ref never exists on the remote; it only gives the simulated push a
+ * refspec to carry. */
+const PUBLISH_AUTH_PROBE_REF = 'baton-reviewer-auth-probe';
 
 function postEffectMergeError(message, cause) {
   return Object.assign(mergeError(message, 'structured_post_effect_inconsistent', cause), { postEffect: true });
@@ -2245,26 +2249,29 @@ export async function landContribution(repoRoot, request) {
     && !request.publishRemote.includes('\0') ? request.publishRemote : null;
   // Issue #573: the push is the LAST step of a landing, so a declared remote this environment
   // cannot publish to cost the whole derived gate run before the landing learned it — and the
-  // report was a bare git tail. One `git ls-remote`, in the SAME hermetic environment the push
-  // will run in (localGitEnv, prompts disabled), pre-flights the remote before the scratch
-  // checkout exists and before any gate file runs, and the refusal names which of the two
-  // failed: the destination does not exist or cannot be reached, or it answered but this
-  // environment holds no credential it accepts. The push itself, its rollback and the #558
-  // refusal keep their places: a remote that breaks between pre-flight and push still refuses
-  // `integrate_publish_failed` and rolls the local move back.
+  // report was a bare git tail. Reads prove nothing here: a public-read remote lists refs to an
+  // anonymous fetch and still refuses the push, so the pre-flight is a `git push --dry-run` —
+  // the same command as the landing's own push, in the SAME hermetic environment (localGitEnv,
+  // prompts disabled), naming a THROWAWAY ref (`--dry-run` writes nothing anywhere; the ref
+  // never exists on the remote). It runs before the scratch checkout exists and before any gate
+  // file runs, and the refusal names which of the two failed: the destination does not exist or
+  // cannot be reached, or it answered but this environment holds no credential it accepts. The
+  // push itself, its rollback and the #558 refusal keep their places: a remote that breaks
+  // between pre-flight and push still refuses `integrate_publish_failed` and rolls the local
+  // move back.
   if (!dryRun && publishRemote !== null) {
     try {
-      gitFile(['ls-remote', '--heads', publishRemote], repoRoot,
+      gitFile(['push', '--dry-run', publishRemote, `${targetHeadBefore}:refs/heads/${PUBLISH_AUTH_PROBE_REF}`], repoRoot,
         { stdio: ['ignore', 'pipe', 'pipe'] }, { GIT_TERMINAL_PROMPT: '0' });
     } catch (error) {
       const unauthenticated = GIT_REMOTE_AUTH_FAILURE.test(gitStepTail(error));
       throw Object.assign(
         mergeError(unauthenticated
-          ? `this environment cannot authenticate to the declared shared remote for ${target}; give the landing's git environment the credential it needs`
+          ? `this environment cannot authenticate to the declared shared remote for ${target}; give the landing's git environment the push credential it needs`
           : `the declared shared remote for ${target} does not exist or cannot be reached; correct the destination named by advanced.integration.publishRemote`,
         unauthenticated ? 'integrate_publish_unauthenticated' : 'integrate_publish_unreachable'),
         {
-          script: 'git ls-remote',
+          script: 'git push --dry-run',
           ...(Number.isSafeInteger(error.status) ? { exit: error.status } : {}),
           stderrTail: redactPushTail(gitStepTail(error)),
         },
