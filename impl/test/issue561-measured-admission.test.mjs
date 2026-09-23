@@ -32,10 +32,10 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { deriveSwapReserveBytes } from '../src/worktree-capacity.mjs';
 import {
   HostCapacityAuthority,
   deriveHostCapacity,
-  deriveSwapReserveBytes,
   hostCapacityObservation,
   hostCapacityShortfall,
   parseMemInfoAvailable,
