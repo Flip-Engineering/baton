@@ -1523,7 +1523,7 @@
         {
           "name": "_validateSessionContext",
           "ordinal": 0,
-          "size": 15,
+          "size": 19,
           "seam": "effect",
           "evidence": [
             "effect:worktree_authority",
@@ -12899,7 +12899,7 @@
         {
           "name": "_once",
           "ordinal": 0,
-          "size": 51,
+          "size": 65,
           "seam": "recovery",
           "evidence": [
             "admission:swarm_refusal",
@@ -13449,7 +13449,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1102,
+          "size": 1108,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13684,7 +13684,7 @@
         {
           "name": "_notificationReceipt",
           "ordinal": 0,
-          "size": 18,
+          "size": 22,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -14068,7 +14068,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 227,
+          "size": 232,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -15836,7 +15836,7 @@
         {
           "name": "_validateRecoveryAttemptAdmissionPayload",
           "ordinal": 0,
-          "size": 75,
+          "size": 78,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -15883,7 +15883,7 @@
         {
           "name": "createAndClaimPlanRecoveryRefinement",
           "ordinal": 0,
-          "size": 117,
+          "size": 121,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -17839,9 +17839,18 @@
           ]
         },
         {
+          "name": "swarmReplayConflictDetail",
+          "ordinal": 0,
+          "size": 18,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
           "name": "recordSwarm",
           "ordinal": 0,
-          "size": 20,
+          "size": 25,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
@@ -19022,9 +19031,18 @@
           ]
         },
         {
+          "name": "recordedRunStopScope",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_validateRunStopAdmission",
           "ordinal": 0,
-          "size": 104,
+          "size": 110,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -19553,7 +19571,7 @@
         {
           "name": "_normalizeContextPackage",
           "ordinal": 0,
-          "size": 51,
+          "size": 56,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
@@ -20727,7 +20745,7 @@
         {
           "name": "_recover",
           "ordinal": 0,
-          "size": 549,
+          "size": 551,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -20742,7 +20760,7 @@
         {
           "name": "_reattachPreservedSession",
           "ordinal": 0,
-          "size": 137,
+          "size": 139,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -20928,7 +20946,7 @@
         {
           "name": "reapRunScratchpads",
           "ordinal": 0,
-          "size": 23,
+          "size": 25,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

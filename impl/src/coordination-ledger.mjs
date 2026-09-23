@@ -1862,8 +1862,8 @@ export function _runStopContextTargets(store, targetRunIds) {
   return { targetContextSessionIds, targetContextCellIds, targetContextCallIds };
 }
 
-export function _runStopTargets(store, runId, throughSeq = store._events.length, contextVersion = 3) {
-  const targetRunIds = store._runLineagePolicy
+export function _runStopTargets(store, runId, throughSeq = store._events.length, contextVersion = 3, scoped = store._runLineagePolicy !== null) {
+  const targetRunIds = scoped
     ? [...new Set([runId, ...store.runDescendants(runId).map((row) => row.childRunId)])].sort(compareCanonicalStrings)
     : [runId];
   const targetRunSet = new Set(targetRunIds);
@@ -1888,7 +1888,7 @@ export function _runStopTargets(store, runId, throughSeq = store._events.length,
   const hasContextTargets = contextTargets.targetContextSessionIds.length > 0
     || contextTargets.targetContextCellIds.length > 0
     || (contextTargets.targetContextCallIds?.length ?? 0) > 0;
-  if (store._runLineagePolicy) {
+  if (scoped) {
     const core = {
       throughSeq, targetRunIds, targetTaskIds, targetWorkerIds,
       ...(hasContextTargets ? contextTargets : {}),
@@ -5732,6 +5732,27 @@ export function _planElevationAtWaveClose(store, waveId, auth, closedEventSeq) {
   if (demotions.length > 0) store._appendBatch(demotions, 'plan_auto_demote');
 }
 
+/** #511: the outcome of the request a colliding identity already names, read off the recorded row
+ * itself — never a live re-derivation: the row, the seat it resolved to when it names one, and the
+ * readback that shows the caller their original request landed. */
+function swarmReplayConflictDetail(prior, requestedKind) {
+  const payload = prior?.payload ?? {};
+  const named = payload.participantId ?? payload.holderParticipantId
+    ?? (Array.isArray(payload.participantIds) ? payload.participantIds[0] : null);
+  return Object.freeze({
+    prior: Object.freeze({
+      kind: typeof prior?.kind === 'string' ? prior.kind : null,
+      requestedKind,
+      seq: Number.isSafeInteger(prior?.seq) ? prior.seq : null,
+      ts: typeof prior?.ts === 'string' ? prior.ts : null,
+      actor: typeof prior?.actor === 'string' ? prior.actor : null,
+      participantId: typeof named === 'string' && named.length > 0 ? named : null,
+    }),
+    next: 'read the request this identity already names back with `baton swarm view` (or the '
+      + 'caller\'s own receipt trail) before retrying: a retry under a used key either repeats the '
+      + 'original request byte for byte or takes a new key',
+  });
+}
 export function recordSwarm(store, kind, payload, auth) {
   validateSwarmEvent(kind, payload);
   if (typeof auth?.actor !== 'string' || !auth.actor || typeof auth?.key !== 'string' || !auth.key) {
@@ -5741,7 +5762,12 @@ export function recordSwarm(store, kind, payload, auth) {
   if (prior) {
     if (prior.kind !== kind || prior.actor !== auth.actor
       || JSON.stringify(canonicalJson(prior.payload)) !== JSON.stringify(canonicalJson(payload))) {
-      throw new CoordinationRefusal('Swarm mutation identity already names another request', 'swarm_replay_conflict');
+      // #511: a retry that collides with an identity that already landed is often redundant rather
+      // than wrong (a client-side timeout over an admission that succeeded), so the refusal names
+      // what the identity already did — the row, the seat it resolved to, and where to read it
+      // back — instead of only that it collided.
+      throw new CoordinationRefusal('Swarm mutation identity already names another request',
+        'swarm_replay_conflict', swarmReplayConflictDetail(prior, kind));
     }
     return clone(prior);
   }

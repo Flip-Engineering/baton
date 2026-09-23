@@ -190,6 +190,10 @@ test('558d: a malformed publishRemote declaration is refused at deployment open'
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue558-open-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
+  // The committing identity is the fixture's own: a seat's HOME is sandboxed and carries no global
+  // git identity, so a bare `git commit` here fails `Author identity unknown` in every lane.
+  git(repo, 'config', 'user.name', 'Issue 558');
+  git(repo, 'config', 'user.email', 'issue558@example.invalid');
   write(repo, 'README.md', 'base\n');
   git(repo, 'add', '-A');
   git(repo, 'commit', '-qm', 'base');
