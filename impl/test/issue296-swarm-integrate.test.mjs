@@ -464,6 +464,8 @@ test('296: an omitted target on a detached checkout no branch names refuses type
 test('296: an omitted target on a detached checkout two branches name refuses with the candidates named', needsGit, async (t) => {
   const w = await world(t, { detach: 'ambiguous' });
   const detachedHead = git(w.repo, 'rev-parse', 'HEAD');
+  const masterBefore = git(w.repo, 'rev-parse', 'master');
+  const elsewhereBefore = git(w.repo, 'rev-parse', 'elsewhere');
 
   const error = await w.integrate({ target: undefined }).then(() => null, (thrown) => thrown);
 
@@ -472,6 +474,7 @@ test('296: an omitted target on a detached checkout two branches name refuses wi
     'the refusal\'s detail names every branch that would have to be guessed between');
   assert.equal(error.detail.head, detachedHead);
   assert.match(error.message, /no single local branch names that commit/u);
-  assert.equal(git(w.repo, 'rev-parse', 'master'), git(w.repo, 'rev-parse', 'elsewhere'),
-    'neither candidate branch moved');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), masterBefore, 'master did not move');
+  assert.equal(git(w.repo, 'rev-parse', 'elsewhere'), elsewhereBefore, 'elsewhere did not move');
+  assert.equal(w.foldRow().integration, undefined, 'no receipt was recorded');
 });
