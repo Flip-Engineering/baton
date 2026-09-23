@@ -276,3 +276,84 @@ test('572-w4: a real parentless turn report reaches the resident root transport 
   assert.equal(deliveries().length, 1);
   assert.equal(sent.length, 1);
 });
+
+test('572-w5: a deployment-scoped worker turn report reaches the root socket exactly once', async (t) => {
+  const socketDirectory = mkdtempSync('/tmp/baton-572-root-turn-');
+  const socketPath = join(socketDirectory, 'claude.sock');
+  const received = [];
+  const server = createServer((connection) => {
+    const chunks = [];
+    connection.on('data', (chunk) => chunks.push(chunk));
+    connection.on('end', () => received.push(Buffer.concat(chunks).toString('utf8')));
+  });
+  await listen(server, socketPath);
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(socketDirectory, { recursive: true, force: true });
+  });
+  const discovery = async () => JSON.stringify([{ sessionId: TARGET.sessionId, pid: 572 }]);
+  const transport = async ({ socket, line }) => {
+    assert.equal(socket, '/tmp/cc-socks/572.sock');
+    await new Promise((resolve, reject) => {
+      const client = createConnection(socketPath);
+      client.once('error', reject);
+      client.once('close', resolve);
+      client.end(line);
+    });
+  };
+  const f = fixture(t, { target: TARGET, discovery, transport });
+  const reported = f.store.recordDriver('worker.turn_reported', {
+    runId: 'run-root-572', worker: 'worker-root-572', taskId: 'task-root-572',
+    turnSeq: 12, turnEpoch: 3,
+    report: { status: 'completed', summary: 'The deployment turn is ready for root.' },
+    assignmentDone: true,
+  }, { actor: 'baton-runtime', key: 'worker-turn-reported-572' });
+  const frame = deriveWakeFrame(reported.event);
+  assert.equal(frame?.wakeClass, 'root_turn_reported');
+  assert.equal(frame?.swarmId, null);
+  assert.equal(frame?.runId, 'run-root-572');
+  assert.equal(frame?.next, 'baton run view run-root-572');
+
+  const delivered = await waitFor(
+    () => f.store.eventsView().filter((event) => event.payload?.kind === 'wake.root_delivered'
+      && event.payload.seq === reported.event.seq),
+    (rows) => rows.length === 1,
+    { label: 'deployment turn delivery' },
+  );
+  await waitFor(() => received, (rows) => rows.length === 1, { label: 'deployment turn socket frame' });
+  assert.deepEqual({ ...delivered[0].payload, at: '<at>' }, {
+    kind: 'wake.root_delivered', seq: reported.event.seq, wakeClass: 'root_turn_reported',
+    swarmId: null, runId: 'run-root-572', harness: 'claude-code', mechanism: 'session-socket',
+    sessionId: TARGET.sessionId, at: '<at>',
+  });
+  assert.match(JSON.parse(received[0]).message.content, /deployment turn is ready for root/u);
+
+  const replay = await deliverRootWakeFrame({
+    store: f.store, frame, target: TARGET, discovery, transport,
+  });
+  assert.deepEqual(replay, { delivered: false, duplicate: true });
+  assert.equal(received.length, 1);
+  assert.equal(f.store.eventsView().filter((event) => event.payload?.kind === 'wake.root_delivered'
+    && event.payload.seq === reported.event.seq).length, 1);
+});
+
+test('572-w6: an unresolvable run-addressed frame records its typed delivery failure', async (t) => {
+  let sends = 0;
+  const f = fixture(t, null);
+  const frame = Object.freeze({
+    seq: 5720, wakeClass: 'root_turn_reported', swarmId: null, runId: 'run-missing-572',
+  });
+  await assert.rejects(deliverRootWakeFrame({
+    store: f.store,
+    frame,
+    target: TARGET,
+    deliver: async () => { sends += 1; return { delivered: true }; },
+  }), (error) => error?.code === 'root_wake_source_invalid');
+  assert.equal(sends, 0);
+  const failure = f.store.eventsView().find((event) => event.payload?.kind === 'wake.root_undelivered');
+  assert.deepEqual({ ...failure?.payload, at: '<at>' }, {
+    kind: 'wake.root_undelivered', seq: 5720, wakeClass: 'root_turn_reported',
+    swarmId: null, runId: 'run-missing-572', harness: 'claude-code', mechanism: 'session-socket',
+    code: 'root_wake_source_invalid', at: '<at>',
+  });
+});
