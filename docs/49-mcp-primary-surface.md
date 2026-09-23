@@ -1,18 +1,18 @@
 # 49 — MCP as the primary agent surface: a core tool set, one entry story, receipts and wakes, reincarnation survival (issue #314)
 
-Design direction: 2026-09-18, design seat kimi-314. Stage: `design` — pinned red-before by
-`impl/test/issue314-mcp-core-surface-red.test.mjs` (ten rows, one per law, each red at HEAD with
-an assertion that names the missing law; manifest rows under reason `#314`). Every claim about
-current behavior below cites the file and line it was read at; the byte numbers are measured by
-the red file's own fixture (a stub card over the real `McpFleetServer` and the production
-wrapper — the exact composition both entry scripts serve).
+Design direction: 2026-09-18. The core projection, entry points, receipts, wakes, and resident
+reconnection are implemented. Their contracts are covered by
+`impl/test/issue314-core-table.test.mjs`, `issue314-mcp-core-surface-red.test.mjs`,
+`issue314-lane2-receipts-wakes.test.mjs`, and `issue314-lane3-reincarnation-rebind.test.mjs`.
 
-> **Landed (2026-09-18, lane 4 — the entry story).** The laws this lane owns are closed and noted
-> in place: law (c) (§4) in full, and law (f)'s GUIDE half (§7). Lane 1's projection (the core
-> table and the served surface) and lanes 2–3's rules (receipts/wakes, reincarnation survival)
-> stay red-listed under `#314`; 314-f's third clause rides lane 1's landing.
+The production application surface exposes eight core tools: `baton_deployment`, `baton_run`,
+`baton_swarm`, `baton_waves`, `baton_knowledge`, `baton_wakes`, `baton_services`, and
+`baton_surface`. The raw `McpFleetServer` application table contains 57 tools after the #566
+restoration; the production wrapper projects that table into the core families. The startup
+gate in `impl/test/mcp-web-startup-gate.test.mjs` checks the composed entry point and its gate
+selection for application entry-point and bridge changes.
 
-The issue: MCP.md documents 52 flat `baton_*` tools on the ordinary surface (the generated
+The original issue measured 52 flat `baton_*` tools on the ordinary surface (the generated
 inventory, impl/MCP.md §Tool inventory) plus six `baton_surface_*` meta tools the production
 wrapper merges — **58 tools, 64,629 bytes of schema on every `tools/list`** (measured). An
 orchestrator running lanes needs about a dozen operations (the issue names them: doctor, run
@@ -51,10 +51,10 @@ fails.
   `impl/scripts/expected-red-tests.json` in this change; a landing moves them, never the
   reverse.
 
-## 1. The measured present
+## 1. Measured baseline
 
-Measured 2026-09-18 at HEAD (the red file's fixture answers these; they are reproducible, not
-asserted from prose):
+These measurements describe the 2026-09-18 baseline before the core projection. The current
+tool counts are stated above; the historical schema byte counts below belong to that baseline.
 
 | fact | value | source |
 |---|---|---|
