@@ -22,6 +22,16 @@ const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const POLL_MS = 50;
 export const MAX_WAVE_PROGRESS_BYTES = 7 * 1024 * 1024;
 
+/** #102 Decision 1 (TC-17): the tight cell's size bound. The SAME count the wave member-array
+ * ceiling uses above — named rather than repeated so the cell's circuit breaker and the wave's
+ * ceiling can never drift apart. A cell consumes ONE wave member slot; this bound throttles the
+ * per-run worker projection the cell spends, not the wave's member list. */
+export const MAX_CELL_SIZE = 64;
+
+// #102 Decision 1: the closed field set of a wave member's `group` — one declaration shared by the
+// library seam here and the transport seam in application.mjs.
+export const CELL_GROUP_FIELDS = Object.freeze(['editing', 'quorum', 'seat', 'size', 'strict']);
+
 function boundedJsonBytes(value, limit = MAX_WAVE_PROGRESS_BYTES) {
   let bytes = 0;
   const add = (amount) => {
@@ -109,6 +119,57 @@ function failureRecord(error) {
   return { code: error?.code ?? null, message: String(error?.message ?? error) };
 }
 
+// #102 Decision 1 (TC-03): the closed `group` field at the library seam. A member names EITHER its
+// own route (`exact`, or the bare harness/model/effort triple) or a group seat, never both — the
+// same typed refusals the transport seam raises, so the two seams agree on one law. The group
+// returns normalized (the seat copied to its three fields, quorum defaulted to size, editing
+// checked as a sorted distinct in-range list) so every later reader sees the strict reading.
+function validateMemberGroup(member, role) {
+  if (member.exact !== undefined) {
+    throw waveError(`wave member ${role} names both a group seat and its own route`, 'wave_group_route_conflict');
+  }
+  if ([member.harness, member.model, member.effort].some((value) => value !== undefined)) {
+    throw waveError(`wave member ${role} names both a group seat and a member-level route`, 'wave_group_route_conflict');
+  }
+  const group = member.group;
+  if (!group || typeof group !== 'object' || Array.isArray(group)
+    || Object.keys(group).some((key) => !CELL_GROUP_FIELDS.includes(key))) {
+    throw waveError(`wave member ${role} group is invalid`, 'wave_group_invalid');
+  }
+  const seat = group.seat;
+  if (seat === undefined) throw waveError(`wave member ${role} group names no seat`, 'wave_group_seat_missing');
+  if (!seat || typeof seat !== 'object' || Array.isArray(seat)
+    || ['harness', 'model', 'effort'].some((axis) => typeof seat[axis] !== 'string' || seat[axis].length === 0)) {
+    throw waveError(`wave member ${role} group seat is invalid`, 'wave_group_invalid');
+  }
+  const size = group.size;
+  if (!Number.isSafeInteger(size) || size < 2 || size > MAX_CELL_SIZE) {
+    throw waveError(`wave member ${role} group size is invalid`, 'wave_group_invalid');
+  }
+  const quorum = group.quorum === undefined ? size : group.quorum;
+  if (!Number.isSafeInteger(quorum) || quorum < 1 || quorum > size) {
+    throw waveError(`wave member ${role} group quorum is invalid`, 'wave_group_invalid');
+  }
+  const strict = group.strict === undefined ? false : group.strict;
+  if (typeof strict !== 'boolean' || (strict === true && quorum < size)) {
+    throw waveError(`wave member ${role} group strict is invalid`, 'wave_group_invalid');
+  }
+  if (group.editing !== undefined) {
+    const indexes = group.editing;
+    if (!Array.isArray(indexes) || indexes.length === 0
+      || indexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= size)
+      || new Set(indexes).size !== indexes.length
+      || indexes.some((index, at) => at > 0 && index <= indexes[at - 1])) {
+      throw waveError(`wave member ${role} group editing is invalid`, 'wave_group_invalid');
+    }
+  }
+  return Object.freeze({
+    seat: Object.freeze({ harness: seat.harness, model: seat.model, effort: seat.effort }),
+    size, quorum, strict,
+    editing: group.editing === undefined ? null : Object.freeze([...group.editing]),
+  });
+}
+
 function validateMember(member, index, repoRoot = null) {
   if (!member || typeof member !== 'object' || Array.isArray(member)) {
     throw waveError(`wave member[${index}] must be an object`);
@@ -150,6 +211,7 @@ function validateMember(member, index, repoRoot = null) {
       }
     }
   }
+  const group = member.group === undefined ? null : validateMemberGroup(member, role);
   if (member.exact !== undefined) {
     const exact = member.exact;
     if (!exact || typeof exact !== 'object' || Array.isArray(exact)
@@ -159,12 +221,12 @@ function validateMember(member, index, repoRoot = null) {
     }
   }
   const selector = { harness: member.harness, model: member.model, effort: member.effort };
-  if (member.exact === undefined
+  if (group === null && member.exact === undefined
     && [selector.harness, selector.model, selector.effort].some((value) => value !== undefined)
     && (selector.model === undefined || selector.effort === undefined)) {
     throw waveError(`wave member ${role} manual routing requires model and effort together`);
   }
-  return Object.freeze({ ...member, role: role.trim() });
+  return Object.freeze({ ...member, role: role.trim(), ...(group === null ? {} : { group }) });
 }
 
 // #171 (deliverable pre-seeding) + #114: a spec-shaped member (objectiveRef, no objective) renders
