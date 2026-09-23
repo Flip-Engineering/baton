@@ -69,6 +69,7 @@ import * as runtimeEffects from './runtime-effects.mjs';
 import * as runtimeObservation from './runtime-observation.mjs';
 import * as runtimeAdmission from './runtime-admission.mjs';
 import * as runtimeApi from './runtime-api.mjs';
+import * as runtimeRedrive from './runtime-redrive.mjs';
 import * as eventHandlers from './runtime-event-handlers/dispatcher.mjs';
 import { capBytesToScalar } from './runtime-event-handlers/observation-events.mjs';
 import { WorkerNotFoundError } from './runtime-api.mjs';
@@ -101,6 +102,7 @@ export const DOUBT_REFUSAL_CODES = Object.freeze([
   'doubt_surface_unavailable',
 ]);
 
+export { REDRIVE_REFUSAL_CODES, REDRIVE_SCOPES } from './runtime-redrive.mjs';
 
 
 
@@ -163,6 +165,11 @@ const STOP_DEADLINE_ATTEMPT_BOUND = 2;
 // Error taxonomy (thrown, not returned) — programmer-error / precondition failures.
 // ---------------------------------------------------------------------------
 
+
+/** Issue #69 — the cited-REPL-object lane's closed refusal family, re-exported on the coordinator
+ * surface the realization declares (declared once, in messages.mjs, beside the lane's render
+ * family). */
+export { REPL_OBJECT_REFUSAL_CODES } from './messages.mjs';
 
 export class DuplicateTaskIdError extends Error {
   constructor(message) {
@@ -1905,11 +1912,44 @@ export class Coordinator {
 
   /** The brief a provider sees for one dispatch: the admitted brief plus every block this
    * deployment attaches at the provider edge (context packs, swarm surface, lane contract,
-   * orientation L0, attention, knowledge briefing). The composition lives in
+   * orientation L0, cited REPL objects, attention, knowledge briefing). The composition lives in
    * runtime-briefing.mjs (issue #259 slice 3); this delegate keeps the member name, arity and
-   * prototype position, so every call site and every prototype-level exercise is untouched. */
+   * prototype position, so every call site and every prototype-level exercise is untouched.
+   * `workerId` is the addressed worker; the `{workerId}` form is the same fact stated as the
+   * addressing options the #69 cite-into-brief seam is asked with. */
   _providerBrief(brief, workerId = null) {
-    return runtimeBriefing.providerBrief(this, brief, workerId, canonicalDigest);
+    const addressed = workerId !== null && typeof workerId === 'object'
+      ? (workerId.workerId ?? null) : workerId;
+    return runtimeBriefing.providerBrief(this, brief, addressed, canonicalDigest);
+  }
+
+  // =========================================================================
+  // Issue #59 — re-drive continuity (D1-D4). A dead attempt's closed state (terminal cause,
+  // refusal evidence, scratchpad projection, checkpoint-pin digests) is carried into a re-driven
+  // member's provider-facing brief as the named `## Re-drive continuity` section, under the
+  // closed UNTRUSTED_RE_DRIVE frame: evidence to verify, never authority. The carry is opt-in
+  // per re-drive (the closed `{sourceRunId, scopes}` option), the source is resolved from the
+  // store's own records, and every refusal is typed — never a silent accept, never a silent drop.
+  // The admission, the serializer and the refusal family live in runtime-redrive.mjs; these
+  // delegates keep the member names the seam's callers use.
+  // =========================================================================
+
+  /** The carry admission: admits the closed option, validates the source's role and wave-chain
+   * relation against the store's own records, gathers the named scopes and composes the block —
+   * or returns null when no carry was declared. */
+  _redriveContinuity(memberId, carryForward) {
+    return runtimeRedrive.redriveContinuity(this, this._recorder, memberId, carryForward);
+  }
+
+  /** The ONE closed serializer for a carried block: within-block order, the unframable refusal,
+   * the item/byte bounds, the digest-cited spill, and the stash the provider seam reads. */
+  _composeContinuity(memberId, continuity) {
+    return runtimeRedrive.composeContinuity(this, this._recorder, memberId, continuity);
+  }
+
+  /** The composed block this member's admission stashed, or null when it carries nothing. */
+  _continuityForMember(memberId) {
+    return runtimeRedrive.continuityForMember(this, memberId);
   }
 
   // =========================================================================
@@ -6026,6 +6066,36 @@ export class Coordinator {
   // caller's task — a caller-supplied runId is never trusted.
     _replCiteInOwnRun(taskId, citation) {
     return runtimeObservation._replCiteInOwnRun(this, this._recorder, taskId, citation);
+  }
+
+  // Issue #69 — the REPL realization's serving path (D1-D7). The bodies live in the runtime
+  // modules (the seam map keeps classifying them); each delegate is that member's one entry point.
+    _citedReplObjects(runId, workerId, citations) {
+    return runtimeObservation._citedReplObjects(this, this._recorder, runId, workerId, citations);
+  }
+
+    _assertReplObjectsServed(workerId, records, opts = {}) {
+    return runtimeAdmission._assertReplObjectsServed(this, this._recorder, workerId, records, opts);
+  }
+
+    _resolveReplSpill(spillId) {
+    return runtimeObservation._resolveReplSpill(this, this._recorder, spillId);
+  }
+
+    _replManifestReview(runId) {
+    return runtimeObservation._replManifestReview(this, this._recorder, runId);
+  }
+
+    _assertReplReviewProjection(record) {
+    return runtimeAdmission._assertReplReviewProjection(this, this._recorder, record);
+  }
+
+    _admitSharedFanout(fields) {
+    return runtimeAdmission._admitSharedFanout(this, this._recorder, fields);
+  }
+
+    _promoteReplObject(workerBinding, caller) {
+    return runtimeAdmission._promoteReplObject(this, this._recorder, workerBinding, caller);
   }
 
     list() {

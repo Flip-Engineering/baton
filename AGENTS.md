@@ -1,8 +1,25 @@
-# Writing rules for this project
+# Rules for this project
+
+These rules apply to every agent and harness working on baton, not only Claude. The first section
+applies to code and design. The rest apply to prose.
+
+# Banned runtime patterns
+
+## No pausing, idling or truncating agents
+
+Baton never deliberately pauses, idles or truncates an agent's work. When an agent's turn ends,
+Baton wakes the agent's orchestrator (its parent seat, or the root) with the turn's report, and the
+orchestrator decides whether to nudge the agent on. The agent stops when it declares itself done or
+its orchestrator stops it. No runtime rule may leave live work waiting on a party that Baton does not
+wake. An existing instance is a `priority:high` bug to remove (#572). The first known instance is
+the turn-end park recorded under the actor `policy`, which waits for a claim or nudge and wakes no
+one.
+
+# Writing rules
 
 These rules apply to any prose written for or checked into this repository: README, CONTRIBUTING,
 `docs/*.md`, issue and PR bodies, commit messages, code comments, and anything else meant to be
-read by a person. They apply to every agent and harness working on baton, not only Claude.
+read by a person.
 
 ## Plain technical English only
 
