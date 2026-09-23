@@ -4518,6 +4518,38 @@ export class SwarmRuntime {
         next: { command: 'swarm.check', swarmId: swarm.swarmId,
           participantId: contribution.participantId, contributionId: contribution.contributionId } });
     }
+    // Issue #564: a root-addressed wake that reached no session is attention this view reports.
+    // The owed row is durable (`swarm.root_attention_owed`, recorded where the runtime observes
+    // work waiting on the root); a delivery attempt is durable too, keyed by the SAME wake
+    // identity — the ledger seq of the owed row the frame came from. Nothing here is stored: the
+    // read joins the two row sets, so a later delivery clears the row on the next read and a
+    // failed delivery keeps it, naming the code the attempt failed under.
+    const rootWakeDelivered = new Set();
+    const rootWakeFailed = new Map();
+    for (const event of ledger) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.swarmId !== swarm.swarmId || !Number.isSafeInteger(payload.seq)) continue;
+      if (payload.kind === 'wake.root_delivered') rootWakeDelivered.add(payload.seq);
+      else if (payload.kind === 'wake.root_undelivered') {
+        rootWakeFailed.set(payload.seq, typeof payload.code === 'string' ? payload.code : null);
+      }
+    }
+    for (const event of ledger) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.kind !== 'swarm.root_attention_owed' || payload.swarmId !== swarm.swarmId) continue;
+      if (rootWakeDelivered.has(event.seq)) continue;
+      const nextAct = payload.next;
+      organization.push({ kind: 'root_wake_undelivered',
+        participantId: typeof payload.participantId === 'string' ? payload.participantId : null,
+        contributionId: typeof payload.contributionId === 'string' ? payload.contributionId : null,
+        owed: typeof payload.owed === 'string' ? payload.owed : null,
+        ask: typeof payload.ask === 'string' ? payload.ask : null,
+        seq: event.seq,
+        delivery: rootWakeFailed.has(event.seq)
+          ? { state: 'failed', code: rootWakeFailed.get(event.seq) }
+          : { state: 'none', code: null },
+        ...(nextAct !== null && typeof nextAct === 'object' && !Array.isArray(nextAct) ? { next: nextAct } : {}) });
+    }
     for (const row of participants) {
       if (row.status !== 'active') continue;
       const worker = this._workerFor(row, workers);
