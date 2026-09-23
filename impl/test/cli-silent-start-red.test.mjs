@@ -253,7 +253,7 @@ test('PT-2c capability [generated-damerau1-sweep] — every generated distance-1
   const detection = deriveDetectionSet(cli, sem);
   const lifecycle = extractLifecycleVerbs(cli);
   assert.ok(lifecycle.length >= 29, 'stage[derivation-source-unreadable] the lifecycle verb set must be extractable from application-cli.mjs (29 verbs at HEAD)');
-  assert.equal(detection.size, 39, 'stage[derivation-source-unreadable] the detection set must be the 39-token RUN_RECOGNIZED_FIRST_TOKENS at HEAD');
+  assert.equal(detection.size, 40, 'stage[derivation-source-unreadable] the detection set must be the 40-token RUN_RECOGNIZED_FIRST_TOKENS at HEAD (39 at the PT pin\u2019s recording; #99/#179 Decision 5 added the run resultpin verb, #566 composition)');
 
   const variants = new Set();
   for (const seed of SWEEP_SEEDS) {
@@ -453,7 +453,7 @@ test('PT-7 pin [canonical-aliases-unchanged] — canonical aliases resolve to HE
   const cli = readFileSync(CLI_PATH, 'latin1');
   const sem = readFileSync(SEM_PATH, 'latin1');
   const detection = deriveDetectionSet(cli, sem);
-  assert.equal(detection.size, 39, 'stage[derivation-source-unreadable]');
+  assert.equal(detection.size, 40, 'stage[derivation-source-unreadable] (40 tokens at HEAD — the #99/#179 run resultpin verb joined the recognition set; #566 composition)');
   for (const token of detection) {
     if (token === 'member') continue;
     try {

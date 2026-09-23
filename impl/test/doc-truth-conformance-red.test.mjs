@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap } from '../src/application-semantics.mjs';
+import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
 import { McpFleetServer, mcpCombinedToolNames } from '../src/mcp-northbound.mjs';
 import { webCardCommands } from '../scripts/surface-truth.mjs';
 import { buildSurfaceInventoryArtifact, checkSurfaceInventoryArtifact, instantiateProfileInventory } from '../scripts/surface-conformance.mjs';
@@ -426,10 +427,18 @@ test('R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted 
   }
   const ledgerNames = new Set(ledger.entries.map((entry) => entry.name));
   // Forward direction: every whitelisted CLI name is web-admitted or ledgered.
+  // #566 third arm: the registry-operation direct ports (the #99/#179 accessor pair) ride the
+  // web bus through the workflow entries without being APPLICATION_COMMAND_DEFINITIONS keys —
+  // the CLI dispatch projection reads that same admission (CLI_CARD_LEDGERED_PORTS), so they
+  // are web-admitted in the way that matters and pass beside the carded names (harvest-accessor
+  // contract Decision 5).
+  const registryOperationDirectPorts = new Set([...webAdmittedCommandNames()]
+    .filter((adm) => adm.includes('.') && !APPLICATION_COMMAND_DEFINITIONS[adm]));
   const unledgered = [];
   for (const name of CLI_WEB_COMMANDS) {
     const resolved = applicationOperationAliasMap()[name] ?? name;
     if (card.has(name) || card.has(resolved)) continue; // web-admitted (canonical or legacy spelling)
+    if (registryOperationDirectPorts.has(name) || registryOperationDirectPorts.has(resolved)) continue; // registry-operation direct port
     if (ledgerNames.has(name) || ledgerNames.has(resolved)) continue; // ledgered
     unledgered.push(name);
   }

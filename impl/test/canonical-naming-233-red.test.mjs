@@ -57,6 +57,9 @@ const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
   // application.mjs, admitted here so the CLI's two spellings reach the RUNNING resident
   // (web-northbound.mjs DEPLOYMENT_WEB_ROWS, one row per verb, both spellings derived).
   'deployment.reincarnate',
+  // Issue #99/#179 (harvest-accessor contract Decision 5): the accessor's two direct ports,
+  // web-bus admitted beside the CLI dispatch projection that reads it (#566 composition).
+  'run.resultpin', 'waves.harvest',
   // Issue #441 (lane A, the reading half): the context-package admit/attach ports the recruit
   // --issue path uses — admitted on the web lane (web-northbound.mjs ~169) since wave 13; the
   // underscore spellings are derived from these names like every other row here.
