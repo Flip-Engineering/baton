@@ -953,6 +953,14 @@ test('I4-registry (stage: rows absent): two canonical operations with pinned pro
     assert.equal(op.names?.cli, cli, `${key} derived CLI spelling`);
     assert.equal(op.names?.mcp, mcp, `${key} derived MCP spelling`);
   }
+  // The effect field names the authority class the verb exercises, never a restatement of the
+  // verb's own key. The mutating wave verbs (waves.start/send/stop/run) all declare 'control', and
+  // waves.harvest carries neither the run lane's adopt_result nor its export_result capability, so
+  // it declares the same class. Before this pin the row read effect: 'waves_harvest' — the only
+  // value in the registry that restated its own key.
+  const harvest = registry.canonicalOperations.find((entry) => entry.key === 'waves.harvest');
+  assert.equal(harvest.effect, 'control', 'waves.harvest effect is the wave family\'s control class');
+  assert.notEqual(harvest.effect, 'waves_harvest', 'the verb-spelled effect the row carried before is gone');
   // The dispatch gate and the served inventory pick both up.
   const served = servedCliOrdinaryKeys();
   for (const [key] of expectations) {
