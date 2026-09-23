@@ -1119,6 +1119,7 @@ function worktreeManager(repoRoot, opts = {}) {
         sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
         ownerAuthority: opts.ownerAuthority,
         expectedOwnerBindings: expectedEntries,
+        snapshotUncommitted: true,
         ...custody(),
         ...(opts.log ? { log: opts.log } : {}),
         ...(opts.worktreeCapacity ? {
