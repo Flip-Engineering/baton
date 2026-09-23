@@ -2408,20 +2408,29 @@ export class SwarmRuntime {
     });
   }
 
-  /** Issue #564: the review-owed rows a swarm owes after a seat that held review stopped being
-   * active — a leave, or a provider-fault death. Every contribution still unreviewed (no
-   * SETTLING review, the same reads the contribution ledger applies) that no remaining active
-   * seat can review is re-addressed to the root, derived from the durable fold rather than the
-   * contribution's write instant; the keys above keep a second departure or a replayed
-   * observation from double-recording. needsFromOthers items are NOT re-derived here: their
-   * trigger is the contribution's own recording, not the departure. */
-  _recordReviewerLossRows(swarm, actor) {
+  /** Issue #564: RECONCILE the swarm's reviewer-loss rows — not a fire-once-per-departure hook.
+   * Every path that can observe the state (the stop effect, a participant_left update, the
+   * provider-fault observation) runs this: a contribution still unreviewed (no settling review —
+   * the same reads the contribution ledger applies) with no remaining active reviewer other than
+   * its own author is re-addressed to the root, and the deterministic keys make a re-run the
+   * REPAIR of a faulted earlier attempt — the missing rows land, the landed ones replay as
+   * no-ops — so a departure whose owed append faulted is never lost forever just because its
+   * departure row already exists. The cheap guard first: nothing unreviewed, or a remaining
+   * reviewer for every unreviewed contribution, reads no further and writes nothing.
+   * needsFromOthers needs are not reconciled here: their trigger is the contribution's own
+   * recording, not the roster. */
+  _reconcileReviewerLossRows(swarm, actor) {
+    const seats = Object.values(swarm.participants ?? {});
     const unreviewed = Object.values(swarm.contributions ?? {})
       .filter((contribution) => !(swarm.reviews?.[contribution.contributionId] ?? [])
         .some((review) => review.decision !== 'comment'));
-    return this._recordRootAttentionRows(swarm, unreviewed
-      .flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
-      .filter((row) => row.owed === 'review_owed'), actor);
+    const owed = unreviewed.filter((contribution) => !seats.some((seat) => seat?.status === 'active'
+      && seat?.participantId !== contribution.participantId
+      && Array.isArray(seat?.permissions) && seat.permissions.includes('review')));
+    if (owed.length === 0) return [];
+    return this._recordRootAttentionRows(swarm,
+      owed.flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
+        .filter((row) => row.owed === 'review_owed'), actor);
   }
 
 
@@ -9176,13 +9185,13 @@ export class SwarmRuntime {
           ? this._recordReviewerLossRows(this._swarm(args.swarmId), principal.actor) : [];
         this._reconcileHostCapacity();
         // Issue #469: the receipt a stop answers with IS the row the operation lane records
-        // (`_once` writes the effect's own result), so projecting it HERE is what keeps both the
-        // answer and the durable row carrying the objective's reference — never a second copy of
-        // the text the join row already holds.
-        return { participantId: participant.participantId,
-          leaveReason, writes: leave ? [leave, ...reviewerLoss] : [] };
-      }, { context });
-      return this._mutationResult(command, args, result.writes ?? [], principal, context,
+        // Issue #564: the stop RECONCILES the reviewer-loss rows whether or not THIS call wrote
+        // the departure row: a first stop whose owed append faulted left the departure durable
+        // and the row missing, so a later stop (leave would be null for the settled seat) is
+        // the repair. The reconciler's deterministic keys keep a healthy re-run a no-op, and a
+        // fault here still faults the mutation with its completion unwritten.
+        const reviewerLoss = this._reconcileReviewerLossRows(this._swarm(args.swarmId), principal.actor);
+        this._reconcileHostCapacity();
         { participantId: result.participantId, result: result.result, leftReason: result.leaveReason ?? null });
     }
     refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
