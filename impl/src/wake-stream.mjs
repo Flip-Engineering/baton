@@ -291,6 +291,20 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'requestId', kind: 'request', fallback: { field: 'worker', kind: 'worker' } },
   }),
   wakeRow({
+    // Issue #564 (addressing half): work that only the root can act on gets a wake ADDRESSED to
+    // the root. The runtime derives one durable row per trigger on the contribution write path —
+    // `review_owed` when no other active seat holds the review permission at that moment (the
+    // check is the root's to run), `needs_root` per needsFromOthers item whose text is addressed
+    // to the root — and this class is what such a row wakes. Deployment scope: a root session's
+    // deployment-wide subscription receives it, exactly like `attention`, its sibling. Terminal:
+    // the row names the act (run the check, read the view), and the acknowledgement is that act.
+    wakeClass: 'root_owed', scope: 'deployment', terminal: true,
+    next: 'baton swarm view {swarmId}',
+    summary: 'a contribution waits on the root — a check no other active seat can review, or a needsFromOthers item addressed to the root',
+    rows: [operationalKind('swarm.root_attention_owed')],
+    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
+  }),
+  wakeRow({
     wakeClass: 'guidance_delivered', scope: 'deployment', terminal: false, next: null,
     summary: 'a message reached the participant it was addressed to',
     rows: [operationalKind('message.delivered')],

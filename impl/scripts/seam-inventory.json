@@ -12572,7 +12572,7 @@
         {
           "name": "_observeParticipantFaults",
           "ordinal": 0,
-          "size": 47,
+          "size": 58,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12776,6 +12776,41 @@
           "seam": "observation",
           "evidence": [
             "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordRootAttentionRows",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:record_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_reconcileReviewerLossRows",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_reconcileTurnReportedRows",
+          "ordinal": 0,
+          "size": 22,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:projection_name",
+            "observation:key_name"
           ]
         },
         {
@@ -13368,7 +13403,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1093,
+          "size": 1125,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -14007,7 +14042,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1134,
+          "size": 1165,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
