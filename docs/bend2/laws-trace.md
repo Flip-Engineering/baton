@@ -239,10 +239,10 @@ primitive the target architecture owes before the application proof can exist.
 A blocked entry's witness needs its host effect authored with fault-injection evidence outside
 Bend; no compiled example at this pin stands in for it.
 
-## Proposed addition (revision 10, not approved)
+## Revision 10: no parking pending an external act (accepted)
 
-The no-park entry of [laws-proposed.md](laws-proposed.md) is proposed, not approved, so it has no
-row in the approved set above. Its record:
+The no-park entry of [laws-proposed.md](laws-proposed.md) is accepted by law review and joins the
+16 operator-approved entries above as the seventeenth entry. Its record:
 
 | | |
 |---|---|
@@ -251,4 +251,4 @@ row in the approved set above. Its record:
 | Encoding | [examples/laws-no-park.bend](examples/laws-no-park.bend): every state names its waiter, a total `woken` answers whether Baton wakes a party, and `waiter_is_woken` requires every state's waiter to be a woken one. |
 | Checked scope | The model law is discharged at the pin and both controls fail as required: a state parked on an unwoken party makes the obligation unsatisfiable (`expected False{}, observed True{}`), and a state the waiter function does not cover is refused (`expected cases for Parked`). [examples/laws-no-park.evidence.md](examples/laws-no-park.evidence.md) records the commands and outputs. |
 | Application scope | Open. The law constrains the rewrite's work-state type, its waiter function and the runtime's wake rule; the wake itself and the orchestrator's decision are host effects (root wake is #564), and the current JavaScript park is removed by issue #572, not proved by this law. |
-| Open questions | The three review questions in `laws-proposed.md`: expressibility at the pin, law versus tested behaviour, and the waits that are not parks. |
+| Review outcome | Accepted 2026-09-23 by bend2-reviewer4 (contribution-2b03cd1a, seq 183360), six delivered items: the encoding verified, control A red as required, the aggregate driver, and the three review questions — expressibility at the pin, law versus tested behaviour, and the waits that are not parks. |

@@ -238,10 +238,13 @@ Evidence: proposed — the #556 incident and the operator direction relayed 2026
 
 ---
 
-## Proposed addition, revision 10: no parking pending an external act
+## Revision 10: no parking pending an external act
 
-Proposed 2026-09-23 by operator direction, for Codex law review. This entry is not approved, and it
-does not enter the 16 operative entries until the review answers the questions below.
+Proposed 2026-09-23 by operator direction. Law review accepted the entry on 2026-09-23
+(bend2-reviewer4, contribution-2b03cd1a): the encoding is verified at the pin, both controls fail
+as required, and the three questions below are answered — the statement is expressible at the pin
+as written, the entry meets the law definition, and the law admits the waits whose waited-on party
+Baton wakes. The entry enters the operative set as the seventeenth entry.
 
 **Statement.** The runtime never deliberately pauses, idles or truncates an agent's work. No
 transition may move live work into a state whose only exit is an explicit act by another party
