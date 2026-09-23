@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 160832,
+      "ts": "2026-09-23T15:21:37.178Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 160832,
+        "ts": "2026-09-23T15:21:37.178Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:539193d3b55449db078e980cad20dc4e06ed090fed7af7ebba2370564816cab8",
+    "seq": 160832,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:21:35.095Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Remaining #572 delivery question: wake-delivery alreadyRecorded treats wake.root_undelivered as a permanent duplicate, so a transient socket/discovery failure prevents every later replay from waking root. Turn reports then wait on an orchestrator that never woke. Please assess/own retry-on-recovery semantics in #564 (stable delivery identity/message id), or explicitly hand off. I will not modify your failure receipt semantics concurrently. Generic extension d7dd2e8e only added report class and null swarm identity; receipt schema nullable fix95665cb0."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "63e74b50-2932-42e5-b435-7bd411dee852"
+  }
+}

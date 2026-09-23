@@ -1,0 +1,2400 @@
+{
+  "swarmId": "swarm-rigidity-20260921",
+  "purpose": "Rigidity and arbitrary-limits removal: issues 496, 499, 500, 530, 531, 532, 536, 538 (the exactObject security-boundary class) plus anything else in the original 492-sweep findings not yet closed. Removal/correction mandate, not just cataloging.",
+  "status": "open",
+  "closedReason": null,
+  "actor": "web:local-owner:935be40a-9001-4fba-a1e6-9fabb1f916d2",
+  "seq": 7270,
+  "ts": "2026-09-21T18:17:05.636Z",
+  "baseCommit": "31f356b2b1cd5a32a241116c52aa96ea7133fc4a",
+  "policy": {
+    "rerouteOnProviderFault": "manual",
+    "reroutePreferApi": false,
+    "resumeContinuation": "auto"
+  },
+  "caller": {
+    "participantId": "rigidity-lead8",
+    "permissions": [
+      "read",
+      "communicate",
+      "contribute",
+      "review",
+      "organize",
+      "recruit"
+    ],
+    "lastRefusal": {
+      "seq": 156071,
+      "command": "swarm.integrate",
+      "code": "integrate_gates_red",
+      "field": null
+    }
+  },
+  "availableActions": [
+    "swarm.view",
+    "swarm.watch",
+    "swarm.recruit",
+    "swarm.guide",
+    "swarm.capture",
+    "swarm.check",
+    "swarm.notify",
+    "swarm.notifications",
+    "swarm.integrate",
+    "swarm.update",
+    "run.knowledge.seed",
+    "run.board.post",
+    "run.board.read",
+    "run.scratchpad.append",
+    "run.scratchpad.read",
+    "run.scratchpad.elevate",
+    "evidence.search"
+  ],
+  "admission": [],
+  "actionTargets": {
+    "swarm.capture": {
+      "participantIds": [
+        "rigidity-lead",
+        "rigidity-lead2",
+        "rigidity-lead3",
+        "rigidity-lead4",
+        "rigidity-lead5",
+        "rigidity-lead6",
+        "rigidity-lead7",
+        "rigidity-lead7f",
+        "rigidity-reviewer7",
+        "rigidity-571-fixtures",
+        "rigidity-lead8",
+        "rigidity-572-gates",
+        "rigidity-568-cleanup"
+      ]
+    },
+    "swarm.check": {
+      "participantIds": [
+        "rigidity-lead",
+        "rigidity-lead2",
+        "rigidity-lead3",
+        "rigidity-lead4",
+        "rigidity-lead5",
+        "rigidity-lead6",
+        "rigidity-lead7",
+        "rigidity-lead7f",
+        "rigidity-reviewer7",
+        "rigidity-571-fixtures",
+        "rigidity-lead8",
+        "rigidity-572-gates",
+        "rigidity-568-cleanup"
+      ]
+    }
+  },
+  "updates": [
+    {
+      "event": "swarm.group_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.work_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.assignment_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.coupling_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.claim_updated",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.proposal_updated",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.holder_released",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.policy_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.context_updated",
+      "permission": "communicate"
+    },
+    {
+      "event": "swarm.contribution_recorded",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.contribution_reviewed",
+      "permission": "review"
+    },
+    {
+      "event": "swarm.participant_left",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.closed",
+      "permission": "organize"
+    },
+    {
+      "command": "run.knowledge.seed",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.post",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.append",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.scratchpad.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.elevate",
+      "permission": "contribute"
+    },
+    {
+      "command": "evidence.search",
+      "permission": "read"
+    }
+  ],
+  "deployment": {
+    "workspace": {
+      "state": "ready",
+      "freeBytes": 5972688896,
+      "freeInodes": 58370000,
+      "minFreeBytes": null,
+      "minFreeInodes": null,
+      "floorBytes": 617935248,
+      "floorInodes": 14828,
+      "floorSource": "derived",
+      "estimateHighWater": {
+        "bytes": 195089083,
+        "inodes": 14632
+      },
+      "runtimeFootprint": {
+        "bytes": 422846165,
+        "inodes": 196
+      }
+    },
+    "hostCapacity": {
+      "capacity": {
+        "cores": 10,
+        "totalBytes": 17179869184,
+        "freeBytes": 1140850688,
+        "availableBytes": 1140850688,
+        "load1m": 86,
+        "hubCores": 1,
+        "usableCores": 9,
+        "suiteCores": 9,
+        "verdictLanes": 1,
+        "coreShareBytes": 1717986918,
+        "suiteBytes": 15461882262,
+        "usableBytes": 15461882266,
+        "saturated": true,
+        "memoryTight": true
+      },
+      "used": {
+        "cores": 0,
+        "bytes": 0,
+        "leases": {
+          "verify": 0,
+          "worker": 24
+        }
+      },
+      "queue": [],
+      "roomForVerify": false,
+      "roomForWorker": true
+    },
+    "served": {
+      "commit": "65c913f0df143ec8d01f999047ca5cfdf6f03a51",
+      "branch": null,
+      "target": {
+        "ref": "origin/master",
+        "commit": "e501507a6f174ae9ad0bd5e03e60820f965c4bf6",
+        "behind": 9
+      }
+    }
+  },
+  "cursor": 157968,
+  "participants": [
+    {
+      "participantId": "rigidity-lead",
+      "guidance": [
+        {
+          "seq": 4916,
+          "ts": "2026-09-21T17:01:03.506Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:6fbbed40a0c2fb550d9753d9b157a2142c8f83057ecdb6c8355caf4e8de71a88",
+          "from": {
+            "kind": "root",
+            "participantId": null
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 4916,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 4915,
+              "kind": "nudge",
+              "ts": "2026-09-21T17:01:03.505Z",
+              "messageId": "message:6fbbed40a0c2fb550d9753d9b157a2142c8f83057ecdb6c8355caf4e8de71a88"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 4935,
+          "ts": "2026-09-21T17:01:41.770Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:b4987f9003fe866cc6f1fef3a43fa7f28a4cd12d1610b0670f5ceca1520a4cca",
+          "from": {
+            "kind": "root",
+            "participantId": null
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 4935,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 4934,
+              "kind": "nudge",
+              "ts": "2026-09-21T17:01:41.769Z",
+              "messageId": "message:b4987f9003fe866cc6f1fef3a43fa7f28a4cd12d1610b0670f5ceca1520a4cca"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        }
+      ]
+    },
+    {
+      "participantId": "rigidity-lead2",
+      "guidance": [
+        {
+          "seq": 7036,
+          "ts": "2026-09-21T18:16:20.195Z",
+          "kind": "swarm.guidance_parked",
+          "messageId": "message:0bd90ff70623c5759b8dd32c34c634d5d0aca2dfa16c8ea7c8621044725489db",
+          "from": {
+            "kind": "root",
+            "participantId": null
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 7036,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": "awaiting_resume_decision",
+            "deliveredTo": "rigidity-lead2",
+            "at": "2026-09-21T18:16:21.381Z"
+          }
+        },
+        {
+          "seq": 66691,
+          "ts": "2026-09-22T16:06:39.453Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:00881dcf7a2acabf51b8ae9777d3a728f3359b5c3961601ee99d8b195ff4f2c7",
+          "from": {
+            "kind": "root",
+            "participantId": null
+          },
+          "priority": "now",
+          "thread": {
+            "root": 66691,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        }
+      ]
+    },
+    {
+      "participantId": "rigidity-lead3",
+      "guidance": []
+    },
+    {
+      "participantId": "rigidity-lead4",
+      "guidance": []
+    },
+    {
+      "participantId": "rigidity-lead5",
+      "guidance": []
+    },
+    {
+      "participantId": "rigidity-lead6",
+      "guidance": []
+    },
+    {
+      "participantId": "rigidity-lead7",
+      "guidance": []
+    },
+    {
+      "participantId": "rigidity-lead7f",
+      "guidance": [
+        {
+          "seq": 128117,
+          "ts": "2026-09-23T03:52:33.067Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:04611609fcd19951c3d93b1e00b7c66fc8be4b49cf80f2ddcc92ac1afdf439c0",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 128117,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 128116,
+              "kind": "nudge",
+              "ts": "2026-09-23T03:52:33.063Z",
+              "messageId": "message:04611609fcd19951c3d93b1e00b7c66fc8be4b49cf80f2ddcc92ac1afdf439c0"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 137862,
+          "ts": "2026-09-23T04:55:15.398Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:d6e6848a6ab730fb2e5183c36c1581e41c37a49d864d798be0eaa1cd14f67fce",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 137862,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 137861,
+              "kind": "nudge",
+              "ts": "2026-09-23T04:55:15.393Z",
+              "messageId": "message:d6e6848a6ab730fb2e5183c36c1581e41c37a49d864d798be0eaa1cd14f67fce"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 140269,
+          "ts": "2026-09-23T05:16:43.205Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:855f0012dd58e48a5db5b031c19155d8707898a1ae865bd893f85f1d06e3999f",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 140269,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 141372,
+          "ts": "2026-09-23T05:50:19.057Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:3d451e2930b09e5f96b4df5dd657e0267758626f03c27b54d01fc35921035d12",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 141372,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 141371,
+              "kind": "nudge",
+              "ts": "2026-09-23T05:50:19.054Z",
+              "messageId": "message:3d451e2930b09e5f96b4df5dd657e0267758626f03c27b54d01fc35921035d12"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 142143,
+          "ts": "2026-09-23T05:54:41.740Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:6a8b23893bd93a71b939e89766e90ab1572c8f8e9265cd4dceff62ba092fc40d",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 142143,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 142142,
+              "kind": "nudge",
+              "ts": "2026-09-23T05:54:41.734Z",
+              "messageId": "message:6a8b23893bd93a71b939e89766e90ab1572c8f8e9265cd4dceff62ba092fc40d"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 143066,
+          "ts": "2026-09-23T06:04:41.817Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:8e269fc8c30eb89e4cfe30d67f80273150cc904f387ee0cf599a630cc0b7ebd8",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 143066,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 143756,
+          "ts": "2026-09-23T06:10:02.907Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:768fbae8af382c48fa62c61e736b415fba2c37e25b0246cbcae1d6ebfc2eaf22",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 143756,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 144584,
+          "ts": "2026-09-23T06:19:21.799Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:643d81f2d7b6ea7b5c75ee0f20474b22d461f98f9410ca2d296875f91cb147ce",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 144584,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 144914,
+          "ts": "2026-09-23T06:22:41.326Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:2dd9fdf402bfa01fa5f37e83dfaf7fa2ed1029e2bda7a789911c53ccae39a056",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 144914,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 148462,
+          "ts": "2026-09-23T13:46:29.721Z",
+          "kind": "swarm.guidance_parked",
+          "messageId": "message:93c96c29fec1a6bb44804dde99725b5c9354afaad71537a46383d735896d7d5c",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 148462,
+            "parent": null
+          },
+          "delivery": {
+            "state": "parked",
+            "lane": null,
+            "reason": "worker_not_active",
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 150577,
+          "ts": "2026-09-23T13:58:59.858Z",
+          "kind": "swarm.guidance_parked",
+          "messageId": "message:406d14d02f425ede24ea6f190094837e9038bb3f9ab881a74843ba23c1d82843",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 150577,
+            "parent": null
+          },
+          "delivery": {
+            "state": "parked",
+            "lane": null,
+            "reason": "worker_not_active",
+            "deliveredTo": null,
+            "at": null
+          }
+        }
+      ]
+    },
+    {
+      "participantId": "rigidity-reviewer7",
+      "guidance": [
+        {
+          "seq": 127842,
+          "ts": "2026-09-23T03:50:54.639Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:090ff6bcd676de92faf064174ae5ee649e7c0e599b71941c781daaf23009f1f9",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 127842,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 127841,
+              "kind": "steer",
+              "ts": "2026-09-23T03:50:54.634Z",
+              "messageId": "message:090ff6bcd676de92faf064174ae5ee649e7c0e599b71941c781daaf23009f1f9"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 136218,
+          "ts": "2026-09-23T04:46:33.833Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:059db4921af686c06365783c75ac4a66d94830ab70e97dcb1d7371b9d48040bd",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 136218,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 140073,
+          "ts": "2026-09-23T05:13:59.629Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:5de35c42bf306108a6bea791fc96d4eabd5f5fdae9070f52d9bb61e99bb5691c",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 140073,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 141169,
+          "ts": "2026-09-23T05:47:37.501Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:00c98f27d6d9c1e98d32db9907920f11dcd3e83f3e5bc237fbd12396066d2f49",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 141169,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 141828,
+          "ts": "2026-09-23T05:52:49.783Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:990457c797d3965f359bed06d8fde08292db169daa1ac15a93222a7233f2fbbc",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 141828,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 142831,
+          "ts": "2026-09-23T06:01:46.285Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:c74a26249f3b2a965b9b28fa1ebbf596b3b4d15d57b1fb545ebb899321becdf7",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 142831,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 143469,
+          "ts": "2026-09-23T06:08:24.509Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:2eef46afa1833dcfbe6119d8db2a593a026de5a7a29799c03ad7d591ecdf0933",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 143469,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 144487,
+          "ts": "2026-09-23T06:18:29.407Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:50d645ae11a32664da8bf2be984a3508a18d97f5f957eee70514e2685a4d479e",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 144487,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 145421,
+          "ts": "2026-09-23T13:27:52.645Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:b09b6c8ecf6c563557480a87259fa43740b2a58cae5dc12b1a3a5ed1f6cdde39",
+          "from": {
+            "kind": "root",
+            "participantId": null
+          },
+          "priority": "now",
+          "thread": {
+            "root": 145421,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 145707,
+          "ts": "2026-09-23T13:28:30.604Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:8e3f61946cbc1c010f9151fe5f43ae0ba5844a3959655d93a80aca363ee55c10",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 145707,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 145706,
+              "kind": "nudge",
+              "ts": "2026-09-23T13:28:30.600Z",
+              "messageId": "message:8e3f61946cbc1c010f9151fe5f43ae0ba5844a3959655d93a80aca363ee55c10"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 148733,
+          "ts": "2026-09-23T13:48:23.706Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:03c724cd2ebef366bf14bee4cb27fae402644b05c98923f804bd39424dc57dca",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 148733,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 149752,
+          "ts": "2026-09-23T13:54:20.202Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:074a7422569af6f8400702b901111d2140d3c71b9abe018b685584f8a58c6624",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 149752,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 150565,
+          "ts": "2026-09-23T13:58:58.766Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:e60aeed53981190e74a7c7be2feb5be0220773685d9d17b32abc2247b4c07ce3",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 150565,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 151284,
+          "ts": "2026-09-23T14:04:43.762Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:221f269c1e46223e93cfd2951f8f37cf77346c6e75e0b1e62bac0fd8b893b801",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 151284,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 151548,
+          "ts": "2026-09-23T14:07:37.445Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:af23e3f6b62d4d99f90084fffc3044a60b1ae21350d7367cdc64a9c856105930",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 151548,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 151547,
+              "kind": "steer",
+              "ts": "2026-09-23T14:07:37.372Z",
+              "messageId": "message:af23e3f6b62d4d99f90084fffc3044a60b1ae21350d7367cdc64a9c856105930"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 151653,
+          "ts": "2026-09-23T14:09:00.613Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:dc58cf03d8f44dedf8a801addd38379366e4e874f42ff88152f265e1c82ad1b9",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 151653,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 151652,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:09:00.416Z",
+              "messageId": "message:dc58cf03d8f44dedf8a801addd38379366e4e874f42ff88152f265e1c82ad1b9"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152040,
+          "ts": "2026-09-23T14:13:17.277Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:d7d2adf06878836ea690e61a75595877965ea44bee1efb09ac8f9c75debb16ce",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 152040,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 152039,
+              "kind": "steer",
+              "ts": "2026-09-23T14:13:17.171Z",
+              "messageId": "message:d7d2adf06878836ea690e61a75595877965ea44bee1efb09ac8f9c75debb16ce"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152694,
+          "ts": "2026-09-23T14:22:20.535Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:ea62197e59195ebe21ca97103b0084411fddcc9f66cfc1a9d951582cc6a0008e",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 152694,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 152693,
+              "kind": "steer",
+              "ts": "2026-09-23T14:22:19.911Z",
+              "messageId": "message:ea62197e59195ebe21ca97103b0084411fddcc9f66cfc1a9d951582cc6a0008e"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 153384,
+          "ts": "2026-09-23T14:27:14.228Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:0d6cd84ba4ab562d19783478b4d1aaecb4062966abc042126654bd3ac527d08b",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 153384,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 153612,
+          "ts": "2026-09-23T14:28:50.710Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:df5c82c413bd51c217fd14ad02a2387ac5f7e110e51a04dc558c3174a7afb496",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 153612,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 154693,
+          "ts": "2026-09-23T14:39:50.910Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:ef5911da8bee6440a6a51074665d8f739c983aa025c72a4f776644f0acae8af2",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 154693,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 155483,
+          "ts": "2026-09-23T14:46:18.367Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:a2346c707e0bd7238d2071fbf41f8d856a7359c304bf2b4ddc6c2314b9a6466e",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 155483,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156201,
+          "ts": "2026-09-23T14:52:08.555Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:f803b59410537e2f304d3fff3a1613a91ced9eca30c47680b4343bddbb1dcece",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 156201,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156737,
+          "ts": "2026-09-23T14:55:37.124Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:90c1d6ef1bb49ec84824e5811d4b4b889611ba573b87e312f32154e59a38f520",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 156737,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156911,
+          "ts": "2026-09-23T14:56:57.810Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:9067127970e50d451cc31597d2bbb2eae987249a4faa049695ab0bacc5155f80",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 156911,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 156910,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:56:57.777Z",
+              "messageId": "message:9067127970e50d451cc31597d2bbb2eae987249a4faa049695ab0bacc5155f80"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        }
+      ]
+    },
+    {
+      "participantId": "rigidity-571-fixtures",
+      "guidance": [
+        {
+          "seq": 144400,
+          "ts": "2026-09-23T06:17:42.759Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:6706e10414600575c935cbba48efeba7a1aa732ef250d97030a873409e5ce992",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead7f"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 144400,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 144399,
+              "kind": "steer",
+              "ts": "2026-09-23T06:17:42.753Z",
+              "messageId": "message:6706e10414600575c935cbba48efeba7a1aa732ef250d97030a873409e5ce992"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 145430,
+          "ts": "2026-09-23T13:27:53.094Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:4e9575689b95976801f64335ad0b24bcbde50286a8efdb44a046edfc6fb9556d",
+          "from": {
+            "kind": "root",
+            "participantId": null
+          },
+          "priority": "now",
+          "thread": {
+            "root": 145430,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 148334,
+          "ts": "2026-09-23T13:45:32.531Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:275dbaf0472238bbfa46876311fd5632e194c216d3e813d5440b35c67739ea88",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 148334,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 148739,
+          "ts": "2026-09-23T13:48:25.054Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:7d44070d91aa0baf048bb124edd4fdab902b5234fe1717d4253b52c345062d7c",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 148739,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 148738,
+              "kind": "nudge",
+              "ts": "2026-09-23T13:48:25.046Z",
+              "messageId": "message:7d44070d91aa0baf048bb124edd4fdab902b5234fe1717d4253b52c345062d7c"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 149219,
+          "ts": "2026-09-23T13:50:56.705Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:71971a667490377bde3acb5aee278cf0534bc8c862bb4a0be960864a86642232",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 149219,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149218,
+              "kind": "nudge",
+              "ts": "2026-09-23T13:50:56.695Z",
+              "messageId": "message:71971a667490377bde3acb5aee278cf0534bc8c862bb4a0be960864a86642232"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 150866,
+          "ts": "2026-09-23T14:01:20.850Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:b669c391fd37a43f2e809a1f0a516e0d8d16236f99ac53bd5dfa6d80da0475b4",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 150866,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152416,
+          "ts": "2026-09-23T14:18:03.910Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:c2c979d07d4b7d126958d8de5f9f8915002407b1c1b05beab56302c78a329578",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 152416,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 154399,
+          "ts": "2026-09-23T14:37:18.171Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:03cae83978977712e913c2f57d3cf16175026dac6f1de6a6f6a88ac88c00e984",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 154399,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": null,
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 154626,
+          "ts": "2026-09-23T14:39:29.343Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:881b8ec50b0947c13c2babc2ac8f340c826c5c937b38fe837ec35d65dea219c6",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 154626,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 154625,
+              "kind": "steer",
+              "ts": "2026-09-23T14:39:29.305Z",
+              "messageId": "message:881b8ec50b0947c13c2babc2ac8f340c826c5c937b38fe837ec35d65dea219c6"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 155655,
+          "ts": "2026-09-23T14:48:18.779Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:33b6819dcebbb56114b4606097e8c245a6e5076225e20146e532b7c082e2784b",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 155655,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 155654,
+              "kind": "steer",
+              "ts": "2026-09-23T14:48:18.743Z",
+              "messageId": "message:33b6819dcebbb56114b4606097e8c245a6e5076225e20146e532b7c082e2784b"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156472,
+          "ts": "2026-09-23T14:53:27.455Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:238df9ab88ecade8f6bd9393e2755732981c62d9a8208f4d1514f7582c3e08fc",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 156472,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 156471,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:53:27.410Z",
+              "messageId": "message:238df9ab88ecade8f6bd9393e2755732981c62d9a8208f4d1514f7582c3e08fc"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156478,
+          "ts": "2026-09-23T14:53:28.621Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:620550ac16c461fcd5ce6e06391920217b425304bb21e6a67aa8953f287de030",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 156478,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 156477,
+              "kind": "steer",
+              "ts": "2026-09-23T14:53:28.586Z",
+              "messageId": "message:620550ac16c461fcd5ce6e06391920217b425304bb21e6a67aa8953f287de030"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        }
+      ]
+    },
+    {
+      "participantId": "rigidity-lead8",
+      "guidance": [
+        {
+          "seq": 149410,
+          "ts": "2026-09-23T13:52:08.288Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:77152d090e57c92295df3ce067b9c3e7c24560cb40e4ed61aacb034c5b490e12",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 149410,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149409,
+              "kind": "nudge",
+              "ts": "2026-09-23T13:52:08.278Z",
+              "messageId": "message:77152d090e57c92295df3ce067b9c3e7c24560cb40e4ed61aacb034c5b490e12"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 149414,
+          "ts": "2026-09-23T13:52:09.177Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:5f2f74755788ad2627d8170c66ac6e1f225bca90580c797f816f2cb093e4c20d",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-reviewer7"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 149414,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149413,
+              "kind": "nudge",
+              "ts": "2026-09-23T13:52:09.171Z",
+              "messageId": "message:5f2f74755788ad2627d8170c66ac6e1f225bca90580c797f816f2cb093e4c20d"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 149430,
+          "ts": "2026-09-23T13:52:14.196Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:d33ae941520c34aa06626a15611770b5331b947a1e19748450753c4a1208a209",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-572-gates"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 149430,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149429,
+              "kind": "steer",
+              "ts": "2026-09-23T13:52:14.182Z",
+              "messageId": "message:d33ae941520c34aa06626a15611770b5331b947a1e19748450753c4a1208a209"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 149699,
+          "ts": "2026-09-23T13:54:05.218Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:5ecb07564bfc495232487a322967cfa71c3e9806393501472cc59aeac8ce2deb",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 149699,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149698,
+              "kind": "nudge",
+              "ts": "2026-09-23T13:54:05.213Z",
+              "messageId": "message:5ecb07564bfc495232487a322967cfa71c3e9806393501472cc59aeac8ce2deb"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 149739,
+          "ts": "2026-09-23T13:54:17.827Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:a9ba4fba2f1af6f21d09e7db24e5c8aee4bdd93903ce4cc38bc863f8f6c121b1",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-572-gates"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 149739,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149738,
+              "kind": "steer",
+              "ts": "2026-09-23T13:54:17.820Z",
+              "messageId": "message:a9ba4fba2f1af6f21d09e7db24e5c8aee4bdd93903ce4cc38bc863f8f6c121b1"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 151078,
+          "ts": "2026-09-23T14:02:48.094Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:68d15f55db9bc6122a6282497ab9898cf7127ac0b41e1c04fa2412054c8ade71",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 151078,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 151077,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:02:47.987Z",
+              "messageId": "message:68d15f55db9bc6122a6282497ab9898cf7127ac0b41e1c04fa2412054c8ade71"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 151657,
+          "ts": "2026-09-23T14:09:04.765Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:1fb476991464e8e9f0ebd2411fe0710fb7a5c192c7c39bebe657a7414dee30f5",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 151657,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 151656,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:09:04.719Z",
+              "messageId": "message:1fb476991464e8e9f0ebd2411fe0710fb7a5c192c7c39bebe657a7414dee30f5"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 151875,
+          "ts": "2026-09-23T14:12:03.772Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:49460f4564e38c6742a5207d162888526d68383eee4a8c46b56bd4bea969227b",
+          "from": {
+            "kind": "root",
+            "participantId": null
+          },
+          "priority": "now",
+          "thread": {
+            "root": 151875,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 151874,
+              "kind": "steer",
+              "ts": "2026-09-23T14:12:03.467Z",
+              "messageId": "message:49460f4564e38c6742a5207d162888526d68383eee4a8c46b56bd4bea969227b"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152420,
+          "ts": "2026-09-23T14:18:07.342Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:dfadba1ebc38dd22b3b4d5677c0e3be4f72ef043e38e1458e97c79370b267330",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 152420,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 152419,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:18:07.140Z",
+              "messageId": "message:dfadba1ebc38dd22b3b4d5677c0e3be4f72ef043e38e1458e97c79370b267330"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152499,
+          "ts": "2026-09-23T14:19:30.255Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:0a764cc46b5763e70ff490040b687dc95f4115d3fd30ea8618ef1f56c5845767",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 152499,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 152498,
+              "kind": "steer",
+              "ts": "2026-09-23T14:19:30.142Z",
+              "messageId": "message:0a764cc46b5763e70ff490040b687dc95f4115d3fd30ea8618ef1f56c5845767"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152572,
+          "ts": "2026-09-23T14:20:36.172Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:7e3819ed00b750a475ea467ef124149eb007c5ae469b53822f4842cba73d3e98",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 152572,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 152571,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:20:36.052Z",
+              "messageId": "message:7e3819ed00b750a475ea467ef124149eb007c5ae469b53822f4842cba73d3e98"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 153663,
+          "ts": "2026-09-23T14:29:23.217Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:830a227e8113544f27a12cd729939c2b95ea1c23edd29deea8b83196aa9b1b3d",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 153663,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 153662,
+              "kind": "steer",
+              "ts": "2026-09-23T14:29:23.176Z",
+              "messageId": "message:830a227e8113544f27a12cd729939c2b95ea1c23edd29deea8b83196aa9b1b3d"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 154652,
+          "ts": "2026-09-23T14:39:33.267Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:6521fa152b409ac657d06d9eb00fd0cc936bd32493e3436ef7a5c51281b35846",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 154652,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 154651,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:39:33.234Z",
+              "messageId": "message:6521fa152b409ac657d06d9eb00fd0cc936bd32493e3436ef7a5c51281b35846"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 154740,
+          "ts": "2026-09-23T14:40:15.631Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:a48e3730b7b06cf752f90f9b874aa0263931826c4211a7ad152aed929f12488d",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 154740,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 154739,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:40:15.603Z",
+              "messageId": "message:a48e3730b7b06cf752f90f9b874aa0263931826c4211a7ad152aed929f12488d"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 155612,
+          "ts": "2026-09-23T14:47:52.120Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:3f4449ec5e0474144a2b45547dee4df40e67c57c169526ac9da5d252649b4d4c",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 155612,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 155611,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:47:52.083Z",
+              "messageId": "message:3f4449ec5e0474144a2b45547dee4df40e67c57c169526ac9da5d252649b4d4c"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156260,
+          "ts": "2026-09-23T14:52:24.913Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:d8e95bbdc3cfe91c2866975d1013c8104e718ad9feed8b3eef0117d0a1c41197",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 156260,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 156259,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:52:24.881Z",
+              "messageId": "message:d8e95bbdc3cfe91c2866975d1013c8104e718ad9feed8b3eef0117d0a1c41197"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156482,
+          "ts": "2026-09-23T14:53:29.247Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:d431c2e3a51a72a2b3ab2e634dae3de0490c17cf190968f663c857d9c7f7ae1a",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 156482,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 156481,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:53:29.217Z",
+              "messageId": "message:d431c2e3a51a72a2b3ab2e634dae3de0490c17cf190968f663c857d9c7f7ae1a"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156929,
+          "ts": "2026-09-23T14:56:59.163Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:e638ba202a9fe3a43f93b572a7caa5215d33703f0d4484b1eb1bece8ad6a1430",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 156929,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 156928,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:56:59.131Z",
+              "messageId": "message:e638ba202a9fe3a43f93b572a7caa5215d33703f0d4484b1eb1bece8ad6a1430"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        }
+      ]
+    },
+    {
+      "participantId": "rigidity-572-gates",
+      "guidance": [
+        {
+          "seq": 149186,
+          "ts": "2026-09-23T13:50:45.887Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:3ad48735bd1524ffd2c94ab1c74bfa9cc0e72eaa465d8ac12e365494f2593750",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 149186,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149185,
+              "kind": "nudge",
+              "ts": "2026-09-23T13:50:45.842Z",
+              "messageId": "message:3ad48735bd1524ffd2c94ab1c74bfa9cc0e72eaa465d8ac12e365494f2593750"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 149578,
+          "ts": "2026-09-23T13:53:06.562Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:ba052c773383611eafa7081db566e0a0c9a33fa899db856fb45d2cdd357df2d0",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 149578,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149577,
+              "kind": "nudge",
+              "ts": "2026-09-23T13:53:06.557Z",
+              "messageId": "message:ba052c773383611eafa7081db566e0a0c9a33fa899db856fb45d2cdd357df2d0"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 149808,
+          "ts": "2026-09-23T13:54:35.514Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:802facc04bf2f52cf55b6ff6e52fc9f796078a6cae8220eb574b579cf5dafaf6",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 149808,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 149807,
+              "kind": "steer",
+              "ts": "2026-09-23T13:54:35.505Z",
+              "messageId": "message:802facc04bf2f52cf55b6ff6e52fc9f796078a6cae8220eb574b579cf5dafaf6"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 150430,
+          "ts": "2026-09-23T13:57:59.252Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:5ef038ee4ed2baf939ed5bf2f88093e9ec9155c75ed331d49d97e26108b2d893",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 150430,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 150429,
+              "kind": "steer",
+              "ts": "2026-09-23T13:57:59.248Z",
+              "messageId": "message:5ef038ee4ed2baf939ed5bf2f88093e9ec9155c75ed331d49d97e26108b2d893"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 150889,
+          "ts": "2026-09-23T14:01:26.383Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:940fbdc2f815e3429cc3e5190da509a3c6e9b9385a8eeec5c9e704b96c42df94",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-568-cleanup"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 150889,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 150888,
+              "kind": "steer",
+              "ts": "2026-09-23T14:01:26.377Z",
+              "messageId": "message:940fbdc2f815e3429cc3e5190da509a3c6e9b9385a8eeec5c9e704b96c42df94"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        }
+      ]
+    },
+    {
+      "participantId": "rigidity-568-cleanup",
+      "guidance": [
+        {
+          "seq": 151069,
+          "ts": "2026-09-23T14:02:44.609Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:5b482f73d2c8aba19520b6e00cac5bbbcdd28ef33e0290c998c0a0115596adb5",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 151069,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 151068,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:02:44.539Z",
+              "messageId": "message:5b482f73d2c8aba19520b6e00cac5bbbcdd28ef33e0290c998c0a0115596adb5"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152392,
+          "ts": "2026-09-23T14:17:53.256Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:9e91874d03877f6a51959f4b3b782d83093c5915c2115173456f9cf46f3fccd9",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 152392,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 152391,
+              "kind": "steer",
+              "ts": "2026-09-23T14:17:53.156Z",
+              "messageId": "message:9e91874d03877f6a51959f4b3b782d83093c5915c2115173456f9cf46f3fccd9"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152592,
+          "ts": "2026-09-23T14:20:55.213Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:d13512434159d07c900c1f5bc923811991cd2e918566d7b44976028c769913aa",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 152592,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 152591,
+              "kind": "steer",
+              "ts": "2026-09-23T14:20:55.173Z",
+              "messageId": "message:d13512434159d07c900c1f5bc923811991cd2e918566d7b44976028c769913aa"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 152600,
+          "ts": "2026-09-23T14:20:58.931Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:16bcebeffd1a19a67063789564790fd440aefc4433ff442c104049a729864864",
+          "from": {
+            "kind": "peer",
+            "participantId": "rigidity-571-fixtures"
+          },
+          "priority": "next_boundary",
+          "thread": {
+            "root": 152600,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 152599,
+              "kind": "nudge",
+              "ts": "2026-09-23T14:20:58.834Z",
+              "messageId": "message:16bcebeffd1a19a67063789564790fd440aefc4433ff442c104049a729864864"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 153377,
+          "ts": "2026-09-23T14:27:10.473Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:7be07178da616de4ce4b3d4f1a4307709779967cf192c85c36c2bda9e774a9d0",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 153377,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 153376,
+              "kind": "steer",
+              "ts": "2026-09-23T14:27:10.360Z",
+              "messageId": "message:7be07178da616de4ce4b3d4f1a4307709779967cf192c85c36c2bda9e774a9d0"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 153713,
+          "ts": "2026-09-23T14:29:53.036Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:fdd464f309f7dd72d6dd033770734fa417bc9b5f7b01678ae6a422055fefe374",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 153713,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 153712,
+              "kind": "steer",
+              "ts": "2026-09-23T14:29:52.998Z",
+              "messageId": "message:fdd464f309f7dd72d6dd033770734fa417bc9b5f7b01678ae6a422055fefe374"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 156996,
+          "ts": "2026-09-23T14:57:30.868Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:ba3871c8eb77484231d14c36db22cc8f9e2f7c91d5a5a05e4772f81f01b2d265",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 156996,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 156995,
+              "kind": "steer",
+              "ts": "2026-09-23T14:57:30.749Z",
+              "messageId": "message:ba3871c8eb77484231d14c36db22cc8f9e2f7c91d5a5a05e4772f81f01b2d265"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 157039,
+          "ts": "2026-09-23T14:57:52.057Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:22fac5137d2ca69897837b40593a34f1a9688db46fc44d0aa3b28ab51ca49777",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 157039,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 157038,
+              "kind": "steer",
+              "ts": "2026-09-23T14:57:51.802Z",
+              "messageId": "message:22fac5137d2ca69897837b40593a34f1a9688db46fc44d0aa3b28ab51ca49777"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        },
+        {
+          "seq": 157655,
+          "ts": "2026-09-23T15:01:47.671Z",
+          "kind": "swarm.guidance_sent",
+          "messageId": "message:fec59263162612b1e8ddf696fa4ed49cf137dcbca7a4ded5da2029921533d2cd",
+          "from": {
+            "kind": "lead",
+            "participantId": "rigidity-lead8"
+          },
+          "priority": "now",
+          "thread": {
+            "root": 157655,
+            "parent": null
+          },
+          "delivery": {
+            "state": "delivered",
+            "lane": {
+              "seq": 157654,
+              "kind": "steer",
+              "ts": "2026-09-23T15:01:47.621Z",
+              "messageId": "message:fec59263162612b1e8ddf696fa4ed49cf137dcbca7a4ded5da2029921533d2cd"
+            },
+            "reason": null,
+            "deliveredTo": null,
+            "at": null
+          }
+        }
+      ]
+    }
+  ],
+  "projection": "guidance"
+}

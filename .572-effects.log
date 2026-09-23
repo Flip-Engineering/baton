@@ -1,0 +1,25 @@
+✔ PH3: requiredEffects is a digest-bound subset and supports only repository_edit (21.044ms)
+✔ PH3/PH4: restart preserves required-effect metadata after an unchanged result completes (6129.76975ms)
+✔ PH3/PH5: required repository_edit metadata does not reject an unchanged verified result (4403.11375ms)
+✔ PH3/PH5: read-only-permitted unchanged work remains valid, while a required in-scope diff passes (8321.287208ms)
+✔ PH5: a Plan without repository_edit refuses an observed edit before verification without path disclosure (4858.791541ms)
+✔ captured mixed-scope changes fail before verifier or result retention (5430.9485ms)
+✖ P92-OR1: explicit evidence intent accepts a textual capsule and inverse prose cannot change explicit intent (18193.071375ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 6
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 33656.764958
+
+✖ failing tests:
+
+test at impl/test/phase92-read-only-result-red.test.mjs:79:1
+✖ P92-OR1: explicit evidence intent accepts a textual capsule and inverse prose cannot change explicit intent (18193.071375ms)
+  Error: Run did not settle: {"phase":"work_completed","terminalCause":null,"nodes":[{"key":"work","deps":[],"state":"accepted","dispatchVersion":1,"taskId":"baton-eefc45ada525f48b7a76641b-work","terminalEvent":31,"terminalOutcome":{"status":"completed","accepted":true,"code":"accepted"},"budget":{"status":"held","initial":{"tokens":100000000,"usd":1000,"wallMin":480,"providerTurns":2048},"reserved":{"tokens":100000000,"usd":1000,"wallMin":480,"providerTurns":2048},"consumed":{"tokens":null,"usd":null,"wallMin":0.0556,"providerTurns":1},"released":{"tokens":null,"usd":null,"wallMin":479.9444,"providerTurns":2047},"held":{"tokens":100000000,"usd":1000,"wallMin":0,"providerTurns":0},"overrun":{"tokens":null,"usd":null,"wallMin":0,"providerTurns":0},"availability":{"tokens":"unavailable","usd":"unavailable","wallMin":"exact","providerTurns":"exact"},"settledEvent":34},"objective":"Read-only audit and research report; make no repository changes.","objectiveRef":{"ref":"goal.objective","bytes":64}}],"resultIntent":"change","objectiveResultPolicy":{"mode":"change","repositoryMutation":"required_when_declared","acceptance":"verified_effect_result"}}
+      at terminal (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/phase92-read-only-result-red.test.mjs:73:9)
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/phase92-read-only-result-red.test.mjs:144:21)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)

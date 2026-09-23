@@ -1,0 +1,12 @@
+✔ 418-L1: the real tree is green — every bound-shaped constant is declared, exempted or named (1575.180833ms)
+✔ 418-L2: a bound-shaped constant in a module is flagged; the registry/env/pragma/comment channels pass (16.521416ms)
+✔ 418-L3: multiplied KiB/MiB products flag; sub-KiB literals do not (1.150833ms)
+✔ 418-L4: a table entry whose line vanished is reported stale (6.403084ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2828.98375

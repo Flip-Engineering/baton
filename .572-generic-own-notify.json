@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 158664,
+      "ts": "2026-09-23T15:10:19.207Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 158664,
+        "ts": "2026-09-23T15:10:19.207Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:07a94cc0ef4c57a15b264d219a5f326f8f49fb81008ef3cf31c1d2dde27cbbf6",
+    "seq": 158664,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:5c9c001288f9ffac1243c6001e512b8cbd70c66f7513b1a9355e9bbe31095a5d",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:10:17.851Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 158663,
+      "kind": "steer",
+      "ts": "2026-09-23T15:10:19.164Z",
+      "messageId": "message:5c9c001288f9ffac1243c6001e512b8cbd70c66f7513b1a9355e9bbe31095a5d"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "I will implement the remaining generic root_turn_reported transport amendment now in wake-delivery.mjs plus focused test, using existing attachment/receipt identity. Please tell me promptly if you already have code underway to avoid collision. Main now contains your production wiring and abb2d0de; generic emitter is 3a7e3af4. This closes plain pausable Runs and gives wave observers a root report without an automatic continuation loop."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "9e320e9b-1c0d-4c5b-9c60-233c44d49cfb"
+  }
+}

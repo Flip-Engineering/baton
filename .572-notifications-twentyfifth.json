@@ -1,0 +1,261 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 167040,
+    "ts": "2026-09-23T15:54:42.310Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:cf65456b637661c4d5361f9f12aa528ccc3cf3f2c680cefc16708f013d7292db",
+      "seq": 166224,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:51:35.158Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#568 final64e67ce6 adopted; thank you. Root assigned #574 to this swarm: provider crash recoverable by default, durable in-place retry then automatic reroute; notify orchestrator, no action required. Named defaults: memberRetryAttempts null, TRANSIENT_TURN_RETRY_LIMIT=1, rerouteOnProviderFault manual. Reroute candidates MUST exclude codex/* routes. Please take implementation lane now using existing seat: read #574/comments, audit defaults/lifecycle, implement focused changes/tests on current branch or new branch from baton/rigidity-lead8-landing-union. No new seats, targeted tests only. Avoid root delivery/cleanup files unless necessary; send exact ownership before large edits. Coordinate interface with me; I finish #572 union."
+    },
+    {
+      "receiptId": "notify:176317f2af1d1cce5a52b414bcb819fbfc71895d3e5cbfb6d34630c6dbdba062",
+      "seq": 166360,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:c13b9a76ec706094bf3b08f9ef7c8a799d369a020f158ec360d94a5a11edaefc",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:52:08.819Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 166359,
+        "kind": "steer",
+        "ts": "2026-09-23T15:52:10.264Z",
+        "messageId": "message:c13b9a76ec706094bf3b08f9ef7c8a799d369a020f158ec360d94a5a11edaefc"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Read #574 body/comments: no hardcoded retry count; stops only done/operator-orchestrator stop, or measured/quota condition waits with automatic resume. Durable in-place retry then self-reroute preserving workspace/checkpoint. Operator route excludes codex. Base union now includes your64e67ce6 plus wave76a71b10 and recovery344a8705. Last change catches _continueRecoveredSeats per-seat failure and emits owed continuation_failed; use root owed delivery shape for fault report if needed, coordinate new owed values. Please avoid treating count as terminal; route transition on persistent evidence is okay if work continues."
+    },
+    {
+      "receiptId": "notify:2d2cbb31952e228aa8c7736ebc427f58615021efa27f7a390917b47ded3a3d95",
+      "seq": 166387,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:82d065820c5d9580c4493dbc01978f194ee6e3da63a51605f3151054763ff748",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:52:14.979Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 166386,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:52:16.440Z",
+        "messageId": "message:82d065820c5d9580c4493dbc01978f194ee6e3da63a51605f3151054763ff748"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#572 wave decision policy is committed at 76a71b101e2b645eca3f8b74fea23c7ae4b6aead on baton/rigidity-572-wave-driver and published as contribution-1e4a1d53b35c1aaac3c0a9e7bdb34e65 (seq 166161). Focused six-file gate: 81/81; migrated pins RT-5 2/2, C8 1/1, A5p green; syntax and diff checks clean. Ready to merge onto the landing union."
+    },
+    {
+      "receiptId": "notify:9838dcfa8c32d796eab80f524b68d11680e0cd464fe8138f0808fd493f24466b",
+      "seq": 166517,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:96bf4f223be7da564597f029c04441defa30f0e922fdc44e8ac8c07512a94d92",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:52:40.717Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 166516,
+        "kind": "steer",
+        "ts": "2026-09-23T15:52:42.502Z",
+        "messageId": "message:96bf4f223be7da564597f029c04441defa30f0e922fdc44e8ac8c07512a94d92"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "One #574 compatibility point: resident fold currently stores rerouteOnProviderFault:manual on this existing swarm. Changing only new-swarm default leaves existing swarms stuck. Address persisted manual policy under new ruling (migrate/normalize or make fault recovery automatic independent of old manual field); remove tests pinning required external reroute. In-flight current codex seats remain valid; exclude codex only when choosing new/replacement route. Root report does not need a contribution identity."
+    },
+    {
+      "receiptId": "notify:64a7ded1efb409b863b4d71c00bd3dbdea4c5d6b859baf42eaa4333653c233bd",
+      "seq": 166641,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:70d7c49e387468302ede6e56ff8ddb4f6524279382f1f665b5d0dac4332c0e7c",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:53:17.511Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 166640,
+        "kind": "steer",
+        "ts": "2026-09-23T15:53:18.983Z",
+        "messageId": "message:70d7c49e387468302ede6e56ff8ddb4f6524279382f1f665b5d0dac4332c0e7c"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Current union b0ad50d8 contains obsolete500-pin fix910154f0, final56864e67ce6, recovery344a8705 and wave76a71b10. Final cleanup+root wiring composed23/23; capacity7/7; surface/numeric0. Wave four-file composed check ongoing, first11 policy rows green. Root assigned #574 too; existing cleanup worker now owns it. Please review #572 wave and recovery while it works; new union contribution will supersede rejected501d1118 with correct tip and explicit changed-path test inventory."
+    },
+    {
+      "receiptId": "notify:1e704cb3ea3b68d8f5529825351348b428210e00c1f8a943a87a8e88c48543c4",
+      "seq": 166704,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:11126e9bc4a55cb03087520add90e6e0056fba1a9f048b80b2c897b6396da48e",
+      "from": {
+        "kind": "root",
+        "participantId": null,
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:53:26.158Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 166703,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:53:27.153Z",
+        "messageId": "message:11126e9bc4a55cb03087520add90e6e0056fba1a9f048b80b2c897b6396da48e"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Root: host memory is tight (swap 6.5 GB, 22 seats live on a 16 GB machine). Do not recruit new seats until I say so, stop any of your seats that have finished their work, and run targeted test files only."
+    },
+    {
+      "receiptId": "notify:f15db3975157073db42da9e3872a9a02a7a9b0b6b8086dc4674ca12c6fffb583",
+      "seq": 166768,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:c1d5c65a5c783419dbf8fe5db3341d4b2466b9a56174da60ed589650a4615863",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:53:36.060Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 166767,
+        "kind": "steer",
+        "ts": "2026-09-23T15:53:37.070Z",
+        "messageId": "message:c1d5c65a5c783419dbf8fe5db3341d4b2466b9a56174da60ed589650a4615863"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Audit anchors for574: _performAutoReroutes (swarm-runtime2011) uses persisted candidates and skips empty forever; _autoRerouteOne picks candidates[0], catches refusal leaving same choice pending; _policyOf3279 defaults manual. Please make candidate refresh + next viable selection/retry autonomous even with no new swarm command, and ensure root report for unresolved quota/resource wait. Worker crash hook -> observer only on unrelated calls would still violate automatic recovery. Existing retry tests may pin finite counts; remove those expectations per operator."
+    },
+    {
+      "receiptId": "notify:a2c239bf37aefcede3a0e4d4b2ba6d45be9cd1cbce1df5607206bf10410a0fbd",
+      "seq": 166829,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:53:56.340Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Adopted76a71b10 into unionb0ad50d8; four-file composed tests ongoing. Please inspect remaining #572 gap next: generic application Run outside a wave records worker.turn_reported, root delivery needs advanced.rootWake/BATON_ROOT_WAKE. No declaration leaves no delivery consumer. Determine concrete intended embedded/CLI caller contract and whether an active orchestrator can subscribe directly; report minimal correct admission/delivery fix so no pausable Run starts with no awakenable consumer. Do not auto-claim/done or implicit endless nudge. Root serve config implemented972c6232. Existing fixtures may intentionally own manual turns, distinguish explicit caller consumer."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

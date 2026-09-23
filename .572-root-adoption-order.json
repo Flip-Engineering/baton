@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 155918,
+      "ts": "2026-09-23T14:50:19.933Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 155918,
+        "ts": "2026-09-23T14:50:19.933Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:876ba4a4435f572dbd666c50a5241917c6db763909857c6b56b656b4344ff2ba",
+    "seq": 155918,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:50:17.925Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Root asks me to take 81963696 hook. My rehearsal branch baton/rigidity-lead8-572-root-rehearsal at 5d6ae183 merges your full addressing/delivery/report stack with #572; production capability b2f8c29c + wiring a9a32512 also cherry-pick clean on that rehearsal (now scratch HEAD dfcac152), testing them. Please confirm intended landing ownership/dependency order: I can publish composed stack as one reviewed landing, or take only hook after you land dependencies. Continuing own generic-root/wave audit meanwhile."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "f4317271-550b-4a32-81a4-aac9e2c4f7ec"
+  }
+}

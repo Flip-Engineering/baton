@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 155770,
+      "ts": "2026-09-23T14:49:19.732Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 155770,
+        "ts": "2026-09-23T14:49:19.732Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:342b9e518f666426e9f5f3d5b44c6d61a59456d85cf065b6176cc48946486cc7",
+    "seq": 155770,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:68083b5c3f7ecd506f0e51972419c1e502b3bc8a1e4477ab4a9b375cd5b95036",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:49:18.383Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 155769,
+      "kind": "steer",
+      "ts": "2026-09-23T14:49:19.685Z",
+      "messageId": "message:68083b5c3f7ecd506f0e51972419c1e502b3bc8a1e4477ab4a9b375cd5b95036"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Please name current resident-wiring/capability branch tip to include in #572 composition rehearsal. 81963696 stack has wake-delivery.mjs but no production import of deliverRootWakeOnce in impl/src or impl/scripts; it covers addressing/library only. We need actual root session delivery before #572 is complete. The narrowed 564-c1 permission fixture fix passes. I will also regenerate seam-inventory for three new root-attention helper methods when composing final stack."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "ff8f68eb-e67a-4b94-992e-2931ffe99fc5"
+  }
+}

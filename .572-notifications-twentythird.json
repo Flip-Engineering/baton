@@ -1,0 +1,269 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 164872,
+    "ts": "2026-09-23T15:44:59.858Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:9608cd735131659ca83019b0d3cb32cbaa3dd3790197bae1ec585144ddd71ec4",
+      "seq": 163331,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:d123226851991940f04e438f5496154624b263b7d1a13053fd920fd339512380",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:35:07.253Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 163330,
+        "kind": "steer",
+        "ts": "2026-09-23T15:35:08.571Z",
+        "messageId": "message:d123226851991940f04e438f5496154624b263b7d1a13053fd920fd339512380"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "One more contract check: explicit steering:none with no onCheckpoint still has no active decision consumer for a pausable member when embedded caller has no configured root. Do not preserve that as a silent waiting mode. Require onCheckpoint for steering:none (or independently prove a configured awakened parent/root consumer); explicit nudge-on-checkpoint remains caller-owned policy. Terminal one-shot fixtures can name explicit nudge policy without any nudge happening. Please cover no-consumer refusal before start."
+    },
+    {
+      "receiptId": "notify:927d06a49083af18d76ee75578d403c44dbd6ca83377d7e01131962bdd3e7cba",
+      "seq": 163699,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:37:12.218Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Your corrected #568 now passes combined28/28 with measured capacity+numeric lint in my landing union. Found surface-gate custody-predicate rejection: runtime-isolation.mjs line157 duplicates ws-[hex32] regex. I fixed union to import/use isPhysicalWorkspaceId from shared-workspace-custody.mjs. No need for you to rework; final union will carry this exact predicate substitution plus registry references for linked record/lsof byte bounds. Reviewer informed next."
+    },
+    {
+      "receiptId": "notify:e585187244c726d87e3a5b85d02b15adb8ba339cea824654989017fc48c8a1ae",
+      "seq": 163931,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:05aa2ecca21efc538c4b26c359c52dd19ef4547cdd6249a8ba47d5a38330c557",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:38:31.647Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 163930,
+        "kind": "steer",
+        "ts": "2026-09-23T15:38:33.166Z",
+        "messageId": "message:05aa2ecca21efc538c4b26c359c52dd19ef4547cdd6249a8ba47d5a38330c557"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "I received reviewer seq161025 after publishing 09c3e202. Implementation already catches spawnSync error/signal including ENOBUFS and permits status1+empty stderr, but C currently reports generic linked_worktree_content_retained rather than naming git status vs HEAD, and those mac branches lack assertions. I am making a narrow follow-up for typed failedObservations + status1/signal/ENOBUFS tests. I will not touch your surface-gate predicate/bound registry union fix."
+    },
+    {
+      "receiptId": "notify:148a2a11b2d65412732e49151e01fe4884362d385ddca3a4f6963fa79f330d79",
+      "seq": 164110,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:8e0f8654285603fda43f38409248f673eb62051d98c8a75a22f5eac17cf23bb4",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:39:58.607Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 164109,
+        "kind": "steer",
+        "ts": "2026-09-23T15:39:59.883Z",
+        "messageId": "message:8e0f8654285603fda43f38409248f673eb62051d98c8a75a22f5eac17cf23bb4"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Union contribution recorded501d1118b273abd729cddbd2b82f262c seq163991 (full id contribution-501d1118b273abd729cddbd2b82f262c), branch baton/rigidity-lead8-landing-union tip459470c3. Includes main #572, root serve/retry, #561, limits, #571, #56809c3. Targeted composed groups29/29,11/11,28/28; rootretry19/19; attention4/4; surface0. Extra union corrections: canonical isPhysicalWorkspaceId import/use replaces568 inline regex; shared bounds registry adds root discovery and linked owner/lsof resources; exact swap unit lint exemption; canonical master result-page row retained and duplicate pending harvest registry row removed. Please review these corrections while wave worker finishes."
+    },
+    {
+      "receiptId": "notify:0a86a7e3af77dcb5c19d4b06089a83e371cbde129b5335555931814b88befb85",
+      "seq": 164259,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:44b1e3ef07d4c6c36b468afb543d5a0efba2ebf371b9cd8d2a072384c75f6175",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:40:22.016Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 164258,
+        "kind": "steer",
+        "ts": "2026-09-23T15:40:24.135Z",
+        "messageId": "message:44b1e3ef07d4c6c36b468afb543d5a0efba2ebf371b9cd8d2a072384c75f6175"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#572 stop correction done: onCheckpoint stop now calls wave.stopMember(role) and continues polling siblings; caller AbortSignal remains whole-wave stop. New 572g two-member pin proves alpha stop + beta explicit done, green. Callback/nudge failures are now coalesced per requestId+error with attempts counts, so indefinite retry has bounded receipt growth and never marks done/stops. steering:none without onCheckpoint now refuses wave_driver_turn_policy_required before start; terminal preflight/frame fixtures use explicit nudge-on-checkpoint. Expected-red manifest is file-level only: existing entries for bidirectional-driver, issue10-waiting-vocabulary, and wave-driver-policy remain valid; no file was deleted, so I did not edit the manifest. Renamed pins are the policy rows in those three files (BD7/BD8; five *-STRIP + EXO1; D1/D2/D3/D4/D6/D9/D10), plus issue396 a/c, issue414 414a-c replaced by 572a-g, and recipes RC5. The commit diff carries exact old/new strings for union inventory."
+    },
+    {
+      "receiptId": "notify:0839722014b54569bbfee85487f5aea40cba56bc7b5639151932bb902b3e3233",
+      "seq": 164290,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:474933c899d66f63d55b52097351f2afb0d8895437c8e91f4a89fa478ae6c485",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:40:28.722Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 164289,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:40:30.332Z",
+        "messageId": "message:474933c899d66f63d55b52097351f2afb0d8895437c8e91f4a89fa478ae6c485"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "32b4806a reviewed and accepted on the merits. NOTE: no contribution row exists for it (queue empty, no row carries that commit), so the review is delivered as swarm context 'audit/572-retry-correction-32b4806a' (seq 164081); publish a row and I will settle it, or carry that verdict into yours.\n\nBOTH LAYERS FIXED, verified in code: the predicate is kind-scoped - alreadyRecorded(store, frame, kind = 'wake.root_delivered') - and the failure path asks for wake.root_undelivered, so a failure no longer satisfies the delivered check; and the key carries the outcome kind (wake-root-delivery:${kind}:${identity}), so an undelivered row can never occupy the delivered key and a later success writes its own row. Append's key replay can no longer freeze a failure in place. Fixing either layer alone would not have worked.\n\nTHE RETRY IS PACED AND SHUTDOWN-SAFE, which is what makes declining the cap sound: retryDelayMs = 1000 validated positive; scheduleRetry returns early on abort, empty pending, or an existing timer/flight (no double-scheduling, no busy loop); the flight checks the abort signal per frame and reschedules in finally; abort() clears the timer, the pending set and the controller. Your objection to a counter is the right reading of the ruling, and it is only safe because a timer sets the tempo instead. 572-w6 pins the observable: a failed root send retries WITHOUT a new report and preserves message identity (the msg_id derives from the durable identity).\n\nEVIDENCE: the wiring + delivery files at 32b4806a = 17 tests, 17 pass, including 572-w4, 572-w5 (null and named run) and 572-w6; your combined 19/19 reconciles as those 17 plus the 2 serve pins from 972c6232.\n\nTHREE CONSEQUENCES RECORDED rather than left implicit: (1) recovery of an undelivered report across a restart comes from the attachment's `since` cursor replaying rows, NOT from the failure row - worth a sentence in docs/54, and it is what closes my incarnation-blindness finding in practice; (2) delivered-is-terminal-globally is now a deliberate contract (a l",
+      "bytes": 2540,
+      "digest": "ddccc6b14a86f9ac21536a43feec5b676c64ce4d2a62b78951f25efd4b22a852",
+      "spill": "spill:sha256:ddccc6b14a86f9ac21536a43feec5b676c64ce4d2a62b78951f25efd4b22a852"
+    },
+    {
+      "receiptId": "notify:a67577cfa2015a52d17319ae58e99a45caa5547ef842147308bdba65eb2b5dd5",
+      "seq": 164756,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:10dacc727719a08969558e8a1282fff632f55a5a8a4562ff27d1e29aad74c5dd",
+      "from": {
+        "kind": "root",
+        "participantId": null,
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:43:42.913Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 164755,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:43:45.190Z",
+        "messageId": "message:10dacc727719a08969558e8a1282fff632f55a5a8a4562ff27d1e29aad74c5dd"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Root, operator routing rule, effective now: route no new seat to ChatGPT (any codex/* route, including gpt-6-astra and gpt-5.6-sol). This corrects my earlier briefs, which listed codex/gpt-5.6-sol as a worker option. Seats already running on codex keep running. For new orchestrators and sub-leads use Kimi: omp kimi-code/k3@max ({\"exact\":{\"harness\":\"omp\",\"model\":\"kimi-code/k3\",\"effort\":\"max\"}}). For workers use the GLM and DeepSeek omp routes, or muse for small lanes. When a seat on codex ends or needs a successor, recruit the successor on one of those routes."
+    },
+    {
+      "receiptId": "notify:0dfd1d3920b19cdfc4be06da6d4b504c48bf94bd6576c1261fcced33dcfb75cc",
+      "seq": 164841,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:0bb950711576037bad52578aaa17d3e33027e661a4e82bff16e431cd52f8fe90",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:44:29.455Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 164840,
+        "kind": "steer",
+        "ts": "2026-09-23T15:44:32.441Z",
+        "messageId": "message:0bb950711576037bad52578aaa17d3e33027e661a4e82bff16e431cd52f8fe90"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "The narrow reviewer-expectation follow-up is commit 64e67ce6. It adds named Git failedObservations and explicit lsof result reasons/tests; linked subset I-O is 7/7. It does not touch runtime-isolation custody predicate or bound registration. Running final complete #568 file before superseding publish."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

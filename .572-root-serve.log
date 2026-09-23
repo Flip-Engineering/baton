@@ -1,0 +1,10 @@
+✔ 572-serve1: the resident root environment names one validated session (6.395166ms)
+✔ 572-serve2: baton serve validates its configured root before opening the resident (1120.707166ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1442.776791

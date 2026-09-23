@@ -1,0 +1,250 @@
+{
+  "swarmId": "swarm-rigidity-20260921",
+  "purpose": "Rigidity and arbitrary-limits removal: issues 496, 499, 500, 530, 531, 532, 536, 538 (the exactObject security-boundary class) plus anything else in the original 492-sweep findings not yet closed. Removal/correction mandate, not just cataloging.",
+  "status": "open",
+  "closedReason": null,
+  "actor": "web:local-owner:935be40a-9001-4fba-a1e6-9fabb1f916d2",
+  "seq": 7270,
+  "ts": "2026-09-21T18:17:05.636Z",
+  "baseCommit": "31f356b2b1cd5a32a241116c52aa96ea7133fc4a",
+  "policy": {
+    "rerouteOnProviderFault": "manual",
+    "reroutePreferApi": false,
+    "resumeContinuation": "auto"
+  },
+  "caller": {
+    "participantId": "rigidity-lead8",
+    "permissions": [
+      "read",
+      "communicate",
+      "contribute",
+      "review",
+      "organize",
+      "recruit"
+    ],
+    "lastRefusal": {
+      "seq": 156071,
+      "command": "swarm.integrate",
+      "code": "integrate_gates_red",
+      "field": null
+    }
+  },
+  "availableActions": [
+    "swarm.view",
+    "swarm.watch",
+    "swarm.recruit",
+    "swarm.guide",
+    "swarm.capture",
+    "swarm.check",
+    "swarm.notify",
+    "swarm.notifications",
+    "swarm.integrate",
+    "swarm.update",
+    "run.knowledge.seed",
+    "run.board.post",
+    "run.board.read",
+    "run.scratchpad.append",
+    "run.scratchpad.read",
+    "run.scratchpad.elevate",
+    "evidence.search"
+  ],
+  "admission": [],
+  "actionTargets": {
+    "swarm.capture": {
+      "participantIds": [
+        "rigidity-lead",
+        "rigidity-lead2",
+        "rigidity-lead3",
+        "rigidity-lead4",
+        "rigidity-lead5",
+        "rigidity-lead6",
+        "rigidity-lead7",
+        "rigidity-lead7f",
+        "rigidity-reviewer7",
+        "rigidity-571-fixtures",
+        "rigidity-lead8",
+        "rigidity-572-gates",
+        "rigidity-568-cleanup"
+      ]
+    },
+    "swarm.check": {
+      "participantIds": [
+        "rigidity-lead",
+        "rigidity-lead2",
+        "rigidity-lead3",
+        "rigidity-lead4",
+        "rigidity-lead5",
+        "rigidity-lead6",
+        "rigidity-lead7",
+        "rigidity-lead7f",
+        "rigidity-reviewer7",
+        "rigidity-571-fixtures",
+        "rigidity-lead8",
+        "rigidity-572-gates",
+        "rigidity-568-cleanup"
+      ]
+    }
+  },
+  "updates": [
+    {
+      "event": "swarm.group_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.work_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.assignment_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.coupling_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.claim_updated",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.proposal_updated",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.holder_released",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.policy_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.context_updated",
+      "permission": "communicate"
+    },
+    {
+      "event": "swarm.contribution_recorded",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.contribution_reviewed",
+      "permission": "review"
+    },
+    {
+      "event": "swarm.participant_left",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.closed",
+      "permission": "organize"
+    },
+    {
+      "command": "run.knowledge.seed",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.post",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.append",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.scratchpad.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.elevate",
+      "permission": "contribute"
+    },
+    {
+      "command": "evidence.search",
+      "permission": "read"
+    }
+  ],
+  "deployment": {
+    "workspace": {
+      "state": "ready",
+      "freeBytes": 6039797760,
+      "freeInodes": 59450000,
+      "minFreeBytes": null,
+      "minFreeInodes": null,
+      "floorBytes": 618378954,
+      "floorInodes": 14828,
+      "floorSource": "derived",
+      "estimateHighWater": {
+        "bytes": 195089083,
+        "inodes": 14632
+      },
+      "runtimeFootprint": {
+        "bytes": 423289871,
+        "inodes": 196
+      }
+    },
+    "hostCapacity": {
+      "capacity": {
+        "cores": 10,
+        "totalBytes": 17179869184,
+        "freeBytes": 67108864,
+        "availableBytes": 67108864,
+        "load1m": 72,
+        "hubCores": 1,
+        "usableCores": 9,
+        "suiteCores": 9,
+        "verdictLanes": 1,
+        "coreShareBytes": 1717986918,
+        "suiteBytes": 15461882262,
+        "usableBytes": 15461882266,
+        "saturated": true,
+        "memoryTight": true
+      },
+      "used": {
+        "cores": 0,
+        "bytes": 0,
+        "leases": {
+          "verify": 0,
+          "worker": 24
+        }
+      },
+      "queue": [],
+      "roomForVerify": false,
+      "roomForWorker": true
+    },
+    "served": {
+      "commit": "65c913f0df143ec8d01f999047ca5cfdf6f03a51",
+      "branch": null,
+      "target": {
+        "ref": "origin/master",
+        "commit": "e501507a6f174ae9ad0bd5e03e60820f965c4bf6",
+        "behind": 9
+      }
+    }
+  },
+  "cursor": 158165,
+  "context": {
+    "[null,\"audit/root-only-gates-and-turn-mechanisms-v1\"]": {
+      "key": "audit/root-only-gates-and-turn-mechanisms-v1",
+      "body": "Audit delivered: root-only review/landing restrictions, then remaining pause/idle/turn-end mechanisms, then #561 + limits readiness. All read-only; nothing modified, and I did not touch runtime-admission _admitPauseRecord.\n\n== 1. ROOT-ONLY REVIEWER/LANDER RESTRICTIONS ==\n\nTHE MODEL. impl/src/swarm-runtime.mjs:1070 SWARM_PERMISSIONS = read, communicate, contribute, review, organize, recruit, stop; :1071 DEFAULT_PERMISSIONS = read, communicate, contribute (NO review, NO organize); :1095-1105 COMMAND_PERMISSIONS: swarm.view/watch -> read, swarm.recruit -> recruit, swarm.guide/notify -> communicate, swarm.capture -> contribute, swarm.check -> review, swarm.stop -> stop, swarm.integrate -> organize (comment :1103 'root-side acts take - organize'; impl/src/swarm-contract.mjs:357-361 labels it 'root-side act').\n\nTHE ACTUAL ROOT-ONLY MECHANISM IS A BYPASS, NOT A CHECK. `_permit` (swarm-runtime.mjs:2012-2019) refuses only when `member` is truthy; `_caller` (:2003-2011) returns null for an unscoped principal and refuses only a SCOPED non-member (swarm_membership_required). So a principal outside the swarm - the deployment owner/root - passes every gate unconditionally, including `organize` (landing) and `review`. There is no `principal.kind === 'root'` predicate anywhere: the restriction on members is that they must HOLD the permission, and the root holds everything by not being a member.\n\nGRANTS ARE ROOT-SOURCED BY CONSTRUCTION. :8137-8144 - a recruiter may only grant permissions it holds ('Delegation cannot grant authority the caller does not hold') and DEFAULT_PERMISSIONS carries neither review nor organize, so review and organize exist only along the root's own recruit chain. Lander = root or a seat the root granted organize. Reviewer = same for review.\n\nREVIEWER INDEPENDENCE, the one hard rule: swarm.check (a) on another seat's contribution needs `review` (:7971-7972), (b) on your OWN contribution is admitted at `contribute` and then refused :8889-8896 with code `self_check_refused`, rule `check-reviewer-independence`, before any effect ('no check runs, no review row lands').\n\nCONCRETE DEFECT - an advertised verb that cannot succeed: :4562 pushes `swarm.check` into availableActions for ANY caller holding `contribute`, and :4583-4584 sets actionTargets['swarm.check'] = contributionTargets, which for a contribute-only caller is exactly [itself]. Dispatch then refuses that one target (self_check_refused) and refuses every other target (needs review). So a default-grant worker is offered `swarm.check`, pointed at the only participant it may not check. This contradicts the in-code claim at :4560-4565 that availableActions 'can no more overstate an authority than dispatch can overlook one'. The mirror rule :4563 (review holder -> offer swarm.capture) is sound: capturing another seat is `review` and works. Minimal fix: drop the :4562 push, or make the offered target set the empty set for contribute-only callers, or admit a contribute holder to check a DIFFERENT seat's contribution - whichever the operator ruling is, the view and dispatch must agree. Tests that pin this area: impl/test/swarm-bridge-truth.test.mjs, swarm-check-admission.test.mjs, swarm-organization-truth.test.mjs, swarm-view-slices.test.mjs, swarm-refusals.test.mjs, issue457-seat-default-view.test.mjs.\n\n== 2. REMAINING DELIBERATE PAUSE / IDLE / TURN-END MECHANISMS ==\n\nPAUSE PLANE (untouched by me). Minted only from impl/src/runtime-event-handlers/turn-terminal.mjs:82-86 when the task is non-terminal AND `_turnCompletionOf(handle) === 'pausable'`; impl/src/runtime-api.mjs:313-316 returns 'pausable' for EVERY swarm-participant run, else the adapter card's turnCompletion (default 'claim'). Cards declaring 'pausable': claude-session.mjs:691, codex-appserver.mjs:320, grok-acp.mjs:242, kimi-acp.mjs:185, omp-rpc.mjs:528. Reservation states: runtime-admission.mjs:1062 (_reservePauseRecord: not_found / resolving / already_resolved) and :1096 (_withPauseReservation). Task-state law: coordination-ledger.mjs:182-188 - `paused` exits only to {working, failed, cancelled}, deliberately never `completed`.\n\nPARKED DELIVERY, two reasons: `harness_one_shot` (swarm-runtime.mjs:5819, and :6331-6358 marking it terminal: true; documented at swarm-event-schemas.mjs:338) parks a guide/notify for a harness that takes no mid-turn delivery; `worker_not_active` is the other (my own guide to the previous lead came back parked with that reason).\n\nworker_not_active, the load-bearing conditions: coordinator.mjs:3543 (`!['working','blocked'].includes(handle.status)`), :3355 (no handle), :3746 and :3851; runtime-admission.mjs:2559-2567 is the IDLE GATE - reusableFollowUp = (mode === 'turn' && status === 'idle'), `idle && !reusableFollowUp` refuses, and dead/exited/orphaned/interrupted/pending all refuse; also :2279, :2282, :2315, :2557; runtime-observation.mjs:2544, :2547, :2629, :2632, :2842, :2844; observation-events.mjs:140.\n\nLIVE TIMERS THAT CAN END OR PARK A TURN WITHOUT AN OPERATOR.\n(a) The stall seam: runtime-observation.mjs:1740-1756 _armStallCycle arms `stall_seam` with windowMs = coordinator._progressNudgeWindowMs ?? 300_000 (set at runtime-admission.mjs:546) and answered: false, with a real `timer` (cleared :1837; expiry paths :1764-1777). The PAUSE seam no longer reads that window (comment runtime-admission.mjs:544-545), but the STALL seam does - so a 5-minute window is still live. That is the mechanism to eyeball if you want no clock deciding anything.\n(b) The 600 s backstop, and there are TWO of them sharing one env var: coordinator.mjs:385 SUPERVISED_GATE_IDLE_DEFAULT_MS = 600_000 behind supervisedGateTimeoutMs() (:391, env BATON_SUITE_IDLE_MS), read at swarm-runtime.mjs:140 and :150 - that is the REGENERATOR step timeout only; the comment :379-383 records that the gate run itself takes no such bound (#546, the landing waits for the runner's verdict). impl/scripts/run-suite.mjs:339-340 reads the SAME variable as the runner's PER-FILE idle deadline, which is what produced the `fileHung` row after 600853 ms in my #571 review. Two different laws, one knob.\n(c) Session lifetime: application-deployment.mjs:6276 sessionTtlMs default 24 h, enforced :4204 and :4215.\n\nRESUME REFUSALS: `session_context_mismatch` - coordinator.mjs:2753 (session context belongs to a different repository) and :2758 (session worktree not reusable), surfaced through runtime-recovery.mjs:1077, :1084, :1462, :1926. That is the code that refused the resume of my predecessor seat.\n\nPARKED STATES ARE PROJECTED HONESTLY, not hidden: application-observation.mjs:2830-2833 and :3761-3765 render `paused` as paused, never 'running'; brand.mjs:78-82 maps parked/paused to 'needs you'; application-cli.mjs:3373-3376 explains a parked guide as waiting for the seat's next exec / resume-from brief.\n\n== 3. #561 AND LIMITS READINESS (measured, master is now cf316a44) ==\n\nMASTER MOVED: 80e07683 -> cf316a44 (two commits: the landing-pipeline fix with the CDW5 pin it greens; the probe-settle fix with CLW5's checkpoint pin). Serviced checkout is still 65c913f0, now 8 behind.\n\nLIMITS, contribution-90a93fc7782084c198c05da44553c9bb tip 4bad7ddf: ACCEPTED (seq 143741). Against cf316a44 the diff applies CLEANLY, overlap with the two new commits is ZERO, and its named batch is 61 tests / 61 pass / exit 0; its item-two batch is 116/113/3 and those three rows fail identically on a CLEAN cf316a44 checkout (3 pass / 3 fail), so they remain pre-existing. Ready to land as-is once a gate is allowed to run.\n\n#561, contribution-5cb143c479a9a8d4b92f6f0bd36f1d93 tip e1cd7be8: ACCEPTED (seq 142122). Against cf316a44 the diff applies CLEANLY, overlap is 2 files (impl/src/index.mjs, impl/test/create-driver-wiring.test.mjs), and its named batch is 49 tests / 49 pass / 0 fail - CDW5 is GREENER NOW, because master landed the integrationPublishRemote classification. So the lane's carried annotation row (2f7b2f57, which declares CDW5 + WC32 as environment reds) is OBSOLETE on the new base: land the lane with a row that says CDW5 is greened by master, not declared red. Rebase it (or land the verified diff) rather than carrying the old reds forward.\n\n#569 GATE STATE: impl/test/issue486-no-scan-per-command.test.mjs, which was red on clean 80e07683 with 486-b/486-c, is GREEN 3/3 on cf316a44, and master's own commit message records CLW5's pin catching up - so the wide-gate blocker named in the earlier order appears cleared. Worth re-measuring on the exact gate set before you stage, since I only ran that one file.\n\nMY SCRATCH: /tmp/aud-lim, /tmp/aud-561, /tmp/aud-clean are being removed now; every result above is reproducible from the refs alone - git worktree add --detach <dir> cf316a44, then git diff 80e07683 <tip> | git apply.",
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-reviewer7",
+      "seq": 149447,
+      "ts": "2026-09-23T13:52:19.329Z"
+    },
+    "[null,\"test/issue572-startup-continuation\"]": {
+      "key": "test/issue572-startup-continuation",
+      "body": "{\"path\":\"impl/test/issue572-startup-continuation.test.mjs\",\"source\":\"// Issue #572: a successor an OLDER resident left pending starts when the deployment OPENS.\\n//\\n// The historical hole: the drive of a pending resume decision lived only on the command path\\n// (`_dispatch` -> `_continueRecoveredSeats`), so a seat whose `resumeDecision.requested` row was\\n// durable waited for somebody to call a command. In a quiet swarm nobody ever did.\\n//\\n// This test writes the LEGACY durable state (a swarm, a lead, and a successor joined with\\n// `resumeFrom` plus an unanswered `swarm.resume_decision_requested`), then does exactly ONE thing:\\n// it opens the deployment. No `swarm.view`, no `swarm.update`, no command of any kind is issued\\n// after the open. The proof is the durable answer row the drive writes — and nothing else.\\nimport assert from 'node:assert/strict';\\nimport { execFileSync } from 'node:child_process';\\nimport { createHash } from 'node:crypto';\\nimport { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';\\nimport { tmpdir } from 'node:os';\\nimport { join } from 'node:path';\\nimport test from 'node:test';\\n\\nimport { MockAdapter, createDriver } from '../src/index.mjs';\\nimport { openBatonDeployment } from '../src/application-deployment.mjs';\\nimport { CoordinationStore } from '../src/coordination-store.mjs';\\n\\nconst SWARM_ID = 'startup-continuation';\\nconst RESIDENT_ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });\\nconst OWNER = Object.freeze({ actor: 'owner', principalId: 'owner', sessionId: 'owner-session' });\\n\\nconst roots = [];\\nconst temp = (label) => {\\n  const root = mkdtempSync(join(tmpdir(), `baton-issue572-startup-${label}-`));\\n  roots.push(root);\\n  return root;\\n};\\ntest.after(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); });\\n\\nconst git = (cwd, args) => execFileSync('git', args, {\\n  cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],\\n  env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },\\n}).trim();\\n\\nfunction repository(label) {\\n  const root = temp(label);\\n  git(root, ['init', '-q']);\\n  git(root, ['config', 'user.email', 'issue572@example.invalid']);\\n  git(root, ['config', 'user.name', 'issue572']);\\n  writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, scripts: { test: 'node --test' } }));\\n  mkdirSync(join(root, 'test'), { recursive: true });\\n  writeFileSync(join(root, 'test', 'smoke.test.mjs'),\\n    \\\"import test from 'node:test';\\\\nimport assert from 'node:assert/strict';\\\\ntest('smoke', () => assert.equal(1, 1));\\\\n\\\");\\n  git(root, ['add', '.']);\\n  git(root, ['commit', '-qm', 'base']);\\n  return { root, baseSha: git(root, ['rev-parse', 'HEAD']) };\\n}\\n\\n/** The exact adapter card a served deployment open requires (the phase89/issue384 idiom). */\\nfunction adapter() {\\n  const value = new MockAdapter({\\n    harness: RESIDENT_ROUTE.harness,\\n    scenario: { outcome: 'completed', delayMs: 1, summary: 'issue572 startup fixture' },\\n  });\\n  const card = value.card.bind(value);\\n  value.card = () => ({\\n    ...card(),\\n    authPosture: 'subscription',\\n    providerCompatibility: { credentialState: 'available' },\\n    workerPolicy: {\\n      schemaVersion: 1,\\n      autonomy: { supported: ['unattended'], default: 'unattended', perTask: false, observation: 'unavailable', mechanisms: ['fixture-unattended'] },\\n      access: { supported: ['full'], default: 'full', perTask: false, observation: 'unavailable', mechanisms: ['fixture-full'] },\\n      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'], observation: 'unavailable', configuredPreferences: [] },\\n    },\\n    modelSelection: { mode: 'exact', configuredDefault: 'gpt-5.6-sol', available: ['gpt-5.6-sol'], family: 'codex',\\n      acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: ['high'], serviceTier: null,\\n      provenance: 'issue572-startup-continuation', refreshedAt: null },\\n    permissions: { mode: 'unattended-full', boundary: 'fixture same-UID host access' },\\n  });\\n  return value;\\n}\\n\\nfunction configuredFor(f, label) {\\n  const deploymentRoot = join(temp(`${label}-deployment`), 'deployment');\\n  mkdirSync(deploymentRoot, { recursive: true });\\n  const home = join(temp(`${label}-home`), 'home');\\n  mkdirSync(home, { recursive: true });\\n  const configRoot = join(temp(`${label}-cfg`), 'config');\\n  mkdirSync(configRoot, { recursive: true });\\n  return {\\n    root: f.root,\\n    deploymentRoot,\\n    advanced: {\\n      deploymentRoot,\\n      adapters: { codex: adapter() },\\n      routes: [RESIDENT_ROUTE],\\n      verification: { command: 'node', arguments: ['--test'] },\\n      resident: { env: { XDG_CONFIG_HOME: configRoot, HOME: home }, home, webDrainMs: 1_000, sessionTtlMs: 60_000 },\\n    },\\n  };\\n}\\n\\nconst coordinationRoot = (deploymentRoot) => join(deploymentRoot, 'state', 'coordination');\\nconst ledgerRows = (deploymentRoot) => {\\n  const path = join(coordinationRoot(deploymentRoot), 'events.jsonl');\\n  if (!existsSync(path)) return [];\\n  return readFileSync(path, 'utf8').split('\\\\n').filter((line) => line !== '').map((line) => JSON.parse(line));\\n};\\n/** Swarm rows may be recorded directly or wrapped by the driver's own recorder. */\\nconst rowsOfKind = (deploymentRoot, kind) => ledgerRows(deploymentRoot)\\n  .filter((row) => row.kind === kind || (row.kind === 'driver.recorded' && row.payload?.kind === kind))\\n  .map((row) => (row.kind === kind ? row : row.payload));\\n\\n/** The durable state an older resident leaves behind: rows written, nothing driven. */\\nfunction seedLegacyPendingSuccessor(deploymentRoot) {\\n  const store = new CoordinationStore(coordinationRoot(deploymentRoot));\\n  const auth = (key) => ({ actor: OWNER.actor, key });\\n  store.recordSwarm('swarm.created', { swarmId: SWARM_ID, purpose: 'Continue a seat at open' }, auth('legacy-swarm'));\\n  store.recordSwarm('swarm.participant_joined', {\\n    swarmId: SWARM_ID, participantId: 'lead', role: 'Lead the recovered work',\\n    permissions: ['read', 'communicate', 'contribute', 'review', 'organize'],\\n  }, auth('legacy-lead-join'));\\n  store.recordSwarm('swarm.participant_joined', {\\n    swarmId: SWARM_ID, participantId: 'bravo', runId: 'run-legacy-bravo',\\n    role: 'Continue the lead', resumeFrom: 'lead', parentId: 'lead',\\n    permissions: ['read', 'communicate', 'contribute', 'review', 'organize'],\\n  }, auth('legacy-bravo-join'));\\n  store.recordSwarm('swarm.resume_decision_requested', {\\n    swarmId: SWARM_ID, participantId: 'bravo', predecessor: 'lead',\\n    carry: { how: 'bound', workspaceId: null, snapshotSha: null }, plan: { options: {} },\\n  }, auth('legacy-bravo-request'));\\n  // A legacy resident exited, so the lease is free: the seeding store must let go, or the\\n  // deployment open refuses `coordination_writer_busy` on a lease nobody holds in production.\\n  store.releaseWriterLease({ requireOwned: true });\\n}\\n\\ntest('572-startup: a legacy pending successor starts at deployment open, with no command and no view', async (t) => {\\n  const f = repository('open');\\n  const configured = configuredFor(f, 'open');\\n  seedLegacyPendingSuccessor(configured.deploymentRoot);\\n  assert.equal(rowsOfKind(configured.deploymentRoot, 'swarm.resume_decision_answered').length, 0,\\n    'the legacy state starts unanswered - nothing has driven it');\\n\\n  // THE ONLY ACT: open the deployment. No command, no view, no recruit follows.\\n  const deployment = await openBatonDeployment({ repo: configured.root, advanced: configured.advanced },\\n    (options) => createDriver({ ...options }));\\n  t.after(async () => { try { await deployment.close(); } catch { /* best effort */ } });\\n\\n  const answered = rowsOfKind(configured.deploymentRoot, 'swarm.resume_decision_answered');\\n  assert.equal(answered.length, 1,\\n    'opening the deployment drives the pending successor exactly once, with no command issued');\\n  assert.equal(answered[0].payload?.participantId, 'bravo',\\n    'the answer names the successor the legacy state left pending');\\n  assert.equal(answered[0].payload?.predecessor, 'lead',\\n    'and the seat it continues');\\n  assert.equal(answered[0].payload?.guidance?.automatic, true,\\n    'the continuation is the automatic answer, not an operator decision');\\n  assert.equal(answered[0].idempotencyKey, `resume-continuation:${SWARM_ID}:bravo`,\\n    'the drive is keyed, so the same decision can never be answered twice');\\n  assert.equal(answered[0].actor, 'baton-runtime',\\n    'the deployment itself drove it - no caller, no command row, no view');\\n});\\n\",\"evidence\":{\"green\":\"node --test test/issue572-startup-continuation.test.mjs at 3ca76f5e = 1 test, 1 pass\",\"red\":\"same command with the one-line await application._swarmRuntime()._continueRecoveredSeats() removed = 1 fail on \\\"opening the deployment drives the pending successor exactly once, with no command issued\\\"\",\"proofRow\":\"swarm.resume_decision_answered seq 20, actor baton-runtime, idempotencyKey resume-continuation:startup-continuation:bravo, payload {participantId: bravo, predecessor: lead, guidance: {automatic: true}}\",\"fixtureNotes\":[\"the seeding store must releaseWriterLease({requireOwned:true}) or the open refuses coordination_writer_busy\",\"the adapter card needs the full modelSelection/permissions/workerPolicy shape (issue306a idiom) or the open refuses application_profile_route_unavailable\"]}}",
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-reviewer7",
+      "seq": 158055,
+      "ts": "2026-09-23T15:04:21.006Z"
+    }
+  },
+  "projection": "context"
+}

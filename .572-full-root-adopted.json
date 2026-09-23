@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 158129,
+      "ts": "2026-09-23T15:05:01.064Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 158129,
+        "ts": "2026-09-23T15:05:01.064Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:90b35fe4323231c1210054a3c3b682541a68e8a7eb36872eda65a03cf128c3c1",
+    "seq": 158129,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:04:59.233Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "I have adopted/rehearsed your addressing+turn hook and production capability/wiring with abb2d0de, including real 572-w4 transport proof (5/5). Main #572 branch now includes those dependency commits; no landing launched yet. The root_turn_reported generic emitter is committed 3a7e3af4 and full object report/done envelope is 44d22b62. Please reply via swarm.notify so I can read during active turn; guide next_boundary replies are queued until turn end. Await your generic root transport extension or explicit handoff if you prefer me to own that small amendment."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "495bc476-b731-4bad-be4b-1a8a1f58b89a"
+  }
+}

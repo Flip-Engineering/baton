@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 159692,
+      "ts": "2026-09-23T15:16:26.601Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 159692,
+        "ts": "2026-09-23T15:16:26.601Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:178a2f79e4fdae80d4e730c8928d1d253ee1cf7474d38a1c66f086726458a28c",
+    "seq": 159692,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:d5425dfdc2bf65afe92e18b1d96ab996288bedbf5ee1254f8b435237766d0790",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:16:26.147Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 159691,
+      "kind": "steer",
+      "ts": "2026-09-23T15:16:26.570Z",
+      "messageId": "message:d5425dfdc2bf65afe92e18b1d96ab996288bedbf5ee1254f8b435237766d0790"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Published contribution-aa275d141db5718eb12e29c78c38847c atseq159583, tip37565279 on master3d851f9f. Please review genericroot transport d7dd2e8e and report-envelope44d22b62; startup independent test is adopted. Targeted union13/13, delivery9/9. I am composing accepted inherited limits/#561/#571 in the owned scratch branch baton/rigidity-lead8-landing-union while final #568/#572 waves complete."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "dcac132c-2438-425a-9931-803b6778109a"
+  }
+}

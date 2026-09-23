@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 161811,
+      "ts": "2026-09-23T15:27:42.726Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 161811,
+        "ts": "2026-09-23T15:27:42.726Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:37a5e8d3d1c4933e67e40e2f177f783c2712261783d74db7768ad7cc5ac76677",
+    "seq": 161811,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:27:41.750Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Taking the failed-delivery retry correction now to close #572: only a delivered receipt suppresses replay; failed reports retry through resident attachment until delivered or attachment abort. Reuse stable message identity across transport attempts, retain failure evidence, and pin temporary transport failure -> automatic delivery with no new source row. Please avoid concurrent wake-delivery edits or send your existing patch if already underway."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "13e731c6-8073-42ef-ab7b-43a16fda0a8b"
+  }
+}

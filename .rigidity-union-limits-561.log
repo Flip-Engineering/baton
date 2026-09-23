@@ -1,0 +1,114 @@
+✔ A1: limits.mjs exports one deep-frozen FRAME_LIMITS plus VERSION and DIGEST (4.587917ms)
+✔ A2: every admission lane is cataloged with value, unit, graceful class, and refusal code (5.394041ms)
+✔ A3: the substrate guards are declared — and only spill.body mints a refusal (0.795375ms)
+✔ A4: the view class is declared with shed-flagged graceful degradation (0.814542ms)
+✔ A5: FRAME_LIMITS_DIGEST is canonical-derivation stable and byte-stable across processes (609.660084ms)
+✔ A6: board.report.body is cataloged as a live admission row at the LIVE 4,096 store value (v1.2, blue-team blocker 1) (0.494ms)
+✔ B1 (GOLDEN, graceful class): a send beyond the spill ceiling draws the spill_body_exceeded coaching refusal (125.250208ms)
+✔ B2: a reply beyond the spill ceiling lands message.rejected {spill_body_exceeded, cap, actual, unit, gracefulPath} on the worker stream (75.617708ms)
+✔ B3: a run objective beyond the spill ceiling draws the typed spill_body_exceeded application error (1007.91375ms)
+✔ B4 (GOLDEN, hard class): an oversize decision question gains the coaching ValidationError (1.646541ms)
+✔ B5: the store's reuse-need ceiling carries the coaching shape (registry ceiling-of-ceilings) (3.741292ms)
+✔ B6: the store's reuse-rationale ceiling carries the coaching shape at 8,192 (1.620125ms)
+✔ B7: the orientation push note ceiling carries the coaching shape (36.711125ms)
+✔ B8: the steering-policy focus ceiling carries the coaching shape at injection (2.584459ms)
+✔ B9: the live board-title store bound carries the coaching shape at 160 (1.909709ms)
+✔ B10: the live board-detail store bound carries the coaching shape at 4,096 (1.335375ms)
+✔ B11: the decision option-label ceiling carries the coaching shape at 160 (0.401625ms)
+✔ B12: the decision option-summary ceiling carries the coaching shape at 512 (0.316208ms)
+✔ B13: the decision answer-text ceiling carries the coaching shape at 4,096 (0.41325ms)
+✔ B14: the scratchpad entry canonical ceiling gains the coaching shape (numberless today) (7.027667ms)
+✔ B15: the live board-report body store bound carries the coaching shape at 4,096 (v1.2, blue-team blocker 1) (9.847709ms)
+✔ B16: the legacy-alias send door carries the coaching shape at its LIVE 16,384 (v1.2, blue-team blocker 2) (870.039125ms)
+✔ C1: the store mints digest-addressed spills and materializes them byte-identically (58.928416ms)
+✔ C2: spill mints are idempotent by key and content-addressed across keys (26.117875ms)
+✔ C3: an oversize send is ADMITTED with spill — receipts carry head + digest citation (51.536584ms)
+✔ C4 (blocker 4): the provider-bound frame for a spilled send carries EXACTLY head + citation (40.021625ms)
+✔ C5 (blocker 4): the worker resolves the spill through the closed read-port kind (35.565291ms)
+✔ C6 (parity + blocker 11): an oversize reply spills like a send; the amended envelope adds ONLY the citation keys (55.692417ms)
+✔ C7: a large run objective is admitted whole — no spill, no citation; run views carry it verbatim (852.918875ms)
+✔ C8 (OQ5): the wave driver downgrades its precheck to a spill-aware ADVISORY and passes the objective through (4.422583ms)
+✔ C9 (blocker 3): a body beyond the 1 MiB spill ceiling is NOT admitted and mints NO spill (44.532875ms)
+✔ C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 KiB head cap is admitted WHOLE through the REAL wave-start admission — never walled, never spilled (#358) (6009.633416ms)
+✔ D1 (the split): an oversize DECISION_REQUEST question PARSES shape-only — it is never scanner-null (1.842417ms)
+✔ D2 (pin): a large-but-parseable SCRATCHPAD_WRITE frame is admitted shape-only (0.899875ms)
+✔ D3 (pin): a large-but-parseable CONTEXT_READ frame is admitted shape-only (0.446166ms)
+✔ D4 (pin): a large-but-parseable BOARD_CLAIM frame is admitted shape-only (0.655333ms)
+✔ D5 (pin): a BOARD_REPORT body over the LIVE 4,096 admission bound is still admitted shape-only at the wire (0.418083ms)
+✔ D6 (pin): the scan windows stay substrate resource guards — over-window frames are prose for all six grammars (0.45575ms)
+✔ D7: all six scanner doc comments carry the shape-only law sentence (Decision 5's named edit) (6.190125ms)
+✔ D8 (the split, seam half): the oversize question reaches admission and draws the COACHING refusal (48.173584ms)
+✔ E1: doctorReadiness() carries the frozen limits projection with version, digest, and lanes (861.717292ms)
+✔ E2: card() publishes agentExperience.limitsRegistryDigest beside registryDigest (809.256167ms)
+✔ E3 (blocker 5): a reuseDecisionPolicy override leaves the published digest byte-identical — the override rides effective (767.349041ms)
+✔ E4 (OQ4): a deployment override ABOVE the registry ceiling refuses at injection — never a silent min() (4.442834ms)
+✔ E5: the connection handshake verifies limitsRegistryDigest exactly like the semantic registry digest (78.157834ms)
+✔ E6: the doctor projection covers every registry lane with the closed row shape (1117.433834ms)
+✔ F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs (4682.927291ms)
+✔ F2 (pin): the store's deliberate-local field caps stay plain shape refusals (1.650125ms)
+✔ F3 (pin): context_pack.body keeps its exact substrate refusal — value unchanged, only imported (1.697375ms)
+✔ G1 (OQ2): attention text capped inside the read-port renderer carries the [truncated] marker (40.540459ms)
+✖ 418-L1: the real tree is green — every bound-shaped constant is declared, exempted or named (1659.705875ms)
+✔ 418-L2: a bound-shaped constant in a module is flagged; the registry/env/pragma/comment channels pass (4.883042ms)
+✔ 418-L3: multiplied KiB/MiB products flag; sub-KiB literals do not (1.243833ms)
+✔ 418-L4: a table entry whose line vanished is reported stale (5.914167ms)
+✔ M561-1: darwin vm.swapusage and linux /proc/meminfo swap lines parse to bytes (47.3325ms)
+✔ M561-2: observation reads swap and disk through its injectable readers only (1.727958ms)
+✔ M561-3: pagingBytes caps swap by disk; suiteBytes is one core share; tightness derives (1.522209ms)
+✔ M561-4: measured worker leases enter the byte budget and an over-budget worker queues (395.545333ms)
+✔ M561-5: an unmeasured worker fleet admits the first worker free (62.648417ms)
+✔ M561-6: observeWorkerBytes rewrites the lease measurement and the budget follows (177.552708ms)
+✔ M561-7: durable verify waits out standing tightness; plain verify keeps the degraded answer (196.561625ms)
+✔ M561-8: a memory shortfall reads observed paging bytes and required share (0.561333ms)
+✔ M561-10: deriveSwapReserveBytes bounds the paging debt by one core share and reads zero without debt (0.431667ms)
+✔ M561-9: suiteLeaseDurable is true for a participant holder and false otherwise (0.610208ms)
+ℹ tests 64
+ℹ suites 0
+ℹ pass 63
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21523.869166
+
+✖ failing tests:
+
+test at test/issue418-numeric-constant-lint.test.mjs:28:1
+✖ 418-L1: the real tree is green — every bound-shaped constant is declared, exempted or named (1659.705875ms)
+  AssertionError [ERR_ASSERTION]: the standing inventory regressed: host-capacity.mjs:180, host-capacity.mjs:197, host-capacity.mjs:198
+  + actual - expected
+  
+  + [
+  +   {
+  +     constants: '1024, 1024, 1024',
+  +     file: 'host-capacity.mjs',
+  +     line: 180,
+  +     reason: `bound-shaped constant outside the registry — declare it in limits.mjs, read it from the registry, mark the operator env line, add "// baton-lint: declared-bound <citation>", or name it in numeric-constant-lint.mjs's exemption table`
+  +   },
+  +   {
+  +     constants: '1024',
+  +     file: 'host-capacity.mjs',
+  +     line: 197,
+  +     reason: `bound-shaped constant outside the registry — declare it in limits.mjs, read it from the registry, mark the operator env line, add "// baton-lint: declared-bound <citation>", or name it in numeric-constant-lint.mjs's exemption table`
+  +   },
+  +   {
+  +     constants: '1024',
+  +     file: 'host-capacity.mjs',
+  +     line: 198,
+  +     reason: `bound-shaped constant outside the registry — declare it in limits.mjs, read it from the registry, mark the operator env line, add "// baton-lint: declared-bound <citation>", or name it in numeric-constant-lint.mjs's exemption table`
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/issue418-numeric-constant-lint.test.mjs:30:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { file: 'host-capacity.mjs', line: 180, constants: '1024, 1024, 1024', reason: `bound-shaped constant outside the registry — declare it in limits.mjs, read it from the registry, mark the operator env line, add "// baton-lint: declared-bound <citation>", or name it in numeric-constant-lint.mjs's exemption table` }, { file: 'host-capacity.mjs', line: 197, constants: '1024', reason: `bound-shaped constant outside the registry — declare it in limits.mjs, read it from the registry, mark the operator env line, add "// baton-lint: declared-bound <citation>", or name it in numeric-constant-lint.mjs's exemption table` }, { file: 'host-capacity.mjs', line: 198, constants: '1024', reason: `bound-shaped constant outside the registry — declare it in limits.mjs, read it from the registry, mark the operator env line, add "// baton-lint: declared-bound <citation>", or name it in numeric-constant-lint.mjs's exemption table` } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

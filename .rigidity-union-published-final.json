@@ -1,0 +1,28 @@
+{
+  "receipt": {
+    "command": "swarm.update",
+    "event": {
+      "kind": "swarm.contribution_recorded",
+      "seq": 167408,
+      "ts": "2026-09-23T15:56:35.870Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "contributions",
+        "id": "contribution-d3feda73cce83521a9112914ff007dd8",
+        "seq": 167408,
+        "ts": "2026-09-23T15:56:35.870Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.view",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "commandReceipt": {
+    "idempotencyKey": "21b9de09-342f-48cb-8be1-d881e8b40421"
+  }
+}

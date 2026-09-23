@@ -1,0 +1,70 @@
+✔ CDW1: one real verified run consults the injected route authority, custody provider, and verifier runtime (7676.191416ms)
+✔ CDW3: an authority without record is a silent no-op, not a failure — the shape of 5bd37fbf (6581.149333ms)
+✔ CDW2: the injected goal-plan authority is consulted for goal, plan, approval, and plan-gated dispatch (7168.820458ms)
+✔ CDW4: the injected knowledge-briefing provider is consulted, and its block reaches the provider-facing brief only (6059.289542ms)
+✔ CDW6: the declared shared remote reaches the driver the landing authority reads (1860.493042ms)
+✔ CDW5: every option the composition root reads is classified, and every exercised claim names a case in this file (6.476375ms)
+✖ 500-caps-A: the open publishes the declared capacity and stop-envelope defaults verbatim (2246.754375ms)
+✔ 500-caps-B: a capacity observation is quantized down before any verdict or published row (1833.508334ms)
+✔ 500-caps-C: the adapter wire frame corridor refuses outside 64 KiB–16 MiB and admits the bounds (1977.731708ms)
+✔ 500-caps-D: the resident command deadline default is 30 s — pollMs sits on its boundary (1423.105833ms)
+✔ 500-caps-E: the muse auth.json read enforces the registry credential.file boundary (2.357209ms)
+✔ 500-caps-F: the omp model catalog read answers a parsed selector map or an unreadable null (0.860209ms)
+✖ 500-caps-H: the bounds with no hermetic seam keep their live literals (source pins) (5.006916ms)
+✔ RA1: the module imports neither monolith and keeps no implicit receiver outside the relocated classes (285.346708ms)
+✔ RA2: every runtime_admission_port delegate keeps the member name, parameter list, arity, and hands over the recorder (224.284417ms)
+✔ RA3: the recorder is the only recording path, and the constructor delegate is complete (120.712166ms)
+✔ RA4: the relocated declarations moved once; the export surface is unchanged (3.422083ms)
+✔ RA5: the map sees the move (6.24625ms)
+✔ RA6: slice 12 — the three tranche-2 admission prefixes are admission-seamed module members that never import effects (126.834458ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 17
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 42928.123708
+
+✖ failing tests:
+
+test at test/issue500-deployment-capacity.test.mjs:124:1
+✖ 500-caps-A: the open publishes the declared capacity and stop-envelope defaults verbatim (2246.754375ms)
+  AssertionError [ERR_ASSERTION]: the steering nudge window
+  + actual - expected
+  
+  + undefined
+  - 300000
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/issue500-deployment-capacity.test.mjs:133:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 300000,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/issue500-deployment-capacity.test.mjs:251:1
+✖ 500-caps-H: the bounds with no hermetic seam keep their live literals (source pins) (5.006916ms)
+  AssertionError [ERR_ASSERTION]: steering nudge window: expected 1 occurrence(s), found 0
+  
+  0 !== 1
+  
+      at count (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/issue500-deployment-capacity.test.mjs:255:12)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/issue500-deployment-capacity.test.mjs:271:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

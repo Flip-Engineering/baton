@@ -1,0 +1,31 @@
+✔ 564-w1: a resident root_owed attachment writes one Claude turn frame and a replay sends nothing (93.754209ms)
+✔ 564-w4: a contribution-less turn_reported row crosses the resident attachment exactly once (95.969166ms)
+✔ 564-w2: a failed resident delivery records its typed code and remains swarm attention (139.821209ms)
+✔ 564-w3: deployment open refuses every configured harness that cannot start an idle turn (1044.006125ms)
+✔ 572-w4: a real parentless turn report reaches the resident root transport once (64.777041ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run run-plain) (41.808708ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run null) (50.77875ms)
+✔ 572-w6: a failed root send retries without a new report and preserves message identity (58.701125ms)
+✔ 568-A: restart captures a dead local owner, reclaims its checkout, and keeps its branch (6579.715417ms)
+✔ 568-B: active and shared workspaces remain under their existing custody (5086.668083ms)
+✔ 568-C: recovery retains ignored evidence that the snapshot policy cannot attribute (3254.287208ms)
+✔ 568-D: restart releases a branch-only owner receipt and retains unique branch work (3013.955667ms)
+✔ 568-E: restart reclaims a recorded external worktree and preserves dirty detached evidence (6067.362625ms)
+✔ 568-F: active owner retains its recorded external worktree (3436.997208ms)
+✔ 568-G: a recycled external path is retained because its Git identity no longer matches (4463.193167ms)
+✔ 568-H: normal seat stop reclaims its linked worktree and keeps its branch evidence (6841.323416ms)
+✔ 568-I: recovery retains an external checkout while a live process has a cwd inside it (8652.49325ms)
+✔ 568-J: a recycled Git registration at the same path and admin name is retained (4991.747208ms)
+✔ 568-K: a foreign-uid Linux process and a racing exit do not block cleanup (6117.550209ms)
+✔ 568-L: an unreadable same-uid Linux cwd retains and names its process (4174.234083ms)
+✔ 568-M: macOS lsof stderr makes a successful partial scan retain (4443.52325ms)
+✔ 568-O: macOS lsof result guards retain failures and accept a clean no-match (23091.464ms)
+✔ 568-N: a Git observation failure retains its row and examines later rows (9444.014209ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 103271.859709

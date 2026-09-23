@@ -1,0 +1,328 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 163489,
+    "ts": "2026-09-23T15:35:56.639Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:842c6d23031888b342beb7b2dd3e4320a9f5c06130842bcd14f7cb58b20a9292",
+      "seq": 162106,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:f91e07ae2633c36f0ff62628bf652128b6bdbf8b700bcb2f62f57ac316d483a5",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:29:05.012Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 162105,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:29:05.500Z",
+        "messageId": "message:f91e07ae2633c36f0ff62628bf652128b6bdbf8b700bcb2f62f57ac316d483a5"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Both done: the undelivered-wake audit (answer to the question sent to wake-lead6) and the brief inspection of 972c6232.\n\nAUDIT - IT IS TERMINAL TWICE, NOT ONCE, and the fix must touch two places. Full text: swarm context key 'audit/572-undelivered-root-wake-terminal' (seq 161995).\n\nF1, the stronger half, which the framing misses: the durable KEY makes the outcome immutable. recordDelivery writes under key wake-root-delivery:${JSON.stringify([swarmId, wakeClass, seq])} and _append (coordination-ledger.mjs:1194-1195) does `const prior = store._byKey.get(key); if (prior) return prior;`. So the first outcome for an identity is the ONLY row that identity can ever have - a retry cannot append a delivered row, the store hands back the prior undelivered event. Fixing only alreadyRecorded would change nothing observable. (The docstring on deliverRootWakeOnce already claims 'at most once IN THIS RUNTIME'; the durable key actually spans incarnations.)\nF2: the predicate suppresses before any write - alreadyRecorded matches kind wake.root_delivered OR wake.root_undelivered on (seq, wakeClass, swarmId).\nF3, the harm that makes this urgent: BOTH identities are destination-blind. A wake that failed once is never delivered - not later by the same runtime, and not by the SUCCESSOR incarnation that comes up with a working session. On a deployment that reincarnates as often as this one, that is the likely case, not an edge.\nF4: it contradicts the owed mechanism - root_owed says 'the root still owes this', and a terminal undelivered marker turns it into 'owed forever, delivered never, retried never', the shape the AGENTS law forbids.\n\nFIX LADDER: (1) put the DESTINATION (harness + sessionId) in the delivery identity so a new session is a new identity; (2) make undelivered retryable under a bounded attempt generation, with attempt count and last failure on the row; (3) on cap exhaustion the state must become ATTENTION naming the wake and the failure, never silence; (4) if the operator wants strict at-most-once forever instead, the und",
+      "bytes": 3263,
+      "digest": "9197ed02aada48072606c51f1cbbfcd96b57a3edd43aacb70cac0f33abe56bcf",
+      "spill": "spill:sha256:9197ed02aada48072606c51f1cbbfcd96b57a3edd43aacb70cac0f33abe56bcf"
+    },
+    {
+      "receiptId": "notify:bf759e8a5c64650cb21e04c60f018784b37ecff0b16729d7f828f40f37929d05",
+      "seq": 162154,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:2f938949d55ae36e9b8748cb0d816fff8965612e9c15ecbc22d5c315b42f036d",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:29:14.269Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 162153,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:29:15.425Z",
+        "messageId": "message:2f938949d55ae36e9b8748cb0d816fff8965612e9c15ecbc22d5c315b42f036d"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "(Tail of the audit note, cut by the cap - the ladder and the serve verdict.)\n\nFIX LADDER for the terminal undelivered wake: (1) put the DESTINATION (harness + sessionId) into the delivery identity so a new session is a new identity - that alone makes a successor incarnation eligible; (2) make undelivered RETRYABLE under a bounded attempt generation, recording the attempt count and the last failure on the row; (3) when the cap is exhausted the state must become ATTENTION naming the wake and the failure, never silence; (4) if the operator wants strict at-most-once forever instead, the undelivered path must page the operator rather than let a report look delivered.\n\nWhat is right and should not change: exactly-once for a DELIVERED wake, keyed on the durable source row. The defect is only that a FAILURE was given the same terminal standing as a success.\n\nASSERTIONS to pin it: a transient failure followed by a working transport DELIVERS, and the record shows the attempt sequence; a same-destination retry either retries under a bounded generation or reports attention at the cap, never a silent no-op; delivered stays terminal; incarnation N's undelivered row does not block N+1; and a test on the key SHAPE itself so a future change cannot quietly reintroduce a destination-blind identity.\n\n972c6232 - INSPECTED, CLEAN, no concerns: rootWakeTargetFromEnvironment parses BATON_ROOT_WAKE, returns null for absent or empty, refuses malformed JSON typed, and delegates to the shared validator; serveCheckout now builds advanced with integration.publishRemote preserved INDEPENDENTLY and rootWake only when non-null, passing advanced only when non-empty. Its pin reproduces: issue572-root-serve.test.mjs = 2 tests, 2 pass."
+    },
+    {
+      "receiptId": "notify:f5ed7eca3a64166306b40f76d0f4448cbbeb01bcbb6db2291245202ae01f81c8",
+      "seq": 162476,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:31:52.884Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "32b4806a closes both terminal layers: alreadyRecorded suppresses delivered only, recordDelivery keys include outcome kind (legacy failed key cannot occupy success), attachment retries pending reports automatically until success or caller shutdown, stable transport msg_id across attempts. Real store test572-w6 transientfail->automaticdelivery no new source passes; combined19/19. Please independently review it. I did NOT adopt attempt exhaustion/caps: #572 forbids moving live work to another unwoken party based on counters. New-target retry after failure works because failures no longer suppress any target; successfully delivered source rows retain existing terminal contract."
+    },
+    {
+      "receiptId": "notify:c93a33a71d64df8de45dcfd9ed601271e299ea397b46b852a1317a249041392f",
+      "seq": 162487,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T15:31:54.985Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Retry fix committed32b4806a, independently audited precursor by rigidity-reviewer7: fixed both alreadyRecorded failure suppression AND immutable shared outcome key. Successful and failed receipt keys differ; failures retry via attachment until success/shutdown; msg_id stable across retries. Full delivery/wiring/serve19/19, new real-store automaticretry pin572-w6. No attempt cap (would recreate #572). Root serve configuration972c6232 still required for deployment."
+    },
+    {
+      "receiptId": "notify:7810e2b63886d5539648d295857b19a3d71009a51a07981e1fc7b14b537cf8ef",
+      "seq": 162548,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:64044b580b8922dcc77a45a40c34fefc703649c555d4efab3ca4114ef2f3d166",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:32:10.448Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 162547,
+        "kind": "steer",
+        "ts": "2026-09-23T15:32:11.525Z",
+        "messageId": "message:64044b580b8922dcc77a45a40c34fefc703649c555d4efab3ca4114ef2f3d166"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Saw your callback implementation and collateral migrations in progress. Please include removal/update of expected-red manifest entries for every deleted or renamed policy pin (or report exact old/new names for me to do at union). Full union has inherited limits registry, so your frame-economics one-line policy delta will be preserved when merged. Ensure decision stop only stops the requested member/explicit scope; callback throw or invalid result must not mark done or stop live work."
+    },
+    {
+      "receiptId": "notify:f80623b219b942378a8e8965e7352654e71f08d294201755e8c7faad9cbc4feb",
+      "seq": 162571,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:520069afbe18bc07bcf444e8984d3ead4ebd69323b5695643fc13ff713d997ac",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:32:19.544Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 162570,
+        "kind": "steer",
+        "ts": "2026-09-23T15:32:20.648Z",
+        "messageId": "message:520069afbe18bc07bcf444e8984d3ead4ebd69323b5695643fc13ff713d997ac"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#568 platform guards committed as 09c3e202. Linux scopes /proc cwd reads to process.getuid(), skips foreign uid and ENOENT/ESRCH races, and retains unreadable same-uid PIDs. macOS uses uid-filtered spawnSync lsof and rejects stderr/error/signal/invalid status. Git status/HEAD observation failures retain the row and continue. Final #568 14/14; worktree 36/36; no fixture remains. Running current-target+#561 composition before superseding publish."
+    },
+    {
+      "receiptId": "notify:64da6fce5bab169641eba34d9c49a66c1bc70bffe74635467958a02d770e4194",
+      "seq": 162628,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:f0e35b2b1c9fe1e5a917a165d14125521c0b68618d30ff4c03de2dd8a9dd1e18",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:32:34.197Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 162627,
+        "kind": "steer",
+        "ts": "2026-09-23T15:32:35.440Z",
+        "messageId": "message:f0e35b2b1c9fe1e5a917a165d14125521c0b68618d30ff4c03de2dd8a9dd1e18"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Concrete review: current onCheckpoint stop for one role sets orchestratorStopped and breaks whole wave, whose finally closes every live peer. Callback is passed one member, so stop must stop that member/run and continue observing its peers. If intended wave-stop is needed, use separately explicit caller AbortSignal; do not widen per-member decision silently. Please add a two-member pin proving stop for member A does not stop B."
+    },
+    {
+      "receiptId": "notify:41faec2ffb5323c1e1a49e81885b57ae26823d54df38520b7019f794f6fa8c74",
+      "seq": 162830,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:dee0e7f33fd4fda424142fb2ddc16d151fadab7225ae76fd9a2227707f16c3fa",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:32:57.550Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 162829,
+        "kind": "steer",
+        "ts": "2026-09-23T15:32:58.194Z",
+        "messageId": "message:dee0e7f33fd4fda424142fb2ddc16d151fadab7225ae76fd9a2227707f16c3fa"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "568 platform correction09c3e202 is ready; worker reports14/14 issue568 +36/36 worktree. Please verify required changes and settle forthcoming superseding contribution. I am merging it into union now; reviewer-requested Linuxuid/macstderr/status+HEAD retention all visibly changed. Root retry correction32b4806a was sent earlier; both failure predicate and immutable outcome key are fixed, with automatic retry and stable msg_id."
+    },
+    {
+      "receiptId": "notify:095f56dd2ec1f48937c650c5b4f21de32fcfc1f49a268a9add464277a63d4ae6",
+      "seq": 163156,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:9c69586a819f6b8bd67749adeaec0e5120bd881b8e6a059e8ed2eab55bbce56d",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:34:13.159Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 163155,
+        "kind": "steer",
+        "ts": "2026-09-23T15:34:15.700Z",
+        "messageId": "message:9c69586a819f6b8bd67749adeaec0e5120bd881b8e6a059e8ed2eab55bbce56d"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Corrected #568 contribution recorded: contribution-d8f3cd96c2f131184147cc4407b117b6 seq 163072, tip 09c3e202. Supersedes contribution-483a5b31. Final #568 14/14, worktree 36/36; master 3d851f9f + accepted #561 + #568 composes cleanly with platform guards 4/4."
+    },
+    {
+      "receiptId": "notify:9608cd735131659ca83019b0d3cb32cbaa3dd3790197bae1ec585144ddd71ec4",
+      "seq": 163331,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:d123226851991940f04e438f5496154624b263b7d1a13053fd920fd339512380",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:35:07.253Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 163330,
+        "kind": "steer",
+        "ts": "2026-09-23T15:35:08.571Z",
+        "messageId": "message:d123226851991940f04e438f5496154624b263b7d1a13053fd920fd339512380"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "One more contract check: explicit steering:none with no onCheckpoint still has no active decision consumer for a pausable member when embedded caller has no configured root. Do not preserve that as a silent waiting mode. Require onCheckpoint for steering:none (or independently prove a configured awakened parent/root consumer); explicit nudge-on-checkpoint remains caller-owned policy. Terminal one-shot fixtures can name explicit nudge policy without any nudge happening. Please cover no-consumer refusal before start."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

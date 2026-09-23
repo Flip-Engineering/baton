@@ -1,0 +1,31 @@
+{
+  "ok": false,
+  "error": {
+    "message": "Nothing was recorded: ask again with projection: contributions (672825 bytes fits wire.frame/substrate 1048576 bytes; measured candidates: contributions, participants, situation, guidance, context, attention, workspace, knowledge, outline)\nwire.frame is 1238444 bytes (cap 1048576); resend within the 1048576-byte cap",
+    "code": "swarm_bridge_frame_exceeded",
+    "detail": {
+      "lane": "wire.frame",
+      "class": "substrate",
+      "value": 1048576,
+      "unit": "bytes",
+      "actual": 1238444,
+      "direction": "response",
+      "rule": "bridge-frame",
+      "requested": null,
+      "fits": "contributions",
+      "fitsBytes": 672825,
+      "measured": [
+        "contributions",
+        "participants",
+        "situation",
+        "guidance",
+        "context",
+        "attention",
+        "workspace",
+        "knowledge",
+        "outline"
+      ],
+      "resourceReason": "the bridge buffers exactly one JSON frame per direction in process memory; the shared wire.frame substrate row bounds that buffer, it is not a worker cap"
+    }
+  }
+}

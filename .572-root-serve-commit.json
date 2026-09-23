@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 161513,
+      "ts": "2026-09-23T15:25:04.149Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 161513,
+        "ts": "2026-09-23T15:25:04.149Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:b56032285b5a71233cc6afe8cbd39e47a81cceedb12dba8f9182e6a14c602294",
+    "seq": 161513,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:25:03.216Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Serve root configuration is now committed972c6232: BATON_ROOT_WAKE JSON {harness:claude-code,sessionId:<operator session>,from?:baton} validated by same normalizer and passed alongside integration publish remote. 2/2 tests include actual baton serve subprocess rejecting unsupported target before resident opens. docs54 section9 documents current #572 contract. Root redeploy must set BATON_ROOT_WAKE as well as BATON_PUBLISH_REMOTE. Still need response on transient failed-delivery retry semantics; current wake.root_undelivered permanently suppresses retries."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "009fc33f-615f-4864-8fbf-68f9c984a808"
+  }
+}

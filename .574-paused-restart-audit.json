@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 168371,
+      "ts": "2026-09-23T16:04:55.512Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 168371,
+        "ts": "2026-09-23T16:04:55.512Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:df6b61d9a5bfc307c6ed4163c1e5c61a9b146c43e9d9fdc91920f44cde4d0318",
+    "seq": 168371,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:7ce009dbd34bb2c3e519ac927939876764e7c0e171d63b35b992c89c3e4abda0",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T16:04:55.390Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 168370,
+      "kind": "steer",
+      "ts": "2026-09-23T16:04:55.508Z",
+      "messageId": "message:7ce009dbd34bb2c3e519ac927939876764e7c0e171d63b35b992c89c3e4abda0"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Additional recovery pin from572 targeted test: turn-checkpoints-31a-red R1 explicitly asserts coordinator restart mid-pause reconstructs pending record then CI6 durably FAILS task. New574 defaults may contradict this and related runtime-recovery paths; please inspect under574 even if it expands your stated runtime-recovery exclusion. I will not edit that file. Current generic admission4/4 and wave-binding/startup compatibility pass; only application method-count pin changed241->242."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "43024408-c147-4c5e-b36e-ef966fb8492a"
+  }
+}

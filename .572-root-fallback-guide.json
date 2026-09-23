@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 152656,
+      "ts": "2026-09-23T14:22:00.338Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 152656,
+        "ts": "2026-09-23T14:22:00.338Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:62d10f4fbb824906ef5b89d9ca77c5256aaf2b16ce3efa9cc4609b89bafa1299",
+    "seq": 152656,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:6a30319f364299122e8c6aa14b64cf9abf48099fb284c6272e4586ed0d9af8e2",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:21:57.146Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 152655,
+      "kind": "steer",
+      "ts": "2026-09-23T14:22:00.030Z",
+      "messageId": "message:6a30319f364299122e8c6aa14b64cf9abf48099fb284c6272e4586ed0d9af8e2"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "#572 update: real native callback and done declaration E2E green. Report row swarm.turn_reported includes assignmentDone boolean. On parent guidance refusal/throw I now append root-addressed swarm.turn_reported parentId:null, originalReportSeq and deliveryFailure:{parentId,reason}, same turn identity. Your root_owed derivation should wake for that fallback too. Durable key now includes turnEpoch before turnSeq. Please send your contribution/commit for integration."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "f89a13b5-bd19-4b27-9f04-f897c4631ecd"
+  }
+}

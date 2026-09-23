@@ -1,0 +1,360 @@
+✔ 572-a: a successor starts immediately under the default policy (2671.946667ms)
+✔ 572-b: a stored manual policy continues a successor (2800.628167ms)
+✔ 572-c: a turn report reaches the parent once (2247.632417ms)
+✔ 572-d: a top-level turn records a root-addressed report (1463.819666ms)
+✔ 572-e: an older pending successor starts on recovery (4482.880541ms)
+✔ 572-f: default participants can review peers and land contributions (2907.611416ms)
+✔ 572-g: unavailable guidance records the delivery refusal (1365.839542ms)
+✔ 572-h: a refused parent delivery addresses the report to root (2606.778625ms)
+✔ A1 (RED): a scope refusal projects the four-field surface with the exact key `detail` (stage: verdict-surface-missing) (5.98025ms)
+✔ A2 (RED): a non-whitelisted trustPhase (promotion) escalates with check:null — a raw gate-internal phase name never crosses (stage: verdict-surface-missing) (0.538625ms)
+✔ A4 (RED): a red_green verifier refusal projects check = the closed diagnosticCode and a sanitized tail — an adversarial capsule never crosses (stage: verdict-surface-missing) (2.072583ms)
+✔ A5 (RED): a forbidden-effect refusal projects gate forbidden_effect, check forbidden_effect, and the retraction corrective (stage: verdict-surface-missing) (0.8065ms)
+✔ A6 (RED): a coverage verifier refusal projects gate coverage, the closed code as check, and a sanitized tail (stage: verdict-surface-missing) (1.358958ms)
+✔ B1 (RED): every reachable null verifier diagnostic carries corrective:null and the closed code as check (stage: verdict-surface-missing) (0.798625ms)
+✔ B2 (RED): VERDICT_CORRECTIVE_TABLE is the frozen hub-minted corrective table, keyed by terminal code (stage: corrective-table-missing) (0.332375ms)
+✔ B3 (RED): every terminal code REACHABLE on the surface has a corrective or null in the closed table (OQ1 source-scan) (0.25075ms)
+✔ B4 (RED): a forced corrective outside the closed table refuses verdict_surface_corrective_forced and the surface degrades per-record (stage: forced-corrective-refusal-missing) (146.932375ms)
+✔ C1 (RED): two replays over the same log derive the same surface; the latest evidence supersedes (stage: verdict-surface-missing) (0.916125ms)
+✖ C2 (RED): a worker receives ITS OWN surface — the projection is worker-scoped, never run-wide (stage: verdict-surface-missing) (2.502875ms)
+✔ C3 (RED): the run.debug failure leg carries the same check/corrective — the shared projection on the DG-1 consumer (stage: run-debug-verdict-missing) (6907.374125ms)
+✔ C4 (PIN): the surface never rides the refinement brief — task.brief stays byte-stable when the verdict surface is present (R5) (370.76725ms)
+✖ C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing) (113.943584ms)
+✖ D1 (RED): a boundary-commit deployment never ships the no-commit line — the worktreeHarvestPolicy read (stage: live-composition-missing) (0.471416ms)
+✖ D2 (RED): the applicationProfile schema declares the worktreeHarvestPolicy field (stage: worktree-harvest-policy-missing) (5.282584ms)
+✖ D3 (RED): an orchestrator-harvest deployment ships the no-commit line under its named source (stage: live-composition-missing) (0.524917ms)
+✖ D4 (RED): an underrived requested line refuses objective_constraint_underrived and is never printed (stage: live-composition-missing / underrived-refusal-missing) (0.352917ms)
+✖ D5 (RED): a line naming a bound the deployment does not enforce refuses objective_constraint_unenforced (stage: live-composition-missing / unenforced-refusal-missing) (0.278ms)
+✖ D6 (RED): the wire_frame line is lane-conditional — it ships IFF the size census over the served scope shows a file over ~1500 lines (stage: live-composition-missing) (0.280041ms)
+✖ D7 (RED): the composed block is a pure function of live policy, frozen at admission — two composes derive the same block and a suppression record carrying the epoch (stage: live-composition-missing) (0.32075ms)
+✖ D8 (RED): the [attempt:] line is a per-attempt discriminator, never a constraint line (stage: live-composition-missing) (0.367875ms)
+✖ D9 (RED): the suppression epoch DERIVES from the profile digest and the admission SHA — different inputs derive different epochs, never a hardcoded constant (stage: live-composition-missing / epoch-missing) (0.404208ms)
+✖ D10 (RED): the served block is FROZEN for the run — a mid-run policy change does not retro-edit the admitted block the worker received (stage: live-composition-missing / epoch-missing) (0.310167ms)
+✖ D11 (RED): a served line carries the LIVE input value — the exact pathScope, profile digest, workflow/result sources, and the profile-constraints line ship (stage: live-composition-missing) (0.28575ms)
+✖ D12 (RED): the composed block drives the REAL recipe objective render seam — the no-commit line ships/absents in the worker-facing objective text by harvest policy, and the static list is retired (stage: live-composition-missing) (0.312209ms)
+✔ E1 (PIN): the run.debug scope detail is {digests, counts} in ACTUAL order and never path strings — the sanitized evidence projection holds (R2) (6206.947708ms)
+✔ E2 (PIN): DEBUG_GATE_CODES is the closed gate enum in ACTUAL order — an added gate code kills this pin (GT1) (160.132417ms)
+✔ E4 (PIN): the cross-referenced refusal laws stay alive — the #73 closed caller schema and the R5 recovery-digest pin (refusal vocabulary) (90.82175ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 23
+ℹ fail 14
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 27355.49
+
+✖ failing tests:
+
+test at impl/test/worker-verdict-surface-red.test.mjs:711:1
+✖ C2 (RED): a worker receives ITS OWN surface — the projection is worker-scoped, never run-wide (stage: verdict-surface-missing) (2.502875ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'forbidden_effect_observed'
+  - 'the projection respects the input set’s own ordering — never a run-wide global latest'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:721:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'forbidden_effect_observed',
+    expected: 'the projection respects the input set’s own ordering — never a run-wide global latest',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:759:1
+✖ C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing) (113.943584ms)
+  AssertionError [ERR_ASSERTION]: stage: push-verdict-missing — the pushed item carries WHAT was checked (fold B3)
+  + actual - expected
+  
+  + undefined
+  - 'path_scope'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:783:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 'path_scope',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:792:1
+✖ D1 (RED): a boundary-commit deployment never ships the no-commit line — the worktreeHarvestPolicy read (stage: live-composition-missing) (0.471416ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing — composeObjectiveConstraintLines is the invented live composition
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:793:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:821:1
+✖ D2 (RED): the applicationProfile schema declares the worktreeHarvestPolicy field (stage: worktree-harvest-policy-missing) (5.282584ms)
+  AssertionError [ERR_ASSERTION]: stage: worktree-harvest-policy-missing — the profile schema carries worktreeHarvestPolicy (fold B5)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:831:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:838:1
+✖ D3 (RED): an orchestrator-harvest deployment ships the no-commit line under its named source (stage: live-composition-missing) (0.524917ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:839:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:863:1
+✖ D4 (RED): an underrived requested line refuses objective_constraint_underrived and is never printed (stage: live-composition-missing / underrived-refusal-missing) (0.352917ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:864:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:885:1
+✖ D5 (RED): a line naming a bound the deployment does not enforce refuses objective_constraint_unenforced (stage: live-composition-missing / unenforced-refusal-missing) (0.278ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:886:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:907:1
+✖ D6 (RED): the wire_frame line is lane-conditional — it ships IFF the size census over the served scope shows a file over ~1500 lines (stage: live-composition-missing) (0.280041ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:908:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:943:1
+✖ D7 (RED): the composed block is a pure function of live policy, frozen at admission — two composes derive the same block and a suppression record carrying the epoch (stage: live-composition-missing) (0.32075ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:944:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:965:1
+✖ D8 (RED): the [attempt:] line is a per-attempt discriminator, never a constraint line (stage: live-composition-missing) (0.367875ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:966:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:981:1
+✖ D9 (RED): the suppression epoch DERIVES from the profile digest and the admission SHA — different inputs derive different epochs, never a hardcoded constant (stage: live-composition-missing / epoch-missing) (0.404208ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:982:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:1004:1
+✖ D10 (RED): the served block is FROZEN for the run — a mid-run policy change does not retro-edit the admitted block the worker received (stage: live-composition-missing / epoch-missing) (0.310167ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:1005:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:1047:1
+✖ D11 (RED): a served line carries the LIVE input value — the exact pathScope, profile digest, workflow/result sources, and the profile-constraints line ship (stage: live-composition-missing) (0.28575ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:1048:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/worker-verdict-surface-red.test.mjs:1082:1
+✖ D12 (RED): the composed block drives the REAL recipe objective render seam — the no-commit line ships/absents in the worker-facing objective text by harvest policy, and the static list is retired (stage: live-composition-missing) (0.312209ms)
+  AssertionError [ERR_ASSERTION]: stage: live-composition-missing
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/worker-verdict-surface-red.test.mjs:1083:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

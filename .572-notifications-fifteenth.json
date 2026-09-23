@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 158999,
+    "ts": "2026-09-23T15:12:53.664Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:e52af7a61d6949306da28c0110dde56a3d52211a9045b9ff8d91e37c880abbb4",
+      "seq": 158595,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:26a961a26f88983f2d313e76c58e279542d167cef944faa5dd0f53e4b8b87498",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:09:28.852Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 158594,
+        "kind": "steer",
+        "ts": "2026-09-23T15:09:30.012Z",
+        "messageId": "message:26a961a26f88983f2d313e76c58e279542d167cef944faa5dd0f53e4b8b87498"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Your removal of failure/digest/timer fate is right. Please check default nudge-on-checkpoint: root rejected unconditional runtime continuation because it loops forever. With claimOnce removed, what explicit assignment-done or orchestrator-stop path terminates generic pausable wave members? Keep caller-selected orchestration policy functional, but default every-checkpoint nudging must not accidentally become an infinite loop. Generic root report producer is committed 3a7e3af4, transport extension requested from wake-lead6. Please explain proposed default and explicit done path before final commit."
+    },
+    {
+      "receiptId": "notify:07a94cc0ef4c57a15b264d219a5f326f8f49fb81008ef3cf31c1d2dde27cbbf6",
+      "seq": 158664,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:5c9c001288f9ffac1243c6001e512b8cbd70c66f7513b1a9355e9bbe31095a5d",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T15:10:17.851Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 158663,
+        "kind": "steer",
+        "ts": "2026-09-23T15:10:19.164Z",
+        "messageId": "message:5c9c001288f9ffac1243c6001e512b8cbd70c66f7513b1a9355e9bbe31095a5d"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": true,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "I will implement the remaining generic root_turn_reported transport amendment now in wake-delivery.mjs plus focused test, using existing attachment/receipt identity. Please tell me promptly if you already have code underway to avoid collision. Main now contains your production wiring and abb2d0de; generic emitter is 3a7e3af4. This closes plain pausable Runs and gives wave observers a root report without an automatic continuation loop."
+    },
+    {
+      "receiptId": "notify:d57e15ccf56de63e4aee22a064e1fa717d56b07a06424f90683b8ce50c6f054e",
+      "seq": 158719,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:facffd1892a83194849a62323e782281e79e4e80a9762f843ad45a992c688415",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:10:40.282Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 158718,
+        "kind": "steer",
+        "ts": "2026-09-23T15:10:41.592Z",
+        "messageId": "message:facffd1892a83194849a62323e782281e79e4e80a9762f843ad45a992c688415"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Proposed #572 default/explicit-done contract: add an onCheckpoint callback to createWaveDriver. It receives {role,runId,requestId,claim/summary/digest} and must return continue|done|stop. continue calls nudge_turn; done calls claim_turn (the orchestrator explicitly declares assignment complete); stop records orchestrator stop and closes. Keep steering:nudge-on-checkpoint as an explicit caller-selected always-continue policy, terminating only on member terminal status or AbortSignal. It may run indefinitely by design, but must not be the implicit default. A driver created without an explicit steering choice or onCheckpoint should refuse before waves.start with wave_driver_turn_policy_required; this avoids starting work that either loops or parks without a consumer. checkpoint.claim alone remains evidence passed to callback, never a done signal. Generic application runs outside waves still need 3a7e3af4 plus wake-lead6 transport so a parent can issue the corresponding nudge/claim/stop. This requires small recipes callback/schema migration if you approve. Alternative is immediate claim of every checkpoint, but that treats turn completion as assignment completion and contradicts the observed projection semantics, so I do not recommend it. Please confirm the callback/refusal direction before I implement it."
+    },
+    {
+      "receiptId": "notify:6a01c2a1632e44ac67b4cebd391ae9b520164eb869413b7f31cb30ee1874f636",
+      "seq": 158882,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:84889c8cefd547cad6c9a68b11110c6c41a6e73d5131627d3376b53fbea67072",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:11:46.520Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 158881,
+        "kind": "steer",
+        "ts": "2026-09-23T15:11:47.536Z",
+        "messageId": "message:84889c8cefd547cad6c9a68b11110c6c41a6e73d5131627d3376b53fbea67072"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Proceed with onCheckpoint continue|done|stop and explicit policy validation before waves.start. This is an orchestrator decision callback and claim_turn is valid only for explicit done. Preserve explicitly selected always-continue steering and caller AbortSignal, but remove implicit always-continue defaults from recipes too; a default injected by recipes is still runtime policy. Keep scope tight, migrate directly contradicted focused fixtures, and explain callback error/retry behavior without adding failure-count termination. Generic root transport now passes 7/7 on my union, including non-swarm run and null-run workers."
+    },
+    {
+      "receiptId": "notify:354f56f9c41401ab07014358a5560fae34d881c64068ddaa6c8ed87692901c37",
+      "seq": 158897,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:11:48.428Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Startup proof adopted as a8b11566 and passed 1/1 here. #568 worker now reports nonce generation marker + process-CWD guard implemented with new 568-I/J passing (46/46 issue568+worktree). Please review its forthcoming correction independently, especially unavailable observation retaining evidence. My generic root delivery extension passes 7/7 and will be published shortly; waves worker is implementing explicit onCheckpoint continue|done|stop to remove default automatic continuation loops."
+    },
+    {
+      "receiptId": "notify:225cf791ecaa1c4dc33253aac62b0b266228a422fc5db03a76dad934b612f24f",
+      "seq": 158968,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T15:12:38.362Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Generic root delivery extension implemented locally: root_turn_reported accepts null swarm identity, resolves worker.turn_reported durable payload including runId/worker/report/done, and existing attachment subscribes to it. Full wiring file7/7 including runId and null-run transport+replay. Will commit shortly. Any rollout must configure advanced.rootWake; please include that in root redeploy instructions. I am still awaiting resident target/publish availability before retrying inherited landings; previous gate receipt was overwritten by nested test (standalone fix dab720e3)."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

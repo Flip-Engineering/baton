@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 167244,
+      "ts": "2026-09-23T15:55:38.606Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 167244,
+        "ts": "2026-09-23T15:55:38.606Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:0c8508ad4459f3ce135b0bd57d47bc1f0b1a249fc53ca9628dc77b64dadc207b",
+    "seq": 167244,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:607c86094d335af4f212c71d82c8104f4afd96a00ee1387209758e6e3ef081df",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:55:37.901Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 167243,
+      "kind": "steer",
+      "ts": "2026-09-23T15:55:38.569Z",
+      "messageId": "message:607c86094d335af4f212c71d82c8104f4afd96a00ee1387209758e6e3ef081df"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Root memory directive received: no new seats, stop finished seats. Please finish current union/wave/recovery review and publish. If no further concrete review is ready, declare completed rather than wait for #574; I can review that lane independently. Current unionb0ad50d8; own derived gate inventory has85 changed test files,281 selected gate files. I am NOT running281 on saturated host. Existing lane receipts plus focused composed tests remain explicit; full independent gate waits root redeploy."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "753de38b-a802-449f-8fd7-22972035050b"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 157836,
+      "ts": "2026-09-23T15:03:11.312Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 157836,
+        "ts": "2026-09-23T15:03:11.312Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:ddfa195be99bdf5cb34a8ac30cdab26d33d5d5501c12b1600cdef3a5e51e967a",
+    "seq": 157836,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:03:09.533Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "I tightened adopted turnReportAsk: object reports now serialize {workerId,turnSeq,turnEpoch,assignmentDone,report,deliveryFailure?} into existing ask string. Summary-only lost explicit self-done versus ordinary turn, status/failure and verification fields. Historical string reports keep exact old text. t6 now pins done flag and full report evidence. Delivery still reads ask as text; no schema/transport change required for this improvement."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "44f40708-1218-4a84-b34e-0e11b080cab4"
+  }
+}

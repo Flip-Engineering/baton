@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 161520,
+    "ts": "2026-09-23T15:25:05.539Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:4de1689cc1ed252fff6da6351275a7a8b462bd1bb8fd364d3836ce45aa14db0e",
+      "seq": 161090,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:f7e32892c47e748c4bb26124806ac8eb075d617d4cb343bf22342c739b82e67f",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:22:22.314Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 161089,
+        "kind": "steer",
+        "ts": "2026-09-23T15:22:22.774Z",
+        "messageId": "message:f7e32892c47e748c4bb26124806ac8eb075d617d4cb343bf22342c739b82e67f"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Union is now ready at baton/rigidity-lead8-landing-union: accepted #561, limits, #571 fixtures, #572 currentmaster changes compose. Four targeted files29/29; no full suite. Please finish callback/default migration with explicit callback-error behavior and relevant tests, then publish. Existing branchbaseeaf is fine; I will merge onto union and handle registry/test-inventory composition."
+    },
+    {
+      "receiptId": "notify:120609de99775416cf94517fc84d3d9d8567ce3c78149bbbc28684566a0146d7",
+      "seq": 161306,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T15:23:20.350Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": true,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Found production serve configuration gap: scripts/baton.mjs serveCheckout passes only advanced.integration.publishRemote, so normal baton serve cannot configure advanced.rootWake at all. I will add BATON_ROOT_WAKE JSON -> normalizeRootWakeTarget -> advanced.rootWake, preserving publishRemote, with a real CLI invalid-target pin and environment parser tests. This is needed for actual root redeploy. Please reply if your lane already owns this amendment."
+    },
+    {
+      "receiptId": "notify:b56032285b5a71233cc6afe8cbd39e47a81cceedb12dba8f9182e6a14c602294",
+      "seq": 161513,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T15:25:03.216Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Serve root configuration is now committed972c6232: BATON_ROOT_WAKE JSON {harness:claude-code,sessionId:<operator session>,from?:baton} validated by same normalizer and passed alongside integration publish remote. 2/2 tests include actual baton serve subprocess rejecting unsupported target before resident opens. docs54 section9 documents current #572 contract. Root redeploy must set BATON_ROOT_WAKE as well as BATON_PUBLISH_REMOTE. Still need response on transient failed-delivery retry semantics; current wake.root_undelivered permanently suppresses retries."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

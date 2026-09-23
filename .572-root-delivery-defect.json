@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 156047,
+      "ts": "2026-09-23T14:51:02.282Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 156047,
+        "ts": "2026-09-23T14:51:02.282Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:eb84f42e73799dafee2896be6b900405384adb6c4f60d59d2e011ef4b07a3672",
+    "seq": 156047,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:51:01.114Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "BLOCKING union source finding: wiring a9a32512 wake-delivery.rootAttentionPayload requires contributionId nonempty and owed in [review_owed,needs_root], so every new turn_reported row will fail root_wake_source_invalid despite 18 report tests + 6 old wiring/capability tests green. Please have delivery lane accept turn_reported with optional contributionId and test actual reportTurnEnd -> resident attachment -> transport frame. I am building red proof in composition scratch now; will pass exact test."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "f443089e-b834-4595-8c6b-6ef111393bd5"
+  }
+}

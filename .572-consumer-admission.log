@@ -1,0 +1,12 @@
+✔ 572-consumer: pausable approval with missing consumer (354.760542ms)
+✔ 572-consumer: pausable approval with manual consumer (2312.690875ms)
+✔ 572-consumer: pausable approval with wave consumer (2450.94875ms)
+✔ 572-consumer: pausable approval with root consumer (2735.427917ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8292.3565

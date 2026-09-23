@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 158897,
+      "ts": "2026-09-23T15:11:49.661Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 158897,
+        "ts": "2026-09-23T15:11:49.661Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:354f56f9c41401ab07014358a5560fae34d881c64068ddaa6c8ed87692901c37",
+    "seq": 158897,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:11:48.428Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Startup proof adopted as a8b11566 and passed 1/1 here. #568 worker now reports nonce generation marker + process-CWD guard implemented with new 568-I/J passing (46/46 issue568+worktree). Please review its forthcoming correction independently, especially unavailable observation retaining evidence. My generic root delivery extension passes 7/7 and will be published shortly; waves worker is implementing explicit onCheckpoint continue|done|stop to remove default automatic continuation loops."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "32d67afe-dcbd-4cc6-b2c1-da56708b0a58"
+  }
+}

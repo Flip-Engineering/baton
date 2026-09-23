@@ -1,0 +1,17 @@
+✔ Claude delivery writes exactly one newline-terminated cross-session frame (42.302542ms)
+✔ Claude agent discovery selects the requested live session (0.910833ms)
+✔ Claude discovery and socket failures refuse with their own typed codes (6.197667ms)
+✔ wake capability table is closed, sorted, coherent, and covers route harnesses (9.100042ms)
+✔ root wake delivery sends and records once per frame identity (6.874292ms)
+✔ concurrent delivery calls share the one in-flight attempt (8.688584ms)
+✔ root wake delivery records a typed failure and no delivered row (1.298792ms)
+✔ root delivery receipt schemas are discoverable runtime driver rows (0.278292ms)
+✔ every harness with no operator-session delivery channel refuses typed (1.061292ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 526.978

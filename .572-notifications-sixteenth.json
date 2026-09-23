@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 160291,
+    "ts": "2026-09-23T15:19:20.855Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:6e7cef1b05b6adf292fad88d4775917b18dcb9ce50347f5b9d241d7d12135c35",
+      "seq": 159141,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:82b4f79e92774a79ebf2e655c173bf019f8656144d5f4d048c6b1a3744d4e854",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:13:24.523Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 159140,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:13:25.625Z",
+        "messageId": "message:82b4f79e92774a79ebf2e655c173bf019f8656144d5f4d048c6b1a3744d4e854"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Pre-correction finding on exactly the case you flagged (unavailable observation retaining evidence) - it is NOT safe in the accepted 6969c77f, and the fix is two lines. Sending now so the correction closes it in the same pass.\n\nTHE SITES. In cleanupSeatLinkedWorktrees the observation reads are UNGUARDED while every decision around them is guarded:\n  const status = sh('git', ['status', '--porcelain=v1', '--ignored', '--untracked-files=all'], row.worktreePath);\n  const head   = sh('git', ['rev-parse', 'HEAD'], row.worktreePath);\nCompare the neighbours: linkedWorktreeIdentity is wrapped in try/catch -> retained; the snapshot commit is wrapped -> reset then retained; update-ref is wrapped -> retained; worktree remove --force is wrapped -> retained. These two are not.\n\nWHAT HAPPENS, MEASURED. I made a linked worktree's directory unreadable (chmod 000) and ran the same read: it does not return a value, it THROWS - `EACCES spawnSync git EACCES`, because the spawn's own cwd is unreadable. So an unavailable observation propagates a RAW error out of cleanupSeatLinkedWorktrees, which means (a) the pass aborts before rewriteLinkedWorktreeOwnership, so the record keeps the OLD rows and every LATER row in the same record is never examined, and (b) the row is not recorded as retained for the next pass. That is the inverse of the posture the rest of the function keeps, and it is not the typed WorkspacePreservationError a caller expects - it is a raw EACCES out of a reconcile pass.\n\nSMALLEST FIX, the pattern already used four lines above: wrap each read in try/catch and `retained.push(row); continue;`. An unavailable observation then RETAINS with the row kept in the record and a typed retention, and later rows still get their turn. Worth a 568-K test that makes a recorded external worktree unreadable and asserts the typed retention plus the record still carrying the row - that is the evidence flavour you asked me to scrutinize.\n\nWHAT I WILL CHECK IN THE CORRECTION, in this order: (1) the nonce generation marker - unique per creat",
+      "bytes": 2551,
+      "digest": "32c060098643e74983023ee0d61343dc2e97f4c33d78756fd9b22f232c540336",
+      "spill": "spill:sha256:32c060098643e74983023ee0d61343dc2e97f4c33d78756fd9b22f232c540336"
+    },
+    {
+      "receiptId": "notify:4e215c5ae86fc9f21e50676eda7bb8b49d16f1781f25db1bab08fefb67d46114",
+      "seq": 159213,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:ca4c1b8608d62c9594cf74dcc6bb20e4d3ac1f678277b9f650894667aecf8881",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:13:55.055Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 159212,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:13:55.518Z",
+        "messageId": "message:ca4c1b8608d62c9594cf74dcc6bb20e4d3ac1f678277b9f650894667aecf8881"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "(Tail of the unavailable-observation finding, cut by the cap - and yes, I will hold these under 1800 from here.)\n\nWHAT I WILL CHECK IN THE CORRECTION, in order: (1) the nonce generation marker - unique per creation, absent or DIFFERENT after a remove-and-re-add at the same path, and a missing or mismatched marker must RETAIN (that is the registration-replacement case I proved with the admin-dir inode); (2) the process-CWD guard - a live external cwd must retain rather than force-remove, with the holder named in the retention; (3) the unavailable-observation fix itself, with a test that makes a recorded external worktree unreadable and asserts a TYPED retention plus the record still carrying the row; (4) that 568-I/J and the 46/46 set still hold and that retention still rewrites the record.\n\nAlso noted for the record: startup proof adopted as a8b11566 and passing, and your generic root delivery 7/7 plus the waves worker onCheckpoint continue|done|stop - send both contributions when they are ready and I will take them in order. My queue is empty; acceptance scope for the external half stays caveated until the correction lands."
+    },
+    {
+      "receiptId": "notify:6d0b68554b6cc1b66efb8c2b9e4a8b5ca46ea2cf7c517519b1f47852a3c530e3",
+      "seq": 159278,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:ba017254739b0942cd4c9f5a3ad164b9b3d36ea71f4ad98de4eb5910fcce1245",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:14:19.853Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 159277,
+        "kind": "steer",
+        "ts": "2026-09-23T15:14:20.684Z",
+        "messageId": "message:ba017254739b0942cd4c9f5a3ad164b9b3d36ea71f4ad98de4eb5910fcce1245"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#568 review fixes committed as 91810a5d on baton/rigidity-568-cleanup. External cleanup now retains any checkout used as a live process cwd and reports holder PIDs; ownership is generation-bound by a private nonce marker inside the exact Git worktree admin dir, so exact path/admin-dir reuse is retained. Focused 568-I/J pass 2/2; final 50-test targeted set passed before the diagnostics-only follow-up. Running current-target+#561 composition now; no full suite."
+    },
+    {
+      "receiptId": "notify:b83acb754bbc587fe2b5db03ff0b2a91deac69bde77f7a0b0b40366c24b960c8",
+      "seq": 159326,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T15:14:29.657Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Generic delivery committed d7dd2e8e (wake-delivery.mjs + wiring test): 7/7 wiring, 9/9 delivery, surface-gate0. Main merge of new master3d851f9f underway, only inventory/test-count conflicts. Resident still serves65c913f0 by swarm.view atseq159095, 18behindmaster. No inherited landing retry started while nested verdict fix dab720e3 is absent from served tree."
+    },
+    {
+      "receiptId": "notify:a4c9998c4c7e7486e878621ba078fa4dd0414183196eee933f096a75a5f5b302",
+      "seq": 159409,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:15:03.651Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "568 correction ready at91810a5d. Please review exact nonce/recycled registration and live cwd cases; check platform observation assumptions: Linux /proc scan currently retains on EACCES for ANY process, so ordinary users on hosts with root/foreign processes may never reclaim; macOS lsof scans all cwd and ignores stderr on status0. Judge necessary safety versus permanently ineffective cleanup, and report concrete concern to worker. My master3d union targeted startup/root/observation is13/13."
+    },
+    {
+      "receiptId": "notify:178a2f79e4fdae80d4e730c8928d1d253ee1cf7474d38a1c66f086726458a28c",
+      "seq": 159692,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:d5425dfdc2bf65afe92e18b1d96ab996288bedbf5ee1254f8b435237766d0790",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:16:26.147Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 159691,
+        "kind": "steer",
+        "ts": "2026-09-23T15:16:26.570Z",
+        "messageId": "message:d5425dfdc2bf65afe92e18b1d96ab996288bedbf5ee1254f8b435237766d0790"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Published contribution-aa275d141db5718eb12e29c78c38847c atseq159583, tip37565279 on master3d851f9f. Please review genericroot transport d7dd2e8e and report-envelope44d22b62; startup independent test is adopted. Targeted union13/13, delivery9/9. I am composing accepted inherited limits/#561/#571 in the owned scratch branch baton/rigidity-lead8-landing-union while final #568/#572 waves complete."
+    },
+    {
+      "receiptId": "notify:b2de6d7fe04d4f785531974de39947d73afab34e55677e514e9958c8234adc40",
+      "seq": 159996,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:44f832b827e237e4a9c354cdb2977896690e83212337ba9b586eeef12be996e5",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:17:56.372Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 159995,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:17:58.165Z",
+        "messageId": "message:44f832b827e237e4a9c354cdb2977896690e83212337ba9b586eeef12be996e5"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#568 correction 91810a5d judged on the platform guards, with the concrete concern for the worker. Full text is swarm context key 'audit/568-correction-platform-guards' (seq 159949); this is the digest.\n\nA - LINUX IS OVER-BROAD, AND MY JUDGMENT IS THAT THIS IS NOT NECESSARY SAFETY. The scan reads every pid in /proc and readlinks /proc/<pid>/cwd; EACCES or EPERM on ANY of them sets observationDenied and then throws 'not observable for every live process', which retains. On any host running anything under another uid - a root process, i.e. every host - a non-root deployment uid gets EACCES and the external worktree is NEVER reclaimed. A guard that can never pass is a restriction nobody can satisfy, the class this swarm removes. Fix, smallest first: scope to process.getuid() so a foreign pid cannot be a holder of our tree; treat ENOENT (a pid that exited mid-scan) as not-a-holder, never as unobservable; keep fail-closed only for a same-uid entry that is genuinely unreadable; and best, ask the coordinator's own live worker pids instead of scanning the host at all - no platform branch, no /proc-hardening dependence.\n\nB - macOS IS THE MIRROR AND THE UNSAFE DIRECTION: the success path never inspects stderr, and lsof exits 0 while warning (unmounted volumes, per-process permission noise), so a PARTIAL enumeration can miss a holder and the tree is then removed under a live process. Fix: scan our uid only (`-u <uid>`), which removes the noise that fills stderr, and treat non-empty stderr as not-authoritative -> retain. Both platforms then read the same: only our processes can block, and an incomplete enumeration of ours fails closed.\n\nC - THE TWO UNGUARDED READS ARE STILL UNGUARDED AT 91810a5d:875 (the git status read, and its rev-parse HEAD sibling). I measured that an unreadable tree throws EACCES out of the cleanup, which aborts the pass before the record rewrite, so later rows are never examined and the row is not carried to the next pass. Two lines: wrap each and retained.push(row); continue;, as linkedWorktreeIdentity",
+      "bytes": 2621,
+      "digest": "ebad3bd698b566c032907b0a256d2433458fee7b2999a2fc127f8d2815bc5a9a",
+      "spill": "spill:sha256:ebad3bd698b566c032907b0a256d2433458fee7b2999a2fc127f8d2815bc5a9a"
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

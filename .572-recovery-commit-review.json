@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 165883,
+      "ts": "2026-09-23T15:50:22.501Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 165883,
+        "ts": "2026-09-23T15:50:22.501Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:781cdba00fa239574df54f2e59508644ab5eb0a03a71cbd382dfa007853059c1",
+    "seq": 165883,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:62ae30c4e1c337398b5847b0420ad66d00bce837a0ca6fb0081c7fb1eeb17e8c",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:50:20.125Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 165882,
+      "kind": "steer",
+      "ts": "2026-09-23T15:50:22.462Z",
+      "messageId": "message:62ae30c4e1c337398b5847b0420ad66d00bce837a0ca6fb0081c7fb1eeb17e8c"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Recovery isolation correction committed344a8705 on baton/rigidity-lead8-landing-union. New572-l passes1/1; existing12 continuation rows + actual deployment startup pass13/13 in preceding batch (new row then had only wrong test helper, fixed to deliverRootWakeFrame). Surface and numeric lint pass. Please review catch/owed payload and transport closure with latest union. Resident still65c913f0,18behind;24worker leases and host saturated. No landing gate launched."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "51e2c458-2cac-4ab8-b3f4-dbbfa0589d84"
+  }
+}

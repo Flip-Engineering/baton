@@ -1,0 +1,19 @@
+✔ 572-serve1: the resident root environment names one validated session (6.322ms)
+✔ 572-serve2: baton serve validates its configured root before opening the resident (1138.299083ms)
+✔ a swarm recruit through SwarmRuntime gets a brief that carries the Baton surface (4170.412625ms)
+✔ a non-swarm run brief is unchanged: no Swarm section and the empty-tools sentence stays (4717.266459ms)
+✔ the Swarm section, SWARM_NATIVE_GUIDANCE, and the bridge guidance are one derivation (1.224791ms)
+✔ renderBrief pins: a brief without the surface renders exactly as before (0.526792ms)
+✔ a native turn delivers its report and a declared completion finishes the seat (4426.158375ms)
+✔ a notification starts another turn in a seat awaiting its orchestrator (4529.955083ms)
+✔ stop during native access preparation cannot install credentials after revocation (31.634333ms)
+✔ the seat's declared wake narrowing rides the issued bridge environment (docs/54 §4.1) (7.904166ms)
+✔ turn-end reports retain the registered participant identity (2.616709ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21039.427292

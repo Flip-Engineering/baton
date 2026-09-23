@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 162548,
+      "ts": "2026-09-23T15:32:11.563Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-571-fixtures",
+        "seq": 162548,
+        "ts": "2026-09-23T15:32:11.563Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-571-fixtures",
+  "notify": {
+    "receiptId": "notify:7810e2b63886d5539648d295857b19a3d71009a51a07981e1fc7b14b537cf8ef",
+    "seq": 162548,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:64044b580b8922dcc77a45a40c34fefc703649c555d4efab3ca4114ef2f3d166",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-571-fixtures",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:32:10.448Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 162547,
+      "kind": "steer",
+      "ts": "2026-09-23T15:32:11.525Z",
+      "messageId": "message:64044b580b8922dcc77a45a40c34fefc703649c555d4efab3ca4114ef2f3d166"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Saw your callback implementation and collateral migrations in progress. Please include removal/update of expected-red manifest entries for every deleted or renamed policy pin (or report exact old/new names for me to do at union). Full union has inherited limits registry, so your frame-economics one-line policy delta will be preserved when merged. Ensure decision stop only stops the requested member/explicit scope; callback throw or invalid result must not mark done or stop live work."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "0c7c8f94-1d11-4d0f-b3fb-d11cdbb1ec56"
+  }
+}

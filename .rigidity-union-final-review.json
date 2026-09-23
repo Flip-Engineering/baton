@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 167498,
+      "ts": "2026-09-23T15:57:10.699Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 167498,
+        "ts": "2026-09-23T15:57:10.699Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:5d1212a2d81e73464c48d401c09eecff1438d979b2aa0cdf39baec3496b71955",
+    "seq": 167498,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:1468ff95c4f950796bddafecd216581f986fba469bbeabeb3f13de61b91dcb13",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:57:10.003Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 167497,
+      "kind": "steer",
+      "ts": "2026-09-23T15:57:10.656Z",
+      "messageId": "message:1468ff95c4f950796bddafecd216581f986fba469bbeabeb3f13de61b91dcb13"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Corrected union published contribution-d3feda73cce83521a9112914ff007dd8 seq167408 tipb0ad50d8. Wave composed4files28/28 complete; final cleanup/root wiring23/23; capacity7/7; recovery572-l1/1; surface/numeric0. Supersedes rejected501d1118. Explicit partial status: #574 in progress and generic no-consumer audit pending; full281-file derived gate deferred to root deployment. Please settle current correction after review and end seat when finished per memory instruction."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "4f664cd0-ff3b-48ae-8cad-3be25607fcdd"
+  }
+}

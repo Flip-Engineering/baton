@@ -1,0 +1,35 @@
+✖ the suite verdict destination stays private to its owning runner (4208.86575ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4407.606208
+
+✖ failing tests:
+
+test at impl/test/test-runner.test.mjs:178:1
+✖ the suite verdict destination stays private to its owning runner (4208.86575ms)
+  AssertionError [ERR_ASSERTION]: baton suite calibration: {"baselineBasis":"unrecorded","baselineProbeMs":null,"cores":10,"factor":1,"load":{"fifteen":91.9755859375,"five":77.912109375,"one":17.44970703125},"measuredAt":"2026-09-23T14:53:53.862Z","probeMs":2.234916999999996,"schemaVersion":1}
+  baton test runner: plan — 1 file(s) in the whole suite: 1 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+  baton test runner: proceeding WITHOUT a host verify lease (memory: 4845928448 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+  baton suite verdict (SUBSET 1 of 730 files): RED — 0 passed, 0 expected red (0 code, 0 environment-red), 0 of this run’s red rows cancelled by a dangling await earlier in their file, 1 unexpected failure(s), 0 stale expectation(s), 0 hung
+    baton suite environment: codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; codex/gpt-6-astra declared — `~/.codex/auth.json` present; kimi-code/kimi-code/k3 declared — kimi credential files present with a ready authentication state; grok/grok-4.5 declared — `~/.grok/auth.json` present with a ready authentication state; claude-code:claude/claude-opus-4-6 declared — bounded version + auth status probes; muse/muse-spark-1.3-contributor declared — a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`); omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/deepseek/deepseek-v4-pro[1m] ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/zai/glm-5.3-flash ABSENT — repository glm_key.json (omp_agent_unconfigured); omp/kimi-code/k3 ABSENT — repository kimi_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3-flash ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/deepseek-v4-pro ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/kimi-k3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); claude-code:kimi/kimi-k3[1m] declared — the private kimi-through-claude credential present
+    unexpected failure: ../.572-test-tmp/baton-test-runner-contract-RoQNUE/child.test.mjs :: nested runners receive no outer verdict destination — Expected values to be strictly equal:
+  baton suite verdict note: SUBSET verdict (1 of 730 files) — not the canonical-suite acceptance.
+  
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/test-runner.test.mjs:189:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

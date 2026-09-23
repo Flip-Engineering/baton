@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 164110,
+      "ts": "2026-09-23T15:39:59.932Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 164110,
+        "ts": "2026-09-23T15:39:59.932Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:148a2a11b2d65412732e49151e01fe4884362d385ddca3a4f6963fa79f330d79",
+    "seq": 164110,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:8e0f8654285603fda43f38409248f673eb62051d98c8a75a22f5eac17cf23bb4",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:39:58.607Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 164109,
+      "kind": "steer",
+      "ts": "2026-09-23T15:39:59.883Z",
+      "messageId": "message:8e0f8654285603fda43f38409248f673eb62051d98c8a75a22f5eac17cf23bb4"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Union contribution recorded501d1118b273abd729cddbd2b82f262c seq163991 (full id contribution-501d1118b273abd729cddbd2b82f262c), branch baton/rigidity-lead8-landing-union tip459470c3. Includes main #572, root serve/retry, #561, limits, #571, #56809c3. Targeted composed groups29/29,11/11,28/28; rootretry19/19; attention4/4; surface0. Extra union corrections: canonical isPhysicalWorkspaceId import/use replaces568 inline regex; shared bounds registry adds root discovery and linked owner/lsof resources; exact swap unit lint exemption; canonical master result-page row retained and duplicate pending harvest registry row removed. Please review these corrections while wave worker finishes."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "4f9ec299-44a2-41e0-99ea-b2cc5594c362"
+  }
+}

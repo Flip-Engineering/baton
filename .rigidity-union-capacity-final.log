@@ -1,0 +1,15 @@
+✔ 500-caps-A: the open publishes the declared capacity and stop-envelope defaults verbatim (3160.324417ms)
+✔ 500-caps-B: a capacity observation is quantized down before any verdict or published row (1903.643833ms)
+✔ 500-caps-C: the adapter wire frame corridor refuses outside 64 KiB–16 MiB and admits the bounds (2156.475333ms)
+✔ 500-caps-D: the resident command deadline default is 30 s — pollMs sits on its boundary (1511.3505ms)
+✔ 500-caps-E: the muse auth.json read enforces the registry credential.file boundary (1.973333ms)
+✔ 500-caps-F: the omp model catalog read answers a parsed selector map or an unreadable null (1.015ms)
+✔ 500-caps-H: the bounds with no hermetic seam keep their live literals (source pins) (5.711667ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16022.896583

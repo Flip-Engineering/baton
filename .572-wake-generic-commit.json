@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 159326,
+      "ts": "2026-09-23T15:14:31.525Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 159326,
+        "ts": "2026-09-23T15:14:31.525Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:b83acb754bbc587fe2b5db03ff0b2a91deac69bde77f7a0b0b40366c24b960c8",
+    "seq": 159326,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:14:29.657Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Generic delivery committed d7dd2e8e (wake-delivery.mjs + wiring test): 7/7 wiring, 9/9 delivery, surface-gate0. Main merge of new master3d851f9f underway, only inventory/test-count conflicts. Resident still serves65c913f0 by swarm.view atseq159095, 18behindmaster. No inherited landing retry started while nested verdict fix dab720e3 is absent from served tree."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "5b2b191a-979b-49f2-8911-d8b96d41816e"
+  }
+}

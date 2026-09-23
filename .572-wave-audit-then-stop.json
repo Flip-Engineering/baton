@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 167237,
+      "ts": "2026-09-23T15:55:37.302Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-571-fixtures",
+        "seq": 167237,
+        "ts": "2026-09-23T15:55:37.302Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-571-fixtures",
+  "notify": {
+    "receiptId": "notify:55079d6ae87c3ed0dbb2640fbd74d26d66ce4633c22be143f2349b81ef90823c",
+    "seq": 167237,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:52fbecf1ea2f44754079c0bf36285f58a195de7ef99129347ed495491e7e834b",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-571-fixtures",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:55:36.705Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 167236,
+      "kind": "steer",
+      "ts": "2026-09-23T15:55:37.265Z",
+      "messageId": "message:52fbecf1ea2f44754079c0bf36285f58a195de7ef99129347ed495491e7e834b"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Root now forbids new seats and asks finished seats to stop for memory. Your wave76a is adopted. Finish the short no-consumer audit requested (minimal finding/call sites is enough), publish it, then declare completed with swarm.participant_left reason completed and end your seat; do not remain waiting after this audit. I will implement any follow-up. No further lane delegated."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "1760f692-58f3-4b89-8d07-6135b0b31f52"
+  }
+}

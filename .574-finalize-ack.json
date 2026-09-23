@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 168437,
+      "ts": "2026-09-23T16:06:17.850Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 168437,
+        "ts": "2026-09-23T16:06:17.850Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:62a8ccd6acce2528ccb2fb06d49ed7f48e403cbde4fedda57944bf9083053bbc",
+    "seq": 168437,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:a7d7bfb4e5609fb959b2152a9a70b45d9e9808e1e76e67dcd3baaf994d589491",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T16:06:17.730Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 168436,
+      "kind": "steer",
+      "ts": "2026-09-23T16:06:17.846Z",
+      "messageId": "message:a7d7bfb4e5609fb959b2152a9a70b45d9e9808e1e76e67dcd3baaf994d589491"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "runtime-effects _finalizeStop ownership clear; proceed provider-death retry preservation. Ensure explicit orchestrator/operator stop wins even if it races retry_pending: no new retry after runStop/closing/stopping admission. Same helper preserves exact owner/session then schedules recovery. I am now editing workflow-interpreter.mjs and workflow-as-data tests for residual572 fixed nudge-count claim and silent close-on-unhandled-attention; disjoint."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "11fe669d-506d-4eb4-98ee-c34c83938244"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "swarmId": "swarm-rigidity-20260921",
+  "since": 167408,
+  "rows": [
+    {
+      "seq": 167581,
+      "ts": "2026-09-23T15:57:40.254Z",
+      "participantId": "rigidity-571-fixtures",
+      "contributionId": "contribution-c7a5e635db11107b60be8411c416ddb2",
+      "workId": null,
+      "summary": "Issue #572 audit: generic pausable Runs need a declared turn consumer before dispatch",
+      "subject": "Issue #572 audit: generic pausable Runs need a declared turn consumer before dispatch",
+      "items": [
+        {
+          "id": "572-generic-turn-consumer-audit",
+          "status": "delivered"
+        }
+      ],
+      "commit": null,
+      "files": [
+        "impl/src/application-cli.mjs",
+        "impl/src/application-client.mjs",
+        "impl/src/application-deployment.mjs",
+        "impl/src/application.mjs",
+        "impl/src/runtime-event-handlers/turn-terminal.mjs",
+        "impl/src/wake-stream.mjs"
+      ],
+      "decision": null,
+      "reviewState": "unreviewed",
+      "integration": null
+    }
+  ],
+  "cursor": 167581,
+  "truncated": false
+}

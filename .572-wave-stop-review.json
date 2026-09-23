@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 162628,
+      "ts": "2026-09-23T15:32:35.481Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-571-fixtures",
+        "seq": 162628,
+        "ts": "2026-09-23T15:32:35.481Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-571-fixtures",
+  "notify": {
+    "receiptId": "notify:64da6fce5bab169641eba34d9c49a66c1bc70bffe74635467958a02d770e4194",
+    "seq": 162628,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:f0e35b2b1c9fe1e5a917a165d14125521c0b68618d30ff4c03de2dd8a9dd1e18",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-571-fixtures",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:32:34.197Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 162627,
+      "kind": "steer",
+      "ts": "2026-09-23T15:32:35.440Z",
+      "messageId": "message:f0e35b2b1c9fe1e5a917a165d14125521c0b68618d30ff4c03de2dd8a9dd1e18"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Concrete review: current onCheckpoint stop for one role sets orchestratorStopped and breaks whole wave, whose finally closes every live peer. Callback is passed one member, so stop must stop that member/run and continue observing its peers. If intended wave-stop is needed, use separately explicit caller AbortSignal; do not widen per-member decision silently. Please add a two-member pin proving stop for member A does not stop B."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "c0ebdda5-b1c5-41de-83f5-e3a8ba41aff7"
+  }
+}

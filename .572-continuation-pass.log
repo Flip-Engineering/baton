@@ -1,0 +1,40 @@
+✔ 572-a: a successor starts immediately under the default policy (1038.57275ms)
+✔ 572-b: a stored manual policy continues a successor (1764.412417ms)
+✔ 572-c: a turn report reaches the parent once (1377.527834ms)
+✔ 572-d: a top-level turn records a root-addressed report (729.086917ms)
+✔ 572-e: an older pending successor starts on recovery (2393.793208ms)
+✔ 572-f: default participants can review peers and land contributions (1858.347875ms)
+✔ 572-g: unavailable guidance records the delivery refusal (982.427875ms)
+✔ 572-h: a refused parent delivery addresses the report to root (2146.517167ms)
+✔ 572-i: an invalid turn identity refuses before recording or delivery (1408.28ms)
+✔ 572-j: a dead parent routes the report to root (1613.824916ms)
+✖ 572-j: a stopping parent routes the report to root (1369.940292ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 10
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16976.636875
+
+✖ failing tests:
+
+test at impl/test/issue572-continuation.test.mjs:264:3
+✖ 572-j: a stopping parent routes the report to root (1369.940292ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'delivered'
+  - 'root_addressed'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/issue572-continuation.test.mjs:273:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'delivered',
+    expected: 'root_addressed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

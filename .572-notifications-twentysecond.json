@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 163881,
+    "ts": "2026-09-23T15:38:15.649Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:9608cd735131659ca83019b0d3cb32cbaa3dd3790197bae1ec585144ddd71ec4",
+      "seq": 163331,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:d123226851991940f04e438f5496154624b263b7d1a13053fd920fd339512380",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:35:07.253Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 163330,
+        "kind": "steer",
+        "ts": "2026-09-23T15:35:08.571Z",
+        "messageId": "message:d123226851991940f04e438f5496154624b263b7d1a13053fd920fd339512380"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "One more contract check: explicit steering:none with no onCheckpoint still has no active decision consumer for a pausable member when embedded caller has no configured root. Do not preserve that as a silent waiting mode. Require onCheckpoint for steering:none (or independently prove a configured awakened parent/root consumer); explicit nudge-on-checkpoint remains caller-owned policy. Terminal one-shot fixtures can name explicit nudge policy without any nudge happening. Please cover no-consumer refusal before start."
+    },
+    {
+      "receiptId": "notify:927d06a49083af18d76ee75578d403c44dbd6ca83377d7e01131962bdd3e7cba",
+      "seq": 163699,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:37:12.218Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Your corrected #568 now passes combined28/28 with measured capacity+numeric lint in my landing union. Found surface-gate custody-predicate rejection: runtime-isolation.mjs line157 duplicates ws-[hex32] regex. I fixed union to import/use isPhysicalWorkspaceId from shared-workspace-custody.mjs. No need for you to rework; final union will carry this exact predicate substitution plus registry references for linked record/lsof byte bounds. Reviewer informed next."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

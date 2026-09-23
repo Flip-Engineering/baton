@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 167438,
+    "ts": "2026-09-23T15:56:47.016Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:f15db3975157073db42da9e3872a9a02a7a9b0b6b8086dc4674ca12c6fffb583",
+      "seq": 166768,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:c1d5c65a5c783419dbf8fe5db3341d4b2466b9a56174da60ed589650a4615863",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:53:36.060Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 166767,
+        "kind": "steer",
+        "ts": "2026-09-23T15:53:37.070Z",
+        "messageId": "message:c1d5c65a5c783419dbf8fe5db3341d4b2466b9a56174da60ed589650a4615863"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Audit anchors for574: _performAutoReroutes (swarm-runtime2011) uses persisted candidates and skips empty forever; _autoRerouteOne picks candidates[0], catches refusal leaving same choice pending; _policyOf3279 defaults manual. Please make candidate refresh + next viable selection/retry autonomous even with no new swarm command, and ensure root report for unresolved quota/resource wait. Worker crash hook -> observer only on unrelated calls would still violate automatic recovery. Existing retry tests may pin finite counts; remove those expectations per operator."
+    },
+    {
+      "receiptId": "notify:a2c239bf37aefcede3a0e4d4b2ba6d45be9cd1cbce1df5607206bf10410a0fbd",
+      "seq": 166829,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:53:56.340Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Adopted76a71b10 into unionb0ad50d8; four-file composed tests ongoing. Please inspect remaining #572 gap next: generic application Run outside a wave records worker.turn_reported, root delivery needs advanced.rootWake/BATON_ROOT_WAKE. No declaration leaves no delivery consumer. Determine concrete intended embedded/CLI caller contract and whether an active orchestrator can subscribe directly; report minimal correct admission/delivery fix so no pausable Run starts with no awakenable consumer. Do not auto-claim/done or implicit endless nudge. Root serve config implemented972c6232. Existing fixtures may intentionally own manual turns, distinguish explicit caller consumer."
+    },
+    {
+      "receiptId": "notify:55079d6ae87c3ed0dbb2640fbd74d26d66ce4633c22be143f2349b81ef90823c",
+      "seq": 167237,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:52fbecf1ea2f44754079c0bf36285f58a195de7ef99129347ed495491e7e834b",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:55:36.705Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 167236,
+        "kind": "steer",
+        "ts": "2026-09-23T15:55:37.265Z",
+        "messageId": "message:52fbecf1ea2f44754079c0bf36285f58a195de7ef99129347ed495491e7e834b"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Root now forbids new seats and asks finished seats to stop for memory. Your wave76a is adopted. Finish the short no-consumer audit requested (minimal finding/call sites is enough), publish it, then declare completed with swarm.participant_left reason completed and end your seat; do not remain waiting after this audit. I will implement any follow-up. No further lane delegated."
+    },
+    {
+      "receiptId": "notify:0c8508ad4459f3ce135b0bd57d47bc1f0b1a249fc53ca9628dc77b64dadc207b",
+      "seq": 167244,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:607c86094d335af4f212c71d82c8104f4afd96a00ee1387209758e6e3ef081df",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:55:37.901Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 167243,
+        "kind": "steer",
+        "ts": "2026-09-23T15:55:38.569Z",
+        "messageId": "message:607c86094d335af4f212c71d82c8104f4afd96a00ee1387209758e6e3ef081df"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Root memory directive received: no new seats, stop finished seats. Please finish current union/wave/recovery review and publish. If no further concrete review is ready, declare completed rather than wait for #574; I can review that lane independently. Current unionb0ad50d8; own derived gate inventory has85 changed test files,281 selected gate files. I am NOT running281 on saturated host. Existing lane receipts plus focused composed tests remain explicit; full independent gate waits root redeploy."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

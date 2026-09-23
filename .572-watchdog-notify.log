@@ -1,0 +1,13 @@
+✔ GV4/GV5: repeated failing commands notify the orchestrator (59.283792ms)
+✔ GV4/GV5: an absolute edited path outside scope kills once (34.279625ms)
+✔ GV4/GV5: canonical filesystem aliases do not fabricate an out-of-scope kill (27.452541ms)
+✔ GV4/GV5: an empty path scope is unscoped and does not invent a violation (28.036458ms)
+✔ GV4: a quiet working worker notifies the orchestrator at the watchdog deadline (31.851042ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 599.728666

@@ -1,0 +1,338 @@
+{
+  "swarmId": "swarm-rigidity-20260921",
+  "purpose": "Rigidity and arbitrary-limits removal: issues 496, 499, 500, 530, 531, 532, 536, 538 (the exactObject security-boundary class) plus anything else in the original 492-sweep findings not yet closed. Removal/correction mandate, not just cataloging.",
+  "status": "open",
+  "closedReason": null,
+  "actor": "web:local-owner:935be40a-9001-4fba-a1e6-9fabb1f916d2",
+  "seq": 7270,
+  "ts": "2026-09-21T18:17:05.636Z",
+  "baseCommit": "31f356b2b1cd5a32a241116c52aa96ea7133fc4a",
+  "policy": {
+    "rerouteOnProviderFault": "manual",
+    "reroutePreferApi": false,
+    "resumeContinuation": "auto"
+  },
+  "caller": {
+    "participantId": "rigidity-lead8",
+    "permissions": [
+      "read",
+      "communicate",
+      "contribute",
+      "review",
+      "organize",
+      "recruit"
+    ],
+    "lastRefusal": {
+      "seq": 167637,
+      "command": "swarm.watch",
+      "code": "swarm_bridge_frame_exceeded",
+      "field": null
+    }
+  },
+  "availableActions": [
+    "swarm.view",
+    "swarm.watch",
+    "swarm.recruit",
+    "swarm.guide",
+    "swarm.capture",
+    "swarm.check",
+    "swarm.notify",
+    "swarm.notifications",
+    "swarm.integrate",
+    "swarm.update",
+    "run.knowledge.seed",
+    "run.board.post",
+    "run.board.read",
+    "run.scratchpad.append",
+    "run.scratchpad.read",
+    "run.scratchpad.elevate",
+    "evidence.search"
+  ],
+  "admission": [],
+  "actionTargets": {
+    "swarm.capture": {
+      "participantIds": [
+        "rigidity-lead",
+        "rigidity-lead2",
+        "rigidity-lead3",
+        "rigidity-lead4",
+        "rigidity-lead5",
+        "rigidity-lead6",
+        "rigidity-lead7",
+        "rigidity-lead7f",
+        "rigidity-reviewer7",
+        "rigidity-571-fixtures",
+        "rigidity-lead8",
+        "rigidity-572-gates",
+        "rigidity-568-cleanup"
+      ]
+    },
+    "swarm.check": {
+      "participantIds": [
+        "rigidity-lead",
+        "rigidity-lead2",
+        "rigidity-lead3",
+        "rigidity-lead4",
+        "rigidity-lead5",
+        "rigidity-lead6",
+        "rigidity-lead7",
+        "rigidity-lead7f",
+        "rigidity-reviewer7",
+        "rigidity-571-fixtures",
+        "rigidity-lead8",
+        "rigidity-572-gates",
+        "rigidity-568-cleanup"
+      ]
+    }
+  },
+  "updates": [
+    {
+      "event": "swarm.group_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.work_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.assignment_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.coupling_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.claim_updated",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.proposal_updated",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.holder_released",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.policy_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.context_updated",
+      "permission": "communicate"
+    },
+    {
+      "event": "swarm.contribution_recorded",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.contribution_reviewed",
+      "permission": "review"
+    },
+    {
+      "event": "swarm.participant_left",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.closed",
+      "permission": "organize"
+    },
+    {
+      "command": "run.knowledge.seed",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.post",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.append",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.scratchpad.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.elevate",
+      "permission": "contribute"
+    },
+    {
+      "command": "evidence.search",
+      "permission": "read"
+    }
+  ],
+  "deployment": {
+    "workspace": {
+      "state": "ready",
+      "freeBytes": 5771362304,
+      "freeInodes": 56390000,
+      "minFreeBytes": null,
+      "minFreeInodes": null,
+      "floorBytes": 642563761,
+      "floorInodes": 14831,
+      "floorSource": "derived",
+      "estimateHighWater": {
+        "bytes": 195089083,
+        "inodes": 14632
+      },
+      "runtimeFootprint": {
+        "bytes": 447474678,
+        "inodes": 199
+      }
+    },
+    "hostCapacity": {
+      "capacity": {
+        "cores": 10,
+        "totalBytes": 17179869184,
+        "freeBytes": 1476395008,
+        "availableBytes": 1476395008,
+        "load1m": 19,
+        "hubCores": 1,
+        "usableCores": 9,
+        "suiteCores": 9,
+        "verdictLanes": 1,
+        "coreShareBytes": 1717986918,
+        "suiteBytes": 15461882262,
+        "usableBytes": 15461882266,
+        "saturated": true,
+        "memoryTight": true
+      },
+      "used": {
+        "cores": 0,
+        "bytes": 0,
+        "leases": {
+          "verify": 0,
+          "worker": 23
+        }
+      },
+      "queue": [],
+      "roomForVerify": false,
+      "roomForWorker": true
+    },
+    "served": {
+      "commit": "65c913f0df143ec8d01f999047ca5cfdf6f03a51",
+      "branch": null,
+      "target": {
+        "ref": "origin/master",
+        "commit": "3d851f9f6e60bdb0e4a8b3ae632692ec56fe225d",
+        "behind": 18
+      }
+    }
+  },
+  "cursor": 167667,
+  "projection": "outline",
+  "watch": {
+    "reason": "event",
+    "afterSeq": 167408,
+    "matchedSeq": 167637,
+    "pendingSince": null,
+    "event": {
+      "seq": 167409,
+      "kind": "driver.recorded",
+      "payloadKind": "swarm.operation_completed"
+    },
+    "events": [
+      {
+        "seq": 167409,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.operation_completed"
+      },
+      {
+        "seq": 167463,
+        "kind": "evidence.mapped",
+        "payloadKind": "content.message"
+      },
+      {
+        "seq": 167468,
+        "kind": "evidence.mapped",
+        "payloadKind": "content.message"
+      },
+      {
+        "seq": 167496,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.operation_requested"
+      },
+      {
+        "seq": 167498,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.notification_sent"
+      },
+      {
+        "seq": 167499,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.operation_completed"
+      },
+      {
+        "seq": 167515,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.operation_requested"
+      },
+      {
+        "seq": 167517,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.notification_sent"
+      },
+      {
+        "seq": 167518,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.operation_completed"
+      },
+      {
+        "seq": 167538,
+        "kind": "evidence.mapped",
+        "payloadKind": "content.message"
+      },
+      {
+        "seq": 167581,
+        "kind": "swarm.contribution_recorded",
+        "payloadKind": null
+      },
+      {
+        "seq": 167582,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.operation_completed"
+      },
+      {
+        "seq": 167597,
+        "kind": "evidence.mapped",
+        "payloadKind": "content.message"
+      },
+      {
+        "seq": 167602,
+        "kind": "swarm.participant_left",
+        "payloadKind": null
+      },
+      {
+        "seq": 167603,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.operation_completed"
+      },
+      {
+        "seq": 167619,
+        "kind": "evidence.mapped",
+        "payloadKind": "content.message"
+      },
+      {
+        "seq": 167622,
+        "kind": "evidence.mapped",
+        "payloadKind": "lifecycle.turn_completed"
+      },
+      {
+        "seq": 167623,
+        "kind": "evidence.mapped",
+        "payloadKind": "turn.paused"
+      },
+      {
+        "seq": 167637,
+        "kind": "driver.recorded",
+        "payloadKind": "swarm.operation_refused"
+      }
+    ]
+  }
+}

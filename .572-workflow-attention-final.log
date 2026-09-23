@@ -1,0 +1,10 @@
+✔ W3-answer-bounds (stage[policy-missing:answer-decisions]): a non-matching pattern defers; an invalid optionId refuses — never a wrong auto-commit (B5) (3691.465958ms)
+✔ 572-workflow: an unhandled checkpoint returns to its caller with the member live (2499.612167ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6463.826041

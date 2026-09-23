@@ -1,0 +1,27 @@
+✔ Claude delivery writes exactly one newline-terminated cross-session frame (22.182125ms)
+✔ Claude agent discovery selects the requested live session (0.63475ms)
+✔ Claude discovery and socket failures refuse with their own typed codes (2.551541ms)
+✔ wake capability table is closed, sorted, coherent, and covers route harnesses (8.0695ms)
+✔ root wake delivery sends and records once per frame identity (4.176125ms)
+✔ concurrent delivery calls share the one in-flight attempt (6.00475ms)
+✔ root wake delivery records a typed failure and no delivered row (0.687834ms)
+✔ root delivery receipt schemas are discoverable runtime driver rows (0.224ms)
+✔ every harness with no operator-session delivery channel refuses typed (0.798875ms)
+✔ 564-w1: a resident root_owed attachment writes one Claude turn frame and a replay sends nothing (85.9875ms)
+✔ 564-w4: a contribution-less turn_reported row crosses the resident attachment exactly once (50.975792ms)
+✔ 564-w2: a failed resident delivery records its typed code and remains swarm attention (82.7765ms)
+✔ 564-w3: deployment open refuses every configured harness that cannot start an idle turn (784.483625ms)
+✔ 572-w4: a real parentless turn report reaches the resident root transport once (46.258125ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run run-plain) (33.247792ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run null) (34.94375ms)
+✔ 572-w6: a failed root send retries without a new report and preserves message identity (48.488833ms)
+✔ 572-serve1: the resident root environment names one validated session (6.187041ms)
+✔ 572-serve2: baton serve validates its configured root before opening the resident (1323.436875ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4105.51225

@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 165815,
+      "ts": "2026-09-23T15:49:59.170Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 165815,
+        "ts": "2026-09-23T15:49:59.170Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:0aed4a032c53a982bfc405b583548efafb3a301449f900cde0c59142b639ff37",
+    "seq": 165815,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:cd1516ccbfb4701599ec8b1a0ccbcf25209383b6f8af67b14630c3ca07530be3",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:49:56.416Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 165814,
+      "kind": "steer",
+      "ts": "2026-09-23T15:49:58.904Z",
+      "messageId": "message:cd1516ccbfb4701599ec8b1a0ccbcf25209383b6f8af67b14630c3ca07530be3"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "32b retry acceptance noted; it is included in contribution-501d1118 at459470c3. Union now also merges cleanup64e67ce6, removes obsolete issue500 progressNudgeWindow assertions (capacity7/7). New concrete recovery gap fixed pending commit: _continueRecoveredSeats catches each failed start, records continuation_failed root attention (transport admits contribution-less row), continues other seats, leaves failed successor pending. New572-l proves other seat starts, root transport gets failure, repeated view dedupes alert, then recovered start succeeds. Root replay/cursor contract added docs54. Please review after upcoming commit."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "bdfce59a-5832-4191-b13d-9dea97097242"
+  }
+}

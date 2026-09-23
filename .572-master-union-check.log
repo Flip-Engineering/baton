@@ -1,0 +1,21 @@
+✔ 564-w1: a resident root_owed attachment writes one Claude turn frame and a replay sends nothing (302.44225ms)
+✔ 564-w4: a contribution-less turn_reported row crosses the resident attachment exactly once (136.470917ms)
+✔ 564-w2: a failed resident delivery records its typed code and remains swarm attention (128.325417ms)
+✔ 564-w3: deployment open refuses every configured harness that cannot start an idle turn (962.322625ms)
+✔ 572-w4: a real parentless turn report reaches the resident root transport once (53.913583ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run run-plain) (42.714625ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run null) (42.275833ms)
+✔ 572-startup: a legacy pending successor starts at deployment open, with no command and no view (7222.863083ms)
+✔ RO1: the module imports neither monolith and contains no implicit receiver at all (111.971875ms)
+✔ RO2: every observation_port delegate keeps the member name, parameter list, and hands over the recorder (586.190292ms)
+✔ RO3: the recorder is the only recording path — census pinned, and instance patches fire across the boundary (479.078875ms)
+✔ RO4: the eleven relocated helpers moved once; exactly three are imported back (3.161291ms)
+✔ RO5: the map sees the move (4.995ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9158.95025

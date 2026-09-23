@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 168302,
+      "ts": "2026-09-23T16:03:23.373Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 168302,
+        "ts": "2026-09-23T16:03:23.373Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:87cd3f2f60130ccf7c32825bb50b3d1c6749ba048d6b7c95ed4075f2480b38ae",
+    "seq": 168302,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:90f791217e82ea69ca35567c995907d2d1be4582466b22d76dd4bebc41e7def2",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T16:03:23.197Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 168301,
+      "kind": "steer",
+      "ts": "2026-09-23T16:03:23.369Z",
+      "messageId": "message:90f791217e82ea69ca35567c995907d2d1be4582466b22d76dd4bebc41e7def2"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Coordinator cleanup ownership is clear; proceed narrow retry_pending preservation. Keep wake/recover/reroute ordering after exact preservation so concurrent native fault callback cannot start successor on checkout being removed. Also cover no-native-sessionRef provider crashes: preserve work and restart/reroute through a supported fresh-session path rather than leaving generic retry_pending forever. Generic condition rechecks must run autonomously, not await a user recover command. Recovery refusal counters must not become terminal task fate."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "52343d4a-46ce-41af-9327-6cf8dc652fc6"
+  }
+}

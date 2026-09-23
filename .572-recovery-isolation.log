@@ -1,0 +1,38 @@
+✔ 572-a: a successor starts immediately under the default policy (2821.320041ms)
+✔ 572-b: a stored manual policy continues a successor (2725.47725ms)
+✔ 572-c: a turn report reaches the parent once (2149.731125ms)
+✔ 572-d: a top-level turn records a root-addressed report (1117.234584ms)
+✔ 572-e: an older pending successor starts on recovery (4563.38325ms)
+✔ 572-f: default participants can review peers and land contributions (3182.132ms)
+✔ 572-g: unavailable guidance records the delivery refusal (1530.250583ms)
+✔ 572-h: a refused parent delivery addresses the report to root (2411.176292ms)
+✔ 572-i: an invalid turn identity refuses before recording or delivery (1459.7405ms)
+✔ 572-j: a dead parent routes the report to root (2535.340792ms)
+✔ 572-j: a stopping parent routes the report to root (2184.10125ms)
+✔ 572-k: the root reconciler runs at the report boundary (1281.592ms)
+✖ 572-l: a failed successor wakes root and preserves recovery for other seats (4588.791708ms)
+✔ 572-startup: a legacy pending successor starts at deployment open, with no command and no view (8841.443583ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 13
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 45204.543959
+
+✖ failing tests:
+
+test at test/issue572-continuation.test.mjs:293:1
+✖ 572-l: a failed successor wakes root and preserves recovery for other seats (4588.791708ms)
+  AssertionError [ERR_ASSERTION]: The "string" argument must be of type string. Received type undefined (undefined)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/issue572-continuation.test.mjs:327:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /continuation_failed/,
+    operator: 'match',
+    diff: 'simple'
+  }

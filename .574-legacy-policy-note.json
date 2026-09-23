@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 166517,
+      "ts": "2026-09-23T15:52:42.560Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 166517,
+        "ts": "2026-09-23T15:52:42.560Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:9838dcfa8c32d796eab80f524b68d11680e0cd464fe8138f0808fd493f24466b",
+    "seq": 166517,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:96bf4f223be7da564597f029c04441defa30f0e922fdc44e8ac8c07512a94d92",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:52:40.717Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 166516,
+      "kind": "steer",
+      "ts": "2026-09-23T15:52:42.502Z",
+      "messageId": "message:96bf4f223be7da564597f029c04441defa30f0e922fdc44e8ac8c07512a94d92"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "One #574 compatibility point: resident fold currently stores rerouteOnProviderFault:manual on this existing swarm. Changing only new-swarm default leaves existing swarms stuck. Address persisted manual policy under new ruling (migrate/normalize or make fault recovery automatic independent of old manual field); remove tests pinning required external reroute. In-flight current codex seats remain valid; exclude codex only when choosing new/replacement route. Root report does not need a contribution identity."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "96c6eeb0-1c5a-460e-a44e-f4d7621b778f"
+  }
+}

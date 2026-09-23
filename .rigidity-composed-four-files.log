@@ -1,0 +1,37 @@
+✔ 418-L1: the real tree is green — every bound-shaped constant is declared, exempted or named (498.837542ms)
+✔ 418-L2: a bound-shaped constant in a module is flagged; the registry/env/pragma/comment channels pass (5.531542ms)
+✔ 418-L3: multiplied KiB/MiB products flag; sub-KiB literals do not (1.0925ms)
+✔ 418-L4: a table entry whose line vanished is reported stale (1.192958ms)
+✔ 564-w1: a resident root_owed attachment writes one Claude turn frame and a replay sends nothing (90.378208ms)
+✔ 564-w4: a contribution-less turn_reported row crosses the resident attachment exactly once (49.342375ms)
+✔ 564-w2: a failed resident delivery records its typed code and remains swarm attention (101.490042ms)
+✔ 564-w3: deployment open refuses every configured harness that cannot start an idle turn (906.369ms)
+✔ 572-w4: a real parentless turn report reaches the resident root transport once (36.307583ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run run-plain) (30.647875ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run null) (38.042ms)
+✔ 572-a: a successor starts immediately under the default policy (1986.606792ms)
+✔ 572-b: a stored manual policy continues a successor (1812.6315ms)
+✔ 572-c: a turn report reaches the parent once (1647.557917ms)
+✔ 572-d: a top-level turn records a root-addressed report (1037.146709ms)
+✔ 572-e: an older pending successor starts on recovery (2988.820583ms)
+✔ 572-f: default participants can review peers and land contributions (2437.314958ms)
+✔ 572-g: unavailable guidance records the delivery refusal (1246.78725ms)
+✔ 572-h: a refused parent delivery addresses the report to root (2205.648375ms)
+✔ 572-i: an invalid turn identity refuses before recording or delivery (1119.478667ms)
+✔ 572-j: a dead parent routes the report to root (1922.079ms)
+✔ 572-j: a stopping parent routes the report to root (2106.300417ms)
+✔ 572-k: the root reconciler runs at the report boundary (1490.358459ms)
+✔ SH1 (#40): the sweeper removes exactly the suite roots whose recorded owner is dead (226.274583ms)
+✔ SH2 (#40): the sweeper tolerates a missing parent directory and an empty one (1.545167ms)
+✔ SH5 (#571): fixture snapshots are limited to a suite-owned per-file temp directory (3.938792ms)
+✔ SH6 (#571): the runner fails and reaps a timed-out file that leaves a fixture directory (11363.029041ms)
+✔ SH3 (#40): a watchdog-armed child terminates itself after its parent dies unhandled (1018.418416ms)
+✔ SH4 (#40): a child orphaned before its watchdog can even arm still reaps itself (the boot race) (320.5405ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 38493.386833

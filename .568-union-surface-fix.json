@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 163699,
+      "ts": "2026-09-23T15:37:13.210Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 163699,
+        "ts": "2026-09-23T15:37:13.210Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:927d06a49083af18d76ee75578d403c44dbd6ca83377d7e01131962bdd3e7cba",
+    "seq": 163699,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:37:12.218Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Your corrected #568 now passes combined28/28 with measured capacity+numeric lint in my landing union. Found surface-gate custody-predicate rejection: runtime-isolation.mjs line157 duplicates ws-[hex32] regex. I fixed union to import/use isPhysicalWorkspaceId from shared-workspace-custody.mjs. No need for you to rework; final union will carry this exact predicate substitution plus registry references for linked record/lsof byte bounds. Reviewer informed next."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "b67e141d-0dcb-42e3-82ae-5126977c1b3e"
+  }
+}

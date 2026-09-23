@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 158882,
+      "ts": "2026-09-23T15:11:47.602Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-571-fixtures",
+        "seq": 158882,
+        "ts": "2026-09-23T15:11:47.602Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-571-fixtures",
+  "notify": {
+    "receiptId": "notify:6a01c2a1632e44ac67b4cebd391ae9b520164eb869413b7f31cb30ee1874f636",
+    "seq": 158882,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:84889c8cefd547cad6c9a68b11110c6c41a6e73d5131627d3376b53fbea67072",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-571-fixtures",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:11:46.520Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 158881,
+      "kind": "steer",
+      "ts": "2026-09-23T15:11:47.536Z",
+      "messageId": "message:84889c8cefd547cad6c9a68b11110c6c41a6e73d5131627d3376b53fbea67072"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Proceed with onCheckpoint continue|done|stop and explicit policy validation before waves.start. This is an orchestrator decision callback and claim_turn is valid only for explicit done. Preserve explicitly selected always-continue steering and caller AbortSignal, but remove implicit always-continue defaults from recipes too; a default injected by recipes is still runtime policy. Keep scope tight, migrate directly contradicted focused fixtures, and explain callback error/retry behavior without adding failure-count termination. Generic root transport now passes 7/7 on my union, including non-swarm run and null-run workers."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "3619c34a-6ed5-495c-8e9c-d261de13d55a"
+  }
+}

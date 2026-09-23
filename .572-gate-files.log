@@ -1,0 +1,572 @@
+✔ N1: a native completion parks a VISIBLE checkpoint — no prompt, no verdict, no second turn (440.52075ms)
+✔ N2: no automatic prompt under ANY elapsed time — the pause seam uses no clock (311.408166ms)
+✔ N3: the reported loop cannot reproduce — repeated completions and wire noise mint no prompt and no claim (251.33775ms)
+✔ N4: an orchestrator nudge is a real continuation — a fresh turn on the SAME task (64.555084ms)
+✔ N5: an explicit claim runs the existing verifier with or without a diff (238.16725ms)
+✔ N6: a cancelled checkpoint is not resurrected by a late native completion (111.332959ms)
+✔ TW-R1: an un-driven pausable checkpoint PARKS — durable record, visible projection, zero automatic prompts, zero verdicts (515.7095ms)
+✔ TW-R2: no automatic prompt under ANY elapsed time — the pause seam uses no clock (321.650375ms)
+✔ TW-R3: worker wire activity is not a claim — provider calls, content, and turn boundaries decide nothing (220.382792ms)
+✔ TW-R4: claim_turn runs the existing verifier and completes an in-scope claim (170.536792ms)
+✔ TW-R5: claim_turn on a diffless checkpoint runs the declared verifier (299.05875ms)
+✔ TW-R6: nudge_turn is a real continuation — fresh turn on the SAME task, and its completion re-parks (149.810625ms)
+✔ TW-R7: wait_turn is a receipt — the record stays claimable and a later claim succeeds (154.159625ms)
+✔ TW-R8: a `claim`-carded turn (the default) is untouched — it reaches the trust gate byte-identically (106.7975ms)
+✔ TW-R9: cancellation — a parked checkpoint is not resurrected by a late completion (243.340292ms)
+✔ TW-R10 (static): the retired self-driving cycle cannot quietly return, and the stall seam is untouched (4.657333ms)
+✖ TC-01 group[group-field-admission-missing]: waves.start accepts the closed group field (1378.415833ms)
+✖ TC-02 group[group-seat-missing-refusal]: group without seat refuses wave_group_seat_missing before any spawn (620.280333ms)
+✖ TC-03 group[group-route-conflict-refusal]: member-level route alongside group.seat refuses wave_group_route_conflict at BOTH seams (732.415208ms)
+✖ TC-04 cell-mint[cell-mint-missing]: a cell member starts ONE run whose plan carries size homogeneous nodes (2549.209584ms)
+✖ TC-05 cell-identity[cell-identity-missing]: size distinct worker identities under one runId, steering.registered once (2386.320833ms)
+✖ TC-06 cell-spawn[cell-spawn-refusal-missing]: a refused individual spawn is recorded cell_spawn_refused, never aborts the run (3.3025ms)
+✖ TC-11 quorum[cell-quorum-aggregate-missing]: the run-status builder derives the cell aggregate, never nodes[0] (2.3645ms)
+✖ TC-12 quorum[cell-below-quorum-terminal-missing]: lost > size - quorum fails cell_below_quorum (2.556292ms)
+✖ TC-13 quorum[cell-exact-breach-missing]: group.strict with any loss fails cell_exact_breach (2.366875ms)
+✖ TC-14 quorum[cell-member-lost-missing]: a never-started worker is receipted cell_member_lost, not a run failure (57.851416ms)
+✖ TC-20 quorum[first-node-truth-missing]: worker #1's terminal neither settles nor fails the cell (3.74575ms)
+✖ TC-20b quorum[cell-quorum-behavioral-missing]: rest/kill/degrade probes the aggregate, never nodes[0] (2286.802959ms)
+✖ TC-16 no-clock[cell-no-clock-law-missing]: the cell aggregate is the CLOSED {size,quorum,survived,lost,degraded} — no time/TTL/turn field (2419.3825ms)
+✖ TC-26 quorum[survivor-set-missing]: survived is the closed work-rest set, losses receipted in cell.lost (2.78ms)
+✖ TC-25 quiescence[quiescence-ordering-missing]: a quorum terminal mints with a LIVE member — its grant is revoked, its worktree captured checkpoint-only, the whole-run stop reaps the remainder (2479.6095ms)
+✖ TC-15 collector[collector-result-law-missing]: the collective result is the collector's capture, siblings checkpoint-only (4.043916ms)
+✖ TC-15b collector[collector-result-law-behavioral-missing]: the outcome resultSha is the COLLECTOR capture, not the first completer's (2742.655292ms)
+✖ TC-19 loop[cell-end-to-end-loop-missing]: the WHOLE #74 loop is executable — mint, size grants, broadcast, worker-attributed claim/report, one collective result (3735.599541ms)
+✔ TC-21 reply[per-member-reply-slot-missing]: a runId broadcast admits EACH delivered member's FIRST reply (193.369792ms)
+✔ TC-18a reply pin: the non-cell single-worker reply lane is byte-identical (one reply slot) (216.834625ms)
+✔ TC-09b waves.send pin: the C5 runId fan-out already receipts delivered/targetCount at the coordinator seam (205.184375ms)
+✖ TC-09 waves.send[cell-broadcast-receipt-missing]: a cell send routes the C5 runId fan-out and receipts targetCount=size (879.1165ms)
+✖ TC-10 delivery[partial-delivery-honesty-missing]: a cell send with a dead member receipts delivered < size, targetCount=size, no throw (731.341667ms)
+✖ TC-24 delivery[cell-delivery-mode-gate-missing]: a cell target admits nudge ONLY — now|turn refuse wave_cell_delivery_unsupported (3.460459ms)
+✔ TC-07 horizon[pin]: the run-scoped horizon serves every worker of the run; foreign runs refuse (55.2015ms)
+✔ D-loose pin: a non-cell member's task-tier note is invisible to siblings (the loose default is byte-identical) (378.805292ms)
+✖ D1 depth1[cell-mate-task-tier-read-missing]: a cell member's CONTEXT_READ resolves the cell's task tiers (788.792542ms)
+✖ D2 depth2[direct-shared-write-missing]: a cell member may write the shared tier directly with the cell's nonce (740.6745ms)
+✖ D3 depth3[cell-reply-visibility-missing]: a member's reply is visible to its cell-mates (1043.069917ms)
+✖ D4 depth4[shared-worktree-option-missing]: group.worktree:'shared' is admitted and one tree is captured (887.367333ms)
+✖ TC-23a trust[cell-editing-division-missing]: group.editing divides the gate — non-listed members carry analysis:true (792.447458ms)
+✔ TC-23b trust pin: analysis metadata does not affect unchanged-result verification (198.99875ms)
+✔ TC-23c trust pin: an unchanged editing member reaches verification without a policy kill (184.560458ms)
+✖ TC-08 grant[per-worker-grant-mint-missing]: a waves.send claimGrant to a cell runId mints size grants (791.798209ms)
+✖ TC-22 grant[per-member-mint-key-missing]: size mints under one send key derive per-member caller keys (805.069916ms)
+✔ TC-22b grant pin: waves.send resolves worker[0] of the runId — the seam the per-member mint must replace (4862.876833ms)
+✖ TC-17 size[cell-size-bound-missing]: MAX_CELL_SIZE is a named documented count bound of 64 (0.577667ms)
+✔ TC-17b size pin: the derivation anchors MAX_CELL_SIZE rests on exist today (1.8895ms)
+✔ TC-18 loose[pin]: a wave with no group fields is byte-identical today (3465.103375ms)
+✔ T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no verdict, no kill, no policy nudge (669.587167ms)
+✔ T2: a final turn with no diff proceeds through verification without terminating the worker (186.072583ms)
+✔ T3: a pausable checkpoint on a NO-required-effects brief is NOT accepted mid-workflow (no mid-workflow completion) (244.512084ms)
+✔ T5: an unsolicited native turn boundary does not consume a checkpoint (128.945125ms)
+✔ T6: useful scratchpad work preserves the independent checkpoint (229.113291ms)
+✔ T7: repeated scratchpad receipts do not manufacture completion authority (287.39225ms)
+✔ T7b: elapsed time never turns an unanswered checkpoint into a verdict (108.505042ms)
+✔ T8: answering a question does not consume an independent checkpoint (381.915875ms)
+✔ T8b: a pending question and checkpoint survive the retired window (209.922125ms)
+✔ T9: a drivered run gets NO policy cycle (the driver's claim cadence owns steering) (87.216292ms)
+✔ T10: explicit continuation can create another checkpoint without automatic prompts (108.602875ms)
+✔ T10b: an explicit claim runs the full gate and carries no invented expiry authority (162.416209ms)
+✔ T11: an unchanged final result produces no policy failure or gate-refusal event (259.606375ms)
+✔ T12: an analysis:true node may omit requiredEffects (the sole legitimate omission path) (4.95775ms)
+✔ T13: omitting repository_edit WITHOUT analysis:true is a plan-validation error (15.088417ms)
+✔ T14: an analysis node's edit-free final runs verification (121.764541ms)
+✔ T14b: a non-analysis node's edit-free final also runs verification (166.08075ms)
+✔ T14c: analysis does NOT exempt the violation phases — an out-of-scope diff still fails path_scope (74.752083ms)
+✔ T15: no shipped constraint or profile text coaches progress-by-diff-timing for the gate (1.609ms)
+✔ T16: path_scope violation fires identically at a final (regression pin) (105.426ms)
+✔ T17: a registered orchestrator claim runs the full gate (77.81075ms)
+ℹ tests 76
+ℹ suites 0
+ℹ pass 47
+ℹ fail 29
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 62605.883083
+
+✖ failing tests:
+
+test at impl/test/tight-cell-red.test.mjs:474:1
+✖ TC-01 group[group-field-admission-missing]: waves.start accepts the closed group field (1378.415833ms)
+  AssertionError [ERR_ASSERTION]: stage[group-field-admission-missing]: a wave member must accept the closed group field {editing?, quorum?, seat, size, strict?} (Decision 1); today the group key is refused at _normalizeWaveStart (application.mjs:11598) with application_wave_start_invalid
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:477:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:487:1
+✖ TC-02 group[group-seat-missing-refusal]: group without seat refuses wave_group_seat_missing before any spawn (620.280333ms)
+  AssertionError [ERR_ASSERTION]: stage[group-seat-missing-refusal]: the refusal is the typed wave_group_seat_missing (Decision 1); today the group key is refused wholesale at admission with application_wave_start_invalid
+  + actual - expected
+  
+  + 'application_wave_start_invalid'
+  - 'wave_group_seat_missing'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:493:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'application_wave_start_invalid',
+    expected: 'wave_group_seat_missing',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:498:1
+✖ TC-03 group[group-route-conflict-refusal]: member-level route alongside group.seat refuses wave_group_route_conflict at BOTH seams (732.415208ms)
+  AssertionError [ERR_ASSERTION]: stage[group-route-conflict-refusal]: the transport refusal is wave_group_route_conflict; today the group key is refused wholesale (application_wave_start_invalid)
+  + actual - expected
+  
+  + 'application_wave_start_invalid'
+  - 'wave_group_route_conflict'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:509:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'application_wave_start_invalid',
+    expected: 'wave_group_route_conflict',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:528:1
+✖ TC-04 cell-mint[cell-mint-missing]: a cell member starts ONE run whose plan carries size homogeneous nodes (2549.209584ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-mint-missing]: run.status().ownership.workerIds.length === size — today one member maps to one run/one worker (ground truth 2)
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:538:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:545:1
+✖ TC-05 cell-identity[cell-identity-missing]: size distinct worker identities under one runId, steering.registered once (2386.320833ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-identity-missing]: size distinct workerIds
+  
+  1 !== 3
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:555:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:572:1
+✖ TC-06 cell-spawn[cell-spawn-refusal-missing]: a refused individual spawn is recorded cell_spawn_refused, never aborts the run (3.3025ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-spawn-refusal-missing]: a worker whose spawn refused (capacity/session/policy) is recorded as a per-worker cell_spawn_refused with its spawnError — never a run failure (Decision 2, TC-06); today the run-start mint knows no per-worker spawn record (a member failure is startError, wave.mjs:208-210) — today "cell_spawn_refused" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:573:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:584:1
+✖ TC-11 quorum[cell-quorum-aggregate-missing]: the run-status builder derives the cell aggregate, never nodes[0] (2.3645ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-quorum-aggregate-missing]: the cell outcome carries the closed aggregate cell: {size, quorum, survived, lost, degraded} derived over ALL plan nodes (Decision 6); today the run-status builder reads projection.nodes[0] only (application.mjs:7393-7404, ground truth 13) — today "cell: { size" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:585:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:596:1
+✖ TC-12 quorum[cell-below-quorum-terminal-missing]: lost > size - quorum fails cell_below_quorum (2.556292ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-below-quorum-terminal-missing]: when quorum is unreachable (lost > size - quorum) the cell mints phase failed / terminalCause cell_below_quorum AT the event the count tips (Decision 6, TC-12); today the terminal vocabulary exists nowhere in application.mjs — today "cell_below_quorum" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:597:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:604:1
+✖ TC-13 quorum[cell-exact-breach-missing]: group.strict with any loss fails cell_exact_breach (2.366875ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-exact-breach-missing]: group.strict:true with any member loss fails cell_exact_breach — no degraded fallback (Decision 6, TC-13); today the code exists nowhere — today "cell_exact_breach" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:605:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:611:1
+✖ TC-14 quorum[cell-member-lost-missing]: a never-started worker is receipted cell_member_lost, not a run failure (57.851416ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-member-lost-missing]: a worker whose spawn refused is receipted cell_member_lost in cell.lost with its per-worker cause (Decision 6, TC-14); today a member whose run never started is a flat startError outcome (wave.mjs:430-431) — today "cell_member_lost" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:612:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:619:1
+✖ TC-20 quorum[first-node-truth-missing]: worker #1's terminal neither settles nor fails the cell (3.74575ms)
+  AssertionError [ERR_ASSERTION]: stage[first-node-truth-missing]: the cell outcome names degraded:true when quorum <= survived < size and mints AT the count-reached event — worker #1 resting must not settle the cell, worker #1 dying must not fail it while quorum is reachable (Decision 6, TC-20); today application.mjs derives terminal truth from nodes[0] and knows no degraded phase — today "cell.degraded" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:620:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:627:1
+✖ TC-20b quorum[cell-quorum-behavioral-missing]: rest/kill/degrade probes the aggregate, never nodes[0] (2286.802959ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-quorum-behavioral-missing]: the cell mint spawns size=3 workers under ONE runId (Decision 6); today the group-only member starts one worker
+  
+  1 !== 3
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:642:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:681:1
+✖ TC-16 no-clock[cell-no-clock-law-missing]: the cell aggregate is the CLOSED {size,quorum,survived,lost,degraded} — no time/TTL/turn field (2419.3825ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-no-clock-law-missing]: the run-status aggregate carries the cell block cell:{size,quorum,survived,lost,degraded} (Decision 6); today the run-status builder knows no cell block at all (application.mjs:7393-7404 reads nodes[0] only)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:696:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:705:1
+✖ TC-26 quorum[survivor-set-missing]: survived is the closed work-rest set, losses receipted in cell.lost (2.78ms)
+  AssertionError [ERR_ASSERTION]: stage[survivor-set-missing]: every terminal non-survivor (failed, cancelled, stopped, denied, never-started) is receipted in cell.lost with its per-member cause — stopped/denied count as LOSSES, never survivals (Decision 6, TC-26); today application.mjs has no cell.lost receipt — today "cell.lost" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:706:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:713:1
+✖ TC-25 quiescence[quiescence-ordering-missing]: a quorum terminal mints with a LIVE member — its grant is revoked, its worktree captured checkpoint-only, the whole-run stop reaps the remainder (2479.6095ms)
+  AssertionError [ERR_ASSERTION]: stage[quiescence-ordering-missing]: the cell mint spawns size=3 workers under ONE runId (Decision 6); today the group-only member starts one worker
+  
+  1 !== 3
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:728:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:782:1
+✖ TC-15 collector[collector-result-law-missing]: the collective result is the collector's capture, siblings checkpoint-only (4.043916ms)
+  AssertionError [ERR_ASSERTION]: stage[collector-result-law-missing]: the cell receipt carries cell.captures [{workerId, taskId, captureDigest}] for every member, sorted by member index — member index 0 is the collector, its pin is resultSha (Decision 7, TC-15); today the run result is the FIRST worker's capture and no per-member digest list exists (ground truth 11) — today "cell.captures" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:783:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:790:1
+✖ TC-15b collector[collector-result-law-behavioral-missing]: the outcome resultSha is the COLLECTOR capture, not the first completer's (2742.655292ms)
+  AssertionError [ERR_ASSERTION]: stage[collector-result-law-behavioral-missing]: the cell mint spawns size=2 workers under ONE runId (Decision 7); today the group-only member starts one worker
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:806:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:838:1
+✖ TC-19 loop[cell-end-to-end-loop-missing]: the WHOLE #74 loop is executable — mint, size grants, broadcast, worker-attributed claim/report, one collective result (3735.599541ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-end-to-end-loop-missing]: the cell mint spawns size=2 workers under ONE runId (Decision 6)
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:853:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1000:1
+✖ TC-09 waves.send[cell-broadcast-receipt-missing]: a cell send routes the C5 runId fan-out and receipts targetCount=size (879.1165ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-broadcast-receipt-missing]: a send to a cell runId routes the C5 runId fan-out and the receipt is {ok:true, result:'sent', messageId, delivered, targetCount:size} (Decision 5, TC-09); today the cell run cannot even be minted — blocked at the cell mint (application_wave_start_invalid) — and sendWaveMember resolves the FIRST worker (application.mjs:11523-11524) returning {result, target}
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1008:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1025:1
+✖ TC-10 delivery[partial-delivery-honesty-missing]: a cell send with a dead member receipts delivered < size, targetCount=size, no throw (731.341667ms)
+  AssertionError [ERR_ASSERTION]: stage[partial-delivery-honesty-missing]: a send to a cell runId with delivered < size returns the honest receipt ({delivered, targetCount:size}) and never throws (Decision 5, TC-10); today the cell run cannot even be minted (blocked at the cell mint, application_wave_start_invalid) and sendWaveMember resolves worker[0] only, returning {result, target} (application.mjs:11523-11524)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1032:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1067:1
+✖ TC-24 delivery[cell-delivery-mode-gate-missing]: a cell target admits nudge ONLY — now|turn refuse wave_cell_delivery_unsupported (3.460459ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-delivery-mode-gate-missing]: a delivery now|turn request for a cell target refuses wave_cell_delivery_unsupported; nudge is admitted (Decision 5, TC-24); today the code exists nowhere in application.mjs — today "wave_cell_delivery_unsupported" exists in none of impl/src/application.mjs
+      at assertTokenInApplication (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:163:10)
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1068:3)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1128:1
+✖ D1 depth1[cell-mate-task-tier-read-missing]: a cell member's CONTEXT_READ resolves the cell's task tiers (788.792542ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-mate-task-tier-read-missing]: D1 requires a cell run — the cell branch of the run-start mint (Decision 2) is the missing capability (blocked today at application_wave_start_invalid); once minted, a cell member's scratchpad CONTEXT_READ must resolve the cell's task tiers (every member's task-ephemeral entries within the cell run), bounded and UNTRUSTED-framed, with zero promotion weight (v1.2 D-depth-1). A wrong implementation that mints the cell but leaves the read port on (runId, ['shared']) fails the member-read assertion that follows the mint.
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1131:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1158:1
+✖ D2 depth2[direct-shared-write-missing]: a cell member may write the shared tier directly with the cell's nonce (740.6745ms)
+  AssertionError [ERR_ASSERTION]: stage[direct-shared-write-missing]: D2 requires a cell run — once minted, a cell member's direct scratchpad write must land in the SHARED tier carrying the cell's nonce (today every worker write scopes worker:<workerId>, coordination-store.mjs:13844; the fence CAS stays, idempotency keys stay per-member, and a direct write never mints a KG candidate — v1.2 D-depth-2). A wrong implementation that never admits the shared-tier write fails here; today blocked at the cell mint (application_wave_start_invalid).
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1161:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1198:1
+✖ D3 depth3[cell-reply-visibility-missing]: a member's reply is visible to its cell-mates (1043.069917ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-reply-visibility-missing]: D3 requires a cell run — once minted, a member's reply to the cell broadcast is visible to its cell-mates (the reply receipt cites the cell + member index; cell-mates' next frames carry the reply's framed excerpt; depth stays 1 per member — v1.2 D-depth-3). A wrong implementation that admits the reply but never mirrors it to siblings fails here; today blocked at the cell mint (application_wave_start_invalid).
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1201:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1230:1
+✖ D4 depth4[shared-worktree-option-missing]: group.worktree:'shared' is admitted and one tree is captured (887.367333ms)
+  AssertionError [ERR_ASSERTION]: stage[shared-worktree-option-missing]: the closed group field gains the optional worktree:'shared' — one worktree, one capture, the collective diff, conflicts surfacing as cell.conflict attention items (v1.2 D-depth-4); today the group key is refused wholesale at admission, so the option cannot even be declared (application_wave_start_invalid).
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1233:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1258:1
+✖ TC-23a trust[cell-editing-division-missing]: group.editing divides the gate — non-listed members carry analysis:true (792.447458ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-editing-division-missing]: group.editing (closed sorted member indexes, default ALL) must be admitted and the cell branch must set analysis:true on every non-listed member's task brief so the per-worker gate and the #88 preflight compose UNCHANGED (Decision 2, TC-23); an idle EDITING member is still policy-killed. A wrong implementation that admits editing but never writes analysis:true to the briefs fails the brief assertion that follows; today blocked at the cell mint (application_wave_start_invalid).
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1261:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1307:1
+✖ TC-08 grant[per-worker-grant-mint-missing]: a waves.send claimGrant to a cell runId mints size grants (791.798209ms)
+  AssertionError [ERR_ASSERTION]: stage[per-worker-grant-mint-missing]: a waves.send claimGrant to a cell runId mints ONE grant PER cell worker — size grants, each bound to its own (workerId, taskId, taskVersion, processGeneration) and all sharing memberRunId = cellRunId (Decision 4, TC-08); today the mint resolves _taskByRun(runId) — the FIRST task (coordination-store.mjs:15011-15016). Blocked at the cell mint (application_wave_start_invalid).
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1310:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1340:1
+✖ TC-22 grant[per-member-mint-key-missing]: size mints under one send key derive per-member caller keys (805.069916ms)
+  AssertionError [ERR_ASSERTION]: stage[per-member-mint-key-missing]: the size per-worker mints under ONE waves.send idempotencyKey derive per-member caller keys <sendKey>:<workerId> — mint #2..N never collide (Decision 4, TC-22); today the mint lane is raw-caller-key indexed (coordination-store.mjs:14992-14995, ground truth 15). Blocked at the cell mint (application_wave_start_invalid).
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1343:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/tight-cell-red.test.mjs:1403:1
+✖ TC-17 size[cell-size-bound-missing]: MAX_CELL_SIZE is a named documented count bound of 64 (0.577667ms)
+  AssertionError [ERR_ASSERTION]: stage[cell-size-bound-missing]: MAX_CELL_SIZE is a named, documented count-based circuit breaker set to 64 — the same bound as the wave member-array ceiling (wave.mjs:163) and comfortably under the run-view worker ceiling — never an arbitrary silent limit (Decision 1, TC-17, campaign law); today the export is undefined (undefined)
+  
+  undefined !== 64
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/tight-cell-red.test.mjs:1404:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 64,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

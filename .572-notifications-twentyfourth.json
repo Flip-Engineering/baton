@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 165958,
+    "ts": "2026-09-23T15:50:47.553Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:263a05902cbdc0dab07f1a54273472cb0b907df8308978d4947e7a8c296bb88e",
+      "seq": 164989,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:d85604709b12674ba8d3b41f93abc5687194798d0f0a439f5b403e20cc05326d",
+      "from": {
+        "kind": "root",
+        "participantId": null,
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:45:24.459Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 164988,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:45:25.893Z",
+        "messageId": "message:d85604709b12674ba8d3b41f93abc5687194798d0f0a439f5b403e20cc05326d"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Root: #574 is assigned to you with #572, because it is the same class. A provider crash ends the seat because of three defaults: memberRetryAttempts null (durable retry off), TRANSIENT_TURN_RETRY_LIMIT = 1 (a hardcoded count), and rerouteOnProviderFault 'manual' (a proposed reroute waits for an orchestrator). The operator wants a crash to be recoverable by default: durable retry in place, then an automatic reroute, with the orchestrator woken with a report rather than having to act. Reroute candidates must exclude codex/* routes."
+    },
+    {
+      "receiptId": "notify:d448cba250bb7831d2e34d76d5f415fd1d39ec2775f878f10b33d75f82bae1f1",
+      "seq": 165304,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:0de1e44c61dc4a71aeca73ef53c00123b5dbaaa09d72f05d1d6ab002e972917a",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:47:07.018Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 165303,
+        "kind": "steer",
+        "ts": "2026-09-23T15:47:07.699Z",
+        "messageId": "message:0de1e44c61dc4a71aeca73ef53c00123b5dbaaa09d72f05d1d6ab002e972917a"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Policy corrections are agreed. Please commit and publish your current verified wave change now so I can compose and run union gates. The landing union has #561, limits, #571, #568 through64e67ce6, #572 plus served root config/retry. I removed two obsolete progressNudgeWindow assertions in issue500-deployment-capacity; no overlap with your files."
+    },
+    {
+      "receiptId": "notify:14121d8538567b0e742bd06e7ef7e3ac235da0ed34a36636643f8133cfd1cbca",
+      "seq": 165659,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:7eb5752f33f14bf7ff3471ab695064ffd6871078af916c12fe94b2dd71eea5d6",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:48:59.335Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 165658,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:49:00.974Z",
+        "messageId": "message:7eb5752f33f14bf7ff3471ab695064ffd6871078af916c12fe94b2dd71eea5d6"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Union reviewed: contribution-501d1118 = REJECT as recorded (seq 165596). The reviewed tip 459470c3 is RED on a file the union itself modifies, and your fix already exists one commit later.\n\nTHE RED: impl/test/issue500-deployment-capacity.test.mjs fails twice - 500-caps-A at :133 (assert driverOptions.progressNudgeWindowMs === 300_000 -> undefined) and 500-caps-H at :271 (source pin count(/progressNudgeWindowMs: 300_000,/u) -> 0). Both concern the 300 000 ms STEERING NUDGE WINDOW that #572 deliberately removed - _progressNudgeWindowMs has zero references in impl/src at this tip. Neither lane alone shows it: the limits lane was green because the window still existed there, and #572's files never touch this one, so the composition is the only place it appears.\n\nTHE FIX IS ALREADY YOURS: 910154f0 'Remove capacity assertions for the deleted steering timer', on the same branch, removes exactly those two assertions plus the 500-caps-A doc header line. I checked it is NOT an ancestor of 459470c3, and at 910154f0 that file is 7 tests / 7 pass. So: move the tip to >= 910154f0, re-run the composed set INCLUDING that file, and re-publish - a new tip is a new row and I will review it immediately.\n\nPROCESS GAP worth closing with the code: your declared gate set (29/29, 11/11, 28/28, rootretry 19/19, attention 4/4, surface 0) OMITS issue500-deployment-capacity.test.mjs, which this union modifies. Derive the union's gate set from the union's own changed files, or the next composition will hide its next break the same way.\n\nWHAT I ACCEPT: all seven accepted/reviewed tips are ancestors of the tip (#561 e1cd7be8, limits 4bad7ddf, #571 7d1c3f98, #568 09c3e202, root retry 32b4806a, root serve 972c6232, #572 slice two 3ca76f5e). The four corrections hold: isPhysicalWorkspaceId now replaces the inline regex (one predicate, not two); the registry gains wake.discovery_timeout_ms, wake.discovery_output_bytes, worktree.linked_owner_record_bytes and worktree.cwd_observation_bytes, with limits.mjs loading at v1.5.0 / 133 rows; the swap-unit ",
+      "bytes": 2442,
+      "digest": "fbd17ddd45fe55b38e3746e5246392356630f4527e5ebe5c4054e8edbe5a0850",
+      "spill": "spill:sha256:fbd17ddd45fe55b38e3746e5246392356630f4527e5ebe5c4054e8edbe5a0850"
+    },
+    {
+      "receiptId": "notify:75b0f6963b0ee048ff6eedeaf73c5da53c553d5c61c48fcef6b7b58dada4b0da",
+      "seq": 165769,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:a409a1784ab0be41513d1ef9ba9586d3989ce7c8adfa908be9fbc25b848a0f07",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:49:27.006Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 165768,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:49:28.889Z",
+        "messageId": "message:a409a1784ab0be41513d1ef9ba9586d3989ce7c8adfa908be9fbc25b848a0f07"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "(Tail of the union verdict, cut by the cap - all of it is in the review record at seq 165596.)\n\nWHAT I ACCEPT in the composition: all seven accepted/reviewed tips are ancestors of the tip (#561 e1cd7be8, limits 4bad7ddf, #571 7d1c3f98, #568 09c3e202, root retry 32b4806a, root serve 972c6232, #572 slice two 3ca76f5e). The four corrections hold: isPhysicalWorkspaceId replaces the inline regex (one predicate, not two); the registry gains wake.discovery_timeout_ms, wake.discovery_output_bytes, worktree.linked_owner_record_bytes and worktree.cwd_observation_bytes with limits.mjs loading at v1.5.0 / 133 rows; the swap-unit lint exemption is scoped and justified as unit arithmetic rather than an arbitrary bound; and at the tip view.resultpin.page and waves.harvest.onto each appear exactly once matching master, with no duplicate harvest spelling anywhere - I can confirm the end state, not the intermediate step, since 818d7407 already had one of each. My composed run: issue572-continuation plus the three issue564 root-wake files = 33 tests, 33 pass.\n\nNet: one commit (910154f0, already yours) between this row and a green composition."
+    },
+    {
+      "receiptId": "notify:0aed4a032c53a982bfc405b583548efafb3a301449f900cde0c59142b639ff37",
+      "seq": 165815,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:cd1516ccbfb4701599ec8b1a0ccbcf25209383b6f8af67b14630c3ca07530be3",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:49:56.416Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 165814,
+        "kind": "steer",
+        "ts": "2026-09-23T15:49:58.904Z",
+        "messageId": "message:cd1516ccbfb4701599ec8b1a0ccbcf25209383b6f8af67b14630c3ca07530be3"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "32b retry acceptance noted; it is included in contribution-501d1118 at459470c3. Union now also merges cleanup64e67ce6, removes obsolete issue500 progressNudgeWindow assertions (capacity7/7). New concrete recovery gap fixed pending commit: _continueRecoveredSeats catches each failed start, records continuation_failed root attention (transport admits contribution-less row), continues other seats, leaves failed successor pending. New572-l proves other seat starts, root transport gets failure, repeated view dedupes alert, then recovered start succeeds. Root replay/cursor contract added docs54. Please review after upcoming commit."
+    },
+    {
+      "receiptId": "notify:781cdba00fa239574df54f2e59508644ab5eb0a03a71cbd382dfa007853059c1",
+      "seq": 165883,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:62ae30c4e1c337398b5847b0420ad66d00bce837a0ca6fb0081c7fb1eeb17e8c",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:50:20.125Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 165882,
+        "kind": "steer",
+        "ts": "2026-09-23T15:50:22.462Z",
+        "messageId": "message:62ae30c4e1c337398b5847b0420ad66d00bce837a0ca6fb0081c7fb1eeb17e8c"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Recovery isolation correction committed344a8705 on baton/rigidity-lead8-landing-union. New572-l passes1/1; existing12 continuation rows + actual deployment startup pass13/13 in preceding batch (new row then had only wrong test helper, fixed to deliverRootWakeFrame). Surface and numeric lint pass. Please review catch/owed payload and transport closure with latest union. Resident still65c913f0,18behind;24worker leases and host saturated. No landing gate launched."
+    },
+    {
+      "receiptId": "notify:70e840498dba171d753bc498eade6717dbbe8e344eed1b4c5b6bdb93068a9f4a",
+      "seq": 165936,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:94c10927c42c95c4b1dae1654ab1c959c5274fb5e7366fcd494e2a37a450dabd",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:50:45.265Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 165935,
+        "kind": "steer",
+        "ts": "2026-09-23T15:50:46.096Z",
+        "messageId": "message:94c10927c42c95c4b1dae1654ab1c959c5274fb5e7366fcd494e2a37a450dabd"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Final #568 follow-up contribution is contribution-d74f5e6d3db0f83e4732c4e652f92eb3 seq165843, tip 64e67ce6. It supersedes d8f3cd96 and only adds named Git observation failures plus lsof result reasons/assertions. Exact final: #568 15/15, worktree 36/36, master+#561 composition N/O 2/2. Please add 64e67ce6 after your adopted #568 tip and keep your union surface/bound fixes."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

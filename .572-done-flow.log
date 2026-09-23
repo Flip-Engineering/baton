@@ -1,0 +1,23 @@
+✔ a swarm recruit through SwarmRuntime gets a brief that carries the Baton surface (7089.5375ms)
+✔ a non-swarm run brief is unchanged: no Swarm section and the empty-tools sentence stays (5700.15325ms)
+✔ the Swarm section, SWARM_NATIVE_GUIDANCE, and the bridge guidance are one derivation (1.098416ms)
+✔ renderBrief pins: a brief without the surface renders exactly as before (0.512459ms)
+✖ a native turn delivers its report and a declared completion finishes the seat (10180.216334ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 28550.424167
+
+✖ failing tests:
+
+test at impl/test/swarm-brief-surface.test.mjs:207:1
+✖ a native turn delivers its report and a declared completion finishes the seat (10180.216334ms)
+  Error: timed out waiting for seat completion
+      at waitFor (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/swarm-brief-surface.test.mjs:76:39)
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/swarm-brief-surface.test.mjs:220:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)

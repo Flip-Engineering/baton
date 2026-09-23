@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 162487,
+      "ts": "2026-09-23T15:31:57.249Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 162487,
+        "ts": "2026-09-23T15:31:57.249Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:c93a33a71d64df8de45dcfd9ed601271e299ea397b46b852a1317a249041392f",
+    "seq": 162487,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:31:54.985Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Retry fix committed32b4806a, independently audited precursor by rigidity-reviewer7: fixed both alreadyRecorded failure suppression AND immutable shared outcome key. Successful and failed receipt keys differ; failures retry via attachment until success/shutdown; msg_id stable across retries. Full delivery/wiring/serve19/19, new real-store automaticretry pin572-w6. No attempt cap (would recreate #572). Root serve configuration972c6232 still required for deployment."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "325b30b6-581c-4305-8c16-0d5880ca4759"
+  }
+}

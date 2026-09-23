@@ -1,0 +1,15 @@
+✔ 564-w1: a resident root_owed attachment writes one Claude turn frame and a replay sends nothing (235.536709ms)
+✔ 564-w4: a contribution-less turn_reported row crosses the resident attachment exactly once (76.359375ms)
+✔ 564-w2: a failed resident delivery records its typed code and remains swarm attention (152.509959ms)
+✔ 564-w3: deployment open refuses every configured harness that cannot start an idle turn (1014.548459ms)
+✔ 572-w4: a real parentless turn report reaches the resident root transport once (54.568709ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run run-plain) (42.023333ms)
+✔ 572-w5: a non-swarm turn report reaches root once (run null) (44.845333ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3688.589667

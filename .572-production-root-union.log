@@ -1,0 +1,16 @@
+✔ 564-w1: a resident root_owed attachment writes one Claude turn frame and a replay sends nothing (253.592875ms)
+✔ 564-w4: a contribution-less turn_reported row crosses the resident attachment exactly once (53.033958ms)
+✔ 564-w2: a failed resident delivery records its typed code and remains swarm attention (156.962875ms)
+✔ 564-w3: deployment open refuses every configured harness that cannot start an idle turn (1012.314041ms)
+✔ 572-w4: a real parentless turn report reaches the resident root transport once (54.704875ms)
+✔ 564-c1: the capability rows cover exactly the named harnesses, sorted, unknown named (6.47225ms)
+✔ 564-c2: the SERVED doctor carries the capability rows of the harnesses this deployment runs (2060.747916ms)
+✔ 564-c3: every harness the deployment vocabulary names has a capability row (0.549208ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4117.632667

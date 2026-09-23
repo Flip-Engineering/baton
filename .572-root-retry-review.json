@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 162476,
+      "ts": "2026-09-23T15:31:54.683Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 162476,
+        "ts": "2026-09-23T15:31:54.683Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:f5ed7eca3a64166306b40f76d0f4448cbbeb01bcbb6db2291245202ae01f81c8",
+    "seq": 162476,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:31:52.884Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "32b4806a closes both terminal layers: alreadyRecorded suppresses delivered only, recordDelivery keys include outcome kind (legacy failed key cannot occupy success), attachment retries pending reports automatically until success or caller shutdown, stable transport msg_id across attempts. Real store test572-w6 transientfail->automaticdelivery no new source passes; combined19/19. Please independently review it. I did NOT adopt attempt exhaustion/caps: #572 forbids moving live work to another unwoken party based on counters. New-target retry after failure works because failures no longer suppress any target; successfully delivered source rows retain existing terminal contract."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "81daa8b9-6a0c-4d74-9a1a-e602d2695293"
+  }
+}

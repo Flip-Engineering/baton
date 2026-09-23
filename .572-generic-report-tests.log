@@ -1,0 +1,49 @@
+✔ EH1: receiver discipline and one-way imports across the five modules (182.110291ms)
+✔ EH2: the arm census is bijective, the ctx key list is frozen, and the write-back surface is one key (23.41575ms)
+✖ EH3: the recording census per module; totals equal the pre-move member (6.537292ms)
+✔ EH4: the inverse-transform residue — family functions invert to their arms (170.615584ms)
+✔ EH5: one driven instance per family records through the port (169.781166ms)
+✔ a swarm recruit through SwarmRuntime gets a brief that carries the Baton surface (4557.177125ms)
+✔ a non-swarm run brief is unchanged: no Swarm section and the empty-tools sentence stays (5229.7305ms)
+✔ the Swarm section, SWARM_NATIVE_GUIDANCE, and the bridge guidance are one derivation (1.647583ms)
+✔ renderBrief pins: a brief without the surface renders exactly as before (0.623834ms)
+✔ a native turn delivers its report and a declared completion finishes the seat (4740.615583ms)
+✔ a notification starts another turn in a seat awaiting its orchestrator (4641.579ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 10
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 20693.020583
+
+✖ failing tests:
+
+test at impl/test/runtime-event-handlers.test.mjs:148:1
+✖ EH3: the recording census per module; totals equal the pre-move member (6.537292ms)
+  AssertionError [ERR_ASSERTION]: the five modules record exactly what the pre-move _handleEvent recorded
+  + actual - expected
+  
+    {
+      append: 10,
+      coordination: 5,
+      mapEvent: 20,
+  +   recordDriver: 12
+  -   recordDriver: 11
+    }
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/runtime-event-handlers.test.mjs:161:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { append: 10, mapEvent: 20, recordDriver: 12, coordination: 5 },
+    expected: { append: 10, mapEvent: 20, recordDriver: 11, coordination: 5 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

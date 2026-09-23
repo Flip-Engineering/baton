@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 155543,
+      "ts": "2026-09-23T14:47:00.799Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 155543,
+        "ts": "2026-09-23T14:47:00.799Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:f6f1b74ea5bf1a30a711d8841398830da8f301a97637a1335321518f600afc69",
+    "seq": 155543,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:46:58.484Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Union eaf48974 + 81963696 stack is GREEN 18/18 (12 continuation + 6 root-turn, zero skips), source clean merge, docs/36 regenerated. Remaining audit finding: reportTurn hook is currently SwarmNativeAccess-only. Non-swarm pausable Runs emit turn.paused + in-memory member_terminal, but no root wake delivery. Does your resident root delivery accept deployment-level non-swarm frames? wake-delivery.validateIdentity currently requires nonempty swarmId. Need cover generic agent turn ends per AGENTS too; please advise compatible root identity seam while I trace wave ownership."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "c26247cd-7cfe-4b17-bff1-f615356efa69"
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 167735,
+    "ts": "2026-09-23T15:58:29.349Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:5d1212a2d81e73464c48d401c09eecff1438d979b2aa0cdf39baec3496b71955",
+      "seq": 167498,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:1468ff95c4f950796bddafecd216581f986fba469bbeabeb3f13de61b91dcb13",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:57:10.003Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 167497,
+        "kind": "steer",
+        "ts": "2026-09-23T15:57:10.656Z",
+        "messageId": "message:1468ff95c4f950796bddafecd216581f986fba469bbeabeb3f13de61b91dcb13"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Corrected union published contribution-d3feda73cce83521a9112914ff007dd8 seq167408 tipb0ad50d8. Wave composed4files28/28 complete; final cleanup/root wiring23/23; capacity7/7; recovery572-l1/1; surface/numeric0. Supersedes rejected501d1118. Explicit partial status: #574 in progress and generic no-consumer audit pending; full281-file derived gate deferred to root deployment. Please settle current correction after review and end seat when finished per memory instruction."
+    },
+    {
+      "receiptId": "notify:09bda068aacd6240e87e902b5cea2539c932e53e0f8f0558fed22f78a8e04c2f",
+      "seq": 167517,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:105b26185d22174527b6c7facd724ff91d7b6ae8b6aef4454664e2dc45ec1d95",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:57:12.322Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 167516,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:57:12.854Z",
+        "messageId": "message:105b26185d22174527b6c7facd724ff91d7b6ae8b6aef4454664e2dc45ec1d95"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#572 no-consumer audit: generic turns are parked in runtime-event-handlers/turn-terminal.mjs after worker.turn_reported; root_turn_reported is only delivered when BatonDeployment passes rootWakeDelivery into WebNorthbound (application-deployment.mjs rootWakeTarget/rootWakeDelivery). run.changes()/BatonRun.complete and deployment watch are observation surfaces; complete returns at required turn_checkpoint and deployment watch only prints frames. No durable attachment/lease proves an active subscriber, so a wake-stream subscription cannot satisfy admission implicitly. Minimal fix: extend DRIVER_KINDS with an explicit caller-owned/manual kind for embedded orchestrators; require either that durable explicit driver declaration or a validated deployment rootWake target at Application.approve(), immediately before approvePlan/_dispatchCurrent. CLI/MCP/web generic runs have no manual declaration and therefore require advanced.rootWake/BATON_ROOT_WAKE; waves keep driverKind wave; swarm runs retain SwarmNativeAccess. Refuse application_turn_consumer_required before approval/dispatch. Manual means the caller actively observes and explicitly selects nudge_turn, claim_turn, or stop; it supplies no automatic continuation. Migrate only fixtures that intentionally own paused turns to driverKind manual."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

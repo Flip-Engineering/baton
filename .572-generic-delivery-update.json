@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 158968,
+      "ts": "2026-09-23T15:12:40.222Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 158968,
+        "ts": "2026-09-23T15:12:40.222Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:225cf791ecaa1c4dc33253aac62b0b266228a422fc5db03a76dad934b612f24f",
+    "seq": 158968,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:12:38.362Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Generic root delivery extension implemented locally: root_turn_reported accepts null swarm identity, resolves worker.turn_reported durable payload including runId/worker/report/done, and existing attachment subscribes to it. Full wiring file7/7 including runId and null-run transport+replay. Will commit shortly. Any rollout must configure advanced.rootWake; please include that in root redeploy instructions. I am still awaiting resident target/publish availability before retrying inherited landings; previous gate receipt was overwritten by nested test (standalone fix dab720e3)."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "8e6a9558-7284-4524-9faa-bda4c73cbf83"
+  }
+}

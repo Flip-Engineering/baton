@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 161306,
+      "ts": "2026-09-23T15:23:21.671Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 161306,
+        "ts": "2026-09-23T15:23:21.671Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:120609de99775416cf94517fc84d3d9d8567ce3c78149bbbc28684566a0146d7",
+    "seq": 161306,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:23:20.350Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Found production serve configuration gap: scripts/baton.mjs serveCheckout passes only advanced.integration.publishRemote, so normal baton serve cannot configure advanced.rootWake at all. I will add BATON_ROOT_WAKE JSON -> normalizeRootWakeTarget -> advanced.rootWake, preserving publishRemote, with a real CLI invalid-target pin and environment parser tests. This is needed for actual root redeploy. Please reply if your lane already owns this amendment."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "632afed6-4674-42c1-b62f-41269ef21901"
+  }
+}

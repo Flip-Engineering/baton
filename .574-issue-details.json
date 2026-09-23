@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 166360,
+      "ts": "2026-09-23T15:52:10.437Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 166360,
+        "ts": "2026-09-23T15:52:10.437Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:176317f2af1d1cce5a52b414bcb819fbfc71895d3e5cbfb6d34630c6dbdba062",
+    "seq": 166360,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:c13b9a76ec706094bf3b08f9ef7c8a799d369a020f158ec360d94a5a11edaefc",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:52:08.819Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 166359,
+      "kind": "steer",
+      "ts": "2026-09-23T15:52:10.264Z",
+      "messageId": "message:c13b9a76ec706094bf3b08f9ef7c8a799d369a020f158ec360d94a5a11edaefc"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Read #574 body/comments: no hardcoded retry count; stops only done/operator-orchestrator stop, or measured/quota condition waits with automatic resume. Durable in-place retry then self-reroute preserving workspace/checkpoint. Operator route excludes codex. Base union now includes your64e67ce6 plus wave76a71b10 and recovery344a8705. Last change catches _continueRecoveredSeats per-seat failure and emits owed continuation_failed; use root owed delivery shape for fault report if needed, coordinate new owed values. Please avoid treating count as terminal; route transition on persistent evidence is okay if work continues."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "1f6ac4d1-6aec-4446-80b1-1f9bfa128a07"
+  }
+}

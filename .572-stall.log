@@ -1,0 +1,100 @@
+✔ RO1: the module imports neither monolith and contains no implicit receiver at all (766.871834ms)
+✔ RO2: every observation_port delegate keeps the member name, parameter list, and hands over the recorder (1515.695209ms)
+✔ RO3: the recorder is the only recording path — census pinned, and instance patches fire across the boundary (1716.784708ms)
+✔ RO4: the eleven relocated helpers moved once; exactly three are imported back (3.036416ms)
+✔ RO5: the map sees the move (3.959459ms)
+✔ RR1: the recovery module imports neither monolith and keeps no implicit receiver (3219.598584ms)
+✖ RR2: every recovery_port delegate keeps the member name, parameter list, and hands over the recorder (142.045292ms)
+✔ RR3: a fake recorder observes exactly what _replay records, and log.append return values key the writes (37.583333ms)
+✔ RR4: the relocated primitives moved once and the coordinator export surface is unchanged (2.382375ms)
+✔ RR7 (slice 12): the base-layer declarations are defined once, and the observation surface holds by identity (10.754833ms)
+✖ RR5: the map sees the move — every recovery_port delegate is recovery, and the module is a target (224.053166ms)
+✔ RR6: the coordinator wires the port and the public verbs keep their shape (12164.454542ms)
+✔ A1 SW-01 (RED): DEFAULT_WATCHDOG is a separately-frozen deployment constant strictly smaller than the wall (4.185542ms)
+✔ A2 SW-11 (RED): a stallMs at/above the node wall refuses at admission with watchdog_stall_exceeds_wall (712.904916ms)
+✔ A3 SW-11 (RED): a non-positive stallMs refuses at admission with watchdog_stall_exceeds_wall (567.225292ms)
+✔ A4 SW-11 (RED): a non-integer stallMs refuses at admission with watchdog_stall_exceeds_wall (487.46175ms)
+✔ A5 SW-12 (RED): the resolved watchdog config is disclosed byte-stable on the run status surface (7891.561875ms)
+✔ B1 SW-04 (RED): REARM_KINDS is the frozen closed four-kind set in ACTUAL sorted order (0.780166ms)
+✔ B2 SW-05 (RED): a scratchpad-note stream (the chatty-idler farm class) buys zero re-arms — the stall fires despite the notes (266.254667ms)
+✔ B3 SW-03 (RED): a heartbeat/tokens/provider-call stream never re-arms — the any-event re-arm is killed (279.68375ms)
+✔ B4 (PIN): a worker-stream resolution stream never stalls — the closed set keeps the resolution kinds live (1065.863084ms)
+✔ B5 (PIN): an orchestrator steer/nudge stream never re-arms a worker liveness — the stall fires on schedule (165.137041ms)
+✔ C1 (RED): a lifecycle.turn_started sets handle.turnInFlight — the per-handle liveness marker (122.197166ms)
+✔ C2 (RED): a turn in flight with ZERO events for >stallMs is never declared stalled (516.084041ms)
+✔ C3 (PIN): a slow-but-productive worker — a long in-flight turn with provider activity — is never declared stalled (957.393875ms)
+✖ C4 (RED): a turn that settles clears turnInFlight — the zombie mirror of the stall bug dies here (274.705125ms)
+✔ D1 SW-08 (RED): a null-deadline blocking question gets a bounded default; expiry escalates, releases, never closes (185.429292ms)
+✔ D2 SW-08 (RED): an operator-acked interaction extends its effective deadline and is skipped by the sweep (147.403625ms)
+✔ D3 SW-06 (PIN): a blocked worker reads honest null + blockedInteraction — never a waiting kind (4772.495833ms)
+✔ D4 SW-07 (PIN): a blocked worker is never stall-declared — the G3 non-working refusal is retained (400.068292ms)
+✔ D5 SW-08 (PIN): an escalated blocking question stays answerable — a late operator answer lands, never already_resolved (35.100708ms)
+✔ E1 SW-02 (RED): the stall declaration names its basis — no_progress_evidence, never "too slow" (174.830916ms)
+✔ E2 SW-09 (RED): the ladder escalates first — the stall_declared reason lands, never a direct stop (187.981459ms)
+✔ E8 SW-02 (PIN): the stalled worker reads waitingOn.provider_stalled — and a later worker-actor REARM clears it (7040.582208ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 31
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 33255.472208
+
+✖ failing tests:
+
+test at impl/test/runtime-recovery.test.mjs:86:1
+✖ RR2: every recovery_port delegate keeps the member name, parameter list, and hands over the recorder (142.045292ms)
+  AssertionError [ERR_ASSERTION]: expected the 42 moved delegates in the map, found 40
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/runtime-recovery.test.mjs:92:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/runtime-recovery.test.mjs:312:1
+✖ RR5: the map sees the move — every recovery_port delegate is recovery, and the module is a target (224.053166ms)
+  AssertionError [ERR_ASSERTION]: exactly the 42 moved members delegate through the recovery port
+  
+  40 !== 42
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/runtime-recovery.test.mjs:320:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 40,
+    expected: 42,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/stall-watchdog-red.test.mjs:764:1
+✖ C4 (RED): a turn that settles clears turnInFlight — the zombie mirror of the stall bug dies here (274.705125ms)
+  AssertionError [ERR_ASSERTION]: stage[in-flight-turn-clear-missing]: the lifecycle.crashed terminal clears turnInFlight too
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/stall-watchdog-red.test.mjs:800:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

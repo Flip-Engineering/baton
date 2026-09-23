@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 156211,
+      "ts": "2026-09-23T14:52:12.769Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 156211,
+        "ts": "2026-09-23T14:52:12.769Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:225a8048ff806fc049acd0d4651a404ed139141fedf80eb57fe9a0eabd5e253b",
+    "seq": 156211,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:52:11.644Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Red proof committed on baton/rigidity-lead8-572-root-rehearsal (latest tip): new 572-w4 in issue564-root-wake-wiring-red.test.mjs invokes real reportTurnEnd, observes resident stream result, asserts root transport once. Fails with wake.root_undelivered code root_wake_source_invalid. All preceding old wiring/capability rows 6/6 green. Please take that single test hunk with the delivery fix; no need duplicate tests."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "35c535f0-9c5a-4776-84a1-30b6b3bbf739"
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 160900,
+    "ts": "2026-09-23T15:21:51.980Z"
+  },
+  "peers": [
+    {
+      "participantId": "rigidity-568-cleanup",
+      "role": "Own issue #568: Baton must reclaim worktrees it creates, including seat-created worktrees under /private/tmp. Read issue/comments; inspect implementation; imple",
+      "status": "active",
+      "route": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/scripts/**",
+        "impl/src/**",
+        "impl/test/**"
+      ],
+      "runtime": {
+        "workerId": "w-163",
+        "state": "working",
+        "turn": "running",
+        "live": true
+      },
+      "lastCheckpoint": null,
+      "lastContribution": {
+        "contributionId": "contribution-483a5b31eb23a2447728b3aeb38ad47d",
+        "seq": 160417,
+        "ts": "2026-09-23T15:19:58.778Z",
+        "workId": null
+      },
+      "holds": [],
+      "activity": {
+        "lastEventKind": "resource.tokens",
+        "lastEventAt": "2026-09-23T15:21:51.840Z",
+        "turnsCompleted": 1,
+        "contributions": 3
+      },
+      "usage": {
+        "tokens": 36799584,
+        "providerCalls": 34
+      }
+    },
+    {
+      "participantId": "rigidity-571-fixtures",
+      "role": "Issue #571 lane for swarm-rigidity-20260921: test fixtures leak temporary git repositories and directories into the system temp dir (153 fixture repos + 62 mkdt",
+      "status": "active",
+      "route": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "medium"
+      },
+      "scope": null,
+      "runtime": {
+        "workerId": "w-158",
+        "state": "working",
+        "turn": "running",
+        "live": true
+      },
+      "lastCheckpoint": null,
+      "lastContribution": {
+        "contributionId": "contribution-db2f0cd479fe0255ab7eb3b79417e37a",
+        "seq": 151640,
+        "ts": "2026-09-23T14:08:43.944Z",
+        "workId": null
+      },
+      "holds": [],
+      "activity": {
+        "lastEventKind": "resource.tokens",
+        "lastEventAt": "2026-09-23T15:21:25.964Z",
+        "turnsCompleted": 5,
+        "contributions": 4
+      },
+      "usage": {
+        "tokens": 32427878,
+        "providerCalls": 37
+      }
+    },
+    {
+      "participantId": "rigidity-reviewer7",
+      "role": "Independent reviewer seat for swarm-rigidity-20260921. Review contributions on this swarm (the lead rigidity-lead7f and its workers): read each contribution del",
+      "status": "active",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "high"
+      },
+      "scope": null,
+      "runtime": {
+        "workerId": "w-145",
+        "state": "working",
+        "turn": "running",
+        "live": true
+      },
+      "lastCheckpoint": null,
+      "lastContribution": null,
+      "holds": [],
+      "activity": {
+        "lastEventKind": "swarm.notification_sent",
+        "lastEventAt": "2026-09-23T15:21:51.516Z",
+        "turnsCompleted": 22,
+        "contributions": 0
+      },
+      "usage": {
+        "tokens": 147132087,
+        "providerCalls": "unavailable"
+      }
+    }
+  ],
+  "omitted": 0
+}

@@ -1,0 +1,71 @@
+✔ 572-a: a successor starts immediately under the default policy (2534.365375ms)
+✔ 572-b: a stored manual policy continues a successor (2308.883208ms)
+✔ 572-c: a turn report reaches the parent once (2027.389167ms)
+✔ 572-d: a top-level turn records a root-addressed report (1163.492292ms)
+✔ 572-e: an older pending successor starts on recovery (3566.84425ms)
+✔ 572-f: default participants can review peers and land contributions (2610.06275ms)
+✔ 572-g: unavailable guidance records the delivery refusal (1114.179584ms)
+✔ 572-h: a refused parent delivery addresses the report to root (2111.934209ms)
+✖ 572-i: an invalid turn identity refuses before recording or delivery (1172.680458ms)
+✔ AP1: receiver discipline — bare coordinator, no recording spelling, an acyclic leaf (738.3765ms)
+✔ AP2: the 46 delegates keep name, parameter list, arity, and forward this without a recorder (353.303416ms)
+✔ AP3: the inverse-transform residue — module bodies read as the members they were (91.933416ms)
+✖ AP4: the map sees the move — the target carries 46 surface members, _publicHandle keeps its evidence (8.894875ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 11
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19705.234792
+
+✖ failing tests:
+
+test at impl/test/issue572-continuation.test.mjs:251:1
+✖ 572-i: an invalid turn identity refuses before recording or delivery (1172.680458ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + Comparison {}
+  - Comparison {
+  -   code: 'swarm_turn_report_invalid'
+  - }
+  
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/issue572-continuation.test.mjs:255:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: construction-time refusal vocabulary error: swarm-runtime.refuse raised 'swarm_turn_report_invalid', which the swarm family's ONE closed refusal set (SWARM_REFUSAL_CODES in impl/src/swarm-refusals.mjs) does not hold — declare the code there with its HTTP class and rule instead of minting a second spelling
+        at assertSwarmRefusalCode (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/src/swarm-refusals.mjs:229:11)
+        at refuse (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/src/swarm-runtime.mjs:245:3)
+        at SwarmRuntime.reportTurnEnd (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/src/swarm-runtime.mjs:6293:7)
+        at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/issue572-continuation.test.mjs:255:34)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: { code: 'swarm_turn_report_invalid' },
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at impl/test/runtime-api.test.mjs:177:1
+✖ AP4: the map sees the move — the target carries 46 surface members, _publicHandle keeps its evidence (8.894875ms)
+  AssertionError [ERR_ASSERTION]: the coordinator keeps 45 surface delegates
+  
+  45 !== 46
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/runtime-api.test.mjs:197:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 45,
+    expected: 46,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

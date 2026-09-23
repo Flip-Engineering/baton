@@ -1,0 +1,56 @@
+✔ P1 (guard): the wave substrate exports resolve — createWave, resolveResultPin, createWaveDriver (0.677833ms)
+✔ P2 (guard): the facade surface is a frozen recipes container with run/implementContract (215.148708ms)
+✔ P3 (guard): createWaveDriver accepts the shipped steering/finalization vocabulary (204.633333ms)
+✔ P4 (guard): MAX_WAVE_PROGRESS_BYTES and the 64-member ceiling hold (0.493875ms)
+✔ W1-01 (stage[spec-validation-missing]): malformed top-level fields refuse workflow_spec_invalid naming the field — schemaVersion is an enum, verification is REMOVED (B4), and a function anywhere is data-not-code (B6) (202.560333ms)
+✔ W1-02 (stage[member-validation-missing]): member-level violations refuse workflow_member_invalid role-named — scope `..`/absolute/backslash/NUL refuses at ADMISSION (B6) (208.352792ms)
+✔ W1-03 (stage[objective-ref-invalid]): objectiveRef violations refuse workflow_objective_ref_invalid (209.193541ms)
+✔ W1-04 (stage[steering-unknown]): unknown or mistyped steering policies refuse workflow_steering_unknown naming the key — RECURSIVE closure and enum values are closed too (B6) (207.244541ms)
+✔ W1-05 (stage[harvest-invalid]): harvest violations refuse workflow_harvest_invalid — every path is containment-checked (B1/D4) (203.320416ms)
+✔ W1-06 (stage[lane-missing]): a valid spec validates and returns the D6 receipt shape (1192.330416ms)
+✔ W2-01 (stage[lane-missing]): a 4-member suite-drafting wave runs from a spec — 4 result_ready, zero per-wave driver script (5975.118333ms)
+✔ W2-phantom (stage[phantom-surfacing]): a member whose start threw is named with its typed start error — the roster never silently shrinks (1532.811542ms)
+✔ W3-approve (stage[policy-missing:approve-on-advertised-plan]): a member with an advertised plan is approved once with the advertised digest (1586.7355ms)
+✔ W3-checkpoint: the orchestrator continues a turn and explicitly completes the next (1963.318792ms)
+✔ W3-message (stage[policy-missing:message-on-spawn]): a spawn-window message is sent and receipts with a durable messageId (1622.021333ms)
+✔ W3-message-bounds (stage[policy-missing:message-on-spawn]): a non-delivering member draws at most 3 messageOnSpawn attempts then a steering_message_undelivered evidence line — a fourth retry does NOT fire (1553.387625ms)
+✔ W3-elevate (stage[policy-missing:elevate-when-notes]): a noted member elevates its scratchpad notes once (1626.66ms)
+✔ W3-elevate-bounds (stage[policy-missing:elevate-when-notes]): a member that writes notes on successive edits is elevated exactly once per wave — refires are deduped by (runId, role) (1765.521709ms)
+✔ W3-answer (stage[policy-missing:answer-decisions]): a pending decision is answered per the closed policy map and receipts (2029.194125ms)
+✖ W3-answer-bounds (stage[policy-missing:answer-decisions]): a non-matching pattern defers; an invalid optionId refuses — never a wrong auto-commit (B5) (2921.645917ms)
+✔ W3-answer-first-match (stage[policy-missing:answer-decisions]): when two policy patterns match one question, the insertion-order FIRST match wins (F7b) (1650.05175ms)
+✔ W3-answer-free (stage[policy-missing:answer-decisions]): an allowFreeResponse decision is answered with the mapped TEXT, never an optionId (F7d) (2085.734917ms)
+✔ W3-signal (stage[policy-missing:signal-on-members-done]): when a named role reaches terminal the remaining member is signaled (3265.671709ms)
+✔ W4-01 (stage[harvest-missing]): a mustContain mismatch is a NAMED harvest_miss — the post-materialization integrity check, waveId-bound to the run's authoritative sha (B1/B2/F4/F5) (1576.327125ms)
+✔ W4-02 (stage[harvest-missing]): a mixed harvest recovers the present path from the run's authoritative sha and receipts the absent path as a NAMED harvest_miss — verdict WAVE-INCOMPLETE over a manifest-digest basis (B1/B2/F4/F5/F9) (1638.072416ms)
+✔ W4-03 (stage[harvest-missing]): a byte-similar artifact WITHOUT the wave's attempt marker receipts a named harvest_miss — the D4 marker check is the attribution discriminator (F4) (1646.409917ms)
+✔ W4-04 (stage[harvest-missing]): a mustContain that MATCHES receipts ok with expected/actual — the post-check has a PASS path, never a selection mechanism (F8d) (1791.3775ms)
+✔ W4-05 (stage[harvest-match-evaluation-missing]): a mustContain matching the file's FIRST LINE receipts matched:true + code:harvest_ok and keeps the wave WAVE-OK — the success path is a NAMED harvest_ok, never a silent harvest_miss (#154) (2324.385125ms)
+✔ W5-01 (stage[lane-missing]): importing the lane module starts nothing — no wave, no spawn, no network (3.253292ms)
+✔ W6-01 (stage[lane-missing]): refusal constancy — a malformed spec refuses byte-identically on facade, CLI, and MCP (366.011208ms)
+✔ W6-02 (stage[state-failure-allowlist-missing]): the five workflow_* codes ride the MCP stateFailureCode allowlist — a workflow_* refusal never degrades to command_outcome_unknown on the wire (0.890042ms)
+✔ workflow launch preserves staged, unstaged and untracked caller work while using the configured base (2351.8455ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 31
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 44197.201375
+
+✖ failing tests:
+
+test at test/workflow-as-data-red.test.mjs:1078:1
+✖ W3-answer-bounds (stage[policy-missing:answer-decisions]): a non-matching pattern defers; an invalid optionId refuses — never a wrong auto-commit (B5) (2921.645917ms)
+  AssertionError [ERR_ASSERTION]: the answered member settles
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/workflow-as-data-red.test.mjs:1137:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

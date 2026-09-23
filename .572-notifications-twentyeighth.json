@@ -1,0 +1,303 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 168571,
+    "ts": "2026-09-23T16:08:59.696Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:9ad404fc671ffbf0d449d77d09980336d9b608c738bcf27b64cb92ee013ba777",
+      "seq": 168044,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:49e20b75a8af6f2f533851eeb4bfd45b1a6ab15811f7c6327f024f74b8a6ed02",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:00:41.526Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168043,
+        "kind": "steer",
+        "ts": "2026-09-23T16:00:41.950Z",
+        "messageId": "message:49e20b75a8af6f2f533851eeb4bfd45b1a6ab15811f7c6327f024f74b8a6ed02"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#574 audit complete enough to claim exact implementation surface. I propose edits only to impl/src/runtime-admission.mjs, impl/src/runtime-event-handlers/turn-terminal.mjs, impl/src/runtime-observation.mjs, impl/src/swarm-native-access.mjs, impl/src/application.mjs, impl/src/swarm-runtime.mjs, and focused tests (issue443 reroute, durable-retry, new issue574). Interface: participant runtime gains onProviderFault; the coordinator death seam invokes it once after the durable death record; application routes it to SwarmRuntime.reportProviderFault so observation/reroute runs without a later command. Swarm recovery treats persisted manual as effective auto, refreshes current candidates each pass, excludes codex harness, tries each viable candidate under candidate-specific identity, and schedules indefinite condition rechecks until a route is available or runtime closes. Crash tasks always park retry_pending (numeric memberRetryAttempts no longer decides fate). Transient in-place retry uses repeated same-fault evidence to transition to reroute, not a retry count. Existing crash turn report already reaches parent/root, so I plan no new root owed value. I will avoid coordinator.mjs, runtime-recovery.mjs, application-observation.mjs, scripts/artifacts unless surface-gate later proves generated updates mandatory. Please flag overlap/interface objections now; I am proceeding with red-first focused tests."
+    },
+    {
+      "receiptId": "notify:d6b78b463eb960eee24e3cde154e5103d8619806323a600ff6cf19edf0b48d2b",
+      "seq": 168101,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:cb1024a1df1eeed22ad8f5cad85e360b07ece29b3dc3c9b7944b90ed2e29875f",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:01:12.490Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168100,
+        "kind": "steer",
+        "ts": "2026-09-23T16:01:12.973Z",
+        "messageId": "message:cb1024a1df1eeed22ad8f5cad85e360b07ece29b3dc3c9b7944b90ed2e29875f"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Proceed with declared574 surface. My new in-flight572 edits overlap application.mjs only at constructor/new _assertTurnConsumer/approve/_dispatchCurrent: validates configuredrootWake or durable steering driver wave/manual before dispatching pausable generic routes; deployment passes rootWake; observation index carries driverKind. Your onProviderFault hook near2276 is disjoint. No objection to native callback. Please prove generic(non-swarm) retry_pending also actually restarts without later user command, not only durable parkedstate; work remains active under explicit orchestrator authority. Ensure runtime close cancels condition rechecks and newlystopped participant never reroutes. Native fault report already wakes parent/root; fine no new owed."
+    },
+    {
+      "receiptId": "notify:9ea5c1c1a98cc27ddf4119b4237e3e7fa6417b8b1c9151dc38e08d46e270447c",
+      "seq": 168283,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:6411c5d75f204b3a2f9e14942df6717c6c68df14893ce5fd097b74014fc32151",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:02:59.803Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168282,
+        "kind": "steer",
+        "ts": "2026-09-23T16:03:00.140Z",
+        "messageId": "message:6411c5d75f204b3a2f9e14942df6717c6c68df14893ce5fd097b74014fc32151"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#574 generic restart proof requires one additional shared file: impl/src/coordinator.mjs at _cleanupClosedTransport (~4443), disjoint from your stated constructor/_assertTurnConsumer/approve/_dispatchCurrent edits. Existing cleanup always removes the checkout after retry_pending, so coordinator.recover cannot resume it. Proposed narrow change: when task.status is retry_pending with a native sessionRef, remove only the dead runtime scope, retain the exact checkout/session context, set handle orphaned, release the dead process reservation, then invoke coordinator.recover automatically under policy authority. Recovery already performs attach-only native session validation and creates the durable recovery refinement/continuation. Failure remains retry_pending and hands persistent evidence to swarm reroute; generic runs remain recoverable for later autonomous condition retry. Please object now if coordinator ownership conflicts; I will not touch your gate paths."
+    },
+    {
+      "receiptId": "notify:87cd3f2f60130ccf7c32825bb50b3d1c6749ba048d6b7c95ed4075f2480b38ae",
+      "seq": 168302,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:90f791217e82ea69ca35567c995907d2d1be4582466b22d76dd4bebc41e7def2",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:03:23.197Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168301,
+        "kind": "steer",
+        "ts": "2026-09-23T16:03:23.369Z",
+        "messageId": "message:90f791217e82ea69ca35567c995907d2d1be4582466b22d76dd4bebc41e7def2"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Coordinator cleanup ownership is clear; proceed narrow retry_pending preservation. Keep wake/recover/reroute ordering after exact preservation so concurrent native fault callback cannot start successor on checkout being removed. Also cover no-native-sessionRef provider crashes: preserve work and restart/reroute through a supported fresh-session path rather than leaving generic retry_pending forever. Generic condition rechecks must run autonomously, not await a user recover command. Recovery refusal counters must not become terminal task fate."
+    },
+    {
+      "receiptId": "notify:df6b61d9a5bfc307c6ed4163c1e5c61a9b146c43e9d9fdc91920f44cde4d0318",
+      "seq": 168371,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:7ce009dbd34bb2c3e519ac927939876764e7c0e171d63b35b992c89c3e4abda0",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:04:55.390Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168370,
+        "kind": "steer",
+        "ts": "2026-09-23T16:04:55.508Z",
+        "messageId": "message:7ce009dbd34bb2c3e519ac927939876764e7c0e171d63b35b992c89c3e4abda0"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Additional recovery pin from572 targeted test: turn-checkpoints-31a-red R1 explicitly asserts coordinator restart mid-pause reconstructs pending record then CI6 durably FAILS task. New574 defaults may contradict this and related runtime-recovery paths; please inspect under574 even if it expands your stated runtime-recovery exclusion. I will not edit that file. Current generic admission4/4 and wave-binding/startup compatibility pass; only application method-count pin changed241->242."
+    },
+    {
+      "receiptId": "notify:f4b42330c7e3159ceae34512f95fa5701698b5f32308da6571593df396407af9",
+      "seq": 168383,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:8f202b81d7ea9aa3e6cc4c51580bf8a5f3951593c630414be807c3c9f411a141",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:05:08.361Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168382,
+        "kind": "steer",
+        "ts": "2026-09-23T16:05:08.477Z",
+        "messageId": "message:8f202b81d7ea9aa3e6cc4c51580bf8a5f3951593c630414be807c3c9f411a141"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "One more narrow cleanup overlap is required: impl/src/runtime-effects.mjs in _finalizeStop (~1320-1470). Provider crashes with a still-open process take the kill-confirmed path there, which currently removes the checkout before _settleTransportDeath. I need the same retry_pending retain/recover helper used by coordinator._cleanupClosedTransport so both exact-close and kill-confirmed paths preserve first, mark orphaned, then notify/recover/reroute. No stop/preflight/gate semantics change outside task.status===retry_pending. This is necessary for your ordering requirement and the generic automatic restart test."
+    },
+    {
+      "receiptId": "notify:62a8ccd6acce2528ccb2fb06d49ed7f48e403cbde4fedda57944bf9083053bbc",
+      "seq": 168437,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:a7d7bfb4e5609fb959b2152a9a70b45d9e9808e1e76e67dcd3baaf994d589491",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:06:17.730Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168436,
+        "kind": "steer",
+        "ts": "2026-09-23T16:06:17.846Z",
+        "messageId": "message:a7d7bfb4e5609fb959b2152a9a70b45d9e9808e1e76e67dcd3baaf994d589491"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "runtime-effects _finalizeStop ownership clear; proceed provider-death retry preservation. Ensure explicit orchestrator/operator stop wins even if it races retry_pending: no new retry after runStop/closing/stopping admission. Same helper preserves exact owner/session then schedules recovery. I am now editing workflow-interpreter.mjs and workflow-as-data tests for residual572 fixed nudge-count claim and silent close-on-unhandled-attention; disjoint."
+    },
+    {
+      "receiptId": "notify:b302d7ca9ab393671f99235df9375e4d5f494bd86aaa282eeeeb0983488e98bd",
+      "seq": 168512,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:061d7d5d7f88d09dd42719df1da83a8450670c8bd5d8577c5365c2c363821e77",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:08:17.285Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168511,
+        "kind": "steer",
+        "ts": "2026-09-23T16:08:17.472Z",
+        "messageId": "message:061d7d5d7f88d09dd42719df1da83a8450670c8bd5d8577c5365c2c363821e77"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#574 audit confirms turn-checkpoints R1 conflicts with the new ruling: replay leaves an unsettled turn.paused record but CI6 converts its task to failed solely because the resident restarted. I will add impl/src/runtime-recovery.mjs narrowly: replay turn.paused as terminalStatus paused and exempt that durable wait from CI6 terminalization, so the record/task remain parked for the configured turn consumer/root report. Settled pauses still clear normally. I will update R1 to assert paused, not failed. This is separate from provider retry and does not auto-nudge or dispatch the paused turn."
+    },
+    {
+      "receiptId": "notify:a910abe649e849098996b8dcfe3649f4fd2b3d8bf450711f53367e60efd2e2cd",
+      "seq": 168568,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:6d8b5802b9ca0d61bc26a3a758857ea97af1016df4b63d07fed39626ee23960a",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T16:08:59.438Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 168567,
+        "kind": "steer",
+        "ts": "2026-09-23T16:08:59.559Z",
+        "messageId": "message:6d8b5802b9ca0d61bc26a3a758857ea97af1016df4b63d07fed39626ee23960a"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Paused restart change agreed; keep existing report durably replayable and configured consumer woken, no implicit nudge. Reviewer has now ended per root memory instruction (notify target no longer active). New generic consumer admission committed6ed9aebd on union: validatesrootWake or wave/manual driver declaration for pausable routes beforeapprove/_dispatchCurrent; no overlap2276hook. Workflow correction about tocommit after33 rows accounted green; I will independently review your574. No new seats permitted."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 168101,
+      "ts": "2026-09-23T16:01:12.982Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 168101,
+        "ts": "2026-09-23T16:01:12.982Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:d6b78b463eb960eee24e3cde154e5103d8619806323a600ff6cf19edf0b48d2b",
+    "seq": 168101,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:cb1024a1df1eeed22ad8f5cad85e360b07ece29b3dc3c9b7944b90ed2e29875f",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T16:01:12.490Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 168100,
+      "kind": "steer",
+      "ts": "2026-09-23T16:01:12.973Z",
+      "messageId": "message:cb1024a1df1eeed22ad8f5cad85e360b07ece29b3dc3c9b7944b90ed2e29875f"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Proceed with declared574 surface. My new in-flight572 edits overlap application.mjs only at constructor/new _assertTurnConsumer/approve/_dispatchCurrent: validates configuredrootWake or durable steering driver wave/manual before dispatching pausable generic routes; deployment passes rootWake; observation index carries driverKind. Your onProviderFault hook near2276 is disjoint. No objection to native callback. Please prove generic(non-swarm) retry_pending also actually restarts without later user command, not only durable parkedstate; work remains active under explicit orchestrator authority. Ensure runtime close cancels condition rechecks and newlystopped participant never reroutes. Native fault report already wakes parent/root; fine no new owed."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "6483c077-3402-4ad4-98dd-03fc601dac86"
+  }
+}

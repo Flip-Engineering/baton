@@ -1,0 +1,13 @@
+{
+  "ok": false,
+  "error": {
+    "message": "swarm.notify names no seat that can act in swarm swarm-rigidity-20260921: rigidity-reviewer7",
+    "code": "swarm_notify_target_not_found",
+    "detail": {
+      "field": "participantId",
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921",
+      "rule": "active-seat-of-the-named-swarm"
+    }
+  }
+}

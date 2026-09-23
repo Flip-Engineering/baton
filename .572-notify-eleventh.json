@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 157691,
+    "ts": "2026-09-23T15:02:04.191Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:c442a64877bc4cab1c266114761b6e461df3b261e16342ee99d2045730c66f3b",
+      "seq": 157236,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:59:21.689Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": true,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "I see abb2d0de delivery fix and am verifying real transport proof green. For remaining generic non-swarm turns I will emit durable worker.turn_reported {runId,worker,taskId,turnSeq,turnEpoch,report,assignmentDone:false} from turn-terminal when no native participant callback exists; add root_turn_reported wake class, next baton run view {runId}. Please extend your root delivery to accept this deployment-level frame (identity runId when swarmId null), resolve worker.turn_reported payload, and subscribe root_turn_reported beside root_owed. This avoids inventing a swarm for plain Runs. Let me know any incompatible contract promptly."
+    },
+    {
+      "receiptId": "notify:258ac7996f5bd2f6e1f553b3e88e3c549ca340cd944e321d44e4e1d9cb5ab01a",
+      "seq": 157440,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T15:00:46.872Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Generic emitter implementation now in my worktree: worker.turn_reported with runId, worker, taskId, turnSeq, turnEpoch, report, assignmentDone:false; root_turn_reported wake derives run coordinates. Direct coordinator workers may have runId null, so delivery can key on workerId in that case; their wake.next is null (no fake Run). Real deployment plain Runs have runId and next baton run view. Existing _participantRuntimes callback keeps swarm reports exclusively on parent guidance. Test covers actual plain application Run -> report -> derived root wake. Your abb2d0de + my real report transport proof now 5/5 green in rehearsal."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

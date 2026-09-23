@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 168568,
+      "ts": "2026-09-23T16:08:59.563Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 168568,
+        "ts": "2026-09-23T16:08:59.563Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:a910abe649e849098996b8dcfe3649f4fd2b3d8bf450711f53367e60efd2e2cd",
+    "seq": 168568,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:6d8b5802b9ca0d61bc26a3a758857ea97af1016df4b63d07fed39626ee23960a",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T16:08:59.438Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 168567,
+      "kind": "steer",
+      "ts": "2026-09-23T16:08:59.559Z",
+      "messageId": "message:6d8b5802b9ca0d61bc26a3a758857ea97af1016df4b63d07fed39626ee23960a"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Paused restart change agreed; keep existing report durably replayable and configured consumer woken, no implicit nudge. Reviewer has now ended per root memory instruction (notify target no longer active). New generic consumer admission committed6ed9aebd on union: validatesrootWake or wave/manual driver declaration for pausable routes beforeapprove/_dispatchCurrent; no overlap2276hook. Workflow correction about tocommit after33 rows accounted green; I will independently review your574. No new seats permitted."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "05526605-107b-4ca5-acdd-038a8c0192fc"
+  }
+}

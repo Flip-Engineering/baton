@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 166768,
+      "ts": "2026-09-23T15:53:37.187Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 166768,
+        "ts": "2026-09-23T15:53:37.187Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:f15db3975157073db42da9e3872a9a02a7a9b0b6b8086dc4674ca12c6fffb583",
+    "seq": 166768,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:c1d5c65a5c783419dbf8fe5db3341d4b2466b9a56174da60ed589650a4615863",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:53:36.060Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 166767,
+      "kind": "steer",
+      "ts": "2026-09-23T15:53:37.070Z",
+      "messageId": "message:c1d5c65a5c783419dbf8fe5db3341d4b2466b9a56174da60ed589650a4615863"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Audit anchors for574: _performAutoReroutes (swarm-runtime2011) uses persisted candidates and skips empty forever; _autoRerouteOne picks candidates[0], catches refusal leaving same choice pending; _policyOf3279 defaults manual. Please make candidate refresh + next viable selection/retry autonomous even with no new swarm command, and ensure root report for unresolved quota/resource wait. Worker crash hook -> observer only on unrelated calls would still violate automatic recovery. Existing retry tests may pin finite counts; remove those expectations per operator."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "caec04ec-8b19-4245-a875-44427e287863"
+  }
+}

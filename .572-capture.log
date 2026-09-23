@@ -1,0 +1,20 @@
+✔ capture and checking preserve a continuing participant and its next turn (115.966833ms)
+✔ unavailable verification preserves the contribution and leaves the author paused (42.161292ms)
+✔ a retained contribution can be checked after its author stops (44.058875ms)
+✔ native subagent observations are durably mapped and remain read-only worker observations (43.5625ms)
+✔ a failed pin leaves the pause available and does not claim retained work (49.97225ms)
+✔ stop waits for an in-flight capture before removing the author workspace (63.19875ms)
+✔ live captures queue per participant and stop waits for both retained revisions (62.746583ms)
+✔ queued guidance resolves a turn that pauses while an earlier delivery is in flight (56.250125ms)
+✔ a check that waits for the verification lane records contribution.check_queued with its position (62.851ms)
+✔ a docs-only capture is checked by the docs verification, a code capture by the code verification (76.488042ms)
+✔ a check verdict observed at another exit code is refused at the receipt (49.438916ms)
+✔ a check whose verify sandbox could not be removed names the leak on its receipt (62.679916ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1226.602667

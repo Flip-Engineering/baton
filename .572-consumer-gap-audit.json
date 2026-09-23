@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 166829,
+      "ts": "2026-09-23T15:53:57.743Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-571-fixtures",
+        "seq": 166829,
+        "ts": "2026-09-23T15:53:57.743Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-571-fixtures",
+  "notify": {
+    "receiptId": "notify:a2c239bf37aefcede3a0e4d4b2ba6d45be9cd1cbce1df5607206bf10410a0fbd",
+    "seq": 166829,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-571-fixtures",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:53:56.340Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Adopted76a71b10 into unionb0ad50d8; four-file composed tests ongoing. Please inspect remaining #572 gap next: generic application Run outside a wave records worker.turn_reported, root delivery needs advanced.rootWake/BATON_ROOT_WAKE. No declaration leaves no delivery consumer. Determine concrete intended embedded/CLI caller contract and whether an active orchestrator can subscribe directly; report minimal correct admission/delivery fix so no pausable Run starts with no awakenable consumer. Do not auto-claim/done or implicit endless nudge. Root serve config implemented972c6232. Existing fixtures may intentionally own manual turns, distinguish explicit caller consumer."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "08903710-a10a-4708-a230-3008ee7bd104"
+  }
+}

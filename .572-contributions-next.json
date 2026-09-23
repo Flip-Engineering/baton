@@ -1,0 +1,36 @@
+{
+  "swarmId": "swarm-rigidity-20260921",
+  "since": 156822,
+  "rows": [
+    {
+      "seq": 156886,
+      "ts": "2026-09-23T14:56:43.499Z",
+      "participantId": "rigidity-568-cleanup",
+      "contributionId": "contribution-0a01c4ca34a4254ed18debfb089e5470",
+      "workId": null,
+      "summary": "Supersedes contribution-cd3e2831: Issue #568 reclaims owned seat and seat-created linked worktrees",
+      "subject": "Supersedes contribution-cd3e2831: Issue #568 reclaims owned seat and seat-created linked worktrees",
+      "items": [
+        {
+          "id": "issue-568",
+          "status": "delivered"
+        }
+      ],
+      "commit": {
+        "sha": "6969c77f1ceade55f8499daf0c815a7205fb4e50",
+        "branch": "baton/rigidity-568-cleanup"
+      },
+      "files": [
+        "impl/src/index.mjs",
+        "impl/src/runtime-isolation.mjs",
+        "impl/src/worktree.mjs",
+        "impl/test/issue568-worktree-reclamation.test.mjs"
+      ],
+      "decision": null,
+      "reviewState": "unreviewed",
+      "integration": null
+    }
+  ],
+  "cursor": 156886,
+  "truncated": false
+}

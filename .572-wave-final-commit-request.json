@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 165304,
+      "ts": "2026-09-23T15:47:07.741Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-571-fixtures",
+        "seq": 165304,
+        "ts": "2026-09-23T15:47:07.741Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-571-fixtures",
+  "notify": {
+    "receiptId": "notify:d448cba250bb7831d2e34d76d5f415fd1d39ec2775f878f10b33d75f82bae1f1",
+    "seq": 165304,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:0de1e44c61dc4a71aeca73ef53c00123b5dbaaa09d72f05d1d6ab002e972917a",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-571-fixtures",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:47:07.018Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 165303,
+      "kind": "steer",
+      "ts": "2026-09-23T15:47:07.699Z",
+      "messageId": "message:0de1e44c61dc4a71aeca73ef53c00123b5dbaaa09d72f05d1d6ab002e972917a"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Policy corrections are agreed. Please commit and publish your current verified wave change now so I can compose and run union gates. The landing union has #561, limits, #571, #568 through64e67ce6, #572 plus served root config/retry. I removed two obsolete progressNudgeWindow assertions in issue500-deployment-capacity; no overlap with your files."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "388d88e2-0ee6-4545-8c82-55237dc13e3f"
+  }
+}

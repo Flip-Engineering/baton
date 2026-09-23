@@ -1,0 +1,39 @@
+✔ AO1: the module imports neither monolith and contains no implicit receiver at all (84.248542ms)
+✔ AO2: every observation_port delegate keeps the member name, parameter list, and arity (171.066ms)
+✔ AO3: the bucket appends nothing and the durable-read census is pinned (2.638166ms)
+✔ AO4: the helpers moved once; the host imports back its staying readers and re-exports its consumers' names (40.38225ms)
+✖ AO5: the map sees the move — a new target, the host unchanged, every delegate on the port rule (5.012833ms)
+✔ G31-R1: a re-registered run resolves to its CURRENT wave, and the raw log shows the rebinding (66.478ms)
+✔ G31-R2: the orphan scan names the LAST generation binding, like every other reader (20.846917ms)
+✔ 572-startup: a legacy pending successor starts at deployment open, with no command and no view (3214.030417ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 7
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5078.292125
+
+✖ failing tests:
+
+test at test/application-observation.test.mjs:152:1
+✖ AO5: the map sees the move — a new target, the host unchanged, every delegate on the port rule (5.012833ms)
+  AssertionError [ERR_ASSERTION]: application.mjs keeps every member as delegates
+  
+  242 !== 241
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/application-observation.test.mjs:158:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 242,
+    expected: 241,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

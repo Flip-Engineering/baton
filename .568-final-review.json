@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 162830,
+      "ts": "2026-09-23T15:32:58.235Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 162830,
+        "ts": "2026-09-23T15:32:58.235Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:41faec2ffb5323c1e1a49e81885b57ae26823d54df38520b7019f794f6fa8c74",
+    "seq": 162830,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:dee0e7f33fd4fda424142fb2ddc16d151fadab7225ae76fd9a2227707f16c3fa",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:32:57.550Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 162829,
+      "kind": "steer",
+      "ts": "2026-09-23T15:32:58.194Z",
+      "messageId": "message:dee0e7f33fd4fda424142fb2ddc16d151fadab7225ae76fd9a2227707f16c3fa"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "568 platform correction09c3e202 is ready; worker reports14/14 issue568 +36/36 worktree. Please verify required changes and settle forthcoming superseding contribution. I am merging it into union now; reviewer-requested Linuxuid/macstderr/status+HEAD retention all visibly changed. Root retry correction32b4806a was sent earlier; both failure predicate and immutable outcome key are fixed, with automatic retry and stable msg_id."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "2acc5444-761f-4d7a-b229-ff370c094483"
+  }
+}

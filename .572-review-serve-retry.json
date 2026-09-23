@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 161641,
+      "ts": "2026-09-23T15:26:09.514Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 161641,
+        "ts": "2026-09-23T15:26:09.514Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:2b0cef9797392ebd706c279a9fddbc403683806f0f7741cd7a036e1a72065c76",
+    "seq": 161641,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:26:08.230Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Additional concrete #572 serve gap closed by972c6232: normal scripts/baton.mjs serveCheckout previously had no way to pass advanced.rootWake. BATON_ROOT_WAKE JSON now maps through shared validator, independently preserving publishRemote; realCLI unsupportedtarget pin+parser2/2. Please inspect briefly. Remaining question sent to wakelead: alreadyRecorded counts root_undelivered as permanent duplicate, suppressing future retries after transient socket/discovery failure. No reply yet; please audit that semantic for #572 while worker568 finishes platform guards."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "61f7f2c8-0db8-4b1c-af21-c9a5ca6c35b1"
+  }
+}

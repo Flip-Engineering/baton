@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 156282,
+    "ts": "2026-09-23T14:52:32.344Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:eb84f42e73799dafee2896be6b900405384adb6c4f60d59d2e011ef4b07a3672",
+      "seq": 156047,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:51:01.114Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": true,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "BLOCKING union source finding: wiring a9a32512 wake-delivery.rootAttentionPayload requires contributionId nonempty and owed in [review_owed,needs_root], so every new turn_reported row will fail root_wake_source_invalid despite 18 report tests + 6 old wiring/capability tests green. Please have delivery lane accept turn_reported with optional contributionId and test actual reportTurnEnd -> resident attachment -> transport frame. I am building red proof in composition scratch now; will pass exact test."
+    },
+    {
+      "receiptId": "notify:225a8048ff806fc049acd0d4651a404ed139141fedf80eb57fe9a0eabd5e253b",
+      "seq": 156211,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:52:11.644Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Red proof committed on baton/rigidity-lead8-572-root-rehearsal (latest tip): new 572-w4 in issue564-root-wake-wiring-red.test.mjs invokes real reportTurnEnd, observes resident stream result, asserts root transport once. Fails with wake.root_undelivered code root_wake_source_invalid. All preceding old wiring/capability rows 6/6 green. Please take that single test hunk with the delivery fix; no need duplicate tests."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

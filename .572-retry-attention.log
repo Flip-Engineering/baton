@@ -1,0 +1,12 @@
+✔ 564-u1: an owed root wake with no delivery record is reported as attention (114.2025ms)
+✔ 564-u2: a durable delivery record for the same wake identity clears the row, and only for that identity (55.426084ms)
+✔ 564-u3: a failed delivery keeps the row and names the code the attempt failed under (36.666ms)
+✔ 564-u4: only this swarm owed rows are reported (45.822416ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2013.199416

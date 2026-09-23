@@ -1,0 +1,32 @@
+✔ A1: a card with no turnCompletion field reads as "claim" — the silent default (7.101458ms)
+✔ A2: the five production harness identities declare turnCompletion "pausable" (203.466667ms)
+✔ A3: the legacy SubprocessAdapterBase family stays "claim" (absent) — a card that cannot steer must not claim it can pause (SC8 lying-card discipline) (0.121708ms)
+✔ C1: working -> paused is legal; paused -> working|failed|cancelled legal; paused -> completed is refused invalid_transition (10.931958ms)
+✔ C1b: a `paused` task folds through the existing generic task.transitioned branch and survives a checkpoint round-trip with no new PROJECTION_CHECKPOINT_FIELDS entry (6.961917ms)
+✔ C3: _deriveWorkerStatus renders `paused` as `blocked` — never silently `working` (the eighth guard site, found independently of docs/35 §2.1(3)) (0.522833ms)
+✔ C4: the REAL two-event sequence (turn_completed folds working->idle, then turn.paused folds idle->paused) renders the worker `paused`, never `idle` (0.374208ms)
+✔ C4b: TURN_PAUSED also folds directly from `working` (the guard's other admitted `from`), and from any other status is a no-op that flags illegal_transition (0.116584ms)
+✔ B1/D4: an unregistered pausable checkpoint parks with durable origin and no automatic cycle (9.738458ms)
+✔ B3: changedPathsDigest is canonicalDigest([]) when the task has no baseSha — every MockAdapter/backward-compat task, and never a thrown captured_change_invalid (P1-5) (4.485208ms)
+✔ D5: a pausable card on a run WITH a live steering.registered marker stays paused — not auto-settled, and _runTrustGate is NOT invoked that turn (211.207709ms)
+✔ D-compat: a `claim`-carded turn (the default, every existing card) never mints a pause record and reaches the trust gate byte-identically to today (23.392334ms)
+✔ C2: every named guard site treats a `paused` task as live, exactly as it treats input_required, and still refuses a terminal task (6.70825ms)
+✔ D1: run.start with driverKind:"wave" reaches the handler and admits exactly one steering.registered marker at run creation (183.3205ms)
+✔ D2: run.start with NO driverKind (every caller in the shipped tree — 31-a ships no production caller) admits no marker at all (189.959333ms)
+✔ D3: a SECOND run.start against the same runId (existingRun !== null) admits no second marker — driver identity is fixed at genuine creation, never re-granted on resume (176.905708ms)
+✔ D4: normalizeIntent refuses a non-"wave" driverKind server-side with application_intent_invalid (P1-1 defense in depth, behind the client whitelist) (195.116625ms)
+✔ R1: a coordinator restarted mid-pause reconstructs _pausedTurns with state:"pending" keyed identically to the live mint, and (P1-3) CI6 durably FAILS the task — fail-closed parity with an unresolved input_required task, not a special case for `paused` (22.289375ms)
+✔ R2: a pause already settled before the restart is NOT reconstructed as an open record (the drivered claim path settles it durably) (30.653958ms)
+✔ turn_checkpoint surface: a pending pause lists nudge_turn/wait_turn/claim_turn with the server-derived target shape, and run.act(nudge_turn) unparks the SAME task working with a freshly armed watchdog (2960.91975ms)
+✔ wait_turn receipts the checkpoint without consuming it: the SAME nudge_turn/wait_turn/claim_turn candidates remain advertised afterward (882.708208ms)
+✔ claim_turn re-runs the live trust gate against the exact paused task and resolves it to a terminal outcome, consuming the checkpoint (1362.7275ms)
+✔ actionAuthority/act recheck against LIVE state: an actionId captured before the pause was resolved by something else is refused, never silently executed (2562.441ms)
+✔ a second act() against the SAME nudge_turn actionId after the first already resolved the pause is refused as scope-mismatched — an already-resolved checkpoint, never re-executed (1847.535ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11396.020834

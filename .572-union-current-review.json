@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 166641,
+      "ts": "2026-09-23T15:53:19.051Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 166641,
+        "ts": "2026-09-23T15:53:19.051Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:64a7ded1efb409b863b4d71c00bd3dbdea4c5d6b859baf42eaa4333653c233bd",
+    "seq": 166641,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:70d7c49e387468302ede6e56ff8ddb4f6524279382f1f665b5d0dac4332c0e7c",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:53:17.511Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 166640,
+      "kind": "steer",
+      "ts": "2026-09-23T15:53:18.983Z",
+      "messageId": "message:70d7c49e387468302ede6e56ff8ddb4f6524279382f1f665b5d0dac4332c0e7c"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Current union b0ad50d8 contains obsolete500-pin fix910154f0, final56864e67ce6, recovery344a8705 and wave76a71b10. Final cleanup+root wiring composed23/23; capacity7/7; surface/numeric0. Wave four-file composed check ongoing, first11 policy rows green. Root assigned #574 too; existing cleanup worker now owns it. Please review #572 wave and recovery while it works; new union contribution will supersede rejected501d1118 with correct tip and explicit changed-path test inventory."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "9248120a-1d0c-47fd-b336-ed3cdaa4e49a"
+  }
+}

@@ -1,0 +1,36 @@
+✔ 418-L1: the real tree is green — every bound-shaped constant is declared, exempted or named (905.904167ms)
+✔ 418-L2: a bound-shaped constant in a module is flagged; the registry/env/pragma/comment channels pass (7.405667ms)
+✔ 418-L3: multiplied KiB/MiB products flag; sub-KiB literals do not (2.019042ms)
+✔ 418-L4: a table entry whose line vanished is reported stale (1.761625ms)
+✔ M561-1: darwin vm.swapusage and linux /proc/meminfo swap lines parse to bytes (10.788083ms)
+✔ M561-2: observation reads swap and disk through its injectable readers only (1.207708ms)
+✔ M561-3: pagingBytes caps swap by disk; suiteBytes is one core share; tightness derives (0.749917ms)
+✔ M561-4: measured worker leases enter the byte budget and an over-budget worker queues (270.01325ms)
+✔ M561-5: an unmeasured worker fleet admits the first worker free (39.151709ms)
+✔ M561-6: observeWorkerBytes rewrites the lease measurement and the budget follows (207.680958ms)
+✔ M561-7: durable verify waits out standing tightness; plain verify keeps the degraded answer (160.501375ms)
+✔ M561-8: a memory shortfall reads observed paging bytes and required share (2.627ms)
+✔ M561-10: deriveSwapReserveBytes bounds the paging debt by one core share and reads zero without debt (0.546875ms)
+✔ M561-9: suiteLeaseDurable is true for a participant holder and false otherwise (0.380417ms)
+✔ 568-A: restart captures a dead local owner, reclaims its checkout, and keeps its branch (7305.548333ms)
+✔ 568-B: active and shared workspaces remain under their existing custody (5121.707333ms)
+✔ 568-C: recovery retains ignored evidence that the snapshot policy cannot attribute (2970.951333ms)
+✔ 568-D: restart releases a branch-only owner receipt and retains unique branch work (3775.670542ms)
+✔ 568-E: restart reclaims a recorded external worktree and preserves dirty detached evidence (6580.994958ms)
+✔ 568-F: active owner retains its recorded external worktree (3166.544291ms)
+✔ 568-G: a recycled external path is retained because its Git identity no longer matches (3763.386792ms)
+✔ 568-H: normal seat stop reclaims its linked worktree and keeps its branch evidence (5614.483958ms)
+✔ 568-I: recovery retains an external checkout while a live process has a cwd inside it (6936.532041ms)
+✔ 568-J: a recycled Git registration at the same path and admin name is retained (3649.529ms)
+✔ 568-K: a foreign-uid Linux process and a racing exit do not block cleanup (4494.98025ms)
+✔ 568-L: an unreadable same-uid Linux cwd retains and names its process (4561.081ms)
+✔ 568-M: macOS lsof stderr makes a successful partial scan retain (3391.793417ms)
+✔ 568-N: a Git observation failure retains its row and examines later rows (8453.518042ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 28
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 73163.746333

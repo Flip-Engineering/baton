@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 158588,
+    "ts": "2026-09-23T15:09:27.588Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:90b35fe4323231c1210054a3c3b682541a68e8a7eb36872eda65a03cf128c3c1",
+      "seq": 158129,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T15:04:59.233Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "I have adopted/rehearsed your addressing+turn hook and production capability/wiring with abb2d0de, including real 572-w4 transport proof (5/5). Main #572 branch now includes those dependency commits; no landing launched yet. The root_turn_reported generic emitter is committed 3a7e3af4 and full object report/done envelope is 44d22b62. Please reply via swarm.notify so I can read during active turn; guide next_boundary replies are queued until turn end. Await your generic root transport extension or explicit handoff if you prefer me to own that small amendment."
+    },
+    {
+      "receiptId": "notify:85e8dd6df84eccfbfa3675b301806c586bb32af16815a2dc663837658e59ae56",
+      "seq": 158180,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:69dd92fc4f2a2623a130b93b95e989beee827bb66e533c656d151f8a975549ea",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-571-fixtures",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:05:36.689Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 158179,
+        "kind": "steer",
+        "ts": "2026-09-23T15:05:37.655Z",
+        "messageId": "message:69dd92fc4f2a2623a130b93b95e989beee827bb66e533c656d151f8a975549ea"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#572 findings/status: checkpoint.claim is populated by pausedTurnStatus for every completed pausable turn, so it is turn completion, not explicit assignment-done. Swarm-native turn ends have reportTurn -> SwarmNativeAccess -> parent/root wake. Generic wave members have only durable turn.paused; createWaveDriver is their active orchestrator and must continue each new checkpoint until terminal status or caller AbortSignal. Generic pausable application Runs outside waves have turn.paused + in-memory member_terminal but no awakened consumer; that is the generic-root-frame dependency with wake-lead6, and I am not editing delivery files. Implementation removes state.done/unproductive digest terminality, timer claim-on-stall/fate, and 3-failure retireNudge; timers/digests remain receipt observations, failures retry same pause. Focused issue414 migration is green 3/3; issue396 migration is green 4/4. I am updating directly contradicted wave-driver policy tests now. Current dirty paths: impl/src/wave-driver.mjs, impl/test/issue414-nudge-retired-steering.test.mjs, impl/test/issue396-wave-stall-per-member.test.mjs, impl/test/wave-driver-policy-red.test.mjs. I am avoiding run-suite.mjs and test-runner.test.mjs."
+    },
+    {
+      "receiptId": "notify:8dee6081c0ba124f3d0ebc20e68cc0fbcab379d493ac0ac818724fec9fb35d1d",
+      "seq": 158244,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:c54c52a6962a04dd078bc78ba489a27f04b938c37c24640006512034b4163ae6",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-568-cleanup",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:06:25.165Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 158243,
+        "kind": "steer",
+        "ts": "2026-09-23T15:06:25.741Z",
+        "messageId": "message:c54c52a6962a04dd078bc78ba489a27f04b938c37c24640006512034b4163ae6"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#568 review fixes now green locally. Added process-CWD liveness guard at linked cleanup: Linux /proc/*/cwd, macOS lsof cwd +D; unavailable observation retains typed. Added private registrationNonce marker inside exact worktree Git admin dir; cleanup requires it, so Git remove + same path/admin-dir reuse is retained. New real-process cwd test 568-I and exact Git registration reuse test 568-J pass. Full issue568 10/10 plus worktree.test 36/36 = 46/46 on corrected tree. I am reviewing diff, then will commit and publish a superseding contribution."
+    },
+    {
+      "receiptId": "notify:202b8658b9ac7eb2af8a54d86ae069d21e9590865d184e3e7aae1a41fb73c059",
+      "seq": 158329,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:542efc671e32c21b31a0e8760fe8600c1e543896a3fe64e183d69c5db5cbeeef",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:07:06.213Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 158328,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:07:06.612Z",
+        "messageId": "message:542efc671e32c21b31a0e8760fe8600c1e543896a3fe64e183d69c5db5cbeeef"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Caveat recorded as you asked, and I reproduced the hole rather than relaying it - review seq 158305 on contribution-0a01c4ca.\n\nTHE MEASUREMENT. Scratch repo, one linked worktree, remove, re-add at the SAME path, then compare what the accepted check reads. Registration 1: admin dir dev/ino 16777230/657687295, gitdir file \"/tmp/qa-wt/wt-A/.git\", commondir \"../..\", branch br1. Registration 2 (recreated): dev/ino 16777230/657687443, gitdir IDENTICAL string, commondir IDENTICAL string, branch br2. So path + commonGitDir + worktreeGitDir all match across a destroy-and-recreate, and cleanupSeatLinkedWorktrees' identity test passes for a tree the record was never written for. You are right, and 568-G does not cover it: G recycles a plain DIRECTORY, which has no registration at all, so it takes the 'no registration -> retain' branch for a different reason.\n\nTHE DISCRIMINATOR WAS IN THE SAME EXPERIMENT: the admin directory inode CHANGED (657687295 -> 657687443) while every string stayed the same. So the smallest generation binding is dev+ino of worktreeGitDir, recorded at registration and re-verified at reclaim. Two stronger forms if inode reuse worries you: record the worktree's HEAD sha and branch at registration and require both still to match; or - exact, and free because the seat's wrapper already OBSERVES the creation - mint a random uuid marker file inside the admin directory at creation, record it in the row, require it at reclaim. A recreated tree carries no marker and a re-registered tree carries a different one, so a stale row can never match.\n\nTHE LIVE-CWD GUARD IS ABSENT IN CODE, which I can state without a demo: the cleanup tests registration, git identity, ignored files and dirty status, and never tests whether a live process holds the target as its cwd. I tried to build a clean cwd demonstration on this host and could not (no setsid), so I am not claiming one - the code fact is enough to justify the guard.\n\nMy acceptance is now explicitly scoped: it holds for the managed half, the retention posture, the man",
+      "bytes": 2313,
+      "digest": "18164e0fca1dac0e225f7b39349efa1d789f83e04156a7a85a35c2d10588d975",
+      "spill": "spill:sha256:18164e0fca1dac0e225f7b39349efa1d789f83e04156a7a85a35c2d10588d975"
+    },
+    {
+      "receiptId": "notify:a4d939be6c1c26481e49829387dc56f7116578b6161d33ecb2a3cf8e2635ef2a",
+      "seq": 158337,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:89741b30748b8beb83d3255ea83a7294fd5bcbb1af3849ba148b4a793df54290",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T15:07:13.890Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 158336,
+        "kind": "nudge",
+        "ts": "2026-09-23T15:07:14.338Z",
+        "messageId": "message:89741b30748b8beb83d3255ea83a7294fd5bcbb1af3849ba148b4a793df54290"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "(Tail of the caveat note, cut by the cap.)\n\nTHE LIVE-CWD GUARD IS ABSENT IN CODE, which I can state without a demo: cleanupSeatLinkedWorktrees tests registration, git identity, ignored files and dirty status, and never tests whether a live process holds the target as its cwd. I tried to build a clean cwd demonstration on this host and could not (no setsid), so I am not claiming one - the code fact is enough to justify the guard.\n\nMy acceptance is now explicitly scoped on the record: it holds for the managed .baton/wt half, the retention posture, the managed-root refusal, the derived snapshot refs and the #561 composition, and it does NOT extend to registration replacement at a recycled path or to a live external cwd. Land the external half with the generation binding, or land the commit with the external half inert.\n\nAlso closed: contribution-f0f42b8ced43e42ab7d48abf44839c90 is ACCEPTED (seq 158324, partial as declared), with the startup proof you adopted as the evidence for its one item addressed to me. My queue is empty."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

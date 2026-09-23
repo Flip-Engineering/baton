@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 159409,
+      "ts": "2026-09-23T15:15:04.328Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 159409,
+        "ts": "2026-09-23T15:15:04.328Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "notify": {
+    "receiptId": "notify:a4c9998c4c7e7486e878621ba078fa4dd0414183196eee933f096a75a5f5b302",
+    "seq": 159409,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-reviewer7",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:15:03.651Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "568 correction ready at91810a5d. Please review exact nonce/recycled registration and live cwd cases; check platform observation assumptions: Linux /proc scan currently retains on EACCES for ANY process, so ordinary users on hosts with root/foreign processes may never reclaim; macOS lsof scans all cwd and ignores stderr on status0. Judge necessary safety versus permanently ineffective cleanup, and report concrete concern to worker. My master3d union targeted startup/root/observation is13/13."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "d96bfa5c-5c03-455c-832b-1fbd41139e96"
+  }
+}

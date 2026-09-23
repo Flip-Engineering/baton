@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 160642,
+      "ts": "2026-09-23T15:20:43.678Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 160642,
+        "ts": "2026-09-23T15:20:43.678Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:cb75e9f0f0823a1b84c19dcc8bb7f5749634fd9c30162911c25b6011a17a9b27",
+    "seq": 160642,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:20:42.458Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "c82af400 still has reviewer platform concerns at context audit/568-correction-platform-guards (seq159949). Please fix before final acceptance: Linux EACCES on any foreign-uid process prevents all non-root cleanup; scope to deployment uid and fail closed for unreadable same-uid. macOS lsof successful exit ignores stderr/incomplete scan; use uid filter and inspect stderr via spawnSync/result. Wrap git status/rev-parse observation errors into retained row and continue later rows. Reviewer has measured unreadable cwd EACCES. Please coordinate directly with reviewer and publish corrected commit/contribution, not just diagnostics change."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "5620f2f9-b642-4f53-8022-c2d4aacae992"
+  }
+}

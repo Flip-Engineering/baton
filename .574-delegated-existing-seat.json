@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 166224,
+      "ts": "2026-09-23T15:51:37.556Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 166224,
+        "ts": "2026-09-23T15:51:37.556Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:cf65456b637661c4d5361f9f12aa528ccc3cf3f2c680cefc16708f013d7292db",
+    "seq": 166224,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:51:35.158Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "#568 final64e67ce6 adopted; thank you. Root assigned #574 to this swarm: provider crash recoverable by default, durable in-place retry then automatic reroute; notify orchestrator, no action required. Named defaults: memberRetryAttempts null, TRANSIENT_TURN_RETRY_LIMIT=1, rerouteOnProviderFault manual. Reroute candidates MUST exclude codex/* routes. Please take implementation lane now using existing seat: read #574/comments, audit defaults/lifecycle, implement focused changes/tests on current branch or new branch from baton/rigidity-lead8-landing-union. No new seats, targeted tests only. Avoid root delivery/cleanup files unless necessary; send exact ownership before large edits. Coordinate interface with me; I finish #572 union."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "fa44ce3d-3394-4134-882b-9dd46600cb80"
+  }
+}

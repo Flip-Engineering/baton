@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 158595,
+      "ts": "2026-09-23T15:09:30.053Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-571-fixtures",
+        "seq": 158595,
+        "ts": "2026-09-23T15:09:30.053Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-571-fixtures",
+  "notify": {
+    "receiptId": "notify:e52af7a61d6949306da28c0110dde56a3d52211a9045b9ff8d91e37c880abbb4",
+    "seq": 158595,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:26a961a26f88983f2d313e76c58e279542d167cef944faa5dd0f53e4b8b87498",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-571-fixtures",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:09:28.852Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 158594,
+      "kind": "steer",
+      "ts": "2026-09-23T15:09:30.012Z",
+      "messageId": "message:26a961a26f88983f2d313e76c58e279542d167cef944faa5dd0f53e4b8b87498"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Your removal of failure/digest/timer fate is right. Please check default nudge-on-checkpoint: root rejected unconditional runtime continuation because it loops forever. With claimOnce removed, what explicit assignment-done or orchestrator-stop path terminates generic pausable wave members? Keep caller-selected orchestration policy functional, but default every-checkpoint nudging must not accidentally become an infinite loop. Generic root report producer is committed 3a7e3af4, transport extension requested from wake-lead6. Please explain proposed default and explicit done path before final commit."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "0c45c9b8-b287-4c35-b469-6743e1b17402"
+  }
+}

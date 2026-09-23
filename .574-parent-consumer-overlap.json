@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 168758,
+      "ts": "2026-09-23T16:12:41.327Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-568-cleanup",
+        "seq": 168758,
+        "ts": "2026-09-23T16:12:41.327Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-568-cleanup",
+  "notify": {
+    "receiptId": "notify:03e807721f3df9c8383b4f7f8008f472d02aa8ea360048c1e4d39c162b72e405",
+    "seq": 168758,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:3cc6f9fdc265ad4e723eb3a2d19cf71f393f2c144326522326d2e5823785f4f6",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-568-cleanup",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T16:12:41.047Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 168757,
+      "kind": "steer",
+      "ts": "2026-09-23T16:12:41.319Z",
+      "messageId": "message:3cc6f9fdc265ad4e723eb3a2d19cf71f393f2c144326522326d2e5823785f4f6"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "I tightened572 admission for parentless swarm seats too: rootWake or explicit driver declaration required unless a live parent is present. Extracted reportTurnEnd parent traversal into SwarmRuntime._turnReportParent(swarm,participant), reused in Application._assertTurnConsumer; your574 reportProviderFault edits elsewhere should merge cleanly. Top-level real application fixtures now need configured rootWake; low-level SwarmRuntime startRun fixtures are unaffected. Native parent report semantics unchanged."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "79ebb209-e475-4b7d-ab70-7e3ab2804d4b"
+  }
+}

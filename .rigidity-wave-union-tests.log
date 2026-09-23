@@ -1,0 +1,36 @@
+✔ (a) two independent members, one progressing: explicit stop reports only the silent one as stalled (358.103292ms)
+✔ (b) a member behind a real dependency reads waiting-on with the dependency named, not stalled (356.232417ms)
+✔ (d) settle keeps each member’s own wait: a waiting member settles with its dependency named while its sibling settles clean (307.965042ms)
+✔ (c) no roster-wide clock: a caller stop preserves each member’s own observation clock (852.222083ms)
+✔ 572a: delivery failures do not retire a live member (9065.625375ms)
+✔ 572b: a delivery can recover after the former three-failure boundary (9115.281666ms)
+✔ 572c: an unchanged digest does not end or claim a member (11681.65ms)
+✔ 572d: an implicit checkpoint policy refuses before a wave starts (1.501542ms)
+✔ 572e: onCheckpoint continues one turn and explicitly declares the next turn done (7747.844042ms)
+✔ 572f: callback errors and invalid returns retry without a failure-count fate (6071.248708ms)
+✔ 572g: a stop decision is scoped to its member while a sibling completes (12998.8475ms)
+✔ RC-1: the recipe is one normative closed schema — unknown/oversize/duplicate/non-exact/function refused; a valid recipe deep-freezes (11.084417ms)
+✔ RC-2: renderObjective composes the pinned shape with salt as an input — identical salt is identical, different salts differ, the objective rides the registry lane (4.394542ms)
+✔ RC-3: the invocation manifest is the identity boundary — same key loads+attaches (zero new starts), different key mints fresh, the manifest round-trips (14634.658125ms)
+✔ RC-5: run options never enter the digest; overrides re-validate; orchestration callbacks pass through (18012.360875ms)
+✔ RC-6: implementContract over a MockAdapter seat returns the createWaveDriver receipt shape with recipe routes/scopes; a same-key retry attaches (7283.957333ms)
+✔ baton.recipes is an embedded facade over the shipped createWaveDriver — no new command surface (1076.580625ms)
+✔ D1: every completed turn is nudged once until the caller stops the drive (9832.042458ms)
+✔ D2: a live member and a frozen sibling both continue until caller stop (21488.863125ms)
+✔ D3: a frozen member stays live until explicit caller stop and closes cleanly (6051.089375ms)
+✔ D4: a numeric hardCapMs refuses; a frozen marker waits for caller stop (8127.711375ms)
+✔ D5: objective salting, opt-out, and the admission byte-check (21924.821917ms)
+✔ D6: the unproductive-checkpoint budget does not stop or claim work (20013.584791ms)
+✔ D7: receipt envelope shape, evidence file, and loud write failure (7426.380875ms)
+✔ D8: a failed nudge is recorded, not consumed, and recovered on the next poll (6472.460542ms)
+✔ D9: stall observation never claims paused members (20478.069834ms)
+✔ D10: consecutive and transient status failures wait for caller stop (13822.417292ms)
+✔ D11: expectedFence 'current' resolves to the live worker fence for a Run-bound worker (4472.695917ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 28
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 248190.197666

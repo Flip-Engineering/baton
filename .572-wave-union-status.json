@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 161090,
+      "ts": "2026-09-23T15:22:22.809Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-571-fixtures",
+        "seq": 161090,
+        "ts": "2026-09-23T15:22:22.809Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "rigidity-571-fixtures",
+  "notify": {
+    "receiptId": "notify:4de1689cc1ed252fff6da6351275a7a8b462bd1bb8fd364d3836ce45aa14db0e",
+    "seq": 161090,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:f7e32892c47e748c4bb26124806ac8eb075d617d4cb343bf22342c739b82e67f",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "rigidity-571-fixtures",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "sentAt": "2026-09-23T15:22:22.314Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 161089,
+      "kind": "steer",
+      "ts": "2026-09-23T15:22:22.774Z",
+      "messageId": "message:f7e32892c47e748c4bb26124806ac8eb075d617d4cb343bf22342c739b82e67f"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Union is now ready at baton/rigidity-lead8-landing-union: accepted #561, limits, #571 fixtures, #572 currentmaster changes compose. Four targeted files29/29; no full suite. Please finish callback/default migration with explicit callback-error behavior and relevant tests, then publish. Existing branchbaseeaf is fine; I will merge onto union and handle registry/test-inventory composition."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "770e15e0-7a26-4d01-bc7d-3a4bb0fd7ef0"
+  }
+}

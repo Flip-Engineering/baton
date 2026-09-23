@@ -1,0 +1,119 @@
+✖ 572-startup: a legacy pending successor starts at deployment open, with no command and no view (775.122875ms)
+✖ completion derives from an accepted contribution, refuses by hand, and accepts a cited basis (516.635083ms)
+✖ an unassigned participant's delegation is underived, never vacuously complete (464.138167ms)
+✖ the subtree view: the root and the lead see the same delegation, scoped to it (467.71525ms)
+✖ a gone holder is released in one durable batch; a live one refuses (464.858459ms)
+✖ replay of the coordination log reproduces the same swarm, release batch included (398.703666ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 0
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3881.348375
+
+✖ failing tests:
+
+test at test/issue572-startup-continuation.test.mjs:123:1
+✖ 572-startup: a legacy pending successor starts at deployment open, with no command and no view (775.122875ms)
+  AssertionError [ERR_ASSERTION]: opening the deployment drives the pending successor exactly once, with no command issued
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/issue572-startup-continuation.test.mjs:136:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/swarm-delegated-completion.test.mjs:98:1
+✖ completion derives from an accepted contribution, refuses by hand, and accepts a cited basis (516.635083ms)
+  Error: A pausable Run requires an explicit turn-report consumer
+      at applicationError (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application-observation.mjs:254:24)
+      at BatonApplication._assertTurnConsumer (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3404:13)
+      at BatonApplication.approve (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3923:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async SwarmRuntime.startRun (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:2317:9)
+      at async result._once.replaySafe (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8805:11)
+      at async SwarmRuntime._once (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:2626:18)
+      at async SwarmRuntime._dispatch (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8534:22)
+      at async SwarmRuntime.command (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:5246:16)
+      at async Swarm._send (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-client.mjs:95:20) {
+    code: 'application_turn_consumer_required',
+    detail: { runId: 'run-4566bd8e0d625d7f3bd22344dc32ee23', next: 'Configure rootWake, or start the Run with driverKind manual and handle each turn checkpoint.' }
+  }
+
+test at test/swarm-delegated-completion.test.mjs:158:1
+✖ an unassigned participant's delegation is underived, never vacuously complete (464.138167ms)
+  Error: A pausable Run requires an explicit turn-report consumer
+      at applicationError (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application-observation.mjs:254:24)
+      at BatonApplication._assertTurnConsumer (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3404:13)
+      at BatonApplication.approve (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3923:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async SwarmRuntime.startRun (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:2317:9)
+      at async result._once.replaySafe (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8805:11)
+      at async SwarmRuntime._once (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:2626:18)
+      at async SwarmRuntime._dispatch (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8534:22)
+      at async SwarmRuntime.command (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:5246:16)
+      at async Swarm._send (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-client.mjs:95:20) {
+    code: 'application_turn_consumer_required',
+    detail: { runId: 'run-a31a08003e80c778e10c0bd091782112', next: 'Configure rootWake, or start the Run with driverKind manual and handle each turn checkpoint.' }
+  }
+
+test at test/swarm-delegated-completion.test.mjs:172:1
+✖ the subtree view: the root and the lead see the same delegation, scoped to it (467.71525ms)
+  Error: A pausable Run requires an explicit turn-report consumer
+      at applicationError (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application-observation.mjs:254:24)
+      at BatonApplication._assertTurnConsumer (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3404:13)
+      at BatonApplication.approve (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3923:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async SwarmRuntime.startRun (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:2317:9)
+      at async result._once.replaySafe (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8805:11)
+      at async SwarmRuntime._once (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:2626:18)
+      at async SwarmRuntime._dispatch (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8534:22)
+      at async SwarmRuntime.command (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:5246:16)
+      at async Swarm._send (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-client.mjs:95:20) {
+    code: 'application_turn_consumer_required',
+    detail: { runId: 'run-5a0f905ff49d1c825114a7bb42529893', next: 'Configure rootWake, or start the Run with driverKind manual and handle each turn checkpoint.' }
+  }
+
+test at test/swarm-delegated-completion.test.mjs:214:1
+✖ a gone holder is released in one durable batch; a live one refuses (464.858459ms)
+  Error: A pausable Run requires an explicit turn-report consumer
+      at applicationError (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application-observation.mjs:254:24)
+      at BatonApplication._assertTurnConsumer (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3404:13)
+      at BatonApplication.approve (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3923:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async SwarmRuntime.startRun (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:2317:9)
+      at async result._once.replaySafe (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8805:11)
+      at async SwarmRuntime._once (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:2626:18)
+      at async SwarmRuntime._dispatch (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8534:22)
+      at async SwarmRuntime.command (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:5246:16)
+      at async Swarm._send (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-client.mjs:95:20) {
+    code: 'application_turn_consumer_required',
+    detail: { runId: 'run-f13e322317e1fe668a3ca6280386d5d8', next: 'Configure rootWake, or start the Run with driverKind manual and handle each turn checkpoint.' }
+  }
+
+test at test/swarm-delegated-completion.test.mjs:265:1
+✖ replay of the coordination log reproduces the same swarm, release batch included (398.703666ms)
+  Error: A pausable Run requires an explicit turn-report consumer
+      at applicationError (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application-observation.mjs:254:24)
+      at BatonApplication._assertTurnConsumer (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3404:13)
+      at BatonApplication.approve (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:3923:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async SwarmRuntime.startRun (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/application.mjs:2317:9)
+      at async result._once.replaySafe (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8805:11)
+      at async SwarmRuntime._once (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:2626:18)
+      at async SwarmRuntime._dispatch (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:8534:22)
+      at async SwarmRuntime.command (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-runtime.mjs:5246:16)
+      at async Swarm._send (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/src/swarm-client.mjs:95:20) {
+    code: 'application_turn_consumer_required',
+    detail: { runId: 'run-9bad22122f7006059fa3afaefb9c1d54', next: 'Configure rootWake, or start the Run with driverKind manual and handle each turn checkpoint.' }
+  }

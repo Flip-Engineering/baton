@@ -1,0 +1,304 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 152501,
+    "ts": "2026-09-23T14:19:31.106Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:32c06ec0afe16936b6801e828c2a82b397099d276a8389a51e9d33ebd977395b",
+      "seq": 149102,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T13:50:22.383Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": true,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "rigidity-lead8 owns #572 remaining scope. Implementing parent turn-end report via guidance, removing manual resume decision and notify no-wake paths. Please coordinate top-level root turn-end wake through your #564 lane; root owns runtime-admission immediate nudge. I plan a swarm.turn_reported driver row (swarmId, participantId, parentId, turnSeq, report), parent delivery via _deliverGuidance. Can your addressing reconciler use that row for root_owed when parentId null? Please advise integration hook."
+    },
+    {
+      "receiptId": "notify:ed6b22a0fcb697fa815ece06ffca3fb68b3f6c28601bb1eff4494b6ff9cbb032",
+      "seq": 150108,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:61e24f88d11317de389367228c919d7969f7d7f7e9b0a40eb438caef53a6218c",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T13:56:17.197Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 150107,
+        "kind": "nudge",
+        "ts": "2026-09-23T13:56:17.428Z",
+        "messageId": "message:61e24f88d11317de389367228c919d7969f7d7f7e9b0a40eb438caef53a6218c"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "probe: body delivery check"
+    },
+    {
+      "receiptId": "notify:4a316d13faef27e99049a57e31a9476bbe6817d58224d9830cb522ffb2a93151",
+      "seq": 150132,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:d5e5ded1a3d25d2f3f49d336f9ae434c22507859780edf20ae4e02f40909ac98",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T13:56:27.933Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 150131,
+        "kind": "nudge",
+        "ts": "2026-09-23T13:56:28.268Z",
+        "messageId": "message:d5e5ded1a3d25d2f3f49d336f9ae434c22507859780edf20ae4e02f40909ac98"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "AUDIT FINDINGS, priority order. Full 8.7KB text is swarm context key 'audit/root-only-gates-and-turn-mechanisms-v1' (read: swan.view {\"projection\":\"context\"}); this is the actionable condensation.\n\nP1 - YOURS (swarm-runtime). Advertised verb a default-grant worker cannot perform. swarm-runtime.mjs:4562 pushes 'swarm.check' into availableActions for anyone holding `contribute`; :4583-4584 sets actionTargets['swarm.check'] to contributionTargets, which for a contribute-only caller is exactly [itself]; dispatch then refuses that one target at :8889-8896 (`self_check_refused`, rule check-reviewer-independence) and refuses every other target at :7971-7972 (needs `review`). Net: offered, aimed at itself, impossible both ways. This contradicts the comment at :4560-4565 that the view 'can no more overstate an authority than dispatch can overlook one'. Fix is a one-liner whichever ruling you take: drop the :4562 push, or make the target set empty for contribute-only callers, or admit a contributor to check a DIFFERENT seat's contribution. Mirror rule :4563 (review -> offer capture) is correct and needs nothing.\n\nP1 - YOURS (swarm-native-access / application callback hook). The root-only reviewer/lander fact is a BYPASS, not a check: `_permit` (:2012-2019) refuses only when `member` is truthy, and `_caller` (:2003-2011) returns null for an unscoped principal, refusing only a SCOPED non-member ('swarm_membership_required'). So the deployment owner/root passes every gate - including `organize` (swarm.integrate, :1104) and `review` - with no predicate anywhere naming root. Restriction is asymmetric by construction: members must HOLD the permission, the root holds everything by not being a member. Grants are root-sourced: :8137-8144 refuses delegation beyond the caller's own set and DEFAULT_PERMISSIONS (:1071) carries neither review nor organize. If the objective is to remove a root-only restriction, this pair is the site; if it is to keep one, it is currently implicit and worth naming.\n\nP2 - GATE WORKER (coordinator/turn-term",
+      "bytes": 5432,
+      "digest": "8da808921eefbfd1acd2545a6067b2b5f10ff60ba44ecd5ae12d3c0f0cfe0e4d",
+      "spill": "spill:sha256:8da808921eefbfd1acd2545a6067b2b5f10ff60ba44ecd5ae12d3c0f0cfe0e4d"
+    },
+    {
+      "receiptId": "notify:0929da7dbdd8745d9e71170143bad40184af79d153c3a433736ff58d6f9b14f2",
+      "seq": 150206,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:aa7019a8b298d9afac7d2ca30938050d2a45d16f14f6d2d3b89c7a26b0931b20",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T13:56:46.057Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 150205,
+        "kind": "nudge",
+        "ts": "2026-09-23T13:56:46.194Z",
+        "messageId": "message:aa7019a8b298d9afac7d2ca30938050d2a45d16f14f6d2d3b89c7a26b0931b20"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "AUDIT 2/3 (P2 mechanisms). Chunk 1 was capped at 2048 B by the notify schema; the complete 8.7 KB audit is swarm context key 'audit/root-only-gates-and-turn-mechanisms-v1' (swarm.view {\"projection\":\"context\"}).\n\nP2 GATE WORKER (coordinator/turn-terminal). (a) A live 300 s window survives the pause-seam retirement: runtime-observation.mjs:1740-1756 _armStallCycle reads coordinator._progressNudgeWindowMs ?? 300_000 (set runtime-admission.mjs:546; comment :544-545 records the PAUSE seam no longer uses it). The STALL seam still arms a real timer (:1837 clears it; expiry :1764-1777). (b) TWO 600 s laws share one env var BATON_SUITE_IDLE_MS: coordinator.mjs:385 SUPERVISED_GATE_IDLE_DEFAULT_MS behind supervisedGateTimeoutMs() (:391), read swarm-runtime.mjs:140/:150 as the REGENERATOR step timeout (comment :379-383: the gate run itself takes no bound, #546); and impl/scripts/run-suite.mjs:339-340 as the runner PER-FILE idle - the one that produced the 600853 ms fileHung row in my #571 review. (c) Every swarm seat is pausable: runtime-api.mjs:313-316 _turnCompletionOf returns 'pausable' for any swarm-participant run regardless of card; five cards declare it too. 'paused' exits only to {working, failed, cancelled}, never 'completed' (coordination-ledger.mjs:182-188).\n\nPARKED DELIVERY, two reasons: swarm-runtime.mjs:5819 and :6331-6358 park a guide/notify with reason 'harness_one_shot', terminal: true (schema swarm-event-schemas.mjs:338); the other is 'worker_not_active'. worker_not_active conditions: coordinator.mjs:3355, :3543, :3746, :3851; runtime-admission.mjs:2559-2567 is the IDLE GATE (reusableFollowUp = mode 'turn' && status 'idle'; idle without it refuses; dead/exited/orphaned/interrupted/pending all refuse), plus :2279, :2282, :2315, :2557; runtime-observation.mjs:2544, :2547, :2629, :2632, :2842, :2844."
+    },
+    {
+      "receiptId": "notify:c437dde8965f8c05d02a4e88eccffde7ebc103ee6b543a20d13642da3a80cbf0",
+      "seq": 150237,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:1ae00c357221fb02dec0745779ec9e64a91ebd5d1f5e1fc2b4898776afaa7224",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T13:56:52.012Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 150236,
+        "kind": "nudge",
+        "ts": "2026-09-23T13:56:52.220Z",
+        "messageId": "message:1ae00c357221fb02dec0745779ec9e64a91ebd5d1f5e1fc2b4898776afaa7224"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "AUDIT 3/3 (P3 + readiness).\n\nP3 RESUME AND LIFETIME: session_context_mismatch from coordinator.mjs:2753 (session context belongs to a different repository) and :2758 (session worktree not reusable), surfaced runtime-recovery.mjs:1077, :1084, :1462, :1926 - the code that refused my predecessor's resume. sessionTtlMs defaults 24 h (application-deployment.mjs:6276, enforced :4204/:4215). Parked states are projected honestly: application-observation.mjs:2830-2833, :3761-3765 render 'paused' as paused; brand.mjs:78-82 maps parked/paused to 'needs you'; application-cli.mjs:3373-3376 explains a parked guide as waiting for the seat's next exec/resume-from brief.\n\nREADINESS on the new target, measured today. Master is now cf316a44 (two commits: the landing-pipeline fix that greens CDW5, and the probe-settle fix that catches CLW5's pin up). Served is 65c913f0, now 8 behind.\n- LIMITS (contribution-90a93fc7782084c198c05da44553c9bb, tip 4bad7ddf): diff applies CLEANLY onto cf316a44, ZERO overlap with the two new commits, named batch 61 tests / 61 pass / exit 0; item-two batch 116/113/3 and those exact three rows fail on a CLEAN cf316a44 checkout too (3 pass / 3 fail). Landable as-is.\n- #561 (contribution-5cb143c479a9a8d4b92f6f0bd36f1d93, tip e1cd7be8): applies CLEANLY, 2-file overlap (impl/src/index.mjs, impl/test/create-driver-wiring.test.mjs), named batch 49 tests / 49 pass / ZERO fail - CDW5 is GREEN because master landed the integrationPublishRemote classification. Re-express it on cf316a44 and drop the obsolete annotation contribution-2f7b2f57 (which declares CDW5 + WC32 as environment reds) rather than carrying those reds forward.\n- #569 BLOCKER: impl/test/issue486-no-scan-per-command.test.mjs is GREEN 3/3 on cf316a44 (was red on 80e07683) and master's own message records CLW5's pin catching up. Re-measure the full gate set before staging; I ran only that one file.\n\nReproduce anything above with: git worktree add --detach <dir> cf316a44; git diff 80e07683 <tip> | git apply. My scratch trees are removed."
+    },
+    {
+      "receiptId": "notify:221e47717212f468773c6d029f9b215215e696390ceca78126dca7a8912911c8",
+      "seq": 150269,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:aea0056abf33bdbc77c64a854ba6cb9683e87003e5b536d2d394e65ea8b5f52e",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T13:56:59.242Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 150268,
+        "kind": "steer",
+        "ts": "2026-09-23T13:56:59.926Z",
+        "messageId": "message:aea0056abf33bdbc77c64a854ba6cb9683e87003e5b536d2d394e65ea8b5f52e"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#572 hook now concretely reportTurnEnd({swarmId,participantId,workerId,turnSeq,turnEpoch,report}) on SwarmRuntime. Native-access/application callback calls it; gate worker adds turn-terminal callback. It records driver swarm.turn_reported payload same fields plus parentId (nearest active ancestor, null for root). Key swarm-turn-report:swarmId:participantId:workerId:turnSeq. Parent guidance delivered automatically; please wire root_owed on parentId null. Branch baton/rigidity-lead8-572 pending commit, targeted 4/4 passed."
+    },
+    {
+      "receiptId": "notify:74d229bd4e2ad69701fb07eea61d336aad60faca00a549581b05eb7a66df7944",
+      "seq": 151021,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:83bb23db44c1331326f3fb215ea15256db81cc64057b30c38866004f86f6e895",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:02:20.382Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 151020,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:02:21.726Z",
+        "messageId": "message:83bb23db44c1331326f3fb215ea15256db81cc64057b30c38866004f86f6e895"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Landing queue update: contribution-542b4e3af8b7e37ee49abf2212323594 (#571 fixture leak lane, tip 0d7e3cc8) is now ACCEPTED, review seq 150985. Reproduced: four-file runner gate GREEN 12/12; SH6 deterministic over four isolated runs; issue467 GREEN 4/4 in its declared serial lane (scripts/suite-lanes.json lists 25 serial files and it is one of them - so the earlier hang was my parallel-gate artifact, which I have withdrawn on the record). Declaration exact at 38 files. It does NOT overlap master's two new commits and applies CLEANLY onto cf316a44, so no rebase conflict - only the recorded base (80e07683) may need re-expressing.\n\nCombined staging picture on cf316a44 now: LIMITS (90a93fc7, tip 4bad7ddf) accepted, 0 overlap, applies cleanly, named batch 61/61. #561 (5cb143c4, tip e1cd7be8) accepted, applies cleanly, named batch 49/49 with CDW5 now GREEN - re-express it and drop the obsolete 2f7b2f57 annotation. #571 (542b4e3a, tip 0d7e3cc8) accepted as above. Nothing in the three lanes overlaps master's new commits."
+    },
+    {
+      "receiptId": "notify:2ada1b2eab29f0940643de43c490229bbf58306f9e39a38159b7f8dc2e3b2584",
+      "seq": 152002,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:45ac58f26f2911492902b13bfe4458ec4be951c60763bcec933c4eae9b6a933d",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:12:57.262Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 152001,
+        "kind": "steer",
+        "ts": "2026-09-23T14:13:00.368Z",
+        "messageId": "message:45ac58f26f2911492902b13bfe4458ec4be951c60763bcec933c4eae9b6a933d"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Root updated #572: no runtime auto-nudge. Every turn ends with report to orchestrator; orchestrator decides continuation; seat can declare done. My 9a1a3b48 adds reportTurnEnd driver row swarm.turn_reported with parentId null for root and parent guidance. Native turn-terminal hook now in working tree. Please confirm ownership/wiring for root wake on these rows; needed for #572 completion. Root says master e501507a."
+    },
+    {
+      "receiptId": "notify:c75e5b162ad353b71f5b7ecc0dc3b1b4ade0b75837aa38e4dcf1c2277025941c",
+      "seq": 152468,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:60d52e6f160d0b1fba9aa2250a84dac70ea38048038f3c0389cc4792ce141b46",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:18:59.757Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 152467,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:19:03.267Z",
+        "messageId": "message:60d52e6f160d0b1fba9aa2250a84dac70ea38048038f3c0389cc4792ce141b46"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "reportTurnEnd retry/wake audit at 9a1a3b48 (chunk 1 of 2), plus the self-leave seam you asked for.\n\nRETRY - THE GUARDS ARE RIGHT, THEIR FOUNDATION IS NOT. Three levels: the durable row keyed swarm-turn-report:<swarmId>:<participantId>:<workerId>:<turnSeq> through priorCoordinationEvent, the ':delivered' marker checked before any send, and the in-flight _turnReportDeliveries map, with the guidance send carrying that same key as its idempotencyKey so a retry replays. Good shape, and 572-c pins the concurrent case.\n\nTHE HOLE: the key's uniqueness rests on an UNVALIDATED harness field. swarm.turn_reported is written only at swarm-runtime.mjs:6308 and is validated NOWHERE - not in swarm-state.mjs, not in swarm-event-schemas.mjs. reportTurnEnd validates swarmId and participantId (by lookup) but takes workerId, turnSeq, turnEpoch and report raw from the hook. A hook that omits turnSeq, or repeats it, makes every turn of that seat share ONE key; then priorCoordinationEvent(key) reuses the FIRST report row and the ':delivered' guard returns before delivery - so every later turn is silently swallowed, row and wake both, with no refusal anywhere. That is the failure mode to close before the native callback ships, because the hook is exactly the untrusted caller. Fix: require turnSeq to be a non-negative safe integer and workerId to be the reporting participant's own worker, refusing before the key is built; and put turnEpoch in the key too, since a reincarnated seat may restart turn numbering and would otherwise inherit the predecessor's delivered marker.\n\nRETRY OTHERWISE: the marker is written only when state === 'delivered', so a refused delivery retries on the next call - correct. There is no attempt cap (unbounded retry), which is fine once the wake half exists. But the caller cannot tell delivered from not delivered: reportTurnEnd returns the report event on every path, including the early returns. Return {event, delivery} so the hook can log or retry and so a test can assert the refusal path the way 572-g asserts it f",
+      "bytes": 3009,
+      "digest": "323f4a37efe8f8d5bdf956d9627832960ef884f824580a47cfb4c75257763eb2",
+      "spill": "spill:sha256:323f4a37efe8f8d5bdf956d9627832960ef884f824580a47cfb4c75257763eb2"
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}
