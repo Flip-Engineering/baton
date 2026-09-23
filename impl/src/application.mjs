@@ -1451,6 +1451,64 @@ function compareRouteTeachingRow(left, right) {
   return 0;
 }
 
+// #102 Decision 6: the cell quorum aggregate. A cell run carries size homogeneous plan
+// nodes under one runId; the run-status builder derives the cell outcome over ALL of them,
+// never nodes[0]. The outcome is the closed aggregate cell: { size, quorum, survived, lost,
+// degraded } — survived is counted from the work-rest set, and every terminal non-survivor
+// is receipted in cell.lost with its per-member cause. A member the projection never
+// dispatched (no task) is receipted cell_member_lost — a spawn that never started is a loss
+// with its own name, never a silent absence. The aggregate is pure in (declaration,
+// projection, task and rest reads): no clock, no counter. Terminal minting reads it: lost
+// beyond the quorum allowance fails cell_below_quorum, any loss under strict fails
+// cell_exact_breach, and quorum <= survived < size rests cell.degraded.
+//
+// Rest is member-liveness evidence, read at two layers. A rested member usually reads
+// projection state accepted (its task verified through the referee). But a member the drive
+// re-turned before its completion landed holds an open follow-up turn while its completion
+// row sits refused-stale on the worker stream — the task fence protects the task transition,
+// and rightly so, yet the member did rest. The aggregate therefore also reads the worker's
+// durable turn evidence: a lifecycle.turn_completed row on the member's stream counts the
+// member survived even when the task still reads working. Task truth is never rewritten by
+// this — only the quorum count reads the wider evidence.
+const CELL_LOST_PROJECTION_STATES = new Set(['failed', 'cancelled', 'stopped', 'denied']);
+function workerRested(driver, workerId) {
+  if (typeof workerId !== 'string' || typeof driver?.log?.read !== 'function') return false;
+  try {
+    return driver.log.read(workerId)
+      .some((event) => event?.kind === 'lifecycle.turn_completed');
+  } catch {
+    return false;
+  }
+}
+function deriveCellAggregate(cell, nodes, taskOf, dispatchBegun = false, restedOf = null) {
+  if (!cell || typeof cell !== 'object') return null;
+  if (!Number.isSafeInteger(cell.size) || !Number.isSafeInteger(cell.quorum)) return null;
+  const list = Array.isArray(nodes) ? nodes : [];
+  let survived = 0;
+  const lost = [];
+  for (const node of list) {
+    const task = node?.taskId ? taskOf(node.taskId) : null;
+    if (!node?.taskId || !task) {
+      // A taskless member before dispatch began is pending, never lost: the mint has not run
+      // yet, so there is no absence to receipt. Past dispatch, a member with no task never
+      // started — receipted cell_member_lost with its own name, never a silent absence.
+      if (!dispatchBegun) continue;
+      lost.push({ workerId: task?.assignee ?? null, nodeKey: node?.key ?? null, cause: 'cell_member_lost' });
+      continue;
+    }
+    if (node.state === 'accepted' || task.status === 'completed'
+      || (typeof restedOf === 'function' && restedOf(task.assignee))) {
+      survived += 1;
+      continue;
+    }
+    if (CELL_LOST_PROJECTION_STATES.has(node.state)) {
+      lost.push({ workerId: task.assignee ?? null, nodeKey: node.key ?? null, cause: task.status ?? node.state });
+    }
+  }
+  const degraded = survived >= cell.quorum && survived < cell.size;
+  return { size: cell.size, quorum: cell.quorum, survived, lost, degraded };
+}
+
 // Issue #335: the ONE teaching every `application_route_not_allowed` site composes — the
 // requested selector as typed, the selector grammar, and the served routes of the requested
 // harness with their readiness state, all read off the deployment's own readiness rows (the
@@ -3849,6 +3907,10 @@ export class BatonApplication {
         // waves.list seat map can recover it even when the wave was minted by the interpreter seam
         // (createWave mints a role-only string roster, wave.mjs:180 — the route is not in it).
         ...(intent.waveId !== undefined ? { route: clone(intent.route) } : {}),
+        // #102 Decision 6: the cell declaration rides the same record, so the run-status
+        // builder recovers size/quorum/strict for the quorum aggregate from the durable log
+        // (same event-log-only discipline as the wave binding above).
+        ...(intent.cell !== undefined ? { cell: clone(intent.cell) } : {}),
       }, {
         actor: owner.actor,
         key: `run.steering_registered:${intent.runId}`,
@@ -5416,6 +5478,28 @@ export class BatonApplication {
       if (runStop?.status === 'stopped') phase = 'stopped';
       else if (runStop) phase = 'stopping';
     }
+    // #102 Decision 6: a cell run's terminal truth is the quorum aggregate, never nodes[0].
+    // A stop still wins (above); otherwise the aggregate mints the terminal the count reached:
+    // a strict breach or a quorum-unreachable loss fails, a quorum rest with losses degrades.
+    const cellDeclaration = this._runCellDeclaration(runId);
+    // Dispatch begun is its own observation: any projected task, or any recorded dispatch.
+    // Before it, taskless members are pending (the mint has not run); past it, one is lost.
+    const cellDispatchBegun = projection.nodes.some((node) => node?.taskId)
+      || (current.dispatches?.length ?? 0) > 0 || !!current.dispatch;
+    const cellAggregate = cellDeclaration
+      ? deriveCellAggregate(cellDeclaration, projection.nodes,
+        (taskId) => this.driver.coordination.task(taskId), cellDispatchBegun,
+        (workerId) => workerRested(this.driver, workerId))
+      : null;
+    // The aggregate terminal below survives the single-node accepted refinement further
+    // down: a quorum mint is never re-derived from nodes[0].
+    let cellTerminalPhase = null;
+    if (cellAggregate && !runStop) {
+      if (cellDeclaration.strict === true && cellAggregate.lost.length > 0) phase = 'failed';
+      else if (cellAggregate.lost.length > cellAggregate.size - cellAggregate.quorum) phase = 'failed';
+      else if (cellAggregate.degraded) phase = 'degraded';
+      if (phase === 'failed' || phase === 'degraded') cellTerminalPhase = phase;
+    }
 
     // VR6/RV: inconclusive runtime repair remains repeatable while a candidate-owned diagnostic
     // checkpoint gets exactly one confirmation. The origin is pinned on the checkpoint so a later
@@ -5643,7 +5727,7 @@ export class BatonApplication {
         },
         cancelledAt: durableExport.cancelledAt ?? null,
       } : null;
-    if (!runStop && node.state === 'accepted') {
+    if (!runStop && node.state === 'accepted' && cellTerminalPhase === null) {
       if (readOnlyResult) phase = 'completed';
       else if (semanticReview.state === 'review_running') phase = 'reviewing';
       else if ((integration || durableExport?.status === 'completed')
@@ -5724,6 +5808,9 @@ export class BatonApplication {
       objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
+      // #102 Decision 6: a cell run carries its quorum aggregate receipt on the view; other
+      // runs carry no cell key, so their views are byte-identical to before.
+      ...(cellAggregate ? { cell: deepFreeze(cellAggregate) } : {}),
       cursor: projection.coordinationUpperBound,
       knowledge: knowledgeProjection.knowledge,
       knowledgeDigest: knowledgeProjection.knowledgeDigest,
@@ -5783,7 +5870,8 @@ export class BatonApplication {
         dispatchClosed: Boolean(runStop),
       },
       evidence: artifacts.map(publicArtifact),
-      narrative: terminalCauseNarrative(terminalCause) ?? (phase === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
+      narrative: terminalCauseNarrative(terminalCause) ?? (phase === 'degraded' ? 'Cell reached quorum with member losses; the aggregate receipt names the survivors and the lost.'
+        : phase === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
         : phase === 'stopping' ? 'Run stop is durably admitted and physical ownership is converging.'
           : phase === 'interrupted'
             ? 'Provider turn interrupted; the exact Plan member and native session remain attached for send or stop.'
@@ -7376,6 +7464,10 @@ export class BatonApplication {
 
   _runWaveRoute(runId, index = null) {
     return applicationObservation._runWaveRoute(this, runId, index);
+  }
+
+  _runCellDeclaration(runId, index = null) {
+    return applicationObservation._runCellDeclaration(this, runId, index);
   }
 
   // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. A wave is the
