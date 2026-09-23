@@ -24206,7 +24206,7 @@
         {
           "name": "reportTurn",
           "ordinal": 0,
-          "size": 10,
+          "size": 17,
           "seam": "observation",
           "evidence": [
             "observation:record_name"

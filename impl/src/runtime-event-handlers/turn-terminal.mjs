@@ -8,9 +8,16 @@ import {
   KILL_RULES, TERMINAL_TASK_STATUSES, boundedProcessObservation, deepFreeze, typedTerminalCode,
 } from '../runtime-recovery.mjs';
 
-function reportTurn(coordinator, ctx, event, report) {
+function reportTurn(coordinator, recorder, ctx, event, report) {
   const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
-  if (typeof participantRuntime?.onTurnCompleted !== 'function') return;
+  if (typeof participantRuntime?.onTurnCompleted !== 'function') {
+    const runId = ctx.handle.runId ?? coordinator._tasks.get(ctx.handle.taskId)?.runId ?? null;
+    recorder.recordDriver('worker.turn_reported', {
+      runId, worker: ctx.workerId, taskId: ctx.handle.taskId,
+      turnSeq: event.seq, turnEpoch: ctx.turnEpoch, report, assignmentDone: false,
+    }, `worker-turn-report:${ctx.workerId}:${ctx.turnEpoch}:${event.seq}`, 'worker');
+    return;
+  }
   coordinator._trackAuthorityPromise(() => Promise.resolve().then(() => participantRuntime.onTurnCompleted({
     workerId: ctx.workerId, turnSeq: event.seq, turnEpoch: ctx.turnEpoch, report,
     assignmentDone: participantRuntime.isDone?.() === true,
@@ -35,7 +42,7 @@ export function turnCompleted(coordinator, recorder, ctx) {
           payload: sealVerdict.seal ? { ...wr, usageSeal: sealVerdict.seal } : wr,
         });
         const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
-        reportTurn(coordinator, ctx, terminalEvent, wr);
+        reportTurn(coordinator, recorder, ctx, terminalEvent, wr);
         // D2 blk-5 / C4: the turn-terminal seam clears the liveness marker (a zombie flag would
         // hold liveness forever and make rung-3 reap impossible).
         ctx.handle.turnInFlight = false;
@@ -117,7 +124,7 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
           worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor,
           payload: sealVerdict.seal ? { ...ctx.payload, usageSeal: sealVerdict.seal } : ctx.payload,
         });
-        if (!ctx.turnWasTerminal) reportTurn(coordinator, ctx, terminalEvent,
+        if (!ctx.turnWasTerminal) reportTurn(coordinator, recorder, ctx, terminalEvent,
           { ...ctx.payload, status: 'failed' });
         // #295: the crash cert is a provider-shaped payload — the adapter types the same fault and
         // the same bounded detail (route, reset instant) it typed on the turn, so a rate-limited
@@ -187,7 +194,7 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
 
 export function exited(coordinator, recorder, ctx) {
 const terminalEvent = ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor, payload: ctx.payload });
-        if (!ctx.turnWasTerminal) reportTurn(coordinator, ctx, terminalEvent,
+        if (!ctx.turnWasTerminal) reportTurn(coordinator, recorder, ctx, terminalEvent,
           { ...ctx.payload, status: 'failed' });
         const task = coordinator._tasks.get(ctx.handle.taskId);
         const failActiveTask = task && !TERMINAL_TASK_STATUSES.has(task.status)

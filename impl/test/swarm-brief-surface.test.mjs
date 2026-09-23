@@ -12,6 +12,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/index.mjs';
+import { deriveWakeFrame } from '../src/wake-stream.mjs';
 import { renderBrief } from '../src/adapter.mjs';
 import { createBrief } from '../src/messages.mjs';
 import { SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
@@ -170,13 +171,21 @@ test('a swarm recruit through SwarmRuntime gets a brief that carries the Baton s
 });
 
 test('a non-swarm run brief is unchanged: no Swarm section and the empty-tools sentence stays', async (t) => {
-  const { baton, briefs } = await fixture(t);
+  const { baton, briefs, driver } = await fixture(t);
   await (await baton.runs.start('Plain non-swarm objective', selection)).approve();
   const brief = await waitFor(() => briefs.find((candidate) => candidate.goal === 'Plain non-swarm objective'),
     'the plain run brief to reach the adapter');
   const text = renderBrief(brief, 'omp-rpc');
   assert.ok(!text.includes('## Swarm'), 'a non-swarm brief carries no Swarm section');
   assert.match(text, /No tools are advertised/u, 'the non-swarm tools section is unchanged');
+  const event = await waitFor(() => driver.coordination.eventsView().find((row) =>
+    row.payload?.kind === 'worker.turn_reported'), 'plain run turn report');
+  assert.equal(event.payload.report.summary, 'Contribution ready');
+  assert.equal(typeof event.payload.runId, 'string');
+  const wake = deriveWakeFrame(event);
+  assert.equal(wake.wakeClass, 'root_turn_reported');
+  assert.equal(wake.runId, event.payload.runId);
+  assert.equal(wake.next, `baton run view ${event.payload.runId}`);
 });
 
 test('the Swarm section, SWARM_NATIVE_GUIDANCE, and the bridge guidance are one derivation', () => {

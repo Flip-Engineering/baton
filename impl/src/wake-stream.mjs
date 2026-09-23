@@ -305,6 +305,13 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
+    wakeClass: 'root_turn_reported', scope: 'deployment', terminal: true,
+    next: 'baton run view {runId}',
+    summary: 'a worker turn ended and its report is addressed to the root orchestrator',
+    rows: [operationalKind('worker.turn_reported')],
+    subject: { field: 'worker', kind: 'worker', fallback: { field: 'runId', kind: 'run' } },
+  }),
+  wakeRow({
     wakeClass: 'guidance_delivered', scope: 'deployment', terminal: false, next: null,
     summary: 'a message reached the participant it was addressed to',
     rows: [operationalKind('message.delivered')],
@@ -563,7 +570,7 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     runId,
     actor: event.actor ?? null,
     subject: subjectOf(row, payload),
-    next: renderNext(row, coordinates),
+    next: row.wakeClass === 'root_turn_reported' && runId === null ? null : renderNext(row, coordinates),
     observation: false,
     served: servedHeader(served),
     // The bounded row identity: what woke the consumer, never a copy of a 60 KiB view (the wake
