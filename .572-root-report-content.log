@@ -1,0 +1,14 @@
+✔ 564-t1: a top-level turn end (parentId null) is owed to the root, and rides the attention join (192.961041ms)
+✔ 564-t2: a report with a live parent is that parent's, never the root's (98.524542ms)
+✔ 564-t3: a second observation repairs rather than duplicates (68.649083ms)
+✔ 564-t4: the participant_left update path reconciles the turn rows too (96.963417ms)
+✔ 564-t5: a parent-guidance failure re-addressed to the root wakes it too, keyed by the reporter epoch (88.200959ms)
+✔ 564-t6: reportTurnEnd drives the reconciler when the runtime provides it (their call site) (31.677875ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2234.370375

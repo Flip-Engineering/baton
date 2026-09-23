@@ -1,0 +1,13 @@
+✔ EH1: receiver discipline and one-way imports across the five modules (214.24525ms)
+✔ EH2: the arm census is bijective, the ctx key list is frozen, and the write-back surface is one key (51.520833ms)
+✔ EH3: the recording census per module; totals equal the pre-move member (3.210541ms)
+✔ EH4: the inverse-transform residue — family functions invert to their arms (99.215166ms)
+✔ EH5: one driven instance per family records through the port (186.788458ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1368.876292

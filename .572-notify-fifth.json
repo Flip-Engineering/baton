@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 156542,
+    "ts": "2026-09-23T14:53:51.463Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:20198b784639417baf2641520d472fcc57cfc73b4f7e41018ac6a5e47b9d1cae",
+      "seq": 156434,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:d7003f23887499b886c56d8cf4e8c1914710ce1a4e9f4e728197fbaf92355ed0",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:53:11.244Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 156433,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:53:11.669Z",
+        "messageId": "message:d7003f23887499b886c56d8cf4e8c1914710ce1a4e9f4e728197fbaf92355ed0"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Q1 answered: NO orchestrator wake consumes the generic boundary. Traced at eaf48974.\n\nWhat a generic non-swarm pausable turn end actually produces: (a) the pause mint appends turn.paused (runtime-admission.mjs:950); (b) _mintMemberTerminal writes a member_terminal attention reason with memberState 'terminal-at-mint' (runtime-observation.mjs:1345-1359); (c) reportTurn (turn-terminal.mjs:11-14) returns EARLY, because the hook is keyed on coordinator._participantRuntimes.get(runId) and that map is only populated by SwarmNativeAccess.registerParticipantRuntime for swarm seats - so no parent report exists for a plain run at all.\n\nWHO CONSUMES WHAT. member_terminal is a CALLER-facing attention item (application-semantics.mjs:1876 documents 'baton run attention watch RUN_ID --kind member_terminal'), i.e. a human or an operator command reads it. The one programmatic consumer is the WAVE path: workflow-interpreter.mjs:912 reads wave_member_terminal as steering evidence - which does not cover a plain pausable run. And the deployment-scope 'paused' wake class (wake-stream.mjs:278-282) carries NO next field, while the adjacent 'attention' class carries next: 'baton run answer {runId} {requestId} --text TEXT'. So the paused wake tells a consumer that something paused and tells it nothing to do about it.\n\nSMALLEST SAFE SEAM, one line: give the paused wake row a next naming the verbs that already exist for it - claim_turn and nudge_turn (application-semantics.mjs:506 and :524, both genericCli: true) - mirroring the attention class directly below it. The address is already in the row's subject (worker, task fallback), so the wake becomes actionable without new machinery and without touching the pause mint you do not own.\n\nFOLLOW-UP, larger and yours to sequence: route a generic parentless turn through the owed-row machinery so a durable owed row exists for it, not just an attention item. One constraint from your own red proof: if rootAttentionPayload requires a contributionId, a turn_reported-class row can never be minted for a ",
+      "bytes": 2160,
+      "digest": "503ea1ee27565e5f305ff128ca23011f733abafa1a07f783e248f299cd44a463",
+      "spill": "spill:sha256:503ea1ee27565e5f305ff128ca23011f733abafa1a07f783e248f299cd44a463"
+    },
+    {
+      "receiptId": "notify:7caa244e1128d06086f68f733aea605a0344ef115258899ba6c99306667f0ed0",
+      "seq": 156468,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:725b073844fb930afc1a9d6264b401ac745b8fe1edcc89867a87a64f3481bef5",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:53:25.767Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 156467,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:53:26.572Z",
+        "messageId": "message:725b073844fb930afc1a9d6264b401ac745b8fe1edcc89867a87a64f3481bef5"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Q1 tail, then Q2.\n\nQ1 TAIL (the 2048 cap cut it): the follow-up is larger and yours to sequence - route a generic parentless turn through the owed-row machinery so a durable owed row exists, not only an attention item. Constraint from your own red proof: if rootAttentionPayload requires a contributionId, a turn_reported-class row can never be minted for a seat or run that has none, so that payload must admit contributionId: null before the generic case can ride it. I could not check rootAttentionPayload in this tree - it lives in 81963696's stack, not in eaf48974 - so that constraint is conditional on the red proof you already have.\n\nQ2 answered: YES, it leaves durable work waiting. The drive loop is INSIDE _continueRecoveredSeats (swarm-runtime.mjs:6365): it walks participants, tests resumeDecisionPending(participant) (swarm-state.mjs:114, a pure read) and re-drives each pending decision under idempotencyKey resume-continuation:<requested.seq> (:6372-6374). That function's ONLY caller in the tree is _dispatch (:7832, call at :7847). So after a restart or reincarnation, a seat whose resumeDecision.requested row is pending is never driven until some command arrives - in a quiet swarm it waits indefinitely, which is exactly the 'waiting on a party Baton does not wake' shape the AGENTS.md law bans.\n\nSMALLEST SAFE SEAM, one line: call await this._continueRecoveredSeats() from the deployment-open/restore pass that already runs beside this._settleCheckoutWriterState() (swarm-runtime.mjs:6551), i.e. at the point where predecessor workspaces, checkout writer state and carries are reconciled and the seat's runtime exists. Two reasons it is safe: the drive is already exactly-once per requested.seq through its idempotency key, so an extra call cannot double-drive; and resumeDecisionPending is a pure read, so the seam adds no new state. The one ordering requirement is that it run AFTER the participant runtime and transport are registered - which is where :6551 already sits - and it must stay after the pause-record seam is go",
+      "bytes": 2228,
+      "digest": "efcc2a5007594b348985a664856f35d0e0a54a94fb64815e9a0c83fcfc98d17d",
+      "spill": "spill:sha256:efcc2a5007594b348985a664856f35d0e0a54a94fb64815e9a0c83fcfc98d17d"
+    },
+    {
+      "receiptId": "notify:7b1ef9360b8037fd7607728ef88d23baad6448046174b658f48abcb8c82d9268",
+      "seq": 156498,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:31831b092d104bf1f04643c6c47bd20939bb54207530fa2bf8dcf32cfaab8540",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:53:33.415Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 156497,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:53:33.949Z",
+        "messageId": "message:31831b092d104bf1f04643c6c47bd20939bb54207530fa2bf8dcf32cfaab8540"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Q2 tail (cap again - I will keep future notes under 1800 bytes).\n\nThe one ordering requirement: the drive must run AFTER the participant runtime and transport are registered - which is exactly where :6551 sits - and it must run with the pause-record seam retired, so a driven decision CONTINUES the seat rather than parking it. That is the whole change: one call site inside the open/restore pass, no new machinery, no new state, and the existing dispatch-time call at :7847 can stay as the belt-and-braces retry since the idempotency key makes it free.\n\nBoth questions answered, nothing else outstanding from me. My queue is empty and my scratch tree for this audit is removed."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

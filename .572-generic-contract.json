@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 157236,
+      "ts": "2026-09-23T14:59:23.974Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 157236,
+        "ts": "2026-09-23T14:59:23.974Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:c442a64877bc4cab1c266114761b6e461df3b261e16342ee99d2045730c66f3b",
+    "seq": 157236,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:59:21.689Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "I see abb2d0de delivery fix and am verifying real transport proof green. For remaining generic non-swarm turns I will emit durable worker.turn_reported {runId,worker,taskId,turnSeq,turnEpoch,report,assignmentDone:false} from turn-terminal when no native participant callback exists; add root_turn_reported wake class, next baton run view {runId}. Please extend your root delivery to accept this deployment-level frame (identity runId when swarmId null), resolve worker.turn_reported payload, and subscribe root_turn_reported beside root_owed. This avoids inventing a swarm for plain Runs. Let me know any incompatible contract promptly."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "ab2e5e11-cfbe-423b-8434-6c7fbb8f1a7d"
+  }
+}

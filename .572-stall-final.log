@@ -1,0 +1,30 @@
+✔ A1 SW-01 (RED): DEFAULT_WATCHDOG is a separately-frozen deployment constant strictly smaller than the wall (4.585041ms)
+✔ A2 SW-11 (RED): a stallMs at/above the node wall refuses at admission with watchdog_stall_exceeds_wall (398.274875ms)
+✔ A3 SW-11 (RED): a non-positive stallMs refuses at admission with watchdog_stall_exceeds_wall (325.698042ms)
+✔ A4 SW-11 (RED): a non-integer stallMs refuses at admission with watchdog_stall_exceeds_wall (330.335292ms)
+✔ A5 SW-12 (RED): the resolved watchdog config is disclosed byte-stable on the run status surface (4180.8885ms)
+✔ B1 SW-04 (RED): REARM_KINDS is the frozen closed four-kind set in ACTUAL sorted order (0.583333ms)
+✔ B2 SW-05 (RED): a scratchpad-note stream (the chatty-idler farm class) buys zero re-arms — the stall fires despite the notes (115.924583ms)
+✔ B3 SW-03 (RED): a heartbeat/tokens/provider-call stream never re-arms — the any-event re-arm is killed (116.774792ms)
+✔ B4 (PIN): a worker-stream resolution stream never stalls — the closed set keeps the resolution kinds live (959.058292ms)
+✔ B5 (PIN): an orchestrator steer/nudge stream never re-arms a worker liveness — the stall fires on schedule (94.743833ms)
+✔ C1 (RED): a lifecycle.turn_started sets handle.turnInFlight — the per-handle liveness marker (35.461709ms)
+✔ C2 (RED): a turn in flight with ZERO events for >stallMs is never declared stalled (429.490875ms)
+✔ C3 (PIN): a slow-but-productive worker — a long in-flight turn with provider activity — is never declared stalled (933.017ms)
+✔ C4 (RED): a turn that settles clears turnInFlight — the zombie mirror of the stall bug dies here (62.429333ms)
+✔ D1 SW-08 (RED): a null-deadline blocking question gets a bounded default; expiry escalates, releases, never closes (36.737958ms)
+✔ D2 SW-08 (RED): an operator-acked interaction extends its effective deadline and is skipped by the sweep (25.858083ms)
+✔ D3 SW-06 (PIN): a blocked worker reads honest null + blockedInteraction — never a waiting kind (5010.649667ms)
+✔ D4 SW-07 (PIN): a blocked worker is never stall-declared — the G3 non-working refusal is retained (284.967917ms)
+✔ D5 SW-08 (PIN): an escalated blocking question stays answerable — a late operator answer lands, never already_resolved (40.364917ms)
+✔ E1 SW-02 (RED): the stall declaration names its basis — no_progress_evidence, never "too slow" (95.26175ms)
+✔ E2 SW-09 (RED): the ladder escalates first — the stall_declared reason lands, never a direct stop (99.514084ms)
+✔ E8 SW-02 (PIN): the stalled worker reads waitingOn.provider_stalled — and a later worker-actor REARM clears it (6509.982417ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21734.265416

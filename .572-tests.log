@@ -1,0 +1,22 @@
+✔ 443-a1: a provider-fault death records ONE reroute_proposed row naming the ranked candidates, and the view projects it (164.913875ms)
+✔ 443-a2: the proposal wakes the new closed wake class, and carries no roll-forward without a policy (64.771458ms)
+✔ 443-b1: `auto` performs the resume onto the first candidate, carrying the workspace and the why (108.862958ms)
+✔ 443-b2: a hand-typed resume of a faulted seat still says why the successor exists (94.188583ms)
+✔ 443-b3: an auto-rerouted successor starts under the default continuation policy (61.103292ms)
+✔ 443-c1: a subscription route whose window is closed is excluded, with its reason and reset (51.847541ms)
+✔ 443-c2: preferApi flips the billing preference, and never re-orders the closed route in (66.452791ms)
+✔ 443-d1: with no candidate the proposal is empty and the attention row names the wait (46.977292ms)
+✔ 443-e1: the new rows replay identically and no caller can submit one (83.749666ms)
+✔ S-G1: the rendered swarm family carries every verb, kind, permission and attention kind (16.600708ms)
+✔ S-G1: the committed §7.4 block is in sync with the contract (and the whole gate is green) (2305.941833ms)
+✔ S-G1: a document missing a kind is refused by the gate, naming the block (23.2265ms)
+✔ S-G1: the attention vocabulary is read from the runtime mint sites, in source order (4.694667ms)
+✔ S-G1: the surface gate regenerates the docs/36 block on --write (0.178834ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3588.5015

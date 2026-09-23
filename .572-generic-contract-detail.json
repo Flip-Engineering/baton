@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 157440,
+      "ts": "2026-09-23T15:00:48.074Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 157440,
+        "ts": "2026-09-23T15:00:48.074Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:258ac7996f5bd2f6e1f553b3e88e3c549ca340cd944e321d44e4e1d9cb5ab01a",
+    "seq": 157440,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T15:00:46.872Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Generic emitter implementation now in my worktree: worker.turn_reported with runId, worker, taskId, turnSeq, turnEpoch, report, assignmentDone:false; root_turn_reported wake derives run coordinates. Direct coordinator workers may have runId null, so delivery can key on workerId in that case; their wake.next is null (no fake Run). Real deployment plain Runs have runId and next baton run view. Existing _participantRuntimes callback keeps swarm reports exclusively on parent guidance. Test covers actual plain application Run -> report -> derived root wake. Your abb2d0de + my real report transport proof now 5/5 green in rehearsal."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "fdd6979e-fe1d-4ad4-9a17-1cd8e0a5260e"
+  }
+}

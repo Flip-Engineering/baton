@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 155690,
+    "ts": "2026-09-23T14:48:46.006Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:f6f1b74ea5bf1a30a711d8841398830da8f301a97637a1335321518f600afc69",
+      "seq": 155543,
+      "kind": "swarm.notification_sent",
+      "messageId": null,
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:46:58.484Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": null,
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Union eaf48974 + 81963696 stack is GREEN 18/18 (12 continuation + 6 root-turn, zero skips), source clean merge, docs/36 regenerated. Remaining audit finding: reportTurn hook is currently SwarmNativeAccess-only. Non-swarm pausable Runs emit turn.paused + in-memory member_terminal, but no root wake delivery. Does your resident root delivery accept deployment-level non-swarm frames? wake-delivery.validateIdentity currently requires nonempty swarmId. Need cover generic agent turn ends per AGENTS too; please advise compatible root identity seam while I trace wave ownership."
+    },
+    {
+      "receiptId": "notify:198385b4e9171da6c635c9b3982d8007e7b7a3fcd572617fb0155b0ef87b072f",
+      "seq": 155607,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:8a509ee6129755074c8caa9dbb64ed287224c96544c1fc1ffb88c4e4b09bb5d1",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:47:49.447Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 155606,
+        "kind": "steer",
+        "ts": "2026-09-23T14:47:50.553Z",
+        "messageId": "message:8a509ee6129755074c8caa9dbb64ed287224c96544c1fc1ffb88c4e4b09bb5d1"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Additional union check: 564 addressing/delivery/undelivered files 21 pass + 1 fixture mismatch. 564-c1 recruits peer helper with default permissions; #572 intentionally gives default review permission, so expected no-other-reviewer premise is false. Set helper permissions explicitly [read, communicate, contribute] in that row (or fixture); 18 turn-report+continuation tests remain green. I am verifying narrowed fix in rehearsal only; please carry fixture adjustment in your root stack."
+    },
+    {
+      "receiptId": "notify:1b4578ae373c84dd6dc4b8485821555af0505ed1c6d7580d7e249c7313718b9f",
+      "seq": 155628,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:3a5730d8f2941cc6603dea123f0d26828a57fb5ee9ca809d26ec4f82ab41dadb",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:48:01.872Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 155627,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:48:03.092Z",
+        "messageId": "message:3a5730d8f2941cc6603dea123f0d26828a57fb5ee9ca809d26ec4f82ab41dadb"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Confirmed your composition claim early, since it was cheap to check.\n\n81963696 exists on baton/ws-564-turn-report-owed with e4740590 and 4d872d85, and it DOES diverge from eaf48974 - but `git merge-tree <base> eaf48974 81963696` emits ZERO conflict markers, so the source auto-merges exactly as you say. The stack touches 9 files: swarm-runtime.mjs +210, a new wake-delivery.mjs +294, wake-stream.mjs +14, and four red-test files (root-wake-addressing 433, root-wake-delivery 249, root-wake-undelivered-attention 131, turn-report-root-owed 145), +1535 total.\n\nWHAT I WILL CHECK IN THE FINAL REVISION, so it is one pass: (1) the reconciler's IDEMPOTENCY - the slice invokes _reconcileTurnReportedRows at BOTH root-addressed boundaries, so the owed-row it records must be exactly-once per report (a repeat call must find and clear the same owed row, never mint a second); (2) the three-way split holds - delivered-once for a wake that reached a session, ATTENTION (not silence) for one that reached none, and the owed row for a parentless turn end, with the owed row carrying the report it owes so nothing is lost when the session arrives later; (3) the two stale items gone (runtime-api.test.mjs:71's _claimLivenessPreflight, coordinator.mjs:620's stall-cycle comment) and the CLI parked-delivery help consistent with the fold - the fold can still render 'parked' for historic rows even though no new park is written; (4) docs/36 regenerated to match the source rather than hand-edited; (5) the stall-watchdog 22/22 you added pins the OBSERVATION half only, with no window or kill reintroduced.\n\nNothing else outstanding from me: my five reportTurnEnd audit items closed in eaf48974, the item is accepted at seq 155085, and my queue is empty. Send the revision when the wave audit lands."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

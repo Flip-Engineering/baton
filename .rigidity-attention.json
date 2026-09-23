@@ -1,0 +1,1353 @@
+{
+  "swarmId": "swarm-rigidity-20260921",
+  "purpose": "Rigidity and arbitrary-limits removal: issues 496, 499, 500, 530, 531, 532, 536, 538 (the exactObject security-boundary class) plus anything else in the original 492-sweep findings not yet closed. Removal/correction mandate, not just cataloging.",
+  "status": "open",
+  "closedReason": null,
+  "actor": "web:local-owner:935be40a-9001-4fba-a1e6-9fabb1f916d2",
+  "seq": 7270,
+  "ts": "2026-09-21T18:17:05.636Z",
+  "baseCommit": "31f356b2b1cd5a32a241116c52aa96ea7133fc4a",
+  "policy": {
+    "rerouteOnProviderFault": "manual",
+    "reroutePreferApi": false,
+    "resumeContinuation": "auto"
+  },
+  "caller": {
+    "participantId": "rigidity-lead8",
+    "permissions": [
+      "read",
+      "communicate",
+      "contribute",
+      "review",
+      "organize",
+      "recruit"
+    ],
+    "lastRefusal": null
+  },
+  "availableActions": [
+    "swarm.view",
+    "swarm.watch",
+    "swarm.recruit",
+    "swarm.guide",
+    "swarm.capture",
+    "swarm.check",
+    "swarm.notify",
+    "swarm.notifications",
+    "swarm.integrate",
+    "swarm.update",
+    "run.knowledge.seed",
+    "run.board.post",
+    "run.board.read",
+    "run.scratchpad.append",
+    "run.scratchpad.read",
+    "run.scratchpad.elevate",
+    "evidence.search"
+  ],
+  "admission": [],
+  "actionTargets": {
+    "swarm.capture": {
+      "participantIds": [
+        "rigidity-lead",
+        "rigidity-lead2",
+        "rigidity-lead3",
+        "rigidity-lead4",
+        "rigidity-lead5",
+        "rigidity-lead6",
+        "rigidity-lead7",
+        "rigidity-lead7f",
+        "rigidity-reviewer7",
+        "rigidity-571-fixtures",
+        "rigidity-lead8",
+        "rigidity-572-gates",
+        "rigidity-568-cleanup"
+      ]
+    },
+    "swarm.check": {
+      "participantIds": [
+        "rigidity-lead",
+        "rigidity-lead2",
+        "rigidity-lead3",
+        "rigidity-lead4",
+        "rigidity-lead5",
+        "rigidity-lead6",
+        "rigidity-lead7",
+        "rigidity-lead7f",
+        "rigidity-reviewer7",
+        "rigidity-571-fixtures",
+        "rigidity-lead8",
+        "rigidity-572-gates",
+        "rigidity-568-cleanup"
+      ]
+    }
+  },
+  "updates": [
+    {
+      "event": "swarm.group_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.work_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.assignment_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.coupling_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.claim_updated",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.proposal_updated",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.holder_released",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.policy_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.context_updated",
+      "permission": "communicate"
+    },
+    {
+      "event": "swarm.contribution_recorded",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.contribution_reviewed",
+      "permission": "review"
+    },
+    {
+      "event": "swarm.participant_left",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.closed",
+      "permission": "organize"
+    },
+    {
+      "command": "run.knowledge.seed",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.post",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.append",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.scratchpad.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.elevate",
+      "permission": "contribute"
+    },
+    {
+      "command": "evidence.search",
+      "permission": "read"
+    }
+  ],
+  "deployment": {
+    "workspace": {
+      "state": "ready",
+      "freeBytes": 5502926848,
+      "freeInodes": 54140000,
+      "minFreeBytes": null,
+      "minFreeInodes": null,
+      "floorBytes": 602330004,
+      "floorInodes": 14828,
+      "floorSource": "derived",
+      "estimateHighWater": {
+        "bytes": 195089083,
+        "inodes": 14632
+      },
+      "runtimeFootprint": {
+        "bytes": 407240921,
+        "inodes": 196
+      }
+    },
+    "hostCapacity": {
+      "capacity": {
+        "cores": 10,
+        "totalBytes": 17179869184,
+        "freeBytes": 268435456,
+        "availableBytes": 268435456,
+        "load1m": 114,
+        "hubCores": 1,
+        "usableCores": 9,
+        "suiteCores": 9,
+        "verdictLanes": 1,
+        "coreShareBytes": 1717986918,
+        "suiteBytes": 15461882262,
+        "usableBytes": 15461882266,
+        "saturated": true,
+        "memoryTight": true
+      },
+      "used": {
+        "cores": 0,
+        "bytes": 0,
+        "leases": {
+          "verify": 0,
+          "worker": 24
+        }
+      },
+      "queue": [],
+      "roomForVerify": false,
+      "roomForWorker": true
+    },
+    "served": {
+      "commit": "65c913f0df143ec8d01f999047ca5cfdf6f03a51",
+      "branch": null,
+      "target": {
+        "ref": "origin/master",
+        "commit": "cf316a449851bf14317ce2057752b25797fb4f56",
+        "behind": 8
+      }
+    }
+  },
+  "cursor": 151387,
+  "attention": [
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:30c63ef68a24be26a03db9a8a951c880cf5220fc5d9208f7df3c43f6cd3adbb5",
+      "code": "integrate_conflict"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:eff850d326857dac530783a4a87bf013781719646ffaeba2121c55c7f7afff57",
+      "code": "integrate_gates_red"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:eeba44baab1ad0e8de73589de412547084e53dfd070a35d7dc6bc1e705f97a8d",
+      "code": "integrate_gates_red"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:b46a81f07f8e06294e9b21b1f6583bdab03a977c011a8da6297e342de153eb0b",
+      "code": "integrate_change_invalid"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:8bae709012042b7e0f93ac2a9914f06e5459d7942f252571eb520b7a80abe32c",
+      "code": "integrate_conflict"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:e85055877b596f2bb260ded7b5c00755b5f3c2c2b5baedbcc03d0cb1d7698cea",
+      "code": "integrate_change_invalid"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:94b15fcfec87e13712910bde72a25eed6d54d9a80c5ca17c2bef3f158227d6d7",
+      "code": "integrate_gates_red"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:c839a9e40577c2ca80f97ba70e95d48112b7612f694695d315059a59ea9c559a",
+      "code": "integrate_conflict"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:c250a0d6302e66c83053891e6120e1ae5da049f28e4faed6bd20e2250ac249f3",
+      "code": "integrate_change_invalid"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:22391e1024288962750391d58a641004b844dc2167f1f17ed32bb4d2f0a05dfe",
+      "code": "integrate_conflict"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:fa7dbb32eeaf3f70469b0acda125d67f9739448aa884f7b3810d228a6901e044",
+      "code": "integrate_gates_red"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:b2bfafcdb817784ee99980899752576021f5cdb71e77b2eddc5fa8fe8379f1b0",
+      "code": "integrate_gates_red"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:b9d3e5957d12f031e157ced019378d523bcab2b16ad9d6662f46d2d5beb7b9af",
+      "code": "integrate_change_invalid"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.notify",
+      "state": "refused",
+      "participantId": "rigidity-lead3",
+      "operationKey": "swarm-operation:6ee1be722672e688c62497d81d40da1b1ba2fb6cba2f469bcdc846ea0a0a654a",
+      "code": "swarm_notify_target_not_found"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.recruit",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:7715b6d5f5ba18bcaf990c9947f9e7b35cdcd7f4a4b5cee0b7ee3f8c729f3da1",
+      "code": "session_context_mismatch"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.recruit",
+      "state": "refused",
+      "participantId": "rigidity-lead5",
+      "operationKey": "swarm-operation:557b95cb2f5734eeb6066032dc199d6524e9550691ed7e1999e3983af3bc4f1b",
+      "code": "session_context_mismatch"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.recruit",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:9bdedec8a2911f09b2e63ec70b9937be92fc17c3f0316c3a108e6ebe22c4fa20",
+      "code": "session_context_mismatch"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:9f478e43af1a7bde7515b979057c632b3ee757c3584b685e4edce05a6262ec75",
+      "code": "integrate_change_invalid"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:85572c684ffdf24e4666bf6ec5aa9cd54744c96bdb9a91c96f44122e5a6e0992",
+      "code": "integrate_change_invalid"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:2cfc2fcbaf37fa79e6de93d4456bf6faa210da822a31dcc0d1ac6927507785f8",
+      "code": "integrate_change_invalid"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:77d964650b5191e2b71338ffb070a3938e83749ad9db41f1e4de363970f2eb37",
+      "code": "integrate_gates_red"
+    },
+    {
+      "kind": "operation_refused",
+      "command": "swarm.integrate",
+      "state": "refused",
+      "participantId": null,
+      "operationKey": "swarm-operation:b9ca59ceee4f51632317a9e2913bb4f7010c527cda5435ab724fd8b1ff0793d6",
+      "code": "integrate_gates_red"
+    },
+    {
+      "kind": "operation_unconfirmed",
+      "command": "swarm.integrate",
+      "participantId": null,
+      "operationKey": "swarm-operation:2830ce9282fc6a5fe7dc4a9e49ff463ecee8957991c5f98e2449db93fbc6de74",
+      "state": "in_progress",
+      "code": null
+    },
+    {
+      "kind": "worker_lost_on_restart",
+      "participantId": "rigidity-lead",
+      "workerId": "w-3",
+      "incarnation": 1,
+      "at": "2026-09-21T17:43:37.355Z",
+      "next": {
+        "resume": "swarm.recruit --resume-from",
+        "stop": "swarm.stop"
+      }
+    },
+    {
+      "kind": "worker_lost_on_restart",
+      "participantId": "rigidity-lead2",
+      "workerId": "w-13",
+      "incarnation": 1,
+      "at": "2026-09-22T20:12:26.012Z",
+      "next": {
+        "resume": "swarm.recruit --resume-from",
+        "stop": "swarm.stop"
+      }
+    },
+    {
+      "kind": "worker_lost_on_restart",
+      "participantId": "rigidity-lead3",
+      "workerId": "w-52",
+      "incarnation": 1,
+      "at": "2026-09-23T02:28:45.727Z",
+      "next": {
+        "resume": "swarm.recruit --resume-from",
+        "stop": "swarm.stop"
+      }
+    },
+    {
+      "kind": "worker_lost_on_restart",
+      "participantId": "rigidity-lead5",
+      "workerId": "w-126",
+      "incarnation": 1,
+      "at": "2026-09-23T03:43:50.950Z",
+      "next": {
+        "resume": "swarm.recruit --resume-from",
+        "stop": "swarm.stop"
+      }
+    },
+    {
+      "kind": "worker_lost_on_restart",
+      "participantId": "rigidity-lead6",
+      "workerId": "w-132",
+      "incarnation": 1,
+      "at": "2026-09-23T03:43:50.950Z",
+      "next": {
+        "resume": "swarm.recruit --resume-from",
+        "stop": "swarm.stop"
+      }
+    },
+    {
+      "kind": "delegation_orphaned",
+      "participantId": "rigidity-lead6",
+      "parentId": "rigidity-lead5",
+      "next": {
+        "event": "swarm.holder_released",
+        "participantId": "rigidity-lead5"
+      }
+    },
+    {
+      "kind": "provider_fault",
+      "participantId": "rigidity-lead7f",
+      "workerId": "w-142",
+      "code": "provider_quota_exhausted",
+      "route": {
+        "harness": "omp",
+        "model": "zai/glm-5.3-flash",
+        "effort": "high"
+      },
+      "resetAt": "2026-09-23T07:15:59.000Z",
+      "resetAtText": "2026-09-23 15:15:59",
+      "snapshotSha": "3f22832394fb948268fce734e70840d6ba1d7bdb",
+      "at": "2026-09-23T06:29:19.276Z",
+      "next": {
+        "resume": "swarm.recruit --resume-from",
+        "stop": "swarm.stop"
+      }
+    },
+    {
+      "kind": "reroute_proposed",
+      "participantId": "rigidity-lead7f",
+      "workerId": "w-142",
+      "code": "provider_quota_exhausted",
+      "from": {
+        "harness": "omp",
+        "model": "zai/glm-5.3-flash",
+        "effort": "high"
+      },
+      "resetAt": "2026-09-23T07:15:59.000Z",
+      "resetAtText": "2026-09-23 15:15:59",
+      "at": "2026-09-23T06:29:19.471Z",
+      "candidates": [
+        {
+          "harness": "codex",
+          "model": "gpt-6-astra",
+          "effort": "minimal",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-6-astra",
+            "intelligence": 52.7,
+            "coding": 76.9,
+            "tps": 54.334,
+            "ttftS": 203.021,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6-astra",
+          "effort": "low",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-6-astra",
+            "intelligence": 52.7,
+            "coding": 76.9,
+            "tps": 54.334,
+            "ttftS": 203.021,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6-astra",
+          "effort": "medium",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-6-astra",
+            "intelligence": 52.7,
+            "coding": 76.9,
+            "tps": 54.334,
+            "ttftS": 203.021,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6-astra",
+          "effort": "high",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-6-astra",
+            "intelligence": 52.7,
+            "coding": 76.9,
+            "tps": 54.334,
+            "ttftS": 203.021,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-6-astra",
+          "effort": "xhigh",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-6-astra",
+            "intelligence": 52.7,
+            "coding": 76.9,
+            "tps": 54.334,
+            "ttftS": 203.021,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "minimal",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-5-6-sol",
+            "intelligence": 47,
+            "coding": 77.4,
+            "tps": 62.141,
+            "ttftS": 64.246,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "low",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-5-6-sol",
+            "intelligence": 47,
+            "coding": 77.4,
+            "tps": 62.141,
+            "ttftS": 64.246,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "medium",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-5-6-sol",
+            "intelligence": 47,
+            "coding": 77.4,
+            "tps": 62.141,
+            "ttftS": 64.246,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-5-6-sol",
+            "intelligence": 47,
+            "coding": 77.4,
+            "tps": 62.141,
+            "ttftS": 64.246,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "gpt-5-6-sol",
+            "intelligence": 47,
+            "coding": 77.4,
+            "tps": 62.141,
+            "ttftS": 64.246,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/kimi-k3",
+          "effort": "low",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "kimi-k3",
+            "intelligence": 43.6,
+            "coding": 76.2,
+            "tps": 37.682,
+            "ttftS": 3.321,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/kimi-k3",
+          "effort": "high",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "kimi-k3",
+            "intelligence": 43.6,
+            "coding": 76.2,
+            "tps": 37.682,
+            "ttftS": 3.321,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/kimi-k3",
+          "effort": "max",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "kimi-k3",
+            "intelligence": 43.6,
+            "coding": 76.2,
+            "tps": 37.682,
+            "ttftS": 3.321,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/glm-5.3-flash",
+          "effort": "low",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "glm-5-3-flash",
+            "intelligence": 41.8,
+            "coding": 71.5,
+            "tps": 51.561,
+            "ttftS": 3.232,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/glm-5.3-flash",
+          "effort": "high",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "glm-5-3-flash",
+            "intelligence": 41.8,
+            "coding": 71.5,
+            "tps": 51.561,
+            "ttftS": 3.232,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/glm-5.3-flash",
+          "effort": "max",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "glm-5-3-flash",
+            "intelligence": 41.8,
+            "coding": 71.5,
+            "tps": 51.561,
+            "ttftS": 3.232,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "grok",
+          "model": "grok-4.5",
+          "effort": "low",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "grok-4-5",
+            "intelligence": 38.8,
+            "coding": 72.4,
+            "tps": 0,
+            "ttftS": 0,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "grok",
+          "model": "grok-4.5",
+          "effort": "medium",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "grok-4-5",
+            "intelligence": 38.8,
+            "coding": 72.4,
+            "tps": 0,
+            "ttftS": 0,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "grok",
+          "model": "grok-4.5",
+          "effort": "high",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "grok-4-5",
+            "intelligence": 38.8,
+            "coding": 72.4,
+            "tps": 0,
+            "ttftS": 0,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/deepseek-v4-pro",
+          "effort": "low",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "deepseek-v4-pro",
+            "intelligence": 36,
+            "coding": 68.8,
+            "tps": 78.618,
+            "ttftS": 1.156,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/deepseek-v4-pro",
+          "effort": "high",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "deepseek-v4-pro",
+            "intelligence": 36,
+            "coding": 68.8,
+            "tps": 78.618,
+            "ttftS": 1.156,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/deepseek-v4-pro",
+          "effort": "max",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "deepseek-v4-pro",
+            "intelligence": 36,
+            "coding": 68.8,
+            "tps": 78.618,
+            "ttftS": 1.156,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "claude-code",
+          "model": "claude-opus-4-6",
+          "effort": "low",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "claude-opus-4-6",
+            "intelligence": 26.4,
+            "coding": null,
+            "tps": 0,
+            "ttftS": 0,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "claude-code",
+          "model": "claude-opus-4-6",
+          "effort": "medium",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "claude-opus-4-6",
+            "intelligence": 26.4,
+            "coding": null,
+            "tps": 0,
+            "ttftS": 0,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "claude-code",
+          "model": "claude-opus-4-6",
+          "effort": "high",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "claude-opus-4-6",
+            "intelligence": 26.4,
+            "coding": null,
+            "tps": 0,
+            "ttftS": 0,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "claude-code",
+          "model": "claude-opus-4-6",
+          "effort": "xhigh",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "claude-opus-4-6",
+            "intelligence": 26.4,
+            "coding": null,
+            "tps": 0,
+            "ttftS": 0,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "claude-code",
+          "model": "claude-opus-4-6",
+          "effort": "max",
+          "billing": "subscription",
+          "reason": "subscription_headroom",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "claude-opus-4-6",
+            "intelligence": 26.4,
+            "coding": null,
+            "tps": 0,
+            "ttftS": 0,
+            "price": null,
+            "priceReason": "subscription",
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-pro[1m]",
+          "effort": "low",
+          "billing": "api",
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "deepseek-v4-pro",
+            "intelligence": 36,
+            "coding": 68.8,
+            "tps": 78.618,
+            "ttftS": 1.156,
+            "price": {
+              "blended31": 1.98,
+              "input": 1.32,
+              "output": 3.96
+            },
+            "priceReason": null,
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-pro[1m]",
+          "effort": "medium",
+          "billing": "api",
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "slug": "deepseek-v4-pro",
+            "intelligence": 36,
+            "coding": 68.8,
+            "tps": 78.618,
+            "ttftS": 1.156,
+            "price": {
+              "blended31": 1.98,
+              "input": 1.32,
+              "output": 3.96
+            },
+            "priceReason": null,
+            "measuredAt": "Wed, 23 Sep 2026 06:22:46 GMT",
+            "design": null,
+            "designReason": "key_absent"
+          }
+        },
+        {
+          "harness": "muse",
+          "model": "muse-spark-1.3-contributor",
+          "effort": "low",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": null
+        },
+        {
+          "harness": "muse",
+          "model": "muse-spark-1.3-contributor",
+          "effort": "medium",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": null
+        },
+        {
+          "harness": "muse",
+          "model": "muse-spark-1.3-contributor",
+          "effort": "high",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": null
+        },
+        {
+          "harness": "muse",
+          "model": "muse-spark-1.3-contributor",
+          "effort": "xhigh",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": null
+        },
+        {
+          "harness": "muse",
+          "model": "muse-spark-1.3-contributor",
+          "effort": "max",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": null
+        },
+        {
+          "harness": "omp",
+          "model": "deepseek/deepseek-flash",
+          "effort": "low",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "state": "unavailable",
+            "reason": "model_unmeasured",
+            "next": "the Artificial Analysis catalog defines no model deepseek-flash; correct that route's aaSlug mapping or accept the route without a measured profile."
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "deepseek/deepseek-flash",
+          "effort": "high",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "state": "unavailable",
+            "reason": "model_unmeasured",
+            "next": "the Artificial Analysis catalog defines no model deepseek-flash; correct that route's aaSlug mapping or accept the route without a measured profile."
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "deepseek/deepseek-flash",
+          "effort": "max",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": {
+            "state": "unavailable",
+            "reason": "model_unmeasured",
+            "next": "the Artificial Analysis catalog defines no model deepseek-flash; correct that route's aaSlug mapping or accept the route without a measured profile."
+          }
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/glm-5.3",
+          "effort": "low",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": null
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/glm-5.3",
+          "effort": "high",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": null
+        },
+        {
+          "harness": "omp",
+          "model": "opencode-go/glm-5.3",
+          "effort": "max",
+          "billing": null,
+          "reason": "api_fallback",
+          "state": "ready",
+          "resetAt": null,
+          "profile": null
+        }
+      ],
+      "next": {
+        "command": "swarm.recruit",
+        "swarmId": "swarm-rigidity-20260921",
+        "resumeFrom": "rigidity-lead7f",
+        "options": {
+          "exact": {
+            "harness": "codex",
+            "model": "gpt-6-astra",
+            "effort": "minimal"
+          }
+        }
+      }
+    },
+    {
+      "kind": "delegation_orphaned",
+      "participantId": "rigidity-reviewer7",
+      "parentId": "rigidity-lead7f",
+      "next": {
+        "event": "swarm.holder_released",
+        "participantId": "rigidity-lead7f"
+      }
+    },
+    {
+      "kind": "delegation_orphaned",
+      "participantId": "rigidity-571-fixtures",
+      "parentId": "rigidity-lead7f",
+      "next": {
+        "event": "swarm.holder_released",
+        "participantId": "rigidity-lead7f"
+      }
+    },
+    {
+      "kind": "participant_runtime_dead",
+      "participantId": "rigidity-572-gates",
+      "state": "dead"
+    },
+    {
+      "kind": "claim_holder_gone",
+      "claimId": "claim-rigidity-572-runtime-observation",
+      "participantId": "rigidity-572-gates",
+      "paths": [
+        "impl/src/runtime-observation.mjs"
+      ],
+      "next": {
+        "event": "swarm.claim_updated",
+        "claimId": "claim-rigidity-572-runtime-observation",
+        "status": "released"
+      }
+    },
+    {
+      "kind": "claim_holder_gone",
+      "claimId": "claim-rigidity-572-stall-callers",
+      "participantId": "rigidity-572-gates",
+      "paths": [
+        "impl/src/runtime-api.mjs",
+        "impl/src/runtime-effects.mjs"
+      ],
+      "next": {
+        "event": "swarm.claim_updated",
+        "claimId": "claim-rigidity-572-stall-callers",
+        "status": "released"
+      }
+    },
+    {
+      "kind": "turn_ended_without_contribution",
+      "participantId": "rigidity-lead5",
+      "changedPaths": [
+        "impl/scripts/run-suite.mjs",
+        "impl/scripts/suite-host-lease.mjs",
+        "impl/src/coordinator.mjs",
+        "impl/src/host-capacity.mjs",
+        "impl/src/index.mjs",
+        "impl/src/worktree-capacity.mjs",
+        "impl/test/issue297-issue307-host-capacity.test.mjs",
+        "impl/test/issue333-suite-verify-lease.test.mjs"
+      ],
+      "commits": [],
+      "omittedPaths": 4,
+      "next": {
+        "command": "swarm.capture",
+        "swarmId": "swarm-rigidity-20260921",
+        "participantId": "rigidity-lead5"
+      }
+    },
+    {
+      "kind": "turn_ended_without_contribution",
+      "participantId": "rigidity-572-gates",
+      "changedPaths": [
+        "impl/src/application-observation.mjs",
+        "impl/src/coordinator.mjs",
+        "impl/src/runtime-event-handlers/turn-terminal.mjs",
+        "impl/src/runtime-recovery.mjs",
+        "impl/test/native-completion-loop.test.mjs",
+        "impl/test/phase73-required-effects.test.mjs",
+        "impl/test/phase92-read-only-result-red.test.mjs",
+        "impl/test/tg3-window-red.test.mjs"
+      ],
+      "commits": [],
+      "omittedPaths": 2,
+      "next": {
+        "command": "swarm.capture",
+        "swarmId": "swarm-rigidity-20260921",
+        "participantId": "rigidity-572-gates"
+      }
+    }
+  ],
+  "projection": "attention"
+}

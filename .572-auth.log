@@ -1,0 +1,19 @@
+✔ every bridge refusal lands on the durable refusal lane, reaches the wake feed, and clears on the same command succeeding (135.492291ms)
+✔ a refusal the runtime already recorded is never recorded twice, and an unattributable one is not recorded at all (39.744792ms)
+✔ an explicit over-size projection is refused typed with the projection that measurably fits, and the default read answers narrow (61.274834ms)
+✔ the client buffers under the bound the bridge published, so a raised ceiling is not a second number (38.711666ms)
+✔ #269 item 4: swarm.check by the contributing seat refuses self_check_refused and runs nothing (81.628459ms)
+✔ #269 item 2: a check that waits on the host authority reads queued on the view while it waits (193.471ms)
+✔ #269 item 2: a check admitted after queueing leaves the durable queued/admitted rows (36.028041ms)
+✔ #269 item 2: a check the host cannot admit records admission_timeout and refuses typed (37.219208ms)
+✔ stop during native access preparation cannot install credentials after revocation (23.123416ms)
+✔ the seat's declared wake narrowing rides the issued bridge environment (docs/54 §4.1) (6.730833ms)
+✔ turn-end reports retain the registered participant identity (2.322959ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 854.408375

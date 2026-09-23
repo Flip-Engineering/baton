@@ -1,0 +1,13 @@
+✔ a swarm recruit through SwarmRuntime gets a brief that carries the Baton surface (7727.704291ms)
+✔ a non-swarm run brief is unchanged: no Swarm section and the empty-tools sentence stays (6190.517541ms)
+✔ the Swarm section, SWARM_NATIVE_GUIDANCE, and the bridge guidance are one derivation (1.01825ms)
+✔ renderBrief pins: a brief without the surface renders exactly as before (0.461916ms)
+✔ a native turn delivers its report and a declared completion finishes the seat (6232.433958ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 26437.411375

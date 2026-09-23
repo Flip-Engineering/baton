@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.guide",
+    "event": {
+      "kind": "swarm.guidance_sent",
+      "seq": 156737,
+      "ts": "2026-09-23T14:55:37.124Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "rigidity-reviewer7",
+        "seq": 156737,
+        "ts": "2026-09-23T14:55:37.124Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.watch",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "observation": {
+      "wakeClass": "paused",
+      "participantId": "rigidity-reviewer7"
+    }
+  },
+  "participantId": "rigidity-reviewer7",
+  "result": {
+    "ok": true,
+    "result": "nudged",
+    "pauseId": "pause:baton-2c5ee51d3496acedb4795f31-work:1359",
+    "taskId": "baton-2c5ee51d3496acedb4795f31-work",
+    "workerId": "w-145",
+    "fence": 21,
+    "turnEpoch": 21,
+    "expiredScratchClaims": [],
+    "seq": 1362
+  },
+  "guide": {
+    "seq": 156737,
+    "kind": "swarm.guidance_sent",
+    "participantId": "rigidity-reviewer7",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8"
+    },
+    "sentAt": "2026-09-23T14:55:37.124Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "messageId": "message:90c1d6ef1bb49ec84824e5811d4b4b889611ba573b87e312f32154e59a38f520",
+    "delivery": {
+      "state": "delivered",
+      "lane": null
+    }
+  },
+  "commandReceipt": {
+    "idempotencyKey": "5ec68527-ebba-41d1-98f2-315bc4595d8b"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 157051,
+    "ts": "2026-09-23T14:57:53.999Z"
+  },
+  "notifications": [],
+  "truncated": false,
+  "cursor": null
+}

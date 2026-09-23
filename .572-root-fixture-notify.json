@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 155607,
+      "ts": "2026-09-23T14:47:50.611Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 155607,
+        "ts": "2026-09-23T14:47:50.611Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:198385b4e9171da6c635c9b3982d8007e7b7a3fcd572617fb0155b0ef87b072f",
+    "seq": 155607,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:8a509ee6129755074c8caa9dbb64ed287224c96544c1fc1ffb88c4e4b09bb5d1",
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:47:49.447Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 155606,
+      "kind": "steer",
+      "ts": "2026-09-23T14:47:50.553Z",
+      "messageId": "message:8a509ee6129755074c8caa9dbb64ed287224c96544c1fc1ffb88c4e4b09bb5d1"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Additional union check: 564 addressing/delivery/undelivered files 21 pass + 1 fixture mismatch. 564-c1 recruits peer helper with default permissions; #572 intentionally gives default review permission, so expected no-other-reviewer premise is false. Set helper permissions explicitly [read, communicate, contribute] in that row (or fixture); 18 turn-report+continuation tests remain green. I am verifying narrowed fix in rehearsal only; please carry fixture adjustment in your root stack."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "6688896d-5bd1-435c-ba24-d3c70446af85"
+  }
+}

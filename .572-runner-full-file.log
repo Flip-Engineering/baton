@@ -1,0 +1,23 @@
+✔ TF1/TF2/TF3: a passing nested suite reaps only its owned fixture root (4745.589458ms)
+✔ TF2/TF3: a failing nested suite stays failed and still reaps its fixture root (4201.202417ms)
+✖ TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root (5021.829125ms)
+✔ #521: a file that stops reporting is reaped by its own progress deadline and named hung (6004.641833ms)
+✔ the suite verdict destination stays private to its owning runner (5105.874125ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 25354.969708
+
+✖ failing tests:
+
+test at impl/test/test-runner.test.mjs:105:1
+✖ TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root (5021.829125ms)
+  Error: timed out waiting for nested test marker
+      at waitFor (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/test-runner.test.mjs:50:9)
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/test-runner.test.mjs:124:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)

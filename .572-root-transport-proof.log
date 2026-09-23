@@ -1,0 +1,34 @@
+✖ 572-w4: a real parentless turn report reaches the resident root transport once (87.721792ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 947.453625
+
+✖ failing tests:
+
+test at impl/test/issue564-root-wake-wiring-red.test.mjs:200:1
+✖ 572-w4: a real parentless turn report reaches the resident root transport once (87.721792ms)
+  AssertionError [ERR_ASSERTION]: {"kind":"wake.root_undelivered","seq":8,"wakeClass":"root_owed","swarmId":"swarm-564","harness":"claude-code","mechanism":"session-socket","code":"root_wake_source_invalid","at":"2026-09-23T14:51:25.628Z"}
+  + actual - expected
+  
+  + 'wake.root_undelivered'
+  - 'wake.root_delivered'
+               ^
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/.572-root-composition/impl/test/issue564-root-wake-wiring-red.test.mjs:215:10)
+      at runNextTicks (node:internal/process/task_queues:65:5)
+      at listOnTimeout (node:internal/timers:567:9)
+      at process.processTimers (node:internal/timers:541:7)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'wake.root_undelivered',
+    expected: 'wake.root_delivered',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
