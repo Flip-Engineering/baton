@@ -1266,12 +1266,6 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
     };
     if (ack && ack.emulated === true) ev.emulated = true;
     recorder.log.append(ev);
-    // D4 rung 2: an orchestrator claim (control.steer / control.nudge) arms the stall-seam cycle
-    // for a currently-declared stall. Neither steer nor nudge is a REARM kind — they never re-arm
-    // the watchdog; they claim the stall for the ladder.
-    if ((mode === 'steer' || mode === 'nudge') && handle.watchdogActions?.has('stall')) {
-      coordinator._armStallCycle(handle, task, { nudgeId: mode === 'nudge' ? `nudge:${workerId}:${recorder.log.tail(workerId)}` : null, controlId: opts.controlId ?? null });
-    }
     // BD3-C: run.send / nudge_turn are ALIASES over the lane — the legacy names mint lane
     // receipts (message.sent / message.delivered) with identical worker-visible behavior.
     if (opts.internalKindToken !== ORIENTATION_DELIVERY && recorder.coordination.recordMessage) {

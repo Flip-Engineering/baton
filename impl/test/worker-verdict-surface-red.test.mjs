@@ -200,14 +200,13 @@ const DIGEST_E = 'e'.repeat(64);
 const CORRECTIVE_TABLE_EXPECTED = Object.freeze({
   worker_path_scope_violation: 'in_scope_revision',
   forbidden_effect_observed: 'forbidden_effect_retraction',
-  required_effect_absent: 'in_scope_edit',
   verification_red_green_failed: 'failing_check_fix',
   verification_coverage_failed: 'coverage_completion',
 });
 // The terminal codes REACHABLE on the surface (OQ1): the 5 corrective rows + the 8 reachable
 // verifier diagnostics that carry corrective: null. A code absent from the closed table escalates.
 const REACHABLE_TERMINAL_CODES = Object.freeze([
-  'worker_path_scope_violation', 'forbidden_effect_observed', 'required_effect_absent',
+  'worker_path_scope_violation', 'forbidden_effect_observed',
   'verification_red_green_failed', 'verification_coverage_failed',
   'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
   'verification_claim_diverged', 'verification_mutation_failed', 'verification_coverage_unavailable',
@@ -274,30 +273,6 @@ function forbiddenEffectEvent({ worker = 'w-1', seq = 8 } = {}) {
       code: 'forbidden_effect_observed',
       phase: 'trust_gate',
       trustPhase: 'forbidden_effect',
-    },
-  };
-}
-
-// A real trust-gate required-effect refusal (the coordinator.mjs:13229-13235 mint shape, byte-for-byte
-// — the path_scope phase throws first, so the required-effect phase's evidence never carries the
-// out-of-scope fields; the six-field out-of-scope digest/count pair is path_scope's shape only).
-function requiredEffectAbsentEvent({ worker = 'w-1', seq = 6 } = {}) {
-  return {
-    ...baseEvent(worker, seq),
-    payload: {
-      message: 'required effect absent from captured result',
-      code: 'required_effect_absent',
-      phase: 'trust_gate',
-      trustPhase: 'required_effect',
-      requiredEffectEvidence: {
-        requiredEffect: 'repository_edit',
-        baseSha: 'sha-base',
-        sha: 'sha-captured',
-        changedPathCount: 4,
-        changedPathsDigest: DIGEST_D,
-        inScopeChangedPathCount: 0,
-        inScopeChangedPathsDigest: DIGEST_E,
-      },
     },
   };
 }
@@ -599,20 +574,6 @@ test('A2 (RED): a non-whitelisted trustPhase (promotion) escalates with check:nu
   assert.equal(surface.corrective, null, 'a code absent from the corrective table carries null (escalate)');
 });
 
-test('A3 (RED): required_effect_absent projects the digest/count subset — the gate degrades to unknown, the code and corrective survive (stage: verdict-surface-missing)', () => {
-  assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing');
-  const surface = applicationNs.projectVerdictSurface([requiredEffectAbsentEvent()]);
-  assert.ok(surface, 'a required-effect refusal projects a record');
-  assert.equal(surface.gate, 'unknown', 'today’s mapping degrades required_effect_absent to gate unknown (application.mjs:949-956)');
-  assert.equal(surface.code, 'required_effect_absent', 'the durable terminal code is preserved (application.mjs:937-943)');
-  assert.equal(surface.check, 'required_effect', 'WHAT was checked — the whitelisted trustPhase');
-  assert.deepEqual(surface.detail, {
-    changedPathCount: 4, changedPathsDigest: DIGEST_D,
-    inScopeChangedPathCount: 0, inScopeChangedPathsDigest: DIGEST_E,
-  }, 'detail is the digest/count subset of requiredEffectEvidence — never paths (fold Minor 1)');
-  assert.equal(surface.corrective, 'in_scope_edit', 'the corrective is keyed by the terminal CODE, so it survives the gate degradation (R3)');
-});
-
 test('A4 (RED): a red_green verifier refusal projects check = the closed diagnosticCode and a sanitized tail — an adversarial capsule never crosses (stage: verdict-surface-missing)', () => {
   assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing');
   const secret = 'trace at /Users/alice/projects/secret/lib.rs:12 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturevalue';
@@ -679,7 +640,6 @@ test('B2 (RED): VERDICT_CORRECTIVE_TABLE is the frozen hub-minted corrective tab
   const table = applicationNs.VERDICT_CORRECTIVE_TABLE;
   assert.equal(table.worker_path_scope_violation, 'in_scope_revision');
   assert.equal(table.forbidden_effect_observed, 'forbidden_effect_retraction');
-  assert.equal(table.required_effect_absent, 'in_scope_edit');
   assert.equal(table.verification_red_green_failed, 'failing_check_fix');
   assert.equal(table.verification_coverage_failed, 'coverage_completion');
 });
@@ -751,14 +711,14 @@ test('C1 (RED): two replays over the same log derive the same surface; the lates
 test('C2 (RED): a worker receives ITS OWN surface — the projection is worker-scoped, never run-wide (stage: verdict-surface-missing)', () => {
   assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing');
   const aEvents = [scopeRefusalEvent({ worker: 'w-a', seq: 5 })];
-  const bEvents = [requiredEffectAbsentEvent({ worker: 'w-b', seq: 6 })];
+  const bEvents = [forbiddenEffectEvent({ worker: 'w-b', seq: 6 })];
   const all = [...aEvents, ...bEvents];
   const aSurface = applicationNs.projectVerdictSurface(all.filter((event) => event.worker === 'w-a'));
   const bSurface = applicationNs.projectVerdictSurface(all.filter((event) => event.worker === 'w-b'));
   assert.equal(aSurface.check, 'path_scope', 'worker A receives ITS OWN scope refusal');
-  assert.equal(bSurface.check, 'required_effect', 'worker B receives ITS OWN required-effect refusal');
-  assert.equal(bSurface.corrective, 'in_scope_edit', 'worker B’s corrective is its own');
-  assert.equal(applicationNs.projectVerdictSurface(all).code, 'required_effect_absent',
+  assert.equal(bSurface.check, 'forbidden_effect', 'worker B receives its own forbidden-effect refusal');
+  assert.equal(bSurface.corrective, 'forbidden_effect_retraction', 'worker B’s corrective is its own');
+  assert.equal(applicationNs.projectVerdictSurface(all).code, 'forbidden_effect_observed',
     'the projection respects the input set’s own ordering — never a run-wide global latest');
 });
 

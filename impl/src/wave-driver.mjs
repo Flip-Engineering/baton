@@ -45,11 +45,7 @@ const DEFAULT_POLICY = Object.freeze({
   settleTimeoutMs: 5_000,
   finalization: 'none',
   unproductiveNudgeBudget: 1,
-  // CP8 (#88): the per-member corrective-nudge COUNT budget drawn on a claim_premature_liveness
-  // refusal (the claim-time liveness preflight). Parallel to unproductiveNudgeBudget; consumed on
-  // DELIVERED acknowledgment only (D8). 2 = the largest legitimate per-member claim cadence
-  // observed in the acceptance suite (phase11-persistent-sessions:372/:379 claims two successive
-  // checkpoints) with one to spare — a third corrective cycle is a permanently diffless worker.
+  // Retained for callers using older driver policy objects.
   refusalNudgeBudget: 2,
   saltObjectives: true,
   preflight: true,
@@ -94,21 +90,7 @@ function canonical(value) {
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
 
-// #111-F3 (carried by the #79 fold): the corrective nudge COACHES instead of the bare
-// completionMessage. A claim_premature_liveness refusal already carries TG4-sanitized fields —
-// `liveness` is per-class COUNTS only (never path strings, never worker prose) and `reason` is
-// the fixed-shape hub text ("no in-scope diff …"). Compose them; never raw gate internals.
-function correctiveCoaching(liveness, reason, fallback) {
-  const counts = liveness && typeof liveness === 'object'
-    ? Object.entries(liveness)
-      .filter(([, value]) => Number.isSafeInteger(value))
-      .map(([key, value]) => `${key}=${value}`)
-      .join(', ')
-    : null;
-  const why = typeof reason === 'string' && reason.length > 0 ? reason : 'no in-scope diff in this pause epoch';
-  if (counts) return `${why}; liveness {${counts}}`;
-  return why || fallback;
-}
+
 
 function assertInteger(value, field) {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -424,39 +406,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // CP8: claim attempts key per pauseId — a refused claim must not consume the driver's one
     // claim for the NEXT pause record (the CP6 "claimable later" contract at the driver layer).
     const claimedPauseIds = new Set();
-    // CP8: one corrective nudge per claim_premature_liveness refusal, exempt from the L4
-    // one-nudge-per-pause dedup exactly once, drawn from the per-member refusalNudgeBudget and
-    // consumed on DELIVERED acknowledgment (D8 — a {ok:false} delivery VALUE consumes nothing).
-    // Exhaustion is record-only: the refusal is on the claims evidence, no nudge, and the pause
-    // pends to the driver's PRE-EXISTING stall clock.
-    const correctiveNudge = async (role, runHandle, checkpoint, state, liveness = null, reason = null) => {
-      const at = new Date().toISOString();
-      try {
-        // #111-F3: coach with the sanitized {liveness counts, reason: no in-scope diff} — never
-        // the bare completionMessage (a worker refused for analysis-only output needs the WHY).
-        const message = correctiveCoaching(liveness, reason, policy.completionMessage);
-        const result = await runHandle.act('nudge_turn', { message });
-        if (result && typeof result === 'object' && result.ok === false) {
-          throw Object.assign(new Error(String(result.reason ?? result.result ?? 'nudge refused')), {
-            code: result.result ?? 'nudge_refused',
-          });
-        }
-        state.refusalsNudged += 1;
-        nudges.push({ role, requestId: checkpoint.requestId, at });
-        nudgedRequestIds.add(checkpoint.requestId);
-        failuresByRequestId.delete(checkpoint.requestId);
-        lastFailureByRequestId.delete(checkpoint.requestId);
-      } catch (error) {
-        // D8: a refused corrective delivery arrives as a VALUE and consumes no budget.
-        failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
-        const message = String(error?.message ?? error);
-        lastFailureByRequestId.set(checkpoint.requestId, { code: error?.code ?? null, message });
-        nudges.push({
-          role, requestId: checkpoint.requestId, at,
-          error: { code: error?.code ?? null, message },
-        });
-      }
-    };
     async function claimOnce(role, runHandle, checkpoint, claims, state) {
       if (claimedPauseIds.has(checkpoint.requestId)) return;
       claimedPauseIds.add(checkpoint.requestId);
@@ -486,9 +435,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
         reason = error?.reason ?? reason ?? null;
         claims.push({ role, requestId: checkpoint.requestId, at, code });
       }
-      if (code === 'claim_premature_liveness' && state.refusalsNudged < policy.refusalNudgeBudget) {
-        await correctiveNudge(role, runHandle, checkpoint, state, liveness, reason);
-      }
+
     }
     // Bidirectional v2 rule 3: at-most-once decision-callback dedup, keyed `${runId}:${requestId}`.
     const decisionFired = new Set();

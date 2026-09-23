@@ -169,9 +169,7 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     reroutePreferApi: { type: 'boolean', required: false,
       description: 'rank a per-token API route above a subscription route that has headroom (the default ranks a subscription route with headroom first, so an idle plan is spent before API money)',
       example: false },
-    resumeContinuation: { type: 'string', enum: ['manual', 'auto'], required: false,
-      description: 'resume-from recruits start immediately; the legacy manual value is read as auto',
-      expectation: 'one of manual, auto', example: 'manual' },
+
   }, {
     // A policy names at least ONE field (the fold refuses a row that changes nothing), so the
     // shipped example names one — a derived example can only name `required` fields, and neither

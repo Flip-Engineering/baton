@@ -14,7 +14,7 @@ import { CONTRIBUTION_NOTE_KIND, CONTRIBUTION_UNCOMMITTED_STATUS, contributionCo
   isContributionContractBody, projectContributionContract, validateContributionContract,
   validateContributionContractMode } from './contribution-contract.mjs';
 import { foldSwarmEvent, scopeClaimId, SwarmIntegrityError, SWARM_REROUTE_MODES,
-  SWARM_POLICY_FIELDS, SWARM_RESUME_CONTINUATION_MODES, resumeDecisionPending } from './swarm-state.mjs';
+  SWARM_POLICY_FIELDS, resumeDecisionPending } from './swarm-state.mjs';
 // Issue #430: every code `refuse` mints draws from the family's ONE closed refusal set —
 // minting a code outside it is a construction-time error.
 import { assertSwarmRefusalCode } from './swarm-refusals.mjs';
@@ -461,23 +461,22 @@ function objectiveReferencedReceipt(receipt, seat) {
   return { ...out, ...(seat?.roleRef ? { objectiveRef: seat.roleRef, objectiveBytes: seat.roleBytes ?? 0 } : {}) };
 }
 
-/** Issue #443 hand-back: the policy a `swarm.create` may OPEN with — validated against the SAME
- * closed vocabulary the `swarm.policy_updated` fold reads (swarm-state.mjs owns both tables), so
- * the two spellings of "declare a policy" can never disagree about what a policy is. The check runs
- * BEFORE the swarm row lands: a refused policy leaves no swarm behind to clean up. */
+/** New policy writes use active fields; historical rows retain their replay vocabulary. */
+const ACTIVE_POLICY_FIELDS = Object.freeze(SWARM_POLICY_FIELDS.filter((field) => field !== 'resumeContinuation'));
+
 function swarmCreatePolicy(policy) {
   if (policy === null || typeof policy !== 'object' || Array.isArray(policy)) {
     refuse('swarm.create policy must be a JSON object naming the policy fields to declare',
       'swarm_command_invalid', {
         field: 'policy', rule: 'field-predicate',
-        expectation: `an object drawn from: ${SWARM_POLICY_FIELDS.join(', ')}`,
+        expectation: `an object drawn from: ${ACTIVE_POLICY_FIELDS.join(', ')}`,
       });
   }
   for (const field of Object.keys(policy)) {
-    if (!SWARM_POLICY_FIELDS.includes(field)) {
+    if (!ACTIVE_POLICY_FIELDS.includes(field)) {
       refuse(`swarm.create policy names no policy field this family holds: ${field}`
-        + ` (one of: ${SWARM_POLICY_FIELDS.join(', ')})`, 'swarm_command_invalid', {
-        field: 'policy', rule: 'closed-set', admitted: [...SWARM_POLICY_FIELDS], offending: field,
+        + ` (one of: ${ACTIVE_POLICY_FIELDS.join(', ')})`, 'swarm_command_invalid', {
+        field: 'policy', rule: 'closed-set', admitted: [...ACTIVE_POLICY_FIELDS], offending: field,
       });
     }
   }
@@ -491,15 +490,10 @@ function swarmCreatePolicy(policy) {
       field: 'policy.reroutePreferApi', rule: 'field-predicate', expectation: 'a boolean',
     });
   }
-  if (policy.resumeContinuation !== undefined && !SWARM_RESUME_CONTINUATION_MODES.includes(policy.resumeContinuation)) {
-    refuse(`resumeContinuation must be one of: ${SWARM_RESUME_CONTINUATION_MODES.join(', ')}`, 'swarm_command_invalid', {
-      field: 'policy.resumeContinuation', rule: 'closed-set', admitted: [...SWARM_RESUME_CONTINUATION_MODES],
-    });
-  }
-  if (policy.rerouteOnProviderFault === undefined && policy.reroutePreferApi === undefined && policy.resumeContinuation === undefined) {
+  if (policy.rerouteOnProviderFault === undefined && policy.reroutePreferApi === undefined) {
     refuse('swarm.create policy names no policy field to declare', 'swarm_command_invalid', {
       field: 'policy', rule: 'required-field',
-      expectation: `at least one of: ${SWARM_POLICY_FIELDS.join(', ')}`,
+      expectation: `at least one of: ${ACTIVE_POLICY_FIELDS.join(', ')}`,
     });
   }
   return Object.freeze({
@@ -6289,9 +6283,16 @@ export class SwarmRuntime {
     return parked.filter((row) => !delivered.has(row.messageId));
   }
 
-  async reportTurnEnd({ swarmId, participantId, workerId, turnSeq, turnEpoch, report }) {
+  async reportTurnEnd({ swarmId, participantId, workerId, turnSeq, turnEpoch, report, assignmentDone = false }) {
     const swarm = this._swarm(swarmId);
     const participant = this._participant(swarm, participantId);
+    if (!Number.isSafeInteger(turnSeq) || turnSeq < 0
+      || !Number.isSafeInteger(turnEpoch) || turnEpoch < 0
+      || typeof workerId !== 'string'
+      || !(participant.bindings ?? []).some((binding) => binding.workerId === workerId)) {
+      refuse('Turn report needs the participant worker and recorded turn identity',
+        'swarm_payload_invalid', { rule: 'turn-report-identity', swarmId, participantId });
+    }
     let parentId = this._resumeOrchestrator(swarm, null, participant,
       { resumeFrom: participantId });
     const workers = this.coordinator.list();
@@ -6300,35 +6301,62 @@ export class SwarmRuntime {
       if (visited.has(parentId)) { parentId = null; break; }
       visited.add(parentId);
       const parent = swarm.participants[parentId];
-      if (swarmParticipantLiveness(this._workerFor(parent, workers)).live) break;
+      const parentWorker = this._workerFor(parent, workers);
+      if (swarmParticipantLiveness(parentWorker).live && parentWorker.status !== 'stopping') break;
       parentId = this._resumeOrchestrator(swarm, null, parent, { resumeFrom: parentId });
     }
-    const key = `swarm-turn-report:${swarmId}:${participantId}:${workerId}:${turnSeq}`;
+    const key = `swarm-turn-report:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
     const prior = this.store.priorCoordinationEvent(key);
-    const event = prior ?? this.store.recordDriver('swarm.turn_reported', {
-      swarmId, participantId, parentId, workerId, turnSeq, turnEpoch, report,
+    let event = prior ?? this.store.recordDriver('swarm.turn_reported', {
+      swarmId, participantId, parentId, workerId, turnSeq, turnEpoch, report, assignmentDone,
     }, { actor: 'baton-runtime', key }).event;
-    if (parentId === null || this.store.priorCoordinationEvent(`${key}:delivered`)) return event;
+    if (parentId === null) {
+      if (event.payload.parentId !== null && event.payload.parentId !== undefined) {
+        event = this.store.recordDriver('swarm.turn_reported', {
+          swarmId, participantId, parentId: null, workerId, turnSeq, turnEpoch, report,
+          assignmentDone, originalReportSeq: event.seq,
+          deliveryFailure: { parentId: event.payload.parentId, reason: 'parent_unavailable' },
+        }, { actor: 'baton-runtime', key: `${key}:root` }).event;
+      }
+      this._reconcileTurnReportedRows?.(this._swarm(swarmId), 'baton-runtime');
+      return { event, delivery: { state: 'root_addressed' } };
+    }
+    if (this.store.priorCoordinationEvent(`${key}:delivered`)) {
+      return { event, delivery: { state: 'delivered', parentId } };
+    }
     this._turnReportDeliveries ??= new Map();
     if (this._turnReportDeliveries.has(key)) return this._turnReportDeliveries.get(key);
     const delivery = (async () => {
       const parent = swarm.participants[parentId];
       const message = `Turn report from ${participantId}:\n${JSON.stringify(report)}\n`
-        + 'Review the report and direct the continuing work.';
-      const result = await this._deliverGuidance({ swarmId, participant: parent,
+        + (assignmentDone ? 'The seat declared its assignment complete.'
+          : 'The assignment remains active for the orchestrator decision.');
+      let result;
+      try { result = await this._deliverGuidance({ swarmId, participant: parent,
         worker: this._workerFor(parent, this.coordinator.list()), message,
         principal: { actor: 'baton-runtime', principalId: 'baton-runtime' },
         args: { swarmId, participantId: parentId, message, idempotencyKey: key },
         guidance: { from: { kind: 'peer', participantId },
           priority: SWARM_GUIDANCE_DEFAULT_PRIORITY, inReplyTo: event.seq },
-      });
+      }); } catch (error) {
+        result = { guide: { delivery: { state: 'refused', reason: error?.code ?? 'turn_report_delivery_failed' } } };
+      }
       if (result.guide?.delivery?.state === 'delivered') {
         this.store.recordDriver('swarm.turn_report_delivered', {
           swarmId, participantId, parentId, turnSeq, reportSeq: event.seq,
           guidanceSeq: result.guide.seq,
         }, { actor: 'baton-runtime', key: `${key}:delivered` });
+      } else {
+        const rootEvent = this.store.recordDriver('swarm.turn_reported', {
+          swarmId, participantId, parentId: null, workerId, turnSeq, turnEpoch, report,
+          assignmentDone, originalReportSeq: event.seq,
+          deliveryFailure: { parentId, reason: result.guide?.delivery?.reason ?? 'undelivered' },
+        }, { actor: 'baton-runtime', key: `${key}:root` }).event;
+        this._reconcileTurnReportedRows?.(this._swarm(swarmId), 'baton-runtime');
+        return { event: rootEvent, delivery: { state: 'root_addressed',
+          parentFailure: result.guide?.delivery?.reason ?? 'undelivered' } };
       }
-      return event;
+      return { event, delivery: { state: 'delivered', parentId } };
     })();
     this._turnReportDeliveries.set(key, delivery);
     try { return await delivery; } finally { this._turnReportDeliveries.delete(key); }

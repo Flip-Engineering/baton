@@ -231,3 +231,59 @@ test('572-g: unavailable guidance records the delivery refusal', async (t) => {
   assert.equal(f.eventsOf('swarm.guidance_parked').length, 0);
   assert.equal(f.eventsOf('swarm.guidance_sent')[0].payload.message, 'Continue this task');
 });
+
+
+test('572-h: a refused parent delivery addresses the report to root', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Recover report delivery' });
+  await f.recruit('lead', { permissions: [...SWARM_PERMISSIONS] });
+  await f.recruit('alpha', {}, f.asSeat('lead'));
+  f.runtime.coordinator.guideParticipant = async () => { throw Object.assign(new Error('gone'), { code: 'worker_not_active' }); };
+  await f.runtime.reportTurnEnd({ swarmId: SWARM_ID, participantId: 'alpha',
+    workerId: f.workerOf('alpha').id, turnSeq: 10, turnEpoch: 1,
+    report: { status: 'completed', summary: 'Ready for review' } });
+  const rootReport = f.eventsOf('swarm.turn_reported').at(-1);
+  assert.equal(rootReport.payload.parentId, null);
+  assert.equal(rootReport.payload.deliveryFailure.reason, 'worker_not_active');
+});
+
+
+test('572-i: an invalid turn identity refuses before recording or delivery', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Validate turn reports' });
+  await f.recruit('alpha');
+  await assert.rejects(f.runtime.reportTurnEnd({ swarmId: SWARM_ID, participantId: 'alpha',
+    workerId: f.workerOf('alpha').id, turnEpoch: 1, report: { status: 'completed' } }),
+  { code: 'swarm_payload_invalid' });
+  assert.equal(f.eventsOf('swarm.turn_reported').length, 0);
+  assert.equal(f.guides.length, 0);
+});
+
+
+for (const status of ['dead', 'stopping']) {
+  test(`572-j: a ${status} parent routes the report to root`, async (t) => {
+    const f = fixture(t);
+    await f.call('create', { purpose: 'Recover unavailable parents' });
+    await f.recruit('lead', { permissions: [...SWARM_PERMISSIONS] });
+    await f.recruit('alpha', {}, f.asSeat('lead'));
+    f.workerOf('lead').status = status;
+    const receipt = await f.runtime.reportTurnEnd({ swarmId: SWARM_ID, participantId: 'alpha',
+      workerId: f.workerOf('alpha').id, turnSeq: 10, turnEpoch: 1,
+      report: { status: 'completed', summary: 'Ready for review' } });
+    assert.equal(receipt.delivery.state, 'root_addressed');
+    assert.equal(receipt.event.payload.parentId, null);
+    assert.equal(f.guides.length, 0);
+  });
+}
+
+
+test('572-k: the root reconciler runs at the report boundary', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Wake root immediately' });
+  await f.recruit('alpha');
+  const observed = [];
+  f.runtime._reconcileTurnReportedRows = () => observed.push(f.eventsOf('swarm.turn_reported').length);
+  await f.runtime.reportTurnEnd({ swarmId: SWARM_ID, participantId: 'alpha',
+    workerId: f.workerOf('alpha').id, turnSeq: 10, turnEpoch: 1, report: { status: 'completed' } });
+  assert.deepEqual(observed, [1]);
+});

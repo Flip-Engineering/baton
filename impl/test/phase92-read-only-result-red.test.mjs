@@ -67,7 +67,7 @@ async function terminal(run) {
   let last = null;
   while (Date.now() < deadline) {
     const view = await run.status(); last = view;
-    if (['completed', 'failed', 'cancelled', 'stopped'].includes(view.phase)) return view;
+    if (['completed', 'work_completed', 'failed', 'cancelled', 'stopped'].includes(view.phase)) return view;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Run did not settle: ${JSON.stringify({
@@ -142,9 +142,8 @@ test('P92-OR1: explicit evidence intent accepts a textual capsule and inverse pr
   });
   await change.approve();
   const unchanged = await terminal(change);
-  assert.equal(unchanged.phase, 'failed');
-  assert.deepEqual(unchanged.terminalCause, {
-    kind: 'policy_failure', code: 'required_effect_absent',
-  });
+  assert.equal(unchanged.phase, 'work_completed');
+  assert.equal(unchanged.terminalCause, null);
+  assert.equal(unchanged.result?.state, 'accepted');
   assert.equal(unchanged.resultIntent, 'change');
 });

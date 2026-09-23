@@ -282,7 +282,7 @@ test('443-a2: the proposal wakes the new closed wake class, and carries no roll-
 test('443-b1: `auto` performs the resume onto the first candidate, carrying the workspace and the why', async (t) => {
   const w = await faultedSwarm(t, {
     rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()],
-    policy: { rerouteOnProviderFault: 'auto', resumeContinuation: 'auto' }, tag: 'b1',
+    policy: { rerouteOnProviderFault: 'auto' }, tag: 'b1',
   });
   const policies = rowsOf(w.store, 'swarm.policy_updated');
   assert.equal(policies.length, 1, 'the swarm-level policy is one recorded row');

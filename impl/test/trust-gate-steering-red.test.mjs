@@ -147,21 +147,23 @@ test('T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no v
   assert.notEqual(task.status, 'completed', 'no acceptance at a checkpoint either — deferral is non-dispatch');
   assert.equal(adapter.calls.kill.length, 0, 'the healthy multi-turn worker is never killed');
   assert.equal(verifyWorktrees, 0, 'non-dispatch means the gate never even builds its verify sandbox');
-  const gateEvents = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
+  const gateEvents = ['forbidden_effect_observed', 'worker_path_scope_violation'];
   assert.equal(coordinator._log.read(handle.id).filter((event) => gateEvents.includes(event.payload?.code)).length, 0,
     'zero gate verdict events');
   const nudges = adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:'));
   assert.equal(nudges.length, 0, 'a native checkpoint awaits explicit orchestration');
 });
 
-test('T2: a FINAL (claim-classified) turn with no diff on a required-edit plan still fails required_effect_absent (anti-gaming pin)', async () => {
+test('T2: a final turn with no diff proceeds through verification without terminating the worker', async () => {
   const adapter = new ScriptableAdapter({ pausable: false });
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnCompleted(adapter, handle);
   await flush(60);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed', 'finals evaluate exactly as today');
+  assert.equal(task.status, 'completed');
+  assert.equal(adapter.calls.kill.length, 0);
+  assert.ok(coordinator._log.read(handle.id).some((event) => event.kind === 'verify.reverified'));
   assert.equal(adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:')).length, 0,
     'no steering cycle is spent on a claim-classified (final) turn');
 });
@@ -282,8 +284,8 @@ test('T8b: a pending question and checkpoint survive the retired window', async 
   const task = coordinator._tasks.get(handle.taskId);
   assert.equal(task.status, 'paused', 'an unanswered question does not authorize a work verdict');
   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.equal(verdictEvent, undefined, 'there is no automatic gate verdict');
+    && event.payload?.phase === 'trust_gate');
+  assert.equal(verdictEvent, undefined, 'there is no automatic gate refusal');
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1);
 });
 
@@ -336,36 +338,31 @@ test('T10b: an explicit claim runs the full gate and carries no invented expiry 
   assert.ok(pauseId, 'the pause record pends');
   await coordinator.claimTurn(pauseId, { actor: 'orchestrator' }).catch(() => {});
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'the claim runs the full final gate on the edit-free pause');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed',
+    'the claim runs verification on the edit-free pause');
   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.equal(verdictEvent?.payload?.steered ?? null, null,
-    'a claim-resolved verdict carries NO steering-expiry receipt (the claim is its own authority)');
+    && event.payload?.phase === 'trust_gate');
+  assert.equal(verdictEvent, undefined);
+  assert.equal(adapter.calls.kill.length, 0);
 });
 
 // ===========================================================================
 // TG4 — the revision-channel verdict (stage: channel missing)
 // ===========================================================================
 
-test('T11: a gate failure names its gate in the projected terminal cause and carries the sanitized {gate, detail} verdict', async () => {
+test('T11: an unchanged final result produces no policy failure or gate-refusal event', async () => {
   const adapter = new ScriptableAdapter({ pausable: false });
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnCompleted(adapter, handle);
   await flush(60);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed');
-  // (a) the projected terminal cause names the gate — never 'unknown'.
-  const cause = task.terminalCause ?? task.failure ?? null;
-  assert.match(JSON.stringify(cause), /required_effect_absent/, 'the projected cause names the gate');
-  // (b) the refusal is projected as sanitized {gate, detail} — the DG-1 shape the worker's
-  // next-brief channel consumes (v1.0.1: the byte-identical refinement brief is a non-channel).
+  assert.equal(task.status, 'completed');
+  assert.equal(task.terminalCause ?? task.failure ?? null, null);
   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent, 'the {gate, detail} verdict event exists');
-  const detail = JSON.stringify(verdictEvent.payload?.detail ?? verdictEvent.payload ?? {});
-  assert.doesNotMatch(detail, /\/tmp\/wt\//, 'the verdict carries no path strings');
+    && event.payload?.phase === 'trust_gate');
+  assert.equal(verdictEvent, undefined);
+  assert.equal(adapter.calls.kill.length, 0);
 });
 
 // ===========================================================================
@@ -428,11 +425,10 @@ test('T13: omitting repository_edit WITHOUT analysis:true is a plan-validation e
   );
 });
 
-test('T14: an analysis node\'s final evaluation SKIPS required_effect and runs every other phase', async () => {
+test('T14: an analysis node\'s edit-free final runs verification', async () => {
   const adapter = new ScriptableAdapter({ pausable: false });
   const { coordinator } = setup({ adapter, capture: noDiff });
-  // The analysis field documents repository_edit as not-required for this node — an edit-free
-  // final does NOT fail required_effect (every other phase still runs).
+  // The analysis field documents repository_edit as not-required for this node.
   const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, requiredEffects: [] }));
   emitTurnCompleted(adapter, handle);
   await flush(60);
@@ -441,13 +437,14 @@ test('T14: an analysis node\'s final evaluation SKIPS required_effect and runs e
   assert.ok(['verifying', 'completed'].includes(task.status), `the final evaluates normally otherwise (got ${task.status})`);
 });
 
-test('T14b: a NON-analysis node\'s edit-free final fails required_effect (the flag is the boundary)', async () => {
+test('T14b: a non-analysis node\'s edit-free final also runs verification', async () => {
   const adapter = new ScriptableAdapter({ pausable: false });
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnCompleted(adapter, handle);
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed');
+  assert.equal(adapter.calls.kill.length, 0);
 });
 
 test('T14c: analysis does NOT exempt the violation phases — an out-of-scope diff still fails path_scope', async () => {
@@ -461,7 +458,7 @@ test('T14c: analysis does NOT exempt the violation phases — an out-of-scope di
   await flush(60);
   const task = coordinator._tasks.get(handle.taskId);
   assert.equal(task.status, 'failed',
-    'analysis skips required_effect ONLY — forbidden/path_scope keep full strength (authority attack 4 closed)');
+    'analysis does not weaken forbidden/path_scope enforcement');
 });
 
 // ===========================================================================
@@ -508,6 +505,7 @@ test('T17: a registered orchestrator claim runs the full gate', async () => {
   assert.ok(pauseId, 'the pause record pends');
   await coordinator.claimTurn(pauseId, { actor: 'orchestrator' }).catch(() => {});
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'a claim on an edit-free pause runs the full final gate — required_effect fires exactly as today');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed',
+    'a claim on an edit-free pause runs verification without a policy failure');
+  assert.equal(adapter.calls.kill.length, 0);
 });

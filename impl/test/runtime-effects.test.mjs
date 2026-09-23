@@ -96,7 +96,7 @@ const REROUTE_CENSUS = Object.freeze({
   cancelRunStopTarget: { 'recorder.log.append(': 1, 'recorder.mapEvent(': 1, 'recorder.recordDriver(': 0, 'recorder.coordination': 0 },
   attemptRunStopTarget: { 'recorder.log.append(': 2, 'recorder.mapEvent(': 2, 'recorder.recordDriver(': 0, 'recorder.coordination': 0 },
   _integrate: { 'recorder.log.append(': 4, 'recorder.mapEvent(': 3, 'recorder.recordDriver(': 3, 'recorder.coordination': 4 },
-  _deliver: { 'recorder.log.append(': 5, 'recorder.log.tail(': 3, 'recorder.mapEvent(': 0, 'recorder.recordDriver(': 0, 'recorder.coordination': 2 },
+  _deliver: { 'recorder.log.append(': 5, 'recorder.log.tail(': 2, 'recorder.mapEvent(': 0, 'recorder.recordDriver(': 0, 'recorder.coordination': 2 },
   _finalizeStop: { 'recorder.log.append(': 2, 'recorder.mapEvent(': 4, 'recorder.recordDriver(': 0, 'recorder.coordination': 0 },
 });
 

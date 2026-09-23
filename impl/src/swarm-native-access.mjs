@@ -8,9 +8,10 @@ import { WORKTREE_STASH_BRIEF_SENTENCE, WORKTREE_WRITER_BRIEF_SENTENCE } from '.
 /** Connect native participant tools to the live deployment without copying owner authority.
  * Credentials belong to a participant, independently of its current transport incarnation. */
 export class SwarmNativeAccess {
-  constructor({ coordinator, dispatch, onTurnCompleted = null }) {
+  constructor({ coordinator, dispatch, onTurnCompleted = null, isDone = null }) {
     this.coordinator = coordinator;
     this.onTurnCompleted = onTurnCompleted;
+    this.isDone = isDone;
     this.bridge = createSwarmNativeBridge({ dispatch });
     this.participants = new Map();
     this.clientPath = fileURLToPath(new URL('./swarm-native-bridge.mjs', import.meta.url));
@@ -32,6 +33,7 @@ export class SwarmNativeAccess {
         // recruit's rendered brief carries the Swarm section and the bridge tool from its very
         // first turn. Derived once above; never re-spelled here.
         const extension = Object.freeze({
+          isDone: () => this.isDone?.({ swarmId, participantId }) === true,
           onTurnCompleted: (report) => this.onTurnCompleted?.({ ...report, swarmId, participantId }),
           env: Object.freeze({ ...issued.env, BATON_SWARM_CLIENT: this.clientPath }),
           redactProviderFrame: (frame) => JSON.parse(JSON.stringify(frame,
@@ -103,6 +105,7 @@ export const SWARM_NATIVE_GUIDANCE = [
   'A closed-set refusal carries the admitted values in detail.admitted and reads "<field> must be one of: ..."; an unknown-field refusal carries the admitted fields the same way. Absent swarm.view projection means full.',
   'Run node "$BATON_SWARM_CLIENT" swarm.update to publish a finding: {"event":"swarm.contribution_recorded","payload":{"body":"your whole report"}} — put the whole report inside the payload\'s `body` field, the payload shape is closed, and an unknown field refuses. A contributionId you omit is minted per call from your identity and that call\'s key, so every such update records a NEW contribution; an id the swarm already holds REFUSES (`contribution_duplicate`), never extends — a correction is its own contribution, and `swarm.contribution_reviewed` is how recorders settle what they already hold. Group, work, context, and review updates use the permitted event kinds shown by swarm.view — the `updates` field lists, beside availableActions, exactly the kinds you may send now and the permission that admits each.',
   'Use swarm.guide to speak to a participant, swarm.recruit to bring in help when granted, and swarm.watch to await relevant updates. These commands use participant names; no worker, fence, pause, or approval choreography is required. Participants with review authority can capture and check contributions. Participants with organize authority can integrate accepted contributions. Record a contribution before requesting review or landing.',
+  'Declare your assignment done with swarm.update {"event":"swarm.participant_left","payload":{"reason":"completed"}}, then end your turn. Baton delivers the final report to your orchestrator and completes the worker. Ordinary turn completion keeps the assignment available for guidance.',
   SWARM_KNOWLEDGE_GUIDANCE,
   SWARM_SEAT_READ_GUIDANCE,
   // Issue #357: the worktrees of one repository share a single stash stack, so the seat's git

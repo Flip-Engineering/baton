@@ -10,7 +10,6 @@ import {
   GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest,
   normalizePlanRequest,
 } from '../src/goal-plan.mjs';
-import { projectTypedTerminalCause } from '../src/application-semantics.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase73-${name}-`));
 const policy = normalizeGoalPlanPolicy({
@@ -173,13 +172,7 @@ test('PH3: requiredEffects is a digest-bound subset and supports only repository
   }
 });
 
-test('PH4: the ordinary application projection preserves the bounded policy failure cause', () => {
-  assert.deepEqual(projectTypedTerminalCause({
-    terminalResult: { terminalCause: { kind: 'policy_failure', code: 'required_effect_absent', private: 'omitted' } },
-  }), { kind: 'policy_failure', code: 'required_effect_absent' });
-});
-
-test('PH3/PH4: restart replays required-effect authority and the same typed failure without worker claims', async (t) => {
+test('PH3/PH4: restart preserves required-effect metadata after an unchanged result completes', async (t) => {
   const first = driver('required-replay', {});
   const authority = await approved(first, 'required-replay', ['repository_edit']);
   const handle = await spawnApproved(first, 'required-replay', authority);
@@ -194,16 +187,17 @@ test('PH3/PH4: restart replays required-effect authority and the same typed fail
   t.after(async () => { await replay.drainAndClose('phase73-required-replay-second').catch(() => {}); });
   await replay.ready;
   const result = await replay.coordinator.result(handle.id);
-  assert.equal(result.status, 'failed');
-  assert.deepEqual(result.terminalCause, { kind: 'policy_failure', code: 'required_effect_absent' });
-  assert.equal(result.artifacts, undefined); assert.equal(result.capturedSha, null); assert.equal(result.retainedResultRef, null);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.terminalCause, null);
+  assert.match(result.capturedSha, /^[a-f0-9]{40}$/u);
+  assert.equal(typeof result.retainedResultRef, 'string');
   const snapshot = replay.coordination.snapshot();
   assert.deepEqual(snapshot.goalPlan.plans[0].nodes[0].requiredEffects, ['repository_edit']);
   assert.deepEqual(snapshot.goalPlan.dispatches[0].requiredEffects, ['repository_edit']);
   assert.deepEqual(snapshot.tasks.find((task) => task.id === 'phase73-required-replay').brief.requiredEffects, ['repository_edit']);
 });
 
-test('PH3/PH5: required repository_edit rejects an unchanged base before referee or retention', async (t) => {
+test('PH3/PH5: required repository_edit metadata does not reject an unchanged verified result', async (t) => {
   const instance = driver('unchanged-required', {});
   t.after(async () => { await instance.drainAndClose('phase73-unchanged-required').catch(() => {}); });
   const authority = await approved(instance, 'unchanged-required', ['repository_edit']);
@@ -222,19 +216,18 @@ test('PH3/PH5: required repository_edit rejects an unchanged base before referee
     const current = await instance.coordinator.result(handle.id);
     return current.ready ? current : null;
   });
-  assert.equal(result.status, 'failed');
-  assert.deepEqual(result.terminalCause, { kind: 'policy_failure', code: 'required_effect_absent' });
-  assert.equal(result.capturedSha, null); assert.equal(result.retainedResultRef, null);
-  assert.equal(result.artifacts, undefined); assert.equal(result.verdict, null);
-  assert.equal(instance.log.read(handle.id).some((event) => event.kind === 'verify.reverified'), false);
-  const requiredFailure = instance.log.read(handle.id).find((event) => event.kind === 'error' && event.payload?.code === 'required_effect_absent');
-  assert.deepEqual(
-    { changed: requiredFailure.payload.requiredEffectEvidence.changedPathCount, inScope: requiredFailure.payload.requiredEffectEvidence.inScopeChangedPathCount },
-    { changed: 0, inScope: 0 },
-  );
-  assert.match(requiredFailure.payload.requiredEffectEvidence.changedPathsDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.terminalCause, null);
+  assert.match(result.capturedSha, /^[a-f0-9]{40}$/u);
+  assert.equal(typeof result.retainedResultRef, 'string');
+  assert.equal(result.verdict?.passed, true);
+  assert.equal(instance.log.read(handle.id).some((event) => event.kind === 'verify.reverified'), true);
+  assert.equal(instance.log.read(handle.id).some((event) => (
+    event.kind === 'error' && event.payload?.phase === 'trust_gate'
+  )), false);
   assert.deepEqual(instance.coordination.snapshot().goalPlan.dispatches[0].requiredEffects, ['repository_edit']);
-  assert.equal(instance.coordination.snapshot().artifacts.filter((artifact) => artifact.taskId === 'phase73-unchanged-required').length, 0);
+  assert.ok(instance.coordination.snapshot().artifacts
+    .some((artifact) => artifact.taskId === 'phase73-unchanged-required'));
 });
 
 test('PH3/PH5: read-only-permitted unchanged work remains valid, while a required in-scope diff passes', async (t) => {

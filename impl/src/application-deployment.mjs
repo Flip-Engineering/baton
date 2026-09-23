@@ -6715,7 +6715,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // layer confusion in v0.9 is corrected; the stall watchdog is issue #67).
     // #500: 5 min between steering nudges; operator-declared with no derivation elsewhere in
     // the tree, and the #500 pin test records the shipped value.
-    progressNudgeWindowMs: 300_000,
     // #500: the drain — 64 workers waited on in one pass, a 90 s window (the bound the
     // registry's host.reincarnation.wait_ms row adds its measured startup allowance to), and
     // a 10 ms poll cadence. Operator-declared; the #500 pin test records the values.

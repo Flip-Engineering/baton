@@ -89,7 +89,7 @@ test('RR2: every recovery_port delegate keeps the member name, parameter list, a
   const delegated = coordinatorFile.members
     .filter((member) => member.evidence.includes('recovery:recovery_port'))
     .map((member) => member.name);
-  assert.ok(delegated.length >= 42, `expected the 42 moved delegates in the map, found ${delegated.length}`);
+  assert.ok(delegated.length >= 40, `expected the 40 moved delegates in the map, found ${delegated.length}`);
   const memberRoot = parseOf(read(MEMBER_FILE));
   const memberParams = new Map();
   for (const fn of [...memberRoot.findAll({ rule: { kind: 'function_declaration' } }), ...memberRoot.findAll({ rule: { kind: 'generator_function_declaration' } })]) {
@@ -317,14 +317,14 @@ test('RR5: the map sees the move — every recovery_port delegate is recovery, a
   );
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegated = coordinatorFile.members.filter((member) => member.evidence.includes('recovery:recovery_port'));
-  assert.equal(delegated.length, 42, 'exactly the 42 moved members delegate through the recovery port');
+  assert.equal(delegated.length, 40, 'exactly the 40 moved members delegate through the recovery port');
   for (const member of delegated) {
     assert.equal(member.seam, 'recovery', `${member.name} must classify as recovery through the port evidence`);
   }
   const moduleFile = map.files.find((file) => file.file === MEMBER_FILE);
   const bySeam = {};
   for (const member of moduleFile.members) bySeam[member.seam] = (bySeam[member.seam] ?? 0) + 1;
-  assert.ok(bySeam.recovery >= 42, `the module target must classify its moved members recovery, got ${JSON.stringify(bySeam)}`);
+  assert.ok(bySeam.recovery >= 40, `the module target must classify its moved members recovery, got ${JSON.stringify(bySeam)}`);
 });
 
 test('RR6: the coordinator wires the port and the public verbs keep their shape', () => {

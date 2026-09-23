@@ -8,6 +8,17 @@ import {
   KILL_RULES, TERMINAL_TASK_STATUSES, boundedProcessObservation, deepFreeze, typedTerminalCode,
 } from '../runtime-recovery.mjs';
 
+function reportTurn(coordinator, ctx, event, report) {
+  const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
+  if (typeof participantRuntime?.onTurnCompleted !== 'function') return;
+  coordinator._trackAuthorityPromise(() => Promise.resolve().then(() => participantRuntime.onTurnCompleted({
+    workerId: ctx.workerId, turnSeq: event.seq, turnEpoch: ctx.turnEpoch, report,
+    assignmentDone: participantRuntime.isDone?.() === true,
+  })), true).catch((error) => coordinator._recordOperationFailure(
+    'swarm.turn_report_delivery_failed', ctx.handle, 'turn_report_delivery_failed', error,
+    { turnSeq: event.seq }));
+}
+
 export function turnCompleted(coordinator, recorder, ctx) {
 // Adapters may wrap the WorkerResult as { result } (MockAdapter) or emit it directly
         // (coordinator.test). Normalize so the logged claim and the gate both see the WorkerResult.
@@ -23,6 +34,8 @@ export function turnCompleted(coordinator, recorder, ctx) {
           worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor,
           payload: sealVerdict.seal ? { ...wr, usageSeal: sealVerdict.seal } : wr,
         });
+        const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
+        reportTurn(coordinator, ctx, terminalEvent, wr);
         // D2 blk-5 / C4: the turn-terminal seam clears the liveness marker (a zombie flag would
         // hold liveness forever and make rung-3 reap impossible).
         ctx.handle.turnInFlight = false;
@@ -52,10 +65,9 @@ export function turnCompleted(coordinator, recorder, ctx) {
         // decision channel is turn-ending by construction — the worker asks, the hub parks the
         // task input_required, and THEN the provider's result frame arrives as an ordinary
         // completed turn. A turn that ends with a blocking interaction STILL PENDING (unsettled)
-        // has by definition not produced its final diff, so the trust gate must not evaluate it
-        // (required_effect_absent killed the gated worker before the orchestrator could
-        // answer). Deferral, never exemption: the post-settlement continuation turn faces the
-        // gate. The guard keys on an actually-pending record — a turn that completes DURING
+        // has by definition not produced its final result, so the trust gate must not evaluate it.
+        // The post-settlement continuation turn faces the gate. The guard keys on an
+        // actually-pending record — a turn that completes DURING
         // answer delivery (record resolving/resolved, e.g. elicitation-style questions, CK2/CK8
         // phase11) is a completed result and must verify normally.
         {
@@ -64,14 +76,8 @@ export function turnCompleted(coordinator, recorder, ctx) {
             && [...coordinator._pending.values()].some((record) => record.worker === ctx.handle.id && record.state === 'pending');
           if (parkedUnsettled) return
         }
-        // Issue #31 §2.1(1)-(2), as revised 2026-09-12: a 'pausable' card's completed turn is a
-        // CHECKPOINT, not an implicit claim — the trust gate does not dispatch, no gate event is
-        // written, and (native-completion-loop) the coordinator does not self-drive the pause
-        // either: no policy nudge, no window, no expiry verdict. A 'claim' card (the default —
-        // every card without the field) never reaches this branch and falls straight through to
-        // the pre-existing gate below, byte-identically to before. A driven and an un-driven
-        // checkpoint are now identical: both park visibly for an explicit `claim_turn` (the real
-        // verifier) or `nudge_turn` (a real continuation).
+        // A swarm turn waits for the orchestrator receiving its report. A declared completion
+        // proceeds through verification and worker cleanup at this boundary.
         {
           const task = coordinator._tasks.get(ctx.handle.taskId);
           // A turn can legally end AFTER its task was already terminalized (run stop, fleet
@@ -80,6 +86,7 @@ export function turnCompleted(coordinator, recorder, ctx) {
           // the pause entirely and fall through, mirroring the interaction family's own
           // `if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;` precedent.
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)
+            && participantRuntime?.isDone?.() !== true
             && coordinator._turnCompletionOf(ctx.handle) === 'pausable') {
             const settled = coordinator._admitPauseRecord(ctx.handle, task, terminalEvent, wr, ctx.appendAttributed);
             if (!settled) return
@@ -91,17 +98,27 @@ export function turnCompleted(coordinator, recorder, ctx) {
           // correct even for a native/test adapter that emits completion before that promise's
           // bookkeeping callback runs. Never capture through the logical placeholder path.
           Promise.resolve(ctx.handle.worktreeReady).then(() => coordinator._runTrustGate(ctx.handle, wr))
+            .then(() => {
+              if (participantRuntime?.isDone?.() === true
+                && !['stopping', 'dead', 'exited'].includes(ctx.handle.status)) {
+                coordinator._stopInBackground(ctx.handle, 'kill', KILL_RULES.terminalObservation);
+              }
+            })
             .catch((error) => coordinator._recordTrustGateEscape(ctx.handle, error))
             .finally(releaseAuthority);
         }
 }
 
 export function crashed(coordinator, recorder, ctx) {
+        ctx.handle.turnInFlight = false;
+        coordinator._clearWatchdog(ctx.handle);
 const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.payload?.usageSeal ?? null);
         const terminalEvent = ctx.appendAttributed({
           worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor,
           payload: sealVerdict.seal ? { ...ctx.payload, usageSeal: sealVerdict.seal } : ctx.payload,
         });
+        if (!ctx.turnWasTerminal) reportTurn(coordinator, ctx, terminalEvent,
+          { ...ctx.payload, status: 'failed' });
         // #295: the crash cert is a provider-shaped payload — the adapter types the same fault and
         // the same bounded detail (route, reset instant) it typed on the turn, so a rate-limited
         // death that arrives as a dead transport still reads with its class, its route and its
@@ -170,6 +187,8 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
 
 export function exited(coordinator, recorder, ctx) {
 const terminalEvent = ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor, payload: ctx.payload });
+        if (!ctx.turnWasTerminal) reportTurn(coordinator, ctx, terminalEvent,
+          { ...ctx.payload, status: 'failed' });
         const task = coordinator._tasks.get(ctx.handle.taskId);
         const failActiveTask = task && !TERMINAL_TASK_STATUSES.has(task.status)
           && task.status !== 'verifying' && !ctx.turnWasTerminal;

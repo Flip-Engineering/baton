@@ -1072,7 +1072,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.guide',
-    description: `Send guidance and continue the recipient's turn through its native delivery lane. The receipt carries guide: {seq, kind, participantId, from, sentAt, priority, inReplyTo, messageId, delivery}. delivery.state is delivered or refused; a refusal names the transport reason. priority (${SWARM_GUIDANCE_PRIORITIES.join(', ')}, default ${SWARM_GUIDANCE_DEFAULT_PRIORITY}) selects immediate steering or delivery at the next boundary. inReplyTo names a prior guidance, message, or contribution row. view: true adds the refreshed view.`,
+    description: `Send guidance and continue the recipient's turn through its native delivery lane. The receipt carries guide: {seq, kind, participantId, from, sentAt, priority, inReplyTo, messageId, delivery}. delivery.state is delivered or refused; parked appears only on historical rows; a refusal names the transport reason. priority (${SWARM_GUIDANCE_PRIORITIES.join(', ')}, default ${SWARM_GUIDANCE_DEFAULT_PRIORITY}) selects immediate steering or delivery at the next boundary. inReplyTo names a prior guidance, message, or contribution row. view: true adds the refreshed view.`,
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA,
       priority: PRIORITY_SCHEMA, inReplyTo: REPLY_TARGET_SCHEMA, view: VIEW_SCHEMA }),

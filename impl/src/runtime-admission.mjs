@@ -539,11 +539,6 @@ export function constructor(coordinator, opts) {
       throw new TypeError('providerQuotaAuthority must implement record() and blockFor()');
     }
     coordinator._providerQuota = providerQuota;
-    // D4 rung 2 (stall seam, #67): the bounded window an armed stall claim waits for its
-    // re-arm evidence before the stall ladder escalates. A deployment knob, NOT
-    // stallTimeoutMs/watchdog. The pause seam no longer uses it — a paused checkpoint never
-    // arms a window (see `_admitPauseRecord`).
-    coordinator._progressNudgeWindowMs = opts.progressNudgeWindowMs ?? 300_000;
     coordinator._recoveryTimeoutMs = opts.recoveryTimeoutMs ?? 15000;
     coordinator._recoveryMaxAttempts = opts.recoveryMaxAttempts ?? 3;
     if (!Number.isSafeInteger(coordinator._recoveryMaxAttempts) || coordinator._recoveryMaxAttempts <= 0
@@ -606,10 +601,9 @@ export function constructor(coordinator, opts) {
       loopThreshold: opts.watchdog?.loopThreshold ?? 3,
       scopeAction,
       orientation: scopeOrientation,
-      // Issue #258: loop and stall evidence escalates to the orchestrator by default; a stop is
-      // an operator's explicit choice (`watchdog.loopAction` / `watchdog.stallAction`).
-      loopAction: opts.watchdog?.loopAction ?? 'escalate',
-      stallAction: opts.watchdog?.stallAction ?? 'escalate',
+      // Loop and stall observations notify the orchestrator for a continuation decision.
+      loopAction: 'escalate',
+      stallAction: 'escalate',
     });
     coordinator._waitPollMs = opts.waitPollMs ?? 25;
     // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
@@ -977,19 +971,8 @@ export function _admitPauseRecord(coordinator, recorder, handle, task, terminalE
     // projection reads it to decide whether a task is paused.
     task.status = 'paused';
 
-    // Pause ownership (revised 2026-09-12, native-completion-loop finding). The checkpoint is a
-    // VISIBLE park, never a self-driving one: the coordinator sends no policy progress nudge,
-    // arms no window, and never lets elapsed time decide the claim. The retired automatic cycle
-    // made the policy's own nudge start the next turn, read that boundary as the answer, and arm
-    // another cycle for the completed turn — so the policy renewed its own work indefinitely
-    // (570 provider turns on a real native self-build while the model kept reporting "Complete,
-    // no remaining work").
-    //
-    // Completion authority belongs to the autonomous orchestrator, not to this seam, and it is
-    // identical for a driven and an un-driven run. The record stays pending and is projected by
-    // `pausedTurns()`; an explicit `claim_turn` runs the existing verifier/trust gate,
-    // `nudge_turn` admits a real continuation, and `wait_turn` notes intent. `false` parks the
-    // turn: no gate dispatch, no settle, no prompt, no timer.
+    // The turn-terminal hook delivers this turn's report to the seat's orchestrator.
+    // The orchestrator can continue the seat through guidance or stop its Run.
     return false;
   }
 

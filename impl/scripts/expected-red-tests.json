@@ -1329,10 +1329,6 @@
       "reason": "#146"
     },
     {
-      "key": "test/stall-watchdog-red.test.mjs :: C4 (RED): a turn that settles clears turnInFlight — the zombie mirror of the stall bug dies here",
-      "reason": "#67"
-    },
-    {
       "key": "test/swarm-gap-red.test.mjs :: S-G11 RED (stage: contribution-unbound): a plain-text contribution binds what it names",
       "reason": "S-G11"
     },
@@ -1589,10 +1585,6 @@
     {
       "file": "test/checkpoint-deferred-229-red.test.mjs",
       "reason": "#229"
-    },
-    {
-      "file": "test/claim-preflight-red.test.mjs",
-      "reason": "#88"
     },
     {
       "file": "test/claude-credential-projection-red.test.mjs",

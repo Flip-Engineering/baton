@@ -78,8 +78,8 @@ async function waitFor(predicate, what) {
   }
 }
 
-async function fixture(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-brief-'));
+async function fixture(t, { delayMs = 5, holdCompletion = false } = {}) {
+  const directory = mkdtempSync(join(process.cwd(), '.baton-swarm-brief-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);
   execFileSync('git', ['config', 'user.name', 'Swarm brief test'], { cwd: repo });
@@ -87,7 +87,14 @@ async function fixture(t) {
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
-  const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs: 5, summary: 'Contribution ready', files: {} } });
+  const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs, summary: 'Contribution ready', files: {} } });
+  const pendingTurns = [];
+  const finishTurn = adapter._finalizeNatural.bind(adapter);
+  if (holdCompletion) adapter._finalizeNatural = (session) => pendingTurns.push(session);
+  const finishTurns = async () => {
+    await waitFor(() => pendingTurns.length > 0, 'scripted turn');
+    for (const session of pendingTurns.splice(0)) finishTurn(session);
+  };
   const card = adapter.card.bind(adapter);
   adapter.card = () => ({
     ...card(),
@@ -112,7 +119,7 @@ async function fixture(t) {
     rmSync(directory, { force: true, recursive: true });
   });
   await app.ready;
-  return { app, driver, adapter, briefs, baton: bindBaton(app, principal('orchestrator')) };
+  return { app, driver, adapter, briefs, finishTurns, baton: bindBaton(app, principal('orchestrator')) };
 }
 
 const swarmSectionOf = (text) => {
@@ -154,7 +161,7 @@ test('a swarm recruit through SwarmRuntime gets a brief that carries the Baton s
   assert.ok(section.includes(SWARM_BRIDGE_NOTHING_RECORDED), 'the section says what a refusal looks like');
 
   // Ending a turn without publishing leaves the work unreachable for the root.
-  assert.match(section, /ending a turn without publishing/u);
+  assert.match(section, /Record a contribution before requesting review or landing/u);
 
   // brief.tools lists the bridge with its verbs, so Tools is never empty for a recruit.
   assert.doesNotMatch(text, /No tools are advertised/u);
@@ -201,4 +208,45 @@ test('renderBrief pins: a brief without the surface renders exactly as before', 
   const text = renderBrief(plain, 'omp-rpc');
   assert.ok(!text.includes('## Swarm'));
   assert.match(text, /No tools are advertised/u);
+});
+
+
+test('a native turn delivers its report and a declared completion finishes the seat', async (t) => {
+  const { app, baton, driver, finishTurns } = await fixture(t, { holdCompletion: true });
+  const swarm = await baton.swarms.create('Report every turn', { swarmId: 'turn-reports' });
+  await swarm.recruit('builder', 'Complete assigned work', selection);
+  const runtime = app._swarmRuntime();
+  const seat = runtime.store.swarm('turn-reports').participants.builder;
+  await runtime.command('swarm.update', { swarmId: 'turn-reports',
+    event: 'swarm.participant_left', payload: { reason: 'completed' },
+    idempotencyKey: 'declare-complete',
+  }, { actor: 'swarm-native:turn-reports:builder', principalId: 'swarm-native:turn-reports:builder' },
+  { swarmId: 'turn-reports', participantId: 'builder', runId: seat.runId });
+  const worker = await waitFor(() => driver.coordinator.list().find((row) => row.runId === seat.runId), 'bound worker');
+  await finishTurns();
+  await waitFor(() => runtime.store.eventsView().find((row) => row.payload?.kind === 'swarm.turn_reported'), 'turn report');
+  await waitFor(() => driver.coordinator._tasks.get(worker.taskId)?.status === 'completed', `seat completion ${JSON.stringify(worker)}`);
+  await waitFor(() => ['dead', 'exited'].includes(driver.coordinator._workers.get(worker.id)?.status), 'declared seat stop');
+  assert.equal(driver.coordinator.pausedTurns({ workerId: worker.id }).length, 0);
+  assert.equal(runtime.store.eventsView().find((row) => row.payload?.kind === 'swarm.turn_reported').payload.assignmentDone, true);
+  assert.equal(runtime.store.swarm('turn-reports').participants.builder.leftReason, 'completed');
+});
+
+
+test('a notification starts another turn in a seat awaiting its orchestrator', async (t) => {
+  const { app, baton, driver, adapter, finishTurns } = await fixture(t, { holdCompletion: true });
+  const swarm = await baton.swarms.create('Continue notified seats', { swarmId: 'notify-turn' });
+  await swarm.recruit('builder', 'Continue on guidance', selection);
+  const runtime = app._swarmRuntime();
+  const seat = runtime.store.swarm('notify-turn').participants.builder;
+  const worker = driver.coordinator.list().find((row) => row.runId === seat.runId);
+  await finishTurns();
+  await waitFor(() => driver.coordinator.pausedTurns({ workerId: worker.id }).length === 1, 'turn boundary');
+  const before = adapter._sessions.get(worker.id).turnGeneration;
+  const answer = await runtime.command('swarm.notify', { swarmId: 'notify-turn',
+    participantId: 'builder', message: 'Continue with the next item', idempotencyKey: 'notify-next-turn',
+  }, principal('orchestrator'));
+  assert.equal(answer.notify.state, 'delivered');
+  assert.equal(adapter._sessions.get(worker.id).turnGeneration, before + 1);
+  assert.equal(driver.coordinator.pausedTurns({ workerId: worker.id }).length, 0);
 });

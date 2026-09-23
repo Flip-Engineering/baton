@@ -385,7 +385,6 @@ const UNEXERCISED_OPTIONS = Object.freeze({
   maxCapabilityBudgetTokens: 'a ceiling over the capability registry',
   maxCapabilityEnvelopeBytes: 'a ceiling over the capability registry',
   now: 'the deployment clock seam; cases use the default',
-  progressNudgeWindowMs: 'the stall window, reached only by a stalled turn',
   providerGovernance: 'consulted on a provider call under a governance policy',
   providerPolling: 'a supervisor, started only with a reuse policy and poll cards',
   providerProcessingSchedule: 'a supervisor, started only with its bounded retry policy',
