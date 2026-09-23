@@ -384,7 +384,7 @@ function rootAttentionPayload(store, frame) {
   const contributionRequired = payload?.owed === 'review_owed' || payload?.owed === 'needs_root';
   const contributionValid = contributionRequired
     ? typeof payload.contributionId === 'string' && payload.contributionId.length > 0
-    : payload?.owed === 'turn_reported' && (payload.contributionId === undefined
+    : ['turn_reported', 'continuation_failed'].includes(payload?.owed) && (payload.contributionId === undefined
       || (typeof payload.contributionId === 'string' && payload.contributionId.length > 0));
   if (payload?.kind !== 'swarm.root_attention_owed'
     || payload.swarmId !== frame.swarmId

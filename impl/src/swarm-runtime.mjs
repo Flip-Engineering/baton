@@ -6563,7 +6563,19 @@ export class SwarmRuntime {
           const args = { swarmId: swarm.swarmId, participantId: participant.participantId,
             idempotencyKey: `resume-continuation:${participant.resumeDecision.requested.seq}` };
           const writes = [];
-          await this._performDeferredStart(swarm, participant, principal, args, writes, null);
+          try {
+            await this._performDeferredStart(swarm, participant, principal, args, writes, null);
+          } catch (error) {
+            this.store.recordDriver('swarm.root_attention_owed', {
+              swarmId: swarm.swarmId, participantId: participant.participantId,
+              owed: 'continuation_failed',
+              ask: JSON.stringify({ predecessor: participant.resumeFrom,
+                code: error?.code ?? 'successor_start_failed', message: error?.message ?? String(error) }),
+              next: { command: 'swarm.view', swarmId: swarm.swarmId },
+            }, { actor: principal.actor,
+              key: `${args.idempotencyKey}:${swarm.swarmId}:${participant.participantId}:failed` });
+            continue;
+          }
           this._write('swarm.resume_decision_answered', {
             swarmId: swarm.swarmId, participantId: participant.participantId,
             predecessor: participant.resumeFrom, guidance: { automatic: true },

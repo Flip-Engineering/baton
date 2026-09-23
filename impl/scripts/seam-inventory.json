@@ -13955,7 +13955,7 @@
         {
           "name": "_continueRecoveredSeats",
           "ordinal": 0,
-          "size": 21,
+          "size": 33,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name"

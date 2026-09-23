@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
+import { deliverRootWakeFrame } from '../src/wake-delivery.mjs';
 import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { allocatePhysicalWorkspaceOwner, createFromBase } from '../src/worktree.mjs';
 
@@ -286,4 +287,48 @@ test('572-k: the root reconciler runs at the report boundary', async (t) => {
   await f.runtime.reportTurnEnd({ swarmId: SWARM_ID, participantId: 'alpha',
     workerId: f.workerOf('alpha').id, turnSeq: 10, turnEpoch: 1, report: { status: 'completed' } });
   assert.deepEqual(observed, [1]);
+});
+
+
+test('572-l: a failed successor wakes root and preserves recovery for other seats', async (t) => {
+  const f = await interruptedLane(t);
+  for (const participantId of ['bravo', 'charlie']) {
+    f.store.recordSwarm('swarm.participant_joined', {
+      swarmId: SWARM_ID, participantId, runId: `legacy-${participantId}`,
+      role: 'Continue work', resumeFrom: 'alpha', parentId: 'lead',
+      permissions: ['read', 'communicate', 'contribute'],
+    }, { actor: 'owner', key: `join-${participantId}` });
+    f.store.recordSwarm('swarm.resume_decision_requested', {
+      swarmId: SWARM_ID, participantId, predecessor: 'alpha',
+      carry: { how: 'bound' }, plan: { options: {} },
+    }, { actor: 'owner', key: `request-${participantId}` });
+  }
+  const start = f.runtime.startRun;
+  f.runtime.startRun = async (request, ...args) => {
+    if (request.participantId === 'bravo') {
+      throw Object.assign(new Error('Workspace observation unavailable'), { code: 'workspace_unavailable' });
+    }
+    return start(request, ...args);
+  };
+  await f.call('view');
+  assert.equal(f.workerOf('bravo'), null);
+  assert.ok(f.workerOf('charlie'));
+  assert.equal(f.eventsOf('swarm.resume_decision_answered', 'bravo').length, 0);
+  const owed = f.eventsOf('swarm.root_attention_owed', 'bravo');
+  assert.equal(owed.length, 1);
+  assert.equal(owed[0].payload.owed, 'continuation_failed');
+  assert.equal(JSON.parse(owed[0].payload.ask).code, 'workspace_unavailable');
+  let body;
+  await deliverRootWakeFrame({ store: f.store,
+    frame: { seq: owed[0].seq, wakeClass: 'root_owed', swarmId: SWARM_ID },
+    target: { harness: 'claude-code', sessionId: 'root-session' },
+    deliver: async (message) => { body = message.body; return { delivered: true }; },
+  });
+  assert.match(body, /continuation_failed/);
+  await f.call('view');
+  assert.equal(f.eventsOf('swarm.root_attention_owed', 'bravo').length, 1);
+  f.runtime.startRun = start;
+  await f.call('view');
+  assert.ok(f.workerOf('bravo'));
+  assert.equal(f.eventsOf('swarm.resume_decision_answered', 'bravo').length, 1);
 });

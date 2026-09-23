@@ -293,3 +293,8 @@ reports have a null swarm identity. A delivered report's replay does not send a 
 Failed sends retain their receipt and retry while the resident attachment remains active. Each
 attempt uses the same message ID, derived from the source wake identity. A successful delivery
 ends retries; shutting down the attachment cancels its pending retry timer.
+
+On restart, the attachment replays root wakes from its subscription cursor. A failed delivery
+remains eligible because only a delivered receipt suppresses another attempt. A successor that
+cannot restart records `continuation_failed` root attention with its failure code and message;
+recovery continues for the other seats and retries the pending successor on later commands.
