@@ -1,0 +1,38 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "The #59 half corrected on the corrected #69: manifest re-derived (358 to 335), all 26 surviving #566 pins measured still red",
+      "base": {
+        "observedHead": "80e07683d8b024c4acccb56696981e28b1aba8ac",
+        "rebasedOnto": "b20f685d07251e1cb4cd5419f611d1abcfbe4ed65"
+      },
+      "commit": {
+        "sha": "a20b14850f966f79e39861253bd49bd7d1aee6da",
+        "branch": "baton/digest-w7-target-69-59-recut"
+      },
+      "items": [
+        {
+          "id": "issue59-recut-correction",
+          "status": "delivered",
+          "change": "contribution-e97dbdaf8fae38de9fd6db4e03dfbaed (accepted at seq 149660) rebased onto the corrected #69 half (b20f685d) standing on cf316a44, its manifest edit re-derived against the moved base: 358 rows minus the same 23 rows this half greens = 335 rows, set-exact, all 23 removed rows still present on master before the removal. No hunk of the half's own delta changed; the tree is byte-identical to the verified rebased pair.",
+          "files": ["impl/scripts/expected-red-tests.json", "impl/src/runtime-redrive.mjs", "impl/test/redrive-continuity-red.test.mjs", "impl/src/adapter.mjs", "impl/src/coordinator.mjs", "impl/src/limits.mjs", "impl/src/messages.mjs", "impl/src/recipes.mjs", "impl/src/runtime-admission.mjs", "impl/src/runtime-briefing.mjs", "impl/src/runtime-observation.mjs", "impl/scripts/seam-inventory.json", "impl/scripts/seam-inventory.mjs"],
+          "test": "node --test --test-reporter=tap test/redrive-continuity-red.test.mjs",
+          "evidence": "At a20b1485: redrive-continuity-red 28 ok/0 not ok; 45/45 pins the pair removes pass on the composed tip; the 26 #566 pins that remain on master (CDW5's went green and was removed by the landed carrier) still fail, measured per row in 16 files, 0 passed, 0 unmatched; at the #69 tree the 23 rows are red (5 ok/23 not ok) where runtime-redrive.mjs does not exist. This item names the half's own changed files; the half's delta rides the branch whose range to the target is exactly this commit."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "Landing order stands: the corrected #69 half (b20f685d, baton/digest-w7-target-69) first, then this half (a20b1485, baton/digest-w7-target-69-59-recut); the second landing's range is exactly the #59 delta.",
+        "This correction supersedes the branch/sha of contribution-e97dbdaf8fae38de9fd6db4e03dfbaed for landing. The lead's union arithmetic is preserved: 381 minus the lead's 11 minus the pair's 45 minus the carrier's CDW5 row.",
+        "No swarm.integrate call, no landing dry run, no push; if a landing is attempted, target: master."
+      ],
+      "needsFromOthers": []
+    }
+  }
+}

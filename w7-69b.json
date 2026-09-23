@@ -1,0 +1,38 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "The #69 half corrected on cf316a44: the duplicate CLW5 re-pin dropped, the manifest arithmetic re-derived (380 to 358)",
+      "base": {
+        "observedHead": "80e07683d8b024c4acccb56696981e28b1aba8ac",
+        "rebasedOnto": "cf316a449851bf14317ce2057752b25797fb4f56"
+      },
+      "commit": {
+        "sha": "b20f685d07251e1cb4cd5419f611d1abcfbe4ed65",
+        "branch": "baton/digest-w7-target-69"
+      },
+      "items": [
+        {
+          "id": "issue69-recut-correction",
+          "status": "delivered",
+          "change": "Applies the union rehearsal's finding to contribution-8eaf6ec8f5b182d858e489a851fae1a3 (accepted at seq 149622): the half's duplicate of the landed #569 CLW5 checkpoint re-pin is dropped from impl/test/coordination-ledger-writes.test.mjs — #569's line is kept verbatim, so the pin a3c56137 is carried exactly once, by #569. The half is rebased onto cf316a44 (master moved by d846922a + cf316a44 while the record was queued) and its manifest edit re-derived against the moved base: 380 rows at the new master minus the same 22 rows this half greens = 358 rows, set-exact, re-verified after the rebase. No other hunk changed; the #569 half on top is republished as its own correction.",
+          "files": ["impl/test/coordination-ledger-writes.test.mjs", "impl/scripts/expected-red-tests.json"],
+          "test": "node --test --test-reporter=tap test/repl-realization-red.test.mjs test/coordination-ledger-writes.test.mjs",
+          "evidence": "At b20f685d: repl-realization-red 34 ok/0 not ok (its 22 removed pins all pass, measured per row); coordination-ledger-writes 6 ok/0 not ok with #569's CLW5 line standing and my duplicate comment gone; the manifest is set-exact master minus the 22."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "This correction supersedes the branch/sha of contribution-8eaf6ec8f5b182d858e489a851fae1a3 for landing; the #59 half rides on this commit and is republished as contribution to follow on baton/digest-w7-target-69-59-recut.",
+        "No swarm.integrate call, no landing dry run, no push; committer identity digest-w7-target on every commit, original authors preserved.",
+        "If a landing is attempted, target: master — the served checkout is detached."
+      ],
+      "needsFromOthers": []
+    }
+  }
+}
