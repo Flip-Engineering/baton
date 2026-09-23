@@ -1450,7 +1450,7 @@ document is the pre-approval register.
 
 Verdict precedence for mechanical counting: a row is rejected if its verdict contains
 "rejected", else reduced if it contains "reduced", else kept. Repairs applied per the r5
-review: CAP-3 now points at the adopted narrow abandonment entry; CS-02 and LEDG-17 name their
+review: CAP-3 now points at the incorporated narrow abandonment entry; CS-02 and LEDG-17 name their
 surviving homes. Mechanical count after repairs: kept 47, reduced 29, rejected 57, retired 1,
 evidence block 1 — 135 rows, each accounted for.
 
@@ -1468,7 +1468,7 @@ evidence block 1 — 135 rows, each accounted for.
 | CUST-12 | rejected | failed Q3/independence: agreement is a theorem or a routing choice, not a prohibition |
 | CAP-1 | reduced → M-10 | failed Q3: derivation honesty is required; the formula is not |
 | CAP-2 | reduced → M-10 | failed independence: carried by the no-cutoff entry |
-| CAP-3 | reduced → M-10 and M-17 (narrow abandonment, adopted in revision 6) | failed Q3: FIFO is policy; the durable hold and admission-on-release are the guarantees |
+| CAP-3 | reduced → M-10 and M-17 (narrow abandonment, incorporated in revision 6) | failed Q3: FIFO is policy; the durable hold and admission-on-release are the guarantees |
 | CAP-4 | rejected (policy) | failed Q2: a workload choice, and the extraction overstated the source (derived share, not measured cost) |
 | CAP-5 | rejected (policy) | failed Q2: a chosen fallback with operation-specific justification |
 | CAP-6 | kept → M-2 | passes |
