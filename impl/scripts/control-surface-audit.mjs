@@ -44,7 +44,8 @@ for (const [argv, expected] of cliCases) {
 }
 
 if (native.schemaVersion !== 3 || !Array.isArray(native.mcpNative) || !Array.isArray(native.cliNative)
-  || !Array.isArray(native.registryCliExceptions) || !Array.isArray(native.mcpDispatchOnlyAliases)) {
+  || !Array.isArray(native.registryCliExceptions) || !Array.isArray(native.mcpDispatchOnlyAliases)
+  || !Array.isArray(native.registryMcpExceptions)) {
   throw new Error('control-surface-audit: native surface capability manifest is invalid');
 }
 for (const row of [...native.mcpNative, ...native.cliNative]) {
@@ -63,6 +64,12 @@ for (const row of native.mcpDispatchOnlyAliases) {
   if (!row || typeof row.name !== 'string' || !row.name || typeof row.canonicalKey !== 'string' || !row.canonicalKey
     || typeof row.reason !== 'string' || !row.reason) {
     throw new Error('control-surface-audit: MCP dispatch-only aliases require name, canonicalKey, and reason');
+  }
+}
+for (const row of native.registryMcpExceptions) {
+  if (!row || typeof row.key !== 'string' || !row.key || typeof row.classification !== 'string' || !row.classification
+    || typeof row.reason !== 'string' || !row.reason) {
+    throw new Error('control-surface-audit: registry MCP exception rows require key, classification, and reason');
   }
 }
 
@@ -122,8 +129,22 @@ function actionDispatchedOnMcp(operation) {
 const indirectMcp = registryMcp.filter(actionDispatchedOnMcp).map((operation) => Object.freeze({
   key: operation.key, action: operation.liveMethod, via: 'run.do',
 }));
+// An MCP-declaring registry operation that is deliberately absent from the operator composition
+// is classified in the manifest (seat_side or host_local), with the same staleness guards as the
+// CLI exceptions: the key must still be declared, and a listed operation that became a live tool
+// makes the entry stale.
+const mcpExceptionKeys = new Set(native.registryMcpExceptions.map((row) => row.key));
+for (const key of mcpExceptionKeys) {
+  if (!registryMcp.some((operation) => operation.key === key)) {
+    throw new Error(`control-surface-audit: stale registry MCP exception is not declared on MCP: ${key}`);
+  }
+  if (liveMcpTools.has(key)) {
+    throw new Error(`control-surface-audit: registry MCP exception became served and must be removed: ${key}`);
+  }
+}
 const missingMcp = registryMcp
-  .filter((operation) => !directMcpOperationPresent(operation) && !actionDispatchedOnMcp(operation))
+  .filter((operation) => !directMcpOperationPresent(operation) && !actionDispatchedOnMcp(operation)
+    && !mcpExceptionKeys.has(operation.key))
   .map((operation) => operation.key);
 if (missingMcp.length > 0) {
   throw new Error(`control-surface-audit: registry declares MCP operations with no direct tool or run.do action path: ${missingMcp.sort().join(', ')}`);
@@ -158,7 +179,9 @@ for (const row of native.cliNative) {
 for (const sentinel of ["name: 'run.message.send'", "name: 'run.message.receipt'", "name: 'run.attention.watch'", "name: 'run.answer'"]) {
   if (!cliSource.includes(sentinel)) throw new Error(`control-surface-audit: CLI implementation is missing ${sentinel}`);
 }
-for (const sentinel of ['baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch', 'baton_decision_answer']) {
+// baton_run_attention_watch left the operator composition with the #156 D4 cut; the attention
+// watch stays pinned on the CLI implementation above and classified seat_side in the manifest.
+for (const sentinel of ['baton_run_message_send', 'baton_run_message_receipt', 'baton_decision_answer']) {
   if (!liveMcpTools.has(sentinel)) throw new Error(`control-surface-audit: MCP assembled tools are missing ${sentinel}`);
 }
 if (!mcpSource.includes('CANONICAL_DOT_TOOL_DEFINITIONS') || !mcpSource.includes('APPLICATION_SEMANTIC_REGISTRY')) {

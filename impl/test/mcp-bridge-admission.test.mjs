@@ -103,15 +103,15 @@ async function ready(mcp) {
 }
 
 test('a server given an admission predicate advertises only the tools whose command it admits', async (t) => {
-  const mcp = server(t, { admitsCommand: (command) => command !== 'scratchpad.elevate' });
+  const mcp = server(t, { admitsCommand: (command) => command !== 'run.status' });
   await ready(mcp);
   const listed = await request(mcp, 'l1', 'tools/list', {});
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.includes('baton_scratchpad_elevate'), false, 'the tool whose command is refused is not advertised');
+  assert.equal(names.includes('baton_run_status'), false, 'the tool whose command is refused is not advertised');
   assert.ok(names.includes('baton_swarm_view'), 'admitted tools stay advertised');
   const everything = server(t);
   await ready(everything);
-  assert.ok((await request(everything, 'l2', 'tools/list', {})).result.tools.map((tool) => tool.name).includes('baton_scratchpad_elevate'), 'without a predicate the surface inventory is unchanged');
+  assert.ok((await request(everything, 'l2', 'tools/list', {})).result.tools.map((tool) => tool.name).includes('baton_run_status'), 'without a predicate the surface inventory is unchanged');
 });
 
 test('the resident wire card keeps the host-local settlement tools off the bridge, by their own commands', () => {
@@ -190,7 +190,7 @@ test('a typed resident refusal keeps its own code and lifted field over the brid
     String(url).endsWith('/v1/session') && !sessionServed && (sessionServed = true)
   ) ? sessionDocument() : new Response(JSON.stringify({ ok: false, error: wireError }), { status: 413 }));
   await ready(mcp);
-  const response = await request(mcp, 'f2', 'tools/call', { name: 'baton_run_view', arguments: { repoId: REPO_ID, runId: 'run:bridge' } });
+  const response = await request(mcp, 'f2', 'tools/call', { name: 'baton_run_episode', arguments: { repoId: REPO_ID, runId: 'run:bridge' } });
   const error = response.result.structuredContent.error;
   assert.equal(error.code, 'application_inspect_oversize');
   assert.match(error.message, /the view exceeds its byte ceiling/u);

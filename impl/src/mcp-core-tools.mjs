@@ -278,11 +278,13 @@ const RETIRED_FLAT_SPELLINGS = Object.freeze(new Map([
   ['baton_swarm_watch', Object.freeze({ tool: 'baton_wakes', verb: 'subscribe' })],
 ]));
 
-/** Issue #156: the application profile IS the parity superset — the ordinary table the raw
- * McpFleetServer serves (D1's 49-tool flat table), in served order. The CORE_TABLE verb-tool
- * curation above remains the production wrapper's projection; this name list is the surface the
- * committed inventory artifact records (the conformance reader and the red suite agree on it). */
-export const CORE_TOOL_NAMES = Object.freeze(ORDINARY_APPLICATION_TOOL_DEFINITIONS.map((tool) => tool.name));
+/** Issue #156: the parity artifact records the APPLICATION surface, whose name list derives
+ * from the ordinary table the raw McpFleetServer serves — exported as ORDINARY_TOOL_NAMES.
+ * Issue #314's CORE_TOOL_NAMES stays the CORE TABLE's own eight-name projection (restored
+ * 2026-09-22: deriving it from the served roster crashed every consumer iterating
+ * CORE_TOOL_VERBS by name — the surface's roster is not the core set). */
+export const ORDINARY_TOOL_NAMES = Object.freeze(ORDINARY_APPLICATION_TOOL_DEFINITIONS.map((tool) => tool.name));
+export const CORE_TOOL_NAMES = Object.freeze(CORE_TABLE.map((row) => row.name));
 
 /** The closed verb set of each core tool, in the tool's own order (the served enum). */
 export const CORE_TOOL_VERBS = Object.freeze(Object.fromEntries(
