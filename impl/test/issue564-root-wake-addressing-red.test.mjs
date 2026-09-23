@@ -86,6 +86,19 @@ function fixture(t) {
     },
     lastCrash: () => null,
   });
+  // Issue #564 review fix: an append-fault seam for the durable-row ordering pin. While armed,
+  // the ledger refuses exactly the swarm.root_attention_owed appends, so a test can simulate the
+  // crash or append failure that used to sit between the contribution append and the owed row.
+  let failRootAttention = false;
+  const originalRecordDriver = store.recordDriver.bind(store);
+  store.recordDriver = (kind, payload, auth) => {
+    if (failRootAttention && kind === 'swarm.root_attention_owed') {
+      throw Object.assign(new Error('injected root-attention append fault'), { code: 'injected_append_fault' });
+    }
+    return originalRecordDriver(kind, payload, auth);
+  };
+  const updateCompletions = () => store.eventsView().filter((event) => event.kind === 'driver.recorded'
+    && event.payload?.kind === 'swarm.operation_completed' && event.payload?.command === 'swarm.update');
   let key = 0;
   const call = (command, args = {}, caller = owner) => runtime.command(`swarm.${command}`,
     { swarmId: SWARM_ID, idempotencyKey: `issue564-${++key}`, ...args }, caller);
@@ -104,6 +117,8 @@ function fixture(t) {
     store, runtime, call, baseSha, contractBody,
     attentionRows: () => store.eventsView().filter((event) => event.kind === 'driver.recorded'
       && event.payload?.kind === 'swarm.root_attention_owed'),
+    updateCompletions,
+    failRootAttention: (value) => { failRootAttention = value; },
     recruit: (participantId, permissions) => call('recruit', {
       participantId, objective: `Work as ${participantId}`,
       ...(permissions === undefined ? {} : { permissions }),
@@ -240,12 +255,99 @@ test('564-c3: a seat that left stops holding review, and the next contribution w
   assert.equal(f.attentionRows().length, 0, 'the active reviewer holds the check');
 
   await f.call('stop', { participantId: 'reviewer', reason: 'Lane done' });
+  // The stop itself re-addresses the existing unreviewed contribution (the c4 case); the
+  // NEXT contribution then carries its own review_owed row from its own write instant.
+  const afterStop = f.attentionRows().filter((event) => event.payload.owed === 'review_owed');
+  assert.equal(afterStop.length, 1, 'the existing unreviewed contribution is re-addressed');
+  assert.equal(f.store.swarm(SWARM_ID).contributions[afterStop[0].payload.contributionId].participantId,
+    'author', 'the re-addressed row names the recorded contribution');
+
   await f.call('update', {
     event: 'swarm.contribution_recorded',
     payload: { participantId: 'author', body: f.contractBody([]) },
   });
 
   const rows = f.attentionRows().filter((event) => event.payload.owed === 'review_owed');
-  assert.equal(rows.length, 1, 'with the reviewer gone, only the root can check');
+  assert.equal(rows.length, 2, 'each contribution owes exactly one review_owed row');
+  assert.equal(new Set(rows.map((event) => event.payload.contributionId)).size, 2,
+    'one row per contribution, never a second for the same work');
+  assert.equal(rows[1].payload.participantId, 'author');
   assert.equal(rows[0].payload.participantId, 'author');
+});
+
+test('564-d: an append fault after the contribution row faults the mutation unacknowledged, and the replay repairs the owed rows', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test durable ordering under append fault' });
+  await f.recruit('author');
+
+  // The fault sits exactly where a crash used to lose the wake: after the contribution append,
+  // while the owed rows are being recorded. The mutation must fault with its operation
+  // completion unwritten, so nothing can read the contribution as acknowledged-without-wake.
+  f.failRootAttention(true);
+  const attempt = f.call('update', {
+    event: 'swarm.contribution_recorded',
+    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+  });
+  await assert.rejects(attempt, (error) => error.code === 'injected_append_fault',
+    'the append fault is the mutation answer, never a swallowed loss');
+  assert.equal(f.attentionRows().length, 0, 'no owed row landed under the fault');
+  assert.equal(f.updateCompletions().length, 0,
+    'the operation is never completed without its owed rows');
+  assert.ok(f.store.swarm(SWARM_ID).contributions
+    && Object.keys(f.store.swarm(SWARM_ID).contributions).length === 1,
+    'the contribution row itself is durable beneath the fault');
+
+  // The replay under the SAME idempotency key repairs exactly what is missing: both owed rows
+  // land once each, and only then is the operation completed — after the rows, never before.
+  f.failRootAttention(false);
+  await f.runtime.command('swarm.update', {
+    swarmId: SWARM_ID, idempotencyKey: 'issue564-3',
+    event: 'swarm.contribution_recorded',
+    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+  }, owner);
+  const rows = f.attentionRows();
+  assert.equal(rows.length, 2, 'the replay records exactly the two owed rows');
+  assert.deepEqual(rows.map((event) => event.payload.owed).sort(), ['needs_root', 'review_owed']);
+  assert.equal(f.store.swarm(SWARM_ID).contributions
+    && Object.keys(f.store.swarm(SWARM_ID).contributions).length, 1,
+    'the replay does not duplicate the contribution');
+  const completions = f.updateCompletions();
+  assert.equal(completions.length, 1, 'exactly one operation completion, from the replay');
+  assert.ok(completions[0].seq > Math.max(...rows.map((event) => event.seq)),
+    'the completion is written after every owed row it acknowledges');
+});
+
+test('564-c4: an existing unreviewed contribution is re-addressed when its sole reviewer leaves, derived from the fold', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test reviewer loss re-addresses existing work' });
+  await f.recruit('author');
+  await f.recruit('reviewer', ['read', 'communicate', 'contribute', 'review']);
+
+  // Recorded while a reviewer seat held review: no review_owed row at the write instant. The
+  // root-addressed need still fires — its trigger is the write, not the roster.
+  await f.call('update', {
+    event: 'swarm.contribution_recorded',
+    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+  });
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 0,
+    'the active reviewer holds the check at the write instant');
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'needs_root').length, 1);
+
+  await f.call('stop', { participantId: 'reviewer', reason: 'Lane done' });
+
+  // The departure is the trigger: the still-unreviewed contribution is re-addressed to the root
+  // from the fold, once — and the needsFromOthers need is NOT re-fired by the departure.
+  const owed = f.attentionRows().filter((event) => event.payload.owed === 'review_owed');
+  assert.equal(owed.length, 1, 'the existing unreviewed contribution wakes the root after the loss');
+  assert.equal(owed[0].payload.participantId, 'author');
+  assert.deepEqual(owed[0].payload.next,
+    { command: 'swarm.check', swarmId: SWARM_ID, participantId: 'author',
+      contributionId: owed[0].payload.contributionId });
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'needs_root').length, 1,
+    'the departure does not re-fire the contribution write triggers');
+
+  // A second departure re-derives from the same fold and records nothing twice.
+  await f.call('stop', { participantId: 'author', reason: 'Author leaves too' });
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 1,
+    'a second departure never double-records the owed row');
 });
