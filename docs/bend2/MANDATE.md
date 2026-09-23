@@ -1,4 +1,20 @@
-## Mandate
+# Baton2 mandate
+
+## Current authorization
+
+The operator authorized the rewrite on 2026-09-22 under the 16 approved revision 9.1
+prohibitions. [authorization.md](authorization.md) records the decision, exact reviewed commit,
+and evidence gates. This authorization supersedes the earlier design-only scope and the hold
+awaiting law approval in the original evaluation mandate below.
+
+Development and verified landings remain on `bend2-rewrite`. The separate architecture review
+must be incorporated before an affected migration phase starts. Sub-orchestrators use
+Codex gpt-6-astra or at most one available Kimi K3 seat through omp. Workers use
+omp zai/glm-5.3-flash, omp deepseek/deepseek-flash, or Codex gpt-5.6-sol; muse is limited to
+small bounded one-shot tasks. No seat uses claude-code.
+
+## Original evaluation mandate
+
 Evaluate rewriting Baton in Bend2 (HigherOrderCO's Bend, second generation, on the HVM runtime),
 and produce everything needed to decide and then execute that rewrite. Work lands on the
 `bend2-rewrite` branch, never on `master`, until the operator decides.
@@ -101,6 +117,9 @@ and integrates it onto `bend2-rewrite`.
   `baton swarm integrate --onto bend2-rewrite`. Nothing from this issue lands on `master`.
 
 
-## Scope at this time
+## Original evaluation scope
 
-Design, review, engineering ideation, and audit/critique only. No rewrite implementation. impl/src is not modified on this branch. Deliverables are documents under docs/bend2/, laws.bend as a design artifact, and small compiled examples under docs/bend2/examples/ that exist only to prove or disprove one specific language-capability claim each.
+The initial scope covered design, review, engineering ideation, and audit. Its deliverables were
+documents under `docs/bend2/`, the proposed law encodings, and compiled capability examples.
+The current authorization above permits rewrite development under the approved contracts and
+the migration plan's evidence gates.

@@ -1,67 +1,52 @@
-# bend2-rewrite — the issue #539 Bend2 evaluation
+# Baton2
 
-This branch carries the evaluation of rewriting Baton in Bend2 (issue #539). It holds Baton's
-current code together with the evaluation's deliverables under `docs/bend2/`. Baton itself is
-described by master's README, [SYSTEM.md](SYSTEM.md) and [CONTRIBUTING.md](CONTRIBUTING.md); this
-page describes what the branch adds.
+Baton2 is the Bend2 rewrite of Baton, a system for coordinating coding agents, preserving their
+work, reviewing contributions, and publishing verified changes. Development takes place on the
+`bend2-rewrite` branch.
 
-[docs/bend2/MANDATE.md](docs/bend2/MANDATE.md) is the authority for the work: evaluate the
-rewrite, produce what is needed to decide, and keep the work at design, review and audit. The
-evaluation does not modify `impl/src`, and nothing from this branch lands on master. Master is
-merged into this branch so the evaluation reads current code.
+The target is a native application written in Bend2 with C host effects for operating-system
+services. The migration plan covers the decision core, durable state, worker lifecycle,
+verification, publication, and CLI, MCP, and web interfaces. Its final phase removes the temporary
+JavaScript boundary and the Node runtime.
 
-The language and runtime under evaluation are pinned in
-[docs/bend2/reference/README.md](docs/bend2/reference/README.md): `bendlang/bend` commit
-`a49524265bdfa5753a4bf38e25f0574a705dd868` and Bend 2.0.25, vendored with each file's sha256.
+The rewrite is in development. This branch contains the current JavaScript implementation,
+the target design, and compiled language examples. Production migration depends on the evidence
+gates in the [rewrite plan](docs/bend2/rewrite-plan.md).
 
-## The four pillars
+## Development contract
 
-**1. Bend2 language and runtime.**
-[docs/bend2/language-review.md](docs/bend2/language-review.md) reports the type system, the effects
-and IO model, the parallelism model, host interop, modules, error handling and the tooling surface,
-with per-effect verdicts for what Baton needs. The compiled examples that carry its evidence are in
-[docs/bend2/examples/](docs/bend2/examples/), each with a `.evidence.md` sibling recording the
-commands and their output; [docs/bend2/examples/index.md](docs/bend2/examples/index.md) indexes
-them. State: complete at the pinned reference, corrected after an independent probe pass that
-disproved several claimed type-system carriers (see `lang-cap-probes.evidence.md`).
+The [16 approved prohibitions](docs/bend2/laws-proposed.md) are Baton2's development contracts.
+They cover recoverable acceptance, uncertain external effects, truthful evidence, work
+preservation, authorization, continuation responsibility, and publication to the designated
+shared destination. The [approval record](docs/bend2/authorization.md) identifies the reviewed
+revision and its binding entries.
 
-**2. Adversarial architecture review and the target architecture.**
-[docs/bend2/architecture-review.md](docs/bend2/architecture-review.md) lists the deletions and
-merges the review proposes, each with its evidence and what Baton loses if it is wrong; the two
-read-only lanes' findings are preserved as
-[docs/bend2/architecture-findings-surface.md](docs/bend2/architecture-findings-surface.md) and
-[docs/bend2/architecture-findings-coordination.md](docs/bend2/architecture-findings-coordination.md).
-[docs/bend2/target-architecture.md](docs/bend2/target-architecture.md) describes baton2, the
-proposed target: its subsystems, ownership, prohibitions and synchronization seams. State: complete
-as a proposal; the deletions, merges and the target await the operator's approval, and one
-correction that applies the operator's F2, F4 and F16/F17 decisions is held until the current pause
-is lifted.
+The [language review](docs/bend2/language-review.md) records what the pinned compiler and runtime
+establish. Filesystem durability, process supervision and cancellation, JSON, HTTP/TLS, and
+cryptography have named prerequisites. Architecture changes and migration phases must satisfy
+their recorded proofs before taking production authority.
 
-**3. Baton's laws in Bend2.**
-[docs/bend2/laws-proposed.md](docs/bend2/laws-proposed.md) is the candidate set: 16 entries, each
-one forbidden behavior, the reason it must bind every otherwise-valid implementation, and an honest
-status label. [docs/bend2/laws-design-notes.md](docs/bend2/laws-design-notes.md) carries every row
-that did not survive the minimality test, with its reason, so no analysis is lost. The lane
-inventories are [docs/bend2/laws-ledger-inventory.md](docs/bend2/laws-ledger-inventory.md) and
-[docs/bend2/laws-validators-inventory.md](docs/bend2/laws-validators-inventory.md). State: the
-candidate set is cleared for the operator's review; `laws.bend` exists as a design artifact only
-once approved rows arrive, and it carries no entries today.
+## Design and evidence
 
-**4. Rewrite plan and recommendation.**
-[docs/bend2/rewrite-plan.md](docs/bend2/rewrite-plan.md) phases the migration, and each phase names
-the subsystems that move, the boundary contract the two halves must agree on while both exist, the
-test that proves the phase and its rollback; the final phases remove the JavaScript boundary and
-the Node runtime. [docs/bend2/go-no-go.md](docs/bend2/go-no-go.md) carries the decision record and
-the recommendation: **Prototype only** — complete the frozen corpus and the shadow decision core,
-keep production authority in JavaScript for now, and treat the process-lifecycle effect family and
-the JSON implementation as the two prerequisites a production migration rests on. State: complete
-as a draft; the recommendation is the orchestrator's, and the per-phase citations of approved
-deletions and laws follow the operator's decisions.
+- [Rewrite plan](docs/bend2/rewrite-plan.md): migration phases, entry conditions, verification, and rollback.
+- [Target architecture](docs/bend2/target-architecture.md): subsystem ownership and interfaces.
+- [Architecture review](docs/bend2/architecture-review.md): proposed changes and their consequences.
+- [Migration readiness](docs/bend2/go-no-go.md): evidence available and remaining prerequisites.
+- [Language reference](docs/bend2/reference/README.md): vendored `bendlang/bend` commit
+  `a49524265bdfa5753a4bf38e25f0574a705dd868` and Bend 2.0.25.
+- [Compiled examples](docs/bend2/examples/index.md): capability probes with commands and observed results.
 
-## Records
+## Working with this branch
 
-[docs/bend2/ledger.md](docs/bend2/ledger.md) is the operational record: the pin, the toolchain
-placements, the routes the seats ran on, the landings, and the findings that outlive the
-evaluation. [docs/bend2/reviews/](docs/bend2/reviews/) holds the independent review written for
-each contribution, one file per contribution, recording what the reviewer ran and what it
-answered.
+[CONTRIBUTING.md](CONTRIBUTING.md) describes the repository workflow.
+[AGENTS.md](AGENTS.md) defines its writing rules.
+[SYSTEM.md](SYSTEM.md) describes the current Baton implementation.
+
+Run the current implementation's verification from the repository root:
+
+```sh
+npm test --prefix impl
+```
+
+Language probes follow the [example convention](docs/bend2/examples/README.md).
+Each records its toolchain, commands, output, and the scope of its conclusion.
