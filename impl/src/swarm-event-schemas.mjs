@@ -295,6 +295,30 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       repoRoot: '/repo', swept: ['integrate-contribution-ada-1'],
     }),
   }),
+  // ── issue #564: the root-addressed wake rows the contribution write path derives ─────────────
+  // A contribution that only the ROOT can act on — a check no other active seat can perform
+  // (nobody else holds the review permission), or a needsFromOthers item ADDRESSED to the root —
+  // is recorded by the runtime as one durable row per trigger, so the wake stream's `root_owed`
+  // class addresses the root instead of leaving the swarm silent. The row is derived AFTER the
+  // contribution row is recorded, from what is present (the recorded contribution, the fold's
+  // participant rows), never caller-submittable; the derivation keeps no state, so a replay
+  // re-derives the same rows under the same idempotency keys and records each trigger once.
+  'swarm.root_attention_owed': Object.freeze({
+    summary: Object.freeze('work that waits on the root — a contribution no other active seat can review, or a needsFromOthers item addressed to the root'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the contribution belongs to'),
+      participantId: STRING('the seat whose contribution waits — the contribution\'s own author'),
+      contributionId: STRING('the contribution the attention comes from'),
+      owed: { type: 'string', description: 'which trigger fired: review_owed (no other active seat holds the review permission) or needs_root (a needsFromOthers item whose text is addressed to the root). Spelled `owed`, never `kind` (the name the reporting half consumes): the ledger\'s driver container records `{kind, ...payload}`, so a payload field named `kind` would overwrite the row\'s own operational identity', expectation: 'one of review_owed, needs_root', example: 'needs_root' },
+      ask: { type: 'string|null', description: 'the addressed needsFromOthers item text, bounded — null on a review_owed row', expectation: 'the item text as addressed, or null', example: 'the root: restart the resident with the publish remote declared' },
+      next: { type: 'json', description: 'the act that answers the row, in the attention projection\'s shape', expectation: 'an object naming a command and its identity arguments', example: Object.freeze({ command: 'swarm.check', swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1' }) },
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1',
+      owed: 'needs_root', ask: 'the root: restart the resident with the publish remote declared',
+      next: Object.freeze({ command: 'swarm.view', swarmId: 'swarm-40e643e96fd1edcd' }),
+    }),
+  }),
   // ── issue #273: guidance's own durable rows ───────────────────────────────────────────────────
   // The three rows one guide leaves behind, all carrying the same provenance — who sent it, when,
   // the priority it asked for, and the row it answers — so a receipt, the participant row's
