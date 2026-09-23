@@ -280,6 +280,38 @@ test('296d: a conflicting path refuses typed, naming the files and the landed co
   assert.equal(w.store.swarms().length, 1);
 });
 
+// ── (d2) a receipt that moved nothing is never named as a landed contribution ──────────────────
+
+test('296i: a prior receipt that records no moved target is not named as the landed contribution', needsGit, async (t) => {
+  const w = await world(t, { targetMoves: 'same-file' });
+  // The same conflict as 296d, with the prior receipt recording no commit for the target AFTER it:
+  // the fold admits dryRun false beside a null targetHeadAfter, so this row holds a receipt that
+  // claims a landing while naming no target move. The refusal still crosses as the git conflict it
+  // is — and it names no landed contribution, because none covers these paths.
+  w.store.recordSwarm('swarm.contribution_recorded', {
+    swarmId: 's1', contributionId: 'contribution:0', participantId: 'lane-a', workId: 'w1', body: 'prior',
+  }, { actor: principal.actor, key: 'i296i:prior' });
+  w.store.recordSwarm('swarm.contribution_integrated', {
+    swarmId: 's1', contributionId: 'contribution:0', participantId: 'lane-a',
+    base: w.observedHead, target: 'master',
+    targetHeadBefore: w.observedHead, targetHeadAfter: null,
+    squashSha: w.targetHead, changedPaths: ['impl/src/coordinator.mjs'],
+    gates: { files: [], verdictLine: 'green', unexpected: [] }, regenerated: [], conflicts: [],
+    issue: null, dryRun: false,
+  }, { actor: principal.actor, key: 'i296i:prior-receipt' });
+
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integrate().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing refuses');
+  assert.equal(error.code, 'integrate_conflict');
+  assert.deepEqual(error.detail.paths, ['impl/src/coordinator.mjs'], 'the conflicting files are still named');
+  assert.equal(error.detail.otherContributionId, null,
+    'a receipt that records no commit for the target after it is not a landed contribution');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target is untouched');
+});
+
 // ── (e) dry run ──────────────────────────────────────────────────────────────────────────────────
 
 test('296e: --dry-run prepares and verifies, records dryRun: true, and leaves the target alone', needsGit, async (t) => {
