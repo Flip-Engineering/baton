@@ -155,9 +155,27 @@ produces.
 The operator can narrow this by calling `baton_wakes_unsubscribe` on the auto-subscription and
 creating a more specific one. But the default is: connect, receive everything.
 
-This dissolves the "how does the root learn about wake events" question. The root's MCP
-session connects to the deployment. The deployment auto-subscribes it. Wake frames arrive as
-notifications. The root never called a tool.
+The auto-subscription reaches a session that is already running a turn: the frames arrive as
+notifications and the session reads them while it works. An MCP notification alone starts no turn
+in an idle session — see §4.3.
+
+### 4.3 Turn-starting delivery (issue #564)
+
+An MCP notification is read inside a running turn; an idle session stays idle until something else
+starts it. Measured on 2026-09-22: a root session with the deployment MCP bridge connected
+received no turn from the wake frames, and work that waited only on the root — an unreviewed
+contribution no seat could review, a `needsFromOthers` item naming the root, a seat holding for
+the root — sat for hours. In the same period the Codex bridge started a turn in the same class of
+session with a cross-session message to `/tmp/cc-socks/<pid>.sock`.
+
+Issue #564 adds the two missing pieces:
+
+- A root-addressed wake class whose frames say that an item waits on the root. The classes in §2
+  read the same for every consumer, so a root subscription cannot tell "this needs you" from
+  "this is a record".
+- A turn-starting delivery path per harness. The doctor and the deployment view report at recruit
+  time how a turn starts in a session of that harness, or that no channel exists; a
+  root-addressed wake that reaches no session is reported as attention by the deployment view.
 
 ## 5. The hard case: a human root without an MCP session
 
