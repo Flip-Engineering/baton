@@ -2270,6 +2270,22 @@ export class CoordinationStore {
    * superseded (Part A rule 2; Part E rule 15). */
   resolveReplCitation(runId, citation) { return coordinationAdmission.resolveReplCitation(this._replBindingHistory, runId, citation); }
 
+  /** R11/F5: the per-member fan-out admission — one already-admitted `shared` REPL manifest is
+   * replicated into each member run of a multi-run wave, with the `shared:<name>` binding over the
+   * same settled cell. The source admission is the authority; the principal is copied from it. */
+  admitReplFanout(fields, auth) { return coordinationAdmission.admitReplFanout(this, fields, auth); }
+
+  /** The run's admitted REPL manifests, in admission order (the D6 review projection's input). */
+  replManifestAdmissions(runId) { return coordinationLedger.replManifestAdmissions(this._replManifestAdmissions, runId); }
+
+  /** Does this principal hold an ACTIVE run-orchestrator lease — this run's, or any run of this
+   * repository when no run is named? The orchestrator identity a D5 promotion is authorized by. */
+  holdsRunOrchestratorLease(fields) { return coordinationLedger.holdsRunOrchestratorLease(this, fields); }
+
+  /** Issue #69 (D4): the run-close reap — a closed run's ACTIVE binding map and per-scope fences
+   * are dropped, its append-only history is retained for replay-exact resolution. Idempotent. */
+  reapRunReplBindings(runId) { return coordinationLedger.reapRunReplBindings(this, runId); }
+
   _knowledgeFailure(message, code, integrity = false) { return coordinationAdmission._knowledgeFailure(message, code, integrity); }
   _knowledgePayload(fields, extras = {}) {
     return coordinationInternals._knowledgePayload(fields, extras);
