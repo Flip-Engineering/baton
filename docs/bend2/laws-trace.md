@@ -238,3 +238,17 @@ primitive the target architecture owes before the application proof can exist.
 
 A blocked entry's witness needs its host effect authored with fault-injection evidence outside
 Bend; no compiled example at this pin stands in for it.
+
+## Proposed addition (revision 10, not approved)
+
+The no-park entry of [laws-proposed.md](laws-proposed.md) is proposed, not approved, so it has no
+row in the approved set above. Its record:
+
+| | |
+|---|---|
+| Statement | The runtime never deliberately pauses, idles or truncates an agent's work; no transition may move live work into a state whose only exit is an explicit act by another party (claim, nudge, guide, resume decision, review). |
+| Enforcement anchor in Baton | The park commit `89661c1f` introduced into the turn checkpoint and `c200ced7` forced on every participant; issue #572 removes it, and AGENTS.md bans it. |
+| Encoding | [examples/laws-no-park.bend](examples/laws-no-park.bend): the exit function is total over the state type, and `runtime_takes_every_exit` requires every state's exit to be the runtime's own. |
+| Checked scope | The model law is discharged at the pin and both controls fail as required: a state with an external exit makes the obligation unsatisfiable, and a state the exit function does not cover is refused. [examples/laws-no-park.evidence.md](examples/laws-no-park.evidence.md) records the commands and outputs. |
+| Application scope | Open. The law constrains the rewrite's work-state type and its turn loop; the current JavaScript park is removed by issue #572, not proved by this law. |
+| Open questions | The three review questions in `laws-proposed.md`: expressibility at the pin, law versus tested behaviour, and the waits that are not parks. |
