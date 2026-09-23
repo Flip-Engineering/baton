@@ -6959,6 +6959,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // can mint on a served deployment.
       contextSourceAdmit: (value) => contextRuntime.bench.admitSource(value),
     });
+    // Resume successors left pending by an older resident before publishing this deployment.
+    await application._swarmRuntime()._continueRecoveredSeats();
     return opened;
   } catch (error) {
     // Issue #384: a start that refuses records WHY, through the deployment's own writer path,
