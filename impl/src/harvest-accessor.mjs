@@ -11,12 +11,14 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { FRAME_LIMITS } from './limits.mjs';
+
 // v1 is sha1-only: the delta lane (changedPathsAtCommit) is 40-hex-only, so the accessor's
 // shape gates refuse 64-hex shas rather than degrading to an unmapped kernel code (Decision 6).
 export const SHA1_HEX = /^[a-f0-9]{40}$/u;
-export const RESULT_REF_ROOT = 'refs/baton/results/';
 // The serialized changedFiles page ceiling (#89 doctrine: cap + graceful spill) — Decision 6.
-export const CHANGED_FILES_PAGE_BYTES = 256 * 1024;
+// Issue #566 (F1): the literal retires into the limits catalog.
+export const CHANGED_FILES_PAGE_BYTES = FRAME_LIMITS['result.changed_files_page'].value;
 
 /** One typed accessor refusal. Every refusal carries a string .code — no bare TypeError. */
 export function typedError(message, code, detail = null) {
