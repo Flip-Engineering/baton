@@ -65,7 +65,7 @@ const ITEMS = [
  * landing must publish to, or undefined when the deployment declares none. `bareRemote` decides
  * whether the fixture also creates a bare repository for the declaration to name.
  */
-async function world(t, { publishRemote = undefined, bareRemote = false } = {}) {
+async function world(t, { publishRemote = undefined, bareRemote = false, onGates = null } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue558-'));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
@@ -103,7 +103,10 @@ async function world(t, { publishRemote = undefined, bareRemote = false } = {}) 
       repoRoot: repo,
       ...(remote === undefined ? {} : { publishRemote: remote }),
       regenerate: async () => {},
-      runGates: async (dir, files) => ({ files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] }),
+      runGates: async (dir, files) => {
+        if (onGates) await onGates();
+        return { files, verdictLine: `green — ${files.length} file(s)`, unexpected: [] };
+      },
     },
   });
   t.after(() => {
@@ -181,6 +184,49 @@ test('558c: a landing publishes the landed ref to the declared remote synchronou
   assert.equal(published, answer.integration.squashSha,
     'the declared remote holds the landed squash the moment the landing returns');
   assert.equal(w.foldRow().integration.squashSha, answer.integration.squashSha);
+});
+
+// ── (f) the remote moves between the pre-flight and the push ────────────────────────────────
+
+test('558f: a remote that accepts the pre-flight but cannot take the squash refuses integrate_publish_failed and rolls the target back', needsGit, async (t) => {
+  // Issue #573 revision: the pre-flight moved the unreachable and unauthenticated refusals ahead
+  // of the gate run, which left the push's own failure pinned nowhere — the live trigger is the
+  // shared remote's target moving while the landing runs, so the real push arrives
+  // non-fast-forward. This row restores that pin: the pre-flight passes, the gate run completes,
+  // the shared remote's master advances during the gate run, and the push refuses with the
+  // target rolled back and no receipt recorded.
+  let gatesRan = 0;
+  const w = await world(t, {
+    bareRemote: true,
+    onGates: async () => {
+      // The shared remote's master advances while the landing's gate run holds. The side
+      // repository shares no history with the fixture's lane work, so the landing's push of the
+      // squash can only refuse non-fast-forward.
+      gatesRan += 1;
+      const side = join(w.directory, 'side');
+      execFileSync('git', ['init', '-q', '-b', 'master', side], { env: { ...process.env, ...QUIET_GIT_ENV } });
+      git(side, 'config', 'user.name', 'Side Race');
+      git(side, 'config', 'user.email', 'side-race@example.invalid');
+      write(side, 'UNRELATED.md', 'moved while the gates ran\n');
+      git(side, 'add', '-A');
+      git(side, 'commit', '-qm', 'unrelated race commit on the shared remote');
+      execFileSync('git', ['push', '-q', w.remote, 'master:refs/heads/master'],
+        { cwd: side, env: { ...process.env, ...QUIET_GIT_ENV } });
+    },
+  });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integrate().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing refuses instead of reporting a local success');
+  assert.equal(error.code, 'integrate_publish_failed',
+    'the push failure after a successful pre-flight keeps its own refusal code');
+  assert.equal(error.detail.script, 'git push', 'the refusal names the real push, never the pre-flight');
+  assert.equal(error.detail.rolledBack, true, 'the local move rolled back');
+  assert.equal(gatesRan, 1, 'the gate run completed — the failure came after it, at the push');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore,
+    'the target holds no unpublished squash: the failed push rolled back');
+  assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
 });
 
 // ── (d) a malformed declaration is refused at open ───────────────────────────────────────────
