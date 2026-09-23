@@ -83,7 +83,11 @@ function fixture(t, rootWakeDelivery) {
     next: { command: 'swarm.view', swarmId: 'swarm-564' },
     ...fields,
   }, { actor: 'baton-runtime', key: `owed-${++key}` });
-  return { directory, store, runtime, web, call, recordOwed };
+  const recordTurnOwed = () => store.recordDriver('swarm.root_attention_owed', {
+    swarmId: 'swarm-564', participantId: 'lead', owed: 'turn_reported', ask: null,
+    next: { command: 'swarm.view', swarmId: 'swarm-564' },
+  }, { actor: 'baton-runtime', key: `owed-${++key}` });
+  return { directory, store, runtime, web, call, recordOwed, recordTurnOwed };
 }
 
 async function listen(server, path) {
@@ -147,6 +151,58 @@ test('564-w1: a resident root_owed attachment writes one Claude turn frame and a
   assert.equal(received.length, 1, 'the replay wrote no second socket frame');
   assert.equal(f.store.eventsView().filter((event) => event.payload?.kind === 'wake.root_delivered').length, 1,
     'the replay wrote no second delivery row');
+});
+
+test('564-w4: a contribution-less turn_reported row crosses the resident attachment exactly once', async (t) => {
+  const socketDirectory = mkdtempSync('/tmp/baton-564-turn-reported-');
+  const socketPath = join(socketDirectory, 'claude.sock');
+  const received = [];
+  const server = createServer((connection) => {
+    const chunks = [];
+    connection.on('data', (chunk) => chunks.push(chunk));
+    connection.on('end', () => received.push(Buffer.concat(chunks).toString('utf8')));
+  });
+  await listen(server, socketPath);
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(socketDirectory, { recursive: true, force: true });
+  });
+
+  const discovery = async () => JSON.stringify([{ sessionId: TARGET.sessionId, pid: 572 }]);
+  const transport = async ({ socket, line }) => {
+    assert.equal(socket, '/tmp/cc-socks/572.sock');
+    await new Promise((resolve, reject) => {
+      const client = createConnection(socketPath);
+      client.once('error', reject);
+      client.once('close', resolve);
+      client.end(line);
+    });
+  };
+  const f = fixture(t, { target: TARGET, discovery, transport });
+  const owed = f.recordTurnOwed();
+  const owedSeq = owed.event.seq;
+  const outcome = await waitFor(
+    () => f.store.eventsView().filter((event) => ['wake.root_delivered', 'wake.root_undelivered']
+      .includes(event.payload?.kind) && event.payload.seq === owedSeq),
+    (rows) => rows.length > 0,
+    { label: 'turn_reported delivery outcome' },
+  );
+
+  assert.equal(outcome[0].payload.kind, 'wake.root_delivered');
+  await waitFor(() => received, (rows) => rows.length === 1, { label: 'turn_reported socket frame' });
+  const message = JSON.parse(received[0]);
+  assert.match(message.message.content, /"owed": "turn_reported"/u);
+  assert.match(message.message.content, /"participantId": "lead"/u);
+  assert.doesNotMatch(message.message.content, /contributionId/u);
+
+  const source = f.store.eventsView(owedSeq, 1)[0];
+  const replay = await deliverRootWakeFrame({
+    store: f.store, frame: deriveWakeFrame(source), target: TARGET, discovery, transport,
+  });
+  assert.deepEqual(replay, { delivered: false, duplicate: true });
+  assert.equal(received.length, 1, 'the replay wrote no second socket frame');
+  assert.equal(f.store.eventsView().filter((event) => event.payload?.kind === 'wake.root_delivered'
+    && event.payload.seq === owedSeq).length, 1, 'the turn_reported identity has one delivery row');
 });
 
 test('564-w2: a failed resident delivery records its typed code and remains swarm attention', async (t) => {

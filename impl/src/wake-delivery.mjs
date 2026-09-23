@@ -344,11 +344,15 @@ function rootAttentionPayload(store, frame) {
     : storedEvents(store);
   const source = events.find((event) => event?.seq === frame.seq) ?? null;
   const payload = source?.kind === 'driver.recorded' ? source.payload : null;
+  const contributionRequired = payload?.owed === 'review_owed' || payload?.owed === 'needs_root';
+  const contributionValid = contributionRequired
+    ? typeof payload.contributionId === 'string' && payload.contributionId.length > 0
+    : payload?.owed === 'turn_reported' && (payload.contributionId === undefined
+      || (typeof payload.contributionId === 'string' && payload.contributionId.length > 0));
   if (payload?.kind !== 'swarm.root_attention_owed'
     || payload.swarmId !== frame.swarmId
     || typeof payload.participantId !== 'string' || payload.participantId.length === 0
-    || typeof payload.contributionId !== 'string' || payload.contributionId.length === 0
-    || !['review_owed', 'needs_root'].includes(payload.owed)
+    || !contributionValid
     || (payload.ask !== null && payload.ask !== undefined && typeof payload.ask !== 'string')
     || payload.next === null || typeof payload.next !== 'object' || Array.isArray(payload.next)) {
     throw refusal('root_owed frame does not resolve to a swarm.root_attention_owed row',
@@ -357,7 +361,7 @@ function rootAttentionPayload(store, frame) {
   return Object.freeze({
     swarmId: payload.swarmId,
     participantId: payload.participantId,
-    contributionId: payload.contributionId,
+    ...(payload.contributionId === undefined ? {} : { contributionId: payload.contributionId }),
     owed: payload.owed,
     ask: payload.ask ?? null,
     next: Object.freeze({ ...payload.next }),
