@@ -356,12 +356,16 @@ _baton_observe_linked_worktree() {
   _gitdir=$(cd "$_path" && "$_rg" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 0;
   _head=$(cd "$_path" && "$_rg" rev-parse HEAD 2>/dev/null) || return 0;
   _at=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || _at='';
+  _nonce=$(/usr/bin/od -An -N32 -tx1 /dev/urandom 2>/dev/null | tr -d '[:space:]') || return 0;
+  case "$_nonce" in ''|*[!a-f0-9]*) return 0 ;; esac;
+  _marker="$_gitdir/baton-seat-owner"; _marker_tmp="$_marker.tmp-$$";
+  (umask 077; printf '%s\n' "$_nonce" > "$_marker_tmp" && mv "$_marker_tmp" "$_marker") 2>/dev/null || { rm -f "$_marker_tmp"; return 0; };
   _json_escape() { printf '%s' "$1" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/"/\\\\"/g'; }
   _jowner=$(_json_escape "$_owner"); _jown=$(_json_escape "$_own");
   _jcommon=$(_json_escape "$_common"); _jpath=$(_json_escape "$_path");
   _jgitdir=$(_json_escape "$_gitdir"); _jat=$(_json_escape "$_at");
-  printf '{"schemaVersion":1,"physicalOwnerId":"%s","ownerCheckout":"%s","commonGitDir":"%s","worktreePath":"%s","worktreeGitDir":"%s","createdHead":"%s","createdAt":"%s"}\n' \
-    "$_jowner" "$_jown" "$_jcommon" "$_jpath" "$_jgitdir" "$_head" "$_jat" >> "$_record" 2>/dev/null || true;
+  printf '{"schemaVersion":1,"physicalOwnerId":"%s","ownerCheckout":"%s","commonGitDir":"%s","worktreePath":"%s","worktreeGitDir":"%s","registrationNonce":"%s","createdHead":"%s","createdAt":"%s"}\n' \
+    "$_jowner" "$_jown" "$_jcommon" "$_jpath" "$_jgitdir" "$_nonce" "$_head" "$_jat" >> "$_record" 2>/dev/null || true;
   return 0;
 }
 _cmd=""; _skip=0; _pending=''; _gitdir=''; _target=$PWD;

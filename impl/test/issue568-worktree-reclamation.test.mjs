@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync,
@@ -377,4 +377,85 @@ test('568-H: normal seat stop reclaims its linked worktree and keeps its branch 
   assert.equal(existsSync(workspace.dir), false);
   assert.equal(git(f.repo, ['show', 'stopped-scratch:stop-evidence.txt']), 'seat stop evidence');
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
+});
+
+test('568-I: recovery retains an external checkout while a live process has a cwd inside it', async (t) => {
+  const f = fixture(t, 'external-live-cwd');
+  const before = authority('external-cwd-deployment', 'controller-before');
+  const after = authority('external-cwd-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'external-live-cwd');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'live-cwd-seat-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'live-cwd-scratch']);
+  const processDir = join(external, 'running');
+  mkdirSync(processDir);
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    cwd: processDir, stdio: 'ignore',
+  });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+
+  const retained = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => assert.fail('a live cwd keeps owner capacity'),
+  });
+
+  assert.deepEqual(retained.errors, []);
+  const diagnostic = retained.diagnostics.find((row) => (
+    row.physicalOwnerId === workspace.receipt.physicalOwnerId
+      && row.code === 'linked_worktree_live_process_retained'
+  ));
+  assert.ok(diagnostic);
+  assert.deepEqual(diagnostic.holders, [`pid:${child.pid}`]);
+  assert.equal(existsSync(external), true);
+  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
+
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGTERM');
+  await exited;
+  const reclaimed = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => true,
+  });
+  assert.deepEqual(reclaimed.errors, []);
+  assert.equal(existsSync(external), false);
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
+});
+
+test('568-J: a recycled Git registration at the same path and admin name is retained', async (t) => {
+  const f = fixture(t, 'external-registration-recycled');
+  const before = authority('external-registration-deployment', 'controller-before');
+  const after = authority('external-registration-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'external-registration-recycled');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'recycled-registration-external');
+  const ownership = addLinkedWorktree(seat, workspace, external, ['-b', 'first-generation']);
+  assert.match(ownership.registrationNonce, /^[a-f0-9]{40,64}$/u);
+  git(f.repo, ['worktree', 'remove', '--force', external]);
+  git(f.repo, ['worktree', 'add', '-b', 'replacement-generation', external, 'HEAD']);
+  const replacementGitDir = git(external, [
+    'rev-parse', '--path-format=absolute', '--git-dir',
+  ]);
+  assert.equal(replacementGitDir, ownership.worktreeGitDir,
+    'Git reused the same external path and administration directory spelling');
+
+  const report = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => assert.fail('a recycled registration keeps owner capacity'),
+  });
+
+  assert.deepEqual(report.errors, []);
+  assert.ok(report.diagnostics.some((row) => (
+    row.physicalOwnerId === workspace.receipt.physicalOwnerId
+      && row.code === 'linked_worktree_content_retained'
+  )));
+  assert.equal(existsSync(external), true);
+  assert.equal(git(external, ['branch', '--show-current']), 'replacement-generation');
+  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
 });
