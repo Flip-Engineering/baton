@@ -83,10 +83,11 @@ function addLinkedWorktree(seat, workspace, path, args = ['--detach']) {
     cwd: workspace.dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...seat.lease.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   });
-  return JSON.parse(readFileSync(
+  const rows = readFileSync(
     seatLinkedWorktreeOwnershipPath(dirname(dirname(dirname(workspace.dir))), workspace.receipt.physicalOwnerId),
     'utf8',
-  ).trim());
+  ).trim().split('\n');
+  return JSON.parse(rows.at(-1));
 }
 
 function expectedOwner(receipt) {
@@ -458,4 +459,143 @@ test('568-J: a recycled Git registration at the same path and admin name is reta
   assert.equal(existsSync(external), true);
   assert.equal(git(external, ['branch', '--show-current']), 'replacement-generation');
   assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
+});
+
+test('568-K: a foreign-uid Linux process and a racing exit do not block cleanup', async (t) => {
+  const f = fixture(t, 'linux-foreign-uid');
+  const before = authority('linux-foreign-deployment', 'controller-before');
+  const after = authority('linux-foreign-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'linux-foreign-uid');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'linux-foreign-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'linux-foreign-scratch']);
+  const cwdReads = [];
+
+  const report = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => true,
+    linkedWorktreeObservation: {
+      platform: 'linux', uid: 501, procRoot: '/synthetic-proc',
+      readdirSync: () => ['101', '102'],
+      statSync: (path) => ({ uid: path.endsWith('/101') ? 0 : 501 }),
+      readlinkSync: (path) => {
+        cwdReads.push(path);
+        throw Object.assign(new Error('process exited'), { code: 'ENOENT' });
+      },
+    },
+  });
+
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(cwdReads, ['/synthetic-proc/102/cwd', '/synthetic-proc/102/cwd']);
+  assert.equal(existsSync(external), false);
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
+});
+
+test('568-L: an unreadable same-uid Linux cwd retains and names its process', async (t) => {
+  const f = fixture(t, 'linux-same-uid-unreadable');
+  const before = authority('linux-same-deployment', 'controller-before');
+  const after = authority('linux-same-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'linux-same-uid-unreadable');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'linux-same-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'linux-same-scratch']);
+
+  const report = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => assert.fail('an unreadable same-uid cwd keeps owner capacity'),
+    linkedWorktreeObservation: {
+      platform: 'linux', uid: 501, procRoot: '/synthetic-proc',
+      readdirSync: () => ['202'],
+      statSync: () => ({ uid: 501 }),
+      readlinkSync: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
+    },
+  });
+
+  const diagnostic = report.diagnostics.find((row) => (
+    row.physicalOwnerId === workspace.receipt.physicalOwnerId
+      && row.code === 'linked_worktree_liveness_unobservable_retained'
+  ));
+  assert.deepEqual(diagnostic?.holders, ['pid:202']);
+  assert.equal(existsSync(external), true);
+  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
+});
+
+test('568-M: macOS lsof stderr makes a successful partial scan retain', async (t) => {
+  const f = fixture(t, 'macos-partial-lsof');
+  const before = authority('macos-partial-deployment', 'controller-before');
+  const after = authority('macos-partial-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'macos-partial-lsof');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'macos-partial-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'macos-partial-scratch']);
+
+  const report = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => assert.fail('an incomplete lsof scan keeps owner capacity'),
+    linkedWorktreeObservation: {
+      platform: 'darwin', uid: 501,
+      spawnSync: (command, args) => {
+        assert.equal(command, '/usr/sbin/lsof');
+        assert.deepEqual(args, ['-a', '-u', '501', '-d', 'cwd', '-Fpn']);
+        return { status: 0, signal: null, stdout: '', stderr: 'incomplete scan\n' };
+      },
+    },
+  });
+
+  assert.ok(report.diagnostics.some((row) => (
+    row.physicalOwnerId === workspace.receipt.physicalOwnerId
+      && row.code === 'linked_worktree_liveness_unobservable_retained'
+  )));
+  assert.equal(existsSync(external), true);
+  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
+});
+
+test('568-N: a Git observation failure retains its row and examines later rows', async (t) => {
+  const f = fixture(t, 'git-observation-failure');
+  const before = authority('git-observation-deployment', 'controller-before');
+  const after = authority('git-observation-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'git-observation-failure');
+  const seat = projectedSeat(f, workspace);
+  const first = join(dirname(f.repo), 'git-observation-first');
+  const second = join(dirname(f.repo), 'git-observation-second');
+  const firstOwnership = addLinkedWorktree(seat, workspace, first, ['-b', 'git-observation-first']);
+  addLinkedWorktree(seat, workspace, second, ['-b', 'git-observation-second']);
+  const indexPath = join(firstOwnership.worktreeGitDir, 'index');
+  const originalIndex = readFileSync(indexPath);
+  writeFileSync(indexPath, 'not a Git index');
+  const observed = [];
+
+  const retained = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => assert.fail('an unobservable Git row keeps owner capacity'),
+    linkedWorktreeHolders: (path) => { observed.push(path); return []; },
+  });
+
+  assert.ok(retained.diagnostics.some((row) => (
+    row.physicalOwnerId === workspace.receipt.physicalOwnerId
+      && row.code === 'linked_worktree_content_retained'
+  )));
+  assert.deepEqual(new Set(observed), new Set([first, second]));
+  const recorded = readFileSync(
+    seatLinkedWorktreeOwnershipPath(f.repo, workspace.receipt.physicalOwnerId), 'utf8',
+  );
+  assert.match(recorded, new RegExp(first.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+  assert.equal(existsSync(first), true);
+  assert.equal(existsSync(second), true);
+
+  writeFileSync(indexPath, originalIndex);
+  const reclaimed = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => true,
+    linkedWorktreeHolders: () => [],
+  });
+  assert.deepEqual(reclaimed.errors, []);
+  assert.equal(existsSync(first), false);
+  assert.equal(existsSync(second), false);
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
 });
