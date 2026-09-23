@@ -1,0 +1,14 @@
+# arch-replay-cursor.expect — the required logical behaviour per case, read by neither half.
+#
+# EXPECT|<case-id>|<source>|<checkpoint>|<cursor>|<owed>
+#
+# The requirement is M-5 with M-13 and M-17: a restart preserves the projection a consumer resumes
+# from and the rows that consumer is still owed, and a checkpoint written under one authority is
+# rebuilt rather than trusted when the next open supplies a different one. Rebuilding is the
+# disposition: no refused row, no quarantine, no lost history. `source` is where the projection came
+# from, `checkpoint` the verdict the open reached on the file, `cursor` the last sequence the
+# projection covers, `owed` the rows past the reader cursor.
+EXPECT|cursor-live|live|none|4|3
+EXPECT|cursor-after-restart-same-basis|checkpoint|valid|4|3
+EXPECT|cursor-after-restart-changed-basis|ledger_fallback|stale_authority|4|3
+EXPECT|cursor-after-restart-missing-basis|ledger_fallback|stale_authority|4|3
