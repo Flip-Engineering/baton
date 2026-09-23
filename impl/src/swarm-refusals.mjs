@@ -171,6 +171,13 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // other lacks — the landing refuses instead of squashing onto a tip the local ref cannot
   // fast-forward to; the refusal names the local head and the fetched tip.
   integrate_target_diverged: row(409, ['runtime'], 'the local target ref and the fetched remote tip have diverged, each holding a commit the other lacks, so the landing refuses rather than drop either side\'s commits'),
+  // Issue #573: the landing pre-flights the DECLARED remote before the derived gate run, so a
+  // landing whose remote cannot publish never spends its gate set — and the refusal names which
+  // of the two failed: the destination does not exist or cannot be reached, or the landing's
+  // hermetic git environment holds no credential the remote accepts. A remote that answers the
+  // pre-flight but refuses the push still refuses `integrate_publish_failed`.
+  integrate_publish_unreachable: row(409, ['runtime'], 'the declared shared remote does not exist or cannot be reached, so the landing never opens'),
+  integrate_publish_unauthenticated: row(409, ['runtime'], 'this environment cannot authenticate to the declared shared remote, so the landing never opens'),
   // Issue #473: the coordinator's own run-stop leg. `swarm.stop` drives it through the injected
   // `stopRun` port, so a run whose stop does not converge inside its bound reached the operator as
   // 503 `temporarily_unavailable` "retry once" — the #430 narration named this exact gap. Both
