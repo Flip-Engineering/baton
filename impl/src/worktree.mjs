@@ -13,7 +13,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync, closeSync, cpSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, renameSync,
-  linkSync, symlinkSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
+  linkSync, symlinkSync, writeFileSync, readFileSync, readlinkSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
@@ -646,6 +646,8 @@ function parseLinkedWorktreeOwnership(repoRoot, physicalOwnerId) {
       || canonicalPathIncludingMissingLeaf(row.commonGitDir) !== commonGitDir
       || typeof row.worktreePath !== 'string' || !isAbsolute(row.worktreePath)
       || typeof row.worktreeGitDir !== 'string' || !isAbsolute(row.worktreeGitDir)
+      || typeof row.registrationNonce !== 'string'
+      || !/^[a-f0-9]{40,64}$/u.test(row.registrationNonce)
       || typeof row.createdHead !== 'string' || !/^[a-f0-9]{40,64}$/u.test(row.createdHead)
       || typeof row.createdAt !== 'string') {
       throw new WorkspaceOwnerDiagnostic(
@@ -704,6 +706,88 @@ function linkedWorktreeSnapshotRef(physicalOwnerId, row) {
   return `refs/baton/seat-worktrees/${physicalOwnerId}/${suffix}`;
 }
 
+function linkedWorktreeRegistrationMarkerMatches(row) {
+  const marker = join(row.worktreeGitDir, 'baton-seat-owner');
+  try {
+    const stat = lstatSync(marker);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 256) {
+      return false;
+    }
+    return readFileSync(marker, 'utf8').trim() === row.registrationNonce;
+  } catch { return false; }
+}
+
+function pathIsWithin(root, candidate) {
+  const within = pathRelative(root, candidate);
+  return within === '' || (within !== '..' && !within.startsWith(`..${sep}`) && !isAbsolute(within));
+}
+
+/** Live processes whose cwd is the linked checkout or one of its descendants. */
+function linkedWorktreeCwdHolders(worktreePath, opts = {}) {
+  if (typeof opts.linkedWorktreeHolders === 'function') {
+    const injected = opts.linkedWorktreeHolders(worktreePath);
+    if (!Array.isArray(injected)) {
+      throw new WorkspaceOwnerDiagnostic(
+        'linked worktree liveness provider returned no holder list',
+        'linked_worktree_liveness_unobservable',
+      );
+    }
+    return Object.freeze([...injected].map(String));
+  }
+  const root = canonicalPathIncludingMissingLeaf(worktreePath);
+  if (process.platform === 'linux') {
+    let names;
+    try { names = readdirSync('/proc'); }
+    catch {
+      throw new WorkspaceOwnerDiagnostic(
+        'linked worktree process cwd state could not be observed',
+        'linked_worktree_liveness_unobservable',
+      );
+    }
+    const holders = [];
+    for (const name of names) {
+      if (!/^[1-9][0-9]*$/u.test(name)) continue;
+      let cwd;
+      try { cwd = canonicalPathIncludingMissingLeaf(readlinkSync(`/proc/${name}/cwd`)); }
+      catch { continue; }
+      if (pathIsWithin(root, cwd)) holders.push(`pid:${name}`);
+    }
+    return Object.freeze(holders);
+  }
+  if (process.platform === 'darwin') {
+    let output = '';
+    try {
+      output = execFileSync('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fpn', '+D', root], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1024 * 1024,
+      });
+    } catch (error) {
+      // lsof exits 1 when the filter matched no process. A launch or observation failure has no
+      // numeric status and cannot establish that the checkout is idle.
+      if (error?.status === 1) output = String(error.stdout ?? '');
+      else {
+        throw new WorkspaceOwnerDiagnostic(
+          'linked worktree process cwd state could not be observed',
+          'linked_worktree_liveness_unobservable',
+        );
+      }
+    }
+    const holders = [];
+    let pid = null;
+    for (const line of output.split('\n')) {
+      if (line.startsWith('p')) pid = line.slice(1);
+      else if (line.startsWith('n') && pid) {
+        const cwd = canonicalPathIncludingMissingLeaf(line.slice(1));
+        if (pathIsWithin(root, cwd)) holders.push(`pid:${pid}`);
+      }
+    }
+    return Object.freeze([...new Set(holders)]);
+  }
+  throw new WorkspaceOwnerDiagnostic(
+    'linked worktree process cwd state could not be observed on this platform',
+    'linked_worktree_liveness_unobservable',
+  );
+}
+
 /** Remove linked worktrees created by one seat after their exact ownership and Git identity hold. */
 function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
   const ownership = parseLinkedWorktreeOwnership(repoRoot, physicalOwnerId);
@@ -714,6 +798,7 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
   const registrations = listWorktrees(repoRoot);
   const retained = [];
   const snapshots = [];
+  const liveHolders = new Set();
   for (const row of ownership.rows) {
     const registration = registrations.find((entry) => (
       canonicalPathIncludingMissingLeaf(entry.dir) === row.worktreePath
@@ -722,6 +807,10 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
       // A path can be recycled after Git drops the old registration. The ownership record alone
       // never grants deletion authority over the new directory.
       if (existsSync(row.worktreePath)) retained.push(row);
+      continue;
+    }
+    if (!linkedWorktreeRegistrationMarkerMatches(row)) {
+      retained.push(row);
       continue;
     }
     if (!existsSync(row.worktreePath)) {
@@ -748,6 +837,16 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
     if (identity.commonGitDir !== row.commonGitDir
       || identity.worktreeGitDir !== row.worktreeGitDir) {
       retained.push(row);
+      continue;
+    }
+    let cwdHolders;
+    try { cwdHolders = linkedWorktreeCwdHolders(row.worktreePath, opts); }
+    catch (error) {
+      throw Object.assign(error, { linkedWorktrees: Object.freeze([row.worktreePath]) });
+    }
+    if (cwdHolders.length > 0) {
+      retained.push(row);
+      for (const holder of cwdHolders) liveHolders.add(holder);
       continue;
     }
     const status = sh('git', ['status', '--porcelain=v1', '--ignored', '--untracked-files=all'], row.worktreePath);
@@ -796,6 +895,18 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
   }
   if (opts.verifyOnly !== true) rewriteLinkedWorktreeOwnership(ownership.recordPath, retained);
   if (retained.length > 0) {
+    if (liveHolders.size > 0) {
+      throw Object.assign(new WorkspaceCustodyError(
+        `worktree "${physicalOwnerId}" retained linked worktrees used by ${liveHolders.size} live process(es)`,
+        [...liveHolders],
+        Object.freeze({
+          schemaVersion: 1, physicalOwnerId, state: 'linked_live', removable: false,
+          dirtyPaths: Object.freeze(retained.map((row) => row.worktreePath)),
+          headSha: null, baseSha: null,
+        }),
+        'linked_worktree_live_process_retained',
+      ), { linkedWorktrees: Object.freeze(retained.map((row) => row.worktreePath)) });
+    }
     throw Object.assign(new WorkspacePreservationError(
       `worktree "${physicalOwnerId}" retained ${retained.length} linked worktree(s)`,
       Object.freeze({
@@ -2708,7 +2819,7 @@ export function applySnapshotToWorktree(repoRoot, snapshotSha, targetDir, baseSh
  * @param {string} repoRoot
  * @param {string} taskId
  * @param {{force?: boolean, deleteBranch?: boolean, retainOwnerReceipt?: boolean, log?: object,
- *   custodyHolders?: Function, excludeHolderId?: string}} [opts]
+ *   custodyHolders?: Function, linkedWorktreeHolders?: Function, excludeHolderId?: string}} [opts]
  *   `custodyHolders` is the injected live-holder provider (see assertRemovableContent) and
  *   `excludeHolderId` names the handle performing this cleanup, which is not a co-holder of it.
  * @returns {Promise<void>}
@@ -2744,7 +2855,14 @@ export async function reap(repoRoot, taskId, opts = {}) {
       );
     }
   }
-  cleanupSeatLinkedWorktrees(repoRoot, taskId, { snapshotUncommitted: true });
+  cleanupSeatLinkedWorktrees(repoRoot, taskId, {
+    snapshotUncommitted: true, verifyOnly: true,
+    ...(opts.linkedWorktreeHolders ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
+  });
+  cleanupSeatLinkedWorktrees(repoRoot, taskId, {
+    snapshotUncommitted: true,
+    ...(opts.linkedWorktreeHolders ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
+  });
   if (existsSync(dir)) {
     try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
     catch { rmSync(dir, { recursive: true, force: true }); }
@@ -2815,7 +2933,7 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * @param {string[]} expectedActiveTaskIds
  * @param {{log?: object, ownerAuthority?: object, expectedOwnerBindings?: object[],
  *   sparseCheckoutIdentity?: object, custodyHolders?: Function, beforeOwnerCleanup?: Function,
- *   snapshotUncommitted?: boolean}} [opts]
+ *   linkedWorktreeHolders?: Function, snapshotUncommitted?: boolean}} [opts]
  * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
@@ -3159,6 +3277,8 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           cleanupSeatLinkedWorktrees(repoRoot, normalizedTaskId, {
             snapshotUncommitted: opts.snapshotUncommitted === true && ownerState === 'local_dead',
             verifyOnly: true,
+            ...(opts.linkedWorktreeHolders
+              ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
           });
         } catch (error) {
           report.diagnostics.push(Object.freeze({
@@ -3192,6 +3312,8 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         try {
           const linkedSnapshots = cleanupSeatLinkedWorktrees(repoRoot, normalizedTaskId, {
             snapshotUncommitted: opts.snapshotUncommitted === true && ownerState === 'local_dead',
+            ...(opts.linkedWorktreeHolders
+              ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
           });
           for (const snapshot of linkedSnapshots) {
             logEvent(opts, normalizedTaskId, 'worktree.linked_reclaimed', {

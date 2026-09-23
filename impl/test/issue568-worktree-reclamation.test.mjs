@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync,
@@ -376,5 +376,52 @@ test('568-H: normal seat stop reclaims its linked worktree and keeps its branch 
   assert.equal(existsSync(external), false);
   assert.equal(existsSync(workspace.dir), false);
   assert.equal(git(f.repo, ['show', 'stopped-scratch:stop-evidence.txt']), 'seat stop evidence');
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
+});
+
+test('568-I: recovery retains an external checkout while a live process has a cwd inside it', async (t) => {
+  const f = fixture(t, 'external-live-cwd');
+  const before = authority('external-cwd-deployment', 'controller-before');
+  const after = authority('external-cwd-deployment', 'controller-after');
+  const workspace = await ownedWorkspace(f, before, 'external-live-cwd');
+  const seat = projectedSeat(f, workspace);
+  const external = join(dirname(f.repo), 'live-cwd-seat-external');
+  addLinkedWorktree(seat, workspace, external, ['-b', 'live-cwd-scratch']);
+  const processDir = join(external, 'running');
+  mkdirSync(processDir);
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    cwd: processDir, stdio: 'ignore',
+  });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+
+  const retained = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => assert.fail('a live cwd keeps owner capacity'),
+  });
+
+  assert.deepEqual(retained.errors, []);
+  const diagnostic = retained.diagnostics.find((row) => (
+    row.physicalOwnerId === workspace.receipt.physicalOwnerId
+      && row.code === 'linked_worktree_live_process_retained'
+  ));
+  assert.ok(diagnostic);
+  assert.equal(existsSync(external), true);
+  assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
+
+  const exited = new Promise((resolve) => child.once('exit', resolve));
+  child.kill('SIGTERM');
+  await exited;
+  const reclaimed = reconcile(f.repo, [], {
+    ownerAuthority: after,
+    snapshotUncommitted: true,
+    beforeOwnerCleanup: () => true,
+  });
+  assert.deepEqual(reclaimed.errors, []);
+  assert.equal(existsSync(external), false);
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
 });
