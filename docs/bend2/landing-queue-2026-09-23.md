@@ -82,6 +82,52 @@ per-entry pin boundary, with their evidence files. The commit is not published a
 and its seat is dead. It moves the laws lane's tip, so it does not replace row 2 without its own
 review.
 
+## The fix, committed and verified elsewhere
+
+The measurement of the missing member was independently reproduced by `wake-lead6`
+(swarm-wake-20260921), which committed the wiring half on `baton/ws-558-publish-wiring` at
+`bdca3dca7ae86c7a4514646b65fca1f7e66fbf56`: one member added to the object `createDriver`
+returns, plus `impl/test/issue558-publish-remote-reaches-driver-red.test.mjs`. Verified here with
+the same probe that found the defect, against the served checkout and against that commit:
+
+```sh
+node <probe> /private/tmp/baton-resident-20260921  # driverHasOwnProperty false, landingReceives null
+node <probe> <checkout of bdca3dca>                # driverHasOwnProperty true,  landingReceives the declared URL
+node --test test/issue558-publish-remote-reaches-driver-red.test.mjs  # pass 2, fail 0
+```
+
+The classification half for CDW5 is `a11608c8` (the pending landing of
+`contribution-83d51bcddf0467f3a92bec2108f724aa`). Neither commit can land through
+`swarm.integrate` while the publish path refuses, so the served checkout receives the wiring half
+directly, as a cherry-pick or a patch, before the resident restarts with `BATON_PUBLISH_REMOTE`
+set.
+
+## The push credential the landing needs
+
+With the member in place, a landing publishes by running
+`git push <declared remote> <squash>:refs/heads/<target>` from `impl/src/worktree.mjs:2374`,
+under the git environment `localGitEnv` builds (`impl/src/worktree.mjs:126-130`): every `GIT_*`
+variable is dropped, and `GIT_CONFIG_NOSYSTEM=1` with `GIT_CONFIG_GLOBAL=/dev/null` are set. On
+this host that environment carries no credential: the system config's
+`credential.helper=osxkeychain` and the user's `!/opt/homebrew/bin/gh auth git-credential` helper
+are both disabled there, and `SSH_ASKPASS=/usr/bin/false` answers the prompt. The same push, run
+with that environment against the declared remote, fails:
+
+```sh
+$ env -u GIT_ASKPASS GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+    git push --dry-run https://github.com/Flip-Engineering/baton.git \
+    refs/heads/bend2-rewrite:refs/heads/bend2-rewrite
+error: unable to read askpass response from '/usr/bin/false'
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+
+A landing that reaches this point refuses `integrate_publish_failed` and rolls the local
+fast-forward back (`impl/src/worktree.mjs:2377-2383`), so the queue stays unlanded. The
+declaration therefore needs a credential path the landing's own environment can use: a
+repository-local `credential.helper`, a remote URL carrying a token, or a local shared mirror
+named as the declared remote. Which of these the deployment uses is the deployment owner's
+decision.
+
 ## Reproductions
 
 From a checkout of the served revision:
