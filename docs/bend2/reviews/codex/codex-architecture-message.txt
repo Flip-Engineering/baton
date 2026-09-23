@@ -1,0 +1,19 @@
+Architecture review complete. Report: /tmp/baton-bend2-laws-review/architecture/codex-architecture-review.md
+SHA256: 39d3ce14317fcb07fc728d48f0c10c821461e0e19875e00a37d1af59363da55d
+Manifest: /tmp/baton-bend2-laws-review/architecture/codex-review-manifest.json
+
+I verified all six input files byte-for-byte against 387ff4399c382e49a8320e12ab48d949c3cd54b6. The report gives dispositions for all F1-F24 and maps the actual 16 approved laws to implementation boundaries. Final law approval at 1fab9a1d stands; no additional law or law-approval cycle is requested.
+
+Verdict: eight logical owners are useful for prototyping. Evidence supports Prototype-only for production authority transfer. Authorized rewrite work can proceed with corrected assumptions and bounded proofs. Important changes to feed to the orchestrator:
+
+1. F8 cannot replace in-process authority checks solely with ordinary affine records: they are forgeable and droppable. F5/F7 cannot assume a built-in nursery or automatic cleanup. A new native 2.0.25 probe compiled and ran, printing parent returned without joining, then child continued after its IO.fork result was dropped. Probe and exact results are in architecture/codex-probes/. Implement and verify provenance, authority at the actual effect, cancellation acknowledgement, reap and custody release.
+2. Phase 4's LandingPlan/receipt/restart matrix still allows local update-ref completion. The source confirms #558 at the reviewed pin. Bind actual canonical shared destination and expected shared state to publication, prove actual completion there, and keep ambiguous dispatch unresolved. No-push and wrong-destination-push require separate cases.
+3. Native durable journaling is a named prerequisite in addition to process and JSON. I checked the installed File API and C write/close implementations: no durability barrier; Base File.fsync/File.rename absent. C implementations are feasible, but must demonstrate synchronization, replacement and stale-writer exclusion.
+4. Reconciler may not retry because a local affine value is expired, consumed or unreachable. That does not resolve external outcome. Preserve effect-specific reconciliation and operation/attempt identities.
+5. I independently confirmed the doctor/quarantine configuration mismatch at 387ff439: both use new CoordinationStore(root); omitted runLineagePolicy becomes null; _validateRunStopAdmission selects a different exact field set. A valid policy-bearing stop is rejected. Preserved raw bytes do not repair the logical damage of skipping its fold. Startup, diagnostics and repair must share applicable recorded policy/schema, classify missing basis separately from corruption, and refuse invented quarantine advice. Your 72,996-row recovery is reported evidence; I did not touch or rerun the resident.
+6. F17 typed IO declarations do not prove change-to-test coverage: a changed pure authority predicate can retain the same signature. Prove dependency/contract coverage before deleting the inventory.
+7. rewrite-plan/go-no-go still use 138 candidate laws; replace that normative basis with the approved 16. Keep historical rows as classified compatibility evidence, including explicit corrections for known bad reference behavior. Also reconcile HVM wording with the actual BendRT/C compiler pin.
+
+Recommend independent pure-decision/replay and native-effect risk prototypes, then composed durable admission-to-canonical-publication recovery proof. No arbitrary new global phase order. The report distinguishes acceptance of a consolidation direction from passed preservation tests. No full suite, canary, implementation certification or live-ledger mutation is claimed.
+
+The old receiver 95927 has been safely stopped after your acknowledgement. New reply socket remains uds:/tmp/cc-socks/21623.sock, resolving your live session dynamically on every send. Please relay this report and these corrections to the bend2 orchestrator.
