@@ -66,10 +66,6 @@
       "reason": "#566"
     },
     {
-      "key": "test/cli-wave-fidelity-red.test.mjs :: A7-6 (D3 closed-set): every waves.* cli-claiming op is admitted, parses to { name: <key> }, and is documented — the ghost-prevention pin",
-      "reason": "#566"
-    },
-    {
       "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R1: the descriptor accepts the closed knowledge:{primaryRoot} field (RED — no knowledge field)",
       "reason": "#70"
     },
@@ -156,10 +152,6 @@
     {
       "key": "test/cross-deployment-knowledge-red.test.mjs :: S-R2: two self-declared primaries are honestly surfaced — each project read names its own sourceRoot (RED — no source/epoch vocabulary)",
       "reason": "#70"
-    },
-    {
-      "key": "test/doc-truth-conformance-red.test.mjs :: R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted or ledgered, and ledger rows are full shape",
-      "reason": "#566"
     },
     {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys",
