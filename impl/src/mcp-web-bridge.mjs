@@ -44,6 +44,9 @@ export const ORDINARY_COMMANDS = Object.freeze([
   'runs.list',
   'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
   'waves.stop', 'waves.run', 'waves.compile',
+  // Issue #161: the plan object's two direct ports. The resident's bus admits their canonical
+  // names (web-northbound PLAN_WEB_ENTRIES), so the bridged MCP tools reach them.
+  'plan.read', 'plan.write',
 ]);
 // SA4 (#227): the CONSTRUCTOR floor is the REGISTRY's own remote_bridge projection — the closed
 // operation set (docs/36 §8.3 L8 / D8, R-OP-15b) the registry itself says a remote bridge
@@ -60,6 +63,9 @@ const MUTATIONS = new Set([
   'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
   'run.board.post', 'run.knowledge.seed',
   'waves.start', 'waves.send', 'waves.stop', 'waves.run',
+  // Issue #161: the plan write lane is a mutation (its forwarded transport key derives from the
+  // body, so a changed mutation mints a fresh key and an identical one replays).
+  'plan.write',
 ]);
 const SAFE_RUN_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 

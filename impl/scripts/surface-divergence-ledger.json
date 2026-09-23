@@ -72,6 +72,38 @@
       "dimension": "name",
       "retiresIn": "M5",
       "note": "waves.compile is web-admitted in the current tree (WAVE_WEB_ENTRIES, #170) but absent from the pinned 31-name card (contract-fold v1.1 D2/G3); ledgered pending wave reconciliation of the card-vs-admission drift"
+    },
+    {
+      "surface": "cli",
+      "name": "plan.read",
+      "canonical": "plan.read",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs) — the plan object is not a web transport (D3.4); the CLI and MCP surfaces serve it, and COMMAND_CAPABILITY admits no plan_read transport"
+    },
+    {
+      "surface": "cli",
+      "name": "plan.write",
+      "canonical": "plan.write",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs) — the plan object is not a web transport (D3.4); the CLI and MCP surfaces serve it, and COMMAND_CAPABILITY admits no plan_write transport"
+    },
+    {
+      "surface": "cli",
+      "name": "run.resultpin",
+      "canonical": "run.resultpin",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "run.resultpin is admitted by the web bus (COMMAND_CAPABILITY) but absent from the pinned card projection (surface-truth.mjs webCardCommands: the web-flagged application command names plus the six wave ports); ledgered pending reconciliation of the card-vs-admission drift, exactly as waves.compile is"
+    },
+    {
+      "surface": "cli",
+      "name": "waves.harvest",
+      "canonical": "waves.harvest",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "waves.harvest is admitted by the web bus (COMMAND_CAPABILITY) but absent from the pinned card projection (surface-truth.mjs webCardCommands); ledgered pending reconciliation of the card-vs-admission drift, exactly as waves.compile is"
     }
   ],
   "cliLocalToolingCodes": [

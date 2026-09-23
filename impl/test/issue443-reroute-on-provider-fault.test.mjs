@@ -56,7 +56,7 @@ const label = (route) => `${route.harness}/${route.model}@${route.effort}`;
  * billing basis is published on this row ('subscription' with no price, or null with a price). */
 function usageRow(route, {
   state = 'ready', code = null, resetAt = null, billing = 'subscription',
-  turns = 0, ceiling = 4, inUse = 0, degraded = null, intelligence = 40,
+  turns = 0, ceiling = 4, inUse = 0, degraded = null, intelligence = 40, quotaWindow = null,
 } = {}) {
   return Object.freeze({
     route: Object.freeze({ ...route }),
@@ -71,9 +71,13 @@ function usageRow(route, {
     concurrency: Object.freeze({ ceiling, inUse }),
     lastProviderRefusal: null,
     credential: null,
-    quota: Object.freeze(code === PROVIDER_FAULT_CODES.quota || degraded !== null
-      ? { state: 'exhausted', resetAt }
-      : { state: 'ok', resetAt: null }),
+    quota: Object.freeze({
+      ...(code === PROVIDER_FAULT_CODES.quota || degraded !== null
+        ? { state: 'exhausted', resetAt }
+        : { state: 'ok', resetAt: null }),
+      // #491 item 2: the declared window SHAPE the route row publishes beside the instant.
+      ...(quotaWindow === null ? {} : { window: Object.freeze({ ...quotaWindow }) }),
+    }),
     degraded,
   });
 }
@@ -87,8 +91,9 @@ const faultedRouteRow = () => usageRow(FAULTED, {
     next: Object.freeze({ action: 'pause_recruits_until_probe', route: Object.freeze({ ...FAULTED }) }),
   }),
 });
-const closedSubscriptionRow = () => usageRow(CLOSED_SUBSCRIPTION, {
+const closedSubscriptionRow = (quotaWindow = null) => usageRow(CLOSED_SUBSCRIPTION, {
   state: 'blocked', code: PROVIDER_FAULT_CODES.quota, resetAt: RESET_AT, billing: 'subscription',
+  quotaWindow,
 });
 const openSubscriptionRow = () => usageRow(OPEN_SUBSCRIPTION, { billing: 'subscription', turns: 2 });
 const openApiRow = () => usageRow(OPEN_API, { billing: 'api', turns: 1, intelligence: 55 });
@@ -445,6 +450,43 @@ test('443-d1: with no candidate the proposal is empty and the attention row name
   assert.equal(attention[0].next, `wait until ${RESET_AT} or add a route`);
   assert.deepEqual(view.attention.filter((row) => row.kind === 'reroute_proposed'), [],
     'a proposal with no candidate is not also reported as one');
+});
+
+// ── #491 item 2: the declared window SHAPE qualifies the reset instant ──────────────────────────
+
+test('491-item2: a closed route names its window shape and the posture its reset instant may be read with — fixed_clock is a hard boundary, rolling is re-probed, unknown keeps today', async (t) => {
+  const CLOSED_FIXED = Object.freeze({ harness: 'claude-code', model: 'claude-opus-4-6', effort: 'high' });
+  const CLOSED_BARE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
+  const w = await faultedSwarm(t, {
+    rows: [
+      faultedRouteRow(), openSubscriptionRow(),
+      closedSubscriptionRow({ kind: 'rolling', periodMs: 5 * 60 * 60 * 1000 }),
+      usageRow(CLOSED_FIXED, {
+        state: 'blocked', code: PROVIDER_FAULT_CODES.quota, resetAt: RESET_AT,
+        quotaWindow: { kind: 'fixed_clock', periodMs: 24 * 60 * 60 * 1000 },
+      }),
+      usageRow(CLOSED_BARE, { state: 'blocked', code: PROVIDER_FAULT_CODES.quota, resetAt: RESET_AT }),
+    ],
+    tag: 'f491',
+  });
+  await w.call('view', { swarmId: SWARM });
+  const proposal = rowsOf(w.store, 'swarm.reroute_proposed')[0].payload;
+  const excluded = (route) => proposal.excluded.find((row) => label(row) === label(route));
+  assert.ok(excluded(CLOSED_SUBSCRIPTION), 'the rolling closed route is named');
+  assert.deepEqual({ ...excluded(CLOSED_SUBSCRIPTION).quotaWindow },
+    { kind: 'rolling', periodMs: 5 * 60 * 60 * 1000 },
+    'the declared shape rides the candidate row beside the instant');
+  assert.equal(excluded(CLOSED_SUBSCRIPTION).windowPosture, 're_probe_at_reset',
+    'a rolling window slides with use, so its instant is re-probed, never trusted');
+  assert.equal(excluded(CLOSED_SUBSCRIPTION).resetAt, RESET_AT,
+    'the instant its provider gave still rides the row');
+  assert.equal(excluded(CLOSED_FIXED).windowPosture, 'hard_boundary',
+    'a fixed clock instant will not move again this window');
+  assert.deepEqual({ ...excluded(CLOSED_FIXED).quotaWindow },
+    { kind: 'fixed_clock', periodMs: 24 * 60 * 60 * 1000 });
+  assert.equal(excluded(CLOSED_BARE).windowPosture, 'unknown',
+    'an undeclared shape keeps the pre-#491 reading');
+  assert.equal(excluded(CLOSED_BARE).quotaWindow, null, 'and invents no shape');
 });
 
 // ── (e) replay parity, and the runtime-recorded kinds stay unsubmittable ────────────────────────

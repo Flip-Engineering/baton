@@ -38,6 +38,7 @@ import { hasNorthboundCapabilityAuthority } from './northbound-capability-author
 import { projectRunTimelinePage } from './run-timeline.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 import * as coordinationLedger from './coordination-ledger.mjs';
+import { PLAN_OBJECT_ID_PATTERN, admitPlanWrite, readPlanObject } from './orchestrator-plan.mjs';
 import {
   normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText,
 } from './verifier-diagnostics.mjs';
@@ -48,6 +49,9 @@ import * as applicationBriefing from './application-briefing.mjs';
 import { searchDeploymentEvidence, validateEvidenceSearchArgs } from './evidence-search.mjs';
 import { validateServicesListArgs } from './provider-services.mjs';
 import * as applicationObservation from './application-observation.mjs';
+import {
+  seatAtomsForRoutes, seatCapacityAtoms, seatDeferredByVendor, seatObservedAtEventSeq,
+} from './seat-telemetry.mjs';
 import {
   ACTION_INPUT_ENVELOPE,
   ACTION_TURN_RESPONSE_KIND,
@@ -1624,7 +1628,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId', 'planPolicy']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -1646,6 +1650,10 @@ export class BatonApplication {
     // the column rather than minting a foreign row.
     this.deploymentId = options.deploymentId ?? null;
     this.authorize = options.authorize;
+    // #161 (DR-3): the deployment-owned plan policy (planPolicy.maxFocusTasks) the plan lane
+    // bounds its focus window by. Null when the application is constructed bare — the lane then
+    // reads its own declared default rather than a fabricated deployment value.
+    this._planPolicy = options.planPolicy ?? null;
     this._clock = options.clock ?? (() => new Date().toISOString());
     if (typeof this._clock !== 'function') {
       throw applicationError('application clock is invalid', 'application_config_invalid');
@@ -7627,9 +7635,16 @@ export class BatonApplication {
     // the per-member inspect calls consume the keyed results instead of one resolveResult each
     // (~90 members × ~3 git calls ≈ 11-13 s per waves_list at HEAD).
     const preservedResults = await this._pagePreservedInspections(page, waveIndex);
+    // #146 (D2.2): the capacity block's inputs, read ONCE for the whole response — the deferral
+    // aggregate (one ledger sweep) and the composition's ledger sequence. Never per wave row: the
+    // WLS-1 bound holds the roster projection to a bounded number of log reads per call.
+    const coordinator = this.driver?.coordinator ?? null;
+    const coordination = this.driver?.coordination ?? null;
+    const deferredByVendor = seatDeferredByVendor(coordination);
     const waves = [];
     for (const row of page) {
       const members = [];
+      const memberRoutes = [];
       for (const member of row.roster ?? []) {
         if (typeof member === 'string') {
           // B2/F13: a legacy string-array member is a bare role with NO registered runId — the
@@ -7643,6 +7658,7 @@ export class BatonApplication {
           // run that vanished refuses wave_not_found, never a silent null.
           const runId = this._runIdForWaveMember(row.waveId, member, waveIndex);
           const route = this._runWaveRoute(runId, waveIndex);
+          if (route !== null) memberRoutes.push(route);
           let view = null;
           if (runId !== null) {
             try {
@@ -7671,6 +7687,8 @@ export class BatonApplication {
         }
         const role = member?.role ?? null;
         const runId = this._runIdForWaveMember(row.waveId, role, waveIndex);
+        const route = this._runWaveRoute(runId, waveIndex);
+        if (route !== null) memberRoutes.push(route);
         let view = null;
         if (runId !== null) {
           try {
@@ -7691,17 +7709,31 @@ export class BatonApplication {
           attentionCount: runId === null ? null : attention,
         }));
       }
-      waves.push(deepFreeze({
+      // #146 (D2.2/A3): the wave-row sibling — the DISTINCT routes this wave's members occupy, each
+      // the closed D1 seat atom, deduplicated by route key. The wave-observability D2.3 pin closes
+      // the wave row's enumerable shape, so the block is attached NON-enumerably, the same pattern
+      // the doctor row's liveness/occupancy siblings use: property access reads it and
+      // Object.keys/JSON keep the pinned shape. A wave whose members' routes cannot be recovered
+      // reads `capacity: []` — the honest answer for a roster with no seat map.
+      const waveRow = {
         closedAtEventSeq: row.closedAtEventSeq ?? null,
         deploymentId: row.deploymentId ?? null,
         roster: members,
         startedAtEventSeq: row.startedAtEventSeq,
         state: row.state,
         waveId: row.waveId,
-      }));
+      };
+      Object.defineProperty(waveRow, 'capacity', {
+        value: seatCapacityAtoms({ coordinator, routes: memberRoutes, deferredByVendor }),
+        enumerable: false,
+      });
+      waves.push(deepFreeze(waveRow));
     }
     const nextCursor = cursor + page.length < open.length ? cursor + page.length : null;
-    return deepFreeze({ schemaVersion: 1, cursor, nextCursor, waves });
+    return deepFreeze({
+      schemaVersion: 1, cursor, nextCursor, waves,
+      observedAtEventSeq: seatObservedAtEventSeq(coordination),
+    });
   }
 
   async _pagePreservedInspections(page, waveIndex) {
@@ -8335,6 +8367,18 @@ export class BatonApplication {
     const routes = [...this.profiles.values()].flatMap((profile) => profile.routes.map((route) => (
       Object.freeze({ ...clone(route), state: 'ready' })
     )));
+    // #146 (D2.1, Fold A5): the same fleet seat projection over the profile routes this
+    // derivation publishes. The raw path reaches the coordinator for the route facts it already
+    // reads for `_reuseDecisionPolicy`, so the allocator binding resolves here too; a bare host
+    // with no coordinator reads every count null (unobservable), never a fabricated 0.
+    const coordinator = this.driver?.coordinator ?? null;
+    const coordination = this.driver?.coordination ?? null;
+    const seats = seatAtomsForRoutes({
+      coordinator,
+      routes,
+      stateOf: (route) => route.state,
+      deferredByVendor: seatDeferredByVendor(coordination),
+    });
     // Decision 7: the frozen limits projection tabulates EVERY registry lane; `effective` is
     // present ONLY where a deployment override exists (decision.need / decision.rationale) — the
     // digest covers DECLARED rows only, so an override never changes the handshake.
@@ -8348,7 +8392,8 @@ export class BatonApplication {
     });
     return deepFreeze({
       schemaVersion: 1, repoId: this.repoId,
-      routes, workspace: Object.freeze({ state: 'ready' }),
+      routes, seats, workspace: Object.freeze({ state: 'ready' }),
+      observedAtEventSeq: seatObservedAtEventSeq(coordination),
       limits: Object.freeze({
         version: FRAME_LIMITS_VERSION, digest: FRAME_LIMITS_DIGEST,
         lanes: deepFreeze(lanes),
@@ -8504,6 +8549,12 @@ export class BatonApplication {
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
+    // #161 (D3.2/H2.1): the orchestrator plan object's two direct ports. Like the siblings above
+    // they dispatch BEFORE context validation and the recursive-session gate, each validates its
+    // own closed shape first, and the lane adjudicates authority (the plan:* power is the
+    // deployment authorize's composition; worker ownership is the lane's, never this seam).
+    if (name === 'plan.read') return this.planRead(args, principal);
+    if (name === 'plan.write') return this.planWrite(args, principal);
     // #176 (waves.* authority closure): the six waves.* verbs pass the recursive-session gate like
     // their run.* siblings — a sessionAuthority-context call refuses typed rather than dispatching
     // unchecked (the observe verbs are not exempt). Checked on the RAW context before full context
@@ -9312,6 +9363,64 @@ export class BatonApplication {
     }
     const view = projectBoardView(snapshot, { role: 'orchestrator', workerId: null });
     return deepFreeze({ schemaVersion: 1, board: request.board, boardRunId: boundRunId, view });
+  }
+
+  // ── #161: the orchestrator plan object's direct ports ─────────────────────────────────────────
+  //
+  // plan.read — the campaign-plan projection at the deployment seat, composed from the
+  // replay-derived plan-object fold (the store's campaignPlan accessor); an unminted plan refuses
+  // plan_not_found naming the addressed planId, and the projection emits the lane's canonical
+  // sorted task key order.
+  async planRead(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'plan read principal');
+    const planId = rawRequest?.planId;
+    if (typeof planId !== 'string' || !PLAN_OBJECT_ID_PATTERN.test(planId)) {
+      throw applicationError('plan read request must name the addressed plan:<hex32> planId',
+        'application_plan_read_invalid', { field: 'planId' });
+    }
+    await this._authorize('plan.read', principal, null, { planId });
+    return deepFreeze(this.driver.coordination.campaignPlan(planId));
+  }
+
+  // plan.write — the idempotency-keyed mutation lane. Both verbs authorize through the facade
+  // `_authorize` seam (the contract's enforcement seam, H2.1): the deployment authorize decides
+  // whether the caller holds the plan:* power, and a denial is the facade refusal
+  // application_unauthorized. `admitPlanWrite` then composes the ownership classes (plan owner /
+  // coordinator subtree / row member, H2.3) and adjudicates the closed
+  // {planId, idempotencyKey?, mutation} body against the live projection, returning the entries to
+  // land; the store's own appendPlanEntries seam lands them (the auto-demote pair atomically) and
+  // nothing further is derived here.
+  async planWrite(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'plan write principal');
+    const body = rawRequest;
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || typeof body.planId !== 'string' || !PLAN_OBJECT_ID_PATTERN.test(body.planId)
+      || !body.mutation || typeof body.mutation !== 'object' || Array.isArray(body.mutation)) {
+      throw applicationError('plan write request must carry a plan:<hex32> planId and a closed mutation',
+        'application_plan_write_invalid', { field: 'mutation' });
+    }
+    await this._authorize('plan.write', principal, null, {
+      planId: body.planId,
+      ...(typeof body.mutation.taskId === 'string' ? { taskId: body.mutation.taskId } : {}),
+    });
+    const store = this.driver.coordination;
+    const plans = new Map(store.campaignPlans().plans.map((plan) => [plan.planId, plan]));
+    const outcome = admitPlanWrite({
+      body,
+      principal,
+      planPower: true,
+      planPolicy: this._planPolicy,
+      plans,
+      priorEvent: (key) => store.priorCoordinationEvent(key),
+      resolveRunId: (waveId, waveRole) => store.waveRoleRun(waveId, waveRole),
+      actor: principal.principalId,
+    });
+    if (!outcome.replay) store.appendPlanEntries(outcome.entries, outcome.batchKind);
+    return deepFreeze({ schemaVersion: 1, ...outcome.outcome });
   }
 
   // run.knowledge.seed — Decision 9: content-addressed seeding inside the run's horizon.

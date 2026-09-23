@@ -128,6 +128,18 @@ function partialFilesJudged(stream) {
   });
 }
 
+/** #491 item 2: how a closed route's provider-stated `resetAt` may be READ, from the route's own
+ * DECLARED window shape. A `fixed_clock` window's instant will not move again this window, so it is
+ * a hard boundary; a `rolling` window's boundary slides forward if the route is used again before
+ * it clears, so the honest posture is to re-probe near it rather than trust the instant; an
+ * absent/`unknown` shape keeps exactly today's reading (the tier invents nothing). ONE derivation,
+ * read by the re-route candidate rows, the swarm view and the auto-reroute policy. */
+function quotaWindowPosture(window) {
+  if (window?.kind === 'fixed_clock') return 'hard_boundary';
+  if (window?.kind === 'rolling') return 're_probe_at_reset';
+  return 'unknown';
+}
+
 /** The default regenerators: the three the repository always runs, each told to WRITE.
  *
  * Issue #459: each one is an out-of-process child of the resident's supervised pool — never a
@@ -3094,6 +3106,14 @@ export class SwarmRuntime {
         harness: row.route?.harness ?? null, model: row.route?.model ?? null,
         effort: row.route?.effort ?? null, billing, reason,
         state: row.state ?? null, resetAt: row.resetAt ?? null,
+        // #491 item 2: the declared window SHAPE rides the candidate row beside the instant it
+        // qualifies, and `windowPosture` is this reader's OWN derivation of what that shape says
+        // about the instant — a fixed clock's `resetAt` is a hard boundary; a rolling window's
+        // boundary slides with use, so the route is re-probed near it instead of trusted; an
+        // undeclared/unknown shape keeps the pre-#491 reading. ONE derivation, read by the decision
+        // row, the swarm view and the auto-reroute policy alike.
+        quotaWindow: row.quota?.window ?? null,
+        windowPosture: quotaWindowPosture(row.quota?.window ?? null),
         profile: row.profile ?? null,
       });
       if (this._routeEligible(row)) {

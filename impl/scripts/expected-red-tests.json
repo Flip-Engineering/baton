@@ -38,10 +38,6 @@
       "reason": "#164"
     },
     {
-      "key": "test/blind-waits-red.test.mjs :: A4 RED: the driver pump loop L5/D10 catch blanket-swallows status failures — no auth-stop guard in the CODE (the #148 instance's shape)",
-      "reason": "#148"
-    },
-    {
       "key": "test/blind-waits-red.test.mjs :: P-APP RED: the APPLICATION-layer run.wait refusal keeps application_unauthorized AND names the app-layer renewal — never the transport /v1/auth/refresh lane (D1.2(a))",
       "reason": "#164"
     },
@@ -67,10 +63,6 @@
     },
     {
       "key": "test/cli-silent-start-red.test.mjs :: PT-7 pin [canonical-aliases-unchanged] — canonical aliases resolve to HEAD and every recognized first-token still dispatches, never run.start",
-      "reason": "#566"
-    },
-    {
-      "key": "test/cli-wave-fidelity-red.test.mjs :: A7-6 (D3 closed-set): every waves.* cli-claiming op is admitted, parses to { name: <key> }, and is documented — the ghost-prevention pin",
       "reason": "#566"
     },
     {
@@ -160,10 +152,6 @@
     {
       "key": "test/cross-deployment-knowledge-red.test.mjs :: S-R2: two self-declared primaries are honestly surfaced — each project read names its own sourceRoot (RED — no source/epoch vocabulary)",
       "reason": "#70"
-    },
-    {
-      "key": "test/doc-truth-conformance-red.test.mjs :: R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted or ledgered, and ledger rows are full shape",
-      "reason": "#566"
     },
     {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys",
@@ -407,162 +395,6 @@
     {
       "key": "test/nested-orchestration-red.test.mjs :: R8 RED (stage: orphan-sweep-missing): sweepChildOrphans revokes orphaned child authorities on startup",
       "reason": "#12"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A1: a row member reads its OWN task and transitions it to done — admitted",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A2: a row member writing a sibling task refuses plan_authority_forbidden",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A3: a coordinator writes its subtree (ownedBy.wave/run match) — admitted",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A4: a coordinator writing outside its subtree refuses coordinator_authority_forbidden",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: A5: the orchestrator (plan:*) mints/upserts/transitions any task — admitted",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L1: two tasks cannot be doing simultaneously within a wave subtree",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L2: two tasks doing in DIFFERENT wave subtrees are admitted (the law is per-wave-subtree)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L3: a verified task is marked done immediately and stays done",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L4: a done task re-opened by any non-review principal refuses plan_reopen_forbidden",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L5: the review authority's reviewed-reject re-open (done → todo, H4.2) is admitted",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L6: focusTaskIds beyond planPolicy.maxFocusTasks refuses plan_focus_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: L7: plan.focus_upserted sets the bounded focus window with a plan-version CAS (stale → plan_stale_version)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M1: plan.write with plan.minted mints the plan and plan.read round-trips it",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M2: a retry of the same mint key + content returns the prior event — exactly-once",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M3: changed content under the same mint key refuses plan_replay_conflict",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M4: update asserted — upsert v1 then v2 with expectedTaskVersion=2 goes green (taskVersion becomes 2)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: M5: upsert v2 with expectedTaskVersion=1 (stale) refuses plan_stale_version",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: N1: plan.read naming an unminted plan refuses plan_not_found",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: N2: a mutation naming a task absent from the plan refuses plan_task_not_found",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: O1: plan.read at the orchestrator seat returns the campaign todo as the plan projection",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: Q1: a #74 coordinator member's plan.write (task_upserted) writes its subtree's row tasks with ownedBy binding",
-      "reason": "#74"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: Q2: the interpreter gates a member on its plan task's state — blocked → dispatch_pending, done → settleable",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S1: a task missing a closed field (no title) refuses plan_task_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S2: a task carrying an unknown field refuses plan_task_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S3: a non-canonical task key order refuses plan_task_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S4: a blockedBy self-edge refuses plan_topology_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S5: a blockedBy dangling edge refuses plan_topology_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S6: a blockedBy cycle refuses plan_topology_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S7: a non-closed status refuses plan_task_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: S8: plan.read returns tasks with the canonical sorted key order",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: W1: at wave.closed the review authority reviews the wave's plan tasks",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: W2: reviewed-rejected done → re-opened todo (H4.2); an unreviewed/incomplete task never reads done",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X1: baton plan read PLAN_ID parses to plan.read",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X2: baton plan write PLAN_ID --mutation JSON parses to plan.write; a malformed body refuses cli_invalid",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X3: CLI_WEB_COMMANDS admits plan.read AND plan.write",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X4: the plan.* web surface is refused AND ledgered in surface-divergence-ledger.json (#159 D3 #3)",
-      "reason": "#159"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X5: MCP tools baton_plan_read/baton_plan_write exist with repoId leading required (H3.1)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X6: the OPERATION_ROWS registry rows claim surfaces for plan.read/plan.write (D3.1)",
-      "reason": "#161"
-    },
-    {
-      "key": "test/orchestrator-plan-object-red.test.mjs :: X7: the generated CLI.md/MCP.md blocks contain the plan rows (D3.5)",
-      "reason": "#161"
     },
     {
       "key": "test/orchestrator-wake-red.test.mjs :: ACTIONS-SLICE (§I H6/F6): the wake actions builder slices the ACTIONS operand to MAX_ATTENTION and spills the head+digest",
@@ -1009,42 +841,6 @@
       "reason": "#72"
     },
     {
-      "key": "test/readiness-honesty-red.test.mjs :: A1a (stage: enumerable honest projection): a static-only doctor row reads unverified with probedAt null — never self-relabeled probe-verified — and the fields survive JSON.stringify; a fresh content-verified probe reads probe-verified with probedAt = recorded verifiedAt (D2 cardinal law + wire law)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A1b (stage: roster honest projection): the fleet_roster row carries the same {verdict, probedAt} projection — the liveness class is not a private sibling (D2 shape)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A1c (stage: northbound re-add): the operator wire surfaces — /v1/application-card, the CLI doctor read, deployment.doctor — re-add verdict + probedAt so a JSON round-trip cannot strip them (D2 wire law, blocker 3)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A2 (stage: on-demand forced probe): baton doctor --check forces exactly one fresh probe per stale route through the OPERATOR path — baton.mjs → BatonWebClient.doctor() → a /v1/application-card forced-probe parameter (D1 trigger 3, blocker 2)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A3 (stage: typed refusal vocabulary): provider_unreachable, probe_content_mismatch, probe_oversize, and provider_quota each have a PROVIDER_TERMINAL_GUIDANCE row with {category, summary, remediation, retryable} — and a probe verdict never collapses to the generic (G6, refusal vocabulary)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A4 (stage: quota/capacity death class): a probe whose output carries the quota/capacity wire — HTTP 402 / insufficient_quota — classifies to the typed provider_quota verdict, distinct from provider_unreachable and probe_content_mismatch, and excludes the automatic re-probe cadence (D1, refusal vocabulary, OQ3)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A5 (stage: honest-projection refusal): a failed verdict refuses wave preflight with wave_driver_route_unready BEFORE any member spawn, and the driver never substitutes a route (D3)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: A6 (stage: spawn-gate coverage): #livenessGate is consulted on every provider-spawn surface — run, startMany, workflow, explore, review — before any real turn, exactly as assertRouteReady already is (D1 trigger 1, blocker 4)",
-      "reason": "#167"
-    },
-    {
-      "key": "test/readiness-honesty-red.test.mjs :: V-stale (stage: lapsed-window verdict): the honest verdict follows the staleness law — a lapsed verified window reads verdict unverified, NEVER stale probe-verified, with probedAt retaining the last recorded measurement (D2 staleness law, P-stale twin)",
-      "reason": "#167"
-    },
-    {
       "key": "test/redrive-continuity-red.test.mjs :: A1 (RED): renderBrief does not emit `## Re-drive continuity` for a brief carrying continuity (stage: renderBrief-continuity-missing)",
       "reason": "#59"
     },
@@ -1277,55 +1073,11 @@
       "reason": "#566"
     },
     {
-      "key": "test/seat-telemetry-red.test.mjs :: A1 (stage: doctor-seats-missing): deployment.doctor carries an enumerable seats array, one closed D1 atom per readiness route in route order, observedAtEventSeq, and the card inherits seats (D2.4)",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A10 (stage: doctor-seats-missing): routes[i].occupancy.inFlight === seats[i].inFlight for every readiness route — matched (same numbers) and auto-ambiguous (same null)",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A11 (stage: inFlightRevision-missing): the live inFlight component carries a per-atom inFlightRevision — the vendor's incarnation-local handle-revision counter, never a clock",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A2 (stage: capacity-deferred-missing): a ceiling-skipped wave member reads deferred === 1 on the wave capacity atom, deduped by route key — the §D5 Arm-1 aggregate, never the mint-time-frozen inFlight",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A3 (stage: waves-capacity-missing): object-roster waves render the capacity block via _runWaveRoute; run-less legacy string-roster waves render capacity: [] — the honest object-roster answer",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A4 (stage: doctor-seats-missing): an auto route with >1 eligible candidate, or 0 eligible (saturated), reads all-null — never a fabricated number",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A5 (stage: seats-freshness-label-missing): seats-bearing reads carry observedAtEventSeq = a ledger event seq (never wall time); the source surfaces carry no marker at HEAD",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A6 (stage: doctor-seats-missing): two routes resolving to the same adapter read IDENTICAL counts — the record never claims per-route independence",
-      "reason": "#146"
-    },
-    {
       "key": "test/seat-telemetry-red.test.mjs :: A7 (stage: surface-teaching-missing): baton_deployment_doctor names seats + the split staleness; baton_waves_list names capacity; the CLI doctor helps with the closed field set",
       "reason": "#146"
     },
     {
       "key": "test/seat-telemetry-red.test.mjs :: A8 (stage: doctor-seats-missing): the doctor's enumerable route rows stay the DP5 closed set while seats/observedAtEventSeq land as additive siblings, and the occupancy VALUE for an auto-ambiguous route corrects numeric → null",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A9-1 (stage: capacity-inflight-missing): a wave member dispatched with vendorRequested X reads the counts of X via _resolveExplicitRoute — never adapterFor, never a different vendor",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A9-2 (stage: doctor-seats-missing): doctor/generic path — an auto route with >1 eligible candidate reads all-null (the router pick is unpredictable from route identity alone)",
-      "reason": "#146"
-    },
-    {
-      "key": "test/seat-telemetry-red.test.mjs :: A9-3 (stage: doctor-seats-missing): doctor/generic path — an auto route with exactly ONE eligible candidate reads that candidate's counts",
       "reason": "#146"
     },
     {
@@ -1607,6 +1359,10 @@
       "reason": "#36"
     },
     {
+      "file": "test/cli-wave-fidelity-red.test.mjs",
+      "reason": "#157"
+    },
+    {
       "file": "test/control-surface-truth-red.test.mjs",
       "reason": "#289"
     },
@@ -1641,6 +1397,10 @@
     {
       "file": "test/dispatch-seam-real-omp-red.test.mjs",
       "reason": "#230"
+    },
+    {
+      "file": "test/doc-truth-conformance-red.test.mjs",
+      "reason": "#159"
     },
     {
       "file": "test/doubt-review-red.test.mjs",
@@ -1717,6 +1477,10 @@
     {
       "file": "test/issue314-mcp-core-surface-red.test.mjs",
       "reason": "#314"
+    },
+    {
+      "file": "test/issue402-receipt-policy-red.test.mjs",
+      "reason": "#402"
     },
     {
       "file": "test/issue441-reading-half-red.test.mjs",
@@ -1821,6 +1585,10 @@
     {
       "file": "test/omp-turn-verdict-red.test.mjs",
       "reason": "#236"
+    },
+    {
+      "file": "test/orchestrator-plan-object-red.test.mjs",
+      "reason": "#161"
     },
     {
       "file": "test/orientation-red.test.mjs",
@@ -2029,6 +1797,10 @@
     {
       "file": "test/readiness-honesty-234-red.test.mjs",
       "reason": "#230"
+    },
+    {
+      "file": "test/readiness-honesty-red.test.mjs",
+      "reason": "#167"
     },
     {
       "file": "test/reap-on-terminal-red.test.mjs",

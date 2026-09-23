@@ -14,7 +14,9 @@ import { FRAME_LIMITS, FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
+import { honestLivenessProjection } from './route-liveness.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
+import { SEAT_ATOM_KEYS } from './seat-telemetry.mjs';
 
 import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, SWARM_VIEW_PROJECTION_NAMES,
@@ -41,6 +43,33 @@ import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 //     documents (scripts/surface-divergence-ledger.json, the eight facade ports of #87+#48 and
 //     waves.compile of #170). The surface conformance, the parity matrix and CLI.md pin this
 //     projection, so it stays the byte-stable card view while dispatch follows the bus.
+/** #167 (D2 wire law): one readiness row's honest {verdict, probedAt} projection, re-added by the
+ * CLI's own doctor read — the served card already carries the two fields, and this re-add keeps a
+ * direct in-process read (or a card served by an older resident) honest without a second
+ * staleness derivation (`route-liveness.mjs` owns the law). */
+function withHonestLiveness(row) {
+  if (!row || typeof row !== 'object') return row;
+  return { ...row, ...honestLivenessProjection(row.liveness ?? null) };
+}
+
+// The transports the resident's WIRE CARD covers beyond the application command table: the six
+// wave direct ports (the same set surface-conformance.mjs pins as WAVE_DIRECT_PORT_VERBS and the
+// docs call the web.bus card) and the direct ports whose divergence from that projection the
+// ledger documents (the eight facade ports of #87+#48, waves.compile of #170, and the #161 plan
+// verbs). The gate asserts the ledger's cli rows and this list agree.
+const CLI_CARD_WAVE_PORTS = Object.freeze([
+  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
+]);
+const CLI_CARD_LEDGERED_PORTS = Object.freeze([
+  'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
+  'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
+  'waves.compile',
+  // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
+  'run.resultpin', 'waves.harvest',
+  // Issue #161 (D3.2/D3.4): the plan object's two direct ports — served on the embedded, CLI and
+  // MCP surfaces; the web envelope refuses both spellings and the ledger documents it.
+  'plan.read', 'plan.write',
+]);
 function cliDispatchTransports() {
   const admitted = new Set(webAdmittedCommandNames());
   const dispatchAliases = applicationOperationAliasMap();
@@ -59,24 +88,15 @@ function cliDispatchTransports() {
       if (admitted.has(candidate) || admitted.has(candidate.replaceAll('.', '_'))) names.add(candidate);
     }
   }
+  // The direct ports the CLI serves although the web bus admits no transport for them: the parser
+  // compiles their verbs and the divergence ledger documents the refusal (the #161 plan pair is
+  // the current such set; the bus-admitted direct ports above need no ledger row and stay out).
+  for (const name of CLI_CARD_LEDGERED_PORTS) {
+    if (!admitted.has(name) && !admitted.has(name.replaceAll('.', '_'))) names.add(name);
+  }
   return names;
 }
 const CLI_DISPATCH_TRANSPORTS = Object.freeze([...cliDispatchTransports()].sort());
-// The transports the resident's WIRE CARD covers beyond the application command table: the six
-// wave direct ports (the same set surface-conformance.mjs pins as WAVE_DIRECT_PORT_VERBS and the
-// docs call the web.bus card) and the direct ports whose divergence from that projection the
-// ledger documents (the eight facade ports of #87+#48 plus waves.compile of #170). The gate
-// asserts the ledger's cli rows and this list agree.
-const CLI_CARD_WAVE_PORTS = Object.freeze([
-  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
-]);
-const CLI_CARD_LEDGERED_PORTS = Object.freeze([
-  'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
-  'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
-  'waves.compile',
-  // Issue #99/#179: the accessor's two ledgered direct ports (Decision 5).
-  'run.resultpin', 'waves.harvest',
-]);
 export const CLI_WEB_COMMANDS = new Set(CLI_DISPATCH_TRANSPORTS.filter((name) => (
   (Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, name)
     && APPLICATION_COMMAND_DEFINITIONS[name].web === true)
@@ -1546,6 +1566,11 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     summary: 'Start a Run from an objective, or observe, steer, review, adopt and export one (`baton help run`).',
   }),
   Object.freeze({
+    token: 'plan', verb: 'baton plan read PLAN_ID',
+    argv: Object.freeze(['plan', 'read', 'PLAN_ID']), kind: 'command', parser: 'baton-cli',
+    summary: 'Read the orchestrator campaign plan, or land one idempotency-keyed mutation (`baton plan write PLAN_ID --mutation JSON`).',
+  }),
+  Object.freeze({
     token: 'review', verb: 'baton review OBJECTIVE',
     argv: Object.freeze(['review', 'objective', '--exact', 'mock/model-a@low', '--exact', 'mock/model-b@low']),
     kind: 'command', parser: 'baton-cli',
@@ -1638,6 +1663,30 @@ function topLevelVerbHelpBlocks(topic) {
   ];
 }
 
+/** Issue #146 (D2.3, the #159 surface doctrine): the doctor's seat record is a closed, documented
+ * set, so the help that renders the doctor verb teaches it — the field set, the split staleness
+ * labels, what `deferred` counts, and the vendor scoping. The two topics below are the ones whose
+ * usage carries `baton doctor` (the application overview and the connection topic). */
+function doctorSeatHelpBlocks(topic) {
+  if (topic !== 'application' && topic !== 'connection') return null;
+  return [
+    'the doctor seat record (#146) — `deployment doctor` carries `seats`, and every `waves list` row '
+    + 'carries a `capacity` block; both hold ONE closed atom per route:\n'
+    + `  ${SEAT_ATOM_KEYS.join(', ')}\n`
+    + '  route is the harness/model/effort the atom was derived for, and state is that route\'s '
+    + 'readiness, never a liveness probe.\n'
+    + '  The atom is a point-in-time composition. observedAtEventSeq is the ledger event sequence at '
+    + 'composition and labels the ledger-derived parts (deferred, state, ceiling); inFlightRevision '
+    + 'is the resolved vendor\'s handle-revision counter and labels the live inFlight count, so two '
+    + 'reads with an equal revision carry the same live count. Neither label is a clock.\n'
+    + '  deferred counts the tasks whose dispatch was skipped at the concurrency ceiling and is still '
+    + 'pending. It is not a queue and not a promise of future dispatch: a task whose ceiling has '
+    + 'cleared stays counted until it claims.\n'
+    + '  The counts are vendor-scoped, so two routes the allocator binds to the same adapter read '
+    + 'identical counts; a route the allocator binds to no single vendor reads null, never 0.',
+  ];
+}
+
 /** #306 lane A: the reincarnation verb's help row. The two spellings are ONE command, and the
  * topic renders it wherever the deployment family is read (`baton help deployment`,
  * `baton help deployment.reincarnate`) — the refusals it can draw are named here, in the closed set
@@ -1723,6 +1772,7 @@ export function batonCliHelp(topic = 'application') {
     blocks.push(`Deprecated: use baton ${operation.aliases[0].replaceAll('.', ' ')}.`);
   }
   return [...blocks, ...(topLevelVerbHelpBlocks(helpTopic) ?? []),
+    ...(doctorSeatHelpBlocks(helpTopic) ?? []),
     ...(reincarnationHelpBlocks(topic) ?? []),
     ...(wakeWatchHelpBlocks(topic) ?? []),
     ...(recruitLegHelpBlocks(topic) ?? [])].join('\n\n');
@@ -4236,6 +4286,27 @@ export function parseBatonCli(rawArgs) {
       idempotencyKey,
     };
   }
+  // #161 (D3.2): the plan object's two CLI verbs — `baton plan read PLAN_ID` and
+  // `baton plan write PLAN_ID --mutation JSON`. The parser validates the transport shape only
+  // (the plan ID is an identifier, the mutation is JSON); the plan lane refuses a body that is
+  // not one of the closed mutations, so the deployment owns the shape law and the CLI never
+  // teaches a second copy of it.
+  if (args[0] === 'plan') {
+    args.shift();
+    const sub = args.shift();
+    if (sub !== 'read' && sub !== 'write') throw cliError('expected plan read or plan write');
+    const planId = id(args.shift(), 'plan ID');
+    if (sub === 'read') {
+      noRemainder(args);
+      return { kind: 'command', name: 'plan.read', args: { planId }, idempotencyKey };
+    }
+    const mutationRaw = take(args, '--mutation', { required: true });
+    noRemainder(args);
+    let mutation;
+    try { mutation = JSON.parse(mutationRaw); } catch { mutation = null; }
+    if (mutation === null) throw cliError('--mutation must be JSON carrying the closed plan mutation shape');
+    return { kind: 'command', name: 'plan.write', args: { planId, mutation }, idempotencyKey };
+  }
   if (args.shift() !== 'run') {
     // #340: the refusal names the CLOSED top-level verb set (CLI_TOP_LEVEL_VERBS) — the same rows
     // `baton --help` teaches and CLI.md is generated from, never a hand list that drifts from them.
@@ -4765,6 +4836,10 @@ export function parseBatonCli(rawArgs) {
 
 export class BatonWebClient {
   #token;
+  // #167 (A2): the operator's one-shot on-demand probe request (`baton doctor --check`). A request
+  // rather than a doctor() parameter because `doctor()` is the fixed reading verb every caller
+  // shares; the request is consumed by the next doctor read and never re-fires.
+  #forceProbe = false;
 
   constructor(options) {
     // socketPath is optional: a local resident's wake attachment rides the owner-only Unix socket
@@ -4825,6 +4900,11 @@ export class BatonWebClient {
     this.sleep = options.sleep;
     this.frameFor = options.frameFor ?? null;
   }
+
+  /** #167 (A2/D1 trigger 3): mark this client's NEXT doctor read as the operator's on-demand probe
+   * trigger. The served card refreshes exactly the stale routes once (its own cache discipline
+   * decides staleness), so a repeated `baton doctor --check` costs no extra provider turn. */
+  requestForceProbe() { this.#forceProbe = true; }
   _headers(json = false) {
     return { authorization: `Bearer ${this.#token}`, origin: this.origin, ...(json ? { 'content-type': 'application/json' } : {}) };
   }
@@ -4941,10 +5021,25 @@ export class BatonWebClient {
 
   async doctor() {
     const readiness = await this._readiness();
-    const card = await this._json('/v1/application-card', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
+    // #167 (A2/D1 trigger 3): a `requestForceProbe()` request rides the operator path to the served
+    // card, which refreshes exactly the stale routes ONCE through the deployment's own probe handle —
+    // this is the read `baton doctor --check` triggers, and the cache discipline decides what is
+    // stale. One-shot: the request is consumed here.
+    const forceProbe = this.#forceProbe === true;
+    this.#forceProbe = false;
+    const card = await this._json(
+      `/v1/application-card${forceProbe ? '?forceProbe=1' : ''}`,
+      { headers: { ...this._headers(), 'sec-fetch-site': 'none' } },
+    );
     const deployment = record(card?.application?.readiness)
       ? card.application.readiness : null;
-    const routes = Array.isArray(deployment?.routes) ? deployment.routes : [];
+    // #167 (D2 wire law): the honest {verdict, probedAt} projection is re-added on THIS read too, so
+    // a consumer of the CLI's doctor sees it whether the card carried it or not.
+    const routes = Array.isArray(deployment?.routes)
+      ? deployment.routes.map((row) => {
+        const { verdict, probedAt } = withHonestLiveness(row);
+        return { ...row, verdict, probedAt };
+      }) : [];
     // Issue #476: the stopping section #467 puts on the served card, carried through verbatim —
     // the reading consumer renders the state and the waits the stop holds, and never re-derives
     // either. Null (never absent) for a resident that is not stopping.
@@ -4955,6 +5050,13 @@ export class BatonWebClient {
       stopping,
       deployment,
       routes,
+      // Issue #146 (D2.1): the served readiness carries the fleet seat projection and the
+      // composition's ledger sequence. The CLI reads both through, the same way it reads routes —
+      // the resident derives them, and a document that does not carry them reads the honest empty
+      // shape rather than a CLI-side guess.
+      seats: Array.isArray(deployment?.seats) ? deployment.seats : [],
+      observedAtEventSeq: Number.isSafeInteger(deployment?.observedAtEventSeq)
+        ? deployment.observedAtEventSeq : null,
       // Epic #103 (D6c): the CLI is a READING consumer of the non-enumerable doctor sibling — it
       // adds the ONE named additive briefing field (never a text render). Property access reads
       // the sibling; an absent pack is an honest null (D5b/B5).
@@ -5592,7 +5694,12 @@ async function runSwarmIntegrateCli(parsed, client) {
 
 export async function runBatonCli(parsed, client, options = {}) {
   if (parsed.kind === 'help') return { help: BATON_CLI_HELP };
-  if (parsed.kind === 'doctor') return client.doctor();
+  if (parsed.kind === 'doctor') {
+    // #167 (A2): `baton doctor --check` is the operator's on-demand probe trigger — the request is
+    // handed to the reading verb, which forwards it to the served card.
+    if (parsed.check === true) client.requestForceProbe();
+    return client.doctor();
+  }
   if (parsed.kind === 'route') {
     const doctor = await client.doctor();
     const routes = servedCliRoutes(doctor);
