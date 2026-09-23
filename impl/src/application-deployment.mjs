@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { BatonApplication } from './application.mjs';
+import { harnessWakeCapabilityForHarnesses } from './wake-delivery.mjs';
 import { bindBaton } from './application-client.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { BatonWebClient } from './application-cli.mjs';
@@ -3619,6 +3620,12 @@ class BatonDeployment {
     const routeUsage = this.#routeUsageRows(routes, profiles);
     const base = {
       ...this.#readiness, ready, routes, routeUsage,
+      // Issue #564: the per-harness turn-starting capability of this deployment's served routes.
+      // The doctor names, for each harness this deployment can run, how a root-addressed wake
+      // starts a turn in an idle session of it, or that no channel exists: the served
+      // BATONDeployment.doctorReadiness is the surface `deployment.doctor` and the resident facade
+      // read, so the rows must ride THIS base, never only the bare application's.
+      wakeDelivery: harnessWakeCapabilityForHarnesses(routes.map((route) => route.harness)),
       // #317 (docs/50 D5): the services section rides the doctor beside routeUsage — present only
       // when the deployment declares services, so the composed document's shape is unchanged for
       // a deployment without the section (D7).
