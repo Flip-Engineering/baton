@@ -965,6 +965,25 @@ const targetFactsOf = (repoRoot, memo) => {
   if (memo) memo.set(repoRoot, facts);
   return facts;
 };
+/** The integrate verb's ONE omitted-target derivation, over `targetRefOf`'s answer: the branch
+ * when the checkout has one; on a DETACHED checkout — where `targetRefOf` can only answer the
+ * literal 'HEAD', which names no branch — the local branch whose tip is the checkout's own commit.
+ * No branch, or several, name that commit: the derivation cannot pick, so it refuses
+ * `integrate_target_undetermined`, naming the detached checkout and its candidates, and the caller
+ * names the target. The #438 view facts read `targetRefOf` itself and never move with this. */
+const landingTargetOf = (repoRoot) => {
+  const branch = targetRefOf(repoRoot);
+  if (branch !== 'HEAD') return branch;
+  const head = gitRead(['rev-parse', 'HEAD'], repoRoot);
+  if (head === null) return 'HEAD';
+  const named = gitRead(
+    ['for-each-ref', '--format=%(refname:short)', '--points-at', head, 'refs/heads'], repoRoot);
+  const candidates = named === null ? [] : named.split('\n');
+  if (candidates.length === 1) return candidates[0];
+  refuse(`the deployment's checkout is detached at ${head} and no single local branch names that`
+    + ' commit — pass the landing target explicitly', 'integrate_target_undetermined',
+  { repoRoot, head, candidates, rule: 'one-branch-at-detached-head' });
+};
 /** A participant's base, derived from the repository at read time (issue #301): the commit its
  * checkout shows, the deployment target that checkout is measured against, and how many target
  * commits the checkout lacks — so drift is visible BEFORE a capture, not discovered after one.
@@ -7700,11 +7719,13 @@ export class SwarmRuntime {
         command: 'swarm.integrate', rule: 'integration-authority',
       });
     }
-    // Issue #43 AX (2026-09-21): `target` is optional at every surface now — omitted, the
-    // landing targets the deployment's own branch (the branch its checkout has current, the
-    // ONE derivation the #438 target facts read), which is what every receipt already names.
+    // Issue #43 AX (2026-09-21): `target` is optional at every surface now — omitted, the landing
+    // targets the deployment's own checkout: its branch (targetRefOf), or — the checkout being
+    // detached, where targetRefOf can only answer the literal 'HEAD' — the local branch at the
+    // checkout's own commit (landingTargetOf, the ONE derivation this verb reads). The #438 view
+    // facts keep reading targetRefOf itself, so what they report never moves with this.
     const target = typeof args.target === 'string' && args.target.length > 0
-      ? args.target : targetRefOf(authority.repoRoot);
+      ? args.target : landingTargetOf(authority.repoRoot);
     const contract = this._contributionContract(contribution);
     const subject = typeof contract?.subject === 'string' && contract.subject.length > 0
       ? contract.subject
