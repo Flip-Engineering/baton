@@ -706,6 +706,13 @@ export function constructor(coordinator, opts) {
     coordinator._tasks = new Map();
     /** @type {string[]} creation order, for FIFO dispatch */
     coordinator._taskOrder = [];
+    /**
+     * Issue #65: the task ids whose _dispatch this process is inside RIGHT NOW. A worker's
+     * up-channel event handled synchronously inside its own spawn ticks the coordinator, and the
+     * dispatch pass must not re-enter the frame that owns that task's claim (see _dispatchPass).
+     * @type {Set<string>}
+     */
+    coordinator._dispatching = new Set();
     /** @type {Map<string, object>} workerId -> WorkerHandle (internal) */
     coordinator._workers = new Map();
     /** @type {Map<string, object>} requestId -> pending question/approval record */
