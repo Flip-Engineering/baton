@@ -252,3 +252,27 @@ test('564-w3: deployment open refuses every configured harness that cannot start
   }
   assert.equal(created, false, 'the invalid target refuses before driver construction');
 });
+
+test('572-w4: a real parentless turn report reaches the resident root transport once', async (t) => {
+  const sent = [];
+  const f = fixture(t, {
+    target: TARGET,
+    discovery: async () => JSON.stringify([{ sessionId: TARGET.sessionId, pid: 564 }]),
+    transport: async ({ frame }) => { sent.push(frame); },
+  });
+  await f.call('create', { purpose: 'Deliver turn reports to root' });
+  await f.call('recruit', { participantId: 'lead', objective: 'Complete assigned work' });
+  const report = { swarmId: 'swarm-564', participantId: 'lead', workerId: 'w-1',
+    turnSeq: 572, turnEpoch: 1, report: { status: 'completed', summary: 'Ready for the next assignment' } };
+  await f.runtime.reportTurnEnd(report);
+  const deliveries = () => f.store.eventsView().filter((row) =>
+    ['wake.root_delivered', 'wake.root_undelivered'].includes(row.payload?.kind));
+  await waitFor(deliveries, (rows) => rows.length > 0, { label: 'root delivery result' });
+  assert.equal(deliveries()[0].payload.kind, 'wake.root_delivered',
+    JSON.stringify(deliveries()[0].payload));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].message.content, /Ready for the next assignment/);
+  await f.runtime.reportTurnEnd(report);
+  assert.equal(deliveries().length, 1);
+  assert.equal(sent.length, 1);
+});
