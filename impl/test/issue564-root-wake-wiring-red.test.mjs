@@ -303,3 +303,27 @@ for (const runId of ['run-plain', null]) {
     assert.equal(sent.length, 1);
   });
 }
+
+test('572-w6: a failed root send retries without a new report and preserves message identity', async (t) => {
+  const attempts = [];
+  const discovery = async () => JSON.stringify([{ sessionId: TARGET.sessionId, pid: 572 }]);
+  const transport = async ({ frame }) => {
+    attempts.push(frame);
+    if (attempts.length === 1) throw new Error('temporary socket failure');
+  };
+  const f = fixture(t, { target: TARGET, discovery, transport, retryDelayMs: 1 });
+  const source = f.recordTurnOwed().event;
+  const outcomes = () => f.store.eventsView().filter((row) => row.payload?.seq === source.seq
+    && ['wake.root_delivered', 'wake.root_undelivered'].includes(row.payload?.kind));
+  await waitFor(outcomes, (rows) => rows.some((row) => row.payload.kind === 'wake.root_delivered'),
+    { label: 'retry delivery' });
+  assert.deepEqual(outcomes().map((row) => row.payload.kind),
+    ['wake.root_undelivered', 'wake.root_delivered']);
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0].msg_id, attempts[1].msg_id);
+  const replay = await deliverRootWakeFrame({
+    store: f.store, frame: deriveWakeFrame(source), target: TARGET, discovery, transport,
+  });
+  assert.deepEqual(replay, { delivered: false, duplicate: true });
+  assert.equal(attempts.length, 2);
+});

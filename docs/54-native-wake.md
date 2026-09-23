@@ -290,3 +290,6 @@ the Claude Code session socket; the capability table reports which harnesses can
 The resident subscribes to root-addressed wakes and records `wake.root_delivered` or
 `wake.root_undelivered` with the source sequence, wake class, and swarm identity. Deployment worker
 reports have a null swarm identity. A delivered report's replay does not send a second message.
+Failed sends retain their receipt and retry while the resident attachment remains active. Each
+attempt uses the same message ID, derived from the source wake identity. A successful delivery
+ends retries; shutting down the attachment cancels its pending retry timer.
