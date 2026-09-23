@@ -26,7 +26,6 @@ import {
   attachedToExistingCheckout, isPhysicalWorkspaceId, workspaceAttachmentOf,
   workspaceCustodyRecord, workspaceHolders,
 } from './shared-workspace-custody.mjs';
-import { pathInScope } from './runtime-observation.mjs';
 import { REARM_KINDS, typedTerminalCode } from './runtime-recovery.mjs';
 import { sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 
@@ -62,10 +61,6 @@ export function _deadlineDue(coordinator) {
     }
     for (const waiter of coordinator._stopWaiters.values()) {
       if (!waiter.finalized && waiter.deadlineAt != null && now >= waiter.deadlineAt) return true;
-    }
-    for (const handle of coordinator._workers.values()) {
-      const stall = handle.stallSeamCycle;
-      if (stall && stall.answered === false && now >= stall.mintedAt + stall.windowMs) return true;
     }
     return false;
   }
@@ -110,72 +105,6 @@ export function providerSilenceAttention(coordinator, workerId) {
       summary: 'no provider traffic observed this turn',
       note: typeof payload.note === 'string' ? payload.note : null,
       lastTrafficAt: typeof payload.lastTrafficAt === 'string' ? payload.lastTrafficAt : null,
-    };
-  }
-
-export async function _claimLivenessPreflight(coordinator, handle, task, record) {
-    // CP2 trigger (brief arm): mirror the gate's would-fire test verbatim (:12530).
-    if (task.brief?.analysis || !task.brief?.requiredEffects?.includes('repository_edit')) {
-      return { ok: true };
-    }
-    // CP2 fidelity law 1: capture with the gate-identical worktree + authority kwargs (:12490-12498).
-    await Promise.resolve(handle.worktreeReady);
-    const captured = await coordinator._captureTrustWorktree(handle, task);
-    const sha = captured && captured.sha;
-    const changedPaths = Array.isArray(captured?.changedPaths) ? captured.changedPaths : [];
-    const inScopeChangedPaths = changedPaths.filter((path) => pathInScope(task.brief.pathScope, path));
-    // CP2 fidelity laws 2-3: baseSha derives sessionContext ?? captured (:12531); the in-scope
-    // filter is the gate's own (:12511). The gate would fire (diffless) when ANY arm of the
-    // five-way test holds (:12532) — only a real in-scope diff lets the claim proceed.
-    const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
-    if (sha && baseSha && sha !== baseSha && changedPaths.length > 0 && inScopeChangedPaths.length > 0) {
-      return { ok: true };
-    }
-    // CP3 + CP4: scan the worker's OWN stream inside the pause epoch for the CLOSED counted set.
-    // Every class is a hub-receipted ok:true, a governance/watchdog-observed worker content event,
-    // or a resolution minted inside the window. Failed receipts, pending interactions, lifecycle
-    // markers, board.claim_result and capability_op (CP7) never count; stale-epoch events never
-    // count (CP4's anti-stale law).
-    //
-    // Epoch spaces: worker-stream events (tool_calls, messages, provider_calls, hub receipts) are
-    // logged at the WIRE epoch, the pause record's `turnEpoch` is the terminal event's wire epoch,
-    // but resolution mints (question.answered/approval.resolved/decision.settled) carry the
-    // COORDINATOR fence epoch (`_safeTurnEpoch`). `wireEpochOffset` is the stable wire→fence
-    // alignment set at the first qualifying wire event, so a resolution's fence epoch equals
-    // `record.turnEpoch + wireEpochOffset` exactly when it was resolved inside the pause's own
-    // asking turn (a stale answer mints `control.stale_rejected`, never a resolution — fencing
-    // keeps the epoch comparison honest on both sides).
-    const epochOffset = handle.wireEpochOffset ?? 0;
-    const inPauseEpoch = (event) => (
-      event.kind === 'question.answered' || event.kind === 'approval.resolved' || event.kind === 'decision.settled'
-        ? event.turnEpoch === record.turnEpoch + epochOffset
-        : event.turnEpoch === record.turnEpoch
-    );
-    const counts = {
-      analysisMessages: 0, approvalsResolved: 0, contextReadOk: 0, decisionsSettled: 0,
-      providerCalls: 0, questionsAnswered: 0, scratchpadWriteOk: 0, toolCalls: 0,
-    };
-    let counted = 0;
-    for (const event of coordinator._log.read(record.worker)) {
-      if (!inPauseEpoch(event) || event.seq > record.mintedEvent) continue;
-      if (event.kind === 'scratchpad.write_result' && event.payload?.ok === true) counts.scratchpadWriteOk += 1;
-      else if (event.kind === 'context.read_result' && event.payload?.ok === true) counts.contextReadOk += 1;
-      else if (event.kind === 'content.tool_call' && event.actor === 'worker') counts.toolCalls += 1;
-      else if (event.kind === 'content.message' && event.actor === 'worker') counts.analysisMessages += 1;
-      else if (event.kind === 'resource.provider_call' && event.actor === 'worker') counts.providerCalls += 1;
-      else if (event.kind === 'question.answered') counts.questionsAnswered += 1;
-      else if (event.kind === 'approval.resolved') counts.approvalsResolved += 1;
-      else if (event.kind === 'decision.settled') counts.decisionsSettled += 1;
-      else continue;
-      counted += 1;
-    }
-    if (counted === 0) return { ok: true };
-    return {
-      ok: false,
-      liveness: counts,
-      reason: 'worker shows read-only liveness inside this pause epoch but no in-scope diff; '
-        + 'nudge the worker to continue and claim the NEXT checkpoint, or wait — '
-        + 'this pause remains claimable',
     };
   }
 

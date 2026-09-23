@@ -255,13 +255,6 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
-    wakeClass: 'resume_decision_required', scope: 'swarm', terminal: true,
-    next: 'baton swarm guide {swarmId} {participantId}',
-    summary: 'a recovered seat awaits its orchestrator\'s decision whether to continue the interrupted work',
-    rows: [ledgerKind('swarm.resume_decision_requested')],
-    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
-  }),
-  wakeRow({
     wakeClass: 'incarnation_changed', scope: 'deployment', terminal: false, next: null,
     summary: 'the resident reincarnated over this deployment — a successor incarnation serves it now, or the handoff failed before its successor published and the same incarnation went on serving; re-read the view (the rows and the attachment you held came from the predecessor)',
     // #306 (lane B): the successor records `host.reincarnated {from, to}` when it sees the old
@@ -282,7 +275,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,
     next: 'baton swarm guide {swarmId} {participantId}',
-    summary: 'a turn paused and stays paused until a caller claims, nudges, or waits on it',
+    summary: 'a turn ended and its orchestrator receives the report to decide continuation',
     rows: [operationalKind('turn.paused')],
     subject: { field: 'worker', kind: 'worker', fallback: { field: 'taskId', kind: 'task' } },
   }),
@@ -296,6 +289,27 @@ export const WAKE_CLASS_TABLE = Object.freeze([
       operationalKind('decision.requested'), operationalKind('decision.settled'), operationalKind('decision.expired'),
     ],
     subject: { field: 'requestId', kind: 'request', fallback: { field: 'worker', kind: 'worker' } },
+  }),
+  wakeRow({
+    // Issue #564 (addressing half): work that only the root can act on gets a wake ADDRESSED to
+    // the root. The runtime derives one durable row per trigger on the contribution write path —
+    // `review_owed` when no other active seat holds the review permission at that moment (the
+    // check is the root's to run), `needs_root` per needsFromOthers item whose text is addressed
+    // to the root — and this class is what such a row wakes. Deployment scope: a root session's
+    // deployment-wide subscription receives it, exactly like `attention`, its sibling. Terminal:
+    // the row names the act (run the check, read the view), and the acknowledgement is that act.
+    wakeClass: 'root_owed', scope: 'deployment', terminal: true,
+    next: 'baton swarm view {swarmId}',
+    summary: 'a contribution waits on the root — a check no other active seat can review, or a needsFromOthers item addressed to the root',
+    rows: [operationalKind('swarm.root_attention_owed')],
+    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
+  }),
+  wakeRow({
+    wakeClass: 'root_turn_reported', scope: 'deployment', terminal: true,
+    next: 'baton run view {runId}',
+    summary: 'a worker turn ended and its report is addressed to the root orchestrator',
+    rows: [operationalKind('worker.turn_reported')],
+    subject: { field: 'worker', kind: 'worker', fallback: { field: 'runId', kind: 'run' } },
   }),
   wakeRow({
     wakeClass: 'guidance_delivered', scope: 'deployment', terminal: false, next: null,
@@ -556,7 +570,7 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     runId,
     actor: event.actor ?? null,
     subject: subjectOf(row, payload),
-    next: renderNext(row, coordinates),
+    next: row.wakeClass === 'root_turn_reported' && runId === null ? null : renderNext(row, coordinates),
     observation: false,
     served: servedHeader(served),
     // The bounded row identity: what woke the consumer, never a copy of a 60 KiB view (the wake
