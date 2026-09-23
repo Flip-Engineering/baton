@@ -2,11 +2,13 @@
 // the push is the last step, so an environment that holds no credential for the declared remote
 // (the hermetic landing git environment reads no global git config, so an HTTPS declaration fails
 // with `fatal: could not read Username`) spent the entire gate run and then reported only the git
-// tail. The fix: a cheap pre-flight of the declared remote BEFORE the gate run — one `git
-// ls-remote` in the same hermetic environment the push will use — that refuses typed and
-// immediately, naming which of the two failed: the destination does not exist or cannot be
-// reached (`integrate_publish_unreachable`), or this environment cannot authenticate to it
-// (`integrate_publish_unauthenticated`).
+// tail. The fix: a cheap pre-flight of the declared remote BEFORE the gate run — one `git push
+// --dry-run` (the same command as the landing's own push: reads alone prove nothing, because a
+// public-read remote lists refs to an anonymous fetch and still refuses the push) in the same
+// hermetic environment the push will use, naming a throwaway ref that writes nothing on either
+// side. It refuses typed and immediately, naming which of the two failed: the destination does
+// not exist or cannot be reached (`integrate_publish_unreachable`), or this environment cannot
+// authenticate to it (`integrate_publish_unauthenticated`).
 //
 // Every row below runs on a REAL temporary repository with a REAL lane branch, following the
 // issue558 fixture conventions, and pins the two pre-flight refusals:
@@ -14,7 +16,10 @@
 //   (a) a declared remote whose destination does not exist refuses `integrate_publish_unreachable`
 //       before any gate file runs;
 //   (b) a declared remote that answers but cannot authenticate this environment refuses
-//       `integrate_publish_unauthenticated` before any gate file runs.
+//       `integrate_publish_unauthenticated` before any gate file runs;
+//   (c) a remote that serves reads but refuses every push (401 on receive-pack) refuses
+//       `integrate_publish_unauthenticated` before any gate file runs — the half an ls-remote
+//       pre-flight cannot catch.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
