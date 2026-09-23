@@ -695,6 +695,20 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({ ...repo, topic: runId, depth: { type: 'string', enum: APPLICATION_SEMANTIC_REGISTRY.depths }, runId }, ['repoId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // Issue #555: the seed leg is a #314 core-table projection source — baton_knowledge
+  // {verb: 'seed'} projects THIS row's schema, so the ordinary table carries it.
+  {
+    name: 'baton_run_knowledge_seed',
+    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
+    inputSchema: schema({
+      ...repo, runId,
+      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
+      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
+      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
+    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   {
     // CS-2: baton_runs was already in ORDINARY_APPLICATION_ENTRIES dispatch (sibling of the
     // advertised set) but missing from the tool table — advertise it on the application surface.
