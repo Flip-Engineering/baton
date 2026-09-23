@@ -238,6 +238,49 @@ Evidence: proposed — the #556 incident and the operator direction relayed 2026
 
 ---
 
+## Proposed addition, revision 10: no parking pending an external act
+
+Proposed 2026-09-23 by operator direction, for Codex law review. This entry is not approved, and it
+does not enter the 16 operative entries until the review answers the questions below.
+
+**Statement.** The runtime never deliberately pauses, idles or truncates an agent's work. No
+transition may move live work into a state whose only exit is an explicit act by another party
+(claim, nudge, guide, resume decision, review).
+
+**Evidence from current Baton.**
+
+- Commit `89661c1f` (2026-09-12, "fix: preserve native agent capabilities and explicit completion
+  authority") changed turn checkpoints so every completed swarm turn parks until an external
+  `claim_turn` or `nudge_turn`. The commit carries no issue and no review.
+- `c200ced7` forced every swarm participant through that park.
+- On 2026-09-23 every live seat of this deployment parked by 06:40 UTC and stayed parked for seven
+  hours: work that finished after the last external act was not resumed by the runtime.
+- Issue #572 removes the park and replaces it with an immediate continue nudge at turn end, and
+  AGENTS.md bans the pattern.
+
+**Shape in the rewrite.** The law is stated so the parked state is unrepresentable rather than
+merely forbidden: the work state's type carries only states whose exit the runtime itself takes, the
+turn loop's exit function is total over that type, and the law requires every state's exit to be the
+runtime's own. Neither half can be given up silently: a state the exit function does not cover is
+refused, and a state whose exit an external act takes makes the law's obligation unsatisfiable.
+`examples/laws-no-park.bend` states the model and the law, and `examples/laws-no-park.evidence.md`
+records both controls at the pin. The operator's expected shape is the continue nudge at turn end:
+the runtime's own exit from the completed-turn state.
+
+**Questions for law review.**
+
+1. Is the statement expressible at the pin as written, where a state whose only exit is another
+   party's act cannot be constructed beside the law, or does the unrepresentability claim need a
+   stronger type-level obligation than the discharged law and its two controls supply?
+2. Does the entry meet the law definition (a forbidden behavior with an enforcement anchor), or is
+   it tested behaviour that belongs in the trace as a test obligation rather than as a law?
+3. Does the law admit the waits that are not parks: a run waiting on a verification lease, a seat
+   waiting on a provider retry, or a gate run waiting on a runner, each of which the runtime itself
+   resumes? The distinguishing shape proposed here is that such a wait carries a runtime-taken exit
+   in its own state, while a park carries none.
+
+---
+
 ## Deferred and excluded
 
 - **M-15 (whole-mandate admission) — deferred to the design notes.** The forbidden behavior is
