@@ -13606,7 +13606,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1102,
+          "size": 1134,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -14263,7 +14263,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1238,
+          "size": 1239,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
