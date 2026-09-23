@@ -505,13 +505,15 @@ fields each kind requires of the caller are read from the payload schemas
 | `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
 
-**Runtime-owned driver kinds (never caller-submittable, 12).** The operation lifecycle and refusal rows the runtime
+**Runtime-owned driver kinds (never caller-submittable, 14).** The operation lifecycle and refusal rows the runtime
 records for itself, disjoint from the caller-submittable set above:
 
 - `swarm.operation_requested`
 - `swarm.operation_unavailable`
 - `swarm.operation_completed`
 - `swarm.operation_refused`
+- `wake.root_delivered`
+- `wake.root_undelivered`
 - `swarm.integration_started`
 - `swarm.integration_failed`
 - `swarm.integration_swept`
