@@ -111,6 +111,21 @@ export function providerBrief(coordinator, brief, workerId = null, digest) {
       });
     }
   }
+  // Issue #69 (D1/D2): the cite-into-brief seam. A brief that CITES REPL objects carries the
+  // addresses (`replCitations`); the addressed worker's own run resolves each one, and the
+  // resolved set rides the provider-facing value as `replObjects`. Like attention it is attached
+  // to a NEW value, so `task.brief` and its digest stay byte-stable (the recovery-refinement pin
+  // is untouched). The EMPTY citation set attaches nothing, which is what makes both renderers
+  // emit no section at all (the absence-on-empty pin).
+  if (typeof workerId === 'string' && workerId.length > 0
+    && Array.isArray(inner?.replCitations) && inner.replCitations.length > 0) {
+    inner = Object.freeze({
+      ...inner,
+      replObjects: coordinator._citedReplObjects(
+        coordinator._workers.get(workerId)?.runId ?? null, workerId, inner.replCitations,
+      ),
+    });
+  }
   // KG-3 rule 6/6a: augment the provider-facing value with a separate `briefing` block.
   // `briefDigest = canonicalDigest(activeTask.brief)` (:4506) hashes only the inner brief,
   // matched store-side at :2599; a briefing that changes between spawn and recovery cannot
