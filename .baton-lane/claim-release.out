@@ -1,0 +1,13 @@
+{
+  "ok": false,
+  "error": {
+    "message": "claim-sse-attach-issue-320 is held by sse-attach: a claim moves only from its holder — release or hand off your own claim, or an organizer moves any",
+    "code": "swarm_permission_required",
+    "detail": {
+      "field": "participantId",
+      "rule": "claim-holder-or-organize",
+      "claimId": "claim-sse-attach-issue-320",
+      "holder": "sse-attach"
+    }
+  }
+}

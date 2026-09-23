@@ -1,0 +1,13 @@
+{
+  "ok": false,
+  "error": {
+    "message": "Nothing was recorded: inReplyTo must be a ledger seq this swarm holds\nswarm.notify request is invalid: inReplyTo must be a ledger seq this swarm holds",
+    "code": "swarm_command_invalid",
+    "detail": {
+      "field": "inReplyTo",
+      "rule": "field-predicate",
+      "expectation": "a ledger seq this swarm holds",
+      "correction": "inReplyTo must be a ledger seq this swarm holds"
+    }
+  }
+}

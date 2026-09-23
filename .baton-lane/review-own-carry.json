@@ -1,0 +1,8 @@
+{
+  "event": "swarm.contribution_reviewed",
+  "payload": {
+    "contributionId": "contribution-4e9dad30a7f92dcf419f152f612e2c64",
+    "decision": "accept",
+    "reason": "Author review, recorded as the author's own (the same shape as contribution-721b24395f40cb6d98efd460402a2244): the carry is mechanically verified - the sha256 of docs/55-failure-stall.md equals the author revision ac691c01 (b81b3690e3dc), and the delta against master is that one file. The independent check of the DESIGN itself is already recorded on 721b by this seat. A peer or the root can add its own review row on this carry at any time."
+  }
+}

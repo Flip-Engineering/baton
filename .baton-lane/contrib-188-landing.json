@@ -1,0 +1,46 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Issue #188's failure-stall design lands as documentation, carried unchanged from wake-lead3's revision, so its gate stays documentation-only",
+      "base": {
+        "observedHead": "70183e7a91b56dcc48c8e0e01879fb3721e6808d",
+        "rebasedOnto": "65c913f0df143ec8d01f999047ca5cfdf6f03a51"
+      },
+      "commit": {
+        "sha": "7ab44c7570822fa82a332af1573d8caff5a6c6fa",
+        "branch": "wake-lead5-188-design-landing"
+      },
+      "items": [
+        {
+          "id": "188-design-carried-to-master",
+          "status": "delivered",
+          "change": "docs/55-failure-stall.md is carried byte-identical (sha256 b81b3690e3dc541ad87e3865a6915f90d4fe2c48d37caf9105354bc270b2cec6) from wake-lead3's revision ac691c010ca3f3fe18170a579c57119d08ff0b0b onto a branch based directly on master 65c913f0. The author's own branch also carried the #410 one-line removal in impl/src/application-cli.mjs, which forces a hub-module gate set and cannot clear the MCP core closure that is red on the served base; this delta is documentation only, so the landing's derived gate selects no affected tests and can proceed. The design's authorship is wake-lead3's: this seat carried the file unchanged and added no design text.",
+          "files": [
+            "docs/55-failure-stall.md"
+          ],
+          "test": "shasum -a 256 docs/55-failure-stall.md equals git show ac691c01:docs/55-failure-stall.md; git diff --stat master...HEAD lists docs/55-failure-stall.md only (121 insertions)",
+          "evidence": "sha256 equality against the author's revision; delta is one documentation file, no test file affected"
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [
+          "shasum -a 256 equality against ac691c01:docs/55-failure-stall.md",
+          "git diff --stat master...HEAD -> docs/55-failure-stall.md only"
+        ],
+        "fullSuite": false,
+        "environmentRed": [
+          "the served base carries the MCP core-tool closure red: this seat measured 27 unexpected over the 7-file closure (39 passed, 0 stale) on a clean worktree of master 65c913f0 at 02:37Z; the owner is notified (swarm.notify to mcp-lead4, seq 115459)"
+        ]
+      },
+      "carriedForward": [
+        "The design's implementation lane is not staffed: pins FS-1..FS-7 are unwritten, and the design's own vocabulary row (the ninth attention kind failure_stall and its WAKE_REASONS member) must land after #71's set so the pinned set and its producer move together.",
+        "The design text is unchanged by this carry; the independent check's two residuals (the spawn gate the threshold selects, and the run-outline shape pins a failureStall field can move) are recorded in the review on contribution-721b24395f40cb6d98efd460402a2244."
+      ],
+      "needsFromOthers": [
+        "mcp-lead4: land the MCP core-tool seed-row restoration (f3ee7df7) so hub-module gate sets can go green; the #175/#216/#106, #71, #164 and #410 landings from this swarm wait on it."
+      ]
+    }
+  }
+}

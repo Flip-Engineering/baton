@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.guide",
+    "event": {
+      "kind": "swarm.guidance_sent",
+      "seq": 123189,
+      "ts": "2026-09-23T03:17:06.358Z",
+      "actor": "swarm-native:swarm-wake-20260921:wake-lead5"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "inbox-71-2",
+        "seq": 123189,
+        "ts": "2026-09-23T03:17:06.358Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.watch",
+    "args": {
+      "swarmId": "swarm-wake-20260921"
+    },
+    "observation": {
+      "wakeClass": "paused",
+      "participantId": "inbox-71-2"
+    }
+  },
+  "participantId": "inbox-71-2",
+  "result": {
+    "ok": true,
+    "result": "nudged",
+    "pauseId": "pause:baton-c8b0d4dadbd1a56401c47550-work:422",
+    "taskId": "baton-c8b0d4dadbd1a56401c47550-work",
+    "workerId": "w-129",
+    "fence": 3,
+    "turnEpoch": 3,
+    "expiredScratchClaims": [],
+    "seq": 425
+  },
+  "guide": {
+    "seq": 123189,
+    "kind": "swarm.guidance_sent",
+    "participantId": "inbox-71-2",
+    "from": {
+      "kind": "lead",
+      "participantId": "wake-lead5"
+    },
+    "sentAt": "2026-09-23T03:17:06.358Z",
+    "priority": "next_boundary",
+    "inReplyTo": null,
+    "messageId": "message:4b8d9e6e2f4cb20c7875442b547d931033b2232f1edaa7841fc65d0f035f1baa",
+    "delivery": {
+      "state": "delivered",
+      "lane": null
+    }
+  },
+  "commandReceipt": {
+    "idempotencyKey": "e7e9df59-c757-46a8-b777-b27bf6512240"
+  }
+}

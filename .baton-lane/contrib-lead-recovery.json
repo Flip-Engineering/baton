@@ -1,0 +1,79 @@
+{
+  "subject": "Lead recovery after the 02:28:45Z restart: two lanes resumed, five unreviewed rows settled with independent evidence, nine gone holders released, and the second deployment-wide landing blocker measured",
+  "base": {
+    "observedHead": "70183e7a91b56dcc48c8e0e01879fb3721e6808d",
+    "rebasedOnto": "65c913f0df143ec8d01f999047ca5cfdf6f03a51"
+  },
+  "commit": null,
+  "items": [
+    {
+      "id": "seat-recovery-and-staffing",
+      "status": "delivered",
+      "change": "Thirteen dead or left seats inventoried with their workspaces and unpublished commits; the two lanes with the most valuable in-progress work resumed with resumeFrom and exact route options: driver-lanes2 (from driver-lanes, work item driver-lanes, route omp/zai/glm-5.3-flash@max, join seq 114544) and inbox-71-2 (from inbox-71, work item issue-71, same route, join seq 114588). Both admitted (host authority) and live. Nine gone holders released so no work item is held by a dead seat: wait-transport, wave-triage, sse-attach2, attention-ledger2, visibility-274, wave-race-65, inbox-71, driver-lanes (assignment_updated seqs 114646, 114673, 114695, 114698, 114701, 114717, 114720, 114723) and wake-lead3 (seq 114726, its orphaned delegations). Boundary: swarm.stop is NOT in this seat's grant (read, communicate, contribute, review, organize, recruit) - the same typed refusal wake-lead2 recorded - so the thirteen rows still read status=active with runtime=dead and only the root can settle them.",
+      "files": [],
+      "test": "baton swarm.view swarm-wake-20260921 participants (runtime.state, workspace.headSha, delegation.work) and the assignments/claims slices of the full view",
+      "evidence": "participants projection: 13 seats runtime=dead; assignments: every dead seat released, both new seats active; recruit receipts seqs 114544 and 114588; release receipts above"
+    },
+    {
+      "id": "unpublished-work-inventory",
+      "status": "delivered",
+      "change": "Every branch that carries unlanded work is named for the next round, so no lane is lost: (a) baton/ws-e3ac091cdfb9b892f9552b23e75a130e afdeb43a - #175, #216 drive-pump, #106 plus the fixture-identity commit f059a0b8, contract payloads staged at /tmp/contrib-175.json, -216.json, -106.json (driver-lanes2 is publishing them now); (b) baton/ws-557c827d9492bd0b7116f194cc6d7d62 7929f363 - #71 slices 1 and 2, 28 of 30 pinned rows green (inbox-71-2 is finishing it); (c) baton/ws-05f801c9100005eaa31258b70ff75d27 3bc09b44 - #164 blind waits fail loud, accepted by this seat, no live seat; (d) baton/ws-c61f91691c228571c5fc66b16d9a36fd 254ad660 - #255 and #108, no live seat; (e) baton/ws-4400d72b89881546c65140507da741e4 f0a32140 - #274 docs/46 sections 4-6, no live seat; (f) baton/ws-3cde404784be06d4713fe6d3e8da029f c69de1e0/e38ad9ea - #410 one-line removal, staged; (g) wake-lead3's ac691c01 - the #188 design, carried and published by this seat as contribution-4e9dad30; (h) baton/ws-5b8910c8c04e157e7c71a1d02358ddf9 75251b99 and baton/ws-36884ee138c57fa94e28f9c1a65da732 bffd75df are snapshot-only, so issue-320 and issue-65 were never started.",
+      "files": [],
+      "test": "git for-each-ref refs/heads/baton/ws-* with the participants projection (workspace.headSha, commitsTotal)",
+      "evidence": "branch heads and subjects listed above; git merge-base --is-ancestor confirms each is not an ancestor of master"
+    },
+    {
+      "id": "reviews-settled",
+      "status": "delivered",
+      "change": "The five unreviewed contributions were reviewed with independent evidence, not by restating their own claims: the 7-file closure measurement was reproduced first-hand (27 unexpected), issue55-stall-liveness-red was run myself (2 passed, 0 unexpected), the #164 delta was run in a scratch worktree at 3bc09b44 (GREEN 33 passed, 1 expected red, 0 unexpected), and 1a830bfe was verified an ancestor of master by ancestry. Decision accept on contribution-e3dea1b3c26f76ce878953d7d8b4f90e, contribution-8e8680195de7120bf93eba6f9a24604a, contribution-595788318a24e1ebc148047601d7dde0, contribution-47e6b05e6c4e314f93f55bf8c1c0acec, contribution-4ac0b26b12fb2f3a0f26bfa33e82bb16, and on contribution-721b24395f40cb6d98efd460402a2244 whose independent check the lane asked for (anchor audit of all seven citations plus #258/#163 conformance, with two residuals recorded for the implementation lane). swarm.capture/check could not run for any of them: the author worktrees were drained at 02:24Z (UnknownWorktreeError: owned worktree base identity mismatch; wt child is missing), so these are review-plane rows.",
+      "files": [],
+      "test": "node scripts/run-suite.mjs over the 7-file closure; node scripts/run-suite.mjs test/issue55-stall-liveness-red.test.mjs; scratch worktree at 3bc09b44: node scripts/run-suite.mjs test/blind-waits-red.test.mjs; git merge-base --is-ancestor 1a830bfe master",
+      "evidence": "verdicts quoted above; review receipts seqs 115264, 115270, 115272, 115274, 115282, 115289"
+    },
+    {
+      "id": "design-landing-attempted",
+      "status": "partial",
+      "change": "Issue #188's design was carried to a clean landing branch (commit 7ab44c7570822fa82a332af1573d8caff5a6c6fa on wake-lead5-188-design-landing, byte-identical to the author's ac691c01, sha256 b81b3690e3dc, one documentation file) because the author's own branch also carried the #410 one-liner and so could not clear a hub-module gate set. Published as contribution-4e9dad30a7f92dcf419f152f612e2c64 (seq 115641). The dry run was clean: squash 01023fa2, gates skipped no_affected_tests, target master at 65c913f0. The real landing then refused integrate_publish_undeclared: the served deployment declares no advanced.integration.publishRemote, so no landing can publish. Nothing moved; the contribution stays accepted and ready, and the landing is a one-command retry once the declaration returns.",
+      "files": [
+        "docs/55-failure-stall.md"
+      ],
+      "test": "swarm.integrate dryRun true then the real landing, both recorded in this seat's receipts",
+      "evidence": "dry-run receipt squashSha 01023fa292021ae6b347c6b178cdb04d517a93dd, gates verdictLine skipped - no_affected_tests; refusal integrate_publish_undeclared; git ls-remote origin master still 65c913f0df143ec8d01f999047ca5cfdf6f03a51"
+    },
+    {
+      "id": "second-blocker-measured",
+      "status": "delivered",
+      "change": "Two deployment-wide facts seeded as durable knowledge rows so no root has to copy them: the publish-remote gap (every real landing refuses) and the MCP core closure (27 unexpected on the served base, f3ee7df7 takes it to 5). Both were measured by this seat; both are recorded with their reproduction commands.",
+      "files": [],
+      "test": "git ls-remote origin master; the 7-file closure run",
+      "evidence": "knowledge seeds recorded by this seat; swarm.notify to mcp-lead4 seq 115459"
+    }
+  ],
+  "verification": {
+    "targeted": true,
+    "gates": [
+      "node scripts/run-suite.mjs over the 7-file MCP core closure (clean worktree of master 65c913f0): RED 39 passed / 27 unexpected / 0 stale",
+      "node scripts/run-suite.mjs test/issue55-stall-liveness-red.test.mjs: GREEN 2 passed / 0 unexpected",
+      "scratch worktree at 3bc09b44: node scripts/run-suite.mjs test/blind-waits-red.test.mjs: GREEN 33 passed / 1 expected red / 0 unexpected",
+      "swarm.integrate dryRun for contribution-4e9dad30: gates skipped no_affected_tests, squash 01023fa2",
+      "git ls-remote origin master = 65c913f0df143ec8d01f999047ca5cfdf6f03a51"
+    ],
+    "fullSuite": false,
+    "environmentRed": [
+      "the served deployment declares no advanced.integration.publishRemote: every real landing refuses integrate_publish_undeclared (measured 02:40Z)",
+      "the served base 65c913f0 carries the MCP core-tool closure red: 27 unexpected over the 7-file closure (measured 02:37Z), so any hub-module gate set is red"
+    ]
+  },
+  "carriedForward": [
+    "driver-lanes2 and inbox-71-2 are live on their inherited branches and publishing; every landing is serialized through this seat one at a time (two concurrent gate runs are the memory pattern that froze the host on 2026-09-22).",
+    "The #188 implementation lane (pins FS-1..FS-7) is not staffed; its ninth attention kind and failure_stall wake reason must land after #71's set.",
+    "Lanes with real unpublished work and no live seat: #164 (3bc09b44), #255/#108 (254ad660), #274 (f0a32140), #410 (c69de1e0). They need seats in the next round, or the root's disposition.",
+    "claim-sse-attach-issue-320 stays held by a left seat: a claim moves only from its holder or an organizer, and this seat's move refused swarm_permission_required."
+  ],
+  "needsFromOthers": [
+    "the root: restore the landing publish path - start the resident with BATON_PUBLISH_REMOTE=https://github.com/Flip-Engineering/baton.git or declare advanced.integration.publishRemote - otherwise no contribution in this deployment can reach master; confirm with git ls-remote.",
+    "the root: swarm.stop the thirteen dead seats of this swarm (wake-lead, wake-lead2, wake-lead3, wait-transport, wave-triage, sse-attach2, attention-ledger2, visibility-274, wave-race-65, inbox-71, driver-lanes and the two left codex seats); this seat holds no stop permission and the runtime's own attention rows name swarm.stop as the next step.",
+    "the root: rule on the #188 design's one interpretive point (the park bounds a spawn gate; the threshold selects when a review is requested) before an implementation lane is staffed - recorded in the review on contribution-721b24395f40cb6d98efd460402a2244.",
+    "mcp-lead4: land the seed-row restoration f3ee7df7 for the MCP core closure (already notified, seq 115459)."
+  ]
+}

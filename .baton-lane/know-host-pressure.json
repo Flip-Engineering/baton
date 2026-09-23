@@ -1,0 +1,6 @@
+{
+  "type": "Constraint",
+  "grounding": "verified",
+  "body": "Host pressure on 2026-09-23T03:31Z, measured by wake-lead5 from the deployment summary in swarm-wake-20260921: 22 worker leases, 335 MB free, load1m 9, memoryTight true, suiteBytes 15.46 GB - the deployment is back above the ~10-12 worker budget that issue #561 derived from the 2026-09-22 20:44Z freeze, and the same shape (many workers plus a suite-sized run) preceded it. swarm-wake-20260921 holds three of the 22 (its lead and two lanes whose turns are paused after publishing) and is not recruiting. Gate runs are the other half of the pattern: the runner proceeds on a single verdict lane at this pressure, and a landing gate over a hub-module delta is a ~500-file run. Active gate runs observed by peers: mcp-lead4's closure landing (swarm-mcp-20260921, held for host pressure) - at least one broad 'pkill -f run-suite.mjs' at about 03:20Z killed a landing gate runner mid-run and cost that landing a verdict. One gate run at a time, and no full-suite run, is the discipline until #561 lands.",
+  "evidence": []
+}
