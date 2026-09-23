@@ -1,0 +1,666 @@
+diff --git a/impl/src/application-observation.mjs b/impl/src/application-observation.mjs
+index 73b8e85d..04ed85be 100644
+--- a/impl/src/application-observation.mjs
++++ b/impl/src/application-observation.mjs
+@@ -781,16 +781,14 @@ export function debugGateRefusal(events) {
+ // refusals — everything else escalates to null so a raw gate-internal phase name never
+ // crosses to the worker (#73's class).
+ const VERDICT_CHECK_PHASES = Object.freeze(new Set([
+-  'path_scope', 'forbidden_effect', 'required_effect',
++  'path_scope', 'forbidden_effect',
+ ]));
+ // Issue #61 D1 + OQ1 — the hub-minted corrective-class table, keyed by terminal CODE
+-// (never the coarse gate: required_effect_absent degrades to gate unknown but keeps its
+-// corrective). Frozen so a caller cannot rewrite a corrective (#73). A code absent from
++// rather than the coarse gate. Frozen so a caller cannot rewrite a corrective (#73). A code absent from
+ // the table carries corrective null — honest absence, escalate to the orchestrator.
+ export const VERDICT_CORRECTIVE_TABLE = Object.freeze({
+   worker_path_scope_violation: 'in_scope_revision',
+   forbidden_effect_observed: 'forbidden_effect_retraction',
+-  required_effect_absent: 'in_scope_edit',
+   verification_red_green_failed: 'failing_check_fix',
+   verification_coverage_failed: 'coverage_completion',
+   verification_output_exceeded: null,
+@@ -828,21 +826,8 @@ function verdictSurfaceCheck(event, liveCode) {
+ }
+ // Issue #61 D1 (fold Minor 1) — the detail evidence CLASS. Scope and red_green/coverage
+ // reuse debugGateDetail verbatim (digests+counts, sanitizer tail — never paths, never the
+-// raw capsule); required_effect_absent carries the digest/count subset of
+-// requiredEffectEvidence; every other gate carries {}.
+-function verdictSurfaceDetail(gate, liveCode, event) {
+-  if (liveCode === 'required_effect_absent') {
+-    const evidence = event.payload?.requiredEffectEvidence && typeof event.payload.requiredEffectEvidence === 'object'
+-      ? event.payload.requiredEffectEvidence : {};
+-    return {
+-      changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
+-      changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
+-      inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
+-        ? evidence.inScopeChangedPathCount : 0,
+-      inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
+-        ? evidence.inScopeChangedPathsDigest : null,
+-    };
+-  }
++// raw capsule); every other gate carries {}.
++function verdictSurfaceDetail(gate, event) {
+   return debugGateDetail(gate, event);
+ }
+ function isVerdictCandidate(event) {
+@@ -867,7 +852,7 @@ export function projectVerdictSurface(events) {
+     gate,
+     code: debugTerminalCode(liveCode, 'trust_gate_failed'),
+     check: verdictSurfaceCheck(event, liveCode),
+-    detail: verdictSurfaceDetail(gate, liveCode, event),
++    detail: verdictSurfaceDetail(gate, event),
+     corrective: Object.hasOwn(VERDICT_CORRECTIVE_TABLE, liveCode)
+       ? VERDICT_CORRECTIVE_TABLE[liveCode] : null,
+   };
+diff --git a/impl/src/coordinator.mjs b/impl/src/coordinator.mjs
+index f92fcca3..015536f1 100644
+--- a/impl/src/coordinator.mjs
++++ b/impl/src/coordinator.mjs
+@@ -6283,28 +6283,6 @@ export class Coordinator {
+           },
+         });
+       }
+-      // TG5: `analysis: true` documents repository_edit as not-required for this node — the
+-      // required_effect progress verdict is skipped; every other phase (capture, forbidden_effect,
+-      // path_scope, environment, coverage) still runs.
+-      if (!task.brief?.analysis && task.brief?.requiredEffects?.includes('repository_edit')) {
+-        const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
+-        if (!sha || !baseSha || sha === baseSha || changedPaths.length === 0 || inScopeChangedPaths.length === 0) {
+-          trustPhase = 'required_effect';
+-          throw Object.assign(
+-            new Error('approved Plan required a repository edit but capture proved no in-scope diff from its base'),
+-            {
+-              code: 'required_effect_absent',
+-              requiredEffectEvidence: {
+-                requiredEffect: 'repository_edit', baseSha, sha: sha ?? null,
+-                changedPathCount: changedPaths.length,
+-                changedPathsDigest: canonicalDigest(changedPaths),
+-                inScopeChangedPathCount: inScopeChangedPaths.length,
+-                inScopeChangedPathsDigest: canonicalDigest(inScopeChangedPaths),
+-              },
+-            },
+-          );
+-        }
+-      }
+       const baseSha = task.sessionContext?.baseSha ?? null;
+       // Issue #334 acceptance: a read-only run (repository mutation is not authorized) whose
+       // captured candidate changed no path has nothing to verify against the base — the
+@@ -6597,7 +6575,6 @@ export class Coordinator {
+         payload: {
+           message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase,
+           ...(err?.verificationAttempt ? { verificationAttempt: err.verificationAttempt } : {}),
+-          ...(err?.requiredEffectEvidence ? { requiredEffectEvidence: err.requiredEffectEvidence } : {}),
+           ...(err?.pathScopeEvidence ? { pathScopeEvidence: err.pathScopeEvidence } : {}),
+         },
+       });
+@@ -6618,7 +6595,7 @@ export class Coordinator {
+       if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
+       task.status = durable?.status ?? 'failed';
+       if (task.status !== 'completed') task.verdict = null;
+-      if (['forbidden_effect_observed', 'required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
++      if (['forbidden_effect_observed', 'worker_path_scope_violation'].includes(code)) {
+         handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
+         // TG4: the projected terminal cause names the gate — never 'unknown' — on the task
+         // surface too (the handle's copy already fed result() and replay).
+diff --git a/impl/src/runtime-api.mjs b/impl/src/runtime-api.mjs
+index c483be78..babc85cd 100644
+--- a/impl/src/runtime-api.mjs
++++ b/impl/src/runtime-api.mjs
+@@ -63,10 +63,6 @@ export function _deadlineDue(coordinator) {
+     for (const waiter of coordinator._stopWaiters.values()) {
+       if (!waiter.finalized && waiter.deadlineAt != null && now >= waiter.deadlineAt) return true;
+     }
+-    for (const handle of coordinator._workers.values()) {
+-      const stall = handle.stallSeamCycle;
+-      if (stall && stall.answered === false && now >= stall.mintedAt + stall.windowMs) return true;
+-    }
+     return false;
+   }
+ 
+diff --git a/impl/src/runtime-effects.mjs b/impl/src/runtime-effects.mjs
+index 7636975c..549eb6ee 100644
+--- a/impl/src/runtime-effects.mjs
++++ b/impl/src/runtime-effects.mjs
+@@ -1266,12 +1266,6 @@ export async function _deliver(coordinator, recorder, handle, message, mode, opt
+     };
+     if (ack && ack.emulated === true) ev.emulated = true;
+     recorder.log.append(ev);
+-    // D4 rung 2: an orchestrator claim (control.steer / control.nudge) arms the stall-seam cycle
+-    // for a currently-declared stall. Neither steer nor nudge is a REARM kind — they never re-arm
+-    // the watchdog; they claim the stall for the ladder.
+-    if ((mode === 'steer' || mode === 'nudge') && handle.watchdogActions?.has('stall')) {
+-      coordinator._armStallCycle(handle, task, { nudgeId: mode === 'nudge' ? `nudge:${workerId}:${recorder.log.tail(workerId)}` : null, controlId: opts.controlId ?? null });
+-    }
+     // BD3-C: run.send / nudge_turn are ALIASES over the lane — the legacy names mint lane
+     // receipts (message.sent / message.delivered) with identical worker-visible behavior.
+     if (opts.internalKindToken !== ORIENTATION_DELIVERY && recorder.coordination.recordMessage) {
+diff --git a/impl/src/runtime-event-handlers/turn-terminal.mjs b/impl/src/runtime-event-handlers/turn-terminal.mjs
+index 643948a9..baec863f 100644
+--- a/impl/src/runtime-event-handlers/turn-terminal.mjs
++++ b/impl/src/runtime-event-handlers/turn-terminal.mjs
+@@ -52,10 +52,9 @@ export function turnCompleted(coordinator, recorder, ctx) {
+         // decision channel is turn-ending by construction — the worker asks, the hub parks the
+         // task input_required, and THEN the provider's result frame arrives as an ordinary
+         // completed turn. A turn that ends with a blocking interaction STILL PENDING (unsettled)
+-        // has by definition not produced its final diff, so the trust gate must not evaluate it
+-        // (required_effect_absent killed the gated worker before the orchestrator could
+-        // answer). Deferral, never exemption: the post-settlement continuation turn faces the
+-        // gate. The guard keys on an actually-pending record — a turn that completes DURING
++        // has by definition not produced its final result, so the trust gate must not evaluate it.
++        // The post-settlement continuation turn faces the gate. The guard keys on an
++        // actually-pending record — a turn that completes DURING
+         // answer delivery (record resolving/resolved, e.g. elicitation-style questions, CK2/CK8
+         // phase11) is a completed result and must verify normally.
+         {
+diff --git a/impl/src/runtime-observation.mjs b/impl/src/runtime-observation.mjs
+index e64e068d..91b4cc9b 100644
+--- a/impl/src/runtime-observation.mjs
++++ b/impl/src/runtime-observation.mjs
+@@ -1102,7 +1102,6 @@ export function *_seedCoordinationTasksPasses(coordinator, recorder) {
+         providerTelemetryFailed: false, providerTerminalSeal: null,
+         sessionPreservation: null, preservedTurnEpoch: null,
+         watchdogActions: new Set(), recentFailedActions: [], turnInFlight: false,
+-        stallSeamDigestSet: null, stallSeamCycle: null,
+         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
+         spawnAbort: null, recoverySpawnAbort: null, recoverySpawnPending: false, recoverySpawnPromise: null, recoveryStopReason: null,
+         recoveryProviderReleaseDeferred: false,
+@@ -1689,9 +1688,6 @@ export function _armWatchdog(coordinator, recorder, handle) {
+         return;
+       }
+       handle.watchdogActions?.add('stall');
+-      // D4 rung 2 / E5: a fresh stall lifetime starts with an EMPTY per-stall-LIFETIME digest
+-      // set, cleared only by _clearStall on a qualifying D2 re-arm inside the claimed window.
+-      handle.stallSeamDigestSet = new Set();
+       recorder.log.append({
+         worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
+         kind: 'health.stall_suspected', actor: 'policy',
+@@ -1737,59 +1733,6 @@ export function _mintStallDeclared(coordinator, recorder, handle) {
+     });
+   }
+ 
+-export function _armStallCycle(coordinator, recorder, handle, task, { nudgeId, controlId }) {
+-    if (!handle || !handle.watchdogActions?.has('stall')) return false;
+-    const windowMs = Number.isSafeInteger(coordinator._progressNudgeWindowMs)
+-      ? coordinator._progressNudgeWindowMs : 300_000;
+-    const cycle = {
+-      kind: 'stall_seam',
+-      worker: handle.id,
+-      taskId: task?.id ?? handle.taskId,
+-      nudgeId: nudgeId ?? null,
+-      controlId: controlId ?? null,
+-      mintedAt: coordinator._now(),
+-      windowMs,
+-      answered: false,
+-      basis: 'no_progress_evidence',
+-      lifetime: handle.stallSeamCycle?.lifetime ?? coordinator._now(),
+-    };
+-    handle.stallSeamCycle = cycle;
+-    const timerHandle = coordinator._setTimeout(() => coordinator._expireStallCycleSafely(handle), windowMs);
+-    if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
+-    cycle.timer = timerHandle;
+-    return true;
+-  }
+-
+-export function _expireStallCycle(coordinator, recorder, handle) {
+-    const cycle = handle?.stallSeamCycle;
+-    if (!cycle || cycle.answered !== false) return;
+-    if (coordinator._now() < cycle.mintedAt + cycle.windowMs) return; // window not yet elapsed
+-    cycle.answered = true; // idempotency guard (timer + sweep both reach here)
+-    if (cycle.timer != null) coordinator._clearTimeout(cycle.timer);
+-    const task = coordinator._tasks.get(handle.taskId);
+-    if (handle.turnInFlight === true) {
+-      // Mid-turn: never reap. The stall stays escalated and the watchdog re-arms (D2).
+-      handle.stallSeamCycle = null;
+-      coordinator._armWatchdog(handle);
+-      return;
+-    }
+-    if (!handle.watchdogActions?.has('stall')) {
+-      handle.stallSeamCycle = null;
+-      return;
+-    }
+-    coordinator._preserveProgressBeforeReap(handle, task, null, true)
+-      .then(() => coordinator._applyWatchdogAction(handle, 'kill'))
+-      .catch((error) => coordinator._refuseStallReap(handle, error));
+-  }
+-
+-export function _expireStallCycleSafely(coordinator, recorder, handle) {
+-    try {
+-      coordinator._expireStallCycle(handle);
+-    } catch (error) {
+-      coordinator._recordStallReapRefusal(handle, error);
+-    }
+-  }
+-
+ export function recordedFailures(coordinator, recorder) {
+     return [...(coordinator._failures ?? new Map()).values()].map((row) => Object.freeze({ ...row }));
+   }
+@@ -1834,22 +1777,10 @@ export function _recordTrustGateEscape(coordinator, recorder, handle, error) {
+ 
+ export function _clearStall(coordinator, recorder, handle) {
+     if (!handle) return;
+-    if (handle.stallSeamCycle?.timer != null) coordinator._clearTimeout(handle.stallSeamCycle.timer);
+     handle.watchdogActions?.delete('stall');
+-    handle.stallSeamDigestSet = new Set();
+-    handle.stallSeamCycle = null;
+     coordinator._armWatchdog(handle);
+   }
+ 
+-export function _observeStallSeam(coordinator, recorder, handle, event) {
+-    const cycle = handle?.stallSeamCycle;
+-    if (!cycle || cycle.answered !== false) return;
+-    if (!REARM_KINDS.includes(event.kind)) return;
+-    if (coordinator._now() >= cycle.mintedAt + cycle.windowMs) return; // outside the claimed window
+-    cycle.answered = true;
+-    coordinator._clearStall(handle);
+-  }
+-
+ export function _scheduleScopeOrientation(coordinator, recorder, handle, path) {
+     const policy = coordinator._watchdog.orientation;
+     if (!policy) return { scheduled: false, reason: 'policy_unavailable' };
+@@ -2180,8 +2111,6 @@ export function _observeWatchdogEvent(coordinator, recorder, handle, event) {
+     }
+     if (!REARM_KINDS.includes(event.kind)) return; // EVERYTHING ELSE IS SILENCE
+     coordinator._touchWatchdog(handle);                     // progress evidence re-arms
+-    // D4 rung 2: a qualifying D2 re-arm inside the claimed window answers the stall-seam cycle.
+-    coordinator._observeStallSeam(handle, event);
+   }
+ 
+ export function _observeTurnProgress(coordinator, recorder, handle, event) {
+@@ -3762,4 +3691,3 @@ export function *_terminalizeUnattachedCoordinationTasks(coordinator, recorder)
+       if (handle) handle.status = 'exited';
+     }
+   }
+-
+diff --git a/impl/src/runtime-recovery.mjs b/impl/src/runtime-recovery.mjs
+index 3bfc543a..2709d07e 100644
+--- a/impl/src/runtime-recovery.mjs
++++ b/impl/src/runtime-recovery.mjs
+@@ -3262,15 +3262,6 @@ export function* _replay(coordinator, recorder) {
+               ...(recoveredFault?.detail ? { detail: recoveredFault.detail } : {}),
+             });
+             break;
+-          case 'error':
+-            if (e.actor === 'policy' && e.payload?.phase === 'trust_gate'
+-              && e.payload?.code === 'required_effect_absent') {
+-              terminalStatus = 'failed';
+-              lastResult = null;
+-              verdict = null;
+-              terminalCause ??= deepFreeze({ kind: 'policy_failure', code: 'required_effect_absent' });
+-            }
+-            break;
+           case 'control.forced_stop':
+           case 'control.recovery_terminalized':
+             if (e.kind === 'control.recovery_terminalized') recoveryTerminalized = true;
+diff --git a/impl/test/native-completion-loop.test.mjs b/impl/test/native-completion-loop.test.mjs
+index 47f35835..58367f62 100644
+--- a/impl/test/native-completion-loop.test.mjs
++++ b/impl/test/native-completion-loop.test.mjs
+@@ -191,7 +191,7 @@ async function flush(times = 60) {
+ }
+ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+ 
+-const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
++const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation'];
+ const gateEvents = (coordinator, workerId) =>
+   coordinator._log.read(workerId).filter((event) => gateCodes.includes(event.payload?.code));
+ const verifyRuns = (coordinator, workerId) =>
+@@ -316,7 +316,7 @@ test('N4: an orchestrator nudge is a real continuation — a fresh turn on the S
+   assert.equal(adapter.epoch(handle.id), 2, 'and starts no further turn');
+ });
+ 
+-test('N5: an explicit claim runs the EXISTING verifier — accepted with the diff, refused without it', async () => {
++test('N5: an explicit claim runs the existing verifier with or without a diff', async () => {
+   // (a) the in-scope diff is accepted by the real verifier.
+   const accepted = await nativeCheckpoint({ capture: withDiff });
+   const claimed = await accepted.coordinator.claimTurn(accepted.rows[0].pauseId, { actor: 'orchestrator' });
+@@ -328,17 +328,16 @@ test('N5: an explicit claim runs the EXISTING verifier — accepted with the dif
+   assert.equal(accepted.adapter.calls.prompt.length, 0, 'the claim needed no policy prompt');
+   assert.equal(pauseRows(accepted.coordinator, accepted.task.id).length, 0, 'the record is consumed');
+ 
+-  // (b) the same act without the required effect is refused by the gate's required-effect phase.
+-  const refused = await nativeCheckpoint({ capture: noDiff });
+-  const refusedClaim = await refused.coordinator.claimTurn(refused.rows[0].pauseId, { actor: 'orchestrator' });
+-  assert.equal(refusedClaim.ok, true);
+-  assert.equal(refusedClaim.outcome, 'failed');
+-  assert.equal(refused.task.status, 'failed');
+-  const verdict = gateEvents(refused.coordinator, refused.handle.id)
+-    .find((event) => event.payload?.code === 'required_effect_absent');
+-  assert.ok(verdict, 'the verifier names required_effect_absent — the claim is not accepted on prose');
+-  assert.equal(verdict.payload?.steered, undefined, 'no retired steering receipt exists any more');
+-  assert.equal(refused.adapter.calls.prompt.length, 0, 'and still no policy prompt');
++  // (b) the same act without a diff still reaches and passes the declared verifier.
++  const unchanged = await nativeCheckpoint({ capture: noDiff });
++  const unchangedClaim = await unchanged.coordinator.claimTurn(unchanged.rows[0].pauseId, { actor: 'orchestrator' });
++  assert.equal(unchangedClaim.ok, true);
++  assert.equal(unchangedClaim.outcome, 'completed');
++  assert.equal(unchanged.task.status, 'completed');
++  assert.equal(verifyRuns(unchanged.coordinator, unchanged.handle.id), 1);
++  assert.equal(gateEvents(unchanged.coordinator, unchanged.handle.id).length, 0);
++  assert.equal(unchanged.adapter.calls.kill.length, 0);
++  assert.equal(unchanged.adapter.calls.prompt.length, 0);
+ });
+ 
+ // ===========================================================================
+diff --git a/impl/test/phase73-required-effects.test.mjs b/impl/test/phase73-required-effects.test.mjs
+index 03799b80..5531f268 100644
+--- a/impl/test/phase73-required-effects.test.mjs
++++ b/impl/test/phase73-required-effects.test.mjs
+@@ -10,7 +10,6 @@ import {
+   GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest,
+   normalizePlanRequest,
+ } from '../src/goal-plan.mjs';
+-import { projectTypedTerminalCause } from '../src/application-semantics.mjs';
+ 
+ const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase73-${name}-`));
+ const policy = normalizeGoalPlanPolicy({
+@@ -173,13 +172,7 @@ test('PH3: requiredEffects is a digest-bound subset and supports only repository
+   }
+ });
+ 
+-test('PH4: the ordinary application projection preserves the bounded policy failure cause', () => {
+-  assert.deepEqual(projectTypedTerminalCause({
+-    terminalResult: { terminalCause: { kind: 'policy_failure', code: 'required_effect_absent', private: 'omitted' } },
+-  }), { kind: 'policy_failure', code: 'required_effect_absent' });
+-});
+-
+-test('PH3/PH4: restart replays required-effect authority and the same typed failure without worker claims', async (t) => {
++test('PH3/PH4: restart preserves required-effect metadata after an unchanged result completes', async (t) => {
+   const first = driver('required-replay', {});
+   const authority = await approved(first, 'required-replay', ['repository_edit']);
+   const handle = await spawnApproved(first, 'required-replay', authority);
+@@ -194,16 +187,17 @@ test('PH3/PH4: restart replays required-effect authority and the same typed fail
+   t.after(async () => { await replay.drainAndClose('phase73-required-replay-second').catch(() => {}); });
+   await replay.ready;
+   const result = await replay.coordinator.result(handle.id);
+-  assert.equal(result.status, 'failed');
+-  assert.deepEqual(result.terminalCause, { kind: 'policy_failure', code: 'required_effect_absent' });
+-  assert.equal(result.artifacts, undefined); assert.equal(result.capturedSha, null); assert.equal(result.retainedResultRef, null);
++  assert.equal(result.status, 'completed');
++  assert.equal(result.terminalCause, null);
++  assert.match(result.capturedSha, /^[a-f0-9]{40}$/u);
++  assert.equal(typeof result.retainedResultRef, 'string');
+   const snapshot = replay.coordination.snapshot();
+   assert.deepEqual(snapshot.goalPlan.plans[0].nodes[0].requiredEffects, ['repository_edit']);
+   assert.deepEqual(snapshot.goalPlan.dispatches[0].requiredEffects, ['repository_edit']);
+   assert.deepEqual(snapshot.tasks.find((task) => task.id === 'phase73-required-replay').brief.requiredEffects, ['repository_edit']);
+ });
+ 
+-test('PH3/PH5: required repository_edit rejects an unchanged base before referee or retention', async (t) => {
++test('PH3/PH5: required repository_edit metadata does not reject an unchanged verified result', async (t) => {
+   const instance = driver('unchanged-required', {});
+   t.after(async () => { await instance.drainAndClose('phase73-unchanged-required').catch(() => {}); });
+   const authority = await approved(instance, 'unchanged-required', ['repository_edit']);
+@@ -222,19 +216,18 @@ test('PH3/PH5: required repository_edit rejects an unchanged base before referee
+     const current = await instance.coordinator.result(handle.id);
+     return current.ready ? current : null;
+   });
+-  assert.equal(result.status, 'failed');
+-  assert.deepEqual(result.terminalCause, { kind: 'policy_failure', code: 'required_effect_absent' });
+-  assert.equal(result.capturedSha, null); assert.equal(result.retainedResultRef, null);
+-  assert.equal(result.artifacts, undefined); assert.equal(result.verdict, null);
+-  assert.equal(instance.log.read(handle.id).some((event) => event.kind === 'verify.reverified'), false);
+-  const requiredFailure = instance.log.read(handle.id).find((event) => event.kind === 'error' && event.payload?.code === 'required_effect_absent');
+-  assert.deepEqual(
+-    { changed: requiredFailure.payload.requiredEffectEvidence.changedPathCount, inScope: requiredFailure.payload.requiredEffectEvidence.inScopeChangedPathCount },
+-    { changed: 0, inScope: 0 },
+-  );
+-  assert.match(requiredFailure.payload.requiredEffectEvidence.changedPathsDigest, /^[a-f0-9]{64}$/u);
++  assert.equal(result.status, 'completed');
++  assert.equal(result.terminalCause, null);
++  assert.match(result.capturedSha, /^[a-f0-9]{40}$/u);
++  assert.equal(typeof result.retainedResultRef, 'string');
++  assert.equal(result.verdict?.passed, true);
++  assert.equal(instance.log.read(handle.id).some((event) => event.kind === 'verify.reverified'), true);
++  assert.equal(instance.log.read(handle.id).some((event) => (
++    event.kind === 'error' && event.payload?.phase === 'trust_gate'
++  )), false);
+   assert.deepEqual(instance.coordination.snapshot().goalPlan.dispatches[0].requiredEffects, ['repository_edit']);
+-  assert.equal(instance.coordination.snapshot().artifacts.filter((artifact) => artifact.taskId === 'phase73-unchanged-required').length, 0);
++  assert.ok(instance.coordination.snapshot().artifacts
++    .some((artifact) => artifact.taskId === 'phase73-unchanged-required'));
+ });
+ 
+ test('PH3/PH5: read-only-permitted unchanged work remains valid, while a required in-scope diff passes', async (t) => {
+diff --git a/impl/test/phase92-read-only-result-red.test.mjs b/impl/test/phase92-read-only-result-red.test.mjs
+index cda76650..52ed41d1 100644
+--- a/impl/test/phase92-read-only-result-red.test.mjs
++++ b/impl/test/phase92-read-only-result-red.test.mjs
+@@ -142,9 +142,8 @@ test('P92-OR1: explicit evidence intent accepts a textual capsule and inverse pr
+   });
+   await change.approve();
+   const unchanged = await terminal(change);
+-  assert.equal(unchanged.phase, 'failed');
+-  assert.deepEqual(unchanged.terminalCause, {
+-    kind: 'policy_failure', code: 'required_effect_absent',
+-  });
++  assert.equal(unchanged.phase, 'completed');
++  assert.equal(unchanged.terminalCause, null);
++  assert.equal(unchanged.result?.state, 'accepted');
+   assert.equal(unchanged.resultIntent, 'change');
+ });
+diff --git a/impl/test/tg3-window-red.test.mjs b/impl/test/tg3-window-red.test.mjs
+index b9673259..90e3ee5d 100644
+--- a/impl/test/tg3-window-red.test.mjs
++++ b/impl/test/tg3-window-red.test.mjs
+@@ -225,7 +225,7 @@ function emitContentMessage(adapter, handle, text) {
+   });
+ }
+ 
+-const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
++const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation'];
+ const gateEvents = (coordinator, workerId) =>
+   coordinator._log.read(workerId).filter((event) => gateCodes.includes(event.payload?.code));
+ const settledWith = (coordinator, workerId, basis) =>
+@@ -338,20 +338,17 @@ test('TW-R4: claim_turn runs the existing verifier and completes an in-scope cla
+   assert.equal(adapter.calls.prompt.length, 0, 'the claim needed no policy prompt');
+ });
+ 
+-test('TW-R5: claim_turn on a diffless checkpoint fails the gate — the verifier still demands the effect', async () => {
++test('TW-R5: claim_turn on a diffless checkpoint runs the declared verifier', async () => {
+   const adapter = new ScriptableAdapter();
+   const { coordinator, handle, task, row } = await parked({ adapter, capture: noDiff });
+ 
+   const claimed = await coordinator.claimTurn(row.pauseId, { actor: 'orchestrator' });
+   assert.equal(claimed.ok, true);
+-  assert.equal(claimed.outcome, 'failed', 'the diffless claim is refused by the authoritative gate');
+-  assert.equal(task.status, 'failed');
+-  const verdict = gateEvents(coordinator, handle.id).find((event) => event.payload?.code === 'required_effect_absent');
+-  assert.ok(verdict, 'the gate verdict names required_effect_absent');
+-  assert.equal(verdict.payload?.steered, undefined,
+-    'the retired steering receipt no longer exists on a claim verdict');
+-  assert.equal(verifyRuns(coordinator, handle.id), 0,
+-    'the refusal lands in the gate\'s required-effect phase — the referee never runs (no verify receipt)');
++  assert.equal(claimed.outcome, 'completed');
++  assert.equal(task.status, 'completed');
++  assert.equal(gateEvents(coordinator, handle.id).length, 0);
++  assert.equal(verifyRuns(coordinator, handle.id), 1);
++  assert.equal(adapter.calls.kill.length, 0);
+   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the record is consumed');
+ });
+ 
+diff --git a/impl/test/tight-cell-red.test.mjs b/impl/test/tight-cell-red.test.mjs
+index 62246409..517087a5 100644
+--- a/impl/test/tight-cell-red.test.mjs
++++ b/impl/test/tight-cell-red.test.mjs
+@@ -1280,33 +1280,24 @@ test('TC-23a trust[cell-editing-division-missing]: group.editing divides the gat
+     + 'division is per-member, not all-or-nothing');
+ });
+ 
+-test('TC-23b trust pin: analysis:true skips required_effect even when repository_edit is required — the TG5 hatch', async () => {
+-  // Fold (blue-team B7): the old pin's brief {analysis:true, requiredEffects:[]} left the required-effect
+-  // gate INERT regardless of analysis (coordinator.mjs:12839-12849), so it stayed green even if the analysis
+-  // hatch were removed entirely. The literal B7 fix ({analysis:true, requiredEffects:['repository_edit']})
+-  // is refused at construction by the BU-2-1 brief validator (messages.mjs:92-98: analysis:true WITH
+-  // repository_edit required is a self-contradiction) — so the gate's `!analysis` guard is a runtime
+-  // backstop against exactly that contradictory brief. This pin injects that state (replacing the validated
+-  // brief on the coordinator task) and proves the guard: diffless + analysis:true + repository_edit REQUIRED
+-  // => NOT policy-killed. TC-23c stays the negative control (same requiredEffects, NO analysis => killed).
++test('TC-23b trust pin: analysis metadata does not affect unchanged-result verification', async () => {
+   const { adapter, coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter({ pausable: false }), capture: noDiff });
+   const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, requiredEffects: [] }));
+   const task = coordinator._tasks.get(handle.taskId);
+   task.brief = Object.freeze({ ...task.brief, analysis: true, requiredEffects: ['repository_edit'] });
+   emitTurnCompleted(adapter, handle);
+   await flush(60);
+-  assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
+-    'PIN: analysis:true skips required_effect on a diffless capture EVEN with repository_edit required — the '
+-    + 'TG5 hatch guard (coordinator.mjs:12842), not an inert gate; removing the `!analysis` guard fails this pin');
++  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed');
++  assert.equal(adapter.calls.kill.length, 0);
+ });
+ 
+-test('TC-23c trust pin: an idle EDITING member is still policy-killed — the safe direction', async () => {
++test('TC-23c trust pin: an unchanged editing member reaches verification without a policy kill', async () => {
+   const { adapter, coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter({ pausable: false }), capture: noDiff });
+   const handle = await coordinator.spawn('mock', makeBrief({ requiredEffects: ['repository_edit'] })); // diffless, no analysis
+   emitTurnCompleted(adapter, handle);
+   await flush(60);
+-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
+-    'PIN: a diffless editing member with required repository_edit still fails required_effect_absent (T14b)');
++  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed');
++  assert.equal(adapter.calls.kill.length, 0);
+ });
+ 
+ // ===========================================================================
+diff --git a/impl/test/trust-gate-steering-red.test.mjs b/impl/test/trust-gate-steering-red.test.mjs
+index 90fbc3ef..646f2a8a 100644
+--- a/impl/test/trust-gate-steering-red.test.mjs
++++ b/impl/test/trust-gate-steering-red.test.mjs
+@@ -147,21 +147,23 @@ test('T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no v
+   assert.notEqual(task.status, 'completed', 'no acceptance at a checkpoint either — deferral is non-dispatch');
+   assert.equal(adapter.calls.kill.length, 0, 'the healthy multi-turn worker is never killed');
+   assert.equal(verifyWorktrees, 0, 'non-dispatch means the gate never even builds its verify sandbox');
+-  const gateEvents = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
++  const gateEvents = ['forbidden_effect_observed', 'worker_path_scope_violation'];
+   assert.equal(coordinator._log.read(handle.id).filter((event) => gateEvents.includes(event.payload?.code)).length, 0,
+     'zero gate verdict events');
+   const nudges = adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:'));
+   assert.equal(nudges.length, 0, 'a native checkpoint awaits explicit orchestration');
+ });
+ 
+-test('T2: a FINAL (claim-classified) turn with no diff on a required-edit plan still fails required_effect_absent (anti-gaming pin)', async () => {
++test('T2: a final turn with no diff proceeds through verification without terminating the worker', async () => {
+   const adapter = new ScriptableAdapter({ pausable: false });
+   const { coordinator } = setup({ adapter, capture: noDiff });
+   const handle = await coordinator.spawn('mock', makeBrief());
+   emitTurnCompleted(adapter, handle);
+   await flush(60);
+   const task = coordinator._tasks.get(handle.taskId);
+-  assert.equal(task.status, 'failed', 'finals evaluate exactly as today');
++  assert.equal(task.status, 'completed');
++  assert.equal(adapter.calls.kill.length, 0);
++  assert.ok(coordinator._log.read(handle.id).some((event) => event.kind === 'verify.reverified'));
+   assert.equal(adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:')).length, 0,
+     'no steering cycle is spent on a claim-classified (final) turn');
+ });
+@@ -282,8 +284,8 @@ test('T8b: a pending question and checkpoint survive the retired window', async
+   const task = coordinator._tasks.get(handle.taskId);
+   assert.equal(task.status, 'paused', 'an unanswered question does not authorize a work verdict');
+   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
+-    && event.payload?.code === 'required_effect_absent');
+-  assert.equal(verdictEvent, undefined, 'there is no automatic gate verdict');
++    && event.payload?.phase === 'trust_gate');
++  assert.equal(verdictEvent, undefined, 'there is no automatic gate refusal');
+   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1);
+ });
+ 
+@@ -336,36 +338,31 @@ test('T10b: an explicit claim runs the full gate and carries no invented expiry
+   assert.ok(pauseId, 'the pause record pends');
+   await coordinator.claimTurn(pauseId, { actor: 'orchestrator' }).catch(() => {});
+   await flush(60);
+-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
+-    'the claim runs the full final gate on the edit-free pause');
++  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed',
++    'the claim runs verification on the edit-free pause');
+   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
+-    && event.payload?.code === 'required_effect_absent');
+-  assert.equal(verdictEvent?.payload?.steered ?? null, null,
+-    'a claim-resolved verdict carries NO steering-expiry receipt (the claim is its own authority)');
++    && event.payload?.phase === 'trust_gate');
++  assert.equal(verdictEvent, undefined);
++  assert.equal(adapter.calls.kill.length, 0);
+ });
+ 
+ // ===========================================================================
+ // TG4 — the revision-channel verdict (stage: channel missing)
+ // ===========================================================================
+ 
+-test('T11: a gate failure names its gate in the projected terminal cause and carries the sanitized {gate, detail} verdict', async () => {
++test('T11: an unchanged final result produces no policy failure or gate-refusal event', async () => {
+   const adapter = new ScriptableAdapter({ pausable: false });
+   const { coordinator } = setup({ adapter, capture: noDiff });
+   const handle = await coordinator.spawn('mock', makeBrief());
+   emitTurnCompleted(adapter, handle);
+   await flush(60);
+   const task = coordinator._tasks.get(handle.taskId);
+-  assert.equal(task.status, 'failed');
+-  // (a) the projected terminal cause names the gate — never 'unknown'.
+-  const cause = task.terminalCause ?? task.failure ?? null;
+-  assert.match(JSON.stringify(cause), /required_effect_absent/, 'the projected cause names the gate');
+-  // (b) the refusal is projected as sanitized {gate, detail} — the DG-1 shape the worker's
+-  // next-brief channel consumes (v1.0.1: the byte-identical refinement brief is a non-channel).
++  assert.equal(task.status, 'completed');
++  assert.equal(task.terminalCause ?? task.failure ?? null, null);
+   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
+-    && event.payload?.code === 'required_effect_absent');
+-  assert.ok(verdictEvent, 'the {gate, detail} verdict event exists');
+-  const detail = JSON.stringify(verdictEvent.payload?.detail ?? verdictEvent.payload ?? {});
+-  assert.doesNotMatch(detail, /\/tmp\/wt\//, 'the verdict carries no path strings');
++    && event.payload?.phase === 'trust_gate');
++  assert.equal(verdictEvent, undefined);
++  assert.equal(adapter.calls.kill.length, 0);
+ });
+ 
+ // ===========================================================================
+@@ -428,11 +425,10 @@ test('T13: omitting repository_edit WITHOUT analysis:true is a plan-validation e
+   );
+ });
+ 
+-test('T14: an analysis node\'s final evaluation SKIPS required_effect and runs every other phase', async () => {
++test('T14: an analysis node\'s edit-free final runs verification', async () => {
+   const adapter = new ScriptableAdapter({ pausable: false });
+   const { coordinator } = setup({ adapter, capture: noDiff });
+-  // The analysis field documents repository_edit as not-required for this node — an edit-free
+-  // final does NOT fail required_effect (every other phase still runs).
++  // The analysis field documents repository_edit as not-required for this node.
+   const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, requiredEffects: [] }));
+   emitTurnCompleted(adapter, handle);
+   await flush(60);
+@@ -441,13 +437,14 @@ test('T14: an analysis node\'s final evaluation SKIPS required_effect and runs e
+   assert.ok(['verifying', 'completed'].includes(task.status), `the final evaluates normally otherwise (got ${task.status})`);
+ });
+ 
+-test('T14b: a NON-analysis node\'s edit-free final fails required_effect (the flag is the boundary)', async () => {
++test('T14b: a non-analysis node\'s edit-free final also runs verification', async () => {
+   const adapter = new ScriptableAdapter({ pausable: false });
+   const { coordinator } = setup({ adapter, capture: noDiff });
+   const handle = await coordinator.spawn('mock', makeBrief());
+   emitTurnCompleted(adapter, handle);
+   await flush(60);
+-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed');
++  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed');
++  assert.equal(adapter.calls.kill.length, 0);
+ });
+ 
+ test('T14c: analysis does NOT exempt the violation phases — an out-of-scope diff still fails path_scope', async () => {
+@@ -461,7 +458,7 @@ test('T14c: analysis does NOT exempt the violation phases — an out-of-scope di
+   await flush(60);
+   const task = coordinator._tasks.get(handle.taskId);
+   assert.equal(task.status, 'failed',
+-    'analysis skips required_effect ONLY — forbidden/path_scope keep full strength (authority attack 4 closed)');
++    'analysis does not weaken forbidden/path_scope enforcement');
+ });
+ 
+ // ===========================================================================
+@@ -508,6 +505,7 @@ test('T17: a registered orchestrator claim runs the full gate', async () => {
+   assert.ok(pauseId, 'the pause record pends');
+   await coordinator.claimTurn(pauseId, { actor: 'orchestrator' }).catch(() => {});
+   await flush(60);
+-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
+-    'a claim on an edit-free pause runs the full final gate — required_effect fires exactly as today');
++  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed',
++    'a claim on an edit-free pause runs verification without a policy failure');
++  assert.equal(adapter.calls.kill.length, 0);
+ });

@@ -1,0 +1,32 @@
+file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/src/wave-driver.mjs:558
+      wave = await baton.waves.start(startOptions);
+             ^^^^^
+
+SyntaxError: Unexpected reserved word
+    at compileSourceTextModule (node:internal/modules/esm/utils:354:16)
+    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:91:18)
+    at #translate (node:internal/modules/esm/loader:451:20)
+    at afterLoad (node:internal/modules/esm/loader:507:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:512:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:555:36)
+    at afterResolve (node:internal/modules/esm/loader:603:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:609:12)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:245:17)
+
+Node.js v25.8.0
+✖ impl/test/swarm-brief-surface.test.mjs (3468.834084ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3612.753292
+
+✖ failing tests:
+
+test at impl/test/swarm-brief-surface.test.mjs:1:1
+✖ impl/test/swarm-brief-surface.test.mjs (3468.834084ms)
+  'test failed'

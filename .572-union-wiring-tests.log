@@ -1,0 +1,14 @@
+✔ 564-w1: a resident root_owed attachment writes one Claude turn frame and a replay sends nothing (221.662542ms)
+✔ 564-w2: a failed resident delivery records its typed code and remains swarm attention (248.704625ms)
+✔ 564-w3: deployment open refuses every configured harness that cannot start an idle turn (949.314625ms)
+✔ 564-c1: the capability rows cover exactly the named harnesses, sorted, unknown named (5.169583ms)
+✔ 564-c2: the SERVED doctor carries the capability rows of the harnesses this deployment runs (1898.564583ms)
+✔ 564-c3: every harness the deployment vocabulary names has a capability row (0.729833ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4971.79925

@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 154136,
+      "ts": "2026-09-23T14:34:12.852Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 154136,
+        "ts": "2026-09-23T14:34:12.852Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:bb38e523aa1102a28cacc353d9f058f6876712681d5b7ecb18753c2c3d26d2d0",
+    "seq": 154136,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:34:10.875Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Review of 243e5a13 found 3 integration gaps: (1) owed record uses EXACT reporter key swarm-turn-report:swarm:seat:worker:epoch:seq, colliding with existing swarm.turn_reported row in priorCoordinationEvent. Use prefix swarm-turn-report-owed:. (2) real report is WorkerResult OBJECT; current ask only reads string and loses summary. Serialize report or use report.summary + structured ref. (3) no observing command occurs at turn-end; reportTurnEnd must invoke your reconciler immediately when root-addressed/fallback. I will add optional _reconcileTurnReportedRows?. call at both root returns; please fix key+body and test by calling actual reportTurnEnd, not direct turn fixture with different key. Return schema now {event,delivery}, per reviewer."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "56cd38de-33e4-4bef-bac7-91b099f0b40a"
+  }
+}

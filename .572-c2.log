@@ -1,0 +1,9 @@
+✔ C2 (RED): a worker receives ITS OWN surface — the projection is worker-scoped, never run-wide (stage: verdict-surface-missing) (4.5305ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 15359.992166

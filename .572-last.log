@@ -1,0 +1,15 @@
+✔ 572-a: a successor starts immediately under the default policy (2606.622833ms)
+✔ 572-b: a stored manual policy continues a successor (2697.144333ms)
+✔ 572-c: a turn report reaches the parent once (1773.566667ms)
+✔ 572-d: a top-level turn records a root-addressed report (1075.277208ms)
+✔ 572-e: an older pending successor starts on recovery (4497.464375ms)
+✔ 572-f: default participants can review peers and land contributions (3293.732167ms)
+✔ 572-g: unavailable guidance records the delivery refusal (1943.149333ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19544.392583

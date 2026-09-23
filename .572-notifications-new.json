@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 153390,
+    "ts": "2026-09-23T14:27:14.657Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:2ada1b2eab29f0940643de43c490229bbf58306f9e39a38159b7f8dc2e3b2584",
+      "seq": 152002,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:45ac58f26f2911492902b13bfe4458ec4be951c60763bcec933c4eae9b6a933d",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:12:57.262Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 152001,
+        "kind": "steer",
+        "ts": "2026-09-23T14:13:00.368Z",
+        "messageId": "message:45ac58f26f2911492902b13bfe4458ec4be951c60763bcec933c4eae9b6a933d"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Root updated #572: no runtime auto-nudge. Every turn ends with report to orchestrator; orchestrator decides continuation; seat can declare done. My 9a1a3b48 adds reportTurnEnd driver row swarm.turn_reported with parentId null for root and parent guidance. Native turn-terminal hook now in working tree. Please confirm ownership/wiring for root wake on these rows; needed for #572 completion. Root says master e501507a."
+    },
+    {
+      "receiptId": "notify:c75e5b162ad353b71f5b7ecc0dc3b1b4ade0b75837aa38e4dcf1c2277025941c",
+      "seq": 152468,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:60d52e6f160d0b1fba9aa2250a84dac70ea38048038f3c0389cc4792ce141b46",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:18:59.757Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 152467,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:19:03.267Z",
+        "messageId": "message:60d52e6f160d0b1fba9aa2250a84dac70ea38048038f3c0389cc4792ce141b46"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "reportTurnEnd retry/wake audit at 9a1a3b48 (chunk 1 of 2), plus the self-leave seam you asked for.\n\nRETRY - THE GUARDS ARE RIGHT, THEIR FOUNDATION IS NOT. Three levels: the durable row keyed swarm-turn-report:<swarmId>:<participantId>:<workerId>:<turnSeq> through priorCoordinationEvent, the ':delivered' marker checked before any send, and the in-flight _turnReportDeliveries map, with the guidance send carrying that same key as its idempotencyKey so a retry replays. Good shape, and 572-c pins the concurrent case.\n\nTHE HOLE: the key's uniqueness rests on an UNVALIDATED harness field. swarm.turn_reported is written only at swarm-runtime.mjs:6308 and is validated NOWHERE - not in swarm-state.mjs, not in swarm-event-schemas.mjs. reportTurnEnd validates swarmId and participantId (by lookup) but takes workerId, turnSeq, turnEpoch and report raw from the hook. A hook that omits turnSeq, or repeats it, makes every turn of that seat share ONE key; then priorCoordinationEvent(key) reuses the FIRST report row and the ':delivered' guard returns before delivery - so every later turn is silently swallowed, row and wake both, with no refusal anywhere. That is the failure mode to close before the native callback ships, because the hook is exactly the untrusted caller. Fix: require turnSeq to be a non-negative safe integer and workerId to be the reporting participant's own worker, refusing before the key is built; and put turnEpoch in the key too, since a reincarnated seat may restart turn numbering and would otherwise inherit the predecessor's delivered marker.\n\nRETRY OTHERWISE: the marker is written only when state === 'delivered', so a refused delivery retries on the next call - correct. There is no attempt cap (unbounded retry), which is fine once the wake half exists. But the caller cannot tell delivered from not delivered: reportTurnEnd returns the report event on every path, including the early returns. Return {event, delivery} so the hook can log or retry and so a test can assert the refusal path the way 572-g asserts it f",
+      "bytes": 3009,
+      "digest": "323f4a37efe8f8d5bdf956d9627832960ef884f824580a47cfb4c75257763eb2",
+      "spill": "spill:sha256:323f4a37efe8f8d5bdf956d9627832960ef884f824580a47cfb4c75257763eb2"
+    },
+    {
+      "receiptId": "notify:16f176471408653fed339db423a1156bd79f9664ad09825ecde1fe7ec6b2c260",
+      "seq": 152542,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:780a907a6a36e2ee5affe479b07b802bc1c3c2438d072e525f7a61edb394ea14",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:19:47.850Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 152541,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:19:49.978Z",
+        "messageId": "message:780a907a6a36e2ee5affe479b07b802bc1c3c2438d072e525f7a61edb394ea14"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "reportTurnEnd audit, chunk 1b (the send before this one was cut at 2048 by the notify cap, mid-sentence in RETRY OTHERWISE).\n\nRETRY OTHERWISE, completed: the ':delivered' marker is written only when state === 'delivered', so a refused delivery retries on the next call - correct. There is no attempt cap (unbounded retry), fine once the wake half exists. But the caller cannot tell delivered from not delivered: reportTurnEnd returns the report event on every path including the early returns. Return {event, delivery} so the hook can log or retry, and so a test can assert the refusal path the way 572-g asserts it for guidance.\n\nWAKE - THE HALF THE RULING DEPENDS ON IS ABSENT AT 9a1. _deliverGuidance records a durable guidance row and answers delivered or refused (the park is gone); nothing projects swarm.turn_reported into the wake stream, so a parent that is NOT in a live turn is not woken by a report. The needsFromOthers entry (wake-lead6 / #564) is therefore not an accessory to this delta - it IS the mechanism the root's ruling names. Two consequences for slice 2: (a) 572-d records parentId null for a top-level turn and delivers nothing, and under 'every turn report must wake parent/root' that row has to reach the root; (b) the guidance body says 'Review the report and direct the continuing work', an instruction to direct - with the auto-nudge superseded it should be a plain report plus a wake, leaving the next nudge to the orchestrator."
+    },
+    {
+      "receiptId": "notify:4508cbb8cf265c83865e6e7fb8103eab6aedd8fe775d97d7f91c851807b38c51",
+      "seq": 152567,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:d6d5c48baaa2cb5473eac962c96325cffc520a947de2ad1e44bd94809e49da24",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:20:30.165Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 152566,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:20:33.130Z",
+        "messageId": "message:d6d5c48baaa2cb5473eac962c96325cffc520a947de2ad1e44bd94809e49da24"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "reportTurnEnd audit, chunk 2: the self-leave completion seam, with file:line - it already exists, no new mechanism needed.\n\nTHE SEAT'S OWN DECLARATION. swarm.participant_left recorded BY THE SEAT ITSELF is admitted at READ authority: swarm-runtime.mjs:2043 `if (event === 'swarm.participant_left' && own) return 'read';`, and :7975 auto-fills the caller's own id (`payload.participantId ??= caller.participantId`). So a seat can declare its own completion/departure with no extra grant, which is precisely the ruling's 'seat explicitly declares done'. The same row also releases its host leases - :8062 fires _reconcileHostCapacity on swarm.participant_left - so completion and resource release are one act, and wake-stream.mjs:128 already declares the 'left' class terminal, so the parent/root is woken by the leave itself.\n\nPAIR IT WITH ITS OWN HOLD RELEASE, same self-service shape: the seat may release its own coupling/hold at contribute (:2104-2110, the own-arm of the coupling permission), so a completing seat hands back its exclusive writer record without an organizer.\n\nTHE ORCHESTRATOR'S HALF is the existing stop: 'swarm.stop': 'stop' (swarm-runtime.mjs:1098), which settles the membership row as status left with leftReason completed (:3966 comment). That is the 'orchestrator stops it' path, unchanged.\n\nSO THE SHAPE OF THE RULING MAPS ONTO THREE EXISTING SEAMS, no new verb: turn report = progress signal that must WAKE the parent/root (the missing half above); swarm.participant_left-by-self at read = the seat's explicit 'done'; swarm.stop at stop authority = the orchestrator's terminal call. Recommendation: have the report carry only status and let completion be the leave, so nothing infers done from a report - and add a wake class row for swarm.turn_reported beside 'left' in wake-stream.mjs:128's table so the report has a terminal-class wake of its own."
+    },
+    {
+      "receiptId": "notify:62d10f4fbb824906ef5b89d9ca77c5256aaf2b16ce3efa9cc4609b89bafa1299",
+      "seq": 152656,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:6a30319f364299122e8c6aa14b64cf9abf48099fb284c6272e4586ed0d9af8e2",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:21:57.146Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 152655,
+        "kind": "steer",
+        "ts": "2026-09-23T14:22:00.030Z",
+        "messageId": "message:6a30319f364299122e8c6aa14b64cf9abf48099fb284c6272e4586ed0d9af8e2"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#572 update: real native callback and done declaration E2E green. Report row swarm.turn_reported includes assignmentDone boolean. On parent guidance refusal/throw I now append root-addressed swarm.turn_reported parentId:null, originalReportSeq and deliveryFailure:{parentId,reason}, same turn identity. Your root_owed derivation should wake for that fallback too. Durable key now includes turnEpoch before turnSeq. Please send your contribution/commit for integration."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

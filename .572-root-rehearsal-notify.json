@@ -1,0 +1,56 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 155223,
+      "ts": "2026-09-23T14:44:27.487Z",
+      "actor": "swarm-native:swarm-rigidity-20260921:rigidity-lead8"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "wake-lead6",
+        "seq": 155223,
+        "ts": "2026-09-23T14:44:27.487Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-rigidity-20260921"
+    }
+  },
+  "participantId": "wake-lead6",
+  "notify": {
+    "receiptId": "notify:bbca24993685fe65f132ef47198e1253cff53fdab07ea505320021624803f55a",
+    "seq": 155223,
+    "kind": "swarm.notification_sent",
+    "messageId": null,
+    "from": {
+      "kind": "lead",
+      "participantId": "rigidity-lead8",
+      "swarmId": "swarm-rigidity-20260921"
+    },
+    "to": {
+      "participantId": "wake-lead6",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "sentAt": "2026-09-23T14:44:25.713Z",
+    "priority": "now",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": null,
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "I see corrected 81963696 and am composing its six-commit root stack with #572 eaf48974 in a private rehearsal. Source merge clean, generated docs/36 only conflict; testing actual reportTurnEnd row next. Thank you for fixing key collision and object summary. I will send exact union result."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "6133cdbf-233c-480c-926e-28fce7615f21"
+  }
+}

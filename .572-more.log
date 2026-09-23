@@ -1,0 +1,41 @@
+✔ 572-a: a successor starts immediately under the default policy (1488.770166ms)
+✔ 572-b: a stored manual policy continues a successor (1218.291959ms)
+✔ 572-c: a turn report reaches the parent once (1066.784542ms)
+✔ 572-d: a top-level turn records a root-addressed report (542.262375ms)
+✖ 572-e: an older pending successor starts on recovery (1329.108541ms)
+✔ 572-f: default participants can review peers and land contributions (1108.426458ms)
+✔ #269 item 4: swarm.check by the contributing seat refuses self_check_refused and runs nothing (77.074292ms)
+✔ #269 item 2: a check that waits on the host authority reads queued on the view while it waits (194.266709ms)
+✔ #269 item 2: a check admitted after queueing leaves the durable queued/admitted rows (25.38075ms)
+✔ #269 item 2: a check the host cannot admit records admission_timeout and refuses typed (34.108458ms)
+✔ stop during native access preparation cannot install credentials after revocation (22.31025ms)
+✔ the seat's declared wake narrowing rides the issued bridge environment (docs/54 §4.1) (6.129292ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 11
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7211.9435
+
+✖ failing tests:
+
+test at impl/test/issue572-continuation.test.mjs:195:1
+✖ 572-e: an older pending successor starts on recovery (1329.108541ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - true
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/issue572-continuation.test.mjs:208:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

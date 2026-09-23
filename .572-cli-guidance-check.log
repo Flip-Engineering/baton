@@ -1,0 +1,30 @@
+✔ 273-a: a delivered guide answers with its own row, naming the lane receipt it rode (84.572125ms)
+✔ 273-a: a guide to a paused seat answers with its own row, and says the lane wrote none (282.026458ms)
+✔ 273-a: a lane that refuses on a deliverable harness answers a refused row, never null (30.289875ms)
+✔ 273-b: priority defaults to next_boundary and the closed set admits exactly next_boundary|now (57.028208ms)
+✔ 273-b: an unknown priority refuses typed with the #431 shape, and sends nothing (51.48575ms)
+✔ 273-c: next_boundary asks the ordinary lane and now asks the immediate one, both durably (72.113417ms)
+✔ 273-d: a guide may answer a prior guidance row, and the fold threads them in order (160.563208ms)
+✔ 273-d: a guide may answer a contribution, and its thread roots at that row (46.730333ms)
+✔ 273-d: an inReplyTo the swarm does not hold refuses typed, and sends nothing (84.033625ms)
+✔ 273-e: from names the root orchestrator, a lead, and a peer seat (94.867792ms)
+✔ 273-e: the row keeps the raw actor beside the relationship, so the brief label stays one derivation (42.174333ms)
+✔ 273-f: the CLI rendering names the seat, the priority, where it landed and what to watch (40.1975ms)
+✔ 273-f: the CLI usage teaches --priority and --in-reply-to, and the parse hands them on typed (6.750125ms)
+✔ 311-n2-a: notify and notifications are declared, carried and advertised like every other verb (6.337708ms)
+✔ 311-n2-b: the validator admits the canonical notify and refuses the closed mistakes (4.438167ms)
+✔ 311-n2-c: a seat notifies a sibling in ANOTHER swarm, and the frame names who and when (208.373458ms)
+✔ 311-n2-d: the answer carries the notification own durable row as its receipt (72.11375ms)
+✔ 311-n2-e: swarm.notifications reads the receipt back in the run layer receipt shape (190.075083ms)
+✔ 311-n2-f: read is the recipient turn boundary AFTER the row, and null until one lands (134.030166ms)
+✔ 311-n2-g: the recipient resolution refuses typed for an unknown, gone or ambiguous seat (66.398208ms)
+✔ 311-n2-h: an over-cap body rides as a digest-cited spill, and past the ceiling it is a coaching refusal (147.186042ms)
+✔ 311-n2-j: the receipt read is scoped to the swarm and to the caller's own correspondence (134.329834ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3553.373417

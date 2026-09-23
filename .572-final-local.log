@@ -1,0 +1,26 @@
+✔ 572-a: a successor starts immediately under the default policy (1889.01125ms)
+✔ 572-b: a stored manual policy continues a successor (1791.891ms)
+✔ 572-c: a turn report reaches the parent once (1645.446834ms)
+✔ 572-d: a top-level turn records a root-addressed report (825.118917ms)
+✔ 572-e: an older pending successor starts on recovery (3021.131875ms)
+✔ 572-f: default participants can review peers and land contributions (1910.691292ms)
+✔ orchestrator starts empty, recruits later, and changes overlapping collaboration groups (95.3775ms)
+✔ delegated coordinator recruits within grants and implementers can contribute ordinary findings (35.006041ms)
+✔ reviewers check and accept contributions while authors remain available for further guidance (46.368041ms)
+✔ inspect gives each participant usable payload examples only for their permitted updates (36.566292ms)
+✔ a captured revision attaches to an existing finding without replacing its text or author (32.973917ms)
+✔ recruitment recovers through the existing idempotent Run authority and retains its original shared context (33.176ms)
+✔ invalid recruitment is refused before membership or provider effects (22.578958ms)
+✔ watch ignores unrelated swarms, wakes on selected updates, and releases on shutdown (55.305625ms)
+✔ watch reports a timeout even when unrelated traffic advanced the deployment cursor (29.6705ms)
+✔ native watching does not wake itself through tool and token telemetry (35.721542ms)
+✔ recruiting a participant that already exists is refused by name, whatever the payload (35.165417ms)
+✔ native coverage labels absence as absence, and passes a real observation through (35.223666ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11590.671833

@@ -1,0 +1,49 @@
+✔ RA1: the module imports neither monolith and keeps no implicit receiver outside the relocated classes (234.646875ms)
+✔ RA2: every runtime_admission_port delegate keeps the member name, parameter list, arity, and hands over the recorder (147.81575ms)
+✔ RA3: the recorder is the only recording path, and the constructor delegate is complete (104.21875ms)
+✔ RA4: the relocated declarations moved once; the export surface is unchanged (3.007625ms)
+✔ RA5: the map sees the move (4.450417ms)
+✔ RA6: slice 12 — the three tranche-2 admission prefixes are admission-seamed module members that never import effects (51.555459ms)
+✔ RE1: the module imports neither monolith and keeps no implicit receiver outside the error classes (108.8445ms)
+✔ RE2: every effects_port delegate keeps the member name, parameter list, arity, and hands over the recorder (104.077584ms)
+✖ RE3: the recorder is the only recording path — a counting wrapper sees every row (53.439667ms)
+✔ RE4: the four relocated primitives moved once, and the export surface is unchanged (2.255709ms)
+✔ RE4b: a driver-built coordinator's port fronts the coordinator's own wrapped authorities (548.012292ms)
+✔ RE5: the map sees the move (4.153208ms)
+✔ RE6: the tranche-2 split — the admission/effect triad, the descriptor union, and delegate timing (190.578667ms)
+✔ EH1: receiver discipline and one-way imports across the five modules (87.039041ms)
+✔ EH2: the arm census is bijective, the ctx key list is frozen, and the write-back surface is one key (19.395625ms)
+✔ EH3: the recording census per module; totals equal the pre-move member (2.013791ms)
+✔ EH4: the inverse-transform residue — family functions invert to their arms (127.672375ms)
+✔ EH5: one driven instance per family records through the port (128.339ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 17
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1931.952542
+
+✖ failing tests:
+
+test at impl/test/runtime-effects.test.mjs:175:1
+✖ RE3: the recorder is the only recording path — a counting wrapper sees every row (53.439667ms)
+  AssertionError [ERR_ASSERTION]: _deliver: recorder.log.tail( census moved
+  
+  2 !== 3
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/runtime-effects.test.mjs:186:14)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

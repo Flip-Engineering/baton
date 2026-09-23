@@ -1,0 +1,87 @@
+✔ CDW1: one real verified run consults the injected route authority, custody provider, and verifier runtime (12523.886583ms)
+✔ CDW3: an authority without record is a silent no-op, not a failure — the shape of 5bd37fbf (10155.024125ms)
+✔ CDW2: the injected goal-plan authority is consulted for goal, plan, approval, and plan-gated dispatch (7768.516708ms)
+✔ CDW4: the injected knowledge-briefing provider is consulted, and its block reaches the provider-facing brief only (8561.045ms)
+✔ CDW6: the declared shared remote reaches the driver the landing authority reads (1626.4945ms)
+✔ CDW5: every option the composition root reads is classified, and every exercised claim names a case in this file (12.175458ms)
+✔ 443h-a: `swarm create --policy` records the policy row, and the view shows it from the first row (898.622125ms)
+✔ 443h-a2: a policy the fold refuses refuses BEFORE the swarm exists (232.973084ms)
+✔ 443h-b: the canonical swarm.create operation names policy, and validateApplicationCommandArgs admits it (1.012833ms)
+✔ 443h-c: reroute_proposal_mismatch is pinned as a replay invariant in the surface gate (252.44275ms)
+✔ 443h-d: a second --issue recruit reuses the admitted package, and the CLI receipt says so (480.379583ms)
+✔ 572-a: a successor starts immediately under the default policy (3518.20525ms)
+✔ 572-b: a stored manual policy continues a successor (2794.757834ms)
+✔ 572-c: a turn report reaches the parent once (2644.773042ms)
+✔ 572-d: a top-level turn records a root-addressed report (2001.630334ms)
+✔ 572-e: an older pending successor starts on recovery (4483.076125ms)
+✔ 572-f: default participants can review peers and land contributions (2971.376292ms)
+✔ 572-g: unavailable guidance records the delivery refusal (1286.970708ms)
+✔ 572-h: a refused parent delivery addresses the report to root (2306.582208ms)
+✖ 572-i: an invalid turn identity refuses before recording or delivery (1708.970375ms)
+✔ AP1: receiver discipline — bare coordinator, no recording spelling, an acyclic leaf (502.780583ms)
+✔ AP2: the 46 delegates keep name, parameter list, arity, and forward this without a recorder (598.007541ms)
+✔ AP3: the inverse-transform residue — module bodies read as the members they were (87.542958ms)
+✖ AP4: the map sees the move — the target carries 46 surface members, _publicHandle keeps its evidence (14.791375ms)
+✔ a swarm recruit through SwarmRuntime gets a brief that carries the Baton surface (5740.622292ms)
+✔ a non-swarm run brief is unchanged: no Swarm section and the empty-tools sentence stays (4956.841ms)
+✔ the Swarm section, SWARM_NATIVE_GUIDANCE, and the bridge guidance are one derivation (1.385833ms)
+✔ renderBrief pins: a brief without the surface renders exactly as before (0.510292ms)
+✔ a native turn delivers its report and a declared completion finishes the seat (5159.569459ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 27
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 105831.985459
+
+✖ failing tests:
+
+test at impl/test/issue572-continuation.test.mjs:251:1
+✖ 572-i: an invalid turn identity refuses before recording or delivery (1708.970375ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + Comparison {}
+  - Comparison {
+  -   code: 'swarm_turn_report_invalid'
+  - }
+  
+      at async TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/issue572-continuation.test.mjs:255:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: construction-time refusal vocabulary error: swarm-runtime.refuse raised 'swarm_turn_report_invalid', which the swarm family's ONE closed refusal set (SWARM_REFUSAL_CODES in impl/src/swarm-refusals.mjs) does not hold — declare the code there with its HTTP class and rule instead of minting a second spelling
+        at assertSwarmRefusalCode (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/src/swarm-refusals.mjs:229:11)
+        at refuse (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/src/swarm-runtime.mjs:245:3)
+        at SwarmRuntime.reportTurnEnd (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/src/swarm-runtime.mjs:6299:7)
+        at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/issue572-continuation.test.mjs:255:34)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    expected: { code: 'swarm_turn_report_invalid' },
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at impl/test/runtime-api.test.mjs:177:1
+✖ AP4: the map sees the move — the target carries 46 surface members, _publicHandle keeps its evidence (14.791375ms)
+  AssertionError [ERR_ASSERTION]: the coordinator keeps 45 surface delegates
+  
+  45 !== 46
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/runtime-api.test.mjs:197:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 45,
+    expected: 46,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

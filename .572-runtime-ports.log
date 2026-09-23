@@ -1,0 +1,42 @@
+✔ AP1: receiver discipline — bare coordinator, no recording spelling, an acyclic leaf (1059.11625ms)
+✔ AP2: the 46 delegates keep name, parameter list, arity, and forward this without a recorder (1283.252916ms)
+✔ AP3: the inverse-transform residue — module bodies read as the members they were (985.777125ms)
+✖ AP4: the map sees the move — the target carries 46 surface members, _publicHandle keeps its evidence (308.65175ms)
+✔ RR1: the recovery module imports neither monolith and keeps no implicit receiver (3645.329334ms)
+✔ RR2: every recovery_port delegate keeps the member name, parameter list, and hands over the recorder (2045.655833ms)
+✔ RR3: a fake recorder observes exactly what _replay records, and log.append return values key the writes (89.562333ms)
+✔ RR4: the relocated primitives moved once and the coordinator export surface is unchanged (6.480792ms)
+✔ RR7 (slice 12): the base-layer declarations are defined once, and the observation surface holds by identity (3.200958ms)
+✔ RR5: the map sees the move — every recovery_port delegate is recovery, and the module is a target (4.158333ms)
+✔ RR6: the coordinator wires the port and the public verbs keep their shape (11479.879625ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 10
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 23206.612792
+
+✖ failing tests:
+
+test at impl/test/runtime-api.test.mjs:177:1
+✖ AP4: the map sees the move — the target carries 46 surface members, _publicHandle keeps its evidence (308.65175ms)
+  AssertionError [ERR_ASSERTION]: the coordinator keeps 46 surface delegates
+  
+  45 !== 46
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/runtime-api.test.mjs:197:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 45,
+    expected: 46,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

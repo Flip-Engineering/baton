@@ -1,0 +1,141 @@
+✔ 273-a: a delivered guide answers with its own row, naming the lane receipt it rode (114.614292ms)
+✔ 273-a: a guide to a paused seat answers with its own row, and says the lane wrote none (37.350666ms)
+✔ 273-a: a lane that refuses on a deliverable harness answers a refused row, never null (95.105917ms)
+✔ 273-b: priority defaults to next_boundary and the closed set admits exactly next_boundary|now (85.091917ms)
+✔ 273-b: an unknown priority refuses typed with the #431 shape, and sends nothing (41.276ms)
+✔ 273-c: next_boundary asks the ordinary lane and now asks the immediate one, both durably (129.189041ms)
+✔ 273-d: a guide may answer a prior guidance row, and the fold threads them in order (62.570417ms)
+✔ 273-d: a guide may answer a contribution, and its thread roots at that row (51.13975ms)
+✔ 273-d: an inReplyTo the swarm does not hold refuses typed, and sends nothing (61.388917ms)
+✔ 273-e: from names the root orchestrator, a lead, and a peer seat (103.158583ms)
+✔ 273-e: the row keeps the raw actor beside the relationship, so the brief label stays one derivation (52.083667ms)
+✔ 273-f: the CLI rendering names the seat, the priority, where it landed and what to watch (63.449792ms)
+✔ 273-f: the CLI usage teaches --priority and --in-reply-to, and the parse hands them on typed (3.138959ms)
+✔ 311-n2-a: notify and notifications are declared, carried and advertised like every other verb (7.09875ms)
+✔ 311-n2-b: the validator admits the canonical notify and refuses the closed mistakes (2.015875ms)
+✔ 311-n2-c: a seat notifies a sibling in ANOTHER swarm, and the frame names who and when (167.181875ms)
+✔ 311-n2-d: the answer carries the notification own durable row as its receipt (42.9265ms)
+✔ 311-n2-e: swarm.notifications reads the receipt back in the run layer receipt shape (124.691917ms)
+✔ 311-n2-f: read is the recipient turn boundary AFTER the row, and null until one lands (57.498417ms)
+✔ 311-n2-g: the recipient resolution refuses typed for an unknown, gone or ambiguous seat (91.36175ms)
+✔ 311-n2-h: an over-cap body rides as a digest-cited spill, and past the ceiling it is a coaching refusal (153.909875ms)
+✔ 311-n2-j: the receipt read is scoped to the swarm and to the caller's own correspondence (59.988584ms)
+✔ 572-a: a successor starts immediately under the default policy (2502.641041ms)
+✔ 572-b: a stored manual policy continues a successor (2234.032667ms)
+✔ 572-c: a turn report reaches the parent once (2092.472958ms)
+✔ 572-d: a top-level turn records a root-addressed report (1051.835375ms)
+✔ 572-e: an older pending successor starts on recovery (3970.035458ms)
+✔ 572-f: default participants can review peers and land contributions (2450.27275ms)
+✔ orchestrator starts empty, recruits later, and changes overlapping collaboration groups (232.611ms)
+✖ delegated coordinator recruits within grants and implementers can contribute ordinary findings (84.116417ms)
+✔ reviewers check and accept contributions while authors remain available for further guidance (93.115125ms)
+✖ inspect gives each participant usable payload examples only for their permitted updates (22.886625ms)
+✔ a captured revision attaches to an existing finding without replacing its text or author (119.534791ms)
+✔ recruitment recovers through the existing idempotent Run authority and retains its original shared context (53.283667ms)
+✔ invalid recruitment is refused before membership or provider effects (45.379375ms)
+✔ watch ignores unrelated swarms, wakes on selected updates, and releases on shutdown (182.268833ms)
+✔ watch reports a timeout even when unrelated traffic advanced the deployment cursor (42.697458ms)
+✔ native watching does not wake itself through tool and token telemetry (83.670333ms)
+✔ recruiting a participant that already exists is refused by name, whatever the payload (52.6195ms)
+✔ native coverage labels absence as absence, and passes a real observation through (35.268125ms)
+ℹ tests 40
+ℹ suites 0
+ℹ pass 38
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 15262.017959
+
+✖ failing tests:
+
+test at impl/test/swarm-runtime.test.mjs:97:1
+✖ delegated coordinator recruits within grants and implementers can contribute ordinary findings (84.116417ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+  +   'lead'
+  -   'builder'
+    ]
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/swarm-runtime.test.mjs:108:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'lead' ],
+    expected: [ 'builder' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/swarm-runtime.test.mjs:141:1
+✖ inspect gives each participant usable payload examples only for their permitted updates (22.886625ms)
+  AssertionError [ERR_ASSERTION]: updates names each kind this caller may send with the permission that admits it
+  + actual - expected
+  ... Skipped lines
+  
+    [
+      {
+  +     event: 'swarm.group_updated',
+  +     permission: 'organize'
+  +   },
+  +   {
+  +     event: 'swarm.work_updated',
+  +     permission: 'organize'
+  +   },
+  +   {
+  +     event: 'swarm.assignment_updated',
+  +     permission: 'organize'
+  +   },
+  +   {
+  +     event: 'swarm.coupling_updated',
+  +     permission: 'organize'
+  +   },
+  +   {
+        event: 'swarm.claim_updated',
+        permission: 'contribute'
+      },
+      {
+        event: 'swarm.proposal_updated',
+  ...
+      {
+  +     event: 'swarm.holder_released',
+  +     permission: 'organize'
+  +   },
+  +   {
+  +     event: 'swarm.policy_updated',
+  +     permission: 'organize'
+  +   },
+  +   {
+        event: 'swarm.context_updated',
+        permission: 'communicate'
+      },
+      {
+        event: 'swarm.contribution_recorded',
+  ...
+      {
+  +     event: 'swarm.contribution_reviewed',
+  +     permission: 'review'
+  +   },
+  +   {
+        event: 'swarm.participant_left',
+        permission: 'read'
+      },
+  +   {
+  +     event: 'swarm.closed',
+  +     permission: 'organize'
+  +   }
+    ]
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-e12b559363c15f3500594c8b499400ad/impl/test/swarm-runtime.test.mjs:152:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { event: 'swarm.group_updated', permission: 'organize' }, { event: 'swarm.work_updated', permission: 'organize' }, { event: 'swarm.assignment_updated', permission: 'organize' }, { event: 'swarm.coupling_updated', permission: 'organize' }, { event: 'swarm.claim_updated', permission: 'contribute' }, { event: 'swarm.proposal_updated', permission: 'read' }, { event: 'swarm.holder_released', permission: 'organize' }, { event: 'swarm.policy_updated', permission: 'organize' }, { event: 'swarm.context_updated', permission: 'communicate' }, { event: 'swarm.contribution_recorded', permission: 'contribute' }, { event: 'swarm.contribution_reviewed', permission: 'review' }, { event: 'swarm.participant_left', permission: 'read' }, { event: 'swarm.closed', permission: 'organize' } ],
+    expected: [ { event: 'swarm.claim_updated', permission: 'contribute' }, { event: 'swarm.proposal_updated', permission: 'read' }, { event: 'swarm.context_updated', permission: 'communicate' }, { event: 'swarm.contribution_recorded', permission: 'contribute' }, { event: 'swarm.participant_left', permission: 'read' } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

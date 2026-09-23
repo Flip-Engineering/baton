@@ -1,0 +1,26 @@
+✔ 564-t1: a top-level turn end (parentId null) is owed to the root, and rides the attention join (207.629375ms)
+✔ 564-t2: a report with a live parent is that parent's, never the root's (176.196417ms)
+✔ 564-t3: a second observation repairs rather than duplicates (61.366875ms)
+✔ 564-t4: the participant_left update path reconciles the turn rows too (83.496ms)
+✔ 564-t5: a parent-guidance failure re-addressed to the root wakes it too, keyed by the reporter epoch (66.853667ms)
+✔ 564-t6: reportTurnEnd drives the reconciler when the runtime provides it (their call site) (66.01025ms)
+✔ 572-a: a successor starts immediately under the default policy (2802.0205ms)
+✔ 572-b: a stored manual policy continues a successor (2472.089458ms)
+✔ 572-c: a turn report reaches the parent once (2703.571916ms)
+✔ 572-d: a top-level turn records a root-addressed report (1148.211792ms)
+✔ 572-e: an older pending successor starts on recovery (3663.145166ms)
+✔ 572-f: default participants can review peers and land contributions (3442.201875ms)
+✔ 572-g: unavailable guidance records the delivery refusal (1450.207542ms)
+✔ 572-h: a refused parent delivery addresses the report to root (2467.728ms)
+✔ 572-i: an invalid turn identity refuses before recording or delivery (1245.97825ms)
+✔ 572-j: a dead parent routes the report to root (1931.065791ms)
+✔ 572-j: a stopping parent routes the report to root (2136.980792ms)
+✔ 572-k: the root reconciler runs at the report boundary (1416.271459ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 28022.703792

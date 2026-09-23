@@ -1,0 +1,20 @@
+✔ 572-a: a successor starts immediately under the default policy (2241.627084ms)
+✔ 572-b: a stored manual policy continues a successor (2016.664958ms)
+✔ 572-c: a turn report reaches the parent once (1851.672833ms)
+✔ 572-d: a top-level turn records a root-addressed report (1325.992042ms)
+✔ 572-e: an older pending successor starts on recovery (3745.666375ms)
+✔ 572-f: default participants can review peers and land contributions (2975.999084ms)
+✔ 572-g: unavailable guidance records the delivery refusal (1178.704167ms)
+✔ 572-h: a refused parent delivery addresses the report to root (1566.785333ms)
+✔ 572-i: an invalid turn identity refuses before recording or delivery (961.331667ms)
+✔ 572-j: a dead parent routes the report to root (1901.281542ms)
+✔ 572-j: a stopping parent routes the report to root (2136.061959ms)
+✔ 572-k: the root reconciler runs at the report boundary (1258.500083ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 23810.575916

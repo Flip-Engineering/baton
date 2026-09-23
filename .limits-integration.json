@@ -1,0 +1,4154 @@
+{
+  "ok": false,
+  "error": {
+    "message": "Landing did not complete: the derived gate set ran red: 1 unexpected row(s)",
+    "code": "integrate_gates_red",
+    "detail": {
+      "unexpected": [
+        "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-suite-vjLNuA/baton-test-runner-contract-EZZ4VC/child.test.mjs :: (file exited 1 without reporting)"
+      ],
+      "verdictLine": "red — passed 0, unexpected 1, expected-red 0, squash 35a825591a0f",
+      "regenerated": [
+        "impl/scripts/seam-inventory.json"
+      ],
+      "selection": {
+        "files": [
+          "test/acp-control-truth.test.mjs",
+          "test/acp-json-rpc-process.test.mjs",
+          "test/adapter-card-contract.test.mjs",
+          "test/adapter.test.mjs",
+          "test/application-observation.test.mjs",
+          "test/async-lock-wait-285-red.test.mjs",
+          "test/atlas-orientation-red.test.mjs",
+          "test/authorization-concurrency.test.mjs",
+          "test/auxiliary-workspace-reconciliation.test.mjs",
+          "test/best-effort-catch-policy-red.test.mjs",
+          "test/bidirectional-driver-red.test.mjs",
+          "test/bidirectional-v3-red.test.mjs",
+          "test/blind-waits-red.test.mjs",
+          "test/board-authority-red.test.mjs",
+          "test/board-workerhalf-red.test.mjs",
+          "test/bridge-idempotency-344.test.mjs",
+          "test/briefing-pack-red.test.mjs",
+          "test/browser-use-red.test.mjs",
+          "test/canonical-naming-233-red.test.mjs",
+          "test/capacity-refusal-visibility-red.test.mjs",
+          "test/checkpoint-deferred-229-red.test.mjs",
+          "test/claim-preflight-red.test.mjs",
+          "test/claude-credential-projection-red.test.mjs",
+          "test/claude-session-accounting.test.mjs",
+          "test/claude-session.test.mjs",
+          "test/cli-adapters.test.mjs",
+          "test/cli-crash-stderr-tail.test.mjs",
+          "test/cli-dead-paths-red.test.mjs",
+          "test/cli-silent-start-red.test.mjs",
+          "test/cli-truthfulness-red.test.mjs",
+          "test/cli-wave-fidelity-red.test.mjs",
+          "test/codex-appserver.test.mjs",
+          "test/concurrency-policy-admission.test.mjs",
+          "test/connection-inspect-schema-order.test.mjs",
+          "test/control-conflict-axis.test.mjs",
+          "test/converged-export-surface.test.mjs",
+          "test/coordination-admission.test.mjs",
+          "test/coordination-internals.test.mjs",
+          "test/coordination-ledger-writes.test.mjs",
+          "test/coordination-ledger.test.mjs",
+          "test/coordinator-plan-effects-red.test.mjs",
+          "test/coordinator.test.mjs",
+          "test/create-driver-wiring.test.mjs",
+          "test/cross-deployment-knowledge-red.test.mjs",
+          "test/decision-gate-trust-gate-red.test.mjs",
+          "test/deepseek-routes-red.test.mjs",
+          "test/deployment-omp-dispatch-red.test.mjs",
+          "test/diagnostics-red.test.mjs",
+          "test/dispatch-seam-omp-red.test.mjs",
+          "test/dispatch-seam-real-omp-red.test.mjs",
+          "test/doc-truth-conformance-red.test.mjs",
+          "test/doubt-review-red.test.mjs",
+          "test/durable-retry-red.test.mjs",
+          "test/e2e.test.mjs",
+          "test/error-actionability-red.test.mjs",
+          "test/event-log-read-scaling-red.test.mjs",
+          "test/evidence-search-deployment.test.mjs",
+          "test/feedback-forge-hardening-red.test.mjs",
+          "test/find-run-narrow-229-red.test.mjs",
+          "test/fixture-clock-lint-red.test.mjs",
+          "test/frame-economics-red.test.mjs",
+          "test/git-batch-216-red.test.mjs",
+          "test/glm-session.test.mjs",
+          "test/goalplan-narrow-210-red.test.mjs",
+          "test/grammar-m1-red.test.mjs",
+          "test/grammar-m2-red.test.mjs",
+          "test/grammar-m3-red.test.mjs",
+          "test/grammar-m4b-red.test.mjs",
+          "test/grammar-m5-red.test.mjs",
+          "test/grok-acp.test.mjs",
+          "test/harvest-accessor-red.test.mjs",
+          "test/harvest-recovery-red.test.mjs",
+          "test/host-verb-inventory.test.mjs",
+          "test/issue10-blocked-interaction-red.test.mjs",
+          "test/issue10-p0-agent-experience.test.mjs",
+          "test/issue10-waiting-vocabulary-red.test.mjs",
+          "test/issue140-waiting-on-tail-read.test.mjs",
+          "test/issue144-lsp-pool-red.test.mjs",
+          "test/issue150-coaching-passthrough.test.mjs",
+          "test/issue268-visibility-red.test.mjs",
+          "test/issue273-guidance-runtime.test.mjs",
+          "test/issue276-resident-drain.test.mjs",
+          "test/issue28-wire-degrade-red.test.mjs",
+          "test/issue285-custody-capacity-hardening.test.mjs",
+          "test/issue286-attention-index.test.mjs",
+          "test/issue286-ceilings.test.mjs",
+          "test/issue286-custody-predicate.test.mjs",
+          "test/issue286-ledger-read-bounds.test.mjs",
+          "test/issue286-tick-fast-path.test.mjs",
+          "test/issue286-wave-binding-truth.test.mjs",
+          "test/issue288-cli-refusal-causes.test.mjs",
+          "test/issue288-command-pending-receipt.test.mjs",
+          "test/issue288-doctor-drift-refusal.test.mjs",
+          "test/issue288-resident-authority.test.mjs",
+          "test/issue288-web-refusal-envelopes.test.mjs",
+          "test/issue290-checkpoint-shape.test.mjs",
+          "test/issue290-holder-release.test.mjs",
+          "test/issue290-ledger-sync.test.mjs",
+          "test/issue290-prospective-fold.test.mjs",
+          "test/issue290-quarantine.test.mjs",
+          "test/issue290-suite-manifest-guard.test.mjs",
+          "test/issue292-coupling-truth.test.mjs",
+          "test/issue296-swarm-integrate.test.mjs",
+          "test/issue297-issue307-host-capacity.test.mjs",
+          "test/issue299-tool-row-digests.test.mjs",
+          "test/issue304-fold-admission-gate.test.mjs",
+          "test/issue304-replay-refusal.test.mjs",
+          "test/issue306-reincarnation-red.test.mjs",
+          "test/issue306a-reincarnate.test.mjs",
+          "test/issue306b-served-behind.test.mjs",
+          "test/issue306r-republish-arm.test.mjs",
+          "test/issue306w-reincarnate-reachable.test.mjs",
+          "test/issue310-contribution-contract.test.mjs",
+          "test/issue311-situation-projection.test.mjs",
+          "test/issue311-swarm-notify.test.mjs",
+          "test/issue314-core-table.test.mjs",
+          "test/issue314-lane2-receipts-wakes.test.mjs",
+          "test/issue314-lane3-reincarnation-rebind.test.mjs",
+          "test/issue314-mcp-core-surface-red.test.mjs",
+          "test/issue316-provider-degraded.test.mjs",
+          "test/issue316-sse-attachment-closed.test.mjs",
+          "test/issue325-goal-plan-replay.test.mjs",
+          "test/issue333-suite-verify-lease.test.mjs",
+          "test/issue334-acceptance.test.mjs",
+          "test/issue335-application-route-teaching.test.mjs",
+          "test/issue335-refusals-teach-the-grammar.test.mjs",
+          "test/issue341-provider-refusals-readiness.test.mjs",
+          "test/issue341-recruit-compares-routes.test.mjs",
+          "test/issue343-swarm-view-narrowing.test.mjs",
+          "test/issue343-swarm-view-paging.test.mjs",
+          "test/issue345-work-holder-updates.test.mjs",
+          "test/issue346-claude-credential-lifetime.test.mjs",
+          "test/issue349-swarm-view-frame-declared.test.mjs",
+          "test/issue350-stop-settles-membership.test.mjs",
+          "test/issue351-idle-stop.test.mjs",
+          "test/issue351-open-liveness.test.mjs",
+          "test/issue351-reconstruction-liveness.test.mjs",
+          "test/issue351-resident-shutdown.test.mjs",
+          "test/issue351-startup-answer.test.mjs",
+          "test/issue352-recruit-follow-stale-admission.test.mjs",
+          "test/issue353-stop-of-dead-seat-settles.test.mjs",
+          "test/issue356-wake-frame.test.mjs",
+          "test/issue357-attention-rows.test.mjs",
+          "test/issue357-worktree-stash-isolation.test.mjs",
+          "test/issue360-drain-releases-settled.test.mjs",
+          "test/issue362-recruit-brief-goal-bound.test.mjs",
+          "test/issue364-runtime-lost-on-restart.test.mjs",
+          "test/issue365-run-follow-legs.test.mjs",
+          "test/issue366-run-stop-replay-ceiling.test.mjs",
+          "test/issue367-context-read-attempt-counters.test.mjs",
+          "test/issue368-recipe-objective-lane.test.mjs",
+          "test/issue371-contract-example.test.mjs",
+          "test/issue372-closed-sets-taught.test.mjs",
+          "test/issue373-read-only-recruit.test.mjs",
+          "test/issue375-route-probe-verdict.test.mjs",
+          "test/issue376-slice2-result-refusals-name-expectation.test.mjs",
+          "test/issue381-inventory-drift.test.mjs",
+          "test/issue383-child-pipe-error.test.mjs",
+          "test/issue383-client-socket-error.test.mjs",
+          "test/issue384-startup-refusal-truth.test.mjs",
+          "test/issue385-resume-carries-workspace.test.mjs",
+          "test/issue387-session-card-refusals.test.mjs",
+          "test/issue388-plan-refusal-keeps-workspace.test.mjs",
+          "test/issue389-orient-detail.test.mjs",
+          "test/issue390-context-call-stopping.test.mjs",
+          "test/issue391-goal-plan-paging.test.mjs",
+          "test/issue391-store-goal-plan-pages.test.mjs",
+          "test/issue394-web-wait-ceiling.test.mjs",
+          "test/issue395-group-eviction-on-leave.test.mjs",
+          "test/issue396-wave-stall-per-member.test.mjs",
+          "test/issue397-checkpoint-reason.test.mjs",
+          "test/issue398-decision-text-refusal.test.mjs",
+          "test/issue399-subset-verdict-marker.test.mjs",
+          "test/issue404-scratchpad-refusal-verbatim.test.mjs",
+          "test/issue405-quarantine-refusal-detail.test.mjs",
+          "test/issue406-context-pack-reap-scope.test.mjs",
+          "test/issue407-plan-history-bound.test.mjs",
+          "test/issue408-evidence-search-gates.test.mjs",
+          "test/issue409-run-wait-event-driven.test.mjs",
+          "test/issue412-worktree-non-isolation.test.mjs",
+          "test/issue413-export-archive-bound.test.mjs",
+          "test/issue414-nudge-retired-steering.test.mjs",
+          "test/issue418-numeric-constant-lint.test.mjs",
+          "test/issue422-joint-couplings-state.test.mjs",
+          "test/issue422-joint-couplings.test.mjs",
+          "test/issue423-claims-and-peers.test.mjs",
+          "test/issue423-claims-proposals-state.test.mjs",
+          "test/issue424-seat-suite-lease.test.mjs",
+          "test/issue425-writer-coupling-honest.test.mjs",
+          "test/issue426-guide-at-batch-boundary.test.mjs",
+          "test/issue427-context-projection.test.mjs",
+          "test/issue428-worktree-custody-on-stop.test.mjs",
+          "test/issue429-model-profile.test.mjs",
+          "test/issue430-swarm-refusal-set.test.mjs",
+          "test/issue431-swarm-argv-closed.test.mjs",
+          "test/issue433-contributions-projection.test.mjs",
+          "test/issue434-deferred-open-reconstruction.test.mjs",
+          "test/issue438-view-no-spawn.test.mjs",
+          "test/issue441-reading-half-red.test.mjs",
+          "test/issue441a-recruit-issue-package.test.mjs",
+          "test/issue441c-situation-one-derivation.test.mjs",
+          "test/issue441d-claims-instead-of-handovers.test.mjs",
+          "test/issue442-provider-fault-fold.test.mjs",
+          "test/issue443-handbacks.test.mjs",
+          "test/issue443-reroute-on-provider-fault.test.mjs",
+          "test/issue444-design-arena-profiles.test.mjs",
+          "test/issue445-transport-idle-timer.test.mjs",
+          "test/issue447-foreign-observation-skipped.test.mjs",
+          "test/issue447-wrapper-scope.test.mjs",
+          "test/issue448-group-member-gone-after-settle.test.mjs",
+          "test/issue449-checkpoint-on-stop.test.mjs",
+          "test/issue449b-checkpoint-bound.test.mjs",
+          "test/issue45-startup-reconcile-red.test.mjs",
+          "test/issue450-stop-releases-gone-reservations.test.mjs",
+          "test/issue451-integrate-dependency-link.test.mjs",
+          "test/issue452-resume-from-stopped.test.mjs",
+          "test/issue453-carry-applies-snapshot.test.mjs",
+          "test/issue454-inspect-observation.test.mjs",
+          "test/issue455-package-reuse.test.mjs",
+          "test/issue456-route-degrade-clears.test.mjs",
+          "test/issue457-seat-default-view.test.mjs",
+          "test/issue458-bridge-run-verbs.test.mjs",
+          "test/issue459-integrate-off-loop.test.mjs",
+          "test/issue461-old-incarnation-exits.test.mjs",
+          "test/issue462-handoff-env-scoped.test.mjs",
+          "test/issue463-integrate-gate-paths.test.mjs",
+          "test/issue464-participant-row-budget.test.mjs",
+          "test/issue464b-workspace-commits-budget.test.mjs",
+          "test/issue464c-brief-reach.test.mjs",
+          "test/issue465-projection-bytes.test.mjs",
+          "test/issue465-second-copies.test.mjs",
+          "test/issue465c-checkpoint-without-events.test.mjs",
+          "test/issue466-landing-selection.test.mjs",
+          "test/issue467-stop-converges.test.mjs",
+          "test/issue468-stream-errors.test.mjs",
+          "test/issue469-operation-objective-ref.test.mjs",
+          "test/issue470-stop-supersedes-failed-handoff.test.mjs",
+          "test/issue471-fixture-residents-die-with-runner.test.mjs",
+          "test/issue472-abandoned-on-host-stopped.test.mjs",
+          "test/issue473-stop-incomplete-typed.test.mjs",
+          "test/issue474-recruit-preconditions-typed.test.mjs",
+          "test/issue475-probe-clears-degrade.test.mjs",
+          "test/issue476-doctor-during-stop.test.mjs",
+          "test/issue477-liveness-observer-survives-startup.test.mjs",
+          "test/issue478-failed-handoff-keeps-serving.test.mjs",
+          "test/issue480-citation-driver.mjs",
+          "test/issue480-citation-resolution.test.mjs",
+          "test/issue481-string-body-refused.test.mjs",
+          "test/issue482-handoff-exit-code.test.mjs",
+          "test/issue483-watch-abort-typed.test.mjs",
+          "test/issue485-refusal-carry.test.mjs",
+          "test/issue486-no-scan-per-command.test.mjs",
+          "test/issue487-session-ledger-dual-writer.test.mjs",
+          "test/issue488-cited-doc-chunks.test.mjs",
+          "test/issue489-run-view-bounded.test.mjs",
+          "test/issue490-refused-recruit-settles.test.mjs",
+          "test/issue495-post-admission-shed.test.mjs",
+          "test/issue496-bridge-id-decision8.test.mjs",
+          "test/issue496-capability-registry-decision8.test.mjs",
+          "test/issue496-runtime-obs-decision8.test.mjs",
+          "test/issue496-web-wait-ceiling-decision8.test.mjs",
+          "test/issue499-board-title-decision8.test.mjs",
+          "test/issue499-count-registry.test.mjs",
+          "test/issue499-recipe-route-counts.test.mjs",
+          "test/issue499-scan-component-ceiling.test.mjs",
+          "test/issue499-schema-counts.test.mjs",
+          "test/issue499-wavefile-counts.test.mjs",
+          "test/issue499-web-operator-maxlength.test.mjs",
+          "test/issue5-cross-controller-lifecycle-recovery.test.mjs",
+          "test/issue500-atlas-source-ceiling.test.mjs",
+          "test/issue500-canonical-ceilings.test.mjs",
+          "test/issue500-context-policy-dedup.test.mjs",
+          "test/issue500-context-source-coverage.test.mjs",
+          "test/issue500-credential-divergence.test.mjs",
+          "test/issue500-deployment-capacity.test.mjs",
+          "test/issue500-follow-response-ceiling.test.mjs",
+          "test/issue500-wire-frame-decision8.test.mjs",
+          "test/issue500-worktree-capacity.test.mjs",
+          "test/issue502-brief-contract-guard.test.mjs",
+          "test/issue503-brief-collaboration-verbs.test.mjs",
+          "test/issue505-quarantine-verb.test.mjs",
+          "test/issue506-queue-holder-liveness.test.mjs",
+          "test/issue507-wakes-since-cli.test.mjs",
+          "test/issue508-driver-not-a-test.test.mjs",
+          "test/issue512-suite-admission-refusal.test.mjs",
+          "test/issue515-read-tolerates-digest-drift.test.mjs",
+          "test/issue517-resume-from-retained-checkout.test.mjs",
+          "test/issue518-plan-budget-replay.test.mjs",
+          "test/issue52-capture-scope.test.mjs",
+          "test/issue522-swarm-check-progress-wait.test.mjs",
+          "test/issue523-quota-scope.test.mjs",
+          "test/issue525-resume-decision.test.mjs",
+          "test/issue528-contribution-body-required.test.mjs",
+          "test/issue529-native-wake-mcp.test.mjs",
+          "test/issue529-native-wake.test.mjs",
+          "test/issue53-run-debug-red.test.mjs",
+          "test/issue530-budget-notify-only.test.mjs",
+          "test/issue531-route-quota-precheck.test.mjs",
+          "test/issue532-exactObject-unknown-fields.test.mjs",
+          "test/issue537-capture-refusals-typed.test.mjs",
+          "test/issue541-cli-command-wait.test.mjs",
+          "test/issue543-resume-ask-delivery.test.mjs",
+          "test/issue545-quota-scope-read.test.mjs",
+          "test/issue55-stall-liveness-red.test.mjs",
+          "test/issue558-landing-publish.test.mjs",
+          "test/issue62-write-failure-red.test.mjs",
+          "test/kg-activation-red.test.mjs",
+          "test/kg-settlement-red.test.mjs",
+          "test/kg12-decisions-red.test.mjs",
+          "test/kg3-activation-red.test.mjs",
+          "test/kg4-quality-red.test.mjs",
+          "test/kimi-acp.test.mjs",
+          "test/lane-contract-brief-305.test.mjs",
+          "test/launch-validation-red.test.mjs",
+          "test/lease-foreign-identity-reap-red.test.mjs",
+          "test/lease-zombie-reap-red.test.mjs",
+          "test/ledger-compaction-223-red.test.mjs",
+          "test/mcp-bridge-admission.test.mjs",
+          "test/mcp-descriptor-auth.test.mjs",
+          "test/mcp-packaging-red.test.mjs",
+          "test/mcp-profile-parity-red.test.mjs",
+          "test/mcp-reflex-board-package-red.test.mjs",
+          "test/mcp-reflex-surface-red.test.mjs",
+          "test/mcp-refusal-coaching.test.mjs",
+          "test/mcp-refusals-named.test.mjs",
+          "test/mcp-visualization.test.mjs",
+          "test/mcp-web-entry-story.test.mjs",
+          "test/mcp-web-local-resident-red.test.mjs",
+          "test/member-wedge-boundary-red.test.mjs",
+          "test/messages.test.mjs",
+          "test/muse-adapter.test.mjs",
+          "test/native-completion-loop.test.mjs",
+          "test/native-subagent-integration.test.mjs",
+          "test/nested-orchestration-red.test.mjs",
+          "test/omp-answer-red.test.mjs",
+          "test/omp-card-contract.test.mjs",
+          "test/omp-catalog-readiness-342.test.mjs",
+          "test/omp-control-truth.test.mjs",
+          "test/omp-false-stall-red.test.mjs",
+          "test/omp-first-turn-red.test.mjs",
+          "test/omp-interrupt-lifetime.test.mjs",
+          "test/omp-native-async.test.mjs",
+          "test/omp-native-features.test.mjs",
+          "test/omp-ordinary-run-pause.test.mjs",
+          "test/omp-policy-attest-red.test.mjs",
+          "test/omp-process-truth.test.mjs",
+          "test/omp-question-coordinator.test.mjs",
+          "test/omp-rpc-red.test.mjs",
+          "test/omp-runtime-isolation-red.test.mjs",
+          "test/omp-turn-in-flight-red.test.mjs",
+          "test/omp-turn-verdict-red.test.mjs",
+          "test/omp-usage-adapter.test.mjs",
+          "test/opencode-go-routes-524.test.mjs",
+          "test/orchestrator-plan-object-red.test.mjs",
+          "test/orchestrator-wake-red.test.mjs",
+          "test/orientation-red.test.mjs",
+          "test/orphan-resume-red.test.mjs",
+          "test/participant-contributions.test.mjs",
+          "test/peer-messages.test.mjs",
+          "test/phase10-completion.test.mjs",
+          "test/phase10-driver-e2e.test.mjs",
+          "test/phase10.1-reconciliation.test.mjs",
+          "test/phase11-acceptance-integration.test.mjs",
+          "test/phase11-concurrent-grok-reap.test.mjs",
+          "test/phase11-control-integrity.test.mjs",
+          "test/phase11-coordination-store.test.mjs",
+          "test/phase11-governance.test.mjs",
+          "test/phase11-model-selection.test.mjs",
+          "test/phase11-persistent-sessions.test.mjs",
+          "test/phase12-browser-oidc.test.mjs",
+          "test/phase12-web-auth.test.mjs",
+          "test/phase12-web-command-status.test.mjs",
+          "test/phase12-web-edge.test.mjs",
+          "test/phase12-web-northbound.test.mjs",
+          "test/phase12-web-operator.test.mjs",
+          "test/phase12-web-session-lifecycle.test.mjs",
+          "test/phase12-web-stream.test.mjs",
+          "test/phase13-atlas-index.test.mjs",
+          "test/phase13-atlas-structural.test.mjs",
+          "test/phase14-route-tuple.test.mjs",
+          "test/phase16-mcp-northbound.test.mjs",
+          "test/phase17-atlas-structural-rewrite.test.mjs",
+          "test/phase18-atlas-cpg.test.mjs",
+          "test/phase19-atlas-cpg-delta.test.mjs",
+          "test/phase20-atlas-cpg-taint.test.mjs",
+          "test/phase22-atlas-cpg-path-sensitive.test.mjs",
+          "test/phase24-atlas-representation-ceiling.test.mjs",
+          "test/phase25-atlas-behavior-fingerprint.test.mjs",
+          "test/phase26-structured-merge.test.mjs",
+          "test/phase27-atlas-egraph-evaluation.test.mjs",
+          "test/phase29-capability-invocation.test.mjs",
+          "test/phase31-cairn-scorecard.test.mjs",
+          "test/phase32-cartographer-quartermaster.test.mjs",
+          "test/phase36-quartermaster-external.test.mjs",
+          "test/phase37-lockfile-sbom.test.mjs",
+          "test/phase38-reuse-decision.test.mjs",
+          "test/phase39-reuse-invalidation.test.mjs",
+          "test/phase40-proposed-install-graph.test.mjs",
+          "test/phase41-advisory-scanner.test.mjs",
+          "test/phase41-transitive-advisory-projection.test.mjs",
+          "test/phase42-policy-invalidation.test.mjs",
+          "test/phase43-advisory-feed-registry.test.mjs",
+          "test/phase43-ed25519-webhook.test.mjs",
+          "test/phase43-hmac-webhook.test.mjs",
+          "test/phase43-https-poll-source.test.mjs",
+          "test/phase43-provider-poll-lifecycle.test.mjs",
+          "test/phase43-provider-receipts.test.mjs",
+          "test/phase43-provider-reconciliation.test.mjs",
+          "test/phase44-cairn-route-stats.test.mjs",
+          "test/phase45-session-auto-rejoin.test.mjs",
+          "test/phase46-representation-review.test.mjs",
+          "test/phase47-cairn-causal-audit.test.mjs",
+          "test/phase48-cairn-recall.test.mjs",
+          "test/phase49-cairn-promotion.test.mjs",
+          "test/phase50-cairn-scratch-correction.test.mjs",
+          "test/phase51-process-lifecycle.test.mjs",
+          "test/phase52-cairn-recall-assessment.test.mjs",
+          "test/phase53-cairn-contradictions.test.mjs",
+          "test/phase54-atlas-cpg-lexical-bindings.test.mjs",
+          "test/phase55-toolchain-projection.test.mjs",
+          "test/phase56-drain-and-close.test.mjs",
+          "test/phase57-acceptance-revocation.test.mjs",
+          "test/phase57-adapter-wire-bounds.test.mjs",
+          "test/phase57-adversarial-governance.test.mjs",
+          "test/phase57-provider-callback-integrity.test.mjs",
+          "test/phase57-provider-governance.test.mjs",
+          "test/phase57-provider-turn-release.test.mjs",
+          "test/phase58-adversarial-confinement.test.mjs",
+          "test/phase58-driver-sparse-projection.test.mjs",
+          "test/phase58-p0-confinement-regressions.test.mjs",
+          "test/phase58-sparse-capture-integrity.test.mjs",
+          "test/phase58-sparse-worker-worktree.test.mjs",
+          "test/phase59-worktree-capacity-authority.test.mjs",
+          "test/phase60-coordination-recovery.test.mjs",
+          "test/phase61-atlas-index-source-contract.test.mjs",
+          "test/phase61-atlas-structural-cpg-source-contract.test.mjs",
+          "test/phase61-representation-producer.test.mjs",
+          "test/phase61-representation-store.test.mjs",
+          "test/phase62-goal-plan-authority.test.mjs",
+          "test/phase62-goal-plan-replay-reds.test.mjs",
+          "test/phase62-goal-plan-stream.test.mjs",
+          "test/phase62-mcp-goal-plan.test.mjs",
+          "test/phase62-web-goal-plan.test.mjs",
+          "test/phase63-canonical-order-authority.test.mjs",
+          "test/phase64-application-cli.test.mjs",
+          "test/phase64-integrated-run-application.test.mjs",
+          "test/phase64-result-finalization-store.test.mjs",
+          "test/phase65-run-semantic-review-integration.test.mjs",
+          "test/phase66-export-lifecycle-red.test.mjs",
+          "test/phase66-materialized-result-export.test.mjs",
+          "test/phase66-plan-authorized-recovery.test.mjs",
+          "test/phase66-result-export-adversarial.test.mjs",
+          "test/phase66-result-export-projection-reds.test.mjs",
+          "test/phase66-result-export-store.test.mjs",
+          "test/phase66-retained-export-delivery-red.test.mjs",
+          "test/phase66-run-continuation-export.test.mjs",
+          "test/phase66-run-recovery-application.test.mjs",
+          "test/phase67-change-aware-inspect.test.mjs",
+          "test/phase67-progressive-agent-experience.test.mjs",
+          "test/phase67-route-attestation.test.mjs",
+          "test/phase67-run-terminality.test.mjs",
+          "test/phase67-self-describing-continuation.test.mjs",
+          "test/phase67-signal-reap.test.mjs",
+          "test/phase67-terminal-cause.test.mjs",
+          "test/phase68-unified-agent-entrypoint.test.mjs",
+          "test/phase69-verifier-retry-cascade.test.mjs",
+          "test/phase69-verifier-runtime-checkpoint.test.mjs",
+          "test/phase70-preserved-stop.test.mjs",
+          "test/phase70-resumable-work.test.mjs",
+          "test/phase71-kimi-credential-setup.test.mjs",
+          "test/phase71-kimi-session.test.mjs",
+          "test/phase72-kimi-orchestrator-mcp.test.mjs",
+          "test/phase72-native-kimi-integration.test.mjs",
+          "test/phase73-required-effects.test.mjs",
+          "test/phase75-task-topology.test.mjs",
+          "test/phase76-recovery-attempt-authority.test.mjs",
+          "test/phase76-recovery-attempt-integration.test.mjs",
+          "test/phase77-recursive-application-red.test.mjs",
+          "test/phase77-recursive-authority-visibility-red.test.mjs",
+          "test/phase77-recursive-run-lineage.test.mjs",
+          "test/phase77-recursive-run-stop-red.test.mjs",
+          "test/phase77-recursive-transport-red.test.mjs",
+          "test/phase78-application-profile-replay.test.mjs",
+          "test/phase78-bound-run-group-red.test.mjs",
+          "test/phase78-concise-deployment-factory.test.mjs",
+          "test/phase78-deployment-capacity-red.test.mjs",
+          "test/phase78-deployment-readiness-red.test.mjs",
+          "test/phase78-grok-auth-readiness.test.mjs",
+          "test/phase78-native-kimi-auth-readiness.test.mjs",
+          "test/phase78-xdg-kimi-claude-discovery.test.mjs",
+          "test/phase79-plan-wave-replay-red.test.mjs",
+          "test/phase79-workflow-composition-red.test.mjs",
+          "test/phase79-workflow-definition-authority-red.test.mjs",
+          "test/phase8-correctness.test.mjs",
+          "test/phase80-application-revision-red.test.mjs",
+          "test/phase80-plan-revision-store.test.mjs",
+          "test/phase80-revision-restart-stop-red.test.mjs",
+          "test/phase80-workflow-revision.test.mjs",
+          "test/phase81-context-program-red.test.mjs",
+          "test/phase82-context-durability-red.test.mjs",
+          "test/phase83-context-application-red.test.mjs",
+          "test/phase83-context-runtime-red.test.mjs",
+          "test/phase84-context-map-application-red.test.mjs",
+          "test/phase84-context-map-plan-binding-red.test.mjs",
+          "test/phase84-context-map-schema-red.test.mjs",
+          "test/phase84-context-map-wave-red.test.mjs",
+          "test/phase85-context-effect-admission-red.test.mjs",
+          "test/phase85-context-eval-application-red.test.mjs",
+          "test/phase85-context-lineage-red.test.mjs",
+          "test/phase85-context-result-capsule-red.test.mjs",
+          "test/phase85-context-result-lineage-red.test.mjs",
+          "test/phase85-context-role-catalog-red.test.mjs",
+          "test/phase85-coordination-projection-poison-red.test.mjs",
+          "test/phase85-workflow-activity-replay-red.test.mjs",
+          "test/phase87-semantic-action-authority.test.mjs",
+          "test/phase88-plan-route-authority.test.mjs",
+          "test/phase89-local-web-transport.test.mjs",
+          "test/phase89-resident-application-red.test.mjs",
+          "test/phase89-resident-cli-e2e.test.mjs",
+          "test/phase89-resident-host-red.test.mjs",
+          "test/phase89-resident-local-host.test.mjs",
+          "test/phase90-run-control-authority.test.mjs",
+          "test/phase90-run-timeline.test.mjs",
+          "test/phase91-semantic-interrupt-preservation-red.test.mjs",
+          "test/phase92-episode-attribution-red.test.mjs",
+          "test/phase92-episode-workstream-red.test.mjs",
+          "test/phase92-linear-replay-red.test.mjs",
+          "test/phase92-read-only-result-red.test.mjs",
+          "test/phase92-replay-verifier-red.test.mjs",
+          "test/phase92-resident-authority-red.test.mjs",
+          "test/phase92-result-intent-vertical.test.mjs",
+          "test/phase92-web-observation-red.test.mjs",
+          "test/phase92.2-physical-workspace-owner-red.test.mjs",
+          "test/phase93a-canonical-identity-red.test.mjs",
+          "test/phase93a-context-purity-red.test.mjs",
+          "test/phase93a-control-grammar-red.test.mjs",
+          "test/phase93a-program-fixtures.mjs",
+          "test/phase93a-schema-values-red.test.mjs",
+          "test/phase93a-source-schema-red.test.mjs",
+          "test/pre-verdict-selection.test.mjs",
+          "test/prescriptive-doctor-red.test.mjs",
+          "test/production-cli-convergence.test.mjs",
+          "test/production-convergence-persistence.test.mjs",
+          "test/production-deployment-convergence.test.mjs",
+          "test/production-mcp-convergence.test.mjs",
+          "test/production-real-substrate-convergence.test.mjs",
+          "test/production-web-convergence.test.mjs",
+          "test/production-web-workflow-ports.test.mjs",
+          "test/provider-fault-death-red.test.mjs",
+          "test/provider-fault-typing-red.test.mjs",
+          "test/provider-governance.test.mjs",
+          "test/provider-quota-readiness-red.test.mjs",
+          "test/provider-services.test.mjs",
+          "test/quiescence-activity-red.test.mjs",
+          "test/quiescence-completion-red.test.mjs",
+          "test/read-lane-229-red.test.mjs",
+          "test/readiness-credentials-red.test.mjs",
+          "test/readiness-honesty-234-red.test.mjs",
+          "test/readiness-honesty-red.test.mjs",
+          "test/reap-on-terminal-red.test.mjs",
+          "test/recipes-red.test.mjs",
+          "test/redrive-continuity-red.test.mjs",
+          "test/referee.test.mjs",
+          "test/reflex1-decision-requests-red.test.mjs",
+          "test/reflex2-boards-red.test.mjs",
+          "test/reflex3-packages-red.test.mjs",
+          "test/reflex4-context-eval-red.test.mjs",
+          "test/registry-truth-289.test.mjs",
+          "test/repl-realization-red.test.mjs",
+          "test/repl1-kind-inventory-red.test.mjs",
+          "test/repl1-manifest-red.test.mjs",
+          "test/repl23-bindings-red.test.mjs",
+          "test/replay-progress-285-red.test.mjs",
+          "test/reply-chains-red.test.mjs",
+          "test/resident-convergence-wiring-red.test.mjs",
+          "test/route-liveness-omp.test.mjs",
+          "test/route-truth.test.mjs",
+          "test/route-usage-341-red.test.mjs",
+          "test/run-admission-readiness-red.test.mjs",
+          "test/run-debug-surface-red.test.mjs",
+          "test/run-records-ceiling-registry.test.mjs",
+          "test/run-show-verification-verdict.test.mjs",
+          "test/run-stream-reconnect.test.mjs",
+          "test/runtime-admission.test.mjs",
+          "test/runtime-api.test.mjs",
+          "test/runtime-briefing.test.mjs",
+          "test/runtime-effects.test.mjs",
+          "test/runtime-event-handlers.test.mjs",
+          "test/runtime-observation.test.mjs",
+          "test/runtime-recorder-port.test.mjs",
+          "test/runtime-recovery.test.mjs",
+          "test/scratchpad-33-red.test.mjs",
+          "test/scratchpad-write-158-red.test.mjs",
+          "test/scratchpad-write-red.test.mjs",
+          "test/seam-inventory.test.mjs",
+          "test/seat-telemetry-red.test.mjs",
+          "test/segment-adopt-skip-fold-285-red.test.mjs",
+          "test/semantic-progress-red.test.mjs",
+          "test/served-commit-306.test.mjs",
+          "test/service-refusals.test.mjs",
+          "test/shared-workspace-custody.test.mjs",
+          "test/stall-watchdog-red.test.mjs",
+          "test/story.test.mjs",
+          "test/suite-manifest-reasons.test.mjs",
+          "test/suite-resource-governance-red.test.mjs",
+          "test/suite-verdict.test.mjs",
+          "test/surface-audit-smoke.test.mjs",
+          "test/surface-capability-catalog.test.mjs",
+          "test/surface-cli.test.mjs",
+          "test/surface-conformance-red.test.mjs",
+          "test/surface-truth.test.mjs",
+          "test/surface-visualize-rows.test.mjs",
+          "test/surfacing-matrix-red.test.mjs",
+          "test/swarm-application.test.mjs",
+          "test/swarm-bridge-truth.test.mjs",
+          "test/swarm-brief-surface.test.mjs",
+          "test/swarm-check-admission.test.mjs",
+          "test/swarm-check-follow-help.test.mjs",
+          "test/swarm-coordination.test.mjs",
+          "test/swarm-coupling.test.mjs",
+          "test/swarm-delegated-completion.test.mjs",
+          "test/swarm-event-schemas.test.mjs",
+          "test/swarm-family-doc.test.mjs",
+          "test/swarm-gap-red.test.mjs",
+          "test/swarm-knowledge.test.mjs",
+          "test/swarm-mcp-dispatch.test.mjs",
+          "test/swarm-native-access.test.mjs",
+          "test/swarm-native-bridge.test.mjs",
+          "test/swarm-organization-truth.test.mjs",
+          "test/swarm-projection-pins.test.mjs",
+          "test/swarm-projections.test.mjs",
+          "test/swarm-receipts.test.mjs",
+          "test/swarm-refusals.test.mjs",
+          "test/swarm-replay-corpus.test.mjs",
+          "test/swarm-runtime.test.mjs",
+          "test/swarm-seat-completion.test.mjs",
+          "test/swarm-state.test.mjs",
+          "test/swarm-surface.test.mjs",
+          "test/swarm-view-slices.test.mjs",
+          "test/swarm-wake.test.mjs",
+          "test/test-runner.test.mjs",
+          "test/tg3-window-red.test.mjs",
+          "test/tight-cell-red.test.mjs",
+          "test/transport-liveness-235-red.test.mjs",
+          "test/trust-gate-steering-red.test.mjs",
+          "test/turn-checkpoints-31a-red.test.mjs",
+          "test/turn-checkpoints-31b-red.test.mjs",
+          "test/turn-checkpoints-31b5-surface-red.test.mjs",
+          "test/turn-progress-checkpoints-305.test.mjs",
+          "test/unified-cli-surface.test.mjs",
+          "test/unified-mcp-surface.test.mjs",
+          "test/verification-selection.test.mjs",
+          "test/wake-binding.test.mjs",
+          "test/wake-mcp-consumers.test.mjs",
+          "test/wake-stream.test.mjs",
+          "test/wave-admission-concurrency.test.mjs",
+          "test/wave-attach-red.test.mjs",
+          "test/wave-driver-policy-red.test.mjs",
+          "test/wave-driver-red.test.mjs",
+          "test/wave-grammar-red.test.mjs",
+          "test/wave-observability-red.test.mjs",
+          "test/wave-observation-concurrency.test.mjs",
+          "test/wave-observer-lifetime.test.mjs",
+          "test/wave-settle-error-surfacing-red.test.mjs",
+          "test/waves-list-scaling-red.test.mjs",
+          "test/waves-run-detach-red.test.mjs",
+          "test/web-client-handshake-patience-red.test.mjs",
+          "test/web-client-transport-causes.test.mjs",
+          "test/web-client-typed-errors-red.test.mjs",
+          "test/web-envelope-fields.test.mjs",
+          "test/wire-settle-detach-red.test.mjs",
+          "test/worker-delivery-push-red.test.mjs",
+          "test/worker-orchestrated-swarm-red.test.mjs",
+          "test/worker-policy.test.mjs",
+          "test/worker-verdict-surface-red.test.mjs",
+          "test/workflow-as-data-red.test.mjs",
+          "test/workflow-dsl-package-red.test.mjs",
+          "test/workflow-dsl-red.test.mjs",
+          "test/workflow-policy.test.mjs",
+          "test/workflow-surface-red.test.mjs",
+          "test/workflow-swarm-lifecycle.test.mjs",
+          "test/workspace-observation-truth.test.mjs",
+          "test/workspace-preservation.test.mjs",
+          "test/workspace-snapshot.test.mjs",
+          "test/worktree-capacity-contention.test.mjs",
+          "test/worktree-capacity-initialization.test.mjs",
+          "test/worktree-capacity-physical-admission.test.mjs",
+          "test/worktree.test.mjs"
+        ],
+        "reason": "56 changed path(s) select 688 gate file(s): 664 importing changed module(s): 3 changed test file(s): 13 naming an otherwise-unimported file in a fixture path: 8 region gate(s): regions application, coordination, custody: 8 inventoried seam path(s)",
+        "provenance": [
+          {
+            "path": "test/acp-control-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/acp-json-rpc-process.mjs"
+          },
+          {
+            "path": "test/acp-json-rpc-process.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/acp-json-rpc-process.mjs"
+          },
+          {
+            "path": "test/adapter-card-contract.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/adapter.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/application-observation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-observation.mjs"
+          },
+          {
+            "path": "test/async-lock-wait-285-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree-capacity.mjs"
+          },
+          {
+            "path": "test/atlas-orientation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/authorization-concurrency.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/auxiliary-workspace-reconciliation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/best-effort-catch-policy-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/bidirectional-driver-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/bidirectional-v3-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/blind-waits-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/board-authority-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/board-workerhalf-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/bridge-idempotency-344.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/briefing-pack-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/browser-use-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/canonical-naming-233-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/capacity-refusal-visibility-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/checkpoint-deferred-229-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/claim-preflight-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/claude-credential-projection-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/claude-session-accounting.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/claude-session.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/cli-adapters.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/cli-crash-stderr-tail.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/cli-dead-paths-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/cli-silent-start-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/cli-truthfulness-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/cli-wave-fidelity-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/codex-appserver.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/concurrency-policy-admission.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/connection-inspect-schema-order.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/control-conflict-axis.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/converged-export-surface.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/web-northbound.mjs"
+          },
+          {
+            "path": "test/coordination-admission.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-admission.mjs"
+          },
+          {
+            "path": "test/coordination-internals.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/coordination-ledger-writes.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-ledger-writes.mjs"
+          },
+          {
+            "path": "test/coordination-ledger.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-ledger.mjs"
+          },
+          {
+            "path": "test/coordinator-plan-effects-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/coordinator.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/create-driver-wiring.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/cross-deployment-knowledge-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/decision-gate-trust-gate-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/deepseek-routes-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/deployment-omp-dispatch-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/diagnostics-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/dispatch-seam-omp-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/dispatch-seam-real-omp-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/doc-truth-conformance-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/doubt-review-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/durable-retry-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/e2e.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/error-actionability-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/event-log-read-scaling-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/evidence-search-deployment.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/feedback-forge-hardening-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/find-run-narrow-229-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/fixture-clock-lint-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/frame-economics-red.test.mjs",
+            "reason": "changed",
+            "via": null
+          },
+          {
+            "path": "test/git-batch-216-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/glm-session.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/goalplan-narrow-210-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/grammar-m1-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/grammar-m2-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/grammar-m3-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/grammar-m4b-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/grammar-m5-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/grok-acp.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/harvest-accessor-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/harvest-recovery-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/host-verb-inventory.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/issue10-blocked-interaction-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue10-p0-agent-experience.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue10-waiting-vocabulary-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue140-waiting-on-tail-read.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-observation.mjs"
+          },
+          {
+            "path": "test/issue144-lsp-pool-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/canonical-order.mjs"
+          },
+          {
+            "path": "test/issue150-coaching-passthrough.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/issue268-visibility-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue273-guidance-runtime.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue276-resident-drain.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/package.json"
+          },
+          {
+            "path": "test/issue28-wire-degrade-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/issue285-custody-capacity-hardening.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/contribution-service.mjs"
+          },
+          {
+            "path": "test/issue286-attention-index.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/issue286-ceilings.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/issue286-custody-predicate.test.mjs",
+            "reason": "region",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/issue286-ledger-read-bounds.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/issue286-tick-fast-path.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/issue286-wave-binding-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/issue288-cli-refusal-causes.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue288-command-pending-receipt.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/issue288-doctor-drift-refusal.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue288-resident-authority.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue288-web-refusal-envelopes.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue290-checkpoint-shape.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue290-holder-release.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue290-ledger-sync.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue290-prospective-fold.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue290-quarantine.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue290-suite-manifest-guard.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/scripts/run-suite.mjs"
+          },
+          {
+            "path": "test/issue292-coupling-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue296-swarm-integrate.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue297-issue307-host-capacity.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue299-tool-row-digests.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/issue304-fold-admission-gate.test.mjs",
+            "reason": "region",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/issue304-replay-refusal.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/issue306-reincarnation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue306a-reincarnate.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue306b-served-behind.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue306r-republish-arm.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue306w-reincarnate-reachable.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue310-contribution-contract.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue311-situation-projection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue311-swarm-notify.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue314-core-table.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue314-lane2-receipts-wakes.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue314-lane3-reincarnation-rebind.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue314-mcp-core-surface-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue316-provider-degraded.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue316-sse-attachment-closed.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/issue325-goal-plan-replay.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/goal-plan.mjs"
+          },
+          {
+            "path": "test/issue333-suite-verify-lease.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/host-capacity.mjs"
+          },
+          {
+            "path": "test/issue334-acceptance.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue335-application-route-teaching.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue335-refusals-teach-the-grammar.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue341-provider-refusals-readiness.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue341-recruit-compares-routes.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue343-swarm-view-narrowing.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue343-swarm-view-paging.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue345-work-holder-updates.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue346-claude-credential-lifetime.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue349-swarm-view-frame-declared.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue350-stop-settles-membership.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue351-idle-stop.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue351-open-liveness.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue351-reconstruction-liveness.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue351-resident-shutdown.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue351-startup-answer.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue352-recruit-follow-stale-admission.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/issue353-stop-of-dead-seat-settles.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue356-wake-frame.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue357-attention-rows.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/issue357-worktree-stash-isolation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue360-drain-releases-settled.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue362-recruit-brief-goal-bound.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue364-runtime-lost-on-restart.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue365-run-follow-legs.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue366-run-stop-replay-ceiling.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue367-context-read-attempt-counters.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/issue368-recipe-objective-lane.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue371-contract-example.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue372-closed-sets-taught.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/evidence-search.mjs"
+          },
+          {
+            "path": "test/issue373-read-only-recruit.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue375-route-probe-verdict.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue376-slice2-result-refusals-name-expectation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/context-program.mjs"
+          },
+          {
+            "path": "test/issue381-inventory-drift.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/mcp-web-bridge.mjs"
+          },
+          {
+            "path": "test/issue383-child-pipe-error.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/issue383-client-socket-error.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue384-startup-refusal-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue385-resume-carries-workspace.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue387-session-card-refusals.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue388-plan-refusal-keeps-workspace.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue389-orient-detail.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/atlas-index.mjs"
+          },
+          {
+            "path": "test/issue390-context-call-stopping.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue391-goal-plan-paging.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/issue391-store-goal-plan-pages.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue394-web-wait-ceiling.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue395-group-eviction-on-leave.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-state.mjs"
+          },
+          {
+            "path": "test/issue396-wave-stall-per-member.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue397-checkpoint-reason.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue398-decision-text-refusal.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue399-subset-verdict-marker.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/scripts/run-suite.mjs"
+          },
+          {
+            "path": "test/issue404-scratchpad-refusal-verbatim.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/issue405-quarantine-refusal-detail.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/issue406-context-pack-reap-scope.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/issue407-plan-history-bound.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue408-evidence-search-gates.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue409-run-wait-event-driven.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue412-worktree-non-isolation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue413-export-archive-bound.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/result-export.mjs"
+          },
+          {
+            "path": "test/issue414-nudge-retired-steering.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue418-numeric-constant-lint.test.mjs",
+            "reason": "changed",
+            "via": null
+          },
+          {
+            "path": "test/issue422-joint-couplings-state.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-contract.mjs"
+          },
+          {
+            "path": "test/issue422-joint-couplings.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue423-claims-and-peers.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue423-claims-proposals-state.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-contract.mjs"
+          },
+          {
+            "path": "test/issue424-seat-suite-lease.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/host-capacity.mjs"
+          },
+          {
+            "path": "test/issue425-writer-coupling-honest.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue426-guide-at-batch-boundary.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/issue427-context-projection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue428-worktree-custody-on-stop.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue429-model-profile.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue430-swarm-refusal-set.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue431-swarm-argv-closed.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/issue433-contributions-projection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue434-deferred-open-reconstruction.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue438-view-no-spawn.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue441-reading-half-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue441a-recruit-issue-package.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue441c-situation-one-derivation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue441d-claims-instead-of-handovers.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue442-provider-fault-fold.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue443-handbacks.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue443-reroute-on-provider-fault.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue444-design-arena-profiles.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue445-transport-idle-timer.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue447-foreign-observation-skipped.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue447-wrapper-scope.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/issue448-group-member-gone-after-settle.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue449-checkpoint-on-stop.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/issue449b-checkpoint-bound.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue45-startup-reconcile-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue450-stop-releases-gone-reservations.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue451-integrate-dependency-link.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/cli-adapters.mjs"
+          },
+          {
+            "path": "test/issue452-resume-from-stopped.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue453-carry-applies-snapshot.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue454-inspect-observation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue455-package-reuse.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue456-route-degrade-clears.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue457-seat-default-view.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue458-bridge-run-verbs.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-native-bridge.mjs"
+          },
+          {
+            "path": "test/issue459-integrate-off-loop.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue461-old-incarnation-exits.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue462-handoff-env-scoped.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue463-integrate-gate-paths.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/issue464-participant-row-budget.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue464b-workspace-commits-budget.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue464c-brief-reach.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue465-projection-bytes.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue465-second-copies.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue465c-checkpoint-without-events.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/issue466-landing-selection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue467-stop-converges.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue468-stream-errors.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue469-operation-objective-ref.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue470-stop-supersedes-failed-handoff.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue471-fixture-residents-die-with-runner.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/package.json"
+          },
+          {
+            "path": "test/issue472-abandoned-on-host-stopped.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue473-stop-incomplete-typed.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/issue474-recruit-preconditions-typed.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue475-probe-clears-degrade.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue476-doctor-during-stop.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue477-liveness-observer-survives-startup.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue478-failed-handoff-keeps-serving.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue480-citation-driver.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue480-citation-resolution.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue481-string-body-refused.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue482-handoff-exit-code.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/host-capacity.mjs"
+          },
+          {
+            "path": "test/issue483-watch-abort-typed.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue485-refusal-carry.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue486-no-scan-per-command.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue487-session-ledger-dual-writer.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue488-cited-doc-chunks.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue489-run-view-bounded.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue490-refused-recruit-settles.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/canonical-order.mjs"
+          },
+          {
+            "path": "test/issue495-post-admission-shed.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/host-capacity.mjs"
+          },
+          {
+            "path": "test/issue496-bridge-id-decision8.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-observation.mjs"
+          },
+          {
+            "path": "test/issue496-capability-registry-decision8.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue496-runtime-obs-decision8.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue496-web-wait-ceiling-decision8.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue499-board-title-decision8.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue499-count-registry.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue499-recipe-route-counts.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue499-scan-component-ceiling.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue499-schema-counts.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue499-wavefile-counts.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue499-web-operator-maxlength.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue5-cross-controller-lifecycle-recovery.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/process-lifecycle.mjs"
+          },
+          {
+            "path": "test/issue500-atlas-source-ceiling.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/atlas-index.mjs"
+          },
+          {
+            "path": "test/issue500-canonical-ceilings.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/canonical-order.mjs"
+          },
+          {
+            "path": "test/issue500-context-policy-dedup.test.mjs",
+            "reason": "region",
+            "via": "impl/test/issue500-deployment-capacity.test.mjs"
+          },
+          {
+            "path": "test/issue500-context-source-coverage.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/context-runtime.mjs"
+          },
+          {
+            "path": "test/issue500-credential-divergence.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue500-deployment-capacity.test.mjs",
+            "reason": "changed",
+            "via": null
+          },
+          {
+            "path": "test/issue500-follow-response-ceiling.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue500-wire-frame-decision8.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue500-worktree-capacity.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue502-brief-contract-guard.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue503-brief-collaboration-verbs.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue505-quarantine-verb.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/issue506-queue-holder-liveness.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/host-capacity.mjs"
+          },
+          {
+            "path": "test/issue507-wakes-since-cli.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue508-driver-not-a-test.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/scripts/run-suite.mjs"
+          },
+          {
+            "path": "test/issue512-suite-admission-refusal.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/host-capacity.mjs"
+          },
+          {
+            "path": "test/issue515-read-tolerates-digest-drift.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/issue517-resume-from-retained-checkout.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/issue518-plan-budget-replay.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue52-capture-scope.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue522-swarm-check-progress-wait.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue523-quota-scope.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue525-resume-decision.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue528-contribution-body-required.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue529-native-wake-mcp.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/issue529-native-wake.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue53-run-debug-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue530-budget-notify-only.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/goal-plan.mjs"
+          },
+          {
+            "path": "test/issue531-route-quota-precheck.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/issue532-exactObject-unknown-fields.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-observation.mjs"
+          },
+          {
+            "path": "test/issue537-capture-refusals-typed.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue541-cli-command-wait.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/issue543-resume-ask-delivery.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/issue545-quota-scope-read.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/issue55-stall-liveness-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/issue558-landing-publish.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/issue62-write-failure-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/kg-activation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/kg-settlement-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/kg12-decisions-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/kg3-activation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/kg4-quality-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/kimi-acp.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/lane-contract-brief-305.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/launch-validation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/lease-foreign-identity-reap-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/result-export.mjs"
+          },
+          {
+            "path": "test/lease-zombie-reap-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/result-export.mjs"
+          },
+          {
+            "path": "test/ledger-compaction-223-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/mcp-bridge-admission.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/mcp-descriptor-auth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/mcp-descriptor.mjs"
+          },
+          {
+            "path": "test/mcp-packaging-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/mcp-profile-parity-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/mcp-reflex-board-package-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/mcp-reflex-surface-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/mcp-refusal-coaching.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/mcp-refusals-named.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/mcp-visualization.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/production-mcp-complete.mjs"
+          },
+          {
+            "path": "test/mcp-web-entry-story.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/mcp-web-local-resident-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/member-wedge-boundary-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/messages.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/messages.mjs"
+          },
+          {
+            "path": "test/muse-adapter.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/native-completion-loop.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/native-subagent-integration.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/nested-orchestration-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/omp-answer-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-card-contract.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-catalog-readiness-342.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/omp-control-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-false-stall-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-first-turn-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-interrupt-lifetime.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-native-async.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-native-features.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-ordinary-run-pause.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/omp-policy-attest-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-process-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/omp-question-coordinator.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/omp-rpc-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-runtime-isolation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-turn-in-flight-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-turn-verdict-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/omp-usage-adapter.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/opencode-go-routes-524.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/orchestrator-plan-object-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/orchestrator-wake-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/orientation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/atlas-index.mjs"
+          },
+          {
+            "path": "test/orphan-resume-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/participant-contributions.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/peer-messages.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase10-completion.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/phase10-driver-e2e.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase10.1-reconciliation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase11-acceptance-integration.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/phase11-concurrent-grok-reap.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase11-control-integrity.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase11-coordination-store.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase11-governance.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase11-model-selection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase11-persistent-sessions.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase12-browser-oidc.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase12-web-auth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase12-web-command-status.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase12-web-edge.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase12-web-northbound.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase12-web-operator.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase12-web-session-lifecycle.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase12-web-stream.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/web-stream.mjs"
+          },
+          {
+            "path": "test/phase13-atlas-index.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase13-atlas-structural.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase14-route-tuple.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase16-mcp-northbound.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase17-atlas-structural-rewrite.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase18-atlas-cpg.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase19-atlas-cpg-delta.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase20-atlas-cpg-taint.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase22-atlas-cpg-path-sensitive.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase24-atlas-representation-ceiling.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase25-atlas-behavior-fingerprint.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase26-structured-merge.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase27-atlas-egraph-evaluation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase29-capability-invocation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase31-cairn-scorecard.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase32-cartographer-quartermaster.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase36-quartermaster-external.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase37-lockfile-sbom.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase38-reuse-decision.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase39-reuse-invalidation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase40-proposed-install-graph.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase41-advisory-scanner.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase41-transitive-advisory-projection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase42-policy-invalidation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase43-advisory-feed-registry.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase43-ed25519-webhook.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase43-hmac-webhook.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase43-https-poll-source.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase43-provider-poll-lifecycle.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase43-provider-receipts.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase43-provider-reconciliation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase44-cairn-route-stats.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase45-session-auto-rejoin.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase46-representation-review.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase47-cairn-causal-audit.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase48-cairn-recall.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase49-cairn-promotion.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase50-cairn-scratch-correction.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/phase51-process-lifecycle.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase52-cairn-recall-assessment.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase53-cairn-contradictions.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase54-atlas-cpg-lexical-bindings.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase55-toolchain-projection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/phase56-drain-and-close.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase57-acceptance-revocation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase57-adapter-wire-bounds.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase57-adversarial-governance.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase57-provider-callback-integrity.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase57-provider-governance.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase57-provider-turn-release.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase58-adversarial-confinement.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/toolchain-projection.mjs"
+          },
+          {
+            "path": "test/phase58-driver-sparse-projection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase58-p0-confinement-regressions.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/phase58-sparse-capture-integrity.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/phase58-sparse-worker-worktree.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/phase59-worktree-capacity-authority.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/phase60-coordination-recovery.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase61-atlas-index-source-contract.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/atlas-index.mjs"
+          },
+          {
+            "path": "test/phase61-atlas-structural-cpg-source-contract.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/atlas-structural.mjs"
+          },
+          {
+            "path": "test/phase61-representation-producer.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase61-representation-store.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase62-goal-plan-authority.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase62-goal-plan-replay-reds.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/goal-plan.mjs"
+          },
+          {
+            "path": "test/phase62-goal-plan-stream.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/web-stream.mjs"
+          },
+          {
+            "path": "test/phase62-mcp-goal-plan.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase62-web-goal-plan.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase63-canonical-order-authority.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/canonical-order.mjs"
+          },
+          {
+            "path": "test/phase64-application-cli.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase64-integrated-run-application.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase64-result-finalization-store.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase65-run-semantic-review-integration.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase66-export-lifecycle-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/result-export.mjs"
+          },
+          {
+            "path": "test/phase66-materialized-result-export.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase66-plan-authorized-recovery.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase66-result-export-adversarial.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/result-export.mjs"
+          },
+          {
+            "path": "test/phase66-result-export-projection-reds.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase66-result-export-store.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase66-retained-export-delivery-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase66-run-continuation-export.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase66-run-recovery-application.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase67-change-aware-inspect.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/phase67-progressive-agent-experience.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/phase67-route-attestation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/phase67-run-terminality.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/phase67-self-describing-continuation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/phase67-signal-reap.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase67-terminal-cause.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/phase68-unified-agent-entrypoint.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/phase69-verifier-retry-cascade.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/phase69-verifier-runtime-checkpoint.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase70-preserved-stop.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/phase70-resumable-work.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase71-kimi-credential-setup.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase71-kimi-session.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/phase72-kimi-orchestrator-mcp.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase72-native-kimi-integration.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase73-required-effects.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/phase75-task-topology.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase76-recovery-attempt-authority.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase76-recovery-attempt-integration.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/phase77-recursive-application-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase77-recursive-authority-visibility-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/web-stream.mjs"
+          },
+          {
+            "path": "test/phase77-recursive-run-lineage.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase77-recursive-run-stop-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/phase77-recursive-transport-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase78-application-profile-replay.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase78-bound-run-group-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase78-concise-deployment-factory.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase78-deployment-capacity-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase78-deployment-readiness-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase78-grok-auth-readiness.test.mjs",
+            "reason": "region",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/phase78-native-kimi-auth-readiness.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/phase78-xdg-kimi-claude-discovery.test.mjs",
+            "reason": "region",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/phase79-plan-wave-replay-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase79-workflow-composition-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase79-workflow-definition-authority-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase8-correctness.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase80-application-revision-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase80-plan-revision-store.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase80-revision-restart-stop-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase80-workflow-revision.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/workflow-revision.mjs"
+          },
+          {
+            "path": "test/phase81-context-program-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/context-program.mjs"
+          },
+          {
+            "path": "test/phase82-context-durability-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase83-context-application-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase83-context-runtime-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/context-runtime.mjs"
+          },
+          {
+            "path": "test/phase84-context-map-application-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase84-context-map-plan-binding-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/goal-plan.mjs"
+          },
+          {
+            "path": "test/phase84-context-map-schema-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/phase84-context-map-wave-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/phase85-context-effect-admission-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/phase85-context-eval-application-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase85-context-lineage-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/context-program.mjs"
+          },
+          {
+            "path": "test/phase85-context-result-capsule-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/context-runtime.mjs"
+          },
+          {
+            "path": "test/phase85-context-result-lineage-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/context-program.mjs"
+          },
+          {
+            "path": "test/phase85-context-role-catalog-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/phase85-coordination-projection-poison-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase85-workflow-activity-replay-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase87-semantic-action-authority.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase88-plan-route-authority.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/goal-plan.mjs"
+          },
+          {
+            "path": "test/phase89-local-web-transport.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase89-resident-application-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase89-resident-cli-e2e.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase89-resident-host-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase89-resident-local-host.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase90-run-control-authority.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase90-run-timeline.test.mjs",
+            "reason": "region",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/phase91-semantic-interrupt-preservation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/phase92-episode-attribution-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase92-episode-workstream-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase92-linear-replay-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/phase92-read-only-result-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase92-replay-verifier-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase92-resident-authority-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/phase92-result-intent-vertical.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase92-web-observation-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/phase92.2-physical-workspace-owner-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree.mjs"
+          },
+          {
+            "path": "test/phase93a-canonical-identity-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/canonical-order.mjs"
+          },
+          {
+            "path": "test/phase93a-context-purity-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/program-ir/index.mjs"
+          },
+          {
+            "path": "test/phase93a-control-grammar-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/program-ir/index.mjs"
+          },
+          {
+            "path": "test/phase93a-program-fixtures.mjs",
+            "reason": "imports",
+            "via": "impl/src/program-ir/index.mjs"
+          },
+          {
+            "path": "test/phase93a-schema-values-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/program-ir/index.mjs"
+          },
+          {
+            "path": "test/phase93a-source-schema-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/program-ir/index.mjs"
+          },
+          {
+            "path": "test/pre-verdict-selection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/prescriptive-doctor-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/production-cli-convergence.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/production-cli-convergence.mjs"
+          },
+          {
+            "path": "test/production-convergence-persistence.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/production-deployment-convergence.mjs"
+          },
+          {
+            "path": "test/production-deployment-convergence.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/production-deployment-convergence.mjs"
+          },
+          {
+            "path": "test/production-mcp-convergence.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/production-mcp-complete.mjs"
+          },
+          {
+            "path": "test/production-real-substrate-convergence.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/production-web-convergence.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/web-northbound.mjs"
+          },
+          {
+            "path": "test/production-web-workflow-ports.test.mjs",
+            "reason": "region",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/provider-fault-death-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/provider-fault-typing-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/provider-governance.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/provider-governance.mjs"
+          },
+          {
+            "path": "test/provider-quota-readiness-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/provider-services.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/quiescence-activity-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/quiescence-completion-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/read-lane-229-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/readiness-credentials-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/readiness-honesty-234-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/readiness-honesty-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/reap-on-terminal-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/recipes-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/redrive-continuity-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/referee.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/reflex1-decision-requests-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/claude-session.mjs"
+          },
+          {
+            "path": "test/reflex2-boards-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/reflex3-packages-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/reflex4-context-eval-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/registry-truth-289.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/repl-realization-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/repl1-kind-inventory-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/repl1-manifest-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/context-program.mjs"
+          },
+          {
+            "path": "test/repl23-bindings-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/replay-progress-285-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/reply-chains-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/resident-convergence-wiring-red.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/package.json"
+          },
+          {
+            "path": "test/route-liveness-omp.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/route-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/route-usage-341-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/run-admission-readiness-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/run-debug-surface-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/run-records-ceiling-registry.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-internals.mjs"
+          },
+          {
+            "path": "test/run-show-verification-verdict.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/run-stream-reconnect.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/web-stream.mjs"
+          },
+          {
+            "path": "test/runtime-admission.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/runtime-api.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/runtime-briefing.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/runtime-effects.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/runtime-event-handlers.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/runtime-observation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/runtime-recorder-port.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/runtime-recovery.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/scratchpad-33-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/scratchpad-write-158-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/scratchpad-write-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/seam-inventory.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/scripts/seam-inventory.json"
+          },
+          {
+            "path": "test/seat-telemetry-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/segment-adopt-skip-fold-285-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/semantic-progress-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/served-commit-306.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/service-refusals.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/shared-workspace-custody.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/stall-watchdog-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/story.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/story.mjs"
+          },
+          {
+            "path": "test/suite-manifest-reasons.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/scripts/run-suite.mjs"
+          },
+          {
+            "path": "test/suite-resource-governance-red.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/scripts/run-suite.mjs"
+          },
+          {
+            "path": "test/suite-verdict.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/scripts/run-suite.mjs"
+          },
+          {
+            "path": "test/surface-audit-smoke.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/mcp-web-bridge.mjs"
+          },
+          {
+            "path": "test/surface-capability-catalog.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/mcp-northbound.mjs"
+          },
+          {
+            "path": "test/surface-cli.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/surface-cli.mjs"
+          },
+          {
+            "path": "test/surface-conformance-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/surface-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/surface-visualize-rows.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/production-cli-convergence.mjs"
+          },
+          {
+            "path": "test/surfacing-matrix-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/swarm-application.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/swarm-bridge-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/swarm-brief-surface.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/swarm-check-admission.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/swarm-check-follow-help.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/swarm-coordination.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordination-store.mjs"
+          },
+          {
+            "path": "test/swarm-coupling.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/swarm-delegated-completion.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/swarm-event-schemas.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-contract.mjs"
+          },
+          {
+            "path": "test/swarm-family-doc.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/swarm-gap-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/swarm-knowledge.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/swarm-mcp-dispatch.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application.mjs"
+          },
+          {
+            "path": "test/swarm-native-access.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-native-bridge.mjs"
+          },
+          {
+            "path": "test/swarm-native-bridge.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/swarm-organization-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/swarm-projection-pins.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/swarm-projections.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/swarm-receipts.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/swarm-refusals.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/limits.mjs"
+          },
+          {
+            "path": "test/swarm-replay-corpus.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-state.mjs"
+          },
+          {
+            "path": "test/swarm-runtime.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/swarm-seat-completion.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/swarm-state.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-state.mjs"
+          },
+          {
+            "path": "test/swarm-surface.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/swarm-view-slices.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/swarm-runtime.mjs"
+          },
+          {
+            "path": "test/swarm-wake.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/test-runner.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/scripts/run-suite.mjs"
+          },
+          {
+            "path": "test/tg3-window-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/tight-cell-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/transport-liveness-235-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/omp-rpc.mjs"
+          },
+          {
+            "path": "test/trust-gate-steering-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/turn-checkpoints-31a-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/turn-checkpoints-31b-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/turn-checkpoints-31b5-surface-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/turn-progress-checkpoints-305.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/coordinator.mjs"
+          },
+          {
+            "path": "test/unified-cli-surface.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/production-cli-convergence.mjs"
+          },
+          {
+            "path": "test/unified-mcp-surface.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/production-mcp-convergence.mjs"
+          },
+          {
+            "path": "test/verification-selection.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/wake-binding.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/resident-authority.mjs"
+          },
+          {
+            "path": "test/wake-mcp-consumers.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/wake-stream.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/wave-admission-concurrency.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/wave-attach-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/wave-driver-policy-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/wave-driver-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/wave-grammar-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/wave-observability-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/wave-observation-concurrency.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/wave-observer-lifetime.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/wave-settle-error-surfacing-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/waves-list-scaling-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/waves-run-detach-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/web-client-handshake-patience-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/web-client-transport-causes.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/web-client-typed-errors-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-cli.mjs"
+          },
+          {
+            "path": "test/web-envelope-fields.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/web-northbound.mjs"
+          },
+          {
+            "path": "test/wire-settle-detach-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/worker-delivery-push-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/worker-orchestrated-swarm-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/worker-policy.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/cli-adapters.mjs"
+          },
+          {
+            "path": "test/worker-verdict-surface-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/workflow-as-data-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/workflow-dsl-package-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/workflow-dsl-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/application-semantics.mjs"
+          },
+          {
+            "path": "test/workflow-policy.test.mjs",
+            "reason": "region",
+            "via": "impl/src/application-deployment.mjs"
+          },
+          {
+            "path": "test/workflow-surface-red.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          },
+          {
+            "path": "test/workflow-swarm-lifecycle.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/workflow-interpreter.mjs"
+          },
+          {
+            "path": "test/workspace-observation-truth.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/index.mjs"
+          },
+          {
+            "path": "test/workspace-preservation.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/toolchain-projection.mjs"
+          },
+          {
+            "path": "test/workspace-snapshot.test.mjs",
+            "reason": "fixture-path",
+            "via": "impl/package.json"
+          },
+          {
+            "path": "test/worktree-capacity-contention.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree-capacity.mjs"
+          },
+          {
+            "path": "test/worktree-capacity-initialization.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree-capacity.mjs"
+          },
+          {
+            "path": "test/worktree-capacity-physical-admission.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/worktree-capacity.mjs"
+          },
+          {
+            "path": "test/worktree.test.mjs",
+            "reason": "imports",
+            "via": "impl/src/adapter.mjs"
+          }
+        ]
+      },
+      "stderrTail": "_exit 0ms\nbaton serve: successor refusing: the successor could not open the state directory\nbaton serve: host.reincarnation_failed successor_start (7) at 2026-09-23T14:29:20.266Z; this incarnation keeps serving\nbaton serve: host.stop_requested trigger operation_completed at 2026-09-23T14:29:20.270Z\nbaton serve: web admission closed (admission_closed)\nbaton serve: draining the fleet with the served transport open for reads\nbaton serve: drain converged; 0 of 0 participant(s) stopped\nbaton serve: web transport closed (closed)\nbaton serve: host.stopped stopped at 2026-09-23T14:29:20.455Z (projection checkpoint written; 3322 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)\nbaton serve: host.stopped tail stop_record 1ms; host_closed 36ms; publication_withdrawal 0ms\nbaton serve: host.reincarnation_failed successor_start (readiness_timeout) at 2026-09-23T14:29:26.558Z; this incarnation keeps serving\nbaton serve: host.stop_requested trigger operation_completed at 2026-09-23T14:29:26.560Z\nbaton serve: web admission closed (admission_closed)\nbaton serve: draining the fleet with the served transport open for reads\nbaton serve: drain converged; 0 of 0 participant(s) stopped\nbaton serve: web transport closed (closed)\nbaton serve: host.stopped stopped at 2026-09-23T14:29:26.826Z (projection checkpoint written; 3322 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)\nbaton serve: host.stopped tail stop_record 1ms; host_closed 45ms; publication_withdrawal 0ms\nwarning: remote HEAD refers to nonexistent ref, unable to checkout\nfatal: Not a valid object name 2c2bf01856ce0ed492d6e7bf110124eeb2f8f076^{commit}\nbaton serve: host.stop_waiting on successor_publication at 2026-09-23T14:29:29.331Z\nbaton serve: web admission closed (closed_degraded); the handoff's authority is the successor's\nbaton serve: the handoff's authority is the successor's (coordination_writer_lost); this incarnation's own application legs are released\nbaton serve: host.publication_withdrawn instance-2589af57-9b8b-4154-8c13-25bd150ed7f0 → instance-8cfb407e-b643-4554-8856-e89ec89e926f\nbaton serve: host.stopped tail web_admission_close 2ms; stop_record 0ms; host_closed 18ms; publication_withdrawal 0ms; incarnation_exit 0ms\nbaton serve: host.stop_waiting on successor_publication at 2026-09-23T14:29:30.392Z\nbaton serve: host.reincarnation_failed publication_handoff (publication_timeout, waited 4018ms) at 2026-09-23T14:29:34.576Z; this incarnation re-took the writer authority and keeps serving (admission reopened: work open, fleet unchanged)\nbaton serve: host.stop_requested trigger operation_completed at 2026-09-23T14:29:34.592Z\nbaton serve: web admission closed (admission_closed)\nbaton serve: draining the fleet with the served transport open for reads\nbaton serve: drain converged; 0 of 0 participant(s) stopped\nbaton serve: web transport closed (closed)\nbaton serve: host.stopped stopped at 2026-09-23T14:29:34.620Z (projection checkpoint written; 4493 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)\nbaton serve: host.stopped tail stop_record 1ms; host_closed 31ms; publication_withdrawal 0ms\nbaton serve: host.stop_waiting on successor_publication at 2026-09-23T14:30:32.330Z\nbaton serve: host.reincarnation_failed publication_handoff (publication_timeout, waited 4002ms) at 2026-09-23T14:30:41.509Z; this incarnation re-took the writer authority and keeps serving (admission reopened: work open, fleet unchanged)\nbaton serve: host.stop_requested supersedes the failed handoff at 2026-09-23T14:30:41.511Z; this incarnation stops (the re-publish held only until the stop that was already asked for)\nbaton serve: host.stop_requested trigger operation_completed at 2026-09-23T14:30:41.511Z\nbaton serve: web admission closed (admission_closed)\nbaton serve: draining the fleet with the served transport open for reads\nbaton serve: drain converged; 0 of 0 participant(s) stopped\nbaton serve: web transport closed (closed)\nbaton serve: host.stopped stopped at 2026-09-23T14:30:41.545Z (projection checkpoint written; 4493 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)\nbaton serve: host.stopped tail stop_record 2ms; host_closed 37ms; publication_withdrawal 0ms\nbaton serve: host.stop_waiting on successor_publication at 2026-09-23T14:30:42.543Z\nbaton serve: host.reincarnation_failed publication_handoff (publication_timeout, waited 4008ms) at 2026-09-23T14:30:51.736Z; this incarnation re-took the writer authority and keeps serving (admission reopened: work open, fleet unchanged)\nbaton serve: host.stop_requested supersedes the failed handoff at 2026-09-23T14:30:51.737Z; this incarnation stops (the re-publish held only until the stop that was already asked for)\nbaton serve: host.stop_requested trigger operation_completed at 2026-09-23T14:30:51.737Z\nbaton serve: web admission closed (admission_closed)\nbaton serve: draining the fleet with the served transport open for reads\nbaton serve: drain converged; 0 of 0 participant(s) stopped\nbaton serve: web transport closed (closed)\nbaton serve: host.stopped stopped at 2026-09-23T14:30:51.760Z (projection checkpoint written; 4493 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)\nbaton serve: host.stopped tail stop_record 0ms; host_closed 30ms; publication_withdrawal 0ms\nbaton serve: host.stop_requested trigger operation_completed at 2026-09-23T14:31:19.111Z\nbaton serve: web admission closed (admission_closed)\nbaton serve: draining the fleet with the served transport open for reads\nbaton serve: fleet drain still in flight after 300ms; the drain's own deadline governs\nbaton serve: drain converged; 1 of 1 participant(s) stopped\nbaton serve: web transport closed (closed)\nbaton serve: host.stopped stopped at 2026-09-23T14:31:20.674Z (projection checkpoint written; 14025 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)\nbaton serve: host.stopped tail stop_record 6ms; host_closed 36ms; publication_withdrawal 0ms\nbaton serve: host.stop_requested trigger operation_completed at 2026-09-23T14:31:22.706Z\nbaton serve: web admission closed (admission_closed)\nbaton serve: draining the fleet with the served transport open for reads\nbaton serve: fleet drain still in flight after 300ms; the drain's own deadline governs\nbaton serve: drain did not converge; waiting on w-1 (local_resources:localAuthority+local_resources:process+local_resources:runtimeScope+local_resources:worktree+local_resources:cleanupPending+local_resources:stopWaiter+process:unconfirmed_after_restart), reason deadline, deadline 350ms\nbaton serve: host.stop_waiting on worker w-1 (attempt 1, alive unobserved) at 2026-09-23T14:31:23.074Z\nbaton serve: web transport closed (closed)\nbaton serve: host.stopped stopped_after_deadline at 2026-09-23T14:31:23.463Z (projection checkpoint written; 14588 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows) (abandoned 1: w-1 attempt 2, alive null)\nbaton serve: host.stopped tail stop_record 9ms; host_closed 29ms; publication_withdrawal 0ms\nbaton serve: host.stop_requested trigger operation_completed at 2026-09-23T14:31:25.542Z\nbaton serve: web admission closed (admission_closed)\nbaton serve: draining the fleet with the served transport open for reads\nbaton serve: fleet drain still in flight after 300ms; the drain's own deadline governs\nbaton serve: drain did not converge; waiting on w-1 (local_resources:localAuthority+local_resources:process+local_resources:runtimeScope+local_resources:worktree+local_resources:stopWaiter+process:ready), reason deadline, deadline 400ms\nbaton serve: host.stop_waiting on worker w-1 (attempt 1, alive true) at 2026-09-23T14:31:25.957Z\nbaton serve: host.stop_waiting on worker w-1 (attempt 2, alive true) at 2026-09-23T14:31:31.233Z\nbaton serve: web transport closed (closed)\nbaton serve: host.stopped stopped_after_deadline at 2026-09-23T14:31:31.897Z (projection checkpoint written; 17070 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)\nbaton serve: host.stopped tail stop_record 4ms; host_closed 29ms; publication_withdrawal 0ms\nPreparing worktree (detached HEAD df5f7b1)\nPreparing worktree (detached HEAD df5f7b1)\nbaton test runner could not reap its test process group\n",
+      "script": "impl/scripts/run-suite.mjs",
+      "exit": 1
+    }
+  }
+}

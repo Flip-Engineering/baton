@@ -1,0 +1,21 @@
+✔ EH1: receiver discipline and one-way imports across the five modules (375.843333ms)
+✔ EH2: the arm census is bijective, the ctx key list is frozen, and the write-back surface is one key (89.811334ms)
+✔ EH3: the recording census per module; totals equal the pre-move member (8.563292ms)
+✔ EH4: the inverse-transform residue — family functions invert to their arms (105.494083ms)
+✔ EH5: one driven instance per family records through the port (267.045375ms)
+✔ RO1: the module imports neither monolith and contains no implicit receiver at all (146.686375ms)
+✔ RO2: every observation_port delegate keeps the member name, parameter list, and hands over the recorder (161.388541ms)
+✔ RO3: the recorder is the only recording path — census pinned, and instance patches fire across the boundary (319.283167ms)
+✔ RO4: the eleven relocated helpers moved once; exactly three are imported back (3.341625ms)
+✔ RO5: the map sees the move (27.731708ms)
+✔ stop during native access preparation cannot install credentials after revocation (140.666375ms)
+✔ the seat's declared wake narrowing rides the issued bridge environment (docs/54 §4.1) (78.473917ms)
+✔ turn-end reports retain the registered participant identity (39.337792ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5233.864167

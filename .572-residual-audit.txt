@@ -1,0 +1,373 @@
+impl/src/grok-acp.mjs:926:      // A-E2/A-I3: an idle stop is confirmed the SAME way on every adapter — the event, emitted
+impl/src/application-deployment.mjs:1564: * root. No token value is ever logged, surfaced, or retained: presence is the only fact
+impl/src/application-deployment.mjs:3039:// contracts, parked guidance (#337) and claims survive unchanged — #364's
+impl/src/application-deployment.mjs:6353:  // only through an explicit advanced recovery root instead of being reinterpreted under v3.
+impl/src/swarm-surface.mjs:36:  'swarm.guide': 'Send guidance to one participant, active or paused; the receipt carries the guide\'s own durable row — the seat, who it is from, the priority, and how it landed (delivered, parked for the seat\'s next exec / resume-from successor brief, or refused) — and names the observation to watch (the seat\'s next turn boundary, or the delivery that clears a park).',
+impl/src/swarm-surface.mjs:41:  'swarm.notify': 'Send one message to another participant, in this swarm or, with --to-swarm-id, in any other swarm of the deployment. The answer carries the message\'s own durable row as its receipt — who sent it, to which seat of which swarm, when, and how it landed (delivered on the lane it rode, parked in the recipient\'s own swarm for a harness that takes no mid-turn delivery, or refused) — and the way back to it is --receipt.',
+impl/src/swarm-surface.mjs:48:  '{seq, ts, from, messageId} rows read from the message lane, beside parked/delivered rows',
+impl/src/swarm-surface.mjs:75:  '(delivery.lane), `parked` when the seat\'s harness takes no mid-turn delivery — the park composes',
+impl/src/swarm-surface.mjs:78:  '(wake class paused) or, for a park, the guidance_delivered row that clears it.'].join(' ');
+impl/scripts/suite-host-lease.mjs:129:  expanded = 0, changedPaths = 0, parallel = 0, serial = 0, parallelism = 1, idleMs = 0,
+impl/scripts/suite-host-lease.mjs:134:  return `baton test runner: plan — ${selection}: ${parallel} in the parallel lane (x${parallelism}), ${serial} in the serial lane; progress deadline ${idleMs} ms per file`;
+impl/src/runtime-isolation.mjs:387:    // Admission constructs policy only. The first accepted worker creates the runtime root so a
+impl/src/coordination-admission.mjs:619:    || (requireLive && !['working', 'input_required', 'paused'].includes(task.status))) fail('representation requires an exact live durable task', 'representation_task_unavailable');
+impl/src/coordination-admission.mjs:6171:  const closedShape = ['blockedOn', 'knowledge', 'lanes', 'parked', 'receiptDigest', 'rings', 'settlementErrors', 'waveId'];
+impl/src/coordination-admission.mjs:6188:  if (!Array.isArray(fields.parked) || fields.parked.length > 8
+impl/src/coordination-admission.mjs:6189:    || fields.parked.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.id !== 'string')) {
+impl/src/coordination-admission.mjs:6190:    throw new CoordinationRefusal('wave.closed parked block is invalid', 'wave_closed_invalid');
+impl/src/coordination-admission.mjs:6472:  // non-terminal status transition (e.g. working→paused) bumps the task's coordination version
+impl/src/coordination-admission.mjs:6474:  // paused is a live task status for the gate).
+impl/src/coordination-ledger.mjs:177:  ['working', new Set(['input_required', 'paused', 'retry_pending', 'completed', 'failed', 'cancelled'])],
+impl/src/coordination-ledger.mjs:183:  // Issue #31 §2.1(3): `paused` is a new NON-terminal state — a turn checkpoint parked pending a
+impl/src/coordination-ledger.mjs:185:  // `failed`/`cancelled` (a parked task must stay terminalizable by run stop / fleet drain).
+impl/src/coordination-ledger.mjs:188:  ['paused', new Set(['working', 'failed', 'cancelled'])],
+impl/src/coordination-ledger.mjs:4360:    // Issue #31 §2.1(3): a `paused` node must render as `paused`, never collapse into the
+impl/src/coordination-ledger.mjs:4362:    // and a parked turn disguised as plain `running` is exactly the dishonest projection the
+impl/src/coordination-ledger.mjs:4364:    if (dispatched) state = dispatched.task?.status === 'completed' && !dispatched.task.acceptanceRevocation ? 'accepted' : (['failed', 'cancelled'].includes(dispatched.task?.status) ? dispatched.task.status : dispatched.task?.status === 'paused' ? 'paused' : 'dispatched');
+impl/src/application-briefing.mjs:25:// resolve lane appends the "no events since event N" idle line (B3).
+impl/src/session-recovery-supervisor.mjs:63:  status() { return this._summary ? { ...this._summary, failures: this._summary.failures.map((row) => ({ ...row })) } : { status: this._promise ? 'recovering' : 'idle' }; }
+impl/src/application-cli.mjs:1653:    + '<commit-ish>; participant rows, workspaces, contracts, parked guidance and claims survive, '
+impl/src/application-cli.mjs:3203:const LIVE_RUNTIME_STATES = new Set(['pending', 'working', 'blocked', 'idle', 'stopping']);
+impl/src/application-cli.mjs:3374:  const where = state === 'parked'
+impl/src/application-cli.mjs:3375:    ? 'parked until the seat\'s next exec / resume-from successor brief composes it'
+impl/scripts/suite-calibration.mjs:5:// One measurement answers how much slower this host is right now than its recorded idle
+impl/scripts/suite-calibration.mjs:131:/** The factor a record carries, or the idle 1 — a record without a finite factor is idle. */
+impl/scripts/suite-calibration.mjs:144: * idle default os.availableParallelism() - 1, a loaded host sheds instead of amplifying, and
+impl/src/story.mjs:22:// (idle/working/blocked/input_required/paused/interrupted/stopping/exited/orphaned) is projected
+impl/src/story.mjs:54: * @typedef {"idle"|"working"|"stopping"|"interrupted"|"blocked"|"input_required"|"paused"|"orphaned"|"exited"} WorkerStatus
+impl/src/story.mjs:112:  // folds, so a parked turn renders honestly instead of as done-and-idle.
+impl/src/story.mjs:113:  TURN_PAUSED: 'turn.paused',
+impl/src/story.mjs:139:const NEVER_STALLED_STATUSES = new Set(['blocked', 'input_required', 'paused', 'stopping', 'interrupted', 'exited', 'orphaned']);
+impl/src/story.mjs:154:    status: 'idle',
+impl/src/story.mjs:248:  [KIND.SPAWNED]: { from: null, to: 'idle' },
+impl/src/story.mjs:249:  [KIND.TURN_STARTED]: { from: ['idle', 'working', 'interrupted'], to: 'working' },
+impl/src/story.mjs:250:  [KIND.TURN_COMPLETED]: { from: ['working'], to: 'idle' }, // SC5b; other statuses: no-op, never a warning
+impl/src/story.mjs:252:  [KIND.INTERRUPT_REQUESTED]: { from: ['working', 'blocked', 'idle'], to: 'stopping' },
+impl/src/story.mjs:253:  [KIND.INTERRUPT_CONFIRMED]: { from: ['stopping'], to: 'idle' },
+impl/src/story.mjs:258:  // Issue #31, P1-2: `lifecycle.turn_completed` is appended BEFORE `turn.paused` is minted, and
+impl/src/story.mjs:259:  // its own rule has already parked the worker at 'idle' by then. A `{from:['working']}` rule
+impl/src/story.mjs:260:  // would therefore be vacuous — every real fold would arrive at 'idle', warn
+impl/src/story.mjs:261:  // 'illegal_transition', and leave the worker rendered 'idle' (silently wrong). Admitting both
+impl/src/story.mjs:263:  [KIND.TURN_PAUSED]: { from: ['working', 'idle'], to: 'paused' },
+impl/src/story.mjs:264:  [KIND.TURN_SETTLED]: { from: ['paused'], to: 'working' },
+impl/src/story.mjs:362:      if (w.status !== 'working') w.status = 'idle';
+impl/src/story.mjs:383:      // SC5b: the finished turn parks the worker at idle. From any other status the transition
+impl/src/story.mjs:386:      if (w.status === 'working') transitionStatus(w, kind, 'idle');
+impl/src/story.mjs:390:      // The turn finished but is parked at a checkpoint pending a steering decision. Leaving it
+impl/src/story.mjs:391:      // at TURN_COMPLETED's 'idle' would read as "done and free to redispatch" — a different
+impl/src/story.mjs:394:      transitionStatus(w, kind, 'paused');
+impl/src/story.mjs:419:        ? 'interrupted' : 'idle');
+impl/src/story.mjs:435:      // already idle and may be redispatched; the narrative reads it (SC5d).
+impl/src/story.mjs:636:  idle: () => 'idle',
+impl/src/story.mjs:660:  if (w.status === 'idle' && w.lastVerdict) {
+impl/src/story.mjs:662:    return w.lastVerdict.accept ? 'done (verified)' : 'idle (verification failed)';
+impl/src/story.mjs:705:  // SC5d: "active" means actually doing something — a finished (idle) worker is not active,
+impl/src/story.mjs:707:  const ACTIVE_STATUSES = ['working', 'stopping', 'blocked', 'input_required', 'paused'];
+impl/src/swarm-contract.mjs:247:// a parked envelope replays idempotently). Effectful verbs mint one durable effect per
+impl/src/swarm-contract.mjs:304:  // Guidance reaches the participant whether its session is active or paused: the pause/turn
+impl/src/swarm-contract.mjs:451:    // Issue #337: a parked or delivered guide changes the named seat — its participant row
+impl/src/swarm-contract.mjs:456:    case 'swarm.guidance_parked':
+impl/src/swarm-contract.mjs:474: * landed and a guide that parked are watched for different rows. `outcome.delivery.state` picks
+impl/src/swarm-contract.mjs:475: * it: a delivered guide is watched at the seat's next turn boundary (`paused`), a parked one at
+impl/src/swarm-contract.mjs:497:      // The seat's next turn boundary is the `paused` class (a turn paused and staying paused IS
+impl/src/swarm-contract.mjs:499:      const parked = outcome?.delivery?.state === 'parked';
+impl/src/swarm-contract.mjs:501:        observation: { wakeClass: parked ? 'guidance_delivered' : 'paused',
+impl/src/swarm-contract.mjs:1075:    description: `Send guidance and continue the recipient's turn through its native delivery lane. The receipt carries guide: {seq, kind, participantId, from, sentAt, priority, inReplyTo, messageId, delivery}. delivery.state is delivered or refused; parked appears only on historical rows; a refusal names the transport reason. priority (${SWARM_GUIDANCE_PRIORITIES.join(', ')}, default ${SWARM_GUIDANCE_DEFAULT_PRIORITY}) selects immediate steering or delivery at the next boundary. inReplyTo names a prior guidance, message, or contribution row. view: true adds the refreshed view.`,
+impl/src/mcp-core-tools.mjs:95:        wake: wakeHandoff(['attention', 'paused', 'integrated']),
+impl/src/mcp-core-tools.mjs:162:        wake: wakeHandoff(['attention', 'paused', 'integrated']),
+impl/src/worktree.mjs:1414:    // the identity this receipt claims. Nothing pops the parked work; the sha is what lets an
+impl/src/worktree.mjs:2111:    // root-only guess, which links nothing on a repository whose install sits under a
+impl/scripts/suite-verdict.mjs:447:    idleMs() { return now() - last; },
+impl/src/kimi-credential-setup.mjs:177:      if (wasPaused && typeof input.pause === 'function') input.pause();
+impl/src/capability-registry.mjs:72:      if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o700 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new TypeError('capability idempotency root must be an owner-only directory');
+impl/src/brand.mjs:55:  'ready', 'working', 'needs you', 'refused', 'stalled', 'idle', 'draining', 'done',
+impl/src/brand.mjs:64:  idle: Object.freeze({ status: 'idle', glyph: '○', word: 'idle' }),
+impl/src/brand.mjs:78:  // needs you — a human must act (docs/38: the attention class, a parked decision, a paused
+impl/src/brand.mjs:81:  parked: 'needs you', awaiting: 'needs you', question: 'needs you',
+impl/src/brand.mjs:82:  selection_required: 'needs you', paused: 'needs you',
+impl/src/brand.mjs:88:  // idle — nothing running, nothing asked
+impl/src/brand.mjs:89:  idle: 'idle', unbound: 'idle', sleeping: 'idle',
+impl/src/shared-workspace-custody.mjs:20:  'pending', 'working', 'blocked', 'stopping', 'idle',
+impl/src/shared-workspace-custody.mjs:25:const ATTACHABLE_STATUSES = Object.freeze(['pending', 'working', 'blocked', 'idle']);
+impl/src/claude-session.mjs:1628:    // frame. Sent while idle it begins the next turn; sent mid-turn the running turn absorbs
+impl/src/claude-session.mjs:1647:    // to publish — the Ack IS the confirmation. A LIVE idle session needs no special case here:
+impl/src/claude-session.mjs:1710:      // live settlement and parked the gated worker forever (issue #30, w-145).
+impl/src/swarm-runtime.mjs:264:const GUIDANCE_ROW_KINDS = Object.freeze(['swarm.guidance_sent', 'swarm.guidance_parked', 'swarm.guidance_delivered']);
+impl/src/swarm-runtime.mjs:344:    const cleared = payload.kind === 'swarm.guidance_parked' ? composed.get(payload.messageId) ?? null : null;
+impl/src/swarm-runtime.mjs:350:        state: payload.kind === 'swarm.guidance_parked'
+impl/src/swarm-runtime.mjs:351:          ? (cleared === null ? 'parked' : 'delivered')
+impl/src/swarm-runtime.mjs:1108:export const SWARM_LIVE_RUNTIME_STATES = Object.freeze(['pending', 'working', 'blocked', 'idle', 'stopping']);
+impl/src/swarm-runtime.mjs:1112:export function swarmParticipantLiveness(worker, pausedTurns = 0) {
+impl/src/swarm-runtime.mjs:1115:  // A turn is paused only while the worker that paused it is alive: a dead or exited worker's
+impl/src/swarm-runtime.mjs:1117:  return { state, live, turn: live && pausedTurns > 0 ? 'paused' : state === 'working' ? 'running' : null };
+impl/src/swarm-runtime.mjs:1940:   * own) and the parked guidance (#337), and the decision row is stamped with what it did. The
+impl/src/swarm-runtime.mjs:2138:    const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
+impl/src/swarm-runtime.mjs:2139:    return swarmParticipantLiveness(worker, paused.length).live;
+impl/src/swarm-runtime.mjs:2478:   * summary is wired. Advisory only: the seat is admitted regardless, and the root decides whether
+impl/src/swarm-runtime.mjs:3099:    // ranks first (an idle flat plan is spent before per-token money), the API routes follow, and
+impl/src/swarm-runtime.mjs:3416:    const paused = evidence?.paused ?? this.coordinator.pausedTurns({ workerId: worker.id });
+impl/src/swarm-runtime.mjs:3417:    if (swarmParticipantLiveness(worker, paused.length).live) return false;
+impl/src/swarm-runtime.mjs:3423:    return !(paused.length > 0 && guidance.length > 0);
+impl/src/swarm-runtime.mjs:3471:   * with nothing assigned in the subtree the `every` predicates were vacuously true, so an idle
+impl/src/swarm-runtime.mjs:3795:    // evidence (a paused turn with guidance still waiting for it defeats a clean exit, #332) —
+impl/src/swarm-runtime.mjs:3940:      const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
+impl/src/swarm-runtime.mjs:3945:      // resident does not own reads `idle`/`working` out of the ledger — a status, not a process —
+impl/src/swarm-runtime.mjs:3953:        : swarmParticipantLiveness(worker, paused.length);
+impl/src/swarm-runtime.mjs:3965:        paused, guidance, contributed: contributors.has(participant.participantId),
+impl/src/swarm-runtime.mjs:4045:        // null: like a dead worker, a completed one has no paused turn left to guide.
+impl/src/swarm-runtime.mjs:4054:        // wrote for it (delivered, parked, refused), with its priority and the thread it belongs
+impl/src/swarm-runtime.mjs:4055:        // to. The #337 parked rows ride the same fold: a park is one row whose delivery state
+impl/src/swarm-runtime.mjs:4401:    // `paused` with nothing saying why. Only an ACTIVE member pages (the rule the organization
+impl/src/swarm-runtime.mjs:4862:      // when every peer is paused. What changed (#433, docs/46 §3.1) is that EVERY admitted row
+impl/src/swarm-runtime.mjs:5069:   * participantId} — so a watcher parked on swarm.watch wakes even though no swarm state changed
+impl/src/swarm-runtime.mjs:5540:      // A coordinator that offers no turn ledger (a light fixture) reads as no paused turns.
+impl/src/swarm-runtime.mjs:5541:      const paused = worker && typeof this.coordinator.pausedTurns === 'function'
+impl/src/swarm-runtime.mjs:5542:        ? this.coordinator.pausedTurns({ workerId: worker.id }).length : 0;
+impl/src/swarm-runtime.mjs:5543:      const liveness = swarmParticipantLiveness(worker, paused);
+impl/src/swarm-runtime.mjs:5755:  /** The message one notification row carried, delivered or parked (#311 item 2). ONE body: the
+impl/src/swarm-runtime.mjs:5831:  /** The message one notification row carried, delivered or parked (#311 item 2). ONE body: the
+impl/src/swarm-runtime.mjs:6083:        && ['pending', 'working', 'blocked', 'idle', 'stopping'].includes(h.status));
+impl/src/swarm-runtime.mjs:6263:  /** The parked guidance still awaiting a seat (#337): every swarm.guidance_parked row naming
+impl/src/swarm-runtime.mjs:6270:    const parked = [];
+impl/src/swarm-runtime.mjs:6276:      } else if (event.payload?.kind === 'swarm.guidance_parked'
+impl/src/swarm-runtime.mjs:6278:        parked.push({ seq: event.seq, ts: event.ts, participantId: event.payload.participantId,
+impl/src/swarm-runtime.mjs:6283:    return parked.filter((row) => !delivered.has(row.messageId));
+impl/src/swarm-runtime.mjs:6500:      const parkedDeliveries = this._undeliveredParkedGuidance(
+impl/src/swarm-runtime.mjs:6515:        parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
+impl/src/swarm-runtime.mjs:6580:      // Issue #337: the parked guidance this brief composed is delivered now, after the run
+impl/src/swarm-runtime.mjs:6582:      for (const row of parkedDeliveries) {
+impl/src/swarm-runtime.mjs:6610:   * rode (the paused-turn lane writes none — the turn itself carries the guidance, and the row
+impl/src/swarm-runtime.mjs:6859:  _composeRecruitBrief(swarm, args, caller, predecessor, parkedDeliveries = [], predecessorWorkspace = null, baseAdvisory = null, recruitedScope = null, ledger = null) {
+impl/src/swarm-runtime.mjs:7031:    // Issue #337: undelivered parked guidance for this seat rides the same Swarm situation
+impl/src/swarm-runtime.mjs:7032:    // section — a one-shot seat's next exec IS this brief. Each line names the parked row's
+impl/src/swarm-runtime.mjs:7034:    // tell parked guidance from the situation around it. The recruit effect marks every
+impl/src/swarm-runtime.mjs:7036:    if (parkedDeliveries.length > 0) {
+impl/src/swarm-runtime.mjs:7038:      for (const row of parkedDeliveries) {
+impl/src/swarm-runtime.mjs:7056:    // seat reads what happened through the same mechanism parked guidance uses: durable ledger
+impl/src/swarm-runtime.mjs:7607:        // actually sit — the integration checkout never guesses at a root-only `node_modules`.
+impl/src/swarm-runtime.mjs:8457:        // Issue #337: undelivered parked guidance for this seat — its own parks when a
+impl/src/swarm-runtime.mjs:8461:        const parkedDeliveries = this._undeliveredParkedGuidance(
+impl/src/swarm-runtime.mjs:8471:          parkedDeliveries, predecessorWs, baseFacts.advisory, recruitedScope, briefLedger);
+impl/src/swarm-runtime.mjs:8661:        // Issue #337: the parked guidance this brief composed is DELIVERED here — after the
+impl/src/swarm-runtime.mjs:8665:        // the message.delivered lane row wakes guidance_delivered on the parked messageId —
+impl/src/swarm-runtime.mjs:8667:        for (const row of parkedDeliveries) {
+impl/src/swarm-runtime.mjs:8929:        const paused = seatWorker ? this.coordinator.pausedTurns({ workerId: seatWorker.id }) : [];
+impl/src/swarm-runtime.mjs:8930:        const live = seatWorker !== null && swarmParticipantLiveness(seatWorker, paused.length).live;
+impl/scripts/run-suite.mjs:42:// idle run (factor 1) preserves node's os.availableParallelism() - 1 default.
+impl/scripts/run-suite.mjs:45:// parent derives from the idle default — the factor scales a row against a RECORDED baseline
+impl/scripts/run-suite.mjs:339:const idleMs = Number.parseInt(process.env.BATON_SUITE_IDLE_MS ?? '', 10) > 0
+impl/scripts/run-suite.mjs:577:  const deadline = createProgressDeadline({ timeoutMs: idleMs });
+impl/scripts/run-suite.mjs:587:    job.hung = { lastEvent: job.lastEvent, idleMs: deadline.idleMs() };
+impl/scripts/run-suite.mjs:589:  }, Math.min(idleMs, 5_000));
+impl/scripts/run-suite.mjs:609:    failed.push({ file, name: `(file hung: no test event for ${job.hung.idleMs} ms after ${job.hung.lastEvent ?? 'start'})`, failureType: 'fileHung', message: 'hung' });
+impl/scripts/run-suite.mjs:704:    idleMs,
+impl/src/swarm-refusals.mjs:114:  contribution_capture_not_paused: row(409, ['coordinator'], 'the legacy capture port captures a paused turn, and the seat holds no paused turn to capture'),
+impl/src/runtime-event-handlers/turn-terminal.mjs:75:          const parkedUnsettled = task?.status === 'input_required'
+impl/src/runtime-event-handlers/turn-terminal.mjs:77:          if (parkedUnsettled) return
+impl/scripts/surface-conformance.mjs:80:    'planning', 'awaiting_approval', 'queued', 'working', 'paused', 'interrupted',
+impl/scripts/surface-conformance.mjs:86:    'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',
+impl/src/swarm-client.mjs:219:  /** Send guidance to one participant, active or paused. */
+impl/src/baton-top.mjs:276:    paused: false,
+impl/src/baton-top.mjs:308:      else if (char === 'p') state.paused = !state.paused;
+impl/src/baton-top.mjs:333:        motion: state.motion && !state.paused,
+impl/src/baton-top.mjs:352:        }, state.paused ? 5000 : parsed.refreshMs);
+impl/src/result-export.mjs:114: * opened export-root directory as fd 3 and only direct child names, so neither PATH nor child-side
+impl/src/omp-rpc.mjs:750:      this._emitGuideReceipt(session, 'idle', stranded.map((guide) => guide.messageId));
+impl/src/omp-rpc.mjs:1277:      this._emitGuideReceipt(session, 'idle', [messageId]);
+impl/src/omp-rpc.mjs:1278:      return { ok: true, messageId, deliveredAt: 'idle', coalesced: 1 };
+impl/src/omp-rpc.mjs:1289:   * native steer lane at once: `deliveredAt: 'idle'` (no batch was pending). The receipt
+impl/src/omp-rpc.mjs:1303:    this._emitGuideReceipt(session, 'idle', [messageId]);
+impl/src/omp-rpc.mjs:1304:    return { ok: true, messageId, deliveredAt: 'idle', coalesced: 1 };
+impl/src/application-semantics.mjs:22:  'planning', 'awaiting_approval', 'queued', 'working', 'paused', 'interrupted',
+impl/src/application-semantics.mjs:28:  'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',
+impl/src/application-semantics.mjs:507:    label: 'Nudge paused turn',
+impl/src/application-semantics.mjs:508:    summary: 'Admit a fresh provider turn on the exact paused task and unpark it in place.',
+impl/src/application-semantics.mjs:517:    label: 'Wait on paused turn',
+impl/src/application-semantics.mjs:518:    summary: 'Record a non-consuming receipt against the exact paused turn checkpoint without changing its state.',
+impl/src/application-semantics.mjs:525:    label: 'Claim paused turn',
+impl/src/application-semantics.mjs:526:    summary: 'Re-run the live trust gate against the exact paused task and resolve it to completed or failed and record the verification result.',
+impl/src/limits.mjs:131:// owner-socket transport's own idle bound derives from it too (local-web-transport.mjs). A
+impl/src/limits.mjs:143:// Issue #445: the owner-socket transport's own idle margin — the headroom its request bound keeps
+impl/src/limits.mjs:193:  // owner-socket transport's own idle bound (#445) both derive from this row's named value above —
+impl/src/limits.mjs:206:  // Issue #445: the owner-socket transport's own idle margin (declared above). The transport never
+impl/src/limits.mjs:207:  // lets an idle timer shorter than the web wait ceiling kill an in-flight request: the bound it
+impl/src/limits.mjs:211:  'transport.idle_margin_ms': { lane: 'transport.idle_margin_ms', class: 'substrate', value: TRANSPORT_IDLE_MARGIN_MS, unit: 'ms', graceful: null, enforcedAt: 'local-web-transport.mjs (the owner-socket transport\u2019s request bound)' },
+impl/src/web-northbound.mjs:47:// transports stay byte-identical, so a reconcilable envelope parked pre-flip under a legacy name
+impl/src/codex-appserver.mjs:1075:      // A-E2/A-I3: an idle stop is confirmed the SAME way on every adapter — the event, emitted
+impl/src/runtime-effects.mjs:274:      // The creation window closes only once the checkout is released: the reap's own idle guard
+impl/src/runtime-effects.mjs:1062:    if (handle.status === 'idle' && !alreadyReaped) {
+impl/src/runtime-effects.mjs:1394:            handle.status = 'idle';
+impl/src/workflow-interpreter.mjs:942:    // parked on a decision the policy already handled (deferred / refused); no steering move
+impl/src/recipes.mjs:47:  'settleTimeoutMs', 'unproductiveNudgeBudget', 'preflight',
+impl/src/recipes.mjs:69:  unproductiveNudgeBudget: 1,
+impl/src/recipes.mjs:142:  if (!Number.isSafeInteger(merged.unproductiveNudgeBudget) || merged.unproductiveNudgeBudget < 0) {
+impl/src/recipes.mjs:143:    throw recipeError('recipe policy "unproductiveNudgeBudget" must be a non-negative integer', 'recipe_schema_invalid');
+impl/src/recipes.mjs:550:  unproductiveNudgeBudget: 1,
+impl/src/coordination-store.mjs:199:  'parked', 'rings', 'schemaVersion', 'sources', 'standingLaws',
+impl/src/coordination-store.mjs:1897:      parked: latest?.parked ?? [], blockedOn: latest?.blockedOn ?? [],
+impl/src/coordination-store.mjs:2165:   * generation is absent from the caller's live-worker set (or parked retry_pending) surface
+impl/src/adapter.mjs:302: * The two verbs are asymmetric, and the Ack must not blur it. An interrupt of an idle-but-LIVE
+impl/src/adapter.mjs:544:      : 'Write only inside the assigned Baton worktree; this Brief declares no narrower write scope, so the worktree root is the whole of it.',
+impl/src/provider-processing-supervisor.mjs:6: * Durable per-root backoff lives in CoordinationStore; this supervisor owns only scan timing,
+impl/src/wave.mjs:215:  // Issue #31 §2.2(6), 31-b Part F rule 15: a `paused` member with no explicit attention override
+impl/src/wave.mjs:218:  if (phase === 'paused') return 'turn_checkpoint';
+impl/src/coordination-internals.mjs:34:  parked: 'the latest wave.closed record parked block (D9)',
+impl/src/coordination-internals.mjs:809:  let parked = Array.isArray(rawInput.parked) ? rawInput.parked.map((entry) => ({ ...entry })) : [];
+impl/src/coordination-internals.mjs:815:    rings, lanes: rawInput.lanes ?? [], landings, parked, blockedOn: rawInput.blockedOn ?? [],
+impl/src/coordination-internals.mjs:826:    // Step 2: drop parked reason detail (kind + id remain).
+impl/src/coordination-internals.mjs:827:    parked = parked.map((entry) => { const { reasonDigest, ...rest } = entry; return rest; });
+impl/src/swarm-family.mjs:67:      // The runtime state the coordinator reports (pending/working/blocked/idle/stopping/
+impl/src/swarm-event-schemas.mjs:170:      description: 'rank a per-token API route above a subscription route that has headroom (the default ranks a subscription route with headroom first, so an idle plan is spent before API money)',
+impl/src/swarm-event-schemas.mjs:300:  // delivered half and names the lane row it rode (delivery.lane); `swarm.guidance_parked` is the
+impl/src/swarm-event-schemas.mjs:315:      delivery: JSON_VALUE('how the guidance landed: {state: delivered|parked|refused, lane: {seq, kind, ts, messageId}|null, reason?}'),
+impl/src/swarm-event-schemas.mjs:324:  'swarm.guidance_parked': Object.freeze({
+impl/src/swarm-event-schemas.mjs:325:    summary: Object.freeze('one guidance message parked durably because the seat\'s harness takes no mid-turn delivery'),
+impl/src/swarm-event-schemas.mjs:328:      participantId: STRING('the seat the parked guidance is addressed to'),
+impl/src/swarm-event-schemas.mjs:346:    summary: Object.freeze('a parked guidance message composed into a seat\'s brief — the park is cleared exactly once'),
+impl/src/swarm-event-schemas.mjs:349:      participantId: STRING('the seat the parked guidance was addressed to'),
+impl/src/swarm-event-schemas.mjs:350:      messageId: STRING('the parked guidance identity this composition delivers'),
+impl/src/swarm-event-schemas.mjs:354:      sentAt: STRING('the instant the composition delivered the parked message, ISO 8601'),
+impl/src/swarm-event-schemas.mjs:377:      messageId: STRING('the delivery-lane identity, shared with the lane row the message rode, or null when it parked'),
+impl/src/swarm-event-schemas.mjs:384:      delivery: JSON_VALUE('how the message landed: {state: delivered|parked|refused, lane: {seq, kind, ts, messageId}|null, reason?}'),
+impl/src/wave-driver.mjs:6:// The multi-hour control loop is THIS module's blocking `run()` call — never parked inside
+impl/src/wave-driver.mjs:19:// with an unchanged `changedPathsDigest`), and `claim_turn` resolves a parked `workerResult` into
+impl/src/wave-driver.mjs:47:  unproductiveNudgeBudget: 1,
+impl/src/wave-driver.mjs:129:  if (!Number.isSafeInteger(policy.unproductiveNudgeBudget) || policy.unproductiveNudgeBudget < 0) {
+impl/src/wave-driver.mjs:130:    throw driverError('wave driver policy unproductiveNudgeBudget is invalid', 'wave_driver_policy_invalid');
+impl/src/wave-driver.mjs:383:    // the consecutive-delivery-failure budget (NOT unproductiveNudgeBudget — that is the L6
+impl/src/wave-driver.mjs:566:        const paused = [];
+impl/src/wave-driver.mjs:621:            // (if any) is NOT admitted to the steerable `paused` set while an interaction is
+impl/src/wave-driver.mjs:625:            if (checkpoint && !reduced.blocked && !reduced.waiting) paused.push({ role, run: runHandle, checkpoint });
+impl/src/wave-driver.mjs:644:          // v2 rule 7: the reducer's class is the rendered label (a decision-parked member never
+impl/src/wave-driver.mjs:703:          for (const { role, run: runHandle, checkpoint } of paused) {
+impl/src/wave-driver.mjs:707:              // parked workerResult into work_completed NOW — no waiting for the stall clock (D6).
+impl/src/wave-driver.mjs:731:            if (unchanged && (claimReady || state.nudges >= policy.unproductiveNudgeBudget)) {
+impl/src/wave-driver.mjs:821:            // recorded. A waiting member is never claimed (the paused admission suppresses it).
+impl/src/wave-driver.mjs:823:            for (const { role, run: runHandle, checkpoint } of paused) {
+impl/src/wave-driver.mjs:950:        rings: [], lanes: [], parked: [], blockedOn: [],
+impl/src/kimi-acp.mjs:683:      // A-E2/A-I3: an idle stop is confirmed the SAME way on every adapter — the event, emitted
+impl/src/application-observation.mjs:2816:                // Issue #31 §2.1(3): a parked turn is neither finished nor merely 'running'.
+impl/src/application-observation.mjs:2818:                : node?.state === 'paused' ? 'paused'
+impl/src/application-observation.mjs:3747:            // Issue #31 §2.1(3), 31-b Part F rule 14: a parked attempt is neither finished nor
+impl/src/application-observation.mjs:3750:            : attempts.some((attempt) => attempt.state === 'paused') ? 'paused'
+impl/src/application-observation.mjs:3813:        summary: `Recursive Candidate revision paused: ${revisionEligibility.reason}.`,
+impl/src/model-profile.mjs:31:// that section for why it is read at the root only and projected into no worker.
+impl/src/workspace-snapshot.mjs:3:// Root's contribution capture (worktree.mjs captureCommit) requires a paused turn:
+impl/src/resident-authority.mjs:160:    EROFS: `move the resident root off the read-only filesystem holding ${parent}`,
+impl/src/runtime-admission.mjs:549:    coordinator._startupRecoveryState = coordinator._startupRecoveryAuthority ? 'idle' : 'disabled';
+impl/src/runtime-admission.mjs:717:    coordinator._pausedTurns = new Map();
+impl/src/runtime-admission.mjs:857:    // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
+impl/src/runtime-admission.mjs:948:    const pausedEvent = appendAttributed({
+impl/src/runtime-admission.mjs:950:      kind: 'turn.paused', actor: 'worker',
+impl/src/runtime-admission.mjs:966:    coordinator._pausedTurns.set(pauseId, record);
+impl/src/runtime-admission.mjs:967:    coordinator._coordTransition(task, 'paused', `task.paused:${task.id}:${terminalEvent.seq}`,
+impl/src/runtime-admission.mjs:968:      recorder.mapEvent(pausedEvent), 'policy');
+impl/src/runtime-admission.mjs:971:    // projection reads it to decide whether a task is paused.
+impl/src/runtime-admission.mjs:972:    task.status = 'paused';
+impl/src/runtime-admission.mjs:1016:    const record = coordinator._pausedTurns.get(pauseId);
+impl/src/runtime-admission.mjs:1650:    if (mode === 'turn' && handle?.status === 'idle'
+impl/src/runtime-admission.mjs:2234:    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) {
+impl/src/runtime-admission.mjs:2286:    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+impl/src/runtime-admission.mjs:2289:    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+impl/src/runtime-admission.mjs:2402:        return 'idle';
+impl/src/runtime-admission.mjs:2404:      // Issue #31 §2.1(3), the eighth guard site: without this case `paused` falls through
+impl/src/runtime-admission.mjs:2408:      // steering decision; WorkerStatus gains no dedicated `paused` value here.
+impl/src/runtime-admission.mjs:2409:      case 'paused':
+impl/src/runtime-admission.mjs:2464:      throw new IntegrationError('worker must be idle, dead, exited, or orphaned before integration', 'worker_not_quiescent');
+impl/src/runtime-admission.mjs:2476:    if (mode === 'turn' && handle.status === 'idle'
+impl/src/runtime-admission.mjs:2513:      && handle.status === 'idle'
+impl/src/runtime-admission.mjs:2517:    if (handle.status === 'idle' && !reusableFollowUp) return { admitted: false, result: { ok: false, result: 'worker_not_active' } };
+impl/src/runtime-admission.mjs:2527:    // delivery to a parked member is the same act as a continuation, and a delivery that ignored
+impl/src/runtime-admission.mjs:2535:      const pause = coordinator.pausedTurns({ workerId })[0];
+impl/src/runtime-observation.mjs:410:export function pausedTurnStatus(coordinator, recorder, pauseId) {
+impl/src/runtime-observation.mjs:411:    const record = coordinator._pausedTurns.get(pauseId);
+impl/src/runtime-observation.mjs:427:export function pausedTurns(coordinator, recorder, { workerId = null, taskId = null } = {}) {
+impl/src/runtime-observation.mjs:429:    for (const pauseId of coordinator._pausedTurns.keys()) {
+impl/src/runtime-observation.mjs:430:      const row = coordinator.pausedTurnStatus(pauseId);
+impl/src/runtime-observation.mjs:531:export function _pausedActTargets(coordinator, recorder, record) {
+impl/src/runtime-observation.mjs:535:    if (task.status !== 'paused') return { ok: false, result: 'not_paused', status: task.status };
+impl/src/runtime-observation.mjs:554:    const record = coordinator._pausedTurns.get(pauseId);
+impl/src/runtime-observation.mjs:577:    const targets = coordinator._pausedActTargets(record);
+impl/src/runtime-observation.mjs:581:    // `TRANSITIONS` has no `paused → completed` edge (31-a: `paused → {working, failed,
+impl/src/runtime-observation.mjs:994:    if (handle.status === 'stopping' || handle.status === 'dead' || handle.status === 'idle' || handle.status === 'exited') return false;
+impl/src/runtime-observation.mjs:1076:        status: durable.status === 'pending' ? 'pending' : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
+impl/src/runtime-observation.mjs:1244:    if (!handle || !task || !['working', 'input_required', 'paused'].includes(task.status)
+impl/src/runtime-observation.mjs:1378:    if (mode === 'turn' && preflightHandle?.status === 'idle'
+impl/src/runtime-observation.mjs:2408:    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+impl/src/runtime-observation.mjs:2411:    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+impl/src/runtime-observation.mjs:2428:    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+impl/src/runtime-observation.mjs:2431:    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+impl/src/runtime-observation.mjs:2450:    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) {
+impl/src/runtime-observation.mjs:2535:    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) {
+impl/src/runtime-observation.mjs:2817:    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+impl/src/runtime-observation.mjs:2820:    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+impl/src/runtime-observation.mjs:2830:    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+impl/src/runtime-observation.mjs:2833:    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+impl/src/runtime-observation.mjs:2849:      || !['working', 'input_required', 'paused'].includes(task.status)) {
+impl/src/runtime-observation.mjs:3643:      // `paused` included for exhaustiveness/audit correctness. Verified a practical no-op: this
+impl/src/runtime-observation.mjs:3644:      // sweep only fires for a task with NO `lifecycle.spawned` receipt, and a paused task's
+impl/src/runtime-observation.mjs:3646:      if (!['working', 'input_required', 'paused'].includes(durable.status)) continue;
+impl/src/wake-stream.mjs:276:    wakeClass: 'paused', scope: 'deployment', terminal: true,
+impl/src/wake-stream.mjs:278:    summary: 'a turn paused and stays paused until a caller claims, nudges, or waits on it',
+impl/src/wake-stream.mjs:279:    rows: [operationalKind('turn.paused')],
+impl/src/wake-stream.mjs:831:   * (never a busy poll), so an idle deployment costs one timer and no ledger copy. */
+impl/src/local-web-transport.mjs:8: * plus the registry's own idle margin row — derived, never a literal, and never shorter than the
+impl/src/local-web-transport.mjs:10: * an idle timer of its own (5000 ms since v19) and re-arms a reused socket from the server's
+impl/src/local-web-transport.mjs:14:  WEB_WAIT_CEILING_ROW.value + FRAME_LIMITS['transport.idle_margin_ms'].value;
+impl/src/local-web-transport.mjs:70: * OWN HTTP agent, and every socket it opens or rides carries this transport's registry-derived idle
+impl/src/local-web-transport.mjs:71: * bound (`LOCAL_TRANSPORT_IDLE_TIMEOUT_MS`, exposed as the returned transport's `idleTimeoutMs`) —
+impl/src/local-web-transport.mjs:86:  // Issue #445: ONE agent of this transport's own — never the process-global one, whose idle timer
+impl/src/local-web-transport.mjs:144:      // keep-alive window, and an idle timer shorter than the ceiling must never govern a request
+impl/src/local-web-transport.mjs:157:  localSocketFetch.idleTimeoutMs = LOCAL_TRANSPORT_IDLE_TIMEOUT_MS;
+impl/src/lsp-pool.mjs:139:// macOS /var → /private/var tmpdir root resolves only when it exists, so every combination of
+impl/src/lsp-pool.mjs:557:    // Detached group leader: unref so an idle pool never pins the host's event loop; the pipes
+impl/src/runtime-recovery.mjs:39:  stallReap: 'stall_reap',
+impl/src/runtime-recovery.mjs:952:    if (!authority || authority !== coordinator._startupRecoveryAuthority || coordinator._startupRecoveryState !== 'idle') throw Object.assign(new Error('startup session recovery authority is unavailable'), { code: 'session_recovery_authority' });
+impl/src/runtime-recovery.mjs:2344:      // isolated-index snapshot: the paused-turn commit primitive stages the REAL index and commits
+impl/src/runtime-recovery.mjs:2560:      stopped = await coordinator._beginStop(handle, 'kill', undefined, 'policy', { rule: KILL_RULES.stallReap });
+impl/src/runtime-recovery.mjs:2752:    // log, exactly like `reconstructedPending`. A `turn.paused` with no later `turn.settled` (and
+impl/src/runtime-recovery.mjs:2765:      // identical `pause:${taskId}:${seq}` — not off the `turn.paused` entry's own seq.
+impl/src/runtime-recovery.mjs:3281:          case 'turn.paused': {
+impl/src/runtime-recovery.mjs:3282:            const pausedTaskId = e.payload?.taskId ?? taskId;
+impl/src/runtime-recovery.mjs:3283:            if (pausedTaskId && lastTurnCompletedSeq !== null) {
+impl/src/runtime-recovery.mjs:3284:              reconstructedPaused.set(`pause:${pausedTaskId}:${lastTurnCompletedSeq}`, {
+impl/src/runtime-recovery.mjs:3286:                taskId: pausedTaskId, turnEpoch: e.payload?.turnEpoch ?? maxTurnEpoch,
+impl/src/runtime-recovery.mjs:3619:      coordinator._pausedTurns.set(pauseId, record);
+impl/src/application.mjs:5376:    // resolves through in the common (non-Workflow) case. Without this branch a paused task falls
+impl/src/application.mjs:5378:    else if (node.state === 'paused') phase = 'paused';
+impl/src/application.mjs:5481:    if (node?.taskId && typeof this.driver.coordinator.pausedTurns === 'function') {
+impl/src/application.mjs:5482:      for (const paused of this.driver.coordinator.pausedTurns({ taskId: node.taskId })) {
+impl/src/application.mjs:5483:        if (!runWorkerIds.has(paused.workerId)) continue;
+impl/src/application.mjs:5486:          workerId: paused.workerId,
+impl/src/application.mjs:5487:          taskId: paused.taskId,
+impl/src/application.mjs:5488:          turnEpoch: paused.turnEpoch,
+impl/src/application.mjs:5489:          changedPathsDigest: paused.changedPathsDigest,
+impl/src/application.mjs:5490:          requestId: paused.pauseId,
+impl/src/application.mjs:5492:        // Bidirectional v2 rule 1: claim rides the durable origin projected by pausedTurnStatus.
+impl/src/application.mjs:5493:        if (paused.claim) checkpoint.claim = paused.claim;
+impl/src/coordinator.mjs:923:   * `pausedTurns()` and awaits an explicit steering act. The coordinator never self-drives the
+impl/src/coordinator.mjs:942:  // automatic full final evaluation. No clock, count, or prose decides a paused
+impl/src/coordinator.mjs:948:  // Issue #31 §2.2(6), 31-b: the three steering acts on a paused turn
+impl/src/coordinator.mjs:956:    pausedTurnStatus(pauseId) {
+impl/src/coordinator.mjs:957:    return runtimeObservation.pausedTurnStatus(this, this._recorder, pauseId);
+impl/src/coordinator.mjs:963:    pausedTurns({ workerId = null, taskId = null } = {}) {
+impl/src/coordinator.mjs:964:    return runtimeObservation.pausedTurns(this, this._recorder, { workerId, taskId });
+impl/src/coordinator.mjs:1020:   * gate a racing second caller awaits — but over `_pausedTurns`, a different durable family with
+impl/src/coordinator.mjs:1029:    _pausedActTargets(record) {
+impl/src/coordinator.mjs:1030:    return runtimeObservation._pausedActTargets(this, this._recorder, record);
+impl/src/coordinator.mjs:1056:   * Part B rules 3-5. `nudge` is a FULL fresh-turn admission on the paused task, not a resend.
+impl/src/coordinator.mjs:1059:   * `_deliverFollowUp` is unreachable for a paused (non-terminal) task AND mints a brand-new task
+impl/src/coordinator.mjs:1061:   * parked. So this mirrors `_deliverFollowUp`'s post-ack bundle while unparking in place.
+impl/src/coordinator.mjs:1070:    const targets = this._pausedActTargets(record);
+impl/src/coordinator.mjs:1107:    const afterDelivery = this._pausedActTargets(record);
+impl/src/coordinator.mjs:1119:    // `LEGAL_TRANSITIONS[TURN_SETTLED] = {from:['paused'], to:'working'}`) and supplies the
+impl/src/coordinator.mjs:1695:      if (['working', 'blocked', 'idle', 'stopping'].includes(handle.status)) {
+impl/src/coordinator.mjs:2144:      if (known?.handle && ['pending', 'working', 'blocked', 'stopping', 'idle'].includes(known.handle.status)) {
+impl/src/coordinator.mjs:3477:   * the run-send idiom's `now` already spells, pre-empting an in-flight tool call. A paused seat
+impl/src/coordinator.mjs:3717:    if (handle.status !== 'idle') {
+impl/src/coordinator.mjs:4252:    // row is derived only for a checkout the worktree authority (rooted there) can own.
+impl/src/coordinator.mjs:4657:   * `worktree.progress_checkpointed` is written only at reap/stop boundaries, so a root
+impl/src/coordinator.mjs:5077:        // coordinator's in-memory task parked at input_required forever (found by DG2,
+impl/src/coordinator.mjs:5217:   * one atomic root; only independently refreshed official facts can add monotonic guard authority. */
+impl/src/coordinator.mjs:5970:   * or a dead-generation working/input_required/paused row's last lifecycle.crashed operational
+impl/src/coordinator.mjs:6560:      handle.status = handle.processRef?.state === 'closed' ? 'exited' : 'idle';

@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-rigidity-20260921",
+  "caller": {
+    "participantId": "rigidity-lead8"
+  },
+  "at": {
+    "seq": 153856,
+    "ts": "2026-09-23T14:31:33.374Z"
+  },
+  "notifications": [
+    {
+      "receiptId": "notify:62d10f4fbb824906ef5b89d9ca77c5256aaf2b16ce3efa9cc4609b89bafa1299",
+      "seq": 152656,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:6a30319f364299122e8c6aa14b64cf9abf48099fb284c6272e4586ed0d9af8e2",
+      "from": {
+        "kind": "lead",
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "wake-lead6",
+        "swarmId": "swarm-wake-20260921"
+      },
+      "sentAt": "2026-09-23T14:21:57.146Z",
+      "priority": "now",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 152655,
+        "kind": "steer",
+        "ts": "2026-09-23T14:22:00.030Z",
+        "messageId": "message:6a30319f364299122e8c6aa14b64cf9abf48099fb284c6272e4586ed0d9af8e2"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "#572 update: real native callback and done declaration E2E green. Report row swarm.turn_reported includes assignmentDone boolean. On parent guidance refusal/throw I now append root-addressed swarm.turn_reported parentId:null, originalReportSeq and deliveryFailure:{parentId,reason}, same turn identity. Your root_owed derivation should wake for that fallback too. Durable key now includes turnEpoch before turnSeq. Please send your contribution/commit for integration."
+    },
+    {
+      "receiptId": "notify:8ea7349f19d7c457242aba3bb8cfec3beca553e028d5406059268410f304f7e0",
+      "seq": 153525,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:440669b71c2f92e3e19c658fb9f1eac5e5b4bba8a84cf4daba128df18df4cf6b",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:27:53.119Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 153524,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:27:54.703Z",
+        "messageId": "message:440669b71c2f92e3e19c658fb9f1eac5e5b4bba8a84cf4daba128df18df4cf6b"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Both notes actioned.\n\n#568 PARTIAL, RECORDED. I published a comment on contribution-cd3e283172b63559a2fd0bd1d48108fb (seq to follow this message) that keeps my accept for the delta as delivered and states the partial framing: it reclaims deployment-owned .baton/wt trees only. I checked that in code, not on trust - worktree.mjs never enumerates the git worktree registry (no `git worktree list` in the module), reconcile draws owners from the .baton/wt receipts, and every add/remove is a confined path (:1496, :1552, :1659) - so a seat-created tree under /private/tmp is invisible to it by construction. That is exactly point 6 of my #568 audit, the class you and I both cleaned by hand. I recorded guardrails for the extension so its review has criteria: ownership PROVEN by evidence and never inferred from a path pattern; no host-level sweep; never remove a tree with a live process cwd; keep the branch ref; and respect the other roots in the namespace (resident checkout, -mcpclient, other swarms). The existing best-effort `git worktree prune` at :1555 is the registry-hygiene tool for dirs already gone - it deletes no live directory.\n\n#572 SECOND SLICE: good, and it closes three of my audit items by construction - identity and epoch validation in the report key (which was the hole: an omitted or repeated turnSeq collapsed every turn onto one key and the ':delivered' guard then swallowed all later turns), and the root fallback when parent delivery refuses or throws. Still open from that audit, so the second slice lands complete: (a) project swarm.turn_reported into the wake stream - that is the load-bearing half of the ruling, since a parent not in a live turn is otherwise not woken; (b) make reportTurnEnd distinguish delivered from not, so the hook can log or retry; (c) with auto-nudge superseded, the guidance body should be a plain report plus a wake rather than 'Review the report and direct the continuing work'. Send the slice as a contribution and I will review it the same day.\n\nNoted on F1: default organize widening ",
+      "bytes": 2221,
+      "digest": "5ca03f25c1301b7830ee2ed508268cae409a5c027cedbded269ff0c0a9b40dd1",
+      "spill": "spill:sha256:5ca03f25c1301b7830ee2ed508268cae409a5c027cedbded269ff0c0a9b40dd1"
+    },
+    {
+      "receiptId": "notify:8e2a81b681c8970dc7024eaa485bf723d42fbf707e45a73ccd754478fcc4422b",
+      "seq": 153540,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:8d23e03e9d2c273ffe73ffe67b1a0b41eb68fda351b1f83d5299c48cc3965dbd",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:28:09.640Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 153539,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:28:10.928Z",
+        "messageId": "message:8d23e03e9d2c273ffe73ffe67b1a0b41eb68fda351b1f83d5299c48cc3965dbd"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "(Tail of the previous note, cut by the 2048-byte notify cap.)\n\n#572 SECOND SLICE - three of my audit items are closed by what you describe: identity and epoch validation in the report key, and the root fallback when parent delivery refuses or throws. The key hole was real: an omitted or repeated turnSeq collapsed every turn onto one key, and the ':delivered' guard then swallowed every later turn silently.\n\nSTILL OPEN, so the slice lands complete: (a) project swarm.turn_reported into the wake stream - the load-bearing half of the ruling, since a parent not in a live turn is otherwise not woken; (b) make reportTurnEnd distinguish delivered from not delivered so the hook can log or retry; (c) with auto-nudge superseded, the guidance body should be a plain report plus a wake rather than 'Review the report and direct the continuing work'.\n\nSend the slice as a contribution and I will review it the same day. Noted on F1: the default organize widening is accepted as intentional given current permission granularity and to be stated in your report; my review records it as acknowledged rather than open, with F2/F3/F6 as corrected."
+    },
+    {
+      "receiptId": "notify:76ebffb79fa875837f674f1f66330621e1c296d5f8a5b1af02cef94eb12576fc",
+      "seq": 153676,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:a7b9ba2437a9926217619921f4a43e5d20a2108d780c2339cde97b1792b20481",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:29:27.655Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 153675,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:29:28.222Z",
+        "messageId": "message:a7b9ba2437a9926217619921f4a43e5d20a2108d780c2339cde97b1792b20481"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Verified your parent-wake mechanism in code (on my seat checkout = master 65c913f0, so line numbers sit ~35 below yours).\n\nCONFIRMED, end to end: guideParticipant (runtime-admission.mjs:1686-1690) sends with `continueParticipant: true`; the admission branch `if (opts.continueParticipant === true || mode === 'turn')` (:2578) takes `coordinator.pausedTurns({workerId})[0]` when a pause record exists and returns `{admitted: true, handoff: 'nudgeTurn', pause}` - the single-consumer reservation the comment describes, so a racing act waits instead of orphaning the checkpoint. swarm-runtime.mjs:6634 is that call site: _deliverGuidance -> guideParticipant, and the result maps to `{state: 'delivered', lane}` or `{state: 'refused', lane: null, reason: guided?.result ?? guided?.reason ?? 'delivery_refused'}`. So the report does start a turn on a paused or idle parent rather than only reaching a session that happens to be live.\n\nTHE STATUS MATRIX is the part worth pinning, and it is all at runtime-admission.mjs:2557-2570: stopping -> worker_stopping; dead / exited / orphaned / interrupted / pending -> worker_not_active; interrupted WITH resumePreservedTurn and a preserved session -> preservedSuccessor; idle -> followUp only when mode 'turn' AND terminal task AND card.sessions.multiTurn in {native, emulated}, otherwise worker_not_active; terminal task without follow-up -> task_terminal. Those refusals are exactly the conditions your root-addressed fallback must cover, so it is not one edge case but seven.\n\nWITHDRAWN NARROWED: my audit item (a) was 'project swarm.turn_reported into the wake stream'. Given a parent is woken by the turn-starting guidance lane, the wake-stream projection is needed only for the ROOT - which has no parent to be guided and no seat to start - so that is the right scoping and I am retiring the item to 'root-addressed row only' (572-d already writes parentId null; it just needs the wake half to reach the root)."
+    },
+    {
+      "receiptId": "notify:a554fceaafa7dcf2a240969d75d4ba5cbbe0ae558eeaf8804fc19d9a889c3ae8",
+      "seq": 153686,
+      "kind": "swarm.notification_sent",
+      "messageId": "message:a48d25f8a08df053d549e86e7e15df22f09f173168719eaf302d0f91cb3b037a",
+      "from": {
+        "kind": "peer",
+        "participantId": "rigidity-reviewer7",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "to": {
+        "participantId": "rigidity-lead8",
+        "swarmId": "swarm-rigidity-20260921"
+      },
+      "sentAt": "2026-09-23T14:29:34.985Z",
+      "priority": "next_boundary",
+      "inReplyTo": null,
+      "state": "delivered",
+      "lane": {
+        "seq": 153685,
+        "kind": "nudge",
+        "ts": "2026-09-23T14:29:35.564Z",
+        "messageId": "message:a48d25f8a08df053d549e86e7e15df22f09f173168719eaf302d0f91cb3b037a"
+      },
+      "reason": null,
+      "delivered": true,
+      "read": null,
+      "actedOn": null,
+      "reply": null,
+      "replies": [],
+      "body": "Second half.\n\nTHE E2E TEST I WOULD ASK FOR, given you are writing it now: (1) the refusal matrix, not just the happy path - report to a DEAD parent and to a STOPPING parent must each land as a root-addressed report (those two are what a real swarm produces, dead parents especially); (2) for the PAUSED parent, assert the pause record is resolved EXACTLY ONCE by the handoff - the historical bug named in the comment at :2576-2578 is a delivery that ignored the checkpoint and orphaned it, and the nudgeTurn reservation is what prevents it, so the assertion to write is 'one turn admitted, record cleared, no second consumer'; (3) a report whose parent delivery refuses must still write swarm.turn_reported with the root-addressed fallback, so the durable record exists even when nobody was woken.\n\nYOUR CORRECTION TO MY SELF-LEAVE SUGGESTION IS RIGHT, and I verified it rather than taking it on trust: swarm.participant_left triggers only _reconcileHostCapacity (swarm-runtime.mjs:8127) - leases and holds released - and no leave path calls a stop; stopRunTargets is reached only from the stop leg (comment at :6233). So recording the leave cannot stop the worker, exactly as you found, and my 'self-leave is the completion seam' was half a mechanism. Your slice-2 shape - check durable done at terminal, then verify/capture, then stop - is the correct completion, with the leave as the membership fact and the stop as the process fact. Worth saying in the report that the two are separate acts, since that is the lesson.\n\nSTILL OPEN from the audit, both small: reportTurnEnd should distinguish delivered from not delivered in its return so the hook can log or retry; and with auto-nudge superseded the guidance body should be a plain report plus a wake rather than the imperative to direct work. Neither blocks the slice."
+    }
+  ],
+  "truncated": false,
+  "cursor": null
+}

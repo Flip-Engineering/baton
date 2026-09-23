@@ -1,0 +1,15 @@
+✔ RE1: the module imports neither monolith and keeps no implicit receiver outside the error classes (52.851041ms)
+✔ RE2: every effects_port delegate keeps the member name, parameter list, arity, and hands over the recorder (59.851167ms)
+✔ RE3: the recorder is the only recording path — a counting wrapper sees every row (75.324458ms)
+✔ RE4: the four relocated primitives moved once, and the export surface is unchanged (1.445042ms)
+✔ RE4b: a driver-built coordinator's port fronts the coordinator's own wrapped authorities (269.250291ms)
+✔ RE5: the map sees the move (2.36975ms)
+✔ RE6: the tranche-2 split — the admission/effect triad, the descriptor union, and delegate timing (114.276541ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1001.248041
