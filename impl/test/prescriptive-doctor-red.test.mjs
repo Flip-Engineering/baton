@@ -296,7 +296,7 @@ function plantOwnerReceipt(repoRoot, physicalOwnerId, { pid, pidStart }) {
 // to the detection: the DEFAULTS fields (ghostReservedFraction, maxReservedBytes for the fraction
 // threshold) PLUS the same runtime-reserve values the ledger was sealed with, so a conforming
 // detection that normalizes the capacity policy from its `policy` argument reads a matching digest.
-function plantReservationLedger(repoRoot) {
+async function plantReservationLedger(repoRoot) {
   const runtimeReserveBytes = 64 * 1024 * 1024;
   const runtimeReserveInodes = 10_000;
   const capacityPolicy = normalizeWorktreeCapacityPolicy({
@@ -315,7 +315,11 @@ function plantReservationLedger(repoRoot) {
     estimate: () => ({ bytes: 7 * 1024 * 1024 * 1024, inodes: 600_000 }),
     now: () => NOW,
   });
-  authority.reserve('worker:pd72-reserved-fraction', {
+  // The plant must COMPLETE before the caller reads: reserve() is async (its _lock suspends on
+  // `await this._acquire()`), so an unawaited call lands the ledger one or more microtasks later
+  // and a synchronous detection read on the same tick sees no ledger. PT-5 asserts the
+  // reserved-fraction disjunct fires, so the fixture has to plant what it claims — await it.
+  await authority.reserve('worker:pd72-reserved-fraction', {
     baseSha: 'a'.repeat(40),
     sparseCheckoutIdentity: { mode: 'full', digest: 'b'.repeat(64) },
     toolchainProjection: null,
@@ -743,7 +747,7 @@ test('PT-5 (stage: W1 missing): the ghost-worktree census fires on unregistered 
   // (the PT-L fixture-lint proves the ledger is real). A wrong implementation that only counts
   // residue is quiet here → fails.
   const capRoot = gitRepo('w1-reserved-fraction');
-  const w1Policy = plantReservationLedger(capRoot);
+  const w1Policy = await plantReservationLedger(capRoot);
   const fraction = surface.detectGhostWorktreeCensus({ root: capRoot, policy: w1Policy });
   assert.ok(fraction && fraction.code === 'warning_ghost_worktree_census',
     'the reserved-fraction disjunct fires W1 with no ghosts');

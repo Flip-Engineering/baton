@@ -957,10 +957,6 @@
       "reason": "#293"
     },
     {
-      "key": "test/prescriptive-doctor-red.test.mjs :: PT-5 (stage: W1 missing): the ghost-worktree census fires on unregistered residue, applies the live-owner discriminator, honors the reserved-fraction disjunct, and is quiet on a clean tree (§4.1 W1, precision law, findings 5/8a)",
-      "reason": "#72"
-    },
-    {
       "key": "test/readiness-honesty-red.test.mjs :: A1a (stage: enumerable honest projection): a static-only doctor row reads unverified with probedAt null — never self-relabeled probe-verified — and the fields survive JSON.stringify; a fresh content-verified probe reads probe-verified with probedAt = recorded verifiedAt (D2 cardinal law + wire law)",
       "reason": "#167"
     },
@@ -1949,6 +1945,10 @@
     {
       "file": "test/phase93a-source-schema-red.test.mjs",
       "reason": "design"
+    },
+    {
+      "file": "test/prescriptive-doctor-red.test.mjs",
+      "reason": "#72"
     },
     {
       "file": "test/provider-fault-death-red.test.mjs",
