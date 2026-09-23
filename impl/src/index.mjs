@@ -34,7 +34,7 @@ import { ProviderProcessingSupervisor } from './provider-processing-supervisor.m
 import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
-import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
+import { loadOrCreateWorktreeCapacityIntegrityKey, measuredHostObservation, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
 import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
 import { normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 import { normalizeTaskTopologyPolicy } from './task-topology.mjs';
@@ -1340,6 +1340,10 @@ export function createDriver(opts) {
     ...(opts.worktreeCapacityObserve ? { observe: opts.worktreeCapacityObserve } : {}),
     ...(opts.worktreeCapacityEstimate ? { estimate: opts.worktreeCapacityEstimate } : {}),
     ...(opts.worktreeCapacityRuntimeFootprint ? { runtimeFootprint: opts.worktreeCapacityRuntimeFootprint } : {}),
+    // #561: the derived floor reserves the disk the OS needs to keep paging under memory
+    // pressure — measured from the host the deployment runs on; a test injects its own
+    // hostObservation instead of staging the machine.
+    hostObservation: measuredHostObservation,
     now: opts.now ?? Date.now,
   }) : null;
   const now = opts.now ?? Date.now;
