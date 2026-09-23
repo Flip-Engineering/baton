@@ -54,9 +54,11 @@ test('HC-1: every host admission threshold is a derivation from the measurement,
   assert.equal(capacity.verdictLanes, 1, 'one host-wide verdict lane on the default derivation');
   assert.equal('workerSlots' in capacity, false, 'no worker slot count: a recruited seat is not a core');
   assert.equal(capacity.coreShareBytes, Math.floor((16 * G) / 10), 'memory is shared per core');
-  assert.equal(capacity.suiteBytes, 9 * Math.floor((16 * G) / 10), 'a suite is entitled to its cores\' share');
-  assert.equal(capacity.saturated, false, 'load 3 on 10 cores is not saturated');
+  assert.equal(capacity.suiteBytes, Math.floor((16 * G) / 10),
+    'one verdict is entitled to ONE core share (#561: the every-core-shares weight was a hardware analogy no host could fund)');
   assert.equal(capacity.memoryTight, false);
+  assert.equal(capacity.pagingBytes, 15 * G, 'no swap or disk staged: paging headroom is available memory alone');
+  assert.equal(capacity.diskTight, false, 'no disk staged: the dimension reads unmeasured, never guessed');
   const loaded = deriveHostCapacity(hostCapacityObservation({
     cores: 10, totalBytes: 16 * G, freeBytes: 15 * G, load1m: 24,
   }));
@@ -450,12 +452,25 @@ test('HC-12 (#329, revised #541): a staged observation names its own numbers; a 
     cores: 10, totalBytes: 16 * G, freeBytes: Math.floor(0.1 * G), availableBytes: Math.floor(3.9 * G), load1m: 1.5,
   }));
   assert.equal(mac.coreShareBytes, Math.floor((16 * G) / 10));
-  assert.equal('workerMemoryTight' in mac, false, 'no worker memory share is derived — a worker holds no slot');
+  assert.equal('workerMemoryTight' in mac, false, 'no worker memory share is derived — the worker weight is measured, not derived');
   assert.equal('workerSlots' in mac, false, 'no worker slot count is derived — seats are not cores');
-  assert.equal(mac.memoryTight, true, '3.9 GB available cannot fund a full-suite verdict (14.4 GB)');
+  assert.equal(mac.memoryTight, false, '3.9 GB of paging headroom funds a one-share verdict — the weight a real host can fund (#561)');
+  assert.equal(mac.diskTight, false, 'no disk staged: unmeasured, never guessed');
   const none = { cores: 0, bytes: 0, leases: { verify: 0, worker: 0 } };
-  const shortfall = hostCapacityShortfall('verify', mac, none);
-  assert.deepEqual(shortfall, { dimension: 'memory', observed: Math.floor(3.9 * G), required: mac.suiteBytes, unit: 'bytes' });
+  assert.equal(hostCapacityShortfall('verify', mac, none), null, 'the captured Mac funds one verdict');
+  // The incident shape: paging headroom intact, but the disk that must BACK the paging is
+  // nearly full — the verify stands down on the disk dimension (#561).
+  const fullDisk = deriveHostCapacity(hostCapacityObservation({
+    cores: 10, totalBytes: 16 * G, freeBytes: Math.floor(0.1 * G), availableBytes: Math.floor(3.9 * G), load1m: 1.5,
+    swapTotalBytes: 10 * G, swapFreeBytes: Math.floor(0.5 * G), diskFreeBytes: Math.floor(0.5 * G), diskTotalBytes: 64 * G,
+  }));
+  assert.equal(fullDisk.memoryTight, false, 'paging headroom stays 3.9 GB: swap growth is disk-capped at 512 MB, still above zero');
+  assert.equal(fullDisk.diskTight, true, '512 MB of free disk cannot back a 1.6 GB verdict');
+  assert.equal(hostCapacityShortfall('verify', fullDisk, none)?.dimension, 'disk',
+    'the shortfall names the disk the operator can free');
+  const nine = { cores: 0, bytes: 0, workerBytes: 0, workerMeasured: 0, leases: { verify: 0, worker: 9 } };
+  assert.equal(hostCapacityShortfall('worker', mac, nine), null,
+    'nine UNMEASURED workers hold no bytes: the measurement accrues with the fleet (#561)');
   assert.equal(hostCapacityShortfall('worker', mac, none), null, 'a worker fits');
   const loaded = deriveHostCapacity(hostCapacityObservation({ cores: 10, totalBytes: 16 * G, freeBytes: 15 * G, load1m: 12 }));
   assert.equal(hostCapacityShortfall('worker', loaded, none), null, '#541: load is not a shortfall dimension');
