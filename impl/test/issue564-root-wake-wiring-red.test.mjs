@@ -276,3 +276,30 @@ test('572-w4: a real parentless turn report reaches the resident root transport 
   assert.equal(deliveries().length, 1);
   assert.equal(sent.length, 1);
 });
+
+for (const runId of ['run-plain', null]) {
+  test(`572-w5: a non-swarm turn report reaches root once (run ${runId})`, async (t) => {
+    const sent = [];
+    const discovery = async () => JSON.stringify([{ sessionId: TARGET.sessionId, pid: 572 }]);
+    const transport = async ({ frame }) => { sent.push(frame); };
+    const f = fixture(t, { target: TARGET, discovery, transport });
+    const source = f.store.recordDriver('worker.turn_reported', {
+      runId, worker: 'w-plain', taskId: 'task-plain', turnSeq: 12, turnEpoch: 2,
+      assignmentDone: false, report: { status: 'completed', summary: 'Inspect the changed files' },
+    }, { actor: 'baton-runtime', key: 'plain-turn' }).event;
+    const outcomes = () => f.store.eventsView().filter((row) => row.payload?.seq === source.seq
+      && ['wake.root_delivered', 'wake.root_undelivered'].includes(row.payload?.kind));
+    await waitFor(outcomes, (rows) => rows.length > 0, { label: 'non-swarm root delivery' });
+    assert.equal(outcomes()[0].payload.kind, 'wake.root_delivered', JSON.stringify(outcomes()));
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].message.content, /Inspect the changed files/);
+    assert.match(sent[0].message.content, /"assignmentDone": false/);
+    assert.match(sent[0].message.content, /"workerId": "w-plain"/);
+    assert.equal(outcomes()[0].payload.swarmId, null);
+    const replay = await deliverRootWakeFrame({
+      store: f.store, frame: deriveWakeFrame(source), target: TARGET, discovery, transport,
+    });
+    assert.deepEqual(replay, { delivered: false, duplicate: true });
+    assert.equal(sent.length, 1);
+  });
+}
