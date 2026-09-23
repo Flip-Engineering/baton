@@ -921,7 +921,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     description: "Apply one preserved result's RECORDED-base delta to the deployment's main checkout with a typed three-way probe: applied-clean receipts, skipped (already_integrated | empty_delta), and typed refusals (harvest_conflict names the exact paths; onto is never touched by a refused harvest). The resultSha XOR runId source law lives in the tool's shape guard.",
     inputSchema: schema({
       ...repo,
-      onto: { type: 'string', minLength: 1, maxLength: 4096 },
+      onto: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['waves.harvest.onto'].value },
       resultSha: { type: 'string', pattern: '^[a-f0-9]{40}$' },
       runId,
     }, ['repoId']),
