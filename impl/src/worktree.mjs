@@ -10,7 +10,7 @@
 // for a worker's own worktree, `.baton/verify/<label>-<suffix>` for a throwaway sandbox.
 // The two directories are structurally namespaced apart (W1).
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync, closeSync, cpSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, renameSync,
   linkSync, symlinkSync, writeFileSync, readFileSync, readlinkSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
@@ -722,9 +722,10 @@ function pathIsWithin(root, candidate) {
   return within === '' || (within !== '..' && !within.startsWith(`..${sep}`) && !isAbsolute(within));
 }
 
-function linkedLivenessUnobservable(worktreePath, message) {
-  return new WorkspacePreservationError(
+function linkedLivenessUnobservable(worktreePath, message, holders = []) {
+  return new WorkspaceCustodyError(
     message,
+    holders,
     Object.freeze({
       schemaVersion: 1, physicalOwnerId: null, state: 'unobservable', removable: false,
       dirtyPaths: Object.freeze([worktreePath]), headSha: null, baseSha: null,
@@ -746,9 +747,22 @@ function linkedWorktreeCwdHolders(worktreePath, opts = {}) {
     return Object.freeze([...injected].map(String));
   }
   const root = canonicalPathIncludingMissingLeaf(worktreePath);
-  if (process.platform === 'linux') {
+  const observation = opts.linkedWorktreeObservation ?? {};
+  const platform = observation.platform ?? process.platform;
+  const uid = observation.uid ?? process.getuid?.();
+  if (!Number.isSafeInteger(uid) || uid < 0) {
+    throw linkedLivenessUnobservable(
+      worktreePath,
+      'linked worktree process uid could not be observed',
+    );
+  }
+  if (platform === 'linux') {
+    const procRoot = observation.procRoot ?? '/proc';
+    const readProc = observation.readdirSync ?? readdirSync;
+    const statProc = observation.statSync ?? statSync;
+    const readCwd = observation.readlinkSync ?? readlinkSync;
     let names;
-    try { names = readdirSync('/proc'); }
+    try { names = readProc(procRoot); }
     catch {
       throw linkedLivenessUnobservable(
         worktreePath,
@@ -756,44 +770,58 @@ function linkedWorktreeCwdHolders(worktreePath, opts = {}) {
       );
     }
     const holders = [];
-    let observationDenied = false;
     for (const name of names) {
       if (!/^[1-9][0-9]*$/u.test(name)) continue;
-      let cwd;
-      try { cwd = canonicalPathIncludingMissingLeaf(readlinkSync(`/proc/${name}/cwd`)); }
+      const holder = `pid:${name}`;
+      let procStat;
+      try { procStat = statProc(join(procRoot, name)); }
       catch (error) {
-        if (error?.code === 'EACCES' || error?.code === 'EPERM') observationDenied = true;
-        continue;
+        if (error?.code === 'ENOENT' || error?.code === 'ESRCH') continue;
+        throw linkedLivenessUnobservable(
+          worktreePath,
+          `linked worktree process owner was not observable for ${holder}`,
+          [holder],
+        );
       }
-      if (pathIsWithin(root, cwd)) holders.push(`pid:${name}`);
-    }
-    if (observationDenied) {
-      throw linkedLivenessUnobservable(
-        worktreePath,
-        'linked worktree process cwd state was not observable for every live process',
-      );
+      if (procStat.uid !== uid) continue;
+      let cwd;
+      try { cwd = canonicalPathIncludingMissingLeaf(readCwd(join(procRoot, name, 'cwd'))); }
+      catch (error) {
+        if (error?.code === 'ENOENT' || error?.code === 'ESRCH') continue;
+        throw linkedLivenessUnobservable(
+          worktreePath,
+          `linked worktree process cwd was not observable for ${holder}`,
+          [holder],
+        );
+      }
+      if (pathIsWithin(root, cwd)) holders.push(holder);
     }
     return Object.freeze(holders);
   }
-  if (process.platform === 'darwin') {
-    let output = '';
+  if (platform === 'darwin') {
+    const run = observation.spawnSync ?? spawnSync;
+    let result;
     try {
-      output = execFileSync('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fpn'], {
+      result = run('/usr/sbin/lsof', [
+        '-a', '-u', String(uid), '-d', 'cwd', '-Fpn',
+      ], {
         encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024,
       });
-    } catch (error) {
-      // lsof exits 1 when the filter matched no process. A launch or observation failure has no
-      // numeric status and cannot establish that the checkout is idle.
-      if (error?.status === 1 && String(error.stderr ?? '').trim().length === 0) {
-        output = String(error.stdout ?? '');
-      }
-      else {
-        throw linkedLivenessUnobservable(
-          worktreePath,
-          'linked worktree process cwd state could not be observed',
-        );
-      }
+    } catch {
+      throw linkedLivenessUnobservable(
+        worktreePath,
+        'linked worktree process cwd state could not be observed',
+      );
     }
+    const stderr = String(result?.stderr ?? '');
+    if (result?.error || result?.signal || ![0, 1].includes(result?.status)
+      || stderr.trim().length > 0) {
+      throw linkedLivenessUnobservable(
+        worktreePath,
+        'linked worktree process cwd state could not be observed',
+      );
+    }
+    const output = String(result?.stdout ?? '');
     const holders = [];
     let pid = null;
     for (const line of output.split('\n')) {
@@ -872,7 +900,16 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
       for (const holder of cwdHolders) liveHolders.add(holder);
       continue;
     }
-    const status = sh('git', ['status', '--porcelain=v1', '--ignored', '--untracked-files=all'], row.worktreePath);
+    let status;
+    try {
+      status = sh(
+        'git', ['status', '--porcelain=v1', '--ignored', '--untracked-files=all'],
+        row.worktreePath,
+      );
+    } catch {
+      retained.push(row);
+      continue;
+    }
     const lines = status.length === 0 ? [] : status.split('\n');
     if (lines.some((line) => line.startsWith('!! '))) {
       retained.push(row);
@@ -898,7 +935,12 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
         continue;
       }
     }
-    const head = sh('git', ['rev-parse', 'HEAD'], row.worktreePath);
+    let head;
+    try { head = sh('git', ['rev-parse', 'HEAD'], row.worktreePath); }
+    catch {
+      retained.push(row);
+      continue;
+    }
     const ref = registration.branch ? `refs/heads/${registration.branch}` : linkedWorktreeSnapshotRef(physicalOwnerId, row);
     if (opts.verifyOnly === true) {
       snapshots.push(Object.freeze({ path: row.worktreePath, sha: head, ref }));
@@ -2846,7 +2888,8 @@ export function applySnapshotToWorktree(repoRoot, snapshotSha, targetDir, baseSh
  * @param {string} repoRoot
  * @param {string} taskId
  * @param {{force?: boolean, deleteBranch?: boolean, retainOwnerReceipt?: boolean, log?: object,
- *   custodyHolders?: Function, linkedWorktreeHolders?: Function, excludeHolderId?: string}} [opts]
+ *   custodyHolders?: Function, linkedWorktreeHolders?: Function,
+ *   linkedWorktreeObservation?: object, excludeHolderId?: string}} [opts]
  *   `custodyHolders` is the injected live-holder provider (see assertRemovableContent) and
  *   `excludeHolderId` names the handle performing this cleanup, which is not a co-holder of it.
  * @returns {Promise<void>}
@@ -2885,10 +2928,14 @@ export async function reap(repoRoot, taskId, opts = {}) {
   cleanupSeatLinkedWorktrees(repoRoot, taskId, {
     snapshotUncommitted: true, verifyOnly: true,
     ...(opts.linkedWorktreeHolders ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
+    ...(opts.linkedWorktreeObservation
+      ? { linkedWorktreeObservation: opts.linkedWorktreeObservation } : {}),
   });
   cleanupSeatLinkedWorktrees(repoRoot, taskId, {
     snapshotUncommitted: true,
     ...(opts.linkedWorktreeHolders ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
+    ...(opts.linkedWorktreeObservation
+      ? { linkedWorktreeObservation: opts.linkedWorktreeObservation } : {}),
   });
   if (existsSync(dir)) {
     try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
@@ -2960,7 +3007,8 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * @param {string[]} expectedActiveTaskIds
  * @param {{log?: object, ownerAuthority?: object, expectedOwnerBindings?: object[],
  *   sparseCheckoutIdentity?: object, custodyHolders?: Function, beforeOwnerCleanup?: Function,
- *   linkedWorktreeHolders?: Function, snapshotUncommitted?: boolean}} [opts]
+ *   linkedWorktreeHolders?: Function, linkedWorktreeObservation?: object,
+ *   snapshotUncommitted?: boolean}} [opts]
  * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
@@ -3306,6 +3354,8 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
             verifyOnly: true,
             ...(opts.linkedWorktreeHolders
               ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
+            ...(opts.linkedWorktreeObservation
+              ? { linkedWorktreeObservation: opts.linkedWorktreeObservation } : {}),
           });
         } catch (error) {
           report.diagnostics.push(Object.freeze({
@@ -3344,6 +3394,8 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
             snapshotUncommitted: opts.snapshotUncommitted === true && ownerState === 'local_dead',
             ...(opts.linkedWorktreeHolders
               ? { linkedWorktreeHolders: opts.linkedWorktreeHolders } : {}),
+            ...(opts.linkedWorktreeObservation
+              ? { linkedWorktreeObservation: opts.linkedWorktreeObservation } : {}),
           });
           for (const snapshot of linkedSnapshots) {
             logEvent(opts, normalizedTaskId, 'worktree.linked_reclaimed', {
