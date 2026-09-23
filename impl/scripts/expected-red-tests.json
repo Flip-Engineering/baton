@@ -1655,10 +1655,6 @@
       "reason": "#55"
     },
     {
-      "file": "test/issue558-publish-remote-reaches-driver-red.test.mjs",
-      "reason": "#558"
-    },
-    {
       "file": "test/issue62-write-failure-red.test.mjs",
       "reason": "#62"
     },

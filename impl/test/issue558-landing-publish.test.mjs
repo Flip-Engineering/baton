@@ -208,9 +208,9 @@ test('558d: a malformed publishRemote declaration is refused at deployment open'
   assert.match(error.message, /publishRemote/u, 'the refusal names the declaration');
 });
 
-// ── (e) a push that reaches somewhere else is unverified, never a success ────────────────────
+// ── (g) a push that reaches somewhere else is unverified, never a success ────────────────────
 
-test('558e: a landing whose push is redirected away from the declared remote refuses unverified and rolls back', needsGit, async (t) => {
+test('558g: a landing whose push is redirected away from the declared remote refuses unverified and rolls back', needsGit, async (t) => {
   const w = await world(t, { bareRemote: true });
   // Issue #556: git's own push-only rewrite. The push names the declared remote and is served by
   // another repository, while a read of the declared remote is served by the declared one — the
