@@ -1503,6 +1503,10 @@
       "reason": "#55"
     },
     {
+      "file": "test/issue564-root-wake-addressing-red.test.mjs",
+      "reason": "#564"
+    },
+    {
       "file": "test/issue62-write-failure-red.test.mjs",
       "reason": "#62"
     },
