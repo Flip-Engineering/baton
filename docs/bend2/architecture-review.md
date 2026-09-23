@@ -6,8 +6,7 @@ This review examines Baton at commit `bc2e4fcd072e9edce21f94ee2ea8bb938c409f9b`.
 The evidence set is `impl/src`, `impl/test`, the repository design documents, and
 [`impl/scripts/seam-inventory.json`](../../impl/scripts/seam-inventory.json). Bend2 capability
 claims use the repository pin in [`reference/README.md`](reference/README.md), which fixes
-`bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868` and Bend 2.0.25. This document proposes
-deletions and merges. [`target-architecture.md`](target-architecture.md) defines the resulting
+`bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868` and Bend 2.0.25. This document records deletion and merge findings with the operator dispositions below. [`target-architecture.md`](target-architecture.md) defines the resulting
 BATON2 ownership model. This review does not change the running implementation.
 
 A finding in this review has three required parts:
@@ -16,7 +15,7 @@ A finding in this review has three required parts:
 2. a named deletion or merge; and
 3. the behavior Baton would lose if that change were wrong.
 
-The current tree has 193 `impl/src/*.mjs` modules and 163,391 source lines. The seam inventory
+The audited tree at `bc2e4fcd` has 193 `impl/src/*.mjs` modules and 163,391 source lines. The seam inventory
 classifies 2,670 members in 22 files. Observation is the largest class at 1,026 members and 18,186
 member lines. Admission has 657 members, surface has 561, recovery has 218, and effect has 208.
 The earlier runtime review reached the same structural diagnosis from a smaller snapshot: the
@@ -34,6 +33,39 @@ processes, CLI, MCP, Web, workflow, wave, Atlas, context, and result export. Its
 `contribution-d31675f128fc5af02a973ee72f16014a`. Both lane contributions were independently
 accepted. The findings below restate their evidence after a direct source check.
 
+## Decision and evidence status
+
+The operator approved the 16 operative revision 9.1 laws at
+`1fab9a1da60db3d5d9c9d3cef89d3caabd68fe35` and authorized rewrite work on `bend2-rewrite`.
+The final law review is `/tmp/baton-bend2-laws-review/codex-final-law-review-r9.1.md`, verdict
+**APPROVED**. Architecture feasibility and migration readiness remain under separate review.
+The external directory `/tmp/baton-bend2-laws-review/architecture` contains review inputs and
+native probes; no final architecture verdict was present when this reconciliation was prepared.
+
+Retained commit `c22cda5bf04c36616d9634464709648538d196d8`, contribution
+`contribution-7ee11e562dbf8ed3c3dad1ab670592d4`, records the operator decisions recovered here:
+
+- F2's durable-store merge is rejected. Preserve the Operational Log and Coordination Journal as
+  separate storage systems; delete the prototype `holistic-runtime.EventJournal`.
+- F4 permits one scheduler only with explicit knowledge promotion, separate information scopes,
+  and preserved parent-child delegation.
+- F16/F17 require typed effect/path declarations and an independent background structural scan.
+  Gate selection consumes a validated result bound to both inputs and the exact source snapshot.
+- F1, F3, F5 through F15, and F18 through F24 are approved design directions. Their implementation
+  still requires the host and capability evidence identified below.
+
+The retained contribution awaits independent disposition during this recovery. Its operator
+record supplies design constraints; this document grants no additional approval. The actionable
+closure conditions are ARCH-CLOSE-01 through ARCH-CLOSE-09 in
+[`target-architecture.md`](target-architecture.md#native-prerequisites-and-closure-conditions).
+Affected phases wait for their architecture verdict and prerequisite evidence. Earlier blanket
+law-approval holds are superseded.
+
+The source census, line references, and historical test observations below remain pinned to
+`bc2e4fcd`; this reconciliation does not recertify them against the current implementation.
+The two lane reports retain their original proposals as source evidence. The dispositions in
+this document and the target architecture govern the rewrite.
+
 ## Why the current subsystems exist
 
 The following boundaries are caused by JavaScript, Node, or the sequence in which Baton was built.
@@ -45,12 +77,12 @@ Each row is also a deletion or merge proposal.
 | `CoordinationStore` plus five `coordination-*` partials | Historical extraction kept 604 class delegates while the moved functions remained organized by seam-map category ([`coordination-internals.mjs`](../../impl/src/coordination-internals.mjs#L1), [`coordination-ledger.mjs`](../../impl/src/coordination-ledger.mjs#L1)). | Delete the class delegate shell and merge durable writes, folds, queries, admission, and replay into the journal, projector, policy, and reconciler owners. | Existing callers that monkeypatch store methods, the class-shaped public API, and byte-compatible replay helpers could be lost. |
 | `BatonApplication` plus `application-observation` | Slice 15 moved methods verbatim and retained same-name delegates so the dispatch table stayed unchanged ([`application-observation.mjs`](../../impl/src/application-observation.mjs#L1)). | Delete application observation delegates and merge each query into its materialized-view owner. | CLI, MCP, and Web commands that depend on current method names, arities, pagination, and authority filtering could change. |
 | Repeated `canonical`, `clone`, `freeze`, `exact`, and digest helpers | JavaScript values do not carry closed record types, affine ownership, or a canonical serialized form. At least 23 modules define a local `canonical` function. | Delete internal copies and merge canonical encoding, fixed-point currency, identifiers, and closed construction into domain types. Keep versioned decoders at durable and network boundaries. | Ledger digests, Unicode order, nanodollar arithmetic, unknown-field policy, and replay identity could change. The locale and migration cases are pinned by [`phase63-canonical-order-authority.test.mjs`](../../impl/test/phase63-canonical-order-authority.test.mjs#L36). |
-| `FenceTable`, shared-workspace custody scans, and northbound string capabilities | JavaScript cannot express a consumed lease. Two installed ESM copies also make object identity unreliable, so northbound authority is an exported string ([`northbound-capability-authority.mjs`](../../impl/src/northbound-capability-authority.mjs#L1)). | Delete the in-process fence table, custody booleans, and bearer strings; merge them into affine `TurnLease`, `WorkspaceLease`, and `Capability` values. Retain durable generations and compare-and-swap receipts at process boundaries. | Stale commands could act after reassignment, shared checkout holders could be miscounted, and a restarted process could accept an obsolete authority if the durable generation boundary is omitted. |
+| `FenceTable`, shared-workspace custody scans, and northbound string capabilities | Mutable stamps and exported strings implement authority checks in JavaScript ([`northbound-capability-authority.mjs`](../../impl/src/northbound-capability-authority.mjs#L1)). | Consolidate issuance, scope, generation, and holder checks. Delete their implementation only after ARCH-CLOSE-02 proves the replacement against LANG-F-26/28. | Forged or stale authority could act; a shared checkout could be removed while another holder remains. |
 | Provider poll, processing, and session-recovery supervisors | Node timers, `AbortController`, and mutable single-flight flags implement task lifetimes manually. | Merge all three into one structured supervisor over a typed action and policy; delete the three timer-loop class bodies. | Provider-specific maximum backoff, durable processing backoff, one-shot session recovery, and close status could be flattened into an incorrect common policy. |
 | ACP, OMP, app-server, CLI, and session process wrappers | Providers arrived through different Node child-process protocols and were integrated at different times. | Merge child ownership, JSON-RPC framing, close/reap, stderr bounds, and cancellation into one worker gateway. Keep a provider codec for protocol-specific frames. | Ready handshakes, permission requests, session resume, provider event names, and oversize-frame behavior could be lost. |
 | `holistic-runtime` and `production-*` convergence wrappers | A later convergence design was added beside the deployed runtime and exported as an opt-in package path ([`package.json`](../../impl/package.json#L15), [`index-converged.mjs`](../../impl/src/index-converged.mjs#L1)). | Delete the parallel runtime and wrapper succession; merge its command registry, notification, and recovery requirements into the single deployment factory. | The `baton/converged` API, raw-core escape hatch, hook-based migration path, and its recovery behavior would be removed. |
 | `workflow-lane.mjs`, `native-modules.mjs`, and duplicate `resolveResultPin` | ESM import-graph tests produced re-export shims. A synchronous result-pin implementation was copied to avoid another import ([`workflow-interpreter.mjs`](../../impl/src/workflow-interpreter.mjs#L406)). | Delete both shims and the copied pin resolver; merge their contracts into the actual workflow and capability modules. | Import inertness, optional capability loading, cancellation, and the exact result attribution grace period could regress. |
-| Seam inventory generator and committed JSON | Dynamic method ownership is reconstructed with AST text because JavaScript declarations do not encode the architectural seam. | Delete the generator, committed JSON, landing-table copy, and five source-shape tests after typed effects and capabilities carry the same information. | Landing could select too few tests for a changed effect or authority path. This risk is material because the current hard-coded application member count is already stale. |
+| Seam inventory generator and committed JSON | Dynamic method ownership is reconstructed with AST text because JavaScript declarations do not encode the architectural seam. | Delete the committed JSON, landing-table copy, and source-shape tables after typed declarations and an independent structural scan establish equivalent coverage (ARCH-CLOSE-09). | Landing could select too few tests for a changed effect or authority path. This risk is material because the current hard-coded application member count is already stale. |
 
 ## Findings
 
@@ -77,11 +109,17 @@ boundary.
 class method that this review treats as internal. Removing the facade before a protocol adapter is
 available would break those callers and some test doubles.
 
-### F2. Merge the two durable event stores
+### F2. Keep the two durable event stores and delete the prototype
 
-**Deletion and merge.** Merge `Log` and `CoordinationStore` into one typed, partitioned journal.
-Delete the prototype `holistic-runtime.EventJournal`. Preserve logical partitions, per-partition
-sequence rules, retention, and archive policy.
+**Operator disposition: store merge rejected.** Preserve `Log` and `CoordinationStore` as the
+Operational Log and Coordination Journal, each with its own writer, sequences, file formats,
+archives, recovery, and fault boundary. Delete the prototype `holistic-runtime.EventJournal`
+and its compatibility paths. Shared record types and cross-store references do not authorize
+shared write transactions, quarantine, or compaction frontiers.
+
+**Original proposal.** The source audit proposed a partitioned journal merging both stores.
+The operator rejected that merge; the deletion above is the retained action. ARCH-CLOSE-04
+requires independent-store durability and recovery evidence.
 
 **Evidence.** `log.mjs` calls the per-worker JSONL log the only source of truth
 ([`log.mjs`](../../impl/src/log.mjs#L1)), while the deployment separately constructs a
@@ -123,8 +161,14 @@ remove a public package export without a migration path.
 
 **Deletion and merge.** Merge `goal-plan`, `orchestrator-plan`, workflow definition and revision,
 task topology, run lineage, wave, workflow interpreter, recipes, and swarm work assignment into one
-versioned plan graph. Delete the independent schedulers and graph identity schemes. Represent plan
-nodes and edges with distinct variants, and keep dynamic swarm actions as plan events.
+versioned plan graph. Preserve the graph identity namespaces as distinct variants and keep dynamic
+swarm actions as plan events. Delete independent scheduling mechanics after ARCH-CLOSE-08 passes.
+
+**Operator condition.** Knowledge promotion remains an explicit operation carrying source and
+destination scope. Separated agents retain reader-relative views. Parent-child relations preserve
+delegated authority, visibility, and completion rules through replay. Native tests must carry
+`kg-settlement-red.test.mjs`, `swarm-delegated-completion.test.mjs`, and the plan identity fixtures.
+A unified graph must reject cross-scope reads and child authority elevation.
 
 **Evidence.** `wave-driver.mjs` owns a polling supervisor while `workflow-interpreter.mjs` owns a
 second member fan-out and join. The workflow lane tests pin a separate import shim
@@ -138,11 +182,12 @@ versioned work graphs, routes, dependencies, attempts, and outcomes.
 revision ancestry, dynamic assignment, and replay of prior plan formats could be corrupted by a
 single undifferentiated node type.
 
-### F5. Merge wave supervision into a first-class parallel join
+### F5. Merge wave supervision into an explicit supervised join
 
 **Deletion and merge.** Delete the per-member poll timers, mutable progress maps, and ad hoc
-`Promise.all` join. Merge them into one first-class join over member tasks plus a supervision policy
-value.
+`Promise.all` join. Merge them into one implemented and tested join over member tasks plus a supervision policy
+value. LANG-CAP-09 and ARCH-CLOSE-03 gate the deletion: pure parallel calls and `IO.fork`
+do not establish cancellation, parent-child cleanup, or task supervision.
 
 **Evidence.** The wave driver tracks each member through repeated status reads, settlement windows,
 stall clocks, claim recovery, and nudge budgets. The workflow interpreter separately fans out pending
@@ -171,11 +216,13 @@ child ownership. The relevant behavior is pinned by `adapter.test.mjs`,
 event mapping, usage reporting, and size bounds. Flattening codecs would make one provider appear
 healthy while its protocol state is incomplete.
 
-### F7. Merge provider supervisors under structured concurrency
+### F7. Merge provider supervisors under a checked task lifecycle
 
 **Deletion and merge.** Merge `ProviderPollSupervisor`, `ProviderProcessingSupervisor`, and
 `SessionRecoverySupervisor` into one task nursery abstraction. Delete their repeated `start`,
-`_schedule`, `_run`, `status`, `close`, timer, abort, and single-flight code.
+`_schedule`, `_run`, `status`, `close`, timer, abort, and single-flight code after the replacement
+passes LANG-CAP-09 and ARCH-CLOSE-03. Explicit cancel, join, close and reap outcomes must account
+for every owned child; an affine value may be dropped without calling cleanup (LANG-F-26).
 
 **Evidence.** The three classes are defined in
 [`provider-poll-supervisor.mjs`](../../impl/src/provider-poll-supervisor.mjs#L6),
@@ -189,12 +236,19 @@ different policies.
 store, and session recovery is one-shot. A common supervisor that owns those policies would change
 their failure and retry rules.
 
-### F8. Replace in-process authority emulation with affine leases
+### F8. Consolidate authority checks and prove any capability replacement
 
-**Deletion and merge.** Delete `FenceTable`, the shared-workspace holder inference flags, and exported
-northbound bearer strings. Merge authority into affine lease and capability values that are consumed
-by effects. Keep serialized generations, lease receipts, and compare-and-swap checks for durable and
-remote boundaries.
+**Deletion and merge.** Consolidate `FenceTable`, shared-workspace holder inference, and northbound
+bearer-string admission into one authority contract. Retain issuance, resource identity, scope,
+generation, holder, and replay checks at every consuming effect until ARCH-CLOSE-02 proves a
+replacement. A checked capability encoding or an approved language extension is a prerequisite to
+deleting checks whose safety relies on unforgeability.
+
+**Language correction.** LANG-F-28 demonstrates that an importing module can construct an affine
+lease directly and another function can produce the same custody type. LANG-F-26 demonstrates a
+legal drop that calls no release. Affinity alone supplies neither issuance provenance nor cleanup.
+[`lang-cap-probes.evidence.md`](examples/lang-cap-probes.evidence.md) carries the compiled positive
+and negative controls. Base's closed opaque handle laws do not establish user-defined lease safety.
 
 **Evidence.** [`fence.mjs`](../../impl/src/fence.mjs#L10) implements mutable version stamps.
 `shared-workspace-custody.mjs` derives custody from several live handles. The northbound module uses
@@ -204,16 +258,29 @@ fixed strings because object identity fails when two package copies load
 `issue428-worktree-custody-on-stop.test.mjs`, and the stale-fence Web cases pin the required external
 behavior.
 
-**Loss if wrong.** Affine values cannot by themselves stop a stale command received after restart or
-over a network. Removing durable generations would permit old authority to act. Removing the holder
-set would also let one participant delete a shared checkout while another still owns it.
+**Loss if wrong.** A forged local record can authorize an effect if its consumer trusts only the
+type name. Removing durable generations permits stale commands to act after restart. Removing the
+holder set or treating a dropped value as a release permits deletion of a shared checkout still
+owned by another participant.
 
 ### F9. Merge recovery into one journal reconciler
 
 **Deletion and merge.** Merge coordination replay, runtime recovery, application recovery views,
 swarm startup recovery, process recovery, and session recovery into one reconciler driven from the
 journal. Delete recovery methods that only repair in-memory promises, timers, and reservation maps;
-structured task lifetimes own those cases.
+the replacement supervisor must account for those cases explicitly under ARCH-CLOSE-03/05.
+Lost in-memory handles provide no proof that an external effect stopped or that retry is safe.
+
+**Validation basis.** A replay refusal is evidence about the validating basis, not by itself proof
+about history. Startup, doctor, and recovery must use the same recorded schema and policy basis, or
+state that the basis cannot be reconstructed. Each refusal classifies its cause before any repair is
+offered: a missing or unreconstructible policy basis, an unsupported decoder version, a projection
+defect, or corrupt source bytes. The same valid ledger passes through all three entry points with
+equivalent logical projections, and the missing-policy case refuses to diagnose corruption and
+refuses to recommend destructive logical repair. Preserving bytes while silently skipping a valid
+fact does not satisfy M-5. Unifying validation semantics across F2, F9, and F22 does not remove the
+distinct diagnostic responsibilities of the three entry points. ARCH-CLOSE-11 carries the closure
+evidence.
 
 **Evidence.** The inventory assigns 218 members and 6,976 member lines to recovery.
 `runtime-recovery.mjs` says 42 class members moved into its bucket
@@ -332,8 +399,18 @@ of process could also change latency, startup registration, and receipt reverifi
 
 **Deletion and merge.** Merge contribution capture, independent verification, gate selection,
 landing-table resolution, integration, and result adoption into one verification and landing
-subsystem. Delete gate derivation from AST seam maps; derive it from typed effect and path
-declarations.
+subsystem. Replace the committed AST seam inventory with typed effect/path declarations checked
+against an independent background structural scan. Gate selection consumes the validated
+`CheckedChangeImpact` for the exact source snapshot (ARCH-CLOSE-09).
+
+**Publication obligation.** One owner performs the whole publication operation: it binds the
+admitted repository authority, the designated shared endpoint and target ref, the expected shared
+target state, and the verified commit, and it records completion only from an independent
+observation of that endpoint. Local preparation keeps its own state and reports its own result. A
+local ref compare-and-swap and a local integration receipt establish local integration only, and
+neither is recorded as shared completion. #558 reports the observed consequence of the current
+split. Phase 4 and `B2-DESTINATION` in
+[`rewrite-plan.md`](rewrite-plan.md) carry this obligation into the migration.
 
 **Evidence.** Gate ownership is split across `contribution-service.mjs`,
 `contribution-verification.mjs`, `referee.mjs`, `landing-table.mjs`, result adoption in application
@@ -344,12 +421,30 @@ recovery review requires proof that execution occurred and makes recovery visibl
 **Loss if wrong.** Verification must remain independent of the contributor, preserve exact command,
 arguments, working directory, environment, and exit status, and prevent integration of a stale
 commit. A merged subsystem with one mutable actor could erase that separation of authority.
+Publication recorded from local evidence alone reports success while the shared branch is unchanged,
+and an uncertain dispatch recorded as settled hides either a duplicate or a missing delivery.
 
-### F17. Delete the seam inventory after typed ownership lands
+### F17. Replace the committed seam inventory with checked change declarations
 
 **Deletion and merge.** Delete `impl/scripts/seam-inventory.mjs`, its committed JSON, the
-landing-table inventory reader, the surface gate consumer, and five tests that reproduce the map
-from source. Merge seam declaration into effect and capability types at their definitions.
+landing-table inventory reader, the surface gate consumer, and fixed member tables after
+ARCH-CLOSE-09 establishes equivalent gate coverage. Keep a background structural scanner owned by
+Verification and Landing. It checks declared effects, paths, transitive calls, and ownership edges
+against the submitted source snapshot.
+
+**Operator condition.** Both declaration and structural scan are mandatory. Their validated result
+binds source snapshot, declaration digest, scanner version, and gate mapping. Missing, stale,
+unresolved, or mismatched evidence prevents gate selection and integration. LANG-F-28's second
+producer probe requires validating this provenance at the consumer; naming a return type
+`CheckedChangeImpact` establishes no unique producer.
+
+The relation between a change and the contracts it affects is carried by evidence. A change
+carries its declared effects and paths, the structural scan derives the effects, imports, calls, and
+ownership edges the change reaches, and a disagreement is a typed refusal. Demonstrate that
+relation on a pure decision helper change, a schema change, a shared library change, and an altered C
+effect, because a change that preserves its type and effect spelling can still alter an
+authorization predicate, a canonical encoder, or an event fold. The committed inventory stays until
+that coverage selects the same gates or stronger ones (ARCH-CLOSE-09).
 
 **Evidence.** The artifact has 26,008 JSON lines for 2,670 class members. The generator infers a
 single primary category from names, ports, and verbs. The source-shape suites then compare those
@@ -358,8 +453,8 @@ while `application-observation.test.mjs` fails its expected count of 174 with an
 175 at line 156. The generated copy and the test copy already disagree.
 
 **Loss if wrong.** The inventory is currently the only explicit input that maps several split
-modules to landing gates. Deleting it before typed declarations drive gate selection would narrow
-verification silently when a seam module changes.
+modules to landing gates. Deleting it before declaration checking and independent structural coverage are proven would
+narrow verification silently when a seam module changes.
 
 ### F18. Merge host and worktree capacity leases
 
@@ -409,7 +504,9 @@ states.
 **Deletion and merge.** Merge `_append` and `_appendBatch` into one append transaction. Merge the
 three ledger drift checks into one verified frontier. Merge the seven temp-write, fsync, rename, and
 directory-fsync recipes into one durable replacement primitive. Delete the in-memory writer flag
-and per-append ownership check after one writer lease controls the transaction.
+and duplicated per-append ownership checks only after ARCH-CLOSE-02/04 prove a single checked
+writer admission and crash-durable transaction. Apply that primitive separately inside each store;
+F2 forbids merging the two stores. LANG-CAP-01 supplies required sync and publication effects.
 
 **Evidence.** The single and batch append paths duplicate record construction, append, group-commit
 scheduling, hash update, indexing, and fold
@@ -454,6 +551,10 @@ command argument validation, MCP JSON schema, and the contribution contract vali
 schema source with derived codecs. Merge the paired swarm refusal builders and HTTP status mapping
 into one versioned refusal registry. Delete the same-rule pair table after old ledger codes have a
 decoder migration.
+
+The merged validator uses one recorded policy basis for live admission and replay, and reports a
+missing or unreconstructible basis instead of a corruption verdict. A missing-policy refusal names
+the policy it could not reconstruct and recommends no quarantine or repair.
 
 **Evidence.** `swarm-event-schemas.mjs` explicitly says its DSL is descriptive and is not the domain
 validator ([`swarm-event-schemas.mjs`](../../impl/src/swarm-event-schemas.mjs#L1)).
@@ -515,14 +616,14 @@ a finding above and carries its own loss statement.
 | Coordinator methods / `runtime-*` functions | Delete delegates; merge by target owner (F1). | Public method ABI, arity, and patchable test seams. |
 | CoordinationStore methods / `coordination-*` functions | Delete delegates; merge by journal, query, policy, and recovery owner (F1). | Store method ABI and byte-compatible replay helpers. |
 | BatonApplication methods / `application-observation` functions | Delete delegates; merge into query owners (F1/F10). | Command dispatch names, authority filters, and paging. |
-| `Log` / `CoordinationStore` | Merge as journal partitions (F2). | Per-worker sequence, archive, and control-store fault isolation. |
+| `Log` / `CoordinationStore` | Preserve separate stores; delete only prototype `EventJournal` (F2). | Per-worker sequence, archive, and control-store fault isolation. |
 | deployed runtime / holistic and converged runtime | Delete the parallel runtime; merge required behavior (F3). | Converged package API and divergent startup recovery. |
 | `goal-plan` / `orchestrator-plan` | Merge as distinct plan-node variants (F4). | Existing ID namespaces, digests, focus, and reopen semantics. |
 | wave driver poll loop / workflow interpreter fan-out | Merge as one supervised join (F5). | Stall, nudge, claim recovery, settle, and selective-stop policy. |
 | `assertIsAdapter` / adapter card-axis check | Merge into one worker protocol contract (F6). | Early method validation or named missing-axis refusals. |
 | `AcpJsonRpcProcess` / `OmpRpcProcess` | Merge process ownership and close latch; keep codecs (F6). | OMP ready frames and ACP session or permission events. |
 | provider poll / provider processing supervisor | Merge timer machinery with separate policies (F7). | Per-card ceiling or durable store-owned backoff. |
-| in-memory fence / custody flags / string capability | Merge into affine lease variants (F8). | Durable stale-command and shared-checkout protection. |
+| in-memory fence / custody flags / string capability | Consolidate checked authority; prove any removed check (F8). | Durable stale-command and shared-checkout protection. |
 | runtime recovery / coordination replay | Merge under a journal reconciler (F9). | External-effect evidence and quarantine behavior. |
 | application / runtime / coordination observation | Merge into materialized views (F10). | Authorization, bounded frames, and stable cursors. |
 | application semantic registry / transport command tables | Merge into one typed protocol (F11). | Transport-specific auth, streaming, exit, and compatibility behavior. |
@@ -532,7 +633,7 @@ a finding above and carries its own loss statement.
 | `wave.resolveResultPin` / workflow copy | Delete copy and use one abortable resolver (F14). | Attribution timing and cancellation. |
 | four Atlas package-version and language maps | Merge into Atlas substrate (F15). | Per-operation language accuracy and card evidence. |
 | production deployment wrappers / production MCP wrappers | Merge each name to one implementation (F3). | Recovery and attention authorization behavior. |
-| AST seam classification / hard-coded test maps | Delete both after typed seam declarations drive gates (F17). | Change-to-gate coverage. |
+| AST seam classification / hard-coded test maps | Replace committed maps with typed declarations and an independent structural scan (F17). | Change-to-gate coverage. |
 | host capacity lease / worktree capacity lease | Merge one physical resource lease substrate (F18). | Coupled floor accounting, owner identity, and dead-holder reap. |
 | client key / bridge key / runtime `_once` / ledger `_byKey` | Collapse to one at-most-once operation transition (F19). | Duplicate effects and crash-unknown recovery. |
 | `_append` / `_appendBatch` | Merge one append transaction (F20). | Byte order, group commit, fold, and durability. |
@@ -546,8 +647,8 @@ a finding above and carries its own loss statement.
 
 The inventory assigns one primary seam to every member. The table below accounts for all 2,670
 members by file. `A/E/O/R/S` mean admission, effect, observation, recovery, and surface. A row's
-action names the deletion or merge that becomes possible with first-class parallel tasks, affine
-leases, typed effects, and typed protocol values. Durable storage, operating-system processes,
+action names the proposed deletion or merge, subject to the capability and host closure conditions.
+Typed task and lease names designate contracts still requiring implementation evidence. Durable storage, operating-system processes,
 network inputs, and Git remain external boundaries.
 
 | Inventory file | Members by seam | Collapse action | Loss if the collapse is wrong |
@@ -561,25 +662,27 @@ network inputs, and Git remain external boundaries.
 | `runtime-briefing.mjs` | 1: O1 | Merge provider brief construction into Artifact/Evidence materialization. | Admitted brief digest stability and untrusted framing could change. |
 | `application-briefing.mjs` | 2: O2 | Merge application briefing views into Artifact/Evidence materialization. | Brief byte bounds and cited evidence could be omitted. |
 | `coordination-ledger.mjs` | 272: A6 E1 O254 S11 | Merge folds into Projector and file format into Journal; delete store delegates. | Projection identity, canonical-order migration, and page bounds could change. |
-| `coordination-admission.mjs` | 180: A174 O2 S4 | Replace in-process guards with typed constructors and affine leases; merge policy checks into Kernel/Scheduler. | Malformed network or replayed durable values could bypass admission if boundary decoding is also removed. |
+| `coordination-admission.mjs` | 180: A174 O2 S4 | Replace in-process guards with typed constructors and checked authority values, retaining issuance, scope, generation, and holder checks until ARCH-CLOSE-02 proves their replacement; merge policy checks into Kernel/Scheduler. | Malformed network or replayed durable values could bypass admission if boundary decoding is also removed. |
 | `runtime-recovery.mjs` | 65: A4 O1 R45 S15 | Merge durable reconciliation into Reconciler; delete promise, timer, and reservation recovery covered by task scopes. | External process, Git, provider-session, and verification recovery could repeat effects. |
 | `coordination-ledger-writes.mjs` | 31: E28 O2 S1 | Merge writer lease and append transaction into Journal; delete `AsyncLocalStorage` writer emulation. | Concurrent writers could violate append order or durability. |
-| `runtime-effects.mjs` | 10: A1 E8 O1 | Merge admitted effects into Worker Gateway, Workspace, and Verification; consume affine effect values. | Stop, integration, delivery, and result resolution could run twice. |
+| `runtime-effects.mjs` | 10: A1 E8 O1 | Merge admitted effects into Worker Gateway, Workspace, and Verification; consume checked effect values. | Stop, integration, delivery, and result resolution could run twice. |
 | `runtime-observation.mjs` | 151: A15 O128 S8 | Merge into typed Projector queries; delete coordinator delegates and repeated scans. | Authority-filtered worker and process views could expose or omit state. |
 | `runtime-admission.mjs` | 102: A95 S7 | Merge typed policy construction into Kernel/Scheduler; delete receiver and recorder plumbing. | Route, pause, contribution, and interaction refusals could lose exact codes or evidence. |
 | `runtime-api.mjs` | 47: S47 | Delete the authority-free fallback bucket; merge helpers into owning domain modules. | Public handle shape, path scope, and terminal status presentation could change. |
 | `runtime-event-handlers/dispatcher.mjs` | 1: E1 | Merge event dispatch into the structured WorkerSession receive loop. | Event order and terminal handling could race. |
 | `runtime-event-handlers/process-lifecycle.mjs` | 4: E3 R1 | Merge into Worker Gateway process state; delete separate mutable context transitions. | Exact-close authority and unconfirmed reap evidence could be lost. |
 | `runtime-event-handlers/turn-terminal.mjs` | 3: E3 | Merge terminal events into task completion values. | Usage, result, and terminal-cause recording could become non-atomic. |
-| `runtime-event-handlers/interaction.mjs` | 6: A1 E5 | Merge interaction authority into an affine pending-interaction value. | A late or duplicate answer could satisfy the wrong turn. |
+| `runtime-event-handlers/interaction.mjs` | 6: A1 E5 | Merge interaction authority into a checked pending-interaction value. | A late or duplicate answer could satisfy the wrong turn. |
 | `runtime-event-handlers/observation-events.mjs` | 9: E8 S1 | Merge observation event folding into Projector subscriptions. | Attention, progress, and diagnostic ordering could change. |
 | `application-observation.mjs` | 175: A24 E1 O104 R1 S45 | Delete application delegates; merge queries into Projector and policy construction into Kernel. | Run, workflow, context, episode, and historical views could lose bounds or authorization. |
 
-The collapse is largest inside a single process. Affine values replace fence checks only while the
-value stays inside the type system. Serialized generations remain mandatory at journal, process,
-network, and restart boundaries. First-class parallelism replaces timer and promise bookkeeping only
-for child tasks whose lifetime is contained by a parent. The Reconciler remains responsible for
-effects that may outlive the process.
+The local authority deletions require ARCH-CLOSE-02 even inside one process: exported affine
+constructors can be forged and dropped (LANG-F-26/28). Durable generations and holder records remain
+mandatory. Timer and promise deletions require ARCH-CLOSE-03 to establish parent-child lifetime and
+cleanup behavior. The Reconciler retains responsibility for effects that may outlive the process.
+Filesystem durability, HTTP/TLS, cancellation/supervision, and crypto are mandatory prerequisites
+LANG-CAP-01/08/09/10, with process effects LANG-CAP-05. Their closure evidence and affected owners
+are listed in the target architecture; no finding assumes Base already supplies them.
 
 ## Existing test truth
 
@@ -591,5 +694,10 @@ revision:
   members and the current source has 175.
 - The sibling coordination seam-map suites pass in targeted runs.
 
-This mismatch supports F17. It is not caused by either document in this contribution. The final
-deployment gate remains `npm test --prefix impl`; its result is recorded with the contribution.
+This mismatch supports F17. It is not caused by either document in this contribution. Its
+disposition is that the 174-member expectation is a committed source-shape count the reviewed source
+has outgrown: it is neither a target requirement nor behavior the rewrite preserves, and it
+disappears with the committed inventory under ARCH-CLOSE-09. Until then it stays a recorded baseline
+row, and neither a change declaration nor the structural scan may be written to reproduce it. The
+final deployment gate remains `npm test --prefix impl`; its result is recorded with the
+contribution.
