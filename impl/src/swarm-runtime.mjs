@@ -874,6 +874,49 @@ const boundedCarryText = (value) => {
   const text = typeof value === 'string' ? value : '';
   return text.length <= CARRY_REASON_BYTES ? text : text.slice(-CARRY_REASON_BYTES);
 };
+// Issue #564: the ADDRESS form a needsFromOthers item must open with to wake the root — the item
+// hands work TO the root ("the root: restart the resident", "root: land the queue"); prose that
+// merely contains the word ("root cause: …", "the root of the issue …") is not addressed to it.
+const ROOT_ADDRESSED_NEED = /^(?:the\s+)?root\s*:/i;
+
+/** Issue #564: the root-addressed wake rows one recorded contribution owes, derived from what is
+ * present — the contribution's own body and the swarm fold's participant rows — and nothing else.
+ * No state is kept: each row is a pure function of its trigger, so a replay re-derives the same
+ * rows under the same idempotency keys and the ledger holds each trigger once. At most one
+ * `review_owed` row — no OTHER active seat holds the review permission at that moment (the
+ * author's own permission never reviews its own work) — and one `needs_root` row per addressed
+ * item, its ask bounded by the ONE role-head bound every rendered row rides. The trigger rides
+ * `owed`, never `kind` (the name the reporting half reads): the ledger's driver container records `{kind, ...payload}`
+ * (coordination-ledger.mjs recordDriver), so a payload field named `kind` would overwrite the
+ * row's own operational identity and the row would never wake its class. */
+function rootAttentionRowPayloads(swarm, contribution) {
+  const authorId = contribution?.participantId ?? null;
+  const reviewHeld = Object.values(swarm?.participants ?? {}).some((seat) => seat?.status === 'active'
+    && seat?.participantId !== authorId
+    && Array.isArray(seat?.permissions) && seat.permissions.includes('review'));
+  const rows = [];
+  if (!reviewHeld) {
+    rows.push({
+      swarmId: swarm.swarmId, participantId: authorId, contributionId: contribution.contributionId,
+      owed: 'review_owed', ask: null,
+      next: { command: 'swarm.check', swarmId: swarm.swarmId, participantId: authorId,
+        contributionId: contribution.contributionId },
+    });
+  }
+  const body = contribution?.body ?? null;
+  const needs = body !== null && typeof body === 'object' && !Array.isArray(body)
+    && Array.isArray(body.needsFromOthers) ? body.needsFromOthers : [];
+  for (const item of needs) {
+    if (typeof item !== 'string' || !ROOT_ADDRESSED_NEED.test(item)) continue;
+    rows.push({
+      swarmId: swarm.swarmId, participantId: authorId, contributionId: contribution.contributionId,
+      owed: 'needs_root', ask: sliceUtf8(item, FRAME_LIMITS['view.role.head'].value),
+      next: { command: 'swarm.view', swarmId: swarm.swarmId },
+    });
+  }
+  return rows;
+}
+
 // #444: the closed axes a recruit's route comparison may order on — `quality` (the default: the
 // route's MEASURED Artificial Analysis intelligence index) and `design` (the best Design Arena Elo
 // its profile carries). Declared ONCE here, beside the comparison that reads it; the refusal an
@@ -2342,6 +2385,20 @@ export class SwarmRuntime {
     return this._mutationResult('swarm.update', args, [write], principal, context,
       { kind: 'note', participantId: payload.participantId });
   }
+  /** Issue #564: record the root-addressed wake rows one recorded contribution owes (the
+   * derivation is `rootAttentionRowPayloads`), one driver row per trigger under a deterministic
+   * idempotency key — the replay-safety the stateless derivation needs. Returns the writes the
+   * caller folds into the mutation receipt. */
+  _recordRootAttentionRows(swarm, contribution, principal) {
+    return rootAttentionRowPayloads(swarm, contribution).map((row) => {
+      const event = this.store.recordDriver('swarm.root_attention_owed', row,
+        { actor: principal.actor,
+          key: `swarm-root-attention:${hash([row.swarmId, row.contributionId, row.owed, row.ask ?? null])}` }).event;
+      return { kind: 'driver.recorded', payload: event.payload,
+        seq: event.seq, ts: event.ts, actor: event.actor };
+    });
+  }
+
 
   /** #373: the recruit mode one participant was started under, read from its durable join —
    * the join carries `mode` for a read_only seat, and a change recruit writes no field, so
@@ -8124,14 +8181,27 @@ export class SwarmRuntime {
       }
       const recorded = this._write(args.event, payload, principal, this._operationKey(command, args, principal));
       this._recordOperationCompleted(command, args, principal, context);
+      // Issue #564: the contribution row is in the fold — derive the root-addressed wake rows
+      // beside it. This runs AFTER the record and can never fail it: a derivation or recording
+      // fault is the rows' loss, never the caller's answer.
+      let rootAttention = [];
+      if (args.event === 'swarm.contribution_recorded') {
+        try {
+          const recordedSwarm = this._swarm(args.swarmId);
+          const recordedContribution = recordedSwarm.contributions?.[payload.contributionId] ?? null;
+          if (recordedContribution !== null) {
+            rootAttention = this._recordRootAttentionRows(recordedSwarm, recordedContribution, principal);
+          }
+        } catch { /* the contribution stands; an attention row is evidence, never admission-critical */ }
+      }
       if (args.event === 'swarm.participant_left') this._reconcileHostCapacity();
       if (args.event === 'swarm.coupling_updated') this._settleCheckoutWriterState();
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
         return this._mutationResult(command, args, [recorded], principal, context,
           { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false });
       }
-      return this._mutationResult(command, args, [externalJoin, recorded].filter(Boolean), principal, context,
-        contributionStatus === null ? {} : { status: contributionStatus });
+      return this._mutationResult(command, args, [externalJoin, recorded, ...rootAttention].filter(Boolean),
+        principal, context, contributionStatus === null ? {} : { status: contributionStatus });
     }
     if (swarm.status !== 'open' && command === 'swarm.recruit') refuse('Swarm recruitment is closed', 'swarm_closed');
     if (command === 'swarm.recruit') {
