@@ -237,6 +237,10 @@
       "reason": "#460"
     },
     {
+      "key": "test/issue564-root-wake-wiring-red.test.mjs :: 572-w4: a real parentless turn report reaches the resident root transport once",
+      "reason": "#572"
+    },
+    {
       "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
       "reason": "#24"
     },
@@ -1455,7 +1459,19 @@
       "reason": "#564"
     },
     {
+      "file": "test/issue564-root-wake-delivery-red.test.mjs",
+      "reason": "#564"
+    },
+    {
+      "file": "test/issue564-turn-report-root-owed-red.test.mjs",
+      "reason": "#572"
+    },
+    {
       "file": "test/issue564-root-wake-undelivered-attention-red.test.mjs",
+      "reason": "#564"
+    },
+    {
+      "file": "test/issue564-wake-capability-report-red.test.mjs",
       "reason": "#564"
     },
     {
