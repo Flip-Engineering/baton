@@ -3469,7 +3469,11 @@ class BatonDeployment {
     this.waves = Object.freeze({
       start: (options = {}) => {
         for (const member of options?.members ?? []) {
-          this.#assertRouteReady(member?.exact ? { exact: member.exact } : member);
+          // #102 Decision 1: a member's readiness route is its own `exact` or its group's seat —
+          // the same XOR the wave admission enforces. Resolving it here keeps a blocked route a
+          // deployment verdict BEFORE any effect, never a wave_member_invalid afterwards.
+          const route = member?.exact ?? member?.group?.seat ?? null;
+          this.#assertRouteReady(route === null ? member : { exact: route });
         }
         return this.#baton.waves.start(options);
       },

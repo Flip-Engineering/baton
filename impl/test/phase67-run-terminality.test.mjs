@@ -19,9 +19,13 @@ import {
 const settledPhases = [
   'work_completed', 'selection_required', 'candidate_selected',
   'completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped',
+  // #102 Decision 6: the cell's quorum-reached partial rest is settled provider truth.
+  'degraded',
 ];
 // Issue #334: a baseline-owned inconclusive verdict reads the terminal phase 'inconclusive'.
-const runTerminalPhases = ['completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped'];
+const runTerminalPhases = ['completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped',
+  // #102 Decision 6: the degraded quorum terminal joins the closed terminal set.
+  'degraded'];
 const providerUnavailablePhases = [
   'work_completed', 'selection_required', 'candidate_selected',
   'completed', 'failed', 'denied',
@@ -40,7 +44,9 @@ test('provider-settled and application-terminal phase sets stay separate, with c
 test('the registry predicates own the canonical settled/terminal vocabulary (L4)', () => {
   for (const phase of ['result_ready', 'awaiting_selection', 'result_selected',
     'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
-    'work_completed', 'selection_required', 'candidate_selected']) {
+    'work_completed', 'selection_required', 'candidate_selected',
+    // #102 Decision 6: the degraded quorum terminal is settled canonical truth.
+    'degraded']) {
     assert.equal(providerSettled(phase), true, phase);
   }
   for (const phase of ['planning', 'awaiting_approval', 'queued', 'working', 'paused',
@@ -48,7 +54,9 @@ test('the registry predicates own the canonical settled/terminal vocabulary (L4)
     'running', 'approved', 'awaiting_plan_approval', 'input_required', 'closed']) {
     assert.equal(providerSettled(phase), false, phase);
   }
-  for (const phase of ['completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied']) {
+  for (const phase of ['completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
+    // #102 Decision 6: the degraded quorum terminal is terminal canonical truth.
+    'degraded']) {
     assert.equal(applicationTerminal(phase), true, phase);
   }
   for (const phase of ['result_ready', 'awaiting_selection', 'result_selected',

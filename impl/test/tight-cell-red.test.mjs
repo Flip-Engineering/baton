@@ -481,7 +481,12 @@ test('TC-01 group[group-field-admission-missing]: waves.start accepts the closed
   // Green oracle: one detached member row — the cell consumes ONE wave member slot.
   assert.deepEqual(Object.keys(sent.receipt).sort(), ['members', 'schemaVersion', 'waveId']);
   assert.equal(sent.receipt.members.length, 1, 'a cell member is ONE wave member slot (Decision 1)');
-  assert.ok(/^run:/u.test(sent.receipt.members[0].runId), 'the cell member produced one runId');
+  // Ground truth for the id scheme: a member row carries the deployment's own run identity —
+  // `run-<32 hex>` (swarm-runtime.mjs:580 mints it for a participant run; observed on a plain
+  // member row through this same seam as `run-c7f6dbdd…`). The `run:`-prefixed ids elsewhere in
+  // this suite are caller-supplied board/authority ids, a different namespace.
+  assert.ok(/^run-[a-f0-9]{32}$/u.test(sent.receipt.members[0].runId),
+    `the cell member produced one runId (got ${sent.receipt.members[0].runId})`);
 });
 
 test('TC-02 group[group-seat-missing-refusal]: group without seat refuses wave_group_seat_missing before any spawn', async () => {
