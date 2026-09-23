@@ -815,11 +815,28 @@ function linkedWorktreeCwdHolders(worktreePath, opts = {}) {
       );
     }
     const stderr = String(result?.stderr ?? '');
-    if (result?.error || result?.signal || ![0, 1].includes(result?.status)
-      || stderr.trim().length > 0) {
+    if (result?.error) {
       throw linkedLivenessUnobservable(
         worktreePath,
-        'linked worktree process cwd state could not be observed',
+        `linked worktree process cwd command failed: ${result.error.code ?? 'spawn_error'}`,
+      );
+    }
+    if (result?.signal) {
+      throw linkedLivenessUnobservable(
+        worktreePath,
+        `linked worktree process cwd command ended by signal ${result.signal}`,
+      );
+    }
+    if (stderr.trim().length > 0) {
+      throw linkedLivenessUnobservable(
+        worktreePath,
+        'linked worktree process cwd command reported an incomplete observation',
+      );
+    }
+    if (![0, 1].includes(result?.status)) {
+      throw linkedLivenessUnobservable(
+        worktreePath,
+        `linked worktree process cwd command exited with status ${result?.status ?? 'unknown'}`,
       );
     }
     const output = String(result?.stdout ?? '');
@@ -851,6 +868,7 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
   const retained = [];
   const snapshots = [];
   const liveHolders = new Set();
+  const failedObservations = [];
   for (const row of ownership.rows) {
     const registration = registrations.find((entry) => (
       canonicalPathIncludingMissingLeaf(entry.dir) === row.worktreePath
@@ -907,8 +925,13 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
         'git', ['status', '--porcelain=v1', '--ignored', '--untracked-files=all'],
         row.worktreePath,
       );
-    } catch {
+    } catch (error) {
       retained.push(row);
+      failedObservations.push(Object.freeze({
+        worktreePath: row.worktreePath,
+        observation: 'git_status',
+        reason: error?.code ?? error?.name ?? 'git_observation_failed',
+      }));
       continue;
     }
     const lines = status.length === 0 ? [] : status.split('\n');
@@ -938,8 +961,13 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
     }
     let head;
     try { head = sh('git', ['rev-parse', 'HEAD'], row.worktreePath); }
-    catch {
+    catch (error) {
       retained.push(row);
+      failedObservations.push(Object.freeze({
+        worktreePath: row.worktreePath,
+        observation: 'git_head',
+        reason: error?.code ?? error?.name ?? 'git_observation_failed',
+      }));
       continue;
     }
     const ref = registration.branch ? `refs/heads/${registration.branch}` : linkedWorktreeSnapshotRef(physicalOwnerId, row);
@@ -971,7 +999,24 @@ function cleanupSeatLinkedWorktrees(repoRoot, physicalOwnerId, opts = {}) {
           headSha: null, baseSha: null,
         }),
         'linked_worktree_live_process_retained',
-      ), { linkedWorktrees: Object.freeze(retained.map((row) => row.worktreePath)) });
+      ), {
+        linkedWorktrees: Object.freeze(retained.map((row) => row.worktreePath)),
+        failedObservations: Object.freeze(failedObservations),
+      });
+    }
+    if (failedObservations.length > 0) {
+      throw Object.assign(new WorkspacePreservationError(
+        `worktree "${physicalOwnerId}" retained linked worktrees with unavailable Git observations`,
+        Object.freeze({
+          schemaVersion: 1, physicalOwnerId, state: 'linked_unobservable', removable: false,
+          dirtyPaths: Object.freeze(retained.map((row) => row.worktreePath)),
+          headSha: null, baseSha: null,
+        }),
+        'linked_worktree_git_observation_unobservable_retained',
+      ), {
+        linkedWorktrees: Object.freeze(retained.map((row) => row.worktreePath)),
+        failedObservations: Object.freeze(failedObservations),
+      });
     }
     throw Object.assign(new WorkspacePreservationError(
       `worktree "${physicalOwnerId}" retained ${retained.length} linked worktree(s)`,
@@ -3363,6 +3408,10 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
             ...(Array.isArray(error?.holders)
               ? { holders: Object.freeze([...error.holders]) }
               : {}),
+            ...(Array.isArray(error?.failedObservations)
+              ? { failedObservations: Object.freeze([...error.failedObservations]) }
+              : {}),
+            ...(typeof error?.message === 'string' ? { reason: error.message } : {}),
           }));
           if (!report.retainedContentOwners.includes(normalizedTaskId)) {
             report.retainedContentOwners.push(normalizedTaskId);
@@ -3409,6 +3458,10 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
             ...(Array.isArray(error?.holders)
               ? { holders: Object.freeze([...error.holders]) }
               : {}),
+            ...(Array.isArray(error?.failedObservations)
+              ? { failedObservations: Object.freeze([...error.failedObservations]) }
+              : {}),
+            ...(typeof error?.message === 'string' ? { reason: error.message } : {}),
           }));
           if (!report.retainedContentOwners.includes(normalizedTaskId)) {
             report.retainedContentOwners.push(normalizedTaskId);
