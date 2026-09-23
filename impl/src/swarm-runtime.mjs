@@ -7869,6 +7869,13 @@ export class SwarmRuntime {
         refuse(message, 'integrate_publish_undeclared', detail); break;
       case 'integrate_publish_failed':
         refuse(message, 'integrate_publish_failed', detail); break;
+      // Issue #573: the publish pre-flight failed before the gate run — the destination is
+      // absent or unreachable, or this environment cannot authenticate to it. The refusal says
+      // which, with the bounded git tail.
+      case 'integrate_publish_unreachable':
+        refuse(message, 'integrate_publish_unreachable', detail); break;
+      case 'integrate_publish_unauthenticated':
+        refuse(message, 'integrate_publish_unauthenticated', detail); break;
       case 'integrate_target_moved':
         refuse(message, 'integrate_target_moved', detail); break;
       // Issue #570: the fetched remote tip and the local target ref went separate ways. The
