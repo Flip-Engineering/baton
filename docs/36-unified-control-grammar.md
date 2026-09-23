@@ -505,16 +505,19 @@ fields each kind requires of the caller are read from the payload schemas
 | `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
 
-**Runtime-owned driver kinds (never caller-submittable, 11).** The operation lifecycle and refusal rows the runtime
+**Runtime-owned driver kinds (never caller-submittable, 14).** The operation lifecycle and refusal rows the runtime
 records for itself, disjoint from the caller-submittable set above:
 
 - `swarm.operation_requested`
 - `swarm.operation_unavailable`
 - `swarm.operation_completed`
 - `swarm.operation_refused`
+- `wake.root_delivered`
+- `wake.root_undelivered`
 - `swarm.integration_started`
 - `swarm.integration_failed`
 - `swarm.integration_swept`
+- `swarm.root_attention_owed`
 - `swarm.guidance_sent`
 - `swarm.guidance_parked`
 - `swarm.guidance_delivered`
@@ -523,7 +526,7 @@ records for itself, disjoint from the caller-submittable set above:
 **Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
 runtime admission check reads (`impl/src/swarm-runtime.mjs`).
 
-**Attention kinds (closed set, 25).** Each view row is a condition that needs an act, derived by the
+**Attention kinds (closed set, 26).** Each view row is a condition that needs an act, derived by the
 runtime from durable state — never asserted by a caller:
 
 - `worker_lost_on_restart`
@@ -545,6 +548,7 @@ runtime from durable state — never asserted by a caller:
 - `recruit_queued`
 - `recruit_queue_timeout`
 - `unreviewed_contribution`
+- `root_wake_undelivered`
 - `worktree_foreign_changes`
 - `turn_ended_without_contribution`
 - `provider_auth_expired`

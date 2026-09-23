@@ -58,6 +58,22 @@ export function harnessWakeCapabilityRows() {
   })));
 }
 
+/** Issue #564: the capability rows of exactly the harnesses a deployment can run, for the doctor
+ * and the deployment view. A harness the table does not know is reported as a row with no
+ * turn-starting channel, never omitted: a root that can run an unwakeable harness is told so where
+ * it recruits instead of discovering it by silence. Sorted by harness, duplicates collapsed. */
+export function harnessWakeCapabilityForHarnesses(harnesses) {
+  const names = [...new Set((Array.isArray(harnesses) ? harnesses : [])
+    .filter((harness) => typeof harness === 'string' && harness.length > 0))].sort();
+  return Object.freeze(names.map((harness) => Object.freeze({
+    harness,
+    ...(harnessWakeCapability(harness) ?? {
+      mechanism: 'unknown', canStartTurn: false,
+      note: 'no wake-delivery row names this harness; an idle session of it cannot be started',
+    }),
+  })));
+}
+
 function refusal(message, code, cause = undefined) {
   const error = Object.assign(new Error(message), { name: 'WakeDeliveryRefusal', code });
   if (cause !== undefined) error.cause = cause;
@@ -69,6 +85,35 @@ function nonempty(value, field) {
     throw refusal(`${field} must be non-empty text`, 'wake_delivery_invalid');
   }
   return value;
+}
+
+/** Issue #564: the operator session one resident is configured to wake. The declaration is
+ * validated at deployment open. A named harness must have a turn-starting channel in the closed
+ * capability table, so a resident cannot start with a configured target it cannot reach. */
+export function normalizeRootWakeTarget(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw refusal('advanced rootWake must be an object', 'wake_delivery_invalid');
+  }
+  const unknown = Object.keys(value).find((field) => !['harness', 'sessionId', 'from'].includes(field));
+  if (unknown !== undefined) {
+    throw refusal(`advanced rootWake contains unsupported field ${unknown}`, 'wake_delivery_invalid');
+  }
+  const harness = nonempty(value.harness, 'advanced rootWake harness');
+  const sessionId = nonempty(value.sessionId, 'advanced rootWake sessionId');
+  const from = value.from === undefined ? 'baton' : nonempty(value.from, 'advanced rootWake from');
+  if (sessionId.length > 256 || /[\0\r\n]/u.test(sessionId)
+    || from.length > 128 || !/^[A-Za-z0-9._:-]+$/u.test(from)) {
+    throw refusal('advanced rootWake sessionId or from is invalid', 'wake_delivery_invalid');
+  }
+  const row = harnessWakeCapability(harness);
+  if (row === null) {
+    throw refusal(`wake delivery harness ${harness} is unknown`, 'wake_harness_unknown');
+  }
+  if (!row.canStartTurn) {
+    throw refusal(`${harness} cannot start a turn in an idle operator session`, 'wake_delivery_unavailable');
+  }
+  return Object.freeze({ harness, sessionId, from });
 }
 
 export function claudeSessionSocketPath(pid) {
@@ -291,4 +336,136 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
     if (storeFlights.get(identityKey) === attempt) storeFlights.delete(identityKey);
     if (storeFlights.size === 0) inFlightByStore.delete(store);
   }
+}
+
+function rootAttentionPayload(store, frame) {
+  const events = typeof store?.eventsView === 'function'
+    ? store.eventsView(frame.seq, 1)
+    : storedEvents(store);
+  const source = events.find((event) => event?.seq === frame.seq) ?? null;
+  const payload = source?.kind === 'driver.recorded' ? source.payload : null;
+  if (payload?.kind !== 'swarm.root_attention_owed'
+    || payload.swarmId !== frame.swarmId
+    || typeof payload.participantId !== 'string' || payload.participantId.length === 0
+    || typeof payload.contributionId !== 'string' || payload.contributionId.length === 0
+    || !['review_owed', 'needs_root'].includes(payload.owed)
+    || (payload.ask !== null && payload.ask !== undefined && typeof payload.ask !== 'string')
+    || payload.next === null || typeof payload.next !== 'object' || Array.isArray(payload.next)) {
+    throw refusal('root_owed frame does not resolve to a swarm.root_attention_owed row',
+      'root_wake_source_invalid');
+  }
+  return Object.freeze({
+    swarmId: payload.swarmId,
+    participantId: payload.participantId,
+    contributionId: payload.contributionId,
+    owed: payload.owed,
+    ask: payload.ask ?? null,
+    next: Object.freeze({ ...payload.next }),
+  });
+}
+
+function rootWakeBody(payload) {
+  return `Baton root attention is owed.\n${JSON.stringify(payload, null, 2)}`;
+}
+
+/** Consume one root_owed frame. The frame resolves only through the addressing row's public kind
+ * and payload. Delivery and its durable receipt use the frame's {seq, wakeClass, swarmId}
+ * identity, so a replay returns the exactly-once duplicate result. */
+export async function deliverRootWakeFrame({
+  store,
+  frame,
+  target,
+  deliver = null,
+  discovery,
+  transport,
+}) {
+  if (frame?.wakeClass !== 'root_owed') {
+    return Object.freeze({ delivered: false, ignored: true });
+  }
+  const normalizedTarget = normalizeRootWakeTarget(target);
+  return deliverRootWakeOnce({
+    store,
+    frame,
+    target: normalizedTarget,
+    deliver: async (context) => {
+      const payload = rootAttentionPayload(store, frame);
+      const body = rootWakeBody(payload);
+      if (deliver !== null) {
+        if (typeof deliver !== 'function') {
+          throw refusal('root wake delivery override must be a function', 'wake_delivery_invalid');
+        }
+        return deliver({ ...context, body, payload, discovery, transport });
+      }
+      if (normalizedTarget.harness === 'claude-code') {
+        return deliverClaudeSessionWake({
+          sessionId: normalizedTarget.sessionId,
+          from: normalizedTarget.from,
+          body,
+          ...(discovery === undefined ? {} : { discovery }),
+          ...(transport === undefined ? {} : { transport }),
+        });
+      }
+      throw refusal(`no root wake transport is implemented for ${normalizedTarget.harness}`,
+        'wake_delivery_unavailable');
+    },
+  });
+}
+
+/** Attach one resident-owned root delivery consumer to the existing deployment wake stream. The
+ * stream waits on the coordination store's append notification. Each frame failure is recorded by
+ * deliverRootWakeOnce and consumed here so the attachment continues to later root_owed rows. */
+export function attachRootWakeDelivery({
+  stream,
+  store,
+  target,
+  deliver = null,
+  discovery,
+  transport,
+  since = 0,
+  signal = null,
+  onResult = null,
+  onError = null,
+}) {
+  if (typeof stream?.watch !== 'function') {
+    throw refusal('root wake delivery requires a wake stream', 'wake_delivery_stream_invalid');
+  }
+  const normalizedTarget = normalizeRootWakeTarget(target);
+  if (since !== null && (!Number.isSafeInteger(since) || since < 0)) {
+    throw refusal('root wake delivery cursor must be a non-negative safe integer',
+      'wake_delivery_cursor_invalid');
+  }
+  if (onResult !== null && typeof onResult !== 'function') {
+    throw refusal('root wake delivery onResult must be a function', 'wake_delivery_invalid');
+  }
+  if (onError !== null && typeof onError !== 'function') {
+    throw refusal('root wake delivery onError must be a function', 'wake_delivery_invalid');
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener?.('abort', abort, { once: true });
+  const consume = (frame) => deliverRootWakeFrame({
+    store, frame, target: normalizedTarget, deliver, discovery, transport,
+  });
+  const done = stream.watch(Object.freeze({
+    kinds: new Set(['root_owed']), swarms: null, participants: null, since,
+  }), {
+    signal: controller.signal,
+    onFrame: async (frame) => {
+      try {
+        const result = await consume(frame);
+        try { onResult?.(result, frame); } catch { /* delivery remains authoritative */ }
+      } catch (error) {
+        try { onError?.(error, frame); } catch { /* the next frame still runs */ }
+      }
+    },
+  }).catch((error) => {
+    try { onError?.(error, null); } catch { /* the attachment is already settled */ }
+  }).finally(() => signal?.removeEventListener?.('abort', abort));
+  return Object.freeze({
+    target: normalizedTarget,
+    consume,
+    done,
+    close: () => controller.abort(),
+  });
 }
