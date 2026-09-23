@@ -106,7 +106,7 @@ export const CONTRIBUTION_CONTRACT_SCHEMA = Object.freeze({
       description: 'the items this contribution hands to the next lane, cited verbatim by successors',
       expectation: 'an array', example: Object.freeze([]) }),
     needsFromOthers: Object.freeze({ type: 'array', required: true,
-      description: 'what this lane still needs from other seats, cited verbatim by successors',
+      description: 'what this lane still needs from other seats, cited verbatim by successors; an item beginning "root:" or "the root:" addresses the deployment root session',
       expectation: 'an array', example: Object.freeze([]) }),
     notes: Object.freeze({ type: 'string', required: false,
       description: 'free prose — anything that fits nowhere else',
