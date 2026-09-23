@@ -37,3 +37,21 @@ test('the seat\'s declared wake narrowing rides the issued bridge environment (d
   assert.equal(Object.hasOwn(registrations.get('run-plain').env, SWARM_BRIDGE_ENV_KEYS.autoWake), false,
     'a seat recruited without a narrowing publishes no key — absence is the whole-stream default');
 });
+
+
+test('turn-end reports retain the registered participant identity', async (t) => {
+  const registrations = new Map();
+  const reports = [];
+  const access = new SwarmNativeAccess({
+    coordinator: { registerParticipantRuntime: (id, entry) => registrations.set(id, entry),
+      unregisterParticipantRuntime: (id) => registrations.delete(id) },
+    dispatch: async () => ({}),
+    onTurnCompleted: async (report) => reports.push(report),
+  });
+  t.after(() => access.close());
+  await access.prepare({ swarmId: 'swarm', participantId: 'builder', runId: 'run-report' });
+  await registrations.get('run-report').onTurnCompleted({ swarmId: 'wrong',
+    participantId: 'wrong', workerId: 'w-1', turnSeq: 3, report: { summary: 'Ready' } });
+  assert.deepEqual(reports, [{ swarmId: 'swarm', participantId: 'builder', workerId: 'w-1',
+    turnSeq: 3, report: { summary: 'Ready' } }]);
+});

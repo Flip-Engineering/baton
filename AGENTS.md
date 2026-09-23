@@ -50,3 +50,11 @@ project to someone new must not assume the reader has the issue tracker open, an
 mechanism rather than pointing at a bare issue number with no context.
 
 See the `writing-style` skill for the same rules with worked before/after examples.
+
+## Agent continuation
+
+Baton must not deliberately pause, idle, or truncate live agent work pending a claim, nudge,
+guide, resume decision, review, or another external act. Turn completion continues the seat and
+delivers its report to its parent orchestrator. Messages addressed to a seat start or continue
+its turn. Review and landing authority must be available to delegated participants. Tests must
+assert continuation and delivery.

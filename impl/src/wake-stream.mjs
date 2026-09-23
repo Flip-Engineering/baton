@@ -255,13 +255,6 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
-    wakeClass: 'resume_decision_required', scope: 'swarm', terminal: true,
-    next: 'baton swarm guide {swarmId} {participantId}',
-    summary: 'a recovered seat awaits its orchestrator\'s decision whether to continue the interrupted work',
-    rows: [ledgerKind('swarm.resume_decision_requested')],
-    subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
-  }),
-  wakeRow({
     wakeClass: 'incarnation_changed', scope: 'deployment', terminal: false, next: null,
     summary: 'the resident reincarnated over this deployment — a successor incarnation serves it now, or the handoff failed before its successor published and the same incarnation went on serving; re-read the view (the rows and the attachment you held came from the predecessor)',
     // #306 (lane B): the successor records `host.reincarnated {from, to}` when it sees the old

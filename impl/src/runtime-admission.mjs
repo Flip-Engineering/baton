@@ -998,51 +998,21 @@ export function captureContribution(coordinator, recorder, workerId, { contribut
       const service = coordinator._contributionOperations();
       const prior = service.captured(workerId, contributionId);
       if (prior) return structuredClone(prior);
-      if (typeof coordinator._worktrees.snapshot === 'function') {
-        const handle = coordinator._getWorker(workerId);
-        const task = coordinator._tasks.get(handle.taskId);
-        if (['stopping', 'dead', 'exited'].includes(handle.status)) {
-          throw Object.assign(new Error('Participant workspace is closing or closed'), { code: 'contribution_workspace_unavailable' });
-        }
-        // Register the whole queue before yielding. Stop can close a process, but must wait
-        // for every admitted capture to be retained before it removes this workspace.
-        const operation = (handle.contributionCapturePending ?? Promise.resolve()).catch(() => {}).then(async () => {
-          await handle.worktreeReady;
-          return service.capture({ handle, task, contributionId });
-        });
-        const settled = operation.then(() => {}, () => {});
-        handle.contributionCapturePending = settled;
-        try { return await operation; }
-        finally { if (handle.contributionCapturePending === settled) handle.contributionCapturePending = null; }
+      const handle = coordinator._getWorker(workerId);
+      const task = coordinator._tasks.get(handle.taskId);
+      if (['stopping', 'dead', 'exited'].includes(handle.status)) {
+        throw Object.assign(new Error('Participant workspace is closing or closed'), { code: 'contribution_workspace_unavailable' });
       }
-      const pause = coordinator.pausedTurns({ workerId })[0];
-      if (!pause) throw Object.assign(new Error('Contribution capture requires a paused turn'), {
-        code: 'contribution_capture_not_paused',
-      });
-      const reservation = await coordinator._reservePauseRecord(pause.pauseId);
-      if (!reservation.ok) throw Object.assign(new Error('Contribution turn changed before capture'), {
-        code: 'contribution_capture_conflict',
-      });
-      const targets = coordinator._pausedActTargets(reservation.record);
-      if (!targets.ok) {
-        reservation.rollback();
-        throw Object.assign(new Error('Contribution author is no longer paused'), {
-          code: 'contribution_capture_not_paused',
-        });
-      }
-      const { handle, task } = targets;
-      // Stop may proceed with process closure, but preservation/reaping waits for this exact
-      // filesystem operation. Verification does not borrow the author's mutable workspace.
-      let release;
-      handle.contributionCapturePending = new Promise((resolve) => { release = resolve; });
-      try {
+      // Register the whole queue before yielding. Stop can close a process, but must wait
+      // for every admitted capture to be retained before it removes this workspace.
+      const operation = (handle.contributionCapturePending ?? Promise.resolve()).catch(() => {}).then(async () => {
         await handle.worktreeReady;
-        return await service.capture({ handle, task, contributionId });
-      } finally {
-        handle.contributionCapturePending = null;
-        release();
-        reservation.rollback();
-      }
+        return service.capture({ handle, task, contributionId });
+      });
+      const settled = operation.then(() => {}, () => {});
+      handle.contributionCapturePending = settled;
+      try { return await operation; }
+      finally { if (handle.contributionCapturePending === settled) handle.contributionCapturePending = null; }
     });
   }
 

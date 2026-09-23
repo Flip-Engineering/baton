@@ -2314,6 +2314,7 @@ export class BatonApplication {
         const { SwarmNativeAccess } = await import('./swarm-native-access.mjs');
         this._swarmNativeAccess ??= new SwarmNativeAccess({
           coordinator: this.driver.coordinator,
+          onTurnCompleted: (report) => this._swarmRuntime().reportTurnEnd(report),
           dispatch: ({ command, args, principal: caller, context: authority }) => {
             this._assertOpen();
             return this._swarmRuntime().command(command, args, caller, authority);

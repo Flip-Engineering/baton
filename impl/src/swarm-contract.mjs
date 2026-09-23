@@ -354,7 +354,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // record: it resolves the contribution's commit against the target, squashes the whole range
   // into one commit in a scratch checkout the deployment owns, derives and runs the gate set,
   // fast-forwards the target, and records the receipt. `organize` authority, like every other
-  // root-side act.
+  // act available to participants with organize authority.
   'swarm.integrate': Object.freeze({
     args: Object.freeze(['swarmId', 'contributionId', 'target', 'dryRun', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
@@ -1072,7 +1072,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.guide',
-    description: `Send guidance to one swarm participant, whether its session is active or paused. The receipt carries the guide's OWN durable row (guide: {seq, kind, participantId, from, sentAt, priority, inReplyTo, messageId, delivery}) — never null — so the sender reads who it is from ({kind: root|lead|peer, participantId}), what it asked for and how it landed: delivery.state delivered rides the lane row the guide wrote (delivery.lane), parked names the swarm.guidance_parked row a harness that takes no mid-turn delivery waits on (composed into the seat's next exec / resume-from successor brief), and refused names a lane that took nothing. priority (${SWARM_GUIDANCE_PRIORITIES.join(', ')}, default ${SWARM_GUIDANCE_DEFAULT_PRIORITY}) asks for the delivery: now rides the immediate steer lane and pre-empts an in-flight tool call, next_boundary waits for the seat's next turn boundary. inReplyTo names the ledger seq this guidance answers (a prior guidance row, a seat's message, or a contribution) and the view threads it; next names the observation to watch: the seat's next turn boundary, or the delivery that clears a park. view: true adds the whole refreshed view.`,
+    description: `Send guidance and continue the recipient's turn through its native delivery lane. The receipt carries guide: {seq, kind, participantId, from, sentAt, priority, inReplyTo, messageId, delivery}. delivery.state is delivered or refused; a refusal names the transport reason. priority (${SWARM_GUIDANCE_PRIORITIES.join(', ')}, default ${SWARM_GUIDANCE_DEFAULT_PRIORITY}) selects immediate steering or delivery at the next boundary. inReplyTo names a prior guidance, message, or contribution row. view: true adds the refreshed view.`,
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA,
       priority: PRIORITY_SCHEMA, inReplyTo: REPLY_TARGET_SCHEMA, view: VIEW_SCHEMA }),
@@ -1080,7 +1080,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.notify',
-    description: `Send one message to another PARTICIPANT, in this swarm or in any other swarm of the deployment — the peer channel the run layer's message.send has and the swarm layer did not (#311). toSwarmId names the recipient's swarm and defaults to this one; a participant that can act in two swarms must be disambiguated by it. The answer carries the message's OWN durable row as its receipt (notify: {receiptId, seq, kind, messageId, from {kind, participantId, swarmId}, to {participantId, swarmId}, sentAt, priority, inReplyTo, state: delivered|parked|refused, lane, reason, message|head, bytes, digest, spill}) — never null — so the sender reads who it went to, when, and how it landed: delivered rides the lane row it rode (lane), parked names the swarm.guidance_parked row a seat whose harness takes no mid-turn delivery composes into its next exec / successor brief, and refused names a lane that took nothing. The message body is admitted under this swarm's peer-message lane: up to ${FRAME_LIMITS['swarm.notify.body'].value} bytes inline, past that as a durable spill cited by head + digest, and past the durable spill ceiling as a coaching refusal. Read the receipt back any time with swarm.notifications --receipt.`,
+    description: `Send a message to a participant and continue its turn through the guidance delivery lane. toSwarmId defaults to this swarm. The receipt records sender, recipient, priority, delivery state, and any transport refusal. Bodies up to ${FRAME_LIMITS['swarm.notify.body'].value} bytes are inline; larger bodies use a durable spill citation. Read the receipt with swarm.notifications --receipt.`,
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA,
       toSwarmId: ID_SCHEMA, priority: PRIORITY_SCHEMA, inReplyTo: REPLY_TARGET_SCHEMA, view: VIEW_SCHEMA }),

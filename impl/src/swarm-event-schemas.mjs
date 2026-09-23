@@ -170,7 +170,7 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       description: 'rank a per-token API route above a subscription route that has headroom (the default ranks a subscription route with headroom first, so an idle plan is spent before API money)',
       example: false },
     resumeContinuation: { type: 'string', enum: ['manual', 'auto'], required: false,
-      description: 'what happens when a resume-from recruit recovers a seat: manual (the default) records the recovery and pages the orchestrator for a guide-or-stop answer, auto performs the full recruit in one command',
+      description: 'resume-from recruits start immediately; the legacy manual value is read as auto',
       expectation: 'one of manual, auto', example: 'manual' },
   }, {
     // A policy names at least ONE field (the fold refuses a row that changes nothing), so the
