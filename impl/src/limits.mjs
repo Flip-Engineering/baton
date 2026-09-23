@@ -169,6 +169,12 @@ const SUBSTRATE = Object.freeze({
   'wire.frame': { lane: 'wire.frame', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null },
   'credential.file': { lane: 'credential.file', class: 'substrate', value: 16384, unit: 'bytes', graceful: null },
   'context_pack.body': { lane: 'context_pack.body', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
+  // Issue #566 (F1): the three byte lanes d1288fd9/#558 hand-typed outside the catalog retire
+  // here — the harvest onto-path ceiling, the recorded changed-files page, and the integration
+  // publish-remote declaration ceiling.
+  'harvest.onto_path': { lane: 'harvest.onto_path', class: 'substrate', value: 4096, unit: 'bytes', graceful: null },
+  'result.changed_files_page': { lane: 'result.changed_files_page', class: 'substrate', value: 262144, unit: 'bytes', graceful: null },
+  'deployment.publish_remote': { lane: 'deployment.publish_remote', class: 'substrate', value: 2048, unit: 'bytes', graceful: null },
   // spill.body is the ONE substrate row that mints a refusal (blocker 3): a substrate ceiling
   // enforced AT ADMISSION — it is a resource ceiling on a durable write, not a scanner window.
   'spill.body': { lane: 'spill.body', class: 'substrate', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.mintSpill / admission spill seam', refusalCode: 'spill_body_exceeded' },
