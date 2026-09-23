@@ -160,6 +160,85 @@ const TRANSPORT_IDLE_MARGIN_MS = WEB_WAIT_CEILING_MS - WEB_WAIT_DEFAULT_MS;
 // an inferred one.
 const FAULT_PROBE_WINDOW_MS = 5 * 3_600_000;
 
+// Issue #28 / #497: the adapter wire-frame corridor — the deliberate range a DEPLOYMENT may
+// configure an adapter's wire frame within, declared here so the corridor, its default and every
+// derived share have one source. The deployment default inside the corridor is half the ceiling
+// (the midpoint posture the claude-session families resolve to when neither adapterOptions nor
+// BATON_CLAUDE_MAX_WIRE_FRAME_BYTES speaks); the #500 pin test records all three bounds.
+const ADAPTER_WIRE_FRAME_MIN_BYTES = 64 * 1024;
+const ADAPTER_WIRE_FRAME_MAX_BYTES = 16 * 1024 * 1024;
+export const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = ADAPTER_WIRE_FRAME_MAX_BYTES / 2;
+
+// The wire frame's own value, named once so the wave derivation below and the SUBSTRATE row
+// cannot drift apart (limits.mjs is the one file where the literal is legal — it is the source).
+const WIRE_FRAME_BYTES = 1024 * 1024;
+
+// Issue #497: the transport families the frame-economics ratchet named as uncataloged. Each
+// value is the ONE declaration of its family's default; the transports import the row.
+const MCP_MESSAGE_BYTES = 256 * 1024;
+const ACP_EVENT_PAYLOAD_BYTES = 64 * 1024;
+const WEB_STREAM_BUFFER_BYTES = 256 * 1024;
+const WEB_STREAM_CONTROL_FRAME_BYTES = 2 * 1024;
+// One wave progress snapshot must fit the corridor's default deployment frame WITH the largest
+// single wire frame still room to move: 8 MiB − 1 MiB = 7 MiB.
+const WAVE_PROGRESS_BYTES = DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES - WIRE_FRAME_BYTES;
+
+// Issue #498: the process-boundary timing family — the bounded reap a spawned transport child
+// gets, the /bin/ps identity probe every writer-liveness check runs, and the credential
+// refresh-lock pair the two vendor credential caches share.
+const PROCESS_REAP_TIMEOUT_MS = 2_000;
+const PROCESS_PS_PROBE_MS = 1_000;
+const PROCESS_GROUP_KILL_ESCALATION_MS = 2_000;
+const CREDENTIAL_CACHE_TIMEOUT_MS = 30_000;
+const CREDENTIAL_CACHE_POLL_MS = 10;
+
+// Issue #498: the timing families four modules re-typed. The workflow-driver watch vocabulary
+// (poll / stall / blocking-interaction / settle) is ONE policy spelled four ways before this
+// row set; the approval, stop-deadline and terminal-grace defaults are the coordinator's own;
+// and the 120_000 family is FIVE distinct resources that merely share a magnitude — each row
+// names its own reading of two minutes.
+const DRIVER_POLL_MS = 20_000;
+const DRIVER_STALL_MS = 20 * 60_000;
+const DRIVER_BLOCKING_INTERACTION_MS = 20 * 60_000;
+const DRIVER_SETTLE_MS = 5_000;
+const APPROVAL_TIMEOUT_MS = 60_000;
+const RUN_STOP_DEADLINE_MS = 15_000;
+const BUDGET_TERMINAL_GRACE_DEFAULT_MS = 250;
+const PROGRESS_SILENCE_MS = 120_000;
+const WATCHDOG_STALL_MS = 120_000;
+const VERIFICATION_RUN_TIMEOUT_MS = 120_000;
+const BRIDGE_COMMAND_TIMEOUT_MS = 120_000;
+const ROUTE_FAILURE_WINDOW_MS = 10 * 60_000;
+
+// Issue #377: the byte families the systemic sweep named — the ledger replay ceilings, the
+// provider's own frame and per-turn budget, the knowledge/reuse policy artifact magnitudes,
+// the advisory feed ceilings, the atlas storage pair, the workspace capacity family, the
+// structured-review report bound, and the vendor credential-cache file. Each is ONE meaning;
+// coincidental collisions between magnitudes never share a row.
+const LEDGER_REPLAY_MAX_BYTES = 1024 * 1024 * 1024;
+const LEDGER_EVENT_MAX_BYTES = 16 * 1024 * 1024;
+const LEDGER_RECEIPT_MAX_BYTES = 1024 * 1024;
+const PROVIDER_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
+const PROVIDER_MAX_CALLS_PER_TURN = 100_000;
+const KNOWLEDGE_POLICY_ARTIFACT_MAX_BYTES = 16 * 1024 * 1024;
+const KNOWLEDGE_POLICY_EVENT_MAX_BYTES = 64 * 1024 * 1024;
+const ADVISORY_PAGE_MAX_BYTES = 16 * 1024 * 1024;
+const ADVISORY_TOTAL_MAX_BYTES = 64 * 1024 * 1024;
+const ADVISORY_DELIVERY_MAX_BYTES = 16 * 1024 * 1024;
+const ADVISORY_HEADER_MAX_BYTES = 256 * 1024;
+const ATLAS_SOURCE_MAX_BYTES = 16 * 1024 * 1024;
+const ATLAS_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
+const WORKSPACE_CAPACITY_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+const WORKSPACE_RESERVE_BYTES = 64 * 1024 * 1024;
+const WORKSPACE_OBSERVATION_QUANTUM_BYTES = 64 * 1024 * 1024;
+const WORKSPACE_FILE_MAX_BYTES = 512 * 1024 * 1024;
+const REVIEW_REPORT_MAX_BYTES = 16 * 1024 * 1024;
+const REVIEW_PREVERDICT_READ_BYTES = 16 * 1024 * 1024;
+const CREDENTIAL_CACHE_FILE_BYTES = 64 * 1024;
+// Issue #89 doctrine (cap + graceful spill) at the harvest accessor: the serialized changedFiles
+// page is one quarter of the wire frame, so a page, the delta it applies and the receipt
+// envelope share one frame with room.
+
 const SUBSTRATE = Object.freeze({
   'scanner.window.decision': { lane: 'scanner.window.decision', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
   'scanner.window.scratchpad': { lane: 'scanner.window.scratchpad', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
@@ -168,7 +247,7 @@ const SUBSTRATE = Object.freeze({
   'stream.omp.flush': { lane: 'stream.omp.flush', class: 'substrate', value: 4096, unit: 'bytes', graceful: null },
   'scanner.window.board_claim': { lane: 'scanner.window.board_claim', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
   'scanner.window.board_report': { lane: 'scanner.window.board_report', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
-  'wire.frame': { lane: 'wire.frame', class: 'substrate', value: 1048576, unit: 'bytes', graceful: null },
+  'wire.frame': { lane: 'wire.frame', class: 'substrate', value: WIRE_FRAME_BYTES, unit: 'bytes', graceful: null },
   'credential.file': { lane: 'credential.file', class: 'substrate', value: 16384, unit: 'bytes', graceful: null },
   'context_pack.body': { lane: 'context_pack.body', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
   // spill.body is the ONE substrate row that mints a refusal (blocker 3): a substrate ceiling
@@ -214,6 +293,61 @@ const SUBSTRATE = Object.freeze({
   // Issue #500: the duplicate `model_profile.catalog_staleness_ms` row (and its comment
   // fragment) that used to sit here is removed — a duplicate key renders the first
   // declaration dead, and the registry declares one face per lane.
+  // Issue #497: the transport families the frame-economics ratchet carried as uncataloged
+  // exemptions. Each row is the ONE declaration of its family's default; the transport imports
+  // the row and its own constructor option still overrides per instance.
+  'mcp.message_bytes': { lane: 'mcp.message_bytes', class: 'substrate', value: MCP_MESSAGE_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'mcp-northbound.mjs (the stdio transport response/notification bound), mcp-descriptor.mjs, mcp-web-bridge.mjs' },
+  'acp.event_payload_bytes': { lane: 'acp.event_payload_bytes', class: 'substrate', value: ACP_EVENT_PAYLOAD_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'kimi-acp.mjs, omp-rpc.mjs, grok-acp.mjs (one event payload on a child ACP/OMP transport)' },
+  'web_stream.buffer_bytes': { lane: 'web_stream.buffer_bytes', class: 'substrate', value: WEB_STREAM_BUFFER_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'web-stream.mjs (the per-connection SSE buffered/frame bound)' },
+  'web_stream.control_frame_bytes': { lane: 'web_stream.control_frame_bytes', class: 'substrate', value: WEB_STREAM_CONTROL_FRAME_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'web-stream.mjs (the SSE control-frame bound)' },
+  'adapter.wire_frame_min': { lane: 'adapter.wire_frame_min', class: 'substrate', value: ADAPTER_WIRE_FRAME_MIN_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'application-deployment.mjs normalizeAdapterOptions (the #28 corridor floor)' },
+  'adapter.wire_frame_max': { lane: 'adapter.wire_frame_max', class: 'substrate', value: ADAPTER_WIRE_FRAME_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'application-deployment.mjs normalizeAdapterOptions (the #28 corridor ceiling) and goal-plan.mjs (the one-artifact bound a verification report may reach)' },
+  'wave.progress_bytes': { lane: 'wave.progress_bytes', class: 'substrate', value: WAVE_PROGRESS_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'wave.mjs boundedJsonBytes (one wave progress snapshot\u2019s serialization ceiling)' },
+  // Issue #498: the process-boundary timing family. These rows pin behaviorally (the ratchet
+  // scans byte values; ms rows stay out of the scan like route.probe_deadline_ms) — the suite
+  // asserts the LIVE values through the named rows.
+  'process.reap_timeout_ms': { lane: 'process.reap_timeout_ms', class: 'substrate', value: PROCESS_REAP_TIMEOUT_MS, unit: 'ms', graceful: null, enforcedAt: 'process-lifecycle.mjs, acp-json-rpc-process.mjs, claude-session.mjs, cli-adapters.mjs, codex-appserver.mjs, grok-acp.mjs (the bounded process-reap default)' },
+  'process.ps_probe_ms': { lane: 'process.ps_probe_ms', class: 'substrate', value: PROCESS_PS_PROBE_MS, unit: 'ms', graceful: null, enforcedAt: 'process-lifecycle.mjs, coordination-ledger-writes.mjs, npm-proposal-resolver.mjs, resident-authority.mjs, worktree.mjs (the /bin/ps process-identity probe)' },
+  'process.group_kill_escalation_ms': { lane: 'process.group_kill_escalation_ms', class: 'substrate', value: PROCESS_GROUP_KILL_ESCALATION_MS, unit: 'ms', graceful: null, enforcedAt: 'context-runtime.mjs (the process-group TERM\u2192KILL escalation; distinct from the transport-child KILL_ESCALATION_GRACE_MS family)' },
+  'credential.cache_timeout_ms': { lane: 'credential.cache_timeout_ms', class: 'substrate', value: CREDENTIAL_CACHE_TIMEOUT_MS, unit: 'ms', graceful: null, enforcedAt: 'claude-credential-cache.mjs, grok-credential-cache.mjs (the refresh-lock timeout and the vendor refresh runtime bound)' },
+  'credential.cache_poll_ms': { lane: 'credential.cache_poll_ms', class: 'substrate', value: CREDENTIAL_CACHE_POLL_MS, unit: 'ms', graceful: null, enforcedAt: 'claude-credential-cache.mjs, grok-credential-cache.mjs (the refresh-lock poll)' },
+  // Issue #497 (the wait half of the MCP family): the tool-call wait default is the SAME
+  // fraction-of-ceiling the web wait derives — WEB_WAIT_DEFAULT_MS — so a ceiling change moves
+  // the MCP default with it and no second 25 s literal survives.
+  'mcp.wait_default_ms': { lane: 'mcp.wait_default_ms', class: 'substrate', value: WEB_WAIT_DEFAULT_MS, unit: 'ms', graceful: null, enforcedAt: 'mcp-northbound.mjs maxWaitMs (the MCP tool-call wait default), mcp-descriptor.mjs' },
+  // Issue #498: the driver watch vocabulary and stop-path defaults (ms rows pin behaviorally,
+  // outside the byte scan, like route.probe_deadline_ms).
+  'driver.poll_ms': { lane: 'driver.poll_ms', class: 'substrate', value: DRIVER_POLL_MS, unit: 'ms', graceful: null, enforcedAt: 'application.mjs PRODUCTION_WORKFLOW_DRIVER, recipes.mjs driver defaults, wave-driver.mjs DEFAULT_WATCHDOG' },
+  'driver.stall_ms': { lane: 'driver.stall_ms', class: 'substrate', value: DRIVER_STALL_MS, unit: 'ms', graceful: null, enforcedAt: 'the same four driver modules (the 20-minute stall window; strictly under the wall budget, #258/#530)' },
+  'driver.blocking_interaction_ms': { lane: 'driver.blocking_interaction_ms', class: 'substrate', value: DRIVER_BLOCKING_INTERACTION_MS, unit: 'ms', graceful: null, enforcedAt: 'application-deployment.mjs DEFAULT_WATCHDOG, runtime-admission.mjs watchdog normalization (the null-deadline default for blocking interactions, D3)' },
+  'driver.settle_ms': { lane: 'driver.settle_ms', class: 'substrate', value: DRIVER_SETTLE_MS, unit: 'ms', graceful: null, enforcedAt: 'wave-driver.mjs, recipes.mjs finalize-on-none policy (the settle window)' },
+  'approval.timeout_ms': { lane: 'approval.timeout_ms', class: 'substrate', value: APPROVAL_TIMEOUT_MS, unit: 'ms', graceful: null, enforcedAt: 'runtime-admission.mjs (the coordinator approval deadline default; the deployment derives its own from the wall budget)' },
+  'run.stop_deadline_ms': { lane: 'run.stop_deadline_ms', class: 'substrate', value: RUN_STOP_DEADLINE_MS, unit: 'ms', graceful: null, enforcedAt: 'runtime-admission.mjs and application-deployment.mjs (the stop path deadline; #500 pin keeps recording the live value)' },
+  'budget.terminal_grace_default_ms': { lane: 'budget.terminal_grace_default_ms', class: 'substrate', value: BUDGET_TERMINAL_GRACE_DEFAULT_MS, unit: 'ms', graceful: null, enforcedAt: 'runtime-admission.mjs (the coordinator-layer default; the deployment declares its own 2 s through budgetPolicy, #500-pinned)' },
+  'progress.silence_ms': { lane: 'progress.silence_ms', class: 'substrate', value: PROGRESS_SILENCE_MS, unit: 'ms', graceful: null, enforcedAt: 'application-semantics.mjs PROGRESS_SILENCE_THRESHOLD_MS (the run progress-silence window)' },
+  'watchdog.stall_ms': { lane: 'watchdog.stall_ms', class: 'substrate', value: WATCHDOG_STALL_MS, unit: 'ms', graceful: null, enforcedAt: 'runtime-admission.mjs watchdog normalization, story.mjs (the #67 stall watchdog window; story.mjs duplicate spelling retired)' },
+  'verification.run_timeout_ms': { lane: 'verification.run_timeout_ms', class: 'substrate', value: VERIFICATION_RUN_TIMEOUT_MS, unit: 'ms', graceful: null, enforcedAt: 'referee.mjs (one verification task run bound)' },
+  'bridge.command_timeout_ms': { lane: 'bridge.command_timeout_ms', class: 'substrate', value: BRIDGE_COMMAND_TIMEOUT_MS, unit: 'ms', graceful: null, enforcedAt: 'mcp-web-bridge.mjs (the local-resident bridge client command deadline)' },
+  'route.failure_window_ms': { lane: 'route.failure_window_ms', class: 'substrate', value: ROUTE_FAILURE_WINDOW_MS, unit: 'ms', graceful: null, enforcedAt: 'route-liveness.mjs, application-deployment.mjs (the failure window a route liveness episode accumulates over)' },
+  // Issue #377: the byte families the systemic sweep flagged, ONE row per meaning.
+  'ledger.replay_max_bytes': { lane: 'ledger.replay_max_bytes', class: 'substrate', value: LEDGER_REPLAY_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'canonical-order.mjs (the replay ledger ceiling)' },
+  'ledger.event_max_bytes': { lane: 'ledger.event_max_bytes', class: 'substrate', value: LEDGER_EVENT_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'canonical-order.mjs (one replay event ceiling)' },
+  'ledger.receipt_max_bytes': { lane: 'ledger.receipt_max_bytes', class: 'substrate', value: LEDGER_RECEIPT_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'canonical-order.mjs (one receipt ceiling)' },
+  'provider.wire_frame_bytes': { lane: 'provider.wire_frame_bytes', class: 'substrate', value: PROVIDER_WIRE_FRAME_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'provider-governance.mjs (the provider-side frame ceiling; a distinct resource from the registry wire.frame)' },
+  'provider.max_calls_per_turn': { lane: 'provider.max_calls_per_turn', class: 'substrate', value: PROVIDER_MAX_CALLS_PER_TURN, unit: 'calls', graceful: null, enforcedAt: 'provider-governance.mjs (the provider per-turn call budget)' },
+  'knowledge.policy_artifact_max_bytes': { lane: 'knowledge.policy_artifact_max_bytes', class: 'substrate', value: KNOWLEDGE_POLICY_ARTIFACT_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-admission/internals/ledger(-writes), cairn-run-scorecard, advisory-feed-registry (the largest single knowledge/reuse policy artifact: batch, receipt, graph batch, result, argument, source ref, page, delivery, report)' },
+  'knowledge.policy_event_max_bytes': { lane: 'knowledge.policy_event_max_bytes', class: 'substrate', value: KNOWLEDGE_POLICY_EVENT_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordination-admission.mjs, coordination-internals.mjs, coordination-ledger.mjs, advisory-feed-registry.mjs (the largest reuse-policy event/candidate/total ceiling)' },
+  'advisory.header_max_bytes': { lane: 'advisory.header_max_bytes', class: 'substrate', value: ADVISORY_HEADER_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'advisory-feed-registry.mjs, hmac-advisory-webhook.mjs (one advisory header ceiling)' },
+  'atlas.source_max_bytes': { lane: 'atlas.source_max_bytes', class: 'substrate', value: ATLAS_SOURCE_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'atlas-index.mjs, atlas-structural.mjs (one atlas source ceiling)' },
+  'atlas.artifact_max_bytes': { lane: 'atlas.artifact_max_bytes', class: 'substrate', value: ATLAS_ARTIFACT_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'atlas-index.mjs, atlas-structural.mjs (one atlas artifact ceiling)' },
+  'workspace.capacity_max_bytes': { lane: 'workspace.capacity_max_bytes', class: 'substrate', value: WORKSPACE_CAPACITY_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'application-deployment.mjs, toolchain-projection.mjs (one workspace capacity ceiling)' },
+  'workspace.reserve_bytes': { lane: 'workspace.reserve_bytes', class: 'substrate', value: WORKSPACE_RESERVE_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'application-deployment.mjs (the runtime reserve a workspace keeps free)' },
+  'workspace.observation_quantum_bytes': { lane: 'workspace.observation_quantum_bytes', class: 'substrate', value: WORKSPACE_OBSERVATION_QUANTUM_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'application-deployment.mjs (the per-observation byte quantum)' },
+  'workspace.file_max_bytes': { lane: 'workspace.file_max_bytes', class: 'substrate', value: WORKSPACE_FILE_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'application-deployment.mjs, toolchain-projection.mjs (one workspace file ceiling)' },
+  'review.report_max_bytes': { lane: 'review.report_max_bytes', class: 'substrate', value: REVIEW_REPORT_MAX_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'coordinator.mjs, application-observation.mjs (one structured review report ceiling)' },
+  'review.preverdict_read_bytes': { lane: 'review.preverdict_read_bytes', class: 'substrate', value: REVIEW_PREVERDICT_READ_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'contribution-service.mjs (the pre-verdict read ceiling)' },
+  'credential.cache_file_bytes': { lane: 'credential.cache_file_bytes', class: 'substrate', value: CREDENTIAL_CACHE_FILE_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'claude-credential-cache.mjs, grok-credential-cache.mjs (the vendor credential cache file bound)' },
+  'workspace.observation_quantum_inodes': { lane: 'workspace.observation_quantum_inodes', class: 'substrate', value: 10_000, unit: 'inodes', graceful: null, enforcedAt: 'application-deployment.mjs (the per-observation inode quantum, #500)' },
 });
 
 // Issue #306 (lane B): the ONE list page the family's read rows draw — the item ceiling a page of
@@ -457,7 +591,7 @@ const COUNTS = Object.freeze({
  * graceful, enforcedAt?, refusalCode?}. */
 export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION, ...COUNTS });
 
-export const FRAME_LIMITS_VERSION = '1.4.0';
+export const FRAME_LIMITS_VERSION = '1.5.0';
 
 /** Issue #105 (D1/B-3): the closed conversational depth ceiling for reply chains — a per-branch
  * depth cap (never per-subtree), declared per send, default 1. The derivation: the scanner's

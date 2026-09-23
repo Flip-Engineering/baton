@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { compareCanonicalStrings } from './canonical-order.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -49,10 +50,10 @@ function validCard(card) {
     pollValid = exactKeys(p, ['origin', 'operation', 'cursorKind', 'initialSequence', 'redirects', 'maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'])
       && origin.protocol === 'https:' && origin.href === `${origin.origin}/` && operation.origin === origin.origin && operation.pathname === p.operation && operation.search === '' && operation.hash === '' && typeof p.operation === 'string' && /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,2048}$/.test(p.operation)
       && !p.operation.includes('//') && !p.operation.split('/').some((segment) => ['.', '..'].includes(segment)) && p.cursorKind === 'sequence' && p.redirects === 'deny' && Number.isSafeInteger(p.initialSequence) && p.initialSequence >= 0 && numeric.every((key) => Number.isSafeInteger(p[key]) && p[key] > 0)
-      && p.maxPages <= 10_000 && p.maxItems <= 100_000 && p.maxPageBytes <= 16 * 1024 * 1024 && p.maxTotalBytes <= 64 * 1024 * 1024 && p.maxWallMs <= 60 * 60 * 1_000 && p.maxBackoffMs <= 60 * 60 * 1_000 && p.maxClockSkewMs <= 24 * 60 * 60 * 1_000;
+      && p.maxPages <= 10_000 && p.maxItems <= 100_000 && p.maxPageBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && p.maxTotalBytes <= FRAME_LIMITS['knowledge.policy_event_max_bytes'].value && p.maxWallMs <= 60 * 60 * 1_000 && p.maxBackoffMs <= 60 * 60 * 1_000 && p.maxClockSkewMs <= 24 * 60 * 60 * 1_000;
   }
   return pollValid && exactKeys(card.ceilings, ceilingKeys) && Object.values(card.ceilings).every((value) => Number.isSafeInteger(value) && value > 0)
-    && card.ceilings.maxDeliveryBytes <= 16 * 1024 * 1024 && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096
+    && card.ceilings.maxDeliveryBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096
     && (!nativeWebhook || (card.ceilings.maxHeaderCount <= 256 && card.ceilings.maxHeaderBytes <= 256 * 1024 && card.ceilings.maxClockSkewMs <= 24 * 60 * 60 * 1_000));
 }
 

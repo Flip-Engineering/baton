@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { FRAME_LIMITS } from './limits.mjs';
 import { Lang, parse } from '@ast-grep/napi';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 
@@ -252,8 +253,8 @@ export class AtlasCodeIndex {
     this.indexRoot = join(opts.artifactRoot, 'indexes'); this.resultRoot = join(opts.artifactRoot, 'results');
     // Issue #500: 16 MiB — the ledger event ceiling used by coordination rows, result
     // bodies and wire frames. A source file the ledger could hold is always indexed.
-    this.maxSourceBytes = opts.maxSourceBytes ?? 16 * 1024 * 1024; this.maxFiles = opts.maxFiles ?? 20000;
-    this.maxResults = opts.maxResults ?? 100000; this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
+    this.maxSourceBytes = opts.maxSourceBytes ?? FRAME_LIMITS['atlas.source_max_bytes'].value; this.maxFiles = opts.maxFiles ?? 20000;
+    this.maxResults = opts.maxResults ?? 100000; this.maxArtifactBytes = opts.maxArtifactBytes ?? FRAME_LIMITS['atlas.artifact_max_bytes'].value;
     for (const key of ['maxSourceBytes', 'maxFiles', 'maxResults', 'maxArtifactBytes']) if (!Number.isSafeInteger(this[key]) || this[key] <= 0) throw new TypeError(`Atlas ${key} must be a positive safe integer`);
     this.repoId = opts.repoId ?? null;
     // Epic #81 (O-5): deployment orientation-result storage ceiling (constructive, never a clock).

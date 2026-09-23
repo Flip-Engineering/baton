@@ -233,9 +233,9 @@ export function validKnowledgeRecallPolicy(policy) {
   const numeric = KNOWLEDGE_RECALL_POLICY_FIELDS.filter((name) => name !== 'repoId');
   if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
   return policy.maxQueryBytes <= 64 * 1024 && policy.maxQueryTerms <= 1_024 && policy.maxCandidates <= 100_000
-    && policy.maxCandidateBytes <= 64 * 1024 * 1024 && policy.maxResults <= 1_000 && policy.maxGraphDepth <= 64
+    && policy.maxCandidateBytes <= FRAME_LIMITS['knowledge.policy_event_max_bytes'].value && policy.maxResults <= 1_000 && policy.maxGraphDepth <= 64
     && policy.maxGraphRows <= 1_000_000 && policy.maxSnippetBytes <= 64 * 1024
-    && policy.maxReceiptBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+    && policy.maxReceiptBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && policy.maxResultBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value;
 }
 
 // KG-3/KG-4 (v2-P1-3, P2-7). The preview policy is a two-level split so `policy.recall` stays
@@ -269,7 +269,7 @@ export function validKnowledgeRecallAssessmentPolicy(policy) {
   const numeric = KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS.filter((name) => name !== 'repoId');
   if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
   return policy.maxScanEvents <= 1_000_000 && policy.maxReceipts <= 100_000 && policy.maxNodeRefs <= 1_000_000
-    && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+    && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && policy.maxResultBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value;
 }
 
 export function validKnowledgePromotionPolicy(policy) {
@@ -277,8 +277,8 @@ export function validKnowledgePromotionPolicy(policy) {
   const numeric = KNOWLEDGE_PROMOTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
   if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
   return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxCandidates <= 100_000
-    && policy.maxCandidateBytes <= 64 * 1024 * 1024 && policy.maxEvidenceRefs <= 1_000_000
-    && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+    && policy.maxCandidateBytes <= FRAME_LIMITS['knowledge.policy_event_max_bytes'].value && policy.maxEvidenceRefs <= 1_000_000
+    && policy.maxBatchBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && policy.maxResultBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value;
 }
 
 export function validKnowledgeScratchCorrectionPolicy(policy) {
@@ -286,7 +286,7 @@ export function validKnowledgeScratchCorrectionPolicy(policy) {
   const numeric = KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
   if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
   return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
-    && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+    && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value && policy.maxResultBytes <= FRAME_LIMITS['knowledge.policy_artifact_max_bytes'].value;
 }
 
 export function providerAttemptDelay(policy, windowAttempt) {

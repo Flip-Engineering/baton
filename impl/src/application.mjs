@@ -206,7 +206,7 @@ const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
 // the production cadence is uncapped; the drive settles on terminality, handled-decision
 // stuck, or observed quiescence, never on a wall clock.
 const PRODUCTION_WORKFLOW_DRIVER = Object.freeze({
-  pollIntervalMs: 20_000, stallTimeoutMs: 20 * 60_000, hardCapMs: null,
+  pollIntervalMs: FRAME_LIMITS['driver.poll_ms'].value, stallTimeoutMs: FRAME_LIMITS['driver.stall_ms'].value, hardCapMs: null,
 });
 const RESULT_INTENTS = Object.freeze(new Set(['change', 'read_only_evidence']));
 // Issue #31 §2.2(4): the closed set of run drivers. Only the wave path exists today — an

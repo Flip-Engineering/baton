@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { FRAME_LIMITS } from './limits.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
@@ -37,7 +38,7 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 const processIdentity = (pid) => {
   if (!Number.isSafeInteger(pid) || pid <= 1) return null;
   try { process.kill(pid, 0); } catch (error) { return error?.code === 'ESRCH' ? null : undefined; }
-  try { const value = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'command='], { encoding: 'utf8', timeout: 1_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); if (value) return value; } catch {}
+  try { const value = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'command='], { encoding: 'utf8', timeout: FRAME_LIMITS['process.ps_probe_ms'].value, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); if (value) return value; } catch {}
   try { process.kill(pid, 0); return undefined; } catch (error) { return error?.code === 'ESRCH' ? null : undefined; }
 };
 const ownerState = (owner) => { if (!owner || typeof owner.pidStart !== 'string') return 'stale'; const observed = processIdentity(owner.pid); return observed === undefined ? 'unknown' : observed === owner.pidStart ? 'active' : 'stale'; };
