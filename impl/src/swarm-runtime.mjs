@@ -883,15 +883,17 @@ const ROOT_ADDRESSED_NEED = /^(?:the\s+)?root\s*:/i;
  * `owed`, never `kind` (the name the reporting half reads): the ledger's driver container records `{kind, ...payload}`
  * (coordination-ledger.mjs recordDriver), so a payload field named `kind` would overwrite the
  * row's own operational identity and the row would never wake its class. */
-/** Issue #564 x #572: the bounded text a turn-report owed row carries. The report is a
- * WorkerResult OBJECT by the time it is recorded, so the summary is read when it is a string; a
- * string report rides whole; a reporter fallback (its parent guidance refused) falls back to the
- * failure reason. Anything else is null rather than a serialized object the attention row cannot
- * read. */
+/** The root receives the report and the seat's explicit completion state. */
 function turnReportAsk(payload) {
   const report = payload?.report;
+  if (report && typeof report === 'object') {
+    return JSON.stringify({
+      workerId: payload.workerId, turnSeq: payload.turnSeq, turnEpoch: payload.turnEpoch,
+      assignmentDone: payload.assignmentDone === true, report,
+      ...(payload.deliveryFailure ? { deliveryFailure: payload.deliveryFailure } : {}),
+    });
+  }
   if (typeof report === 'string' && report.length > 0) return report;
-  if (typeof report?.summary === 'string' && report.summary.length > 0) return report.summary;
   const reason = payload?.deliveryFailure?.reason;
   return typeof reason === 'string' && reason.length > 0 ? reason : null;
 }

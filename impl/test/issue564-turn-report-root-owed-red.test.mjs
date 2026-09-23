@@ -137,9 +137,15 @@ test("564-t6: reportTurnEnd drives the reconciler when the runtime provides it (
   await f.call("create", { purpose: "reportTurnEnd call site (#572)" });
   await f.call("recruit", { participantId: "lead", objective: "hold the lane" });
   await f.runtime.reportTurnEnd({ swarmId: "baton", participantId: "lead", workerId: "w-1",
-    turnSeq: 21, turnEpoch: 5, report: { summary: "turn finished, nothing waits on a parent" } });
+    turnSeq: 21, turnEpoch: 5, assignmentDone: true,
+    report: { status: "completed", summary: "turn finished, nothing waits on a parent", evidence: ["verified"] } });
   assert.equal(f.owedRows().filter((row) => row.owed === "turn_reported").length, 1,
     "the reporter own call reconciles the root-owed row at the turn end, never at a later observation");
+  const delivered = JSON.parse(f.owedRows()[0].ask);
+  assert.equal(delivered.assignmentDone, true);
+  assert.equal(delivered.report.status, 'completed');
+  assert.deepEqual(delivered.report.evidence, ['verified']);
+  assert.equal(delivered.workerId, 'w-1');
   const keys = f.store.eventsView().filter((e) => e.payload?.kind === "swarm.turn_reported").length;
   assert.equal(keys, 1, "and the owed record never collides with the reporter own swarm.turn_reported row");
 });
