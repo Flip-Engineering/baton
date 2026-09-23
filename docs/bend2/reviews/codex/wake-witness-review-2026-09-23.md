@@ -17,6 +17,21 @@ The revised source at `656ee105` compares the returned code with the declared
 routing and calls `IO.die` on disagreement. The following new finding concerns
 its evidence predicates.
 
+An independent check of that fix used fresh Git-object copies of both files at
+`656ee105` and replaced `return addressed ? 0 : 1;` with `return 2;` in the
+copied JavaScript host file. With `BEND_NO_TELEMETRY=1`, running the copied Bend
+program exited 1. Emitting JavaScript exited 0, and running that output with Node
+exited 1. Both executions printed:
+
+```text
+park-routing-recorded-absent routing DISAGREE: declared task-addressed derived no-frame
+```
+
+The reviewer reported a separate interpreter run that exited 0 after printing
+disagreements. Its exact command and artifact were not supplied. The fresh-copy
+reproduction above supports the repaired adapter assertion. The independently
+reproduced zero-seat counterexamples below remain the reason for rejection.
+
 ## Zero-seat counterexample
 
 The model uses `Nat` for a resolved seat identity and admits `ResolvedSeat{0n}`.
