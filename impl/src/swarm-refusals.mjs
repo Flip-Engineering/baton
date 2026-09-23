@@ -162,6 +162,11 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   // no unpublished squash).
   integrate_publish_undeclared: row(409, ['runtime'], 'the deployment declares no shared remote for landings, so the landed ref has nowhere to publish'),
   integrate_publish_failed: row(409, ['runtime'], 'the declared shared remote could not be reached or refused the push, so the landing did not complete'),
+  // Issue #570: the landing gates on the DECLARED remote's tip, fetched before the target head is
+  // resolved. When the local target ref and that tip have diverged — each side holds a commit the
+  // other lacks — the landing refuses instead of squashing onto a tip the local ref cannot
+  // fast-forward to; the refusal names the local head and the fetched tip.
+  integrate_target_diverged: row(409, ['runtime'], 'the local target ref and the fetched remote tip have diverged, each holding a commit the other lacks, so the landing refuses rather than drop either side\'s commits'),
   // Issue #473: the coordinator's own run-stop leg. `swarm.stop` drives it through the injected
   // `stopRun` port, so a run whose stop does not converge inside its bound reached the operator as
   // 503 `temporarily_unavailable` "retry once" — the #430 narration named this exact gap. Both
