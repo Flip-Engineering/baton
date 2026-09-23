@@ -436,7 +436,7 @@ async function runWavePreflight(deployment, route, members = 64) {
       },
     },
   };
-  const wave = createWaveDriver(facade, { preflight: true });
+  const wave = createWaveDriver(facade, { preflight: true, steering: 'nudge-on-checkpoint' });
   const request = {
     members: Array.from({ length: members }, (_, index) => ({
       role: `member-${index}`, objective: `fixture wave member ${index}`, exact: route,
