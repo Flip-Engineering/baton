@@ -328,3 +328,24 @@ test('466c: the landing\'s selection is the runner\'s selection unioned with the
   assert.ok(!expected.includes(runnerName('impl/test/beta-fixture.test.mjs')),
     'an untouched base test is in neither half of the derivation');
 });
+
+// ── the target on a detached deployment checkout: selection changes only WHERE the lane lands ────
+
+test('466: an omitted target on a detached checkout derives the branch at the checkout commit, and the gate set is the same union', needsGit, async (t) => {
+  const w = await world(t);
+  const runner = w.runnerSelection();
+  const region = w.regionGates();
+  const expected = [...new Set([...runner.files.map(runnerName), ...region])].sort();
+  git(w.repo, 'checkout', '-q', '--detach', 'master');
+  assert.equal(git(w.repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD',
+    'the deployment checkout is detached, as the served checkout is');
+
+  const answer = await w.integrate({ target: undefined });
+
+  assert.equal(answer.integration.target, 'master',
+    'the derived target is the one local branch at the checkout commit');
+  assert.equal(answer.integration.squashSha, git(w.repo, 'rev-parse', 'master'),
+    'the lane landed on the derived branch');
+  assert.deepEqual(answer.integration.gates.files, expected,
+    'the detached checkout moves the TARGET derivation only — the gate set is still the runner\'s selection unioned with the region gates');
+});
