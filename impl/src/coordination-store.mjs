@@ -1864,6 +1864,14 @@ export class CoordinationStore {
     return coordinationInternals.waveRoleRun(this._waveRoleRuns, waveId, waveRole);
   }
 
+  // #161 (G4/D1): the plan object's write lane. `admitPlanWrite` adjudicates one body against the
+  // live projection and returns `{entries, batchKind}`; THIS is where the adjudicated entries land
+  // — through the store's own append seams, in one call, so the auto-demote pair folds atomically
+  // and no caller reaches past the store for a ledger append.
+  appendPlanEntries(entries, batchKind = null) {
+    return coordinationLedger.appendPlanEntries(this, entries, batchKind);
+  }
+
   ledgerHeadSeq() { return coordinationLedger.ledgerHeadSeq(this._events); }
 
   // -------------------------------------------------------------------------

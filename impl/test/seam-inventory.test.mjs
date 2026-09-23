@@ -262,16 +262,27 @@ test('SI5 (S-G4): SwarmRuntime is a declared target, mapped across all four seam
 // the row for the source AND the destination in the same commit that regenerates the artifact,
 // and a TARGETS edit that loses coverage fails here no matter how many times --write runs.
 const CORPUS_COUNTS = Object.freeze({
+<<<<<<< HEAD
   'impl/src/coordinator.mjs': 436,
   'impl/src/application.mjs': 241,
   'impl/src/coordination-store.mjs': 608,
+=======
+  'impl/src/coordinator.mjs': 426,
+  'impl/src/application.mjs': 243,
+  'impl/src/coordination-store.mjs': 605,
+>>>>>>> aef3fa35 (Issue #161: the orchestrator plan object's read and write ports land on the embedded, CLI and MCP surfaces)
   'impl/src/swarm-runtime.mjs': 165,
   'impl/src/coordination-internals.mjs': 123,
   'impl/src/coordination-replay.mjs': 62,
   'impl/src/runtime-briefing.mjs': 1,
   'impl/src/application-briefing.mjs': 2,
+<<<<<<< HEAD
   'impl/src/coordination-ledger.mjs': 282,
   'impl/src/coordination-admission.mjs': 182,
+=======
+  'impl/src/coordination-ledger.mjs': 278,
+  'impl/src/coordination-admission.mjs': 180,
+>>>>>>> aef3fa35 (Issue #161: the orchestrator plan object's read and write ports land on the embedded, CLI and MCP surfaces)
   'impl/src/runtime-recovery.mjs': 65,
   'impl/src/coordination-ledger-writes.mjs': 31,
   'impl/src/runtime-effects.mjs': 10,

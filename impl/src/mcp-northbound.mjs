@@ -210,6 +210,10 @@ const CAPABILITY = Object.freeze({
   baton_run_scratchpad_elevate: ['control', 'observe'],
   baton_run_scratchpad_append: ['control', 'observe'],
   baton_run_knowledge_seed: ['control', 'observe'],
+  // Issue #161: the plan pair. The read rides observe; the write rides control (the plan:* power
+  // itself is the deployment authorize's composition inside the port, H2.1).
+  baton_plan_read: ['observe'],
+  baton_plan_write: ['control', 'observe'],
   // Matrix mutations keep the existing transported posture: observe admits the tool call, while
   // the run-orchestrator lease resolved inside S-2 is the control authority.
   ...Object.fromEntries(SURFACING_MATRIX_MCP_ROWS.map((operation) => [operation.names.mcp, ['observe']])),
@@ -1104,6 +1108,40 @@ const SERVICES_LIST_TOOL_DEFINITIONS = Object.freeze([Object.freeze((() => ({
   }),
 }))())]);
 
+// Issue #161 (D3.3/H3.1): the orchestrator plan object as an ordinary MCP pair. ONE schema per
+// verb, derived from the operation's own closed shape: the read takes the addressed plan, the
+// write takes the addressed plan plus one closed mutation (and the caller's idempotency key when
+// it holds one — the lane's exactly-once discipline is the durable key, never a second ledger).
+// Both tools lead `required` with repoId (the #159 G10 lesson). The canonical dot twins derive
+// below like every other tool.
+const PLAN_TOOL_DEFINITIONS = Object.freeze([
+  Object.freeze((() => ({
+    name: deriveSurfaceNames('plan.read').mcp,
+    _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+    execution: Object.freeze({ taskSupport: 'forbidden' }),
+    description: 'Read the deployment’s campaign plan object: the plan’s version, its bounded focus window, and every task in canonical order with status, owner and blockers.',
+    inputSchema: schema({ ...repo, planId: { type: 'string', pattern: '^plan:[a-f0-9]{32}$' } }, ['repoId', 'planId']),
+    annotations: Object.freeze({
+      readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+    }),
+  }))()),
+  Object.freeze((() => ({
+    name: deriveSurfaceNames('plan.write').mcp,
+    _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+    execution: Object.freeze({ taskSupport: 'forbidden' }),
+    description: 'Land one idempotency-keyed mutation on the deployment’s campaign plan object: a mint, a task upsert, a task transition, an evidence link, or the bounded focus window.',
+    inputSchema: schema({
+      ...repo,
+      planId: { type: 'string', pattern: '^plan:[a-f0-9]{32}$' },
+      idempotencyKey: { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9._:-]+$' },
+      mutation: { type: 'object' },
+    }, ['repoId', 'planId', 'mutation']),
+    annotations: Object.freeze({
+      readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+    }),
+  }))()),
+]);
+
 // 2026-09-14 audit (U-F7): an alias pair carries DISTINCT descriptions, so a model can tell the
 // canonical spelling from the retained one instead of seeing two identically-described tools. The
 // note derives from the sibling table (one declaration), never retyped per tool.
@@ -1143,6 +1181,8 @@ export const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   ...SWARM_APPLICATION_TOOL_DEFINITIONS,
   ...EVIDENCE_SEARCH_TOOL_DEFINITIONS,
   ...SERVICES_LIST_TOOL_DEFINITIONS,
+  // Issue #161: the plan object's read/write pair (the D3.3 ordinary tools).
+  ...PLAN_TOOL_DEFINITIONS,
   // Issue #294 (final-landing ruling): the wake family's registry rows claim the mcp surface.
   ...WAKE_TOOL_DEFINITIONS,
 ]);
@@ -1421,6 +1461,9 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_wakes_subscribe', 'baton_wakes_unsubscribe', 'baton_wakes_since',
   // Issue #99/#179: the accessor's two explicit-dispatch tools.
   'baton_run_resultpin', 'baton_waves_harvest',
+  // Issue #161: the plan pair rides its own dispatch branches (the ports are not application
+  // command-table keys — the M1 static guard — so the generic branch never maps their failures).
+  'baton_plan_read', 'baton_plan_write',
 ]);
 // The application command each explicit-dispatch tool reaches (the same knowledge the handle()
 // branches encode); deployment.doctor is a direct method, not a bridged string command.
@@ -1435,6 +1478,8 @@ const EXPLICIT_TOOL_COMMANDS = Object.freeze({
   baton_run_knowledge_seed: 'run.knowledge.seed',
   // Issue #99/#179: the accessor's dispatch identities.
   baton_run_resultpin: 'run.resultpin', baton_waves_harvest: 'waves.harvest',
+  // Issue #161: the plan pair's dispatch identities.
+  baton_plan_read: 'plan.read', baton_plan_write: 'plan.write',
 });
 /** The application command an ordinary tool dispatches, or null for tools that reach a direct
  * method (doctor) or the kernel. One lookup serves the host's advertisement filter and the gate. */
@@ -2951,6 +2996,22 @@ export class McpFleetServer {
       value = await this.application.command('run.knowledge.seed', {
         runId: args.runId, type: args.type, grounding: args.grounding, body: args.body,
         ...(Object.hasOwn(args, 'evidence') ? { evidence: clone(args.evidence) } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_plan_read') {
+      value = await this.application.command('plan.read', { planId: args.planId }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_plan_write') {
+      value = await this.application.command('plan.write', {
+        planId: args.planId,
+        ...(Object.hasOwn(args, 'idempotencyKey') ? { idempotencyKey: args.idempotencyKey } : {}),
+        ...(Object.hasOwn(args, 'mutation') ? { mutation: clone(args.mutation) } : {}),
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId, sessionId: principal.sessionId,
