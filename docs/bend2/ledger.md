@@ -18,6 +18,8 @@ Each row pairs the contributions that carry a subject with the branch commit who
 that subject; the matching is exact against the branch log at `cc1a1876`. Contributions that landed
 under a differently worded commit (the merges `60901316`, `4462bf5d`, and the master merges) or that
 duplicate another row are not listed here; their own rows in the swarm ledger hold their file lists.
+Commit `582e3403` is the pre-contract spelling of the revision-6 change and carries no contribution
+row of its own.
 
 | Contribution | Landed as | Subject |
 |---|---|---|
@@ -28,7 +30,6 @@ duplicate another row are not listed here; their own rows in the swarm ledger ho
 | `9915ccbc` | `fabfef59` | laws-proposed revision 8: Codex r6-review gaps closed, destination prohibition adopted (M-18) |
 | `389e0109` | `6638a471` | laws-proposed revision 7: audit fixes applied |
 | `10b1bebe` | `57f81812` | laws-proposed revision 6: narrowed per the r5 review, abandonment prohibition adopted |
-| `582e3403` | `57f81812` | laws-proposed revision 6 (the companion spelling) |
 | `b4709e1f` | `c9e51892` | laws-proposed revision 5: the minimal prohibition set (16) |
 | `1b901194` | `a1e2b240` | laws-proposed revision 4: consolidated per the independent review |
 | `d3730575` | `f9cbfbf2` | Reviewer probe table reproduced at the pin; language-review capability scope corrected |
@@ -117,7 +118,9 @@ quarantines only the second.
    Measured 2026-09-23: a dry run of a contribution whose only wide path is `README.md` selected 64
    test files and returned `green — passed 707, unexpected 0, expected-red 20, squash 92f3c78f2670`.
    The Kimi row is judged by the current manifest, so the hazard on this host is gate-run cost and
-   duration, not an unjudged refusal.
+   duration, not an unjudged refusal. An independent check with no manifest argument measured 65 for
+   `README.md`, 13 for `.gitignore` and 69 for both through `selectFromRepository`, so the count
+   depends on the manifest the runtime supplies; the 64 above is the deployment's own selection.
 2. **`test/application-observation.test.mjs`'s AO5 count went stale at `0263e104`** (the
    regeneration after issue #140 added `lastCoordinationEvent`, 174 members to 175) and no
    expected-red row covered it. The same correction landed on `master` as `d943c960`, from the
