@@ -2274,6 +2274,7 @@ export class BatonApplication {
         this._swarmNativeAccess ??= new SwarmNativeAccess({
           coordinator: this.driver.coordinator,
           onTurnCompleted: (report) => this._swarmRuntime().reportTurnEnd(report),
+          onProviderFault: (fault) => this._swarmRuntime().reportProviderFault(fault),
           isDone: ({ swarmId, participantId }) => {
             const seat = this._swarmRuntime().store.swarm(swarmId)?.participants?.[participantId];
             return seat?.status === 'left' && seat.leftReason === 'completed';

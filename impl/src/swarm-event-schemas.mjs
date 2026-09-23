@@ -164,8 +164,8 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
   // orchestrator declared and the runtime resolves the defaults (manual, no billing preference).
   'swarm.policy_updated': KIND('declare the swarm-level policy a re-route follows when a seat\'s provider kills it', {
     rerouteOnProviderFault: { type: 'string', enum: ['manual', 'auto'], required: false,
-      description: 'what happens when a seat dies under a provider fault: manual (the default) records the decision and pages an orchestrator, auto performs the resume itself onto the first candidate',
-      expectation: 'one of manual, auto', example: 'manual' },
+      description: 'the recorded compatibility mode. Provider-fault recovery is automatic; historical manual rows are normalized by the runtime',
+      expectation: 'one of manual, auto', example: 'auto' },
     reroutePreferApi: { type: 'boolean', required: false,
       description: 'rank a per-token API route above a subscription route that has headroom (the default ranks a subscription route with headroom first, so an idle plan is spent before API money)',
       example: false },
@@ -174,7 +174,7 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     // A policy names at least ONE field (the fold refuses a row that changes nothing), so the
     // shipped example names one — a derived example can only name `required` fields, and neither
     // field is required: an orchestrator sets the mode, the billing preference, or both.
-    rerouteOnProviderFault: 'manual',
+    rerouteOnProviderFault: 'auto',
   }),
   'swarm.participant_left': KIND('remove one participant from the swarm', {
     participantId: STRING('the participant who leaves', { required: true, ...AUTO('defaults to your own leave when you call as a member') }),

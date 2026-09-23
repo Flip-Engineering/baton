@@ -43,8 +43,6 @@ import { subtractUsdFloor, usdFromNanos, usdToNanos } from './usd.mjs';
 import { resolveWorkerPolicy } from './worker-policy.mjs';
 
 
-export const TRANSIENT_TURN_RETRY_LIMIT = 1;
-
 export const PHYSICAL_LOG_APPENDS = new WeakMap();
 
 export const ATTENTION_PUSH_ORCHESTRATOR_ONLY_KINDS = new Set([
@@ -520,17 +518,11 @@ export function constructor(coordinator, opts) {
     coordinator._now = opts.now || Date.now;
     coordinator._approvalTimeoutMs = opts.approvalTimeoutMs ?? FRAME_LIMITS['approval.timeout_ms'].value;
     coordinator._stopDeadlineMs = opts.stopDeadlineMs ?? FRAME_LIMITS['run.stop_deadline_ms'].value;
-    // #201 durable member retry: the bounded retry COUNT for death-cert crashes (never a
-    // clock — the #163 law). Absent/null = authority OFF (deaths settle failed exactly as
-    // today); N>=0 = up to N retry_pending parks per member task before failed.
-    coordinator._memberRetryAttempts = Number.isSafeInteger(opts.memberRetryAttempts) && opts.memberRetryAttempts >= 0
-      ? opts.memberRetryAttempts : null;
-    // #295 item 2: a transient provider fault re-drives the turn in place — the transport
-    // dropped, the session is alive, and no result was recorded — at most
-    // TRANSIENT_TURN_RETRY_LIMIT times. A deployment that configured its own member retry
-    // authority raises that count; the bound is a declared count, never a clock (#163).
-    coordinator._transientTurnRetryLimit = Number.isSafeInteger(coordinator._memberRetryAttempts)
-      ? Math.max(TRANSIENT_TURN_RETRY_LIMIT, coordinator._memberRetryAttempts) : TRANSIENT_TURN_RETRY_LIMIT;
+    // #574: provider recovery is deployment authority. A provider death always parks durable
+    // work for recovery; a caller-supplied retry count is retained only as compatibility input
+    // and never decides whether the task lives or dies.
+    coordinator._memberRetryAttempts = Number.isSafeInteger(opts.memberRetryAttempts)
+      && opts.memberRetryAttempts >= 0 ? opts.memberRetryAttempts : null;
     // #295 item 4: the deployment's exhausted-route authority. The SAME instance the route
     // readiness derivation and the pre-effect recruit refusal read, so a quota refusal observed
     // here is a fact the next recruit on that route is refused by — and it expires by derivation
@@ -870,6 +862,12 @@ export function closeAuthority(coordinator, recorder) {
     if (coordinator._drainHistoricalReconcilePromise) throw Object.assign(new Error('coordinator historical resource reconciliation is pending'), { code: 'coordinator_not_drained' });
     if (!['disabled', 'ready'].includes(coordinator._startupRecoveryState) && !(coordinator._drainHistoricalReconciled && coordinator._drainReceipt)) {
       throw Object.assign(new Error('coordinator startup recovery authority is not settled'), { code: 'coordinator_not_drained' });
+    }
+    for (const handle of coordinator._workers.values()) {
+      if (handle.automaticRecoveryTimer != null) {
+        coordinator._clearTimeout(handle.automaticRecoveryTimer);
+        handle.automaticRecoveryTimer = null;
+      }
     }
     coordinator._drainState = 'draining';
     coordinator._closed = true;
@@ -2541,8 +2539,14 @@ export function _queueTransientProviderTurnRetry(coordinator, recorder, handle, 
     // owns the settlement (the retry would have nowhere to write).
     if (handle.processRef && handle.processRef.state === 'closed') return false;
     if (typeof coordinator._adapters[handle.vendor]?.prompt !== 'function') return false;
+    const fault = coordinator._providerFaultOf(workerResult);
+    const route = fault?.detail?.route ?? coordinator._providerRouteOf(handle);
+    const retryEvidence = canonicalDigest({ code, route, sessionId: handle.sessionRef?.id ?? null });
+    // One observed fault is re-driven in place. The same fault after that successful dispatch is
+    // persistent evidence and crosses to the recovery/reroute path. The transition is evidence-
+    // based; no attempt count terminates work.
+    if (handle.transientRetryEvidence === retryEvidence) return false;
     const attempt = (handle.transientTurnRetries ?? 0) + 1;
-    if (attempt > coordinator._transientTurnRetryLimit) return false;
     if (coordinator._transientRetryPending?.has(handle.id)) return false;
     // The re-driven turn is admitted through the SAME gate every other new provider turn passes
     // (`_admitProviderTurn`: the member's declared budget, its terminal reserve, and the route's
@@ -2551,12 +2555,10 @@ export function _queueTransientProviderTurnRetry(coordinator, recorder, handle, 
     // re-driven. The refusal is durable and named (`resource.provider_turn_refused`, phase
     // `transient_retry`), so a retry that never happened is never invisible.
     if (!coordinator._admitProviderTurn(handle, task, 'transient_retry').ok) return false;
-    const fault = coordinator._providerFaultOf(workerResult);
-    const route = fault?.detail?.route ?? coordinator._providerRouteOf(handle);
     coordinator._transientRetryPending ??= new Set();
     coordinator._transientRetryPending.add(handle.id);
     const drive = Promise.resolve(coordinator._retryTransientProviderTurn(
-      handle, terminalEvent, workerResult, { code, attempt, route },
+      handle, terminalEvent, workerResult, { code, attempt, route, retryEvidence },
     ))
       .catch((error) => coordinator._recordOperationFailure('provider.transient_retry_failed', handle, 'transient_retry_failed', error))
       .finally(() => coordinator._transientRetryPending?.delete(handle.id));

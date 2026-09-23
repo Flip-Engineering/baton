@@ -34,6 +34,8 @@ export function turnCompleted(coordinator, recorder, ctx) {
         // (coalescing with distribution, memberState terminal-at-mint). Reads and nudges never
         // answer this; the driver's own stall machinery is untouched (the D5 pin).
         if (wr?.status === 'completed') {
+          ctx.handle.transientRetryEvidence = null;
+          ctx.handle.transientTurnRetries = 0;
           coordinator._mintMemberTerminal(ctx.handle, coordinator._tasks.get(ctx.handle.taskId), wr);
         }
         const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.payload?.usageSeal ?? null);
@@ -149,9 +151,9 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
         const task = coordinator._tasks.get(ctx.handle.taskId);
         const failActiveTask = task && !TERMINAL_TASK_STATUSES.has(task.status)
           && task.status !== 'verifying' && !ctx.turnWasTerminal;
-        // #201 durable member retry: a death-cert crash under retry authority parks the task
-        // retry_pending (evidence-bound, never failed) so the successor incarnation can resume
-        // by the cert's handle. Authority OFF (default) settles failed exactly as before.
+        // #201/#574 durable member retry: every provider crash parks the task retry_pending with
+        // its death evidence. Recovery authority is the default; a numeric retry option no longer
+        // decides whether work becomes terminal.
         const deathCert = {
           exitCode: ctx.payload?.exitCode ?? null, signal: ctx.payload?.signal ?? null,
           ...(typeof ctx.payload?.sessionId === 'string' && ctx.payload.sessionId.length > 0
@@ -160,8 +162,7 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
             ? { sessionFile: ctx.payload.sessionFile } : {}),
         };
         const resumeHandle = typeof deathCert.sessionId === 'string' ? deathCert.sessionId : null;
-        const retryEligible = failActiveTask && coordinator._memberRetryAttempts !== null
-          && (ctx.handle.memberRetries ?? 0) < coordinator._memberRetryAttempts;
+        const retryEligible = failActiveTask;
         if (retryEligible) {
           ctx.handle.memberRetries = (ctx.handle.memberRetries ?? 0) + 1;
           if (resumeHandle) {
@@ -171,7 +172,7 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
           const retryEvidence = evidence ? {
             ...evidence,
             deathCert: { ...deathCert },
-            retry: { attempt: ctx.handle.memberRetries, of: coordinator._memberRetryAttempts },
+            retry: { attempt: ctx.handle.memberRetries, of: null },
           } : null;
           if (retryEvidence) coordinator._coordTransition(task, 'retry_pending',
             `task.retry_pending:${task.id}:${retryEvidence.coordinationSeq}`, retryEvidence);

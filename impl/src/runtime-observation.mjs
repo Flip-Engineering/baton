@@ -184,7 +184,9 @@ export function workerObservedCommitsOf(payload) {
 
 export function providerFaultDeathFor(coordinator, recorder, workerId) {
     if (typeof workerId !== 'string' || workerId.length === 0) return null;
-    return coordinator._providerFaultDeaths?.get(workerId) ?? null;
+    const death = coordinator._providerFaultDeaths?.get(workerId) ?? null;
+    if (death === null) return null;
+    return coordinator._providerFaultRecoveries?.has(`${workerId}:${death.seq}`) ? null : death;
   }
 
 export function drain(coordinator, recorder, ctx = {}) {
@@ -1748,6 +1750,166 @@ export function _cleanupTransportInBackground(coordinator, recorder, handle, tas
       receipt(error);
       return Promise.resolve(undefined);
     }
+  }
+
+/** #574: preserve the exact checkout/session authority of a retry_pending provider death after
+ * its transport is gone. Both exact-close and kill-confirmed paths call this after progress
+ * preservation. No recovery is started until this state transition has completed. */
+export function _prepareProviderRetryAfterTransport(coordinator, recorder, handle, task) {
+    if (!handle || task?.status !== 'retry_pending'
+      || handle.terminalCause?.kind !== 'provider_failure') return false;
+    const runtimeRemoved = coordinator._removeRuntimeScope(handle);
+    if (!runtimeRemoved) {
+      throw Object.assign(new Error('provider retry runtime cleanup failed'), {
+        code: 'runtime_cleanup_failed',
+      });
+    }
+    handle.status = 'orphaned';
+    handle.localAuthority = false;
+    handle.cleanupPending = false;
+    handle.cleanupError = null;
+    return true;
+  }
+
+function providerRecoveryStillOwed(coordinator, handle, task) {
+    return !coordinator._closed && coordinator._drainState === 'open'
+      && task?.status === 'retry_pending' && handle?.status === 'orphaned'
+      && !coordinator._stopWaiters.has(handle.id);
+  }
+
+function markProviderFaultRecovered(coordinator, handle, death) {
+    if (!death) return;
+    coordinator._providerFaultRecoveries ??= new Set();
+    coordinator._providerFaultRecoveries.add(`${handle.id}:${death.seq}`);
+    handle.providerFaultRowSeq = null;
+    handle.terminalCause = null;
+  }
+
+function recoveryLineageRoutes(coordinator, handle, task) {
+    const routes = new Set();
+    let currentHandle = handle;
+    let currentTask = task;
+    const visited = new Set();
+    while (currentTask && !visited.has(currentTask.id)) {
+      visited.add(currentTask.id);
+      if (currentHandle?.vendor) routes.add(currentHandle.vendor);
+      const parentId = currentTask.refines ?? null;
+      if (!parentId) break;
+      currentTask = coordinator._tasks.get(parentId) ?? null;
+      currentHandle = currentTask
+        ? [...coordinator._workers.values()].find((row) => row.taskId === currentTask.id) ?? null
+        : null;
+    }
+    return routes;
+  }
+
+async function startFreshProviderRecovery(coordinator, recorder, handle, task, death) {
+    if (!handle.sessionContext || typeof handle.sessionContext !== 'object') {
+      return { ok: false, result: 'session_context_required' };
+    }
+    const persistent = task.refines !== null && task.refines !== undefined;
+    const tried = recoveryLineageRoutes(coordinator, handle, task);
+    const vendors = [handle.vendor, ...Object.keys(coordinator._adapters)]
+      .filter((vendor, index, all) => typeof vendor === 'string' && all.indexOf(vendor) === index)
+      .filter((vendor) => coordinator._harnessOf(vendor) !== 'codex')
+      .filter((vendor) => !persistent || !tried.has(vendor));
+    const refusals = [];
+    for (let index = 0; index < vendors.length; index += 1) {
+      const vendor = vendors[index];
+      if (!providerRecoveryStillOwed(coordinator, handle, task)) {
+        return { ok: false, result: 'recovery_stopped' };
+      }
+      try {
+        const sameRoute = vendor === handle.vendor;
+        const successor = await coordinator.spawn(vendor, task.brief, {
+          taskId: `${task.id}-r${death?.seq ?? 'fault'}-${index + 1}`,
+          runId: task.runId ?? handle.runId ?? null,
+          ...(sameRoute && handle.modelResolved ? { model: handle.modelResolved } : {}),
+          ...(sameRoute && handle.effortResolved ? { effort: handle.effortResolved } : {}),
+          attachedWorkspace: handle.sessionContext,
+          refines: task.id,
+          actor: 'policy',
+          idempotencyKey: `provider-recovery:${task.id}:${death?.seq ?? 'fault'}:${vendor}`,
+        });
+        const evidence = {
+          reason: 'provider_recovery_continued', successorWorkerId: successor.id,
+          providerFaultSeq: death?.seq ?? null,
+        };
+        coordinator._coordTransition(task, 'cancelled',
+          `task.cancelled:${task.id}:provider_recovery:${death?.seq ?? 'fault'}`, evidence);
+        task.status = 'cancelled';
+        markProviderFaultRecovered(coordinator, handle, death);
+        return { ok: true, result: 'fresh_session_started', successorWorkerId: successor.id };
+      } catch (error) {
+        refusals.push(error?.code ?? 'provider_recovery_refused');
+      }
+    }
+    return { ok: false, result: 'no_viable_recovery_route', refusals };
+  }
+
+async function performAutomaticProviderRecovery(coordinator, recorder, handle, task, death) {
+    if (!providerRecoveryStillOwed(coordinator, handle, task)) {
+      return { ok: false, result: 'recovery_stopped' };
+    }
+    const participantRuntime = coordinator._participantRuntimes?.get(handle.runId) ?? null;
+    const persistent = task.refines !== null && task.refines !== undefined;
+    if (!persistent && handle.sessionRef?.persistence === 'native') {
+      const outcome = await coordinator.recover(handle.id, { actor: 'policy' });
+      if (outcome?.ok === true) {
+        markProviderFaultRecovered(coordinator, handle, death);
+        return outcome;
+      }
+      if (['provider_turn_refused', 'recovery_conflict'].includes(outcome?.result)) return outcome;
+    }
+    // A swarm recovery must rebind membership through the swarm runtime. The callback is invoked
+    // only after exact checkout preservation and the in-place native retry opportunity.
+    if (typeof participantRuntime?.onProviderFault === 'function') {
+      await participantRuntime.onProviderFault({
+        workerId: handle.id, faultSeq: death?.seq ?? null, code: death?.code ?? null,
+      });
+      return { ok: true, result: 'swarm_recovery_scheduled' };
+    }
+    return startFreshProviderRecovery(coordinator, recorder, handle, task, death);
+  }
+
+/** Schedule recovery independently of later commands. Refusal counts never settle the task: a
+ * measured admission/resource wait is retried at the deployment driver cadence until work starts
+ * or explicit stop/close changes the durable task state. */
+export function _scheduleAutomaticProviderRecovery(coordinator, recorder, handle, task, death = null,
+  { immediate = true } = {}) {
+    if (!providerRecoveryStillOwed(coordinator, handle, task)) return false;
+    if (handle.automaticRecoveryPromise || handle.automaticRecoveryTimer != null) return true;
+    const launch = () => {
+      handle.automaticRecoveryTimer = null;
+      if (!providerRecoveryStillOwed(coordinator, handle, task)) return;
+      let retry = false;
+      let tracked;
+      tracked = Promise.resolve()
+        .then(() => performAutomaticProviderRecovery(coordinator, recorder, handle, task,
+          death ?? coordinator._providerFaultDeaths?.get(handle.id) ?? null))
+        .then((outcome) => {
+          retry = outcome?.ok !== true && providerRecoveryStillOwed(coordinator, handle, task);
+        })
+        .catch((error) => {
+          coordinator._recordOperationFailure('provider.automatic_recovery_failed', handle,
+            'automatic_provider_recovery_failed', error);
+          retry = providerRecoveryStillOwed(coordinator, handle, task);
+        })
+        .finally(() => {
+          if (handle.automaticRecoveryPromise === tracked) handle.automaticRecoveryPromise = null;
+          if (retry) coordinator._scheduleAutomaticProviderRecovery(
+            handle, task, death, { immediate: false },
+          );
+        });
+      handle.automaticRecoveryPromise = tracked;
+    };
+    if (immediate) queueMicrotask(launch);
+    else {
+      handle.automaticRecoveryTimer = coordinator._setTimeout(launch,
+        FRAME_LIMITS['driver.poll_ms'].value);
+      if (typeof handle.automaticRecoveryTimer?.unref === 'function') handle.automaticRecoveryTimer.unref();
+    }
+    return true;
   }
 
 export function _recordTrustGateEscape(coordinator, recorder, handle, error) {

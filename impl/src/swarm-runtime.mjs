@@ -1766,6 +1766,7 @@ export class SwarmRuntime {
     // recruit it runs is itself a runtime entry, so the guard is what keeps a pending decision from
     // starting a second successor inside its own resume.
     this._autoRerouting = false;
+    this._autoRerouteTimer = null;
     // #475: the probe lane's durable half, read from the store this runtime already owns — every
     // admission (`route.probe_admitted`), the seat's turn as its provider ANSWERED it
     // (`route.observed`), and the episodes already closed (`route.recovered`). #456 kept the
@@ -2008,19 +2009,36 @@ export class SwarmRuntime {
     if (this._autoRerouting) return;
     const pending = [];
     for (const swarm of this.store.swarms()) {
-      if (this._policyOf(swarm).rerouteOnProviderFault !== 'auto') continue;
       for (const participant of Object.values(swarm.participants ?? {})) {
         const reroute = participant.reroute ?? null;
         if (reroute === null || reroute.decision !== null) continue;
-        if (reroute.candidates.length === 0) continue;
+        if (participant.status !== 'left' || participant.leftReason !== 'provider_fault') continue;
         pending.push({ swarmId: swarm.swarmId, participantId: participant.participantId, reroute });
       }
     }
-    if (pending.length === 0) return;
+    if (pending.length === 0) return false;
     this._autoRerouting = true;
     try {
       for (const item of pending) await this._autoRerouteOne(item);
     } finally { this._autoRerouting = false; }
+    const remains = this.store.swarms().some((swarm) => Object.values(swarm.participants ?? {})
+      .some((participant) => participant.status === 'left'
+        && participant.leftReason === 'provider_fault'
+        && participant.reroute !== null && participant.reroute.decision === null));
+    if (remains) this._scheduleAutoReroutePass();
+    return !remains;
+  }
+
+  _scheduleAutoReroutePass() {
+    if (this.watchController.signal.aborted || this._autoRerouteTimer != null) return;
+    this._autoRerouteTimer = setTimeout(() => {
+      this._autoRerouteTimer = null;
+      if (this.watchController.signal.aborted) return;
+      void this._performAutoReroutes().catch(() => {
+        if (!this.watchController.signal.aborted) this._scheduleAutoReroutePass();
+      });
+    }, FRAME_LIMITS['driver.poll_ms'].value);
+    if (typeof this._autoRerouteTimer?.unref === 'function') this._autoRerouteTimer.unref();
   }
 
   /** Issue #443: ONE pending decision performed — the SAME recruit path the root would type, with
@@ -2029,33 +2047,38 @@ export class SwarmRuntime {
    * successor's id is DERIVED from the seat and the death (never minted per attempt), so a retried
    * attempt replays the recruit under its own operation key instead of joining a second seat. */
   async _autoRerouteOne({ swarmId, participantId, reroute }) {
-    const candidate = reroute.candidates[0];
-    const successor = `${participantId}-reroute-${reroute.seq}`;
-    const to = Object.freeze({ harness: candidate.harness, model: candidate.model, effort: candidate.effort ?? null });
-    try {
-      await this.command('swarm.recruit', {
-        swarmId, participantId: successor,
-        objective: `Continue ${participantId}'s lane after its provider killed it`
-          + ` (${reroute.code}): resume from it onto ${this._routeLabel(to)}`,
-        options: { exact: { ...to } },
-        resumeFrom: participantId,
-        idempotencyKey: `swarm-reroute:${swarmId}:${participantId}:${reroute.seq}`,
-      }, { actor: 'baton-runtime', principalId: 'baton-runtime' });
-    } catch {
-      // The recruit's own refusal lane recorded WHY (the standard `swarm.operation_refused` row),
-      // and the decision stays pending: an orchestrator still reads the proposal and may answer it
-      // by hand. A re-route never hides the refusal it drew.
-      return;
+    const current = this.store.swarm(swarmId)?.participants?.[participantId] ?? null;
+    if (current?.status !== 'left' || current.leftReason !== 'provider_fault'
+      || current.reroute?.decision !== null) return false;
+    const policy = this._policyOf(this.store.swarm(swarmId));
+    const refreshed = this._rerouteCandidates(policy.reroutePreferApi, reroute.from).candidates;
+    for (let index = 0; index < refreshed.length; index += 1) {
+      const candidate = refreshed[index];
+      const candidateId = hash([candidate.harness, candidate.model, candidate.effort ?? null]).slice(0, 8);
+      const successor = `${participantId}-reroute-${reroute.seq}-${candidateId}`;
+      const to = Object.freeze({ harness: candidate.harness, model: candidate.model, effort: candidate.effort ?? null });
+      try {
+        await this.command('swarm.recruit', {
+          swarmId, participantId: successor,
+          objective: `Continue ${participantId}'s lane after its provider killed it`
+            + ` (${reroute.code}): resume from it onto ${this._routeLabel(to)}`,
+          options: { exact: { ...to } },
+          resumeFrom: participantId,
+          idempotencyKey: `swarm-reroute:${swarmId}:${participantId}:${reroute.seq}:${candidateId}`,
+        }, { actor: 'baton-runtime', principalId: 'baton-runtime' });
+      } catch {
+        continue;
+      }
+      const admitted = swarmRouteShape(this.store.swarm(swarmId)?.participants?.[successor]?.route);
+      this.store.recordSwarm('swarm.rerouted', {
+        swarmId, successor, carriedFrom: participantId,
+        from: Object.freeze({ ...reroute.from }),
+        to: Object.freeze({ ...(admitted ?? to) }),
+        proposalSeq: reroute.seq,
+      }, { actor: 'baton-runtime', key: `swarm-rerouted:${swarmId}:${participantId}:${reroute.seq}` });
+      return true;
     }
-    // The successor is bound, so the decision is stamped with what it really did: the route the
-    // seat was admitted on (the candidate, exactly) and the proposal it answers.
-    const admitted = swarmRouteShape(this.store.swarm(swarmId)?.participants?.[successor]?.route);
-    this.store.recordSwarm('swarm.rerouted', {
-      swarmId, successor, carriedFrom: participantId,
-      from: Object.freeze({ ...reroute.from }),
-      to: Object.freeze({ ...(admitted ?? to) }),
-      proposalSeq: reroute.seq,
-    }, { actor: 'baton-runtime', key: `swarm-rerouted:${swarmId}:${participantId}:${reroute.seq}` });
+    return false;
   }
 
   _swarm(id) {
@@ -3236,6 +3259,7 @@ export class SwarmRuntime {
     const eligible = [];
     const excluded = [];
     for (const row of rows) {
+      if (row.route?.harness === 'codex') continue;
       const billing = this._routeBilling(row);
       // The candidate row is what a reader audits the decision with: the exact route, the billing
       // basis its own profile publishes, the state it was ready in, and the measured profile the
@@ -3276,7 +3300,9 @@ export class SwarmRuntime {
     const policy = swarm?.policy ?? null;
     const mode = policy?.rerouteOnProviderFault ?? null;
     return Object.freeze({
-      rerouteOnProviderFault: SWARM_REROUTE_MODES.includes(mode) ? mode : 'manual',
+      // #574: old `manual` rows remain readable history. Recovery is automatic for every open
+      // deployment, including swarms created before this ruling.
+      rerouteOnProviderFault: 'auto',
       reroutePreferApi: policy?.reroutePreferApi === true,
       resumeContinuation: 'auto',
     });
@@ -5007,10 +5033,29 @@ export class SwarmRuntime {
 
   close() {
     this.watchController.abort();
+    if (this._autoRerouteTimer != null) {
+      clearTimeout(this._autoRerouteTimer);
+      this._autoRerouteTimer = null;
+    }
     // Issue #459: a runtime that owns its own supervised pool (a bare host with no coordinator)
     // kills what it started, exactly as the resident's fence kills the deployment's pooled
     // children. A landing's orphaned gate run is never this close's legacy.
     this._gatePool?.killAll();
+  }
+
+  /** #574: the native provider-death hook. It crosses directly from the coordinator after exact
+   * preservation, so fault observation and autonomous recovery do not depend on another command. */
+  async reportProviderFault({ swarmId, participantId, workerId, faultSeq = null }) {
+    const swarm = this.store.swarm(swarmId);
+    const participant = swarm?.participants?.[participantId] ?? null;
+    const binding = participant?.bindings?.at(-1) ?? null;
+    if (!participant || participant.status !== 'active' || binding?.workerId !== workerId) return false;
+    const death = typeof this.coordinator.providerFaultDeathFor === 'function'
+      ? this.coordinator.providerFaultDeathFor(workerId) : null;
+    if (death === null || (faultSeq !== null && death.seq !== faultSeq)) return false;
+    this._observeParticipantFaults();
+    await this._performAutoReroutes();
+    return true;
   }
 
   async _watch(args, principal, context) {

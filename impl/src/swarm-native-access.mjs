@@ -8,9 +8,10 @@ import { WORKTREE_STASH_BRIEF_SENTENCE, WORKTREE_WRITER_BRIEF_SENTENCE } from '.
 /** Connect native participant tools to the live deployment without copying owner authority.
  * Credentials belong to a participant, independently of its current transport incarnation. */
 export class SwarmNativeAccess {
-  constructor({ coordinator, dispatch, onTurnCompleted = null, isDone = null }) {
+  constructor({ coordinator, dispatch, onTurnCompleted = null, onProviderFault = null, isDone = null }) {
     this.coordinator = coordinator;
     this.onTurnCompleted = onTurnCompleted;
+    this.onProviderFault = onProviderFault;
     this.isDone = isDone;
     this.bridge = createSwarmNativeBridge({ dispatch });
     this.participants = new Map();
@@ -35,6 +36,7 @@ export class SwarmNativeAccess {
         const extension = Object.freeze({
           isDone: () => this.isDone?.({ swarmId, participantId }) === true,
           onTurnCompleted: (report) => this.onTurnCompleted?.({ ...report, swarmId, participantId }),
+          onProviderFault: (fault) => this.onProviderFault?.({ ...fault, swarmId, participantId }),
           env: Object.freeze({ ...issued.env, BATON_SWARM_CLIENT: this.clientPath }),
           redactProviderFrame: (frame) => JSON.parse(JSON.stringify(frame,
             (_key, value) => typeof value === 'string' ? value.replaceAll(issued.token, '[REDACTED]') : value)),

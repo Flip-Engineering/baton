@@ -50,7 +50,7 @@ const RELOCATED_CLASSES = Object.freeze(['DependencyCycleError', 'SupervisedProc
 const RELOCATED = Object.freeze([
   'ATTENTION_PUSH_INBOX_KINDS', 'ATTENTION_PUSH_ORCHESTRATOR_ONLY_KINDS', 'COORDINATION_MUTATORS',
   'DEFAULT_DRAIN_POLICY', 'PHYSICAL_LOG_APPENDS', 'SUPERVISED_STREAM_TAIL_BYTES',
-  'TRANSIENT_TURN_RETRY_LIMIT', 'bestEffort', 'bestEffortSync', 'cardAcceptsExactModel',
+  'bestEffort', 'bestEffortSync', 'cardAcceptsExactModel',
   'coachingError', 'defaultAccept', 'guidanceSender', 'guidanceSenderLabel', 'normalizeDrainPolicy',
   'normalizedDecisionText', 'resolveCardModel', 'DependencyCycleError', 'SupervisedProcesses',
 ]);
