@@ -143,7 +143,7 @@ dispatch=refused:destination_identity_mismatch
 Exit code 0. The target's identity file named `target-B` where the plan named `target-A`, so the
 dispatch never ran: the tree holds `identity` and nothing else, no `dispatches.log` and no artifact.
 An alias that resolves elsewhere is the case the architecture review reports from the deployment
-(`../reviews/codex/codex-architecture-review.md`, finding 2), and this is the local shape of the
+(`../reviews/codex/architecture/codex-architecture-review.md`, finding 2), and this is the local shape of the
 guarded version.
 
 ### An absent destination is a value

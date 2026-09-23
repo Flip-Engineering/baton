@@ -4,7 +4,7 @@
 
 The operator authorized rewrite development on `bend2-rewrite` under the 16 operative revision
 9.1 laws approved at `1fab9a1da60db3d5d9c9d3cef89d3caabd68fe35`. The
-[authorization record](authorization.md) and [final Codex law review](reviews/codex-final-law-review-r9.1.md)
+[authorization record](authorization.md) and [final Codex law review](reviews/codex/codex-final-law-review-r9.1.md)
 supersede the earlier design-only scope and law-approval hold. Work from this assignment never
 lands on `master`.
 
@@ -208,7 +208,7 @@ already measure the closed parts.
 
 | Closure condition | Closed by | State |
 |---|---|---|
-| `ARCH-CLOSE-01` | the approval and recovery records: [`reviews/codex-final-law-review-r9.1.md`](reviews/codex-final-law-review-r9.1.md), [`authorization.md`](authorization.md), [`recovery-2026-09-22.md`](recovery-2026-09-22.md) | recorded |
+| `ARCH-CLOSE-01` | the approval and recovery records: [`reviews/codex/codex-final-law-review-r9.1.md`](reviews/codex/codex-final-law-review-r9.1.md), [`authorization.md`](authorization.md), [`recovery-2026-09-22.md`](recovery-2026-09-22.md) | recorded |
 | `ARCH-CLOSE-02` | `B2-AUTHORITY` | open; `examples/lang-cap-probes.evidence.md` carries the forged-record and dropped-lease controls |
 | `ARCH-CLOSE-03` | `B2-SUPERVISION` | open; `examples/lang-cap-dropped-child.evidence.md` is a failing control |
 | `ARCH-CLOSE-04` | `B2-FS-DURABILITY` | open; `examples/lang-cap-durability.evidence.md` shows the write path and its missing receipt |

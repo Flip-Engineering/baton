@@ -9,7 +9,7 @@ onto it, and an earlier attempt's completion claim must then say what became of 
 longer names it, and it is still preserved as an ancestor of the commit that replaced it.
 
 This is the case the external review lists beside destination substitution and a lost response
-(`../reviews/codex/codex-architecture-review.md`, finding 2: "target contention"). The composition's
+(`../reviews/codex/architecture/codex-architecture-review.md`, finding 2: "target contention"). The composition's
 table named the other two; this corpus names this one and measures it.
 
 ## Files
