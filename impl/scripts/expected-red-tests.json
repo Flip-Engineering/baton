@@ -58,22 +58,6 @@
       "reason": "#566"
     },
     {
-      "key": "test/canonical-naming-233-red.test.mjs :: CLOSED SET: web-admitted command names equal exactly the ONE derivation",
-      "reason": "#566"
-    },
-    {
-      "key": "test/cli-silent-start-red.test.mjs :: PT-2c capability [generated-damerau1-sweep] — every generated distance-1 variant refuses (exactly-one) or falls through (zero/two-or-more)",
-      "reason": "#566"
-    },
-    {
-      "key": "test/cli-silent-start-red.test.mjs :: PT-7 pin [canonical-aliases-unchanged] — canonical aliases resolve to HEAD and every recognized first-token still dispatches, never run.start",
-      "reason": "#566"
-    },
-    {
-      "key": "test/cli-wave-fidelity-red.test.mjs :: A7-6 (D3 closed-set): every waves.* cli-claiming op is admitted, parses to { name: <key> }, and is documented — the ghost-prevention pin",
-      "reason": "#566"
-    },
-    {
       "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R1: the descriptor accepts the closed knowledge:{primaryRoot} field (RED — no knowledge field)",
       "reason": "#70"
     },
@@ -160,10 +144,6 @@
     {
       "key": "test/cross-deployment-knowledge-red.test.mjs :: S-R2: two self-declared primaries are honestly surfaced — each project read names its own sourceRoot (RED — no source/epoch vocabulary)",
       "reason": "#70"
-    },
-    {
-      "key": "test/doc-truth-conformance-red.test.mjs :: R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted or ledgered, and ledger rows are full shape",
-      "reason": "#566"
     },
     {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys",
@@ -1379,8 +1359,16 @@
       "reason": "#289"
     },
     {
+      "file": "test/cli-silent-start-red.test.mjs",
+      "reason": "#566"
+    },
+    {
       "file": "test/cli-truthfulness-red.test.mjs",
       "reason": "#36"
+    },
+    {
+      "file": "test/cli-wave-fidelity-red.test.mjs",
+      "reason": "#566"
     },
     {
       "file": "test/control-surface-truth-red.test.mjs",
@@ -1417,6 +1405,10 @@
     {
       "file": "test/dispatch-seam-real-omp-red.test.mjs",
       "reason": "#230"
+    },
+    {
+      "file": "test/doc-truth-conformance-red.test.mjs",
+      "reason": "#566"
     },
     {
       "file": "test/doubt-review-red.test.mjs",
@@ -1509,6 +1501,10 @@
     {
       "file": "test/issue55-stall-liveness-red.test.mjs",
       "reason": "#55"
+    },
+    {
+      "file": "test/issue564-root-wake-addressing-red.test.mjs",
+      "reason": "#564"
     },
     {
       "file": "test/issue62-write-failure-red.test.mjs",
