@@ -2,49 +2,55 @@
 
 ## Status and inputs
 
-This plan is a migration design. It does not authorize changes to `impl/src` or a production
-cutover. The operator makes that decision after the three review work items and
-[`go-no-go.md`](go-no-go.md) are complete.
+The operator authorized rewrite development on `bend2-rewrite` under the 16 operative revision
+9.1 laws approved at `1fab9a1da60db3d5d9c9d3cef89d3caabd68fe35`. The
+[authorization record](authorization.md) and [final Codex law review](reviews/codex-final-law-review-r9.1.md)
+supersede the earlier design-only scope and law-approval hold. Work from this assignment never
+lands on `master`.
 
-The plan uses these current sources:
+The separate architecture review remains open. A phase that depends on a proposed deletion or
+merge waits for that finding's verdict, required architecture decision, and proving evidence.
+Authorized prerequisite work and shadow evaluation can proceed while those decisions are open.
+The production target is a native Bend2 deployment using Base effects and declared C imports, built by
+the pinned 2.0.25 toolchain and running the runtime that toolchain implements: generated C over the
+flat state machine described in `paper/BendRT.pdf`. [`MANDATE.md`](MANDATE.md) names the HVM runtime;
+that name appears nowhere in the pinned guide or toolchain, so a mandate-conformance claim resting on
+HVM by name needs its own operator decision. Phase 7 removes the temporary JavaScript boundary and
+Node runtime.
 
-- [`MANDATE.md`](MANDATE.md) defines the scope and the required decision.
+The plan uses these sources:
+
+- [`MANDATE.md`](MANDATE.md), read with [`authorization.md`](authorization.md), defines the target.
 - [`../../impl/CLI.md`](../../impl/CLI.md) and [`../../impl/MCP.md`](../../impl/MCP.md) define the
-  public operation surfaces that must remain compatible during migration.
+  generated public operation surfaces and transport behavior to preserve during migration.
 - [`../../impl/scripts/seam-inventory.json`](../../impl/scripts/seam-inventory.json) classifies
-  2,670 members in 22 modules across the admission, effect, observation, recovery, and surface
-  seams. The inventory supplies migration coverage. The architecture review decides which of
-  those seams should remain in the target.
+  admission, effect, observation, recovery, and surface members. The inspected checkout contains
+  2,684 members in 22 files. Freeze its commit and digest with each phase's coverage manifest;
+  the earlier architecture review's 2,670-member census belongs to its recorded source revision.
 - [`../../impl/src/contribution-contract.mjs`](../../impl/src/contribution-contract.mjs),
   [`../../impl/src/landing-table.mjs`](../../impl/src/landing-table.mjs),
   [`../../impl/src/swarm-runtime.mjs`](../../impl/src/swarm-runtime.mjs), and
-  [`../../impl/src/worktree.mjs`](../../impl/src/worktree.mjs) implement the current contribution
-  landing path.
+  [`../../impl/src/worktree.mjs`](../../impl/src/worktree.mjs) define contribution admission,
+  gate selection, local integration, and durable integration receipts.
 - [`../../impl/test/issue296-swarm-integrate.test.mjs`](../../impl/test/issue296-swarm-integrate.test.mjs)
-  proves the landing path's merge-base rule, isolated squash, derived gates, dry run, typed
-  refusals, durable receipt, replay, and single-landing behavior.
+  supplies local landing fixtures. Shared-destination publication needs the additional Phase 4
+  evidence specified below, including the deployment publication path associated with #558.
 - [`reference/README.md`](reference/README.md) pins `bendlang/bend` at
-  `a49524265bdfa5753a4bf38e25f0574a705dd868` and the Bend 2.0.25 toolchain.
+  `a49524265bdfa5753a4bf38e25f0574a705dd868` and Bend 2.0.25.
+- [`language-review.md`](language-review.md) publishes `LANG-F-01..31` and `LANG-CAP-01..10`.
+  [`examples/index.md`](examples/index.md) names the compiled evidence for each capability.
+- [`architecture-review.md`](architecture-review.md) publishes `F1..F24`;
+  [`target-architecture.md`](target-architecture.md) proposes eight owners. Its revised findings
+  and the separate external Codex verdict determine which phase deletions may proceed.
+- [`laws-proposed.md`](laws-proposed.md) records the operative statements. The approved contract
+  is M-1, M-2, M-3a, M-3b, M-3c, M-4, M-5, M-7, M-8, M-10, M-11, M-12, M-13, M-14,
+  M-17, and M-18. M-6 and M-9 are absorbed into M-8; M-15 is deferred; M-16 remains the
+  repository writing instruction. Historical inventory identifiers in
+  [`laws-design-notes.md`](laws-design-notes.md) locate compatibility fixtures and source traces.
 
-The three review work items have published:
-
-- [`language-review.md`](language-review.md) provides `LANG-F-01` through `LANG-F-25` and the
-  per-capability verdicts `LANG-CAP-01` through `LANG-CAP-08`, backed by the compiled examples in
-  [`examples/index.md`](examples/index.md).
-- [`architecture-review.md`](architecture-review.md) provides deletion and merge findings `F1`
-  through `F24`. [`target-architecture.md`](target-architecture.md) proposes eight BATON2
-  subsystems with exclusive ownership and forbidden-ownership rules.
-- [`laws-proposed.md`](laws-proposed.md) presents 138 candidate laws with source and test traces:
-  `CUST-*`, `CAP-*`, `WAKE-*`, `LEDG-*`, `CS-*`, `AB-*`, `PM-*`, `CL-*`, `PROP-*`, `PR-*`, and
-  `DEV-*`.
-
-The operator has not approved the BATON2 deletions or the candidate laws. They remain proposals.
-Phase 0 records the operator's decision on each architecture deletion and law candidate before a
-later phase treats it as a target requirement. Only approved law rows enter `laws.bend`.
-
-The plan targets **BATON2**, the simplified architecture proposed by the architecture review. It
-does not port the current subsystem list one for one. The target remains a Baton written entirely
-in Bend2. The boundary and proof requirements apply to every operator-approved phase.
+The retained `224a59ca` plan supplies the phase, ownership, and rollback structure carried forward
+here. [`go-no-go.md`](go-no-go.md) records published findings and named pending evidence. Law
+approval is complete; checked application laws and host conformance remain implementation work.
 
 ## Migration rules
 
@@ -59,14 +65,23 @@ Every phase follows these rules:
    present at the phase boundary before authority changes.
 4. Host effects use a request and receipt pair. The decision core records the request identity
    before execution and records the receipt after observation.
-5. A phase advances only after its named proving test passes and `npm test --prefix impl` exits 0.
+5. A phase advances only after its entry gates, named proving test, and rollback rehearsal pass.
+   The root runs `npm test --prefix impl` once on the assembled migration revision; lanes run
+   targeted checks. The final Bend2-only package has its native conformance command as described
+   in Phase 7. A claimed full-suite result names the exact tested commit and observed exit.
 6. A rollback changes authority at a phase boundary and replays the durable ledger. It does not
    rewrite or discard accepted ledger rows. The last phase deletes the rollback bridge and Node
    runtime after its declared rollback window closes.
 7. Public CLI and MCP operation names, request shapes, refusal codes, cursor behavior, and result
    shapes stay compatible until an operator approves a separately versioned public API.
 8. Each phase includes failure injection for process exit, truncated messages, duplicate requests,
-   stale cursors, effect timeout, and restart during an unsettled operation.
+   stale cursors, lost effect acknowledgments, and restart during an unsettled operation.
+9. M-10 applies to frames, reads, queues, and tests: a numeric bound names its physical derivation
+   and continuation behavior. Pagination, streaming, and backpressure preserve owed data. Canary
+   thresholds report evidence for a cutover decision; they do not terminate accepted agent work.
+10. M-17 requires a continuation owner for every accepted unsettled operation. Supervisor transfer,
+    cancellation, release, and restart are explicit transitions with durable evidence. Affine use
+    alone establishes neither cleanup nor unforgeable authority (`LANG-F-26`, `LANG-F-28`).
 
 ## Coexistence boundary
 
@@ -110,7 +125,7 @@ a typed stale-basis result and causes the original decision to run again from th
 
 `EffectRequest` contains `effectId`, `requestId`, `effectKind`, closed arguments, preconditions,
 and the event cursor that authorized it. `EffectReceipt` contains the same identities, a closed
-outcome, bounded observations, and artifact digests. Repeated delivery of an effect identity must
+outcome, observations with continuation references, and artifact digests. Repeated delivery of an effect identity must
 return the recorded receipt or a typed `unconfirmed` result. It must not start an independent copy
 of the effect.
 
@@ -118,22 +133,31 @@ Effect kinds are introduced per phase. The JavaScript host owns only the kinds e
 phase. Bend2 cannot name an undeclared host function through this boundary. Phase 6 moves every
 effect kind to a Bend2 Base effect or a declared C import and then deletes that kind from the
 bridge. A required effect without a proved Bend2 owner blocks Phase 6 and is recorded as a no-go or
-a named prerequisite in [`go-no-go.md`](go-no-go.md).
+a named prerequisite in [`go-no-go.md`](go-no-go.md). Earlier phases close any part of that
+prerequisite needed by their own executable or authority change.
 
 ### Landing as the reference design
 
-The live contribution landing path supplies the model for this boundary:
+The source path and deployment publication path have distinct evidence obligations:
 
-1. The contribution and review rows establish an accepted request.
-2. The landing authority prepares a scratch checkout at the target head.
-3. The change and its derived gate set run in that isolated checkout.
-4. `git update-ref` applies the target change with an expected-head check.
-5. The runtime records an integration receipt or a typed failure row.
-6. Ledger replay reconstructs the same projected integration result.
+1. Contribution and independent review rows establish the artifact, authority, and gate inputs.
+2. `landContribution` prepares an isolated squash from `merge-base(target, tip)..tip`, regenerates
+   artifacts, and runs the union of landing-table and runner-derived gates on that checkout.
+3. A successful local `git update-ref` compare-and-swap records local integration. The current
+   runtime writes `swarm.contribution_integrated` from that result.
+4. The #558 deployment publication path publishes to the shared repository and ref designated by
+   admitted repository authority. The adapter must establish that destination identity before
+   dispatch and bind the actual dispatch to it, as M-18 requires.
+5. An independent observation of that designated destination establishes delivery of the verified
+   commit. The publication receipt binds the operation, destination, target, commit, and observation.
+6. Recovery reconstructs local integration and publication separately. Missing delivery evidence
+   leaves publication unresolved under M-2, with a continuation owner under M-17.
 
-The rewrite applies this sequence to every external effect: durable identity, isolated preparation,
-verification, conditional commit, durable receipt, and replay. An effect whose outcome cannot be
-proven after restart remains unsettled and blocks dependent work.
+The inspected `worktree.mjs` and `swarm-runtime.mjs` establish steps 1–3. The deployment hook and
+remote observation must be captured as separate versioned evidence. A local integration receipt
+alone proves only local integration. A remote name such as `origin` must resolve to the admitted
+shared destination, and a push acknowledgment must be followed by destination observation.
+Phase 4 tests this complete path before its publication authority moves.
 
 ### Boundary retirement
 
@@ -146,6 +170,89 @@ proven after restart remains unsettled and blocks dependent work.
 
 Fixtures and schemas needed for historical replay may remain as Bend2 test data. No live bridge
 handler or JavaScript runtime remains after Phase 7.
+
+## Host and proof prerequisites
+
+These work items can be implemented now on `bend2-rewrite`. Each publishes the exact toolchain,
+commands, outputs, native artifact, failure cases, and remaining external assumptions. The owner
+column uses the proposed architecture for planning; a held ownership deletion stays in place.
+
+| Work item | Findings and required implementation | Planned owner and first dependent gate |
+|---|---|---|
+| `B2-JSON` | `LANG-CAP-06`: canonical JSON codec, exact-field boundary decoding, integer/digest rules, and UTF-8 byte-buffer representation. Include fragmented and large streamed inputs with continuation. | Domain Kernel / Northbound Gateway; Phase 0 executable boundary. |
+| `B2-FS-DURABILITY` | `LANG-CAP-01`, `LANG-F-29`: metadata, permissions, safe temporary files, links, atomic publication, file and directory sync, traversal, partial-write handling, crash recovery, and the supported-platform durability contract: supported platforms and filesystems, interprocess serialization, and stale-writer exclusion. Segment and chunk large logical journals so a fixed-width file quantity never becomes an unexplained maximum on retained history. Bind durable acknowledgment to the actual write path. | Workspace and Artifacts / Journal; any native acceptance or append, with full storage cutover in Phase 6. |
+| `B2-PROCESS` | `LANG-CAP-05/07`: nonblocking spawn, separate streamed stdout/stderr, wait status, signal/kill, reap, and Git invocation. The current blocking `popen` probe establishes only the foreign-effect route. | Worker Gateway / Workspace and Artifacts; native bridge supervisor as needed in Phase 1, process cutover in Phase 6. |
+| `B2-SUPERVISION` | `LANG-CAP-09`, `LANG-F-26/31`: explicit task ownership, join, cancellation and settlement, fail-stop restart, and recovery of accepted work. Each dropped, failed, or disconnected task retains a continuation owner or a justified terminal result. | Scheduler / Worker Gateway; before Phase 3 lifecycle changes and before any child-owner deletion. |
+| `B2-AUTHORITY` | `LANG-F-09/28`: proof-indexed issuance or validated authority over ordinary identifiers; bind exact resource, generation, scope, and time of effect. User-defined affine records are forgeable data. | Domain Kernel / Workspace and Artifacts; before Phase 2 authority changes or F8 deletion. |
+| `B2-HTTP-TLS` | `LANG-CAP-08`: HTTP framing, HTTPS/TLS, peer authentication, streaming, disconnect handling, and Unix sockets where required. Base TCP/UDP examples establish transport bytes. | Northbound Gateway / Worker Gateway; native public/provider transports in Phase 6. |
+| `B2-CRYPTO` | `LANG-CAP-10`: audited hashing, HMAC, secure entropy, constant-time comparison, and signatures where used. Keep secrets out of diagnostics and receipts. | Shared typed host boundary, consumed by the relevant owners; Phase 0 digest parity and each later authenticated/durable boundary. |
+| `B2-DESTINATION` | M-18 and `LANG-CAP-07/08/10`: validate repository/target identity before dispatch, bind publication to it, observe the designated shared destination, and reconcile uncertain delivery. | Verification and Landing / Workspace and Artifacts; Phase 4 publication planning and Phase 6 Git execution. |
+| `B2-HOST-CONFORMANCE` | `LANG-F-08/17/31`: native C implementations, ABI pin/rebuild manifest, cross-implementation protocol vectors, crash and cancellation tests, terminal behavior, and credential isolation. | Each effect owner; before that effect moves, complete in Phase 6. |
+| `B2-DIAGNOSTIC-BASIS` | `ARCH-CLOSE-11`: one recorded schema and policy basis for startup, doctor and recovery, with a cause classification on every refusal (a missing or unreconstructible basis, an unsupported decoder version, a projection defect, or corrupt source bytes). Drive the same valid ledger through all three entry points and require equivalent logical projections, and include a missing-policy negative case. | Event Stores and the recovery owner; before Phase 2 moves coordination authority, since a refusal of a recorded row is that phase's readiness signal. |
+| `B2-COVERAGE` | `ARCH-CLOSE-09`: typed change declarations, an independent structural scan, and consumer validation of the checked result for the exact source snapshot, demonstrated on a pure decision helper, a schema change, a shared library change, and an altered C effect. Keep the committed inventory until the replacement selects the same gates or stronger ones. | Verification and Landing; before the `F17` deletion in Phase 4. |
+| `B2-KNOWLEDGE-SCOPE` | `ARCH-CLOSE-08`: explicit knowledge promotion with source and destination attribution, reader-relative isolated views, and parent-child delegation across a restart. A unified scheduler must reject cross-scope reads and child authority elevation. | Scheduler; before the `F4` unification in Phase 3. |
+
+`LANG-CAP-02/03/04` prove TCP, UDP, environment, argv, clock, sleep, and basic randomness
+primitives. `LANG-CAP-01` proves basic file IO. These examples establish the operations they run.
+Secure randomness, durable storage, monotonic-clock behavior, and full application protocols need
+their own conformance evidence. `LANG-F-27` shows that a typed fold can discard history;
+`LANG-F-29` shows that a receipt constructor can acknowledge no write. `LANG-F-30/31` require
+proof assumptions, unsafe/foreign boundaries, and fail-stop recovery to remain explicit.
+
+### Closure conditions to work items
+
+[`target-architecture.md`](target-architecture.md) states that this plan cites its closure IDs for each
+affected deletion and records the evidence that closes them. The prerequisite table above carries the
+work items; this table carries the closure conditions, with what closes each and the corpora that
+already measure the closed parts.
+
+| Closure condition | Closed by | State |
+|---|---|---|
+| `ARCH-CLOSE-01` | the approval and recovery records: [`reviews/codex-final-law-review-r9.1.md`](reviews/codex-final-law-review-r9.1.md), [`authorization.md`](authorization.md), [`recovery-2026-09-22.md`](recovery-2026-09-22.md) | recorded |
+| `ARCH-CLOSE-02` | `B2-AUTHORITY` | open; `examples/lang-cap-probes.evidence.md` carries the forged-record and dropped-lease controls |
+| `ARCH-CLOSE-03` | `B2-SUPERVISION` | open; `examples/lang-cap-dropped-child.evidence.md` is a failing control |
+| `ARCH-CLOSE-04` | `B2-FS-DURABILITY` | open; `examples/lang-cap-durability.evidence.md` shows the write path and its missing receipt |
+| `ARCH-CLOSE-05` | `B2-PROCESS` | open; `bend base Process`, `bend base exec` and `bend base IO.cancel` each exit 1 |
+| `ARCH-CLOSE-06` | `B2-HTTP-TLS`, with `B2-JSON` for framing | open |
+| `ARCH-CLOSE-07` | `B2-CRYPTO` | open |
+| `ARCH-CLOSE-08` | `B2-KNOWLEDGE-SCOPE` | open |
+| `ARCH-CLOSE-09` | `B2-COVERAGE` | open |
+| `ARCH-CLOSE-10` | `B2-FS-DURABILITY`, at its supported-platform contract and segmentation clauses | open |
+| `ARCH-CLOSE-11` | `B2-DIAGNOSTIC-BASIS` | open; `examples/arch-replay-stop.evidence.md` and `examples/arch-replay-basis.evidence.md` measure the classification gap on three verbs |
+| `ARCH-CLOSE-12` | `B2-DESTINATION`, and the deployment's own publication path | open for the deployment; `examples/arch-publish-target.evidence.md`, `arch-publish-content.evidence.md`, `arch-publish-bind.evidence.md` and `arch-publish-contention.evidence.md` measure the local halves at the pin |
+
+`B2-HOST-CONFORMANCE` names the evidence umbrella rather than a closure condition of its own: it
+supplies the ABI, pin and fault-case evidence for each host closure row above, so those rows are its
+dependent gates.
+
+### Immediate work and phase entry
+
+1. Freeze Phase 0 manifests from the current source commit and collect the existing protocol,
+   refusal, replay, and landing fixtures. This work can run while architecture review is open.
+2. Implement `B2-JSON` and the digest subset of `B2-CRYPTO`, then run canonical boundary vectors.
+   Build the approved law encodings with the laws lead; publish actual-transition proof status.
+3. Run Phase 1 pure shadow comparisons after the executable boundary passes. Keep every proposed
+   architecture merge reversible and retain current production authority.
+4. Develop the remaining host prerequisites independently with compiled examples. A proof of one
+   C import closes only that effect's stated claim.
+5. Resolve the external architecture verdict and each affected F finding before its deletion or
+   production authority change. Phases 2–7 additionally require the preceding phase's evidence,
+   relevant host proofs, and a successful rollback rehearsal.
+
+### Approved law coverage
+
+| Approved entries | First required proof and later extension |
+|---|---|
+| M-1, M-5, M-12 | Phase 1 models recoverable intent, history/order preservation, and prompt acceptance; Phase 2 proves actual append/acknowledgment ordering; Phase 6 proves native storage. |
+| M-2, M-3b, M-3c | Phase 1 models unresolved outcomes, effect identity, and truthful replay; Phases 3–4 inject lost receipts around real effects. |
+| M-3a, M-11, M-18 | Phase 1 validates evidence authority; Phase 4 binds review and verification to the actual artifact/target and proves shared-destination publication. |
+| M-4, M-7, M-8 | Phase 1 checks attribution and authority; Phases 2–3 prove issuance, exact-instance custody, release, and preservation; Phase 6 exercises native host paths. |
+| M-10, M-13, M-14, M-17 | Phase 1 checks limits, wake/refusal meaning, and continuation ownership; Phases 2–3 and 5 prove delivery, backpressure, supervision, and public behavior. |
+
+Each entry needs a proposition over the actual implementation, a checked proof, passing and
+violating implementations, exact reproduction commands, and explicit host assumptions as specified
+by the laws work item. Compile-pass/type-refusal probes establish only their stated mechanism.
+The laws lead's trace and check reports record which application obligations remain open.
 
 ## Phase summary
 
@@ -160,8 +267,9 @@ handler or JavaScript runtime remains after Phase 7.
 | 6. Host-effect migration | Process, socket, filesystem, JSON, git, interprocess transport, terminal, clock, entropy, credential, and provider adapters | Per-effect compatibility receipts; each bridge effect kind is deleted after cutover | `phase6-host-effects-cutover.test.mjs` |
 | 7. Remove the migration boundary | `baton.bridge.v1`, every JavaScript adapter, JavaScript packaging, and the Node runtime | No coexistence boundary remains; public protocols terminate in Bend2 | `phase7-bend2-only-deployment.test.mjs` |
 
-The test filenames are required rewrite deliverables. They do not exist in the current design-only
-branch.
+The test filenames are planned rewrite deliverables, not reported passing tests. This plan revision
+runs document checks only. A phase evidence record must identify the implemented command and result.
+Phase 7 replaces the migration harness with a native conformance runner in its final artifact.
 
 ## Phase 0: freeze the contract and corpus
 
@@ -176,9 +284,10 @@ No production subsystem moves. The phase creates the compatibility assets used b
 - replay corpora containing valid rows, refused operations, partial effects, and recovery cases;
 - an ownership map that assigns every inventoried seam member to a planned phase or an explicit
   temporary JavaScript host boundary and the phase that deletes it;
-- an operator decision ledger for every deletion in `F1` through `F24` and every candidate in
-  [`laws-proposed.md`](laws-proposed.md); and
-- an approved `laws.bend` containing only the candidate rows the operator accepted.
+- an architecture decision ledger for every proposed deletion in `F1..F24`, with open decisions
+  named and assigned to the phase they block; and
+- the approved 16-entry contract encoded by the laws work item, with a trace and check report that
+  separates proved application transitions from modeled statements and host assumptions.
 
 The ownership map uses the eight proposed owners in [`target-architecture.md`](target-architecture.md):
 Domain Kernel, Journal and Projectors, Scheduler, Worker Gateway, Workspace and Artifacts,
@@ -192,8 +301,7 @@ Phase 0 performs no production deletion. It classifies every current subsystem a
 migration, merged into one proposed BATON2 owner, deleted by a named later phase, or absent from the
 target. This is the inventory required by `F1` through `F24`, with special coverage for the facade
 shells (`F1`), parallel runtime (`F3`), seam inventory (`F17`), and Node-specific persistence
-machinery (`F24`). The operator approves, edits, or rejects each proposed deletion before it enters
-the executable phase plan.
+machinery (`F24`). Each deletion receives its architecture verdict and required decision before it executes.
 
 ### Boundary contract
 
@@ -211,11 +319,14 @@ executable must decode and re-encode each fixture with the same meaning and cano
 - prove canonical encode/decode parity and digest parity;
 - replay the corpus through the current JavaScript implementation with no projection change; and
 - run the compiled Bend2 boundary executable produced at the pinned toolchain;
-- prove every phase deletion has an operator decision and one target owner; and
-- prove `laws.bend` contains only operator-approved rows from `laws-proposed.md`, with the decision
-  recorded beside each row.
+- prove every phase deletion has one proposed owner and an explicit open or settled decision; and
+- verify the law manifest against the approved 16-entry set, with each proof status stated.
 
-Phase 1 starts only after that test and the full JavaScript suite pass on the same commit.
+Open architecture decisions block their affected deletions. They do not block collecting fixtures,
+implementing codecs, or testing shadow decisions.
+
+Phase 1 executable comparisons start after that test and the root-owned full suite pass on the
+same commit. Pure model and fixture development can proceed before that gate.
 
 ### Rollback
 
@@ -241,18 +352,23 @@ materialized views in `F10`, and the pure half of the at-most-once operation in 
 JavaScript remains the production authority. Bend2 receives copies of requests and ledger prefixes
 and produces shadow results. Shadow results have no append or effect capability.
 
-The proof corpus includes the operator-approved closed-shape, authorization, permission, wake, and
-ledger candidates from `CS-01..20`, `AB-01..14`, `PM-01..11`, `WAKE-01..13`, and `LEDG-01..19` in
-[`laws-proposed.md`](laws-proposed.md). A rejected candidate remains a compatibility fixture when
-the current implementation enforces it, but it does not become a BATON2 law.
+The proof corpus covers the 16 approved laws using the coverage table above. It carries
+representative source traces with their expected logical behaviour, and it includes a policy-bearing
+stop replay, a missing-policy negative case that refuses to diagnose corruption, a changed
+authorization basis, rejected mutations, preserved history, and owed wake cursors. Historical
+`CS-*`, `AB-*`, `PM-*`, `WAKE-*`, and `LEDG-*` traces in the design notes locate current behavior
+fixtures; each is classified as required compatibility, an expected correction, or an
+internal-structure test of the current code shape. Current behavior that violates an approved law
+receives an explicit expected correction and a regression case; baseline parity alone cannot certify
+that behavior. The startup, doctor, and recovery entry points replay one valid ledger with
+equivalent logical projections (ARCH-CLOSE-11).
 
 ### BATON2 deletions and merges
 
 This phase merges the candidate implementations named by `F10`, `F13`, `F19`, and `F22` into
 read-only Domain Kernel constructors and Journal projectors. It deletes nothing from production;
 the shadow must first prove that these proposed merges retain canonical digests, authorization,
-closed-set refusals, bounded views, idempotency classification, and wake derivation. The operator's
-Phase 0 decisions determine which of these merges proceeds.
+closed-set refusals, bounded views, idempotency classification, and wake derivation. The architecture verdict determines which merges can become production changes.
 
 ### Boundary contract
 
@@ -268,10 +384,10 @@ implementations. Required results are zero unexplained differences, deterministi
 across repeated runs, bounded execution for bounded reads, and identical replay projections at
 every fixture cursor. Any difference receives a regression fixture before correction.
 
-The test also runs each approved law through the proof method and source test named in
-[`laws-proposed.md`](laws-proposed.md). A law marked as type-enforced uses a compile-pass and a
-compile-refusal fixture. Rows marked unpinned require a new pinning test before they can pass this
-gate.
+The test runs each approved law through its published proposition, actual-transition proof, and
+source regression case. A type-level claim includes a compile-pass and compile-refusal case;
+host claims include failure injection. Affine drops, forged records, discarded history, and
+receipt-without-write counterexamples from `LANG-F-26..29` belong in the negative corpus.
 
 ### Rollback
 
@@ -283,6 +399,11 @@ do not consume them.
 
 ### Subsystems that move
 
+Entry requires the architecture verdict for F2/F8/F19/F20/F21/F23, an actual authority proof
+for `B2-AUTHORITY`, and the Phase 1 result. JavaScript still owns physical append in this phase;
+Bend2's durable acknowledgment must depend on the observed append receipt. A future native writer
+requires `B2-FS-DURABILITY` before it acknowledges work.
+
 Bend2 becomes authoritative for:
 
 - command validation and permission checks;
@@ -293,7 +414,7 @@ Bend2 becomes authoritative for:
 
 The target owners are Domain Kernel for typed admission, Journal and Projectors for durable append,
 fold, query, and wake cursors, and Scheduler for command admission. The phase covers the proposed
-journal merge (`F2`), affine authority boundary (`F8`), reconciler (`F9`), view merge (`F10`),
+journal merge (`F2`), checked authority boundary (`F8`), reconciler (`F9`), view merge (`F10`),
 idempotency collapse (`F19`), append transaction (`F20`), task and journal waits (`F21`), schema and
 refusal merge (`F22`), and wake subscription merge (`F23`).
 
@@ -306,8 +427,8 @@ available as the rollback implementation for one compatibility window.
 After the cutover proof, delete the `CoordinationStore` decision shell and its same-name forwarding
 methods covered by `F1`. Merge the current coordination append and projection paths into the target
 owners listed above under the operator-approved parts of `F2`, `F8` through `F10`, and `F19` through
-`F23`. Keep versioned decoders and the JavaScript append/transport adapter until Phase 7. The proof
-corpus is the approved subset of `CS-*`, `AB-*`, `PM-*`, `WAKE-*`, and `LEDG-*`.
+`F23`. Keep versioned decoders and the JavaScript append/transport adapter until Phase 7. The proof corpus covers M-1, M-2, M-3b, M-3c, M-5, M-7, M-8, and M-10 through M-14,
+with M-17 ownership across retry and recovery. Historical inventory rows remain source fixtures.
 
 ### Boundary contract
 
@@ -369,17 +490,18 @@ and run evidence.
 After the cutover proof, delete the independent goal-plan, orchestrator-plan, workflow, wave, and
 swarm schedulers under `F4`; replace the duplicated wave and workflow joins under `F5`; merge the
 three provider supervisors under `F7`; and delete in-process fence and custody emulation only where
-the affine and durable authority proof required by `F8` passes. Merge recovery under `F9`, context
-lineage under `F12`, capacity leases under `F18`, and polling waits under `F21`. The approved
-`CUST-01..12`, `CAP-01..17`, `WAKE-*`, and applicable `DEV-*` rows are the law corpus for this
-phase.
+the checked authority and durable proof required by `F8` passes. Merge recovery under `F9`, context
+lineage under `F12`, capacity leases under `F18`, and polling waits under `F21`. M-2, M-4, M-7, M-8, M-10, M-12, M-13, M-14, and M-17 govern this phase. The
+historical custody/capacity/wake traces supply regression fixtures. F5/F7/F8/F18/F21 changes
+remain gated on `B2-SUPERVISION` and `B2-AUTHORITY` evidence appropriate to each deletion.
+A consumed or dropped lease does not prove that an external process, descriptor, or holder settled.
 
 ### Boundary contract
 
 The phase enables closed `EffectRequest` and `EffectReceipt` kinds. Each effect request cites the
 authorizing event cursor and its preconditions. The JavaScript executor validates the effect kind,
-checks the preconditions it can observe, performs the effect, bounds captured output, and returns a
-receipt. Bend2 decides the next state only from ledger rows and receipts.
+checks observable preconditions, performs the effect, preserves output through streaming or
+artifact references, and returns a receipt. Bend2 decides the next state only from ledger rows and receipts.
 
 Capacity and custody values include their authority identity and lease identity. A release cites the
 grant it settles. A process receipt identifies the logical call, physical process when available,
@@ -391,8 +513,10 @@ logical call without carrying credentials.
 `phase3-runtime-effects.test.mjs` must run the current admission, custody, process-lifecycle,
 provider, workflow, recovery, and drain suites through the boundary. A fault matrix kills each side
 at every request/receipt transition. The test proves one durable decision per idempotency identity,
-one terminal settlement per granted resource, no unowned workspace operation, bounded diagnostics,
-and the same replayed terminal state as the JavaScript baseline.
+one justified settlement or continuing owner per resource, no unowned workspace operation,
+lossless diagnostic continuation, and the approved replayed state. Explicitly drop a child handle,
+kill a parent, lose a signal receipt, and restart before release. Recovery must preserve accepted
+work and custody. A join or affine field cannot supply these proofs by itself.
 
 Load and memory results are recorded, but advancement uses operator-set service thresholds. The
 operator records those thresholds before the canary so the result is not selected after measurement.
@@ -408,60 +532,72 @@ operator review. Existing workers may finish through the JavaScript executor dur
 
 ### Subsystems that move
 
-Bend2 becomes authoritative for:
-
-- contribution contract state and review settlement;
-- eligibility to capture, check, and integrate;
-- affected-test and landing-gate planning selected by the target architecture;
-- landing request construction; and
-- projection of started, failed, dry-run, and integrated receipts.
-
-The target owner is Verification and Landing, with scoped leases and artifacts from Workspace and
-Artifacts and durable outcomes in Journal and Projectors. This phase implements `F16`; typed gate
-selection prepares the later removal in `F17`, and the shared append and durable replacement
-primitives come from `F20`.
-
-JavaScript retains git, scratch-checkout, regenerator, test-runner, and local-ref authority. These
-are temporary host effects with repository-specific safety checks. Phase 6 moves their execution
-to Bend2 and preserves these checks in the Bend2 effect implementation.
+Verification and Landing owns the publication operation end to end: contribution and review state,
+capture and check eligibility, required-gate selection, landing plans, local integration, shared
+publication, and the projection of each distinct outcome. Workspace and Artifacts executes scoped Git
+operations; Journal and Projectors records their distinct outcomes. JavaScript retains Git, scratch
+checkout, regeneration, runner, local-ref, and publication execution until Phase 6. Entry requires
+the F16/F17/F20 architecture decisions, `B2-DESTINATION` planning and adapter
+evidence, Phase 3 recovery, and the applicable approved law proofs.
 
 ### BATON2 deletions and merges
 
-After the proving test, merge contribution, independent review, verification, result adoption, gate
-planning, and integration authority under `F16`. Retain the generated seam inventory until typed
-effect declarations select the same or stronger gate set; then delete it under `F17`. Merge landing
-append and atomic replacement paths under `F20`. The phase proves the approved `CL-01..17` laws,
-including the unpinned `CL-10` empty-range arm and `CL-13` compare-and-swap race after adding their
-tests. `DEV-5` governs review and gated integration if the operator approves it.
+Merge capture, independent review, verification, gate planning, result adoption, and integration
+under F16. Retain the seam inventory until typed declarations select the same or stronger gates,
+then perform the approved F17 deletion. F20 merges append/replacement machinery only after its
+write-order and recovery proof. M-3a, M-3b, M-3c, M-7, M-8, M-11, and M-18 govern publication;
+M-2/M-17 govern interrupted delivery and continued ownership. Historical CL fixtures supply local
+landing cases, including the empty range and target race.
 
 ### Boundary contract
 
-`LandingPlan` contains the accepted contribution identity, immutable commit, target ref and expected
-head, merge-base, excluded prefixes, changed paths, regeneration plan, derived gates, author,
-committer, dry-run flag, and plan digest. JavaScript returns staged receipts for scratch creation,
-merge, regeneration, gate execution, compare-and-swap, and cleanup. Bend2 emits the public
-integration result only after it receives enough receipts to prove the target state.
+`LandingPlan` binds contribution, immutable commit, merge-base, changed paths, regeneration,
+required gates, reviewer/author authority, target ref, expected head, dry-run flag, and plan digest.
+It also binds the canonical shared repository and target designated by admitted authority, the
+expected shared target state, endpoint identity evidence, and configuration revision. Revalidate
+those coordinates at publication dispatch. An unresolved destination identity produces no
+publication effect.
 
-The receipt fields preserve the live landing contract: `base`, `target`, `targetHeadBefore`,
-`targetHeadAfter`, `squashSha`, `changedPaths`, `gates`, `regenerated`, `conflicts`, `issue`, and
-`dryRun`.
+The executor returns separate receipts for scratch creation, squash, regeneration, gates, local
+compare-and-swap, publication dispatch, designated-destination observation, and cleanup. Preserve
+`base`, `target`, `targetHeadBefore`, `targetHeadAfter`, `squashSha`, `changedPaths`, `gates`,
+`regenerated`, `conflicts`, `issue`, and `dryRun` for local compatibility. Add a versioned
+publication record with operation identity, destination identity, target, intended commit, observed
+commit, and observation evidence. A local `targetHeadAfter` establishes local integration only.
+
+Completion requires an independent observation that the intended commit reached the designated
+shared target. If concurrent valid publication advances it, ancestry/content evidence must still
+establish this operation's delivery under its publication policy. An alias pointing at a local
+checkout does not establish shared-destination identity. The actual dispatch effect and its adapter
+must conform to this binding. Dry runs produce verification receipts and perform no publication.
 
 ### Proving test
 
-`phase4-landing-parity.test.mjs` must run the full
-`issue296-swarm-integrate.test.mjs` matrix through both planners and one JavaScript git executor. It
-must add restart points before scratch creation, after the squash, during gates, immediately before
-the ref compare-and-swap, and immediately after it. The test proves target immutability for every
-pre-commit failure, exact reconstruction after a successful compare-and-swap, one durable outcome,
-scratch cleanup, and replay parity.
+`phase4-landing-parity.test.mjs` runs the existing `issue296-swarm-integrate.test.mjs` cases through
+both planners and one executor, then adds the deployment #558 publication path. Required cases:
+
+- correct shared destination; wrong repository/ref; `origin` resolving to a local intermediary;
+  push URL rewrite or destination configuration change after planning;
+- local ref success followed by failed publication, lost publication acknowledgment, or unavailable
+  destination observation; none establishes shared completion without delivery evidence;
+- crash before and after squash, gates, local compare-and-swap, publication dispatch, destination
+  observation, and durable completion;
+- target movement, stale review/gate evidence, duplicate retry, empty range, and dry run;
+- remote observation followed by replay, proving one logical publication and truthful receipt
+  identity; cleanup refusal while custody or preservation obligations remain.
+
+Bind the test to the publication adapter revision and an independently identified shared test
+repository. Record destination and ref identities with the observed commit; redact credentials.
+The test proves every pre-effect refusal preserves its target and every uncertain post-dispatch
+outcome remains recoverable with a continuation owner.
 
 ### Rollback
 
-Block new landings and settle the active landing identities. A landing with no successful ref
-receipt cleans its scratch checkout and returns to JavaScript planning. A landing with a successful
-ref receipt is reconciled forward into its durable integration outcome; rollback does not move the
-target ref backward. After reconciliation, JavaScript replays the contribution rows and resumes
-authority.
+Stop new landing admission and classify every active identity. With no observed local mutation,
+clean only scratch state that custody and preservation permit. With observed local integration,
+retain that commit and reconcile publication forward. With uncertain shared delivery, keep M-2
+state and an M-17 owner until observation justifies settlement or retry. Restore JavaScript planning
+from the same ledger; rollback performs no ref rewind or duplicate publication.
 
 ## Phase 5: move application semantics
 
@@ -525,41 +661,33 @@ This phase starts only when every host capability Baton needs has compiled and r
 capability must have a Bend2 owner at the pinned toolchain, implemented by a Base effect or a
 declared C import. Phase 5 is not a production end state.
 
-The published review leaves this entry condition **open**:
+The prerequisite table records the open work: `B2-FS-DURABILITY`, `B2-PROCESS`, `B2-JSON`,
+`B2-SUPERVISION`, `B2-AUTHORITY`, `B2-HTTP-TLS`, `B2-CRYPTO`, `B2-DESTINATION`, and
+`B2-HOST-CONFORMANCE`. Each host tranche may be developed and tested independently now. Its
+production cutover requires all prerequisites it consumes; Phase 6 completion requires the full set.
 
-- `LANG-CAP-01` through `LANG-CAP-04` prove Base filesystem, TCP, UDP, environment, argv, clock,
-  sleep, and randomness primitives.
-- `LANG-CAP-05` proves that Base has no operating-system process surface. Its example is a blocking
-  `popen` call with whole stdout and exit status; it has no process handle, streaming stdout and
-  stderr, signal, kill, cancellation, or nonblocking wait. The prerequisite is a compiled C-effect
-  family that supplies all of those operations without stalling the event loop.
-- `LANG-CAP-06` proves that Base has no JSON module. The prerequisite is a compiled Bend2 JSON
-  module with laws or a declared C-library import with the same closed and canonical behavior.
-- `LANG-CAP-07` makes git invocation depend on the process and JSON prerequisites.
-- `LANG-CAP-08` proves TCP bytes for interprocess transport and makes framing depend on the JSON
-  prerequisite.
-
-Terminal signal and hidden-input behavior, credential access, git races, and provider protocol
-clients also need effect-specific compiled examples before this phase. The generic foreign-effect
-contract in `LANG-F-08`, `LANG-F-16`, and `LANG-F-17` proves a C-import route; it does not prove
-those production implementations.
+`LANG-F-08`, `LANG-F-16`, and `LANG-F-17` establish the C-effect route and a native artifact.
+They do not prove the behavior of a new foreign implementation. Explicit release, process reap,
+durable generation checks, and crash supervision remain until their replacements pass tests.
 
 ### Subsystems that move
 
 All remaining transport and host-effect subsystems move to Bend2 in independently reversible
 tranches:
 
-- process spawn, signal, wait, exit observation, and reap;
+- process spawn, signal, wait, exit observation, reap, and explicit task supervision;
 - TCP listen, accept, connect, read, write, and close;
 - UDP bind, send, receive, and close where current discovery or transport requires UDP;
-- filesystem metadata, bounded reads and writes, atomic publication, rename, links, directory
-  traversal, permission checks, and cleanup;
+- filesystem metadata, bounded reads and writes, atomic publication, file and directory sync, rename, links, directory
+  traversal, permission checks, safe temporary files, and custody-aware cleanup;
 - JSON decode, closed-shape validation, canonical encode, and bounded framing;
-- git invocation, scratch-checkout management, gate execution, and compare-and-swap ref updates;
+- git invocation, scratch-checkout management, gate execution, compare-and-swap ref updates, publication, and shared-destination observation;
 - transport between Baton processes, including request framing, backpressure, disconnect, and
   restart behavior;
 - terminal input, output, signals, hidden input, and exit status;
-- clocks, monotonic duration observations, entropy, and random identity generation;
+- HTTP/HTTPS/TLS, authenticated peer identity, and required Unix-domain socket transport;
+- clocks, monotonic duration observations, secure entropy, hashes, HMAC, constant-time comparisons,
+  signatures where used, and random identity generation;
 - credential-file access and private runtime projection; and
 - provider and harness protocol clients built over the process or socket effects above.
 
@@ -595,8 +723,11 @@ envelope, bridge transport, and remaining forwarding process.
 `phase6-host-effects-cutover.test.mjs` must first run the compiled example named by every language
 finding. It then runs effect-specific parity and fault cases for every capability listed above,
 including process death, socket disconnect, UDP truncation, partial filesystem publication,
-malformed and oversized JSON, git ref races, interprocess backpressure, terminal interruption,
-clock discontinuity, entropy failure, credential refusal, and provider protocol failure.
+malformed and large streamed JSON, Git/ref/destination races, interprocess backpressure, terminal interruption,
+clock discontinuity, entropy failure, TLS/peer authentication failure, credential refusal, and
+provider protocol failure. Kill the native host between write, sync, rename, directory sync, and
+acknowledgment; drop task and lease values; prove explicit recovery and settlement. Record the
+C runtime ABI and foreign-source digest with every result.
 
 The test must run the full suite, recorded CLI/MCP/web sessions, restart recovery, and contribution
 landing with all live effect ownership in Bend2. It proves that the JavaScript bridge has no
@@ -628,7 +759,7 @@ all durable decisions, projections, transport handling, and host effects.
 
 ### BATON2 deletions and merges
 
-Phase 7 unconditionally deletes `baton.bridge.v1`, every JavaScript adapter and effect host, Node
+After all Phase 7 entry proofs, Phase 7 deletes `baton.bridge.v1`, every JavaScript adapter and effect host, Node
 packaging, and the Node runtime. It completes the approved facade and compatibility deletion in
 `F1`, parallel-runtime deletion in `F3`, shim deletion in `F14`, seam-inventory deletion in `F17`,
 and Node-workaround deletion in `F24`. Static verification permits only the eight BATON2 subsystems
@@ -644,8 +775,11 @@ written, decoded, projected, and served only by Bend2.
 
 ### Proving test
 
-`phase7-bend2-only-deployment.test.mjs` must build and install the deployment in an environment with
-no `node` executable and no JavaScript source or package files. It runs the full compatibility
+The migration harness `phase7-bend2-only-deployment.test.mjs` builds and installs the artifact in
+an isolated environment containing no `node` executable or JavaScript source/package files. The
+installed artifact runs a native conformance command whose executable, argv, and expected exit
+are frozen in Phase 0 and implemented by this phase. The harness observes that command from
+outside the artifact; the final package's test and startup paths require no Node runtime. It runs the full compatibility
 corpus, public CLI/MCP/web sessions, process and socket fault matrix, filesystem and git landing
 matrix, restart replay, and an operator canary. Static checks must find no runtime reference to
 `baton.bridge.v1`, JavaScript, Node, or a JavaScript effect host. The final cursor and projection
@@ -653,7 +787,7 @@ digest must match the Phase 6 cutover receipt before new traffic is admitted.
 
 ### Rollback
 
-During a time-bounded release rollback window, stop Bend2 admission, classify active Bend2 effects,
+During an operator-controlled release rollback window, stop Bend2 admission, classify active Bend2 effects,
 restore the last Phase 6 artifact, and replay from the shared cutover cursor. The rollback artifact
 is external to the Bend2-only deployment. When the operator closes the window, retire that artifact
 and record that rollback now requires a new migration decision and ledger-compatibility proof.
@@ -678,15 +812,16 @@ independently buildable and testable.
 
 ## Decisions and prerequisites still open
 
-1. The operator must approve, edit, or reject each deletion and merge in
-   [`architecture-review.md`](architecture-review.md) before the phase that performs it becomes
-   executable.
-2. The operator must decide every row in [`laws-proposed.md`](laws-proposed.md). Only approved rows
-   enter `laws.bend`; unpinned approved rows first receive the missing test named by the candidate.
-3. The `LANG-CAP-05` process family and `LANG-CAP-06` JSON implementation must be built and backed
-   by compiled evidence. Git, terminal, credential, provider, and interprocess framing effects need
-   their own compiled examples.
-4. Phase 1 must produce the zero-difference proof specified above. No current evidence substitutes
-   for that prototype result.
-5. An independent reviewer checks each completed decision and prerequisite against the three
-   review documents and the pinned examples before the operator authorizes Phase 2.
+- **ARCHITECTURE-VERDICT-PENDING:** the external Codex architecture verdict and its evidence must
+  be incorporated into the revised F findings. Each affected production phase waits for its
+  disposition and required architecture decision.
+- **LAW-IMPLEMENTATION-EVIDENCE-PENDING:** the approved 16-law contract needs checked application
+  transitions, failing counterexamples, and host conformance. The laws work item's publication
+  must distinguish model proofs from actual implementation coverage.
+- **PHASE-1-EVIDENCE-PENDING:** no completed differential run is claimed here. Publish zero
+  unexplained differences and explicit corrections for legacy behavior inconsistent with the laws.
+- The host work items above require effect-specific native evidence before their dependent cutovers.
+- The root owns assembled verification with `npm test --prefix impl` and the reviewed landing on
+  `bend2-rewrite`. Local document checks do not establish a full-suite or destination result.
+
+None of these evidence gates reopens the completed law approval.
