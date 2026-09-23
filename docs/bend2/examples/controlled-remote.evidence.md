@@ -102,5 +102,5 @@ the rollback, and its live state is `integrate_publish_undeclared` until the res
 
 - `arch-publish-compose.evidence.md`: the acceptance-and-settlement composition over a filesystem
   destination; this fixture is the git half those increments name.
-- `../reviews/codex/codex-architecture-review.md`: finding 2 and the M-18 disposition.
+- `../reviews/codex/architecture/codex-architecture-review.md`: finding 2 and the M-18 disposition.
 - `../ledger.md` finding 4: the declaration point and the deployment's live refusal.

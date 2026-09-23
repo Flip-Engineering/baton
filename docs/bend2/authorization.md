@@ -9,7 +9,7 @@ design-only scope and the hold awaiting law approval. No work from this assignme
 
 Codex's final law review approved revision 9.1 at
 `1fab9a1da60db3d5d9c9d3cef89d3caabd68fe35`. The
-[review record](reviews/codex-final-law-review-r9.1.md) is copied unchanged from the operator's
+[review record](reviews/codex/codex-final-law-review-r9.1.md) is copied unchanged from the operator's
 review file at `/tmp/baton-bend2-laws-review/codex-final-law-review-r9.1.md`.
 
 The reviewed artifacts have these SHA256 digests:

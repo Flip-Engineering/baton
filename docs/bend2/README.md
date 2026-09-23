@@ -34,7 +34,7 @@ The documents describe the design, its evidence, and the remaining work:
 [reviews/](reviews/) holds the independent review written for each contribution, one file per
 contribution, recording what the reviewer ran and what it answered.
 [reviews/codex/](reviews/codex/) holds the external Codex architecture review, its manifest and
-its probe evidence; [reviews/codex-final-law-review-r9.1.md](reviews/codex-final-law-review-r9.1.md)
+its probe evidence; [reviews/codex/codex-final-law-review-r9.1.md](reviews/codex/codex-final-law-review-r9.1.md)
 is the final law approval record. [ledger.md](ledger.md) is the operational record.
 [recovery-2026-09-22.md](recovery-2026-09-22.md) and
 [recovery-2026-09-23.md](recovery-2026-09-23.md) record the two cold-restart recoveries with the
