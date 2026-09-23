@@ -1,0 +1,132 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Issues #566/#565/#567 composed on master 3d851f9f: restored MCP contracts and closed-set CLI usage",
+      "base": {
+        "observedHead": "1a1918203ec79d44ed74a23db18383de90ce501e",
+        "rebasedOnto": "3d851f9f6e60bdb0e4a8b3ae632692ec56fe225d"
+      },
+      "commit": {
+        "sha": "be71e037c836aec4665fb0a194ee31690c352c27",
+        "branch": "baton/mcp6-566-restore"
+      },
+      "items": [
+        {
+          "id": "566-restore",
+          "status": "delivered",
+          "change": "Restore the remaining 26 #566 contracts and remove their pins. CDW5 is already fixed on master. Compose with the published digest changes, retaining the published harvest limit names and the result ref constant.",
+          "files": [
+            "docs/49-mcp-primary-surface.md",
+            "docs/reference/evidence/mcp-profile-parity-2026-08-13/mcp-profile-parity-contract.md",
+            "impl/scripts/native-surface-capabilities.json",
+            "impl/scripts/surface-inventory-artifact.json",
+            "impl/scripts/surface-truth.mjs",
+            "impl/src/application-deployment.mjs",
+            "impl/src/application-semantics.mjs",
+            "impl/src/limits.mjs",
+            "impl/src/mcp-northbound.mjs",
+            "impl/src/web-northbound.mjs",
+            "impl/test/canonical-naming-233-red.test.mjs",
+            "impl/test/doc-truth-conformance-red.test.mjs",
+            "impl/test/mcp-profile-parity-red.test.mjs",
+            "impl/test/wave-observability-red.test.mjs",
+            "impl/test/harvest-accessor-red.test.mjs"
+          ],
+          "test": "From impl/: BATON_SUITE_TEST_CONCURRENCY=1 node scripts/run-suite.mjs test/bridge-idempotency-344.test.mjs test/canonical-naming-233-red.test.mjs test/cli-silent-start-red.test.mjs test/cli-wave-fidelity-red.test.mjs test/doc-truth-conformance-red.test.mjs test/frame-economics-red.test.mjs test/grammar-m4b-red.test.mjs test/issue150-coaching-passthrough.test.mjs test/issue499-schema-counts.test.mjs test/mcp-packaging-red.test.mjs test/mcp-profile-parity-red.test.mjs test/mcp-refusals-named.test.mjs test/mcp-web-startup-gate.test.mjs test/phase72-kimi-orchestrator-mcp.test.mjs test/scratchpad-write-red.test.mjs test/swarm-mcp-dispatch.test.mjs test/unified-cli-surface.test.mjs test/wave-observability-red.test.mjs test/workflow-surface-red.test.mjs",
+          "evidence": "Before target merge: 19-file targeted runner exit0,278pass/12 existing expectedred/0unexpected/stale/hung. Reviewer independently accepted contribution0dfc8a atseq163533. After merge: seven affected files79/79green. Six-file runner111pass/1unexpected/0stale/0hung; sole failure harvest H1 expected110 combined tools instead of restored150. Updated that count and obsolete narration, then exact H1 rerun1/1green. All remaining38 harvest tests passed in original run; no source change followed."
+        },
+        {
+          "id": "565-startup-selection",
+          "status": "delivered",
+          "change": "Import the application entry point in the startup gate and pin import-graph selection for index.mjs and mcp-web-bridge.mjs plus script selection.",
+          "files": [
+            "impl/test/mcp-web-startup-gate.test.mjs"
+          ],
+          "test": "node --test impl/test/mcp-web-startup-gate.test.mjs",
+          "evidence": "Selection regression failed before import fix (fixture-path instead of imports); both tests pass after fix."
+        },
+        {
+          "id": "567-cli-values",
+          "status": "delivered",
+          "change": "Render schema-enumerated flags and positional event values in swarm usage and help; keep open values and switches; pin command and family help.",
+          "files": [
+            "impl/src/swarm-surface.mjs",
+            "impl/test/issue273-guidance-runtime.test.mjs",
+            "impl/test/swarm-view-slices.test.mjs",
+            "impl/test/issue567-cli-closed-set-usage.test.mjs"
+          ],
+          "test": "node --test --test-concurrency=1 impl/test/issue567-cli-closed-set-usage.test.mjs impl/test/issue273-guidance-runtime.test.mjs impl/test/swarm-view-slices.test.mjs impl/test/issue431-swarm-argv-closed.test.mjs",
+          "evidence": "New enum usage test failed before fix; targeted batch 31/31 pass. surface-gate exit 0. Generated docs unchanged. Follow-up enum positional and fold coverage batch8/8green before target merge."
+        },
+        {
+          "id": "manifest-closure",
+          "status": "delivered",
+          "change": "Remove all26 #566 and13 #156 keys relative to current master; declare nine newly converged files. Current target already contains the ten #289 removals. Manifest324 to285 rows,170 to179 converged.",
+          "files": [
+            "impl/scripts/expected-red-tests.json"
+          ],
+          "test": "node --test impl/test/suite-manifest-reasons.test.mjs; node --test --test-concurrency=1 impl/test/seam-inventory.test.mjs impl/test/seam-inventory-target-floor.test.mjs",
+          "evidence": "Current target composition: naming, CLI silent-start/fidelity, waves, manifest reasons, seam inventory and target floor79/79green. Regenerated seam inventory equals master. No #566/#156 rows remain."
+        },
+        {
+          "id": "catalog-admission-composition",
+          "status": "delivered",
+          "change": "Derive ordinary tool query/effect modes from tool annotations, preserve live canonical identities over compatibility aliases, and exercise admission filtering with a retained tool spelling. Regenerate the parity matrix.",
+          "files": [
+            "impl/src/surface-capability-catalog.mjs",
+            "impl/test/surface-capability-catalog.test.mjs",
+            "impl/test/mcp-bridge-admission.test.mjs",
+            "docs/reference/inventory/surface-parity-matrix.json"
+          ],
+          "test": "From impl/: BATON_SUITE_TEST_CONCURRENCY=1 node scripts/run-suite.mjs test/mcp-bridge-admission.test.mjs test/surface-capability-catalog.test.mjs test/unified-cli-surface.test.mjs test/mcp-web-startup-gate.test.mjs test/mcp-profile-parity-red.test.mjs",
+          "evidence": "Final targeted runner exit 0: 53 pass, zero expected-red/unexpected/stale/hung. Before correction admission fixture failed on removed baton_run_status; catalog had two mismatched ownership/name assertions and added read-mode assertion reproduced baton_help effect instead of query. Earlier #314 core-table, core-surface, receipt/wake and reconnect files all passed (33 tests). surface-gate --write exit 0."
+        },
+        {
+          "id": "primary-surface-status",
+          "status": "delivered",
+          "change": "Update docs49 implementation status and distinguish the historical52-tool measurement from the current57 raw tools and8 production core families.",
+          "files": [
+            "docs/49-mcp-primary-surface.md"
+          ],
+          "test": "In-process imports of mcpApplicationToolNames and CORE_TOOL_NAMES",
+          "evidence": "Measured57 ordinary tool names and eight core family names; prior four #314 files33/33green. Evidence worker mcp5-surface measured descriptor core wire8tools/21230bytes at467a21c3 (shared contextseq164788); docs use the executable derived budget formula. render-surface-docs --check exit0."
+        },
+        {
+          "id": "merged-core-verification",
+          "status": "delivered",
+          "change": "Verify target composition through harvest, limits, startup, CLI usage, catalog, and documentation contracts.",
+          "files": [],
+          "test": "From impl/: BATON_SUITE_TEST_CONCURRENCY=1 node scripts/run-suite.mjs test/harvest-accessor-red.test.mjs test/frame-economics-red.test.mjs test/mcp-web-startup-gate.test.mjs test/issue567-cli-closed-set-usage.test.mjs test/surface-capability-catalog.test.mjs test/doc-truth-conformance-red.test.mjs; then from repository root: node --test --test-name-pattern=H1-tools impl/test/harvest-accessor-red.test.mjs",
+          "evidence": "Six-file run111pass/1failure (harvest combined count), followed by correction and H1-only1/1green. Full six-file run was not repeated after this test-only correction."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [
+          "node impl/scripts/surface-gate.mjs"
+        ],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "Supersedes contribution-0dfc8a20436313f905ba2fe0f237bc65 (independently accepted), contribution-941d024a529fc18c68a8d46270e4409c, and contribution-e4e2fb353fb8aff8028710094b537417. Earlier mcp5 restore contributions are superseded.",
+        "No full npm test run: the operator expressly requires targeted files only on the memory-constrained host. Deployment verification remains a hub obligation.",
+        "Existing #289 Kimi bridge and #158/#87 workflow or scratchpad failures remain pinned and were classified by the targeted runner.",
+        "Resident still serves 65c913f0; publication requires the #573 SSH publish remote deployment.",
+        "Independent evidence workers mcp5-surface, mcp5-refusal and mcp5-reviewer resumed by delivered swarm.guide rows; no seats recruited.",
+        "mcp5-refusal independently measured all 26 #566 rows red at e501507a and green on restoration; evidence context seq159750. The two surviving #289 failures reproduce on both trees; context seq160338. The ten residual #156 keys were obsolete names, corrected here.",
+        "Current-target merge467a21c3 retained published waves.harvest.onto/view.resultpin.page limits, restored57-tool wave enumeration, published harvest CLI fixture, restored RESULT_REF_ROOT, and regenerated artifacts. The target reintroduced obsolete uncoveredCommands expectation was removed.",
+        "Independent review identified a remaining primary-surface catalog gap: descriptor-only settlement tools are labeled operator/direct/generic despite bridge refusal. Read-only workers continue this investigation; it is separate from the restored contracts.",
+        "Guide delivery rows succeeded but message bodies did not enter this native session; shared context carries findings and review decision.",
+        "Bridge authority independently verified atseq164577: descriptor settlement tools remain excluded and refused on resident bridge; the remaining gap concerns catalog labels.",
+        "Remaining bounded primary-surface audit items are recorded in shared contextseq164788: harvest registry/web and dispatch-table declarations, waves help omission, bridge/brief mode and priority teaching, and wake-subscription mode metadata."
+      ],
+      "needsFromOthers": [
+        "mcp5-reviewer: independently review composed tip be71e037c836aec4665fb0a194ee31690c352c27 and settle this contribution.",
+        "root: deploy the resident with the declared SSH publish remote; run the exact deployment verification after landing.",
+        "root: prior suite skipped-file verdict defect draft remains to be filed; gh issue read/write is unavailable in this seat because gh has no authentication."
+      ]
+    }
+  }
+}

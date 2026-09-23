@@ -1,0 +1,39 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "MCP restoration landing attempt refused: final contribution awaits recorded acceptance",
+      "base": {
+        "observedHead": "be71e037c836aec4665fb0a194ee31690c352c27",
+        "rebasedOnto": "3d851f9f6e60bdb0e4a8b3ae632692ec56fe225d"
+      },
+      "commit": null,
+      "items": [
+        {
+          "id": "landing-status",
+          "status": "partial",
+          "change": "Attempted swarm.integrate of contribution-50325df8c865cb8ff998d17204d512c8 to master. No landing occurred.",
+          "files": [],
+          "test": "swarm.integrate with contributionId contribution-50325df8c865cb8ff998d17204d512c8 and target master",
+          "evidence": "Refused integrate_contribution_not_accepted; detail.reviewState=unreviewed, detail.rule=unrevoked-accept. Prior carrier 0dfc8a was independently accepted; final composed carrier requires its own review record."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "Landable code remains at be71e037 on baton/mcp6-566-restore, contribution-50325df8c865cb8ff998d17204d512c8, published at seq 165284. This status report does not supersede the code contribution.",
+        "Reviewer measured the merged carrier at 209 pass / 1 failure: the sole harvest count assertion was corrected and its exact test passes. Lead also measured 79 merge-sensitive tests green. No npm test was run, per operator constraint.",
+        "mcp5-reviewer remains assigned final review and then independent catalog follow-up; mcp5-refusal probes descriptor versus wrapped bridge invocation; mcp5-surface audits harvest registry/web declarations. No additional seat recruited.",
+        "The root deployment verification command has not run in this seat. No overall completion or master landing is claimed."
+      ],
+      "needsFromOthers": [
+        "mcp5-reviewer: record final accept or a concrete blocking finding on contribution-50325df8c865cb8ff998d17204d512c8.",
+        "root/lead continuation: retry swarm.integrate after the accept is recorded; report any deployment or publish refusal under its actual code."
+      ]
+    }
+  }
+}

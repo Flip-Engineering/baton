@@ -1,0 +1,89 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Issues #566, #565 and #567: restore MCP contracts, select the startup gate, and render CLI option values",
+      "base": {
+        "observedHead": "1a1918203ec79d44ed74a23db18383de90ce501e",
+        "rebasedOnto": "e501507a6f174ae9ad0bd5e03e60820f965c4bf6"
+      },
+      "commit": {
+        "sha": "87c2ed0f3f05fb81d7cb5cf3c36b07ea725ed889",
+        "branch": "baton/mcp6-566-restore"
+      },
+      "items": [
+        {
+          "id": "566-restore",
+          "status": "delivered",
+          "change": "Adopt the accepted restoration onto e501507a. Remove 39 verified pins including all 26 surviving #566 rows; CDW5 was already removed on master. Preserve MCP tool schemas, dispatch, refusal detail and registry composition.",
+          "files": [
+            "docs/reference/evidence/mcp-profile-parity-2026-08-13/mcp-profile-parity-contract.md",
+            "docs/reference/inventory/surface-parity-matrix.json",
+            "impl/scripts/expected-red-tests.json",
+            "impl/scripts/native-surface-capabilities.json",
+            "impl/scripts/surface-inventory-artifact.json",
+            "impl/scripts/surface-truth.mjs",
+            "impl/src/application-deployment.mjs",
+            "impl/src/application-semantics.mjs",
+            "impl/src/harvest-accessor.mjs",
+            "impl/src/limits.mjs",
+            "impl/src/mcp-northbound.mjs",
+            "impl/src/surface-capability-catalog.mjs",
+            "impl/src/web-northbound.mjs",
+            "impl/test/canonical-naming-233-red.test.mjs",
+            "impl/test/cli-silent-start-red.test.mjs",
+            "impl/test/cli-wave-fidelity-red.test.mjs",
+            "impl/test/doc-truth-conformance-red.test.mjs",
+            "impl/test/mcp-profile-parity-red.test.mjs",
+            "impl/test/wave-observability-red.test.mjs"
+          ],
+          "test": "BATON_SUITE_TEST_CONCURRENCY=1 node impl/scripts/run-suite.mjs impl/test/bridge-idempotency-344.test.mjs impl/test/canonical-naming-233-red.test.mjs impl/test/cli-silent-start-red.test.mjs impl/test/cli-wave-fidelity-red.test.mjs impl/test/doc-truth-conformance-red.test.mjs impl/test/frame-economics-red.test.mjs impl/test/grammar-m4b-red.test.mjs impl/test/issue150-coaching-passthrough.test.mjs impl/test/issue499-schema-counts.test.mjs impl/test/mcp-packaging-red.test.mjs impl/test/mcp-profile-parity-red.test.mjs impl/test/mcp-refusals-named.test.mjs impl/test/mcp-web-startup-gate.test.mjs impl/test/phase72-kimi-orchestrator-mcp.test.mjs impl/test/scratchpad-write-red.test.mjs impl/test/swarm-mcp-dispatch.test.mjs impl/test/unified-cli-surface.test.mjs impl/test/wave-observability-red.test.mjs impl/test/workflow-surface-red.test.mjs",
+          "evidence": "Targeted runner exit 0: SUBSET 19 of 729 files, 278 pass, 12 existing expected red, 0 unexpected, 0 stale, 0 hung. All removed keys judged green."
+        },
+        {
+          "id": "565-startup-selection",
+          "status": "delivered",
+          "change": "Import the application entry point in the startup gate and pin import-graph selection for index.mjs and mcp-web-bridge.mjs plus script selection.",
+          "files": [
+            "impl/test/mcp-web-startup-gate.test.mjs"
+          ],
+          "test": "node --test impl/test/mcp-web-startup-gate.test.mjs",
+          "evidence": "Selection regression failed before import fix (fixture-path instead of imports); both tests pass after fix."
+        },
+        {
+          "id": "567-cli-values",
+          "status": "delivered",
+          "change": "Render every schema-enumerated swarm flag value in usage and help; update priority/projection expectations and pin enum/open/switch rendering.",
+          "files": [
+            "impl/src/swarm-surface.mjs",
+            "impl/test/issue273-guidance-runtime.test.mjs",
+            "impl/test/swarm-view-slices.test.mjs",
+            "impl/test/issue567-cli-closed-set-usage.test.mjs"
+          ],
+          "test": "node --test --test-concurrency=1 impl/test/issue567-cli-closed-set-usage.test.mjs impl/test/issue273-guidance-runtime.test.mjs impl/test/swarm-view-slices.test.mjs impl/test/issue431-swarm-argv-closed.test.mjs",
+          "evidence": "New enum usage test failed before fix; targeted batch 31/31 pass. surface-gate exit 0. Generated docs unchanged."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [
+          "node impl/scripts/surface-gate.mjs"
+        ],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "Supersedes contribution-0722e093c6f9712511145a0d8a927327 and rejected contribution-09a025071f0f68ceb4be4b49f8c0fcfd.",
+        "No full npm test run: the operator expressly requires targeted files only on the memory-constrained host. Deployment verification remains a hub obligation.",
+        "Existing #289 Kimi bridge and #158/#87 workflow or scratchpad failures remain pinned and were classified by the targeted runner.",
+        "Resident still serves 65c913f0; publication requires the #573 SSH publish remote deployment.",
+        "Independent evidence workers mcp5-surface, mcp5-refusal and mcp5-reviewer resumed by delivered swarm.guide rows; no seats recruited."
+      ],
+      "needsFromOthers": [
+        "mcp5-reviewer: independently review commit 87c2ed0f3f05fb81d7cb5cf3c36b07ea725ed889 and settle this contribution.",
+        "root: deploy the resident with the declared SSH publish remote; run the exact deployment verification after landing.",
+        "root: prior suite skipped-file verdict defect draft remains to be filed; gh issue read/write is unavailable in this seat because gh has no authentication."
+      ]
+    }
+  }
+}

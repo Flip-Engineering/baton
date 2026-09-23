@@ -1,0 +1,269 @@
+{
+  "swarmId": "swarm-mcp-20260921",
+  "purpose": "MCP as primary control and information surface: comprehensive audit-then-improve campaign across the full MCP surface, including issue 537 (swarm capture's unmapped 503).",
+  "status": "open",
+  "closedReason": null,
+  "actor": "web:local-owner:935be40a-9001-4fba-a1e6-9fabb1f916d2",
+  "seq": 7266,
+  "ts": "2026-09-21T18:17:05.628Z",
+  "baseCommit": "31f356b2b1cd5a32a241116c52aa96ea7133fc4a",
+  "policy": {
+    "rerouteOnProviderFault": "manual",
+    "reroutePreferApi": false,
+    "resumeContinuation": "auto"
+  },
+  "caller": {
+    "participantId": "mcp-lead6",
+    "permissions": [
+      "read",
+      "communicate",
+      "contribute",
+      "review",
+      "organize",
+      "recruit"
+    ],
+    "lastRefusal": {
+      "seq": 158977,
+      "command": "run.package.read",
+      "code": "swarm_command_invalid",
+      "field": "packageDigest"
+    }
+  },
+  "availableActions": [
+    "swarm.view",
+    "swarm.watch",
+    "swarm.recruit",
+    "swarm.guide",
+    "swarm.capture",
+    "swarm.check",
+    "swarm.notify",
+    "swarm.notifications",
+    "swarm.integrate",
+    "swarm.update",
+    "run.knowledge.seed",
+    "run.board.post",
+    "run.board.read",
+    "run.scratchpad.append",
+    "run.scratchpad.read",
+    "run.scratchpad.elevate",
+    "evidence.search"
+  ],
+  "admission": [],
+  "actionTargets": {
+    "swarm.capture": {
+      "participantIds": [
+        "mcp-lead",
+        "mcp-lead2",
+        "mcp-lead3",
+        "mcp-lead4",
+        "mcp-lead5",
+        "mcp5-surface",
+        "mcp5-refusal",
+        "mcp5-reviewer",
+        "mcp-lead6"
+      ]
+    },
+    "swarm.check": {
+      "participantIds": [
+        "mcp-lead",
+        "mcp-lead2",
+        "mcp-lead3",
+        "mcp-lead4",
+        "mcp-lead5",
+        "mcp5-surface",
+        "mcp5-refusal",
+        "mcp5-reviewer",
+        "mcp-lead6"
+      ]
+    }
+  },
+  "updates": [
+    {
+      "event": "swarm.group_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.work_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.assignment_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.coupling_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.claim_updated",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.proposal_updated",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.holder_released",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.policy_updated",
+      "permission": "organize"
+    },
+    {
+      "event": "swarm.context_updated",
+      "permission": "communicate"
+    },
+    {
+      "event": "swarm.contribution_recorded",
+      "permission": "contribute"
+    },
+    {
+      "event": "swarm.contribution_reviewed",
+      "permission": "review"
+    },
+    {
+      "event": "swarm.participant_left",
+      "permission": "read"
+    },
+    {
+      "event": "swarm.closed",
+      "permission": "organize"
+    },
+    {
+      "command": "run.knowledge.seed",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.post",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.board.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.append",
+      "permission": "contribute"
+    },
+    {
+      "command": "run.scratchpad.read",
+      "permission": "read"
+    },
+    {
+      "command": "run.scratchpad.elevate",
+      "permission": "contribute"
+    },
+    {
+      "command": "evidence.search",
+      "permission": "read"
+    }
+  ],
+  "deployment": {
+    "workspace": {
+      "state": "ready",
+      "freeBytes": 5368709120,
+      "freeInodes": 52930000,
+      "minFreeBytes": null,
+      "minFreeInodes": null,
+      "floorBytes": 623995261,
+      "floorInodes": 14829,
+      "floorSource": "derived",
+      "estimateHighWater": {
+        "bytes": 195089083,
+        "inodes": 14632
+      },
+      "runtimeFootprint": {
+        "bytes": 428906178,
+        "inodes": 197
+      }
+    },
+    "hostCapacity": {
+      "capacity": {
+        "cores": 10,
+        "totalBytes": 17179869184,
+        "freeBytes": 1140850688,
+        "availableBytes": 1140850688,
+        "load1m": 63,
+        "hubCores": 1,
+        "usableCores": 9,
+        "suiteCores": 9,
+        "verdictLanes": 1,
+        "coreShareBytes": 1717986918,
+        "suiteBytes": 15461882262,
+        "usableBytes": 15461882266,
+        "saturated": true,
+        "memoryTight": true
+      },
+      "used": {
+        "cores": 0,
+        "bytes": 0,
+        "leases": {
+          "verify": 0,
+          "worker": 25
+        }
+      },
+      "queue": [],
+      "roomForVerify": false,
+      "roomForWorker": true
+    },
+    "served": {
+      "commit": "65c913f0df143ec8d01f999047ca5cfdf6f03a51",
+      "branch": null,
+      "target": {
+        "ref": "origin/master",
+        "commit": "3d851f9f6e60bdb0e4a8b3ae632692ec56fe225d",
+        "behind": 18
+      }
+    }
+  },
+  "cursor": 160153,
+  "context": {
+    "[null,\"mcp5-refusal/#566-refusal-and-fidelity-evidence\"]": {
+      "key": "mcp5-refusal/#566-refusal-and-fidelity-evidence",
+      "body": "#566 refusal-and-fidelity lane evidence (read-only seat mcp5-refusal).\nTrees measured: NEW=/tmp/mcp5-566 (80e07683), OLD=/tmp/mcp5-base (06971d79, d1288fd9 parent). Row set: the 15 #566-reason rows in impl/scripts/expected-red-tests.json that fall in this lane's nine files.\nFull report delivered to mcp-lead5 as notify seq 138814; the exact contribution-contract JSON (commit null) is at /tmp/mcp5-refusal-report.json on this host. The seat holds read+communicate only, so swarm.contribution_recorded refuses (swarm_permission_required, seq 138669).\nVerdicts: RESTORE — bridge-idempotency-344 read-tools; mcp-refusals-named missing-argument; issue150 150-CP1/150-CP2 (gracefulPath null); grammar-m4b M4B-3 (baton_run_view unadvertised); doc-truth R7 (run.resultpin/waves.harvest unledgered; two ledger rows are the fix); frame-economics F1 (four uncataloged literals: two 4096 onto doors, CHANGED_FILES_PAGE_BYTES 256KiB, and a 2048 from add06976); scratchpad A2-1/A2-2/A2-3 and P-A1 (append/read/elevate definition rows gone while their admission and dispatch survive). UPDATE-TEST — mcp-refusals-named unknown-tool probe (baton_run_approve is now advertised by the deliberate #156 D1 sibling derivation) and cli-silent-start PT-2c/PT-7 (detection set 39 -> 40 from the deliberate run resultpin verb; a patched copy at 40 reads 12/12 green). COVERED-ELSEWHERE — create-driver-wiring CDW5 (a11608c8 classifies integrationPublishRemote in UNEXERCISED_OPTIONS; 4a65c33a carries CDW6 with it in EXERCISED_OPTIONS).\nRoot cause of the RESTORE class: d1288fd9 rewrote the advertised ordinary-table composition and dropped 14 definition rows whose registry `surfaces` still include mcp; for attention_watch, scratchpad read/elevate/append and knowledge seed the admission/dispatch rows survive, so calls cross as generic unknown_tool with no data.movedTo. The refusal envelopes are intact; the tool set they describe changed.",
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:swarm-mcp-20260921:mcp5-refusal",
+      "seq": 138898,
+      "ts": "2026-09-23T05:00:28.517Z"
+    },
+    "[null,\"mcp5-refusal/#566-restore-verification\"]": {
+      "key": "mcp5-refusal/#566-restore-verification",
+      "body": "#566 refusal-and-fidelity lane — independent verification of the restore branch (seat mcp5-refusal, read-only).\nSubject: branch baton/mcp5-566-restore at 2d3ebc05 (4377ad83 the restore + 2d3ebc05 the #565 gate row), checkout /tmp/baton-resident-20260921/.baton/wt/ws-cb176070adb25432eab8988ed5ace989. The evidence trees /tmp/mcp5-566 and /tmp/mcp5-base were removed by host cleanup, so the runs below executed in that shared checkout (impl/node_modules present).\nRESULT: 14 of the 15 #566 rows in this lane's nine files are green on the restore branch; CDW5 is red and correctly remains in the manifest for its carrier.\nRow-level, all `cd <checkout>/impl && node --test test/<file>`:\n- bridge-idempotency-344: 6 pass / 0 fail (row 344 green; baton_run_scratchpad_read and baton_run_attention_watch advertised again).\n- mcp-refusals-named: 13 pass / 0 fail (both rows green, including the unknown-tool probe: baton_run_approve is absent again, so the row needed no test edit — the source-side restore supersedes my UPDATE-TEST recommendation).\n- issue150-coaching-passthrough: 2 pass / 0 fail (gracefulPath rides the detail; source check: `gracefulPath: cause?.gracefulPath ?? null` at mcp-northbound.mjs:431 and :1754).\n- cli-silent-start-red: 12 pass / 0 fail (both literals are 40 with comments naming the #99/#179 run resultpin verb — the update I recommended).\n- grammar-m4b-red: 7 pass / 0 fail (baton_run_view advertised beside baton_run_inspect; the canonical dot-twin spread is back in the ordinary table and CANONICAL_DOT_TOOL_DEFINITIONS is back in TOOL_DEFINITIONS).\n- doc-truth-conformance-red: 13 pass / 0 fail (R7 green). Note: the fix route was the card/admission (scripts/surface-truth.mjs), not ledger rows; impl/scripts/surface-divergence-ledger.json still holds its 9 entries.\n- frame-economics-red F1: 1 pass / 0 fail (the three lanes are cataloged: harvest.onto_path 4096, result.changed_files_page 262144, deployment.publish_remote 2048; both onto sites read FRAME_LIMITS).\n- scratchpad-write-red A2-1|A2-2|A2-3|P-A1: 4 pass / 0 fail (the append/read/elevate definitions are back; the append call dispatches and the kernel read-back holds).\n- create-driver-wiring CDW5: 0 pass / 1 fail — expected. Carrier c1720823 verified at source: digest-lead7, branches baton/lead7-landing-r4 and lead7-cross-compose, its tree carries CDW6 with integrationPublishRemote in EXERCISED_OPTIONS; not an ancestor of origin/master (80e07683).\nAdvertised-set spot check on the restored tree (in-process McpFleetServer, surface application, 57 tools): baton_run_scratchpad_read/elevate/append, baton_run_attention_watch, baton_run_view, baton_run_do, baton_run_member_view, baton_application_help, baton_run_resultpin, baton_waves_harvest all ADVERTISED; baton_run_approve ABSENT (the 14 minted baton_run_* rows left with the composition).\nTree hygiene: the checkout stayed clean through my runs (git status shows only the pre-existing untracked RECOVERY-555-LANDING.md).\nBLOCKER (unchanged): this seat holds read+communicate only, so swarm.contribution_recorded refuses swarm_permission_required (seq 138669, and again at 13:28 UTC today). The contract-shaped lane report with commit null is at /tmp/mcp5-refusal-report.json on this host; the full report reached mcp-lead5 by notify seq 138814 at 05:00 UTC, but that seat has since left the swarm. Request to an active lead: grant contribute to mcp5-refusal (or have an authorized seat publish that JSON) so the lane evidence lands as a contribution rather than a chat message.",
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:swarm-mcp-20260921:mcp5-refusal",
+      "seq": 146097,
+      "ts": "2026-09-23T13:29:37.182Z"
+    },
+    "[null,\"mcp5-refusal/#565-gate-selection-measurement\"]": {
+      "key": "mcp5-refusal/#565-gate-selection-measurement",
+      "body": "Corroboration of your blocking gate-selection defect (mcp5-refusal, read-only seat; measurement only, no write authority on that branch).\nYour finding reproduces exactly. Measured with the repository's own selectFromRepository at the lane tip 2d3ebc05, one changed path per call, gate = impl/test/mcp-web-startup-gate.test.mjs:\n- NOT selected: impl/src/index.mjs, impl/src/mcp-web-bridge.mjs (no provenance rows at all).\n- Selected via imports: impl/src/mcp-core-tools.mjs, impl/src/mcp-northbound.mjs (via mcp-core-tools.mjs), impl/src/control-surface-unification.mjs, impl/src/surface-capability-catalog.mjs, impl/src/surface-capability-resolution.mjs, impl/src/web-northbound.mjs (via surface-capability-catalog.mjs).\n- Selected via fixture-path: impl/scripts/mcp-web.mjs.\nYour prescribed fix also validates, run read-only through selectFromRepository's own `read` hook (the gate row's text with one appended static import, `import { McpFleetServer } from '../src/index.mjs';`, everything else from disk):\n- impl/src/index.mjs => selected, provenance {reason: imports, via: impl/src/index.mjs}.\n- impl/src/mcp-web-bridge.mjs => selected, provenance {reason: imports, via: impl/src/index.mjs}.\nThe premise holds: impl/src/index.mjs imports ./mcp-web-bridge.mjs at index.mjs:183, so the single entry-point edge covers both changed paths.\nTwo notes for the fix (which belongs to a writer seat — my authority is read-only): (1) the row's header lines 12-14 name five modules; catalog/resolution/unification do select today, so the corrected claim only needs index.mjs and mcp-web-bridge.mjs in the import edge; (2) a selection pin that asserts the two paths select the gate is worth having beside the runtime row, since the defect is exactly a claim the repository's own derivation contradicts.\nBlocker on my side, unchanged: this seat holds read+communicate only, so swarm.contribution_recorded refuses swarm_permission_required. My lane report (contract-shaped, commit null) is at /tmp/mcp5-refusal-report.json; the #566 verification row is swarm context mcp5-refusal/#566-restore-verification.",
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:swarm-mcp-20260921:mcp5-refusal",
+      "seq": 146710,
+      "ts": "2026-09-23T13:31:42.827Z"
+    },
+    "[null,\"mcp5-refusal/#566-lane-authority-gap\"]": {
+      "key": "mcp5-refusal/#566-lane-authority-gap",
+      "body": "Authority gap for the #566 lane (mcp5-refusal, read-only seat). Active seats in swarm-mcp-20260921 that can act: mcp5-refusal (read+communicate), mcp5-surface (read+communicate), mcp5-reviewer (read+communicate+review). mcp-lead5 (the lane holder) has left; mcp-lead/2/3/4 are roster rows that cannot act in this swarm (swarm.notify refuses: no seat that can act). Consequences: (1) the lane report cannot be published as a contribution from inside the swarm — swarm.contribution_recorded refuses swarm_permission_required for this seat, and no other active seat holds contribute, so a root/operator grant or an out-of-swarm publish is required; the contract-shaped JSON is at /tmp/mcp5-refusal-report.json. (2) The restore branch baton/mcp5-566-restore (tip 2d3ebc05) carries a reviewer-rejected blocking defect with no writer seat to fix it: the startup gate row (impl/test/mcp-web-startup-gate.test.mjs) claims import-graph selection for impl/src/index.mjs and impl/src/mcp-web-bridge.mjs, and selectFromRepository selects neither; the prescribed fix (a static import edge to ../src/index.mjs plus a selection pin) is validated read-only by this seat — with that edge both paths select the row with imports provenance via index.mjs. Evidence rows: mcp5-refusal/#566-refusal-and-fidelity-evidence, mcp5-refusal/#566-restore-verification, mcp5-refusal/#565-gate-selection-measurement.",
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:swarm-mcp-20260921:mcp5-refusal",
+      "seq": 147334,
+      "ts": "2026-09-23T13:38:22.668Z"
+    },
+    "[null,\"mcp5-refusal/#566-26-row-audit\"]": {
+      "key": "mcp5-refusal/#566-26-row-audit",
+      "body": "#566 audit for mcp-lead6 (seat mcp5-refusal, read-only). Trees: MASTER=ws-34aae93d @ e501507a; RESTORE=ws-2d340d88 @ baton/mcp6-566-restore (HEAD e315829b + your uncommitted #565 fix). Targeted runs only (every file --test-name-pattern, 0.4-5.7s each; no npm test).\n\nA. THE 26 ROWS\n- At MASTER e501507a all 26 are RED: the pins are accurate. Spot-checked failure modes are still the d1288fd9 damage (344: \"baton_run_scratchpad_read is advertised\"; F1: the four uncataloged literals incl. application-deployment.mjs:254; R7: unledgered run.resultpin/waves.harvest). CDW5 is GREEN at master (carrier cf316a44 landed; the manifest no longer pins it).\n- At the old restoration tip 2d3ebc05: all 26 GREEN (measured in the previous session: 14 rows in my nine files plus 12 in the surface family).\n- At the rebased tip e315829b (with your live gate fix): all 26 GREEN and CDW5 GREEN; the branch manifest carries 0 #566 rows, so landing removes the whole pin set. Per-file: 344 1/1, canonical-naming 2/2, PT-2c+PT-7 2/2, A7-6 1/1, CDW5 1/1, R7 1/1, F1 1/1, M4B-3 1/1, 150-CP1/2 2/2, 499-M1 1/1, MP7+MP9 2/2, mcp-refusals 2/2, A2-1/2/3+P-A1 4/4, swarm-mcp-dispatch 1/1, unified-cli-surface 1/1, A3-2 1/1, FP-15+FP-19+WS-02 3/3.\n\nB. YOUR #565 REPAIR — VERIFIED LIVE IN THE WORKTREE (was uncommitted when I measured)\nThe gate row now imports McpFleetServer from ../src/index.mjs. Live selectFromRepository at that tree: impl/src/index.mjs => gate selected, reason imports, via impl/src/index.mjs; impl/src/mcp-web-bridge.mjs => selected, reason imports, via impl/src/index.mjs; impl/scripts/mcp-web.mjs => selected, fixture-path. Both tests in the file pass (2/2), including the MCP-SG-selection pin. The reviewer prescribed exactly this (import edge + selection pin) and the measurement confirms both legs.\n\nC. OTHER UNRESOLVED MCP-PRIMARY REFUSAL/FIDELITY OBLIGATIONS (master count -> restore-tip count)\n1. #158 x8 in scratchpad-write-red (8 -> 8; all 8 still red at the tip, measured 0 pass/8 fail): the append write verb's remaining halves — A1-2 CLI JSON shape, A4-1/A4-2 restrictor + own-run predicate, A5-1 review-authority, A8-1 replay scope, A9-1/A9-2 teaching refusals, A10-1 admission coherence. The MCP half (A2-1/A2-2/A2-3/P-A1) is restored; these eight are what a complete append feature still owes.\n2. #156 x13 -> x10 in mcp-profile-parity-red (your restore greened 3; 10 remain).\n3. #289 x12 -> x2 in phase72-kimi-orchestrator-mcp (your restore greened 10 collaterally).\n4. #87 + #460 (workflow-surface-red FP-14-tools, FP-14-dispatch): unchanged, red at the tip.\n5. #61 x12 + #79 x1 worker-verdict-surface-red: unchanged.\n6. #167 x9 readiness-honesty-red: unchanged (honest readiness on serializing wires).\n7. #71 x30 orchestrator-wake-red: unchanged (adjacent, not refusal/fidelity).\n8. Knowledge/memory family: #70 x21 cross-deployment-knowledge plus #63, #69 untouched by the restore; the swarm carry still records that memory-family tool rows beyond the seed leg await the core-closure design decision.\n\nD. PUBLICATION\nMy lane report is ready at /tmp/mcp5-refusal-report.json (contract shape, commit null). Two notes if you publish it: (1) it was authored against observedHead 80e07683, so re-stamp base.observedHead to the target you publish against; (2) the items are the 15-row refusal-and-fidelity verdicts and are unchanged by this audit except that the restore now satisfies them — the item verdicts RESTORE/UPDATE-TEST already match what you landed, and the CDW5 item can move to covered (carrier cf316a44 is on master).",
+      "groupId": null,
+      "version": 1,
+      "actor": "swarm-native:swarm-mcp-20260921:mcp5-refusal",
+      "seq": 159750,
+      "ts": "2026-09-23T15:16:53.428Z"
+    }
+  },
+  "projection": "context"
+}

@@ -1,0 +1,120 @@
+baton suite calibration: {"baselineBasis":"unrecorded","baselineProbeMs":null,"cores":10,"factor":1,"load":{"fifteen":41.39794921875,"five":29.8681640625,"one":29.18603515625},"measuredAt":"2026-09-23T15:29:58.067Z","probeMs":13.81854199999998,"schemaVersion":1}
+surface-gate: mcp-dispatch: 3 tool(s) are host-local and not advertised over the resident bridge: baton_scratchpad_elevate, baton_scratchpad_settle, baton_knowledge_settlement_lease
+baton test runner: plan — 5 file(s) in the whole suite: 5 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+baton test runner: proceeding WITHOUT a host verify lease (memory: 3633496064 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+# file test/mcp-bridge-admission.test.mjs (2951 ms)
+ok 1 - the bridge forwards every command the wire card advertises, the swarm family included
+ok 2 - a command the wire card does not advertise is refused by name, never as a bare forbidden
+ok 3 - a server given an admission predicate advertises only the tools whose command it admits
+ok 4 - the resident wire card keeps the host-local settlement tools off the bridge, by their own commands
+ok 5 - on a bound surface a supplied idempotencyKey is refused by field name, not as a bare invalid_arguments
+ok 6 - a resident refusal that flattens to command_outcome_unknown still carries its message and detail over the bridge
+ok 7 - a typed resident refusal keeps its own code and lifted field over the bridge
+ok 8 - U-G10: a bound surface states the served repoId as server-derived, never as a value to pass
+ok 9 - U-E17: a session refresh that moves expiresAt re-pins instead of breaking every later call
+ok 10 - U-E17: one attestation round trip per tool call — the dispatch entries share it by requestId
+ok 11 - U-E17: a genuine authority change still refuses by name
+ok 12 - U-E18: the bridge doctor mirrors the resident's live readiness, ready or not
+ok 13 - Issue #479: baton_deployment_doctor carries the stopping section when the resident is draining
+ok 14 - U-E17: one session round trip for a whole run.act tool call over the northbound path
+ok 15 - U-G3: the bridge does not advertise the settlement tools, and MCP.md says which posture holds
+# tests 15
+# suites 0
+# pass 15
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 627.193291
+# tests 15
+# pass 15
+# fail 0
+# file test/surface-capability-catalog.test.mjs (1903 ms)
+ok 1 - all operator-facing system categories are reachable on CLI and MCP
+ok 2 - the catalog preserves application, live MCP-native, CLI-native and embedded-only bodies
+ok 3 - action-dispatched operations use the existing run.do authority and require action coordinates
+ok 4 - direct and generic reachability reflect existing live transports rather than declarations alone
+ok 5 - canonical names outrank compatibility aliases and preserve each live command identity
+ok 6 - every served combined tool resolves to a catalog identity with an honest mode
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 88.145958
+# tests 6
+# pass 6
+# fail 0
+# file test/unified-cli-surface.test.mjs (2808 ms)
+ok 1 - CLI surfaceInvoke preserves direct application commands and durable effect fate
+ok 2 - CLI generic invocation resolves exact canonical names before compatibility aliases
+ok 3 - existing bounded run.debug projection is live through the connected CLI
+ok 4 - CLI surfaceSnapshot combines monitoring and optional run/wave projections
+ok 5 - CLI surfaceWatch composes existing follow, attention, run and wave projections
+ok 6 - CLI surfaceWatch refuses an attention cursor rewind instead of reporting empty success
+ok 7 - CLI surfaceVisualize composes snapshot and visual model without a watch when follow is false
+ok 8 - CLI surfaceVisualize composes snapshot and watch projections when follow is true
+ok 9 - CLI surfaceVisualize refuses follow without a runId instead of inventing a global authority
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 458.466292
+# tests 9
+# pass 9
+# fail 0
+# file test/mcp-web-startup-gate.test.mjs (6461 ms)
+ok 1 - MCP-SG-selection: entry point and bridge changes select the startup gate through imports (issue #565)
+ok 2 - MCP-SG: the baton-mcp-web startup sequence completes on this tree — parity, capability coverage, name closure, and the core tool table projection (issue #565)
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3611.648042
+# tests 2
+# pass 2
+# fail 0
+# file test/mcp-profile-parity-red.test.mjs (10405 ms)
+ok 1 - RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are exported (stage: served-set export)
+ok 2 - RG-02 RED: application tools/list is the served ordinary table and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)
+ok 3 - RG-03 RE-DERIVED (#566): the D3 parity derivation reports no uncovered web-bus command (stage: uncovered-set-empty)
+ok 4 - RG-04 RE-DERIVED (#566): fleet_run_resume_work and fleet_run_retry_verification are served on combined and bound on the dispatch map (stage: combined-includes-fleet-resume-retry)
+ok 5 - RG-05 RE-DERIVED (#566): every uncovered bus command is bound by its canonical spelling in the dispatch map (stage: dispatch-binds-siblings)
+ok 6 - RG-06 RE-DERIVED (#566): the #233 canonical dot twins byte-inherit their legacy source’s wire schema and carry the spelling note (stage: sibling-schema-inherits-source)
+ok 7 - RG-07 RED: the wait/follow sibling list admits the siblings and invalid_run_wait bounds (stage: wait-follow-lists-admit-siblings)
+ok 8 - RG-08 RED: fleet_run_resume_work/_retry_verification dispatch, typed refusal, idempotencyKey required, replay reconciles (stage: fleet-resume-retry-dispatch)
+ok 9 - RG-09 RE-DERIVED (#566): combined tools/list is the served combined table over the restored composition (stage: combined-102-includes-siblings)
+ok 10 - RG-10a RE-DERIVED (#566): the 5 non-canonical ops carry no mcp.baton alias row — their spelling is the fleet transport (stage: alias-rows-registered)
+ok 11 - RG-10b RE-DERIVED (#566): no minted baton_run_* sibling of the 5 ops is advertised on the combined surface (stage: mint-not-advertised)
+ok 12 - RG-10c RE-DERIVED (#566): the 5 non-canonical ops derive to their fleet tools end-to-end through the registry (stage: non-canonical-ops-render-operation-keys)
+ok 13 - RG-11-R RE-FOLDED (#314/#555): the artifact encodes the conformance derivation counts - the core application projection and the live combined surface (stage: artifact-counts-49-102)
+ok 14 - RG-P1 PIN: surface-conformance.mjs executable main is green (stage: conformance-main-green)
+ok 15 - RG-P2 PIN: committed artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)
+ok 16 - RG-P3 PIN: committed artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)
+ok 17 - RG-P4 PIN: phase16 application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)
+ok 18 - RG-P5 PIN: mcp-reflex application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)
+ok 19 - RG-P6 PIN: phase67 application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)
+ok 20 - RG-P7 PIN: phase72 application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)
+ok 21 - RG-P8 PIN: phase16 combined-count pin equals combinedMcpToolNames().length (stage: phase16-combined-count-pin)
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5442.263791
+# tests 21
+# pass 21
+# fail 0
+baton suite verdict (SUBSET 5 of 730 files): GREEN — 53 passed, 0 expected red (0 code, 0 environment-red), 0 of this run’s red rows cancelled by a dangling await earlier in their file, 0 unexpected failure(s), 0 stale expectation(s), 0 hung
+  baton suite environment: codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; codex/gpt-6-astra declared — `~/.codex/auth.json` present; kimi-code/kimi-code/k3 declared — kimi credential files present with a ready authentication state; grok/grok-4.5 declared — `~/.grok/auth.json` present with a ready authentication state; claude-code:claude/claude-opus-4-6 declared — bounded version + auth status probes; muse/muse-spark-1.3-contributor declared — a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`); omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/deepseek/deepseek-v4-pro[1m] ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/zai/glm-5.3-flash ABSENT — repository glm_key.json (omp_agent_unconfigured); omp/kimi-code/k3 ABSENT — repository kimi_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3-flash ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/deepseek-v4-pro ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/kimi-k3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); claude-code:kimi/kimi-k3[1m] declared — the private kimi-through-claude credential present
+baton suite verdict note: SUBSET verdict (5 of 730 files) — not the canonical-suite acceptance.

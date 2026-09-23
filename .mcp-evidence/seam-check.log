@@ -1,0 +1,18 @@
+✔ SI7 (#510): check mode refuses a regeneration that lost a TARGETS entry, naming the target and both counts (1733.024125ms)
+✔ SI7b (#510): check mode refuses a target whose member count shrank, naming both counts (1678.81025ms)
+✔ SI7c (#510): a target that grew, and a brand-new target, carry no per-target finding (1676.470208ms)
+✔ SI1: the committed map classifies every member of every declared class exactly once (2123.684875ms)
+✔ SI1b: the committed artifact carries no line numbers, so ordinary edits never stale it (4.5855ms)
+✔ SI2: the committed map regenerates clean, deterministically, and the check mode fails when it is stale (13182.259417ms)
+✔ SI3: the check mode is the same one the CLI runs, and it exits non-zero on a stale artifact (8395.822667ms)
+✔ SI4: the classifier reads the seams off the source, not off a per-member table (1375.437916ms)
+✔ SI5 (S-G4): SwarmRuntime is a declared target, mapped across all four seams, and an unmapped member refuses (3032.408291ms)
+✔ SI6: the per-target corpus is pinned, so a dropped TARGETS entry fails even after a regeneration (1416.910292ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 40745.946333

@@ -1,0 +1,21 @@
+[
+  "test/bridge-idempotency-344.test.mjs",
+  "test/canonical-naming-233-red.test.mjs",
+  "test/cli-silent-start-red.test.mjs",
+  "test/cli-wave-fidelity-red.test.mjs",
+  "test/doc-truth-conformance-red.test.mjs",
+  "test/frame-economics-red.test.mjs",
+  "test/grammar-m4b-red.test.mjs",
+  "test/issue150-coaching-passthrough.test.mjs",
+  "test/issue499-schema-counts.test.mjs",
+  "test/mcp-packaging-red.test.mjs",
+  "test/mcp-profile-parity-red.test.mjs",
+  "test/mcp-refusals-named.test.mjs",
+  "test/mcp-web-startup-gate.test.mjs",
+  "test/phase72-kimi-orchestrator-mcp.test.mjs",
+  "test/scratchpad-write-red.test.mjs",
+  "test/swarm-mcp-dispatch.test.mjs",
+  "test/unified-cli-surface.test.mjs",
+  "test/wave-observability-red.test.mjs",
+  "test/workflow-surface-red.test.mjs"
+]

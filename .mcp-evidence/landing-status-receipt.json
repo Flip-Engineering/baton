@@ -1,0 +1,29 @@
+{
+  "receipt": {
+    "command": "swarm.update",
+    "event": {
+      "kind": "swarm.contribution_recorded",
+      "seq": 167206,
+      "ts": "2026-09-23T15:55:30.018Z",
+      "actor": "swarm-native:swarm-mcp-20260921:mcp-lead6"
+    },
+    "changed": [
+      {
+        "collection": "contributions",
+        "id": "contribution-7bc7524f2171c993ab748e95829eac03",
+        "seq": 167206,
+        "ts": "2026-09-23T15:55:30.018Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.view",
+    "args": {
+      "swarmId": "swarm-mcp-20260921"
+    }
+  },
+  "status": "uncommitted_work",
+  "commandReceipt": {
+    "idempotencyKey": "e7c0d157-1c36-445e-a570-31895208994e"
+  }
+}

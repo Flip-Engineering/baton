@@ -1,0 +1,37 @@
+✔ all operator-facing system categories are reachable on CLI and MCP (12.874292ms)
+✔ the catalog preserves application, live MCP-native, CLI-native and embedded-only bodies (7.36625ms)
+✔ action-dispatched operations use the existing run.do authority and require action coordinates (3.969334ms)
+✔ direct and generic reachability reflect existing live transports rather than declarations alone (20.314459ms)
+✔ canonical names outrank compatibility aliases and preserve each live command identity (3.248458ms)
+✖ every served combined tool resolves to a catalog identity with an honest mode (13.939875ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 5
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 926.677917
+
+✖ failing tests:
+
+test at impl/test/surface-capability-catalog.test.mjs:109:1
+✖ every served combined tool resolves to a catalog identity with an honest mode (13.939875ms)
+  AssertionError [ERR_ASSERTION]: baton_help lost its read-only mode
+  
+  'effect' !== 'query'
+  
+      at TestContext.<anonymous> (file:///private/tmp/baton-resident-20260921/.baton/wt/ws-2d340d886a11ed16f85761a891bb1b2e/impl/test/surface-capability-catalog.test.mjs:122:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'effect',
+    expected: 'query',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,38 @@
+✔ the bridge forwards every command the wire card advertises, the swarm family included (16.633625ms)
+✔ a command the wire card does not advertise is refused by name, never as a bare forbidden (2.351292ms)
+✔ a server given an admission predicate advertises only the tools whose command it admits (42.902125ms)
+✔ the resident wire card keeps the host-local settlement tools off the bridge, by their own commands (5.615667ms)
+✔ on a bound surface a supplied idempotencyKey is refused by field name, not as a bare invalid_arguments (67.451125ms)
+✔ a resident refusal that flattens to command_outcome_unknown still carries its message and detail over the bridge (203.441167ms)
+✔ a typed resident refusal keeps its own code and lifted field over the bridge (68.961875ms)
+✔ U-G10: a bound surface states the served repoId as server-derived, never as a value to pass (5.759ms)
+✔ U-E17: a session refresh that moves expiresAt re-pins instead of breaking every later call (0.914792ms)
+✔ U-E17: one attestation round trip per tool call — the dispatch entries share it by requestId (1.111708ms)
+✔ U-E17: a genuine authority change still refuses by name (1.014292ms)
+✔ U-E18: the bridge doctor mirrors the resident's live readiness, ready or not (40.296833ms)
+✔ Issue #479: baton_deployment_doctor carries the stopping section when the resident is draining (59.419291ms)
+✔ U-E17: one session round trip for a whole run.act tool call over the northbound path (34.22725ms)
+✔ U-G3: the bridge does not advertise the settlement tools, and MCP.md says which posture holds (17.170541ms)
+✔ all operator-facing system categories are reachable on CLI and MCP (16.750083ms)
+✔ the catalog preserves application, live MCP-native, CLI-native and embedded-only bodies (8.379334ms)
+✔ action-dispatched operations use the existing run.do authority and require action coordinates (3.255ms)
+✔ direct and generic reachability reflect existing live transports rather than declarations alone (25.679083ms)
+✔ canonical names outrank compatibility aliases and preserve each live command identity (3.060125ms)
+✔ every served combined tool resolves to a catalog identity with an honest mode (7.990208ms)
+✔ CLI surfaceInvoke preserves direct application commands and durable effect fate (14.412541ms)
+✔ CLI generic invocation resolves exact canonical names before compatibility aliases (1.770041ms)
+✔ existing bounded run.debug projection is live through the connected CLI (1.18575ms)
+✔ CLI surfaceSnapshot combines monitoring and optional run/wave projections (17.35725ms)
+✔ CLI surfaceWatch composes existing follow, attention, run and wave projections (14.437417ms)
+✔ CLI surfaceWatch refuses an attention cursor rewind instead of reporting empty success (2.859ms)
+✔ CLI surfaceVisualize composes snapshot and visual model without a watch when follow is false (21.679083ms)
+✔ CLI surfaceVisualize composes snapshot and watch projections when follow is true (7.826292ms)
+✔ CLI surfaceVisualize refuses follow without a runId instead of inventing a global authority (2.077208ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5649.271625

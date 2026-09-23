@@ -1,0 +1,147 @@
+baton suite calibration: {"baselineBasis":"unrecorded","baselineProbeMs":null,"cores":10,"factor":1,"load":{"fifteen":48.91845703125,"five":38.84716796875,"one":32.0400390625},"measuredAt":"2026-09-23T15:24:42.172Z","probeMs":2.803167000000002,"schemaVersion":1}
+surface-gate: mcp-dispatch: 3 tool(s) are host-local and not advertised over the resident bridge: baton_scratchpad_elevate, baton_scratchpad_settle, baton_knowledge_settlement_lease
+baton test runner: plan — 5 file(s) in the whole suite: 5 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+baton test runner: proceeding WITHOUT a host verify lease (memory: 4623007744 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+# file test/mcp-bridge-admission.test.mjs (1552 ms, exit 1)
+ok 1 - the bridge forwards every command the wire card advertises, the swarm family included
+ok 2 - a command the wire card does not advertise is refused by name, never as a bare forbidden
+not ok 3 - a server given an admission predicate advertises only the tools whose command it admits
+  ---
+  location: 'test/mcp-bridge-admission.test.mjs:105:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    without a predicate the surface inventory is unchanged
+  ...
+ok 4 - the resident wire card keeps the host-local settlement tools off the bridge, by their own commands
+ok 5 - on a bound surface a supplied idempotencyKey is refused by field name, not as a bare invalid_arguments
+ok 6 - a resident refusal that flattens to command_outcome_unknown still carries its message and detail over the bridge
+ok 7 - a typed resident refusal keeps its own code and lifted field over the bridge
+ok 8 - U-G10: a bound surface states the served repoId as server-derived, never as a value to pass
+ok 9 - U-E17: a session refresh that moves expiresAt re-pins instead of breaking every later call
+ok 10 - U-E17: one attestation round trip per tool call — the dispatch entries share it by requestId
+ok 11 - U-E17: a genuine authority change still refuses by name
+ok 12 - U-E18: the bridge doctor mirrors the resident's live readiness, ready or not
+ok 13 - Issue #479: baton_deployment_doctor carries the stopping section when the resident is draining
+ok 14 - U-E17: one session round trip for a whole run.act tool call over the northbound path
+ok 15 - U-G3: the bridge does not advertise the settlement tools, and MCP.md says which posture holds
+# tests 15
+# suites 0
+# pass 14
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 328.140042
+# tests 15
+# pass 14
+# fail 1
+# file test/issue314-core-table.test.mjs (1488 ms)
+ok 1 - 314-l1-a: a field added to a family table appears in the core tool, one removed disappears
+ok 2 - 314-l1-b: a required field added to a family table is required by the verb branch
+ok 3 - 314-l1-c: a swarm family row that vanishes refuses to project (a verb removed disappears)
+ok 4 - 314-l1-d: every core verb dispatches a landed tool or a landed meta authority
+ok 5 - 314-l1-e: a core call and its flat counterpart answer byte-identically (parity)
+ok 6 - 314-l1-f: the six baton_surface verbs carry the unified meta tools' own fields
+ok 7 - 314-l1-g: the resolver refuses an unknown verb and a foreign verb's field, teaching the set
+ok 8 - 314-l1-h: the moved and retired spellings carry their core pointer, the rest do not
+ok 9 - 314-l1-i: the CLI's own MCP client spelling answers through the served surface
+ok 10 - 314-l1-j: the bound bridge surface advertises the core schema without the derived envelope
+ok 11 - 314-l1-k: the long verbs carry their wake handoff from the landed vocabulary
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 334.895375
+# tests 11
+# pass 11
+# fail 0
+# file test/issue314-mcp-core-surface-red.test.mjs (1049 ms)
+ok 1 - 314-a RED: tools/list on the ordinary agent surface is exactly the core verb-tools — one per family (docs/49 §2; #317 added baton_services)
+ok 2 - 314-b RED: the core tools/list stays inside the derived byte budget — core count times the largest designed core schema (docs/49 §3)
+ok 3 - 314-c RED: every core tool is ONE verb-discriminated closed schema (docs/49 §2)
+ok 4 - 314-d1 RED: no blocking read rides the agent surface — waits and watches retire to the wake plane (docs/49 §5)
+ok 5 - 314-d2 RED: a mutation answers a receipt plus a wake subscription, never the whole view (docs/49 §5)
+ok 6 - 314-e1 RED: a bridge session survives reincarnation — rediscovery, ONE typed notification, wake resume (docs/49 §6)
+ok 7 - 314-e2 RED: an in-flight call at the incarnation boundary is retried once against the successor under the same idempotency key (docs/49 §6)
+ok 8 - 314-f RED: the migration table covers every tool MCP.md documents and the served surface reflects it (docs/49 §7)
+ok 9 - 314-g RED: a retired flat spelling refuses unknown_tool with a movedTo pointer into the core (docs/49 §8)
+ok 10 - 314-h RED: MCP.md leads with the resident bridge and documents the descriptor as the headless mode (docs/49 §4)
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 114.19925
+# tests 10
+# pass 10
+# fail 0
+# file test/issue314-lane2-receipts-wakes.test.mjs (1574 ms)
+ok 1 - 314-D2-a: a core mutation answers the receipt its operation answered, never the whole view
+ok 2 - 314-D2-a2: a run mutation answers a receipt and its own outcome — the outline answer is retired
+ok 3 - 314-D2-b: baton_run {verb: start} (run.start) answers a receipt plus the wake subscription its follow-up rides
+ok 4 - 314-D2-b: baton_swarm {verb: recruit} (swarm.recruit) answers a receipt plus the wake subscription its follow-up rides
+ok 5 - 314-D2-b: baton_swarm {verb: check} (swarm.check) answers a receipt plus the wake subscription its follow-up rides
+ok 6 - 314-D2-b: baton_waves {verb: start} (waves.start) answers a receipt plus the wake subscription its follow-up rides
+ok 7 - 314-D2-c: #479 baton_deployment {verb: doctor} carries the stopping section the client answers
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 657.589458
+# tests 7
+# pass 7
+# fail 0
+# file test/issue314-lane3-reincarnation-rebind.test.mjs (16008 ms)
+ok 1 - 314e-l3-a: a served bridge session answers from the successor after a staged handoff, with ONE typed notification
+ok 2 - 314e-l3-b: an in-flight mutation at the boundary is applied once — the replay carries the same key
+ok 3 - 314e-l3-c: a wake subscription opened before the handoff still delivers after it, from its cursor
+ok 4 - 314e-l3-d: a handoff that fails produces no rebind and no notification — the #306r re-publish arm is respected
+ok 5 - 314e-l3-e: the session lifecycle frame is routed to its own MCP method, beside the wake method (docs/49 §10)
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 14921.101333
+# tests 5
+# pass 5
+# fail 0
+baton serve: host.stop_waiting on successor_publication at 2026-09-23T15:24:55.529Z
+baton serve: web admission closed (closed_degraded); the handoff's authority is the successor's
+baton serve: the handoff's authority is the successor's (coordination_writer_lost); this incarnation's own application legs are released
+baton serve: host.publication_withdrawn instance-5dd157c7-fa50-427d-bc39-8e0c0447d977 → instance-b4571c3d-1e76-4b3f-9e7b-2ae2c2f973c2
+baton serve: host.stopped tail web_admission_close 508ms; stop_record 0ms; host_closed 26ms; publication_withdrawal 0ms; incarnation_exit 0ms
+baton serve: host.stop_waiting on successor_publication at 2026-09-23T15:24:58.786Z
+baton serve: web admission closed (closed_degraded); the handoff's authority is the successor's
+baton serve: the handoff's authority is the successor's (coordination_writer_lost); this incarnation's own application legs are released
+baton serve: host.publication_withdrawn instance-f0652c5a-b44a-47b6-940d-828e36316090 → instance-72e07e9f-a5be-482b-bb89-a7cc9728e62f
+baton serve: host.stopped tail web_admission_close 5ms; stop_record 0ms; host_closed 21ms; publication_withdrawal 0ms; incarnation_exit 0ms
+baton serve: host.stop_waiting on successor_publication at 2026-09-23T15:25:02.125Z
+baton serve: web admission closed (closed_degraded); the handoff's authority is the successor's
+baton serve: the handoff's authority is the successor's (coordination_writer_lost); this incarnation's own application legs are released
+baton serve: host.publication_withdrawn instance-5d305d13-3e19-4e63-8629-903b429c3bab → instance-c008b468-da2f-4d62-aa11-d87d73368a0d
+baton serve: host.stopped tail web_admission_close 503ms; stop_record 0ms; host_closed 18ms; publication_withdrawal 0ms; incarnation_exit 0ms
+baton serve: successor the successor died between its marker and its publication
+baton serve: host.stop_waiting on successor_publication at 2026-09-23T15:25:05.576Z
+baton serve: host.reincarnation_failed publication_handoff (9, waited 0ms) at 2026-09-23T15:25:06.256Z; this incarnation re-took the writer authority and keeps serving (admission reopened: work open, fleet unchanged)
+baton serve: host.stop_requested trigger operation_completed at 2026-09-23T15:25:06.724Z
+baton serve: web admission closed (admission_closed)
+baton serve: draining the fleet with the served transport open for reads
+baton serve: drain converged; 0 of 0 participant(s) stopped
+baton serve: web transport closed (closed)
+baton serve: host.stopped stopped at 2026-09-23T15:25:06.847Z (projection checkpoint written; 4493 bytes; cost bound 16777216 bytes; replay frame bound 4096 rows)
+baton serve: host.stopped tail stop_record 5ms; host_closed 33ms; publication_withdrawal 0ms
+baton suite verdict (SUBSET 5 of 730 files): RED — 47 passed, 0 expected red (0 code, 0 environment-red), 0 of this run’s red rows cancelled by a dangling await earlier in their file, 1 unexpected failure(s), 0 stale expectation(s), 0 hung
+  baton suite environment: codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; codex/gpt-6-astra declared — `~/.codex/auth.json` present; kimi-code/kimi-code/k3 declared — kimi credential files present with a ready authentication state; grok/grok-4.5 declared — `~/.grok/auth.json` present with a ready authentication state; claude-code:claude/claude-opus-4-6 declared — bounded version + auth status probes; muse/muse-spark-1.3-contributor declared — a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`); omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/deepseek/deepseek-v4-pro[1m] ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/zai/glm-5.3-flash ABSENT — repository glm_key.json (omp_agent_unconfigured); omp/kimi-code/k3 ABSENT — repository kimi_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3-flash ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/deepseek-v4-pro ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/kimi-k3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); claude-code:kimi/kimi-k3[1m] declared — the private kimi-through-claude credential present
+  unexpected failure: test/mcp-bridge-admission.test.mjs :: a server given an admission predicate advertises only the tools whose command it admits — without a predicate the surface inventory is unchanged
+baton suite verdict note: SUBSET verdict (5 of 730 files) — not the canonical-suite acceptance.

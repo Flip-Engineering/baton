@@ -1,0 +1,2 @@
+surface-gate: mcp-dispatch: 3 tool(s) are host-local and not advertised over the resident bridge: baton_scratchpad_elevate, baton_scratchpad_settle, baton_knowledge_settlement_lease
+surface-gate: ok

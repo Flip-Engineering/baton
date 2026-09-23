@@ -1,0 +1,66 @@
+baton suite calibration: {"baselineBasis":"unrecorded","baselineProbeMs":null,"cores":10,"factor":1,"load":{"fifteen":53.84765625,"five":45.8203125,"one":39.99560546875},"measuredAt":"2026-09-23T15:20:57.603Z","probeMs":2.8375000000000057,"schemaVersion":1}
+surface-gate: mcp-dispatch: 3 tool(s) are host-local and not advertised over the resident bridge: baton_scratchpad_elevate, baton_scratchpad_settle, baton_knowledge_settlement_lease
+baton test runner: plan — 2 file(s) in the whole suite: 2 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+baton test runner: proceeding WITHOUT a host verify lease (memory: 4160749568 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+# file test/mcp-profile-parity-red.test.mjs (2230 ms)
+ok 1 - RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are exported (stage: served-set export)
+ok 2 - RG-02 RED: application tools/list is the served ordinary table and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)
+ok 3 - RG-03 RE-DERIVED (#566): the D3 parity derivation reports no uncovered web-bus command (stage: uncovered-set-empty)
+ok 4 - RG-04 RE-DERIVED (#566): fleet_run_resume_work and fleet_run_retry_verification are served on combined and bound on the dispatch map (stage: combined-includes-fleet-resume-retry)
+ok 5 - RG-05 RE-DERIVED (#566): every uncovered bus command is bound by its canonical spelling in the dispatch map (stage: dispatch-binds-siblings)
+ok 6 - RG-06 RE-DERIVED (#566): the #233 canonical dot twins byte-inherit their legacy source’s wire schema and carry the spelling note (stage: sibling-schema-inherits-source)
+ok 7 - RG-07 RED: the wait/follow sibling list admits the siblings and invalid_run_wait bounds (stage: wait-follow-lists-admit-siblings)
+ok 8 - RG-08 RED: fleet_run_resume_work/_retry_verification dispatch, typed refusal, idempotencyKey required, replay reconciles (stage: fleet-resume-retry-dispatch)
+ok 9 - RG-09 RE-DERIVED (#566): combined tools/list is the served combined table over the restored composition (stage: combined-102-includes-siblings)
+ok 10 - RG-10a RE-DERIVED (#566): the 5 non-canonical ops carry no mcp.baton alias row — their spelling is the fleet transport (stage: alias-rows-registered)
+ok 11 - RG-10b RE-DERIVED (#566): no minted baton_run_* sibling of the 5 ops is advertised on the combined surface (stage: mint-not-advertised)
+ok 12 - RG-10c RE-DERIVED (#566): the 5 non-canonical ops derive to their fleet tools end-to-end through the registry (stage: non-canonical-ops-render-operation-keys)
+ok 13 - RG-11-R RE-FOLDED (#314/#555): the artifact encodes the conformance derivation counts - the core application projection and the live combined surface (stage: artifact-counts-49-102)
+ok 14 - RG-P1 PIN: surface-conformance.mjs executable main is green (stage: conformance-main-green)
+ok 15 - RG-P2 PIN: committed artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)
+ok 16 - RG-P3 PIN: committed artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)
+ok 17 - RG-P4 PIN: phase16 application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)
+ok 18 - RG-P5 PIN: mcp-reflex application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)
+ok 19 - RG-P6 PIN: phase67 application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)
+ok 20 - RG-P7 PIN: phase72 application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)
+ok 21 - RG-P8 PIN: phase16 combined-count pin equals combinedMcpToolNames().length (stage: phase16-combined-count-pin)
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1244.484125
+# tests 21
+# pass 21
+# fail 0
+# file test/suite-manifest-reasons.test.mjs (5303 ms, exit 1)
+ok 1 - S-G2/S-I6: every committed row carries a classifiable reason, and the manifest is canonical
+ok 2 - S-C1: every committed credential row names the registry route it depends on (#417)
+ok 3 - S-N1: the swarm slice is represented in the manifest, with tracked reasons
+not ok 4 - S-G3: every -red file is either a live red spec or a declared converged one
+  ---
+  location: 'test/suite-manifest-reasons.test.mjs:60:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    test/canonical-naming-233-red.test.mjs: a -red file is either listed in rows or declared converged — the manifest, never the filename, is the authority
+  ...
+ok 5 - S-G3: the convention is written down — what -red means and when it is removed
+ok 6 - S-G2/S-I6: the runner reads the reasoned manifest and writes only rows that carry a reason
+ok 7 - R-1: the verdict line and the verdict JSON carry the environment this run observed
+# tests 7
+# suites 0
+# pass 6
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4917.55725
+# tests 7
+# pass 6
+# fail 1
+baton suite verdict (SUBSET 2 of 730 files): RED — 27 passed, 0 expected red (0 code, 0 environment-red), 0 of this run’s red rows cancelled by a dangling await earlier in their file, 1 unexpected failure(s), 0 stale expectation(s), 0 hung
+  baton suite environment: codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; codex/gpt-6-astra declared — `~/.codex/auth.json` present; kimi-code/kimi-code/k3 declared — kimi credential files present with a ready authentication state; grok/grok-4.5 declared — `~/.grok/auth.json` present with a ready authentication state; claude-code:claude/claude-opus-4-6 declared — bounded version + auth status probes; muse/muse-spark-1.3-contributor declared — a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`); omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/deepseek/deepseek-v4-pro[1m] ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/zai/glm-5.3-flash ABSENT — repository glm_key.json (omp_agent_unconfigured); omp/kimi-code/k3 ABSENT — repository kimi_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3-flash ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/deepseek-v4-pro ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/kimi-k3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); claude-code:kimi/kimi-k3[1m] declared — the private kimi-through-claude credential present
+  unexpected failure: test/suite-manifest-reasons.test.mjs :: S-G3: every -red file is either a live red spec or a declared converged one — test/canonical-naming-233-red.test.mjs: a -red file is either listed in rows or declared converged — the manifest, never the filename, is the authority
+baton suite verdict note: SUBSET verdict (2 of 730 files) — not the canonical-suite acceptance.

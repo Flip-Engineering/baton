@@ -1,0 +1,16 @@
+✔ 567: swarm usage and help name every closed-set option value from the command schema (4.308333ms)
+✔ 567: open option values and switches retain their usage syntax (0.361666ms)
+✔ all operator-facing system categories are reachable on CLI and MCP (11.324458ms)
+✔ the catalog preserves application, live MCP-native, CLI-native and embedded-only bodies (7.816917ms)
+✔ action-dispatched operations use the existing run.do authority and require action coordinates (3.129042ms)
+✔ direct and generic reachability reflect existing live transports rather than declarations alone (19.120625ms)
+✔ canonical names outrank compatibility aliases and preserve each live command identity (2.706542ms)
+✔ every served combined tool resolves to a catalog identity with an honest mode (7.240375ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1514.191417

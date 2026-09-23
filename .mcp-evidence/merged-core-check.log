@@ -1,0 +1,201 @@
+baton suite calibration: {"baselineBasis":"unrecorded","baselineProbeMs":null,"cores":10,"factor":1,"load":{"fifteen":64.01416015625,"five":67.99609375,"one":48.54150390625},"measuredAt":"2026-09-23T15:38:28.328Z","probeMs":2.8173749999999984,"schemaVersion":1}
+surface-gate: mcp-dispatch: 3 tool(s) are host-local and not advertised over the resident bridge: baton_scratchpad_elevate, baton_scratchpad_settle, baton_knowledge_settlement_lease
+baton test runner: plan — 6 file(s) in the whole suite: 6 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+baton test runner: proceeding WITHOUT a host verify lease (memory: 2972745728 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+# file test/harvest-accessor-red.test.mjs (303369 ms, exit 1)
+ok 1 - A1-resultpin-dispatch (stage: ports absent): run.resultpin dispatches ahead of the command table
+ok 2 - A2-harvest-dispatch (stage: ports absent): waves.harvest dispatches for both XOR sources
+ok 3 - A3-resultpin-closure (stage: ports absent): shape failures refuse application_run_resultpin_invalid before authorize
+ok 4 - A4-harvest-closure (stage: ports absent): shape failures refuse application_waves_harvest_invalid before authorize
+ok 5 - B1-stale-base (stage: projection absent): the projection owns the RECORDED-base diff after main advances
+ok 6 - C1-projection (stage: projection absent): ready/resultSha/baseSha/changedPaths/changedFiles oracles
+ok 7 - C2-truncation (stage: projection absent): an oversize changedFiles page truncates with digest + cursor
+ok 8 - D1-midflight (stage: projection absent): a pre-approval run reads result_not_ready
+ok 9 - D2-failed (stage: projection absent): a terminal-failed run reads result_not_ready; the checkpoint is pinned
+ok 10 - D3-released-pin (stage: projection absent): a released result ref reads pin_not_found
+ok 11 - D4-retargeted-pin (stage: projection absent): a re-pointed result ref reads pin_mismatch
+ok 12 - D5-unverifiable (stage: projection absent): an unresolvable pin reads pin_unverifiable
+ok 13 - D6-foreign-run (stage: ports absent): the host policy refuses an unauthorized run
+ok 14 - E1-harvest-receipt (stage: harvest absent): onto rules, applied-clean, then already_integrated
+ok 15 - E2-harvest-runid (stage: harvest absent): the runId source resolves the same receipt
+ok 16 - F1-three-way-survival (stage: harvest absent): a divergent untouched file survives the clean apply
+ok 17 - F2-three-way-conflict (stage: harvest absent): a touched-file divergent edit refuses harvest_conflict naming the paths
+ok 18 - G2-empty-delta (stage: harvest absent): a net-zero self-committed pin is skipped/empty_delta
+not ok 19 - H1-tools (stage: tools absent): the two ordinary tools register with closed schemas, _meta digests, and honest annotations
+  ---
+  location: 'test/harvest-accessor-red.test.mjs:772:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    measured combined total (109 + the #314 seed leg, #555)
+    
+    150 !== 110
+    
+  ...
+ok 20 - H2-dispatch (stage: tools absent): baton_run_resultpin dispatches the facade command with the CONNECTION principal
+ok 21 - H3-vocabulary (stage: wire vocabulary absent): all 12 new refusal codes reach the wire AS THEMSELVES
+ok 22 - H4-translations (stage: wire vocabulary absent): the kernel codes map to the harvest vocabulary
+ok 23 - H5-capabilities (stage: tools absent): observe admits run.resultpin; waves.harvest demands control
+ok 24 - I1-cli-parse (stage: CLI verb absent): the new verbs parse to the pinned command shapes
+ok 25 - I2-cli-negative (GUARD, green today): malformed verb spellings refuse at the parser
+ok 26 - I3-cli-web (stage: CLI verb absent): the dispatch gate admits both new keys
+ok 27 - I4-registry (stage: rows absent): two canonical operations with pinned profiles, surfaces, capabilities, names
+ok 28 - I5-cli-episode (GUARD, green today): the occupied episode spelling is untouched
+ok 29 - I6-conformance (GUARD, green today, MUST stay green): the docs/conformance mains enforce the regenerated inventories
+ok 30 - J1-unpinned-sha (stage: harvest absent): a real commit without an ownership pin refuses pin_not_found
+ok 31 - J2-runid-reverification (stage: harvest absent): a released recorded ref refuses pin_not_found on the runId source
+ok 32 - K1-multi-pin (stage: projection absent): two ceremonies own distinct pins, each resolved by its own run
+ok 33 - K2-released-coexists (stage: projection absent): releasing one pin leaves the other live
+ok 34 - L1-receipt-honesty (stage: harvest absent): applied-clean certifies the recorded diff after main advanced
+ok 35 - L2-diverged (stage: harvest absent): a rewound main refuses harvest_base_diverged naming the four shas
+ok 36 - M1-static (GUARD, green today): the byte-stable command table gains no keys
+ok 37 - M2-static (GUARD, green today): the suite pins the closed-shape sorted-key literals
+ok 38 - N1-control-policy (stage: ports absent): the host policy owns both commands
+ok 39 - N2-pre-gate (stage: ports absent): shape failures dispatch ahead of the recursive-session gate
+# tests 39
+# suites 0
+# pass 38
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 301695.262542
+# tests 39
+# pass 38
+# fail 1
+# file test/frame-economics-red.test.mjs (27238 ms)
+ok 1 - A1: limits.mjs exports one deep-frozen FRAME_LIMITS plus VERSION and DIGEST
+ok 2 - A2: every admission lane is cataloged with value, unit, graceful class, and refusal code
+ok 3 - A3: the substrate guards are declared — and only spill.body mints a refusal
+ok 4 - A4: the view class is declared with shed-flagged graceful degradation
+ok 5 - A5: FRAME_LIMITS_DIGEST is canonical-derivation stable and byte-stable across processes
+ok 6 - A6: board.report.body is cataloged as a live admission row at the LIVE 4,096 store value (v1.2, blue-team blocker 1)
+ok 7 - B1 (GOLDEN, graceful class): a send beyond the spill ceiling draws the spill_body_exceeded coaching refusal
+ok 8 - B2: a reply beyond the spill ceiling lands message.rejected {spill_body_exceeded, cap, actual, unit, gracefulPath} on the worker stream
+ok 9 - B3: a run objective beyond the spill ceiling draws the typed spill_body_exceeded application error
+ok 10 - B4 (GOLDEN, hard class): an oversize decision question gains the coaching ValidationError
+ok 11 - B5: the store's reuse-need ceiling carries the coaching shape (registry ceiling-of-ceilings)
+ok 12 - B6: the store's reuse-rationale ceiling carries the coaching shape at 8,192
+ok 13 - B7: the orientation push note ceiling carries the coaching shape
+ok 14 - B8: the steering-policy focus ceiling carries the coaching shape at injection
+ok 15 - B9: the live board-title store bound carries the coaching shape at 160
+ok 16 - B10: the live board-detail store bound carries the coaching shape at 4,096
+ok 17 - B11: the decision option-label ceiling carries the coaching shape at 160
+ok 18 - B12: the decision option-summary ceiling carries the coaching shape at 512
+ok 19 - B13: the decision answer-text ceiling carries the coaching shape at 4,096
+ok 20 - B14: the scratchpad entry canonical ceiling gains the coaching shape (numberless today)
+ok 21 - B15: the live board-report body store bound carries the coaching shape at 4,096 (v1.2, blue-team blocker 1)
+ok 22 - B16: the legacy-alias send door carries the coaching shape at its LIVE 16,384 (v1.2, blue-team blocker 2)
+ok 23 - C1: the store mints digest-addressed spills and materializes them byte-identically
+ok 24 - C2: spill mints are idempotent by key and content-addressed across keys
+ok 25 - C3: an oversize send is ADMITTED with spill — receipts carry head + digest citation
+ok 26 - C4 (blocker 4): the provider-bound frame for a spilled send carries EXACTLY head + citation
+ok 27 - C5 (blocker 4): the worker resolves the spill through the closed read-port kind
+ok 28 - C6 (parity + blocker 11): an oversize reply spills like a send; the amended envelope adds ONLY the citation keys
+ok 29 - C7: a large run objective is admitted whole — no spill, no citation; run views carry it verbatim
+ok 30 - C8 (OQ5): the wave driver downgrades its precheck to a spill-aware ADVISORY and passes the objective through
+ok 31 - C9 (blocker 3): a body beyond the 1 MiB spill ceiling is NOT admitted and mints NO spill
+ok 32 - C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 KiB head cap is admitted WHOLE through the REAL wave-start admission — never walled, never spilled (#358)
+ok 33 - D1 (the split): an oversize DECISION_REQUEST question PARSES shape-only — it is never scanner-null
+ok 34 - D2 (pin): a large-but-parseable SCRATCHPAD_WRITE frame is admitted shape-only
+ok 35 - D3 (pin): a large-but-parseable CONTEXT_READ frame is admitted shape-only
+ok 36 - D4 (pin): a large-but-parseable BOARD_CLAIM frame is admitted shape-only
+ok 37 - D5 (pin): a BOARD_REPORT body over the LIVE 4,096 admission bound is still admitted shape-only at the wire
+ok 38 - D6 (pin): the scan windows stay substrate resource guards — over-window frames are prose for all six grammars
+ok 39 - D7: all six scanner doc comments carry the shape-only law sentence (Decision 5's named edit)
+ok 40 - D8 (the split, seam half): the oversize question reaches admission and draws the COACHING refusal
+ok 41 - E1: doctorReadiness() carries the frozen limits projection with version, digest, and lanes
+ok 42 - E2: card() publishes agentExperience.limitsRegistryDigest beside registryDigest
+ok 43 - E3 (blocker 5): a reuseDecisionPolicy override leaves the published digest byte-identical — the override rides effective
+ok 44 - E4 (OQ4): a deployment override ABOVE the registry ceiling refuses at injection — never a silent min()
+ok 45 - E5: the connection handshake verifies limitsRegistryDigest exactly like the semantic registry digest
+ok 46 - E6: the doctor projection covers every registry lane with the closed row shape
+ok 47 - F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs
+ok 48 - F2 (pin): the store's deliberate-local field caps stay plain shape refusals
+ok 49 - F3 (pin): context_pack.body keeps its exact substrate refusal — value unchanged, only imported
+ok 50 - G1 (OQ2): attention text capped inside the read-port renderer carries the [truncated] marker
+# tests 50
+# suites 0
+# pass 50
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 23078.349417
+# tests 50
+# pass 50
+# fail 0
+# file test/mcp-web-startup-gate.test.mjs (7047 ms)
+ok 1 - MCP-SG-selection: entry point and bridge changes select the startup gate through imports (issue #565)
+ok 2 - MCP-SG: the baton-mcp-web startup sequence completes on this tree — parity, capability coverage, name closure, and the core tool table projection (issue #565)
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3336.136333
+# tests 2
+# pass 2
+# fail 0
+# file test/issue567-cli-closed-set-usage.test.mjs (2717 ms)
+ok 1 - 567: swarm usage and help name every closed-set option value from the command schema
+ok 2 - 567: open option values and switches retain their usage syntax
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 111.889417
+# tests 2
+# pass 2
+# fail 0
+# file test/surface-capability-catalog.test.mjs (2519 ms)
+ok 1 - all operator-facing system categories are reachable on CLI and MCP
+ok 2 - the catalog preserves application, live MCP-native, CLI-native and embedded-only bodies
+ok 3 - action-dispatched operations use the existing run.do authority and require action coordinates
+ok 4 - direct and generic reachability reflect existing live transports rather than declarations alone
+ok 5 - canonical names outrank compatibility aliases and preserve each live command identity
+ok 6 - every served combined tool resolves to a catalog identity with an honest mode
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 86.113625
+# tests 6
+# pass 6
+# fail 0
+# file test/doc-truth-conformance-red.test.mjs (11598 ms)
+ok 1 - R1 (run-watch-documented-but-unparsed): run.watch is served AND its example compiles to the run.watch command on two fixtures
+ok 2 - R2 (web-bus-inventory-undercount): web.bus inventory equals the card AND derives from the D1 admission accessor
+ok 3 - R3 (answer-schema-advertises-decision): a renamed/refused answer form is refused with invalid_arguments on both consumers
+ok 4 - R4 (run-watch-silent-reinterpretation): run watch RUN_ID → run.watch on two fixtures; bare run watch refuses value-required
+ok 5 - R5 (cli-example-shape-leg-red): every served row compiles its Example AND taught Verb, and the served set is honest
+ok 6 - R6 (cli-run-steer-prose-live): CLI.md teaches no run steer command (any spelling)
+ok 7 - R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted or ledgered, and ledger rows are full shape
+ok 8 - R8 (initialize-context-briefing-unmet): the initialize briefing names no non-MCP command
+ok 9 - R9 (fleet-run-answer-accepts-decision): the answer schema is decision-free AND the guard covers fleet_run_answer
+ok 10 - R10 (mcp-wave-examples-omit-repoId): Orchestrate-a-wave examples are fenced json blocks naming real tools with executable shapes
+ok 11 - R11 (artifact-counts-stale): committed artifact counts match the admission and the parser dispatch
+ok 12 - P-CS1-b: node impl/scripts/surface-conformance.mjs has an executable main that is green
+ok 13 - P-CS4: the checked inventory artifact regenerates deterministically and checks clean
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7053.419209
+# tests 13
+# pass 13
+# fail 0
+baton suite verdict (SUBSET 6 of 730 files): RED — 111 passed, 0 expected red (0 code, 0 environment-red), 0 of this run’s red rows cancelled by a dangling await earlier in their file, 1 unexpected failure(s), 0 stale expectation(s), 0 hung
+  baton suite environment: codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; codex/gpt-6-astra declared — `~/.codex/auth.json` present; kimi-code/kimi-code/k3 declared — kimi credential files present with a ready authentication state; grok/grok-4.5 declared — `~/.grok/auth.json` present with a ready authentication state; claude-code:claude/claude-opus-4-6 declared — bounded version + auth status probes; muse/muse-spark-1.3-contributor declared — a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`); omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/deepseek/deepseek-v4-pro[1m] ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/zai/glm-5.3-flash ABSENT — repository glm_key.json (omp_agent_unconfigured); omp/kimi-code/k3 ABSENT — repository kimi_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3-flash ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/deepseek-v4-pro ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/kimi-k3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); claude-code:kimi/kimi-k3[1m] declared — the private kimi-through-claude credential present
+  unexpected failure: test/harvest-accessor-red.test.mjs :: H1-tools (stage: tools absent): the two ordinary tools register with closed schemas, _meta digests, and honest annotations — measured combined total (109 + the #314 seed leg, #555)
+baton suite verdict note: SUBSET verdict (6 of 730 files) — not the canonical-suite acceptance.

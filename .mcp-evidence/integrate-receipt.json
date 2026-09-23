@@ -1,0 +1,12 @@
+{
+  "ok": false,
+  "error": {
+    "message": "Contribution contribution-50325df8c865cb8ff998d17204d512c8 is unreviewed: land only work that carries an unrevoked accept review",
+    "code": "integrate_contribution_not_accepted",
+    "detail": {
+      "contributionId": "contribution-50325df8c865cb8ff998d17204d512c8",
+      "reviewState": "unreviewed",
+      "rule": "unrevoked-accept"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+✔ S-G2/S-I6: every committed row carries a classifiable reason, and the manifest is canonical (24.559167ms)
+✔ S-C1: every committed credential row names the registry route it depends on (#417) (0.520291ms)
+✔ S-N1: the swarm slice is represented in the manifest, with tracked reasons (1.013917ms)
+✔ S-G3: every -red file is either a live red spec or a declared converged one (3.523792ms)
+✔ S-G3: the convention is written down — what -red means and when it is removed (1.396375ms)
+✔ S-G2/S-I6: the runner reads the reasoned manifest and writes only rows that carry a reason (1.510583ms)
+✔ R-1: the verdict line and the verdict JSON carry the environment this run observed (4061.941291ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4439.271917

@@ -1,0 +1,630 @@
+baton suite calibration: {"baselineBasis":"unrecorded","baselineProbeMs":null,"cores":10,"factor":1,"load":{"fifteen":61.72216796875,"five":49.2109375,"one":22.7509765625},"measuredAt":"2026-09-23T15:14:13.849Z","probeMs":2.2158749999999827,"schemaVersion":1}
+surface-gate: mcp-dispatch: 3 tool(s) are host-local and not advertised over the resident bridge: baton_scratchpad_elevate, baton_scratchpad_settle, baton_knowledge_settlement_lease
+baton test runner: plan — 19 file(s) in the whole suite: 19 in the parallel lane (x1), 0 in the serial lane; progress deadline 600000 ms per file
+baton test runner: proceeding WITHOUT a host verify lease (memory: 4124868608 bytes observed, 15461882262 required) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend
+# file test/bridge-idempotency-344.test.mjs (1075 ms)
+ok 1 - 344: keyed bridge verbs derive over every argument axis
+ok 2 - 344: read-only web envelopes admit without an idempotencyKey
+ok 3 - 344: identical keyless reads replay, differing keyless reads stay fresh
+ok 4 - 344: board and scratchpad reads are resident reads
+ok 5 - 344: bound keys derive over every argument axis
+ok 6 - 344: read tools carry no idempotencyKey
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 131.655166
+# tests 6
+# pass 6
+# fail 0
+# file test/canonical-naming-233-red.test.mjs (1176 ms)
+ok 1 - ADMISSION: deployment.doctor is admitted on the web lane — not refused as unknown
+ok 2 - ADMISSION: waves.run and waves_run BOTH admit on the web lane
+ok 3 - CLOSED SET: web-admitted command names equal exactly the ONE derivation
+ok 4 - CLOSED SET: MCP application dispatch names equal exactly the ONE derivation
+# tests 4
+# suites 0
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 32.946584
+# tests 4
+# pass 4
+# fail 0
+# file test/cli-silent-start-red.test.mjs (2410 ms)
+ok 1 - PT-1 pin [objective-first] — the objective-first start form compiles byte-identically to the phase68 pin
+ok 2 - PT-2a capability [pinned-typo-refusals] — transposition typos refuse cli_command_unavailable with suggestion + run start escape (Damerau, not Levenshtein)
+ok 3 - PT-2b capability [refused-position-typos] — distance-1 typos of the refused-only positions refuse with the dead verb's existing text
+ok 4 - PT-2c capability [generated-damerau1-sweep] — every generated distance-1 variant refuses (exactly-one) or falls through (zero/two-or-more)
+ok 5 - PT-3 pin [never-a-guess] — a token distance-1 from zero or two-or-more recognized first-tokens starts objective-first
+ok 6 - PT-4 capability [derivation-symbol-source-scan] — the recognition set is computed from the single named derivation symbol (a–e)
+ok 7 - PT-5 capability [member-prefix] — bare and unknown-sub run member refuse with the subverb teaching message
+ok 8 - PT-6 pin [exit-code-bucket-2] — cli_command_unavailable maps to exit 2; a genuine run.start parse still succeeds
+ok 9 - PT-7 pin [canonical-aliases-unchanged] — canonical aliases resolve to HEAD and every recognized first-token still dispatches, never run.start
+ok 10 - PT-8 pin [parse-time-pre-connection] — the refusal is a parse-time decision, structurally before any connection discovery
+ok 11 - PT-9 pin [refused-positions-unchanged] — run follow and run steer keep refusing with their existing cli_command_unavailable messages
+ok 12 - PT-10 pin [surface-docs-conformance] — the generated CLI inventory conformance gate is unchanged
+# tests 12
+# suites 0
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1309.337334
+# tests 12
+# pass 12
+# fail 0
+# file test/cli-wave-fidelity-red.test.mjs (10136 ms)
+ok 1 - A7-1 (parse): `baton waves send run:foo --message hi` parses to { command: 'waves.send', args: { runId, message: 'hi' } }
+ok 2 - A7-2 (parse): `baton waves send ... --now` carries args.delivery 'now'; two delivery flags refuse cli_action_inputs_invalid
+ok 3 - A7-3 (parse): `baton waves stop run:foo --reason done` parses to { command: 'waves.stop', args: { runId, reason } }; a missing --reason refuses cli_action_inputs_invalid
+ok 4 - A7-4 (admit): CLI_WEB_COMMANDS contains waves.send AND waves.stop
+ok 5 - A7-5 (doc): render-surface-docs.mjs --check passes AND the committed CLI.md cli-verb-inventory region contains both ghost rows
+ok 6 - A7-6 (D3 closed-set): every waves.* cli-claiming op is admitted, parses to { name: <key> }, and is documented — the ghost-prevention pin
+ok 7 - A7-7 (dispatch leg): parsed send/stop map to waves_send/waves_stop ∈ WAVE_WEB_ENTRIES and the full parse → dispatch → transport round-trip reaches sendWaveMember/stopWaveMember
+ok 8 - A7-8 (D2): an interpreter-wave member renders phase/progressClass/attentionCount identical to a driver-wave member driven to the same state
+ok 9 - B-1 PIN (A2-4 F6/F13): a legacy string-array roster survives a store close/reopen replay and renders the pinned no-run read
+ok 10 - B-2 PIN (A2-5): a malformed NEW-shape roster is refused typed BEFORE the durable append (#290)
+ok 11 - B-3 PIN (A5-1): `baton waves list` parses to waves.list
+ok 12 - B-4 PIN (A5-2): `baton waves progress WAVE_ID` parses to waves.progress
+ok 13 - B-5 PIN (A5-3): singular `wave` refuses cli_command_unavailable with the plural corrective naming the RIGHT verb
+ok 14 - B-6 PIN (A5-4): a bare `baton waves attach` issues waves.list — never the wave-ID-invalid refusal
+ok 15 - B-7 PIN (A5-5 F11): the issued bare-attach shape runs the full parse→dispatch→render pipeline and surfaces the attachable set
+ok 16 - B-8 PIN (A6-6 F4): `baton waves start --members JSON` drives an admission-exceeding objective through the full CLI pipeline — typed wave_member_invalid
+# tests 16
+# suites 0
+# pass 16
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 9245.405833
+# tests 16
+# pass 16
+# fail 0
+# file test/doc-truth-conformance-red.test.mjs (2738 ms)
+ok 1 - R1 (run-watch-documented-but-unparsed): run.watch is served AND its example compiles to the run.watch command on two fixtures
+ok 2 - R2 (web-bus-inventory-undercount): web.bus inventory equals the card AND derives from the D1 admission accessor
+ok 3 - R3 (answer-schema-advertises-decision): a renamed/refused answer form is refused with invalid_arguments on both consumers
+ok 4 - R4 (run-watch-silent-reinterpretation): run watch RUN_ID → run.watch on two fixtures; bare run watch refuses value-required
+ok 5 - R5 (cli-example-shape-leg-red): every served row compiles its Example AND taught Verb, and the served set is honest
+ok 6 - R6 (cli-run-steer-prose-live): CLI.md teaches no run steer command (any spelling)
+ok 7 - R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted or ledgered, and ledger rows are full shape
+ok 8 - R8 (initialize-context-briefing-unmet): the initialize briefing names no non-MCP command
+ok 9 - R9 (fleet-run-answer-accepts-decision): the answer schema is decision-free AND the guard covers fleet_run_answer
+ok 10 - R10 (mcp-wave-examples-omit-repoId): Orchestrate-a-wave examples are fenced json blocks naming real tools with executable shapes
+ok 11 - R11 (artifact-counts-stale): committed artifact counts match the admission and the parser dispatch
+ok 12 - P-CS1-b: node impl/scripts/surface-conformance.mjs has an executable main that is green
+ok 13 - P-CS4: the checked inventory artifact regenerates deterministically and checks clean
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1666.321458
+# tests 13
+# pass 13
+# fail 0
+# file test/frame-economics-red.test.mjs (13503 ms)
+ok 1 - A1: limits.mjs exports one deep-frozen FRAME_LIMITS plus VERSION and DIGEST
+ok 2 - A2: every admission lane is cataloged with value, unit, graceful class, and refusal code
+ok 3 - A3: the substrate guards are declared — and only spill.body mints a refusal
+ok 4 - A4: the view class is declared with shed-flagged graceful degradation
+ok 5 - A5: FRAME_LIMITS_DIGEST is canonical-derivation stable and byte-stable across processes
+ok 6 - A6: board.report.body is cataloged as a live admission row at the LIVE 4,096 store value (v1.2, blue-team blocker 1)
+ok 7 - B1 (GOLDEN, graceful class): a send beyond the spill ceiling draws the spill_body_exceeded coaching refusal
+ok 8 - B2: a reply beyond the spill ceiling lands message.rejected {spill_body_exceeded, cap, actual, unit, gracefulPath} on the worker stream
+ok 9 - B3: a run objective beyond the spill ceiling draws the typed spill_body_exceeded application error
+ok 10 - B4 (GOLDEN, hard class): an oversize decision question gains the coaching ValidationError
+ok 11 - B5: the store's reuse-need ceiling carries the coaching shape (registry ceiling-of-ceilings)
+ok 12 - B6: the store's reuse-rationale ceiling carries the coaching shape at 8,192
+ok 13 - B7: the orientation push note ceiling carries the coaching shape
+ok 14 - B8: the steering-policy focus ceiling carries the coaching shape at injection
+ok 15 - B9: the live board-title store bound carries the coaching shape at 160
+ok 16 - B10: the live board-detail store bound carries the coaching shape at 4,096
+ok 17 - B11: the decision option-label ceiling carries the coaching shape at 160
+ok 18 - B12: the decision option-summary ceiling carries the coaching shape at 512
+ok 19 - B13: the decision answer-text ceiling carries the coaching shape at 4,096
+ok 20 - B14: the scratchpad entry canonical ceiling gains the coaching shape (numberless today)
+ok 21 - B15: the live board-report body store bound carries the coaching shape at 4,096 (v1.2, blue-team blocker 1)
+ok 22 - B16: the legacy-alias send door carries the coaching shape at its LIVE 16,384 (v1.2, blue-team blocker 2)
+ok 23 - C1: the store mints digest-addressed spills and materializes them byte-identically
+ok 24 - C2: spill mints are idempotent by key and content-addressed across keys
+ok 25 - C3: an oversize send is ADMITTED with spill — receipts carry head + digest citation
+ok 26 - C4 (blocker 4): the provider-bound frame for a spilled send carries EXACTLY head + citation
+ok 27 - C5 (blocker 4): the worker resolves the spill through the closed read-port kind
+ok 28 - C6 (parity + blocker 11): an oversize reply spills like a send; the amended envelope adds ONLY the citation keys
+ok 29 - C7: a large run objective is admitted whole — no spill, no citation; run views carry it verbatim
+ok 30 - C8 (OQ5): the wave driver downgrades its precheck to a spill-aware ADVISORY and passes the objective through
+ok 31 - C9 (blocker 3): a body beyond the 1 MiB spill ceiling is NOT admitted and mints NO spill
+ok 32 - C10 (v1.2, blue-team blocker 4): a MULTIBYTE wave member above the old 4 KiB head cap is admitted WHOLE through the REAL wave-start admission — never walled, never spilled (#358)
+ok 33 - D1 (the split): an oversize DECISION_REQUEST question PARSES shape-only — it is never scanner-null
+ok 34 - D2 (pin): a large-but-parseable SCRATCHPAD_WRITE frame is admitted shape-only
+ok 35 - D3 (pin): a large-but-parseable CONTEXT_READ frame is admitted shape-only
+ok 36 - D4 (pin): a large-but-parseable BOARD_CLAIM frame is admitted shape-only
+ok 37 - D5 (pin): a BOARD_REPORT body over the LIVE 4,096 admission bound is still admitted shape-only at the wire
+ok 38 - D6 (pin): the scan windows stay substrate resource guards — over-window frames are prose for all six grammars
+ok 39 - D7: all six scanner doc comments carry the shape-only law sentence (Decision 5's named edit)
+ok 40 - D8 (the split, seam half): the oversize question reaches admission and draws the COACHING refusal
+ok 41 - E1: doctorReadiness() carries the frozen limits projection with version, digest, and lanes
+ok 42 - E2: card() publishes agentExperience.limitsRegistryDigest beside registryDigest
+ok 43 - E3 (blocker 5): a reuseDecisionPolicy override leaves the published digest byte-identical — the override rides effective
+ok 44 - E4 (OQ4): a deployment override ABOVE the registry ceiling refuses at injection — never a silent min()
+ok 45 - E5: the connection handshake verifies limitsRegistryDigest exactly like the semantic registry digest
+ok 46 - E6: the doctor projection covers every registry lane with the closed row shape
+ok 47 - F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs
+ok 48 - F2 (pin): the store's deliberate-local field caps stay plain shape refusals
+ok 49 - F3 (pin): context_pack.body keeps its exact substrate refusal — value unchanged, only imported
+ok 50 - G1 (OQ2): attention text capped inside the read-port renderer carries the [truncated] marker
+# tests 50
+# suites 0
+# pass 50
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 12254.243584
+# tests 50
+# pass 50
+# fail 0
+# file test/grammar-m4b-red.test.mjs (1131 ms)
+ok 1 - M4B-1: a canonical Web transport admits beside legacy, reaches one operation, spelling-true
+ok 2 - M4B-2: a reconcilable envelope parked under a legacy name reconciles identically post-flip
+ok 3 - M4B-3: a canonical MCP tool executes beside the legacy tool, reaching one operation
+ok 4 - M4B-4: the C8 canonical serialization order holds and a scrambled emitter is caught
+ok 5 - M4B-5: the generated CLI.md and MCP.md inventory blocks match the committed docs
+ok 6 - M4B-6: the ledger is empty of mcp/web name rows and monotone; canonical names are present
+ok 7 - M4B-7: the kernel and authoring surface tables are byte-unchanged (C9 stays green)
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 244.748875
+# tests 7
+# pass 7
+# fail 0
+# file test/issue150-coaching-passthrough.test.mjs (709 ms)
+ok 1 - 150-CP1: validation-path coaching refusal carries cap, actual, unit, gracefulPath on the MCP wire
+ok 2 - 150-CP2: at-cap message is admitted, cap+1 refuses with the coaching triple
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 89.507584
+# tests 2
+# pass 2
+# fail 0
+# file test/issue499-schema-counts.test.mjs (297 ms)
+ok 1 - 499-M1: each schema file carries exactly one surviving bare 64 (the triaged entryIds batch)
+ok 2 - 499-M2: the workflow team ceiling reads the registry row
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 25.450792
+# tests 2
+# pass 2
+# fail 0
+# file test/mcp-packaging-red.test.mjs (22547 ms)
+ok 1 - MP1: baton_waves_start registers, debits quota PER MEMBER, and returns the detached shape
+ok 2 - MP2: baton_waves_start maps the profile refusal to the typed error (real admission pinned E2E in MP18)
+ok 3 - MP3: baton_waves_progress paginates with cursors and never exceeds the frame
+ok 4 - MP4: baton_waves_stop dispatches with runId validation and the destructive annotation
+ok 5 - MP5: decision.answer enforces the repository coordinate and returns already_resolved distinctly
+ok 6 - MP6: waves.attach over MCP returns runIds that accept waves.send/stop (resume-steer), with harvestReplayed on re-attach
+ok 7 - MP7: the four settlement tools register on MCP and promote requires the sessionAuthority envelope
+ok 8 - MP8: a REPLAYED admission with a foreign session refuses the session code (session gate precedes replay)
+ok 9 - MP9: knowledge_settlement_lease requires the settlement capability on the principal
+ok 10 - MP10: baton_deployment_doctor is quota-free, fresh per call, and carries zero secret material
+ok 11 - MP10b: a non-record doctor readiness refuses typed deployment_readiness_invalid — never a verbatim pass-through
+ok 12 - MP11: baton-mcp accepts a declarative JSON descriptor (closed shape, containment-checked credential refs)
+ok 13 - MP20: containment is judged at the real location — a symlinked repo root admits an unwritten credential; an escaping directory link refuses a dangling ref
+ok 14 - MP12: the descriptor drives the server factory, pinned and frozen at open
+ok 15 - MP13: an env credential ref's VALUE never appears in tool responses or logs (codex #4)
+ok 16 - MP14: package.json carries the files allowlist + exports map, and the pack list excludes credentials/evidence/.baton
+ok 17 - MP15: npm pack → clean install → descriptor-driven stdio handshake (the install smoke)
+ok 18 - MP16: the stdio/bin paths never eagerly import the native Atlas stack (lazy natives pin)
+ok 19 - MP17: MCP.md's quickstart descriptor parses and validates against the closed schema
+ok 20 - MP19: every MCP.md repoId example is the served value (the descriptor's repo, verbatim)
+ok 21 - MP18: an external process orchestrates a wave purely through stdio MCP (start → progress → decision → attach → harvest)
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 21820.932458
+# tests 21
+# pass 21
+# fail 0
+# file test/mcp-profile-parity-red.test.mjs (2061 ms)
+ok 1 - RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are exported (stage: served-set export)
+ok 2 - RG-02 RED: application tools/list is the served ordinary table and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)
+ok 3 - RG-03 RE-DERIVED (#566): the D3 parity derivation reports no uncovered web-bus command (stage: uncovered-set-empty)
+ok 4 - RG-04 RE-DERIVED (#566): fleet_run_resume_work and fleet_run_retry_verification are served on combined and bound on the dispatch map (stage: combined-includes-fleet-resume-retry)
+ok 5 - RG-05 RE-DERIVED (#566): every uncovered bus command is bound by its canonical spelling in the dispatch map (stage: dispatch-binds-siblings)
+ok 6 - RG-06 RE-DERIVED (#566): the #233 canonical dot twins byte-inherit their legacy source’s wire schema and carry the spelling note (stage: sibling-schema-inherits-source)
+ok 7 - RG-07 RED: the wait/follow sibling list admits the siblings and invalid_run_wait bounds (stage: wait-follow-lists-admit-siblings)
+ok 8 - RG-08 RED: fleet_run_resume_work/_retry_verification dispatch, typed refusal, idempotencyKey required, replay reconciles (stage: fleet-resume-retry-dispatch)
+ok 9 - RG-09 RE-DERIVED (#566): combined tools/list is the served combined table over the restored composition (stage: combined-102-includes-siblings)
+ok 10 - RG-10a RE-DERIVED (#566): the 5 non-canonical ops carry no mcp.baton alias row — their spelling is the fleet transport (stage: alias-rows-registered)
+ok 11 - RG-10b RE-DERIVED (#566): no minted baton_run_* sibling of the 5 ops is advertised on the combined surface (stage: mint-not-advertised)
+ok 12 - RG-10c RE-DERIVED (#566): the 5 non-canonical ops derive to their fleet tools end-to-end through the registry (stage: non-canonical-ops-render-operation-keys)
+ok 13 - RG-11-R RE-FOLDED (#314/#555): the artifact encodes the conformance derivation counts - the core application projection and the live combined surface (stage: artifact-counts-49-102)
+ok 14 - RG-P1 PIN: surface-conformance.mjs executable main is green (stage: conformance-main-green)
+ok 15 - RG-P2 PIN: committed artifact mcp.application count equals the live application surface (stage: artifact-application-count-pin)
+ok 16 - RG-P3 PIN: committed artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)
+ok 17 - RG-P4 PIN: phase16 application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)
+ok 18 - RG-P5 PIN: mcp-reflex application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)
+ok 19 - RG-P6 PIN: phase67 application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)
+ok 20 - RG-P7 PIN: phase72 application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)
+ok 21 - RG-P8 PIN: phase16 combined-count pin equals combinedMcpToolNames().length (stage: phase16-combined-count-pin)
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1147.671167
+# tests 21
+# pass 21
+# fail 0
+# file test/mcp-refusals-named.test.mjs (1202 ms)
+ok 1 - an unknown argument field is named by the refusal, not left as a bare code
+ok 2 - a missing required argument is named by the refusal
+ok 3 - the repo and idempotency-key refusals name their field and rule
+ok 4 - a command-contract refusal (invalid_run_command) states the rule instead of a bare code
+ok 5 - non-object arguments refuse invalid_arguments with a rule message
+ok 6 - the answer-shape guard names the answer field and the one-of rule
+ok 7 - a fenced tool refusal names expectedFence
+ok 8 - a capability shortfall composes the required/held/missing sentence, not a bare forbidden
+ok 9 - a repo the deployment does not serve refuses repo_not_served naming the served repoId
+ok 10 - a principal not scoped to a served repo refuses repo_not_served with the scoping sentence
+ok 11 - an unknown tool name answers with the nearest advertised tool and the full tool set
+ok 12 - a near-miss tool name resolves its transposition to the real tool
+ok 13 - malformed tools/call frames keep the bare protocol refusal
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 296.799167
+# tests 13
+# pass 13
+# fail 0
+# file test/mcp-web-startup-gate.test.mjs (1993 ms)
+ok 1 - MCP-SG-selection: entry point and bridge changes select the startup gate through imports (issue #565)
+ok 2 - MCP-SG: the baton-mcp-web startup sequence completes on this tree — parity, capability coverage, name closure, and the core tool table projection (issue #565)
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1075.422667
+# tests 2
+# pass 2
+# fail 0
+# file test/phase72-kimi-orchestrator-mcp.test.mjs (2644 ms, exit 1)
+ok 1 - KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session
+ok 2 - KC6: Web MCP rejects every local identity and lifetime override
+ok 3 - KC6: an observe-only remote session refuses mutation locally before any Web command
+ok 4 - KC6/KC7: independent bridges sharing one remote session derive one stable mutation key
+  ok - identity drift
+  ok - capability drift
+  ok - repository drift
+  ok - expiry drift
+ok 5 - KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed
+  ok - missing sessionId
+  ok - malformed capabilities
+  ok - wrong repository
+  ok - expired
+ok 6 - KC6: malformed and expired authenticated session documents are refused without credential disclosure
+ok 7 - KC8: remote Web credentials are not serialized through facade or MCP state
+not ok 8 - KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web
+  ---
+  location: 'test/phase72-kimi-orchestrator-mcp.test.mjs:281:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    ... Skipped lines
+    
+      [
+        'baton_help',
+        'baton_runs',
+        'baton_run_start',
+        'baton_run_inspect',
+    ...
+        'baton_decision_answer',
+    -   'baton_scratchpad_elevate',
+    -   'baton_scratchpad_settle',
+    -   'baton_knowledge_promote',
+    -   'baton_knowledge_settlement_lease',
+        'baton_run_message_send',
+        'baton_run_message_receipt',
+        'baton_run_attention_watch',
+        'baton_run_scratchpad_read',
+        'baton_run_scratchpad_elevate',
+        'baton_run_scratchpad_append',
+        'baton_run_knowledge_seed',
+    -   'baton_run_resultpin',
+    -   'baton_waves_harvest',
+        'baton_swarm_list',
+        'baton_swarm_create',
+        'baton_swarm_view',
+        'baton_swarm_watch',
+        'baton_swarm_update',
+    
+  ...
+not ok 9 - KC6/KC7: semantic mutation replay is stable while mismatched identity and malformed outlines fail closed
+  ---
+  location: 'test/phase72-kimi-orchestrator-mcp.test.mjs:382:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Cannot read properties of undefined (reading 'idempotencyKey')
+  ...
+ok 10 - KC6/KC7: replay rechecks Web auth/card truth and refuses registry drift
+ok 11 - KC8: project Kimi MCP entry contains no credential and allowlists only semantic Run tools
+ok 12 - KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web listener with pure stdio
+# tests 20
+# suites 0
+# pass 18
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1647.909625
+# tests 20
+# pass 18
+# fail 2
+# file test/scratchpad-write-red.test.mjs (9401 ms, exit 1)
+ok 1 - A1-1 stage[cli-append-branch-missing]: baton run scratchpad append RUN --scope shared --kind note --body TEXT resolves to the closed append command
+not ok 2 - A1-2 stage[cli-append-json-shape-missing]: the non-note JSON body path parses into the closed per-kind shape (H2.3)
+  ---
+  location: 'test/scratchpad-write-red.test.mjs:535:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    stage[cli-append-json-shape-missing]: a malformed non-note body refuses cli_invalid naming the expected JSON shape (H2.3) — never a silent string
+  ...
+ok 3 - A2-1 stage[mcp-append-tool-missing]: baton_run_scratchpad_append is advertised — capabilities, mcpApplicationToolNames, and tools/list
+ok 4 - A2-2 stage[mcp-append-dispatch-branch-missing]: tools/call for a valid append dispatch is routed, never the absent-tool protocolError
+ok 5 - A2-3 stage[mcp-append-admission-missing]: TOOL_DEFINITIONS + ORDINARY_EXPLICIT_TOOLS + the _dispatch chain all reference the tool
+ok 6 - A3-1 stage[web-append-dispatch-missing]: a valid run_scratchpad_append envelope dispatches to a receipt, never `unsupported command`
+ok 7 - A3-2 stage[web-append-admission-missing]: the direct-port admission is the FOUR tables incl. WEB_DIRECT_PORT_COMMANDS (H2.1)
+not ok 8 - A4-1 stage[append-restrictor-missing]: a member append to a sibling worker:<other> partition refuses at the _authorize seam — no entry is minted
+  ---
+  location: 'test/scratchpad-write-red.test.mjs:692:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    stage[append-restrictor-missing]: the deployment must install an append restrictor whose policy references run.scratchpad.append in CODE (the D1 write law — comment-flip resistant); at HEAD no append restrictor exists, so a cross-partition append would resolve
+  ...
+not ok 9 - A4-2 stage[own-run-predicate-missing]: the restrictor ENFORCES the own-run predicate — a member append to shared/worker:<ownId> of a run other than its own refuses (H1.1)
+  ---
+  location: 'test/scratchpad-write-red.test.mjs:719:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    stage[own-run-predicate-missing]: the append restrictor must be constructed with a seat-resolver closure (the coordinator _getWorker binding) so the D1 own-run predicate is ENFORCED at the seam (H1.1 blocker-3 wiring — comment-flip resistant); at HEAD no append restrictor exists at the deployment seam at all
+  ...
+not ok 10 - A5-1 stage[review-authority-append-missing]: local-owner/service-* append to shared ONLY — never a member partition; the deployment installs the restrictor
+  ---
+  location: 'test/scratchpad-write-red.test.mjs:745:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    stage[review-authority-append-missing]: the deployment must install the append restrictor carrying law 3 — a STRICTER posture than the D1.2 read law; at HEAD no append restrictor exists, so the review authority's append posture is undefined (permissive)
+  ...
+ok 11 - A6-1 stage[append-candidacy-shortcut-missing]: the append verb lands as a direct EPHEMERAL write — it never mints a scratch-fact / KG candidacy (law 4)
+ok 12 - A7-1 stage[append-body-limit-missing]: a body over scratchpad.entry.body (8192 B for a steering-registered run) refuses scratchpad_entry_exceeded
+ok 13 - A7-2 stage[append-shared-cap-missing]: the 513th shared append refuses scratchpad_partition_exhausted
+ok 14 - A7-3 stage[append-worker-cap-missing]: the 129th worker:<ownId> append refuses scratchpad_partition_exhausted
+not ok 15 - A8-1 stage[append-replay-scope-missing]: exact retry replays idempotent; changed binding refuses scratchpad_write_conflict; a same-key different-scope retry lands DISTINCT (H3.1)
+  ---
+  location: 'test/scratchpad-write-red.test.mjs:882:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    stage[append-replay-scope-missing]: a same-key different-scope retry lands on a DISTINCT kernel binding (distinct entry) — the surface namespaces the key by scope before the kernel auth (H3.1); at HEAD the surface is absent, so the two-scope disambiguation cannot exist
+  ...
+not ok 16 - A9-1 stage[bare-scratchpad-teaching-missing]: bare `baton run scratchpad` refuses with the closed-set teaching read|elevate|append — never `unexpected argument undefined`
+  ---
+  location: 'test/scratchpad-write-red.test.mjs:933:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    stage[bare-scratchpad-teaching-missing]: bare `run scratchpad` must refuse with the closed-set teaching `run scratchpad requires a subcommand: read|elevate|append` (D4) — never `unexpected argument undefined` (application-cli.mjs:1511); at HEAD the throw is "unexpected argument undefined"
+  ...
+not ok 17 - A9-2 stage[unknown-subverb-teaching-missing]: an unknown subverb names the unknown AND restates the closed set (D4)
+  ---
+  location: 'test/scratchpad-write-red.test.mjs:941:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    stage[unknown-subverb-teaching-missing]: `run scratchpad bogus` must name bogus as unknown AND restate the closed set read|elevate|append (D4, surface-audit-cli.md §3 E-14); at HEAD the throw is "unexpected argument bogus"
+  ...
+not ok 18 - A10-1 stage[append-admission-incoherent]: the append verb is coherently admitted — parser + CLI_WEB_COMMANDS + web four-table + MCP + semantic registry, with no surface advertised-but-dead
+  ---
+  location: 'test/scratchpad-write-red.test.mjs:955:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    stage[append-admission-incoherent]: the verb is in CLI_WEB_COMMANDS (application-cli.mjs:16-32) — the CLI/web shared admission set (A10b)
+  ...
+ok 19 - P-A1 PIN: the read/elevate half of the parity table stays served — CLI parser + CLI_WEB_COMMANDS + MCP + registry all agree (the substrate the write completes)
+ok 20 - P-A4 PIN: the kernel _byKey replay binding has NO scope term — the two-scope namespacing is the SURFACE's job (H3.1), never a kernel-envelope amendment
+ok 21 - P-A5 PIN: the deployment seam no longer wires the permissive `authorize: async () => true,` literal — the read-law restrictor stays the shipped default
+ok 22 - P-A6 PIN: the _authorize seam stays structurally ordered — _authorize def before its typed refusal throw before the read verb's {scope} call — the seam the append verb mirrors
+ok 23 - P-A7 PIN: the kernel bounds sit at the declared constants — the surface exposes them verbatim, never new numbers
+# tests 23
+# suites 0
+# pass 15
+# fail 8
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8200.530583
+# tests 23
+# pass 15
+# fail 8
+# file test/swarm-mcp-dispatch.test.mjs (907 ms)
+ok 1 - every ordinary baton_swarm_* tool dispatches the swarm command it names
+ok 2 - every canonical swarm.* dot twin dispatches on the combined surface
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 112.872959
+# tests 2
+# pass 2
+# fail 0
+# file test/unified-cli-surface.test.mjs (728 ms)
+ok 1 - CLI surfaceInvoke preserves direct application commands and durable effect fate
+ok 2 - CLI generic invocation resolves exact canonical names before compatibility aliases
+ok 3 - existing bounded run.debug projection is live through the connected CLI
+ok 4 - CLI surfaceSnapshot combines monitoring and optional run/wave projections
+ok 5 - CLI surfaceWatch composes existing follow, attention, run and wave projections
+ok 6 - CLI surfaceWatch refuses an attention cursor rewind instead of reporting empty success
+ok 7 - CLI surfaceVisualize composes snapshot and visual model without a watch when follow is false
+ok 8 - CLI surfaceVisualize composes snapshot and watch projections when follow is true
+ok 9 - CLI surfaceVisualize refuses follow without a runId instead of inventing a global authority
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 51.280833
+# tests 9
+# pass 9
+# fail 0
+# file test/wave-observability-red.test.mjs (18380 ms)
+ok 1 - A1-1: waves_start round-trips the web envelope and the capability gate refuses a control-less principal
+ok 2 - A1-2: waves_progress round-trips the web envelope (observe gate)
+ok 3 - A1-3 F2: waves_send dispatches to a REAL runId — the undispatched member resolves the typed post-admission refusal (F2)
+ok 4 - A1-4 F2: waves_stop round-trips the web envelope to a REAL runId and admits ONLY {reason, runId} (F2)
+ok 5 - A1-5: waves_list round-trips the web envelope (observe gate)
+ok 6 - A1-6 F7: the application card advertises admitted wave commands in canonical spelling
+ok 7 - A1-7 PIN: the byte-stable APPLICATION_COMMAND_DEFINITIONS key set is the 10 swarm verbs + the FULL 26-key insertion-order set (F8)
+ok 8 - A2-1: wave.started carries the extended projection payload {deploymentId, idempotencyKey, roster: [{role, route, scope}], waveId} (D2.2/F1/F3)
+ok 9 - A2-2 PIN: a repeat start with the same idempotencyKey appends nothing (exactly-once)
+ok 10 - A2-3: waves.list reads the registry projection — open rows for THIS deployment
+ok 11 - A2-4 F6/F13: legacy-store replay — a string-array roster survives a store close/reopen replay and renders the pinned no-run member read
+ok 12 - A2-5: a malformed NEW-shape roster is refused typed BEFORE the durable append (#290)
+ok 13 - A2-6 OQ1: the close side pins a TOP-LEVEL wave.closed fold branch beside context.pack_minted (B1)
+ok 14 - A2-7 F9: attach is exactly-once — the facade start + attach keeps one wave.started record and one registry row
+ok 15 - A3-1: waves.list rows carry the exact registry shape and page ≤16 with {cursor, nextCursor}
+ok 16 - A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)
+ok 17 - A4-1: waves.list rows read local by construction — remote/stale are deferred vocabulary, never fabricated (B3)
+ok 18 - A4-2 PIN: processState only reads 'active' on an exact match — 'unknown' reads stale, never a guessed 'remote' (F4/F12)
+ok 19 - A5-1: baton waves list parses to waves.list (D4)
+ok 20 - A5-2: baton waves progress WAVE_ID parses to waves.progress (D4)
+ok 21 - A5-3: singular wave refuses cli_command_unavailable with the plural corrective naming the RIGHT verb (D4)
+ok 22 - A5-4: a bare baton waves attach issues waves.list — never the wave-ID-invalid refusal (F5)
+ok 23 - A5-5 F11: the issued bare-attach command runs the FULL CLI parse→dispatch→render pipeline and surfaces the attachable set
+ok 24 - A6-1 F3: the DIRECT-PORT waves.start refuses an admission-exceeding wave with wave_member_invalid naming {actual, cap, cause, role} (D5.1)
+ok 25 - A6-2 F4: the web surface refuses wave_member_invalid with the SAME detail shape as A6-1 and the byte-identical message
+ok 26 - A6-3 F4: the MCP surface refuses baton_waves_start with the SAME detail shape as A6-1 and the byte-identical message
+ok 27 - A6-4 F5: a registry row whose member run no longer resolves refuses wave_not_found — typed on the facade, MCP, and web surfaces (behavioral, never a source grep)
+ok 28 - A6-5 PIN: wave_registry_invalid stays a STORE-INTEGRITY throw — never an MCP per-command error (F8/F12)
+ok 29 - A6-6 F4: `baton waves start --members JSON` drives an admission-exceeding objective through the FULL CLI pipeline — typed body.error + non-zero exit
+ok 30 - A6-7 F10: the per-member runId envelope is validated on the negative path — application_wave_member_action_invalid typed on the facade and the web body
+# tests 30
+# suites 0
+# pass 30
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 17313.79575
+# tests 30
+# pass 30
+# fail 0
+# file test/workflow-surface-red.test.mjs (95100 ms, exit 1)
+ok 1 - FP-01-message (stage: ports absent): run.message.send/receipt dispatch; closed shapes refuse before state
+ok 2 - FP-01-attention (stage: port absent): run.attention.watch dispatches; shape closure is the facade's own code
+ok 3 - FP-01-scratchpad (stage: ports absent): run.scratchpad.read/elevate dispatch; closed scopes and entry shapes
+ok 4 - FP-01-board (stage: ports absent): run.board.post/read dispatch with closed board/item shapes
+ok 5 - FP-01-knowledge (stage: port absent): run.knowledge.seed dispatches; the Finding-scoped rule and Decision refusal live at validation
+ok 6 - FP-02 (stage: facade send absent): facade send mints and delivers identically to the embedded lane
+ok 7 - FP-03 (stage: facade send absent): unknown ≡ foreign at the policy seam; lane outcomes verbatim
+ok 8 - FP-04 (stage: facade receipt absent) THE IDENTITY ROW: facade == coordinator receipt at every transition
+ok 9 - FP-05 (stage: facade receipt absent): resolve-then-authorize — unknown ≡ foreign, the lane's null unreachable
+ok 10 - FP-06 (stage: facade watch absent): scope-first constancy — unknown ≡ out-of-scope, byte-identical to the lane
+ok 11 - FP-07 (stage: facade watch absent): candidacy_review discloses only to the review authority through the facade
+ok 12 - FP-08 (stage: facade watch absent): storm coalescing, terminal-at-mint, and byte-identical cursor chains through the facade
+ok 13 - FP-09-read (stage: facade read absent): bounded framed pages with verbatim fences and honest offset paging
+ok 14 - FP-09-budget (stage: facade read absent): the 256 KiB serialized page budget truncates with a digest citation
+ok 15 - FP-09-constancy (stage: facade read absent): unknown ≡ foreign at the policy seam; unknown runs serve honest empty pages
+ok 16 - FP-10-happy (stage: facade elevate absent): a steering-registered run settles with elevated ≥ 1, receipt verbatim
+ok 17 - FP-10-retry (stage: facade elevate absent): not-ready outcome; wrapper retry → empty (never idempotent); post-reap degrade
+ok 18 - FP-10-constancy (stage: facade elevate absent): unknown ≡ cross-run ≡ foreign; selection outside the partition is the lane's code
+ok 19 - FP-10-store-direct (GUARD, green today): the idempotent/conflict pair is a store-direct posture the wrapper never reaches
+ok 20 - FP-11-binding (stage: facade board absent): the binding law verbatim — one constant, decided before existence
+ok 21 - FP-11-adopt (stage: facade board absent): first post adopts/binds by the seam's rule; the binding lands durably
+ok 22 - FP-11-retry (stage: facade board absent): an exact retry replays idempotent with the DERIVED binding; a closed run refuses
+ok 23 - FP-11-race (stage: facade board absent): the facade passes an appendGate re-validating binding + run-open at append time
+ok 24 - FP-12 (stage: facade board absent): the read view is projectBoardView's exact output, fresh and non-evented
+ok 25 - FP-13-happy (stage: facade seed absent): content-addressed seeding inside the run's horizon with the idempotency law
+ok 26 - FP-13-codes (stage: facade seed absent): the TRUE evidence codes propagate byte-identically (blocker #3)
+not ok 27 - FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations
+  ---
+  location: 'test/workflow-surface-red.test.mjs:1427:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    the ordinary surface is exactly the landed 27 + the six + baton_waves_run (#114, contract-required) + baton_waves_list (#132, §4 drift) + baton_waves_compile (#170, DR-2(a) contract-required) + baton_run_scratchpad_append (#158, scratchpad-write append lane) — a stowaway tool greens nothing (blue-team D5)
+    
+    57 !== 37
+    
+  ...
+not ok 28 - FP-14-dispatch (stage: tools absent): each tool dispatches its facade command with the CONNECTION-derived principal
+  ---
+  location: 'test/workflow-surface-red.test.mjs:1460:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    MCP application facade does not match the served repository or command contract
+  ...
+ok 29 - FP-15 (stage: tools + wire mapping absent): every newly projected refusal reaches the wire AS ITSELF
+ok 30 - FP-19 (GUARD, green today): the settlement plane is byte-identical — the six new tools need no settlement class
+ok 31 - FP-16-parse (stage: verbs absent): the nine spellings parse to their command dispatches; bad sub-verbs are parse errors
+ok 32 - FP-16-registry (stage: rows absent): eight canonical operations with the pinned profiles, surfaces, capabilities, and names
+ok 33 - FP-16-conformance (GUARD, green today, MUST stay green): the docs/conformance mains enforce the regenerated inventories
+ok 34 - FP-17 (stage: validators absent): at-cap admitted, cap+1 refused naming cap AND actual
+ok 35 - WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFLOW ROW: the eight-step sequence through the facade ALONE
+ok 36 - WS-02 (stage: steps unserved today): the eight sequence steps resolve to served commands — boards facade-explicit
+ok 37 - FP-18 (mixed: guards + the accessor and pre-gate rows red today): the projection smuggles no semantics
+# tests 37
+# suites 0
+# pass 35
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 94048.029333
+# tests 37
+# pass 35
+# fail 2
+baton suite verdict (SUBSET 19 of 729 files): GREEN — 278 passed, 12 expected red (12 code, 0 environment-red), 0 of this run’s red rows cancelled by a dangling await earlier in their file, 0 unexpected failure(s), 0 stale expectation(s), 0 hung
+  baton suite environment: codex/gpt-5.6-sol declared — `~/.codex/auth.json` present; codex/gpt-6-astra declared — `~/.codex/auth.json` present; kimi-code/kimi-code/k3 declared — kimi credential files present with a ready authentication state; grok/grok-4.5 declared — `~/.grok/auth.json` present with a ready authentication state; claude-code:claude/claude-opus-4-6 declared — bounded version + auth status probes; muse/muse-spark-1.3-contributor declared — a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`); omp/deepseek/deepseek-flash ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/deepseek/deepseek-v4-pro[1m] ABSENT — repository deepseek_key.json (omp_agent_unconfigured); omp/zai/glm-5.3-flash ABSENT — repository glm_key.json (omp_agent_unconfigured); omp/kimi-code/k3 ABSENT — repository kimi_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/glm-5.3-flash ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/deepseek-v4-pro ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); omp/opencode-go/kimi-k3 ABSENT — repository opencode_go_key.json (omp_agent_unconfigured); claude-code:kimi/kimi-k3[1m] declared — the private kimi-through-claude credential present
+  expected red by reason class: issue=12
+baton suite verdict note: SUBSET verdict (19 of 729 files) — not the canonical-suite acceptance.

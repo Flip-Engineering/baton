@@ -1,0 +1,114 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Issues #566/#565/#567 revised carrier: restored contracts with catalog mode and admission verification",
+      "base": {
+        "observedHead": "1a1918203ec79d44ed74a23db18383de90ce501e",
+        "rebasedOnto": "e501507a6f174ae9ad0bd5e03e60820f965c4bf6"
+      },
+      "commit": {
+        "sha": "0d7c087c7e0c04d580bc161aca2acc8c02d898c6",
+        "branch": "baton/mcp6-566-restore"
+      },
+      "items": [
+        {
+          "id": "566-restore",
+          "status": "delivered",
+          "change": "Adopt the accepted restoration onto e501507a. Remove 39 verified pins including all 26 surviving #566 rows; CDW5 was already removed on master. Preserve MCP tool schemas, dispatch, refusal detail and registry composition.",
+          "files": [
+            "docs/reference/evidence/mcp-profile-parity-2026-08-13/mcp-profile-parity-contract.md",
+            "docs/reference/inventory/surface-parity-matrix.json",
+            "impl/scripts/expected-red-tests.json",
+            "impl/scripts/native-surface-capabilities.json",
+            "impl/scripts/surface-inventory-artifact.json",
+            "impl/scripts/surface-truth.mjs",
+            "impl/src/application-deployment.mjs",
+            "impl/src/application-semantics.mjs",
+            "impl/src/harvest-accessor.mjs",
+            "impl/src/limits.mjs",
+            "impl/src/mcp-northbound.mjs",
+            "impl/src/surface-capability-catalog.mjs",
+            "impl/src/web-northbound.mjs",
+            "impl/test/canonical-naming-233-red.test.mjs",
+            "impl/test/cli-silent-start-red.test.mjs",
+            "impl/test/cli-wave-fidelity-red.test.mjs",
+            "impl/test/doc-truth-conformance-red.test.mjs",
+            "impl/test/mcp-profile-parity-red.test.mjs",
+            "impl/test/wave-observability-red.test.mjs"
+          ],
+          "test": "From impl/: BATON_SUITE_TEST_CONCURRENCY=1 node scripts/run-suite.mjs test/bridge-idempotency-344.test.mjs test/canonical-naming-233-red.test.mjs test/cli-silent-start-red.test.mjs test/cli-wave-fidelity-red.test.mjs test/doc-truth-conformance-red.test.mjs test/frame-economics-red.test.mjs test/grammar-m4b-red.test.mjs test/issue150-coaching-passthrough.test.mjs test/issue499-schema-counts.test.mjs test/mcp-packaging-red.test.mjs test/mcp-profile-parity-red.test.mjs test/mcp-refusals-named.test.mjs test/mcp-web-startup-gate.test.mjs test/phase72-kimi-orchestrator-mcp.test.mjs test/scratchpad-write-red.test.mjs test/swarm-mcp-dispatch.test.mjs test/unified-cli-surface.test.mjs test/wave-observability-red.test.mjs test/workflow-surface-red.test.mjs",
+          "evidence": "Targeted runner exit 0: SUBSET 19 of 729 files, 278 pass, 12 existing expected red, 0 unexpected, 0 stale, 0 hung. All removed keys judged green."
+        },
+        {
+          "id": "565-startup-selection",
+          "status": "delivered",
+          "change": "Import the application entry point in the startup gate and pin import-graph selection for index.mjs and mcp-web-bridge.mjs plus script selection.",
+          "files": [
+            "impl/test/mcp-web-startup-gate.test.mjs"
+          ],
+          "test": "node --test impl/test/mcp-web-startup-gate.test.mjs",
+          "evidence": "Selection regression failed before import fix (fixture-path instead of imports); both tests pass after fix."
+        },
+        {
+          "id": "567-cli-values",
+          "status": "delivered",
+          "change": "Render every schema-enumerated swarm flag value in usage and help; update priority/projection expectations and pin enum/open/switch rendering.",
+          "files": [
+            "impl/src/swarm-surface.mjs",
+            "impl/test/issue273-guidance-runtime.test.mjs",
+            "impl/test/swarm-view-slices.test.mjs",
+            "impl/test/issue567-cli-closed-set-usage.test.mjs"
+          ],
+          "test": "node --test --test-concurrency=1 impl/test/issue567-cli-closed-set-usage.test.mjs impl/test/issue273-guidance-runtime.test.mjs impl/test/swarm-view-slices.test.mjs impl/test/issue431-swarm-argv-closed.test.mjs",
+          "evidence": "New enum usage test failed before fix; targeted batch 31/31 pass. surface-gate exit 0. Generated docs unchanged."
+        },
+        {
+          "id": "manifest-closure",
+          "status": "delivered",
+          "change": "Remove ten additional obsolete #156 keys whose tests were renamed by the restoration, declare all nine newly converged files, and regenerate the seam inventory. Total removed pins: 49.",
+          "files": [
+            "impl/scripts/expected-red-tests.json",
+            "impl/scripts/seam-inventory.json"
+          ],
+          "test": "node --test impl/test/suite-manifest-reasons.test.mjs; node --test --test-concurrency=1 impl/test/seam-inventory.test.mjs impl/test/seam-inventory-target-floor.test.mjs",
+          "evidence": "Manifest check 7/7 after reproducing missing-converged declaration; seam checks 10/10 after regenerating stale artifact. Parity file 21/21 in original 19-file batch and follow-up two-file runner. No #566 or #156 pins remain. One attempted runner command incorrectly prefixed files with impl/ and failed module resolution; corrected commands use test/ paths from impl/."
+        },
+        {
+          "id": "catalog-admission-composition",
+          "status": "delivered",
+          "change": "Derive ordinary tool query/effect modes from tool annotations, preserve live canonical identities over compatibility aliases, and exercise admission filtering with a retained tool spelling. Regenerate the parity matrix.",
+          "files": [
+            "impl/src/surface-capability-catalog.mjs",
+            "impl/test/surface-capability-catalog.test.mjs",
+            "impl/test/mcp-bridge-admission.test.mjs",
+            "docs/reference/inventory/surface-parity-matrix.json"
+          ],
+          "test": "From impl/: BATON_SUITE_TEST_CONCURRENCY=1 node scripts/run-suite.mjs test/mcp-bridge-admission.test.mjs test/surface-capability-catalog.test.mjs test/unified-cli-surface.test.mjs test/mcp-web-startup-gate.test.mjs test/mcp-profile-parity-red.test.mjs",
+          "evidence": "Final targeted runner exit 0: 53 pass, zero expected-red/unexpected/stale/hung. Before correction admission fixture failed on removed baton_run_status; catalog had two mismatched ownership/name assertions and added read-mode assertion reproduced baton_help effect instead of query. Earlier #314 core-table, core-surface, receipt/wake and reconnect files all passed (33 tests). surface-gate --write exit 0."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [
+          "node impl/scripts/surface-gate.mjs"
+        ],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "Supersedes contribution-941d024a529fc18c68a8d46270e4409c and contribution-e4e2fb353fb8aff8028710094b537417. Earlier restoration contributions 0722e093 and 09a02507 are also superseded.",
+        "No full npm test run: the operator expressly requires targeted files only on the memory-constrained host. Deployment verification remains a hub obligation.",
+        "Existing #289 Kimi bridge and #158/#87 workflow or scratchpad failures remain pinned and were classified by the targeted runner.",
+        "Resident still serves 65c913f0; publication requires the #573 SSH publish remote deployment.",
+        "Independent evidence workers mcp5-surface, mcp5-refusal and mcp5-reviewer resumed by delivered swarm.guide rows; no seats recruited.",
+        "mcp5-refusal independently measured all 26 #566 rows red at e501507a and green on restoration; evidence context seq159750. The two surviving #289 failures reproduce on both trees; context seq160338. The ten residual #156 keys were obsolete names, corrected here."
+      ],
+      "needsFromOthers": [
+        "mcp5-reviewer: independently review commit 0d7c087c7e0c04d580bc161aca2acc8c02d898c6 and settle this revised contribution; the two earlier carrier rows are superseded.",
+        "root: deploy the resident with the declared SSH publish remote; run the exact deployment verification after landing.",
+        "root: prior suite skipped-file verdict defect draft remains to be filed; gh issue read/write is unavailable in this seat because gh has no authentication."
+      ]
+    }
+  }
+}
