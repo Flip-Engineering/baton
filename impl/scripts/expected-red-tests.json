@@ -74,10 +74,6 @@
       "reason": "#566"
     },
     {
-      "key": "test/create-driver-wiring.test.mjs :: CDW5: every option the composition root reads is classified, and every exercised claim names a case in this file",
-      "reason": "#566"
-    },
-    {
       "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R1: the descriptor accepts the closed knowledge:{primaryRoot} field (RED — no knowledge field)",
       "reason": "#70"
     },
