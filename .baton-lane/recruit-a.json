@@ -1,0 +1,20 @@
+{
+ "permissions": [
+  "read",
+  "communicate",
+  "contribute",
+  "review"
+ ],
+ "mode": "change",
+ "options": {
+  "exact": {
+   "harness": "omp",
+   "model": "zai/glm-5.3-flash",
+   "effort": "max"
+  }
+ },
+ "participantId": "driver-lanes2",
+ "objective": "You inherit the driver-lanes lane from the dead seat driver-lanes, whose runtime was lost in the 2026-09-23 02:28:45Z host restart. Its work survives as four commits on branch baton/ws-e3ac091cdfb9b892f9552b23e75a130e, based on 11deb760; current origin/master is 65c913f0, ahead of that base.\n\n1. f059a0b8 (impl/src/adapter.mjs, impl/src/worktree.mjs): suite fixture commits state their committer identity, so the mock edit commit and the member capture commit no longer depend on host git config. This host has no git identity configured; without this commit the wave suites fail at the fixture commit.\n2. 8225009e (#175): the signalOnMembersDone direction is stated where an author reads it, in the wavefile contract bullet and the interpreter filter: roles is the WATCHED set whose terminality fires the signal, recipients are the complement. Pinned red-first by the W3-signal-complement row.\n3. a5659dbd (#216 drive-pump half): the pump reuses a settled member's terminal status read as a per-poll snapshot instead of one preserved-result resolve per poll per member. Pinned red-first by GB-2 (11 status-read resolutions at the base, 2 with the skip).\n4. afdeb43a (#106): the shipped driver policy carries the declarative lane field set onSpawn/onNotes/onDecision/onMemberRest with the interpreter's exact shapes, one receipted row per lane. Pinned red-first by D12-D15.\n\nThree complete contribution payloads are staged on this host at /tmp/contrib-175.json, /tmp/contrib-216.json and /tmp/contrib-106.json. Each is a full swarm.update argument: {\"event\":\"swarm.contribution_recorded\",\"payload\":{\"body\":{...}}}. The dead seat wrote them and never recorded them.\n\nTasks, in order:\n1. Bring the work onto your own worktree branch: git cherry-pick f059a0b8 8225009e a5659dbd afdeb43a (oldest first). If a pick conflicts, resolve it against that commit's own intent and say so.\n2. Re-verify each item on your tree with the targeted test files the payloads name, run from impl/: node --test test/workflow-as-data-red.test.mjs (its W3 row), node --test test/git-batch-216-red.test.mjs (GB-2), node --test test/wave-driver-policy-red.test.mjs (D12-D15), plus the adjacent suites test/wave-driver-red.test.mjs and test/worker-orchestrated-swarm-red.test.mjs. Targeted files only: never npm test or the full suite (16 GB host; issue #561 records the freeze that policy prevents).\n3. Publish the three contributions: cat /tmp/contrib-175.json | node \"$BATON_SWARM_CLIENT\" swarm.update - (the same for 216 and 106). Before each publish, correct the body to what is true on YOUR tree: base.observedHead = your observed head, base.rebasedOnto = the master sha you rebased onto, commit.sha and commit.branch = your own commit and branch, and files/test/evidence = what you actually ran and saw. Never publish a claim you have not just re-verified; where a number changed, say so in the item text.\n4. Publish a fourth contribution for f059a0b8 (the fixture-identity commit) with the same care; the three staged payloads do not cover it.\n5. Do NOT integrate and do NOT push. The lead wake-lead5 runs every landing, one at a time, because concurrent gate runs are the memory pattern that froze this host. Stop when the contributions are recorded.\n\nReport in each contribution: the issue id, status, the exact test command, and the observed counts. Record in carriedForward anything you could not verify.",
+ "resumeFrom": "driver-lanes",
+ "workId": "driver-lanes"
+}

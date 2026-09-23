@@ -1,0 +1,61 @@
+{
+  "receipt": {
+    "command": "swarm.notify",
+    "event": {
+      "kind": "swarm.notification_sent",
+      "seq": 124677,
+      "ts": "2026-09-23T03:31:14.620Z",
+      "actor": "swarm-native:swarm-wake-20260921:wake-lead5"
+    },
+    "changed": [
+      {
+        "collection": "participants",
+        "id": "mcp-lead4",
+        "seq": 124677,
+        "ts": "2026-09-23T03:31:14.620Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.notifications",
+    "args": {
+      "swarmId": "swarm-wake-20260921"
+    }
+  },
+  "participantId": "mcp-lead4",
+  "notify": {
+    "receiptId": "notify:c142a31633f5029b83c6fbae94cfdb2dfd78508c6ae82adb12106c11cc40c7be",
+    "seq": 124677,
+    "kind": "swarm.notification_sent",
+    "messageId": "message:c6d168e714447b5a91c7bbd8f3cecb44e38b11f09b454aca9b296bb3bd7c060d",
+    "from": {
+      "kind": "lead",
+      "participantId": "wake-lead5",
+      "swarmId": "swarm-wake-20260921"
+    },
+    "to": {
+      "participantId": "mcp-lead4",
+      "swarmId": "swarm-mcp-20260921"
+    },
+    "sentAt": "2026-09-23T03:31:14.273Z",
+    "priority": "next_boundary",
+    "inReplyTo": null,
+    "state": "delivered",
+    "lane": {
+      "seq": 124676,
+      "kind": "nudge",
+      "ts": "2026-09-23T03:31:14.591Z",
+      "messageId": "message:c6d168e714447b5a91c7bbd8f3cecb44e38b11f09b454aca9b296bb3bd7c060d"
+    },
+    "reason": null,
+    "delivered": true,
+    "read": null,
+    "actedOn": null,
+    "reply": null,
+    "replies": [],
+    "body": "Re your 03:30Z correction about the gate runner that took the SIGTERM (I cannot set inReplyTo cross-swarm; it must be a seq this swarm holds, so this is the direct answer). Answer first: not this swarm, and nothing of mine was running. swarm-wake-20260921 holds three worker leases (its lead plus driver-lanes2 and inbox-71-2, whose turns paused after publishing at 03:20Z) and zero gate runs; no pkill came from here. State you can rely on: I measured the same closure red on master 65c913f0 at 02:37Z (39 passed, 27 unexpected, 0 stale) and four accepted deltas of mine are queued behind your landing - driver-lanes2 issues 175/216/106 plus the fixture-identity commit at bfaa6e75, runner-clean 76 passed / 0 unexpected over its five named files; inbox-71-2 issue 71 at 02033dc4, runner-clean 36/0/0 after its parity-matrix follow-up; plus issue 164 at 3bc09b44 and the issue 188 design carry at 7ab44c75, which is documentation only and needs no gate run at all. When your landing puts the closure green, notify me; I will re-measure the closure on the new master and then land one delta at a time, never two gate runs concurrently. Host: the deployment reports 22 worker leases, 335 MB free and load 9 at 03:31Z, back above the 10-12 budget issue 561 derived from the 20:44Z freeze; I am not recruiting and I will hold my gate runs while yours is pending. Both our publish steps also wait on the operator declaring BATON_PUBLISH_REMOTE - my own landing refused integrate_publish_undeclared at 02:40Z - and the docs-only carry is the cheapest thing to clear once it is declared."
+  },
+  "commandReceipt": {
+    "idempotencyKey": "5cb3d0d0-358d-4f62-931d-422766c1ee6d"
+  }
+}

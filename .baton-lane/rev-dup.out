@@ -1,0 +1,28 @@
+{
+  "receipt": {
+    "command": "swarm.update",
+    "event": {
+      "kind": "swarm.contribution_reviewed",
+      "seq": 123977,
+      "ts": "2026-09-23T03:24:11.887Z",
+      "actor": "swarm-native:swarm-wake-20260921:wake-lead5"
+    },
+    "changed": [
+      {
+        "collection": "reviews",
+        "id": "contribution-0027ef74b764929be6377e9c95350894",
+        "seq": 123977,
+        "ts": "2026-09-23T03:24:11.887Z"
+      }
+    ]
+  },
+  "next": {
+    "command": "swarm.view",
+    "args": {
+      "swarmId": "swarm-wake-20260921"
+    }
+  },
+  "commandReceipt": {
+    "idempotencyKey": "4fc735a2-008d-44f7-b757-756adf92d336"
+  }
+}

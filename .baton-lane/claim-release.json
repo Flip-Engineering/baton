@@ -1,0 +1,8 @@
+{
+  "event": "swarm.claim_updated",
+  "payload": {
+    "claimId": "claim-sse-attach-issue-320",
+    "status": "released",
+    "reason": "holder sse-attach is left (codex provider crash 20:27Z); the claim is released by wake-lead5 so the issue-320 lane is not held by a gone seat"
+  }
+}

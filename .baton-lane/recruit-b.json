@@ -1,0 +1,20 @@
+{
+ "permissions": [
+  "read",
+  "communicate",
+  "contribute",
+  "review"
+ ],
+ "mode": "change",
+ "options": {
+  "exact": {
+   "harness": "omp",
+   "model": "zai/glm-5.3-flash",
+   "effort": "max"
+  }
+ },
+ "participantId": "inbox-71-2",
+ "objective": "You inherit the inbox-71 lane from the dead seat inbox-71, whose runtime was lost in the 2026-09-23 02:28:45Z host restart. The lane owns issue #71, the orchestrator attention inbox (wake-with-decisions instead of poll). Its contract is impl/test/orchestrator-wake-red.test.mjs: 30 pinned red rows. Its manifest rows live in impl/scripts/expected-red-tests.json.\n\nThe work survives as two commits on branch baton/ws-557c827d9492bd0b7116f194cc6d7d62, head 7929f363, based on 11deb760; current origin/master is 65c913f0, ahead of that base.\n- 121a1839 slice 1: attention.wait composes the coordination store's waitAfter with the orchestrator's attention page; 21 of the 30 pinned rows go green and their manifest rows leave the file (impl/src/application.mjs, impl/src/runtime-observation.mjs, impl/src/coordinator.mjs, impl/src/application-semantics.mjs, impl/src/runtime-admission.mjs, impl/scripts/expected-red-tests.json).\n- ec95e55d slice 2: the wake rides every surface - baton_attention_wait on MCP (impl/src/mcp-northbound.mjs), attention_wait on the web envelope with the tight ceiling (impl/src/web-northbound.mjs), baton run attention wait on the CLI (impl/src/application-cli.mjs); 7 more pinned rows go green and leave the manifest.\n\nTasks, in order:\n1. Bring the work onto your own worktree branch: git cherry-pick 121a1839 ec95e55d (oldest first). Resolve any conflict against those commits' intent.\n2. Run node --test test/orchestrator-wake-red.test.mjs from impl/ and enumerate exactly which pinned rows are still red. 28 of the 30 are expected green.\n3. Finish the remaining rows with the smallest correct change per row, red-first: run the row, read its named failure, fix, re-run. Never weaken, delete or re-pin a row to make it pass; if a row is wrong, say why in the contribution instead.\n4. Keep impl/scripts/expected-red-tests.json in the same commit as each row that leaves it, so the pin and its producer move together.\n5. Constraints: targeted test files only. Never npm test or the full suite (16 GB host; issue #561 records the freeze that policy prevents). If a targeted file hangs, record the hang and move on.\n6. Publish ONE contribution covering slices 1 and 2 plus what you finish, in the closed contract shape: subject, base{observedHead, rebasedOnto}, commit{sha, branch}, items[{id, status, change, files, test, evidence}], verification{targeted, gates, fullSuite, environmentRed}, carriedForward, needsFromOthers. Evidence is the counts you observed on your tree, never the predecessor's.\n7. Do NOT integrate and do NOT push. The lead wake-lead5 runs every landing, one at a time. Stop after publishing.\n8. carriedForward must record: #181 (member wake-on-signal) waits on #71 landing, and #188's ninth attention kind and failure_stall wake reason must land after #71's set so the pinned set and its producer move together.",
+ "resumeFrom": "inbox-71",
+ "workId": "issue-71"
+}

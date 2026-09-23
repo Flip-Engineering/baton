@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "error": {
+    "message": "Swarm bridge endpoint is unreachable",
+    "code": "swarm_bridge_unreachable",
+    "detail": {
+      "cause": "connect ECONNREFUSED 127.0.0.1:64516"
+    }
+  }
+}

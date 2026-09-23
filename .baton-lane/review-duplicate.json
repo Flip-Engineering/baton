@@ -1,0 +1,8 @@
+{
+  "event": "swarm.contribution_reviewed",
+  "payload": {
+    "contributionId": "contribution-0027ef74b764929be6377e9c95350894",
+    "decision": "comment",
+    "reason": "Duplicate, recorded by the same seat (wake-lead5) and NOT to be landed. The first publish attempt of this body returned no receipt in the client's rendering (a known crash on some envelopes) but did record; the seat re-published it as contribution-4e9dad30a7f92dcf419f152f612e2c64, which carries the same commit 7ab44c7570822fa82a332af1573d8caff5a6c6fa on wake-lead5-188-design-landing. contribution-4e9dad30 is the landing target (accepted by the author, dry run clean: squash 01023fa2, gates skipped no_affected_tests; the real landing is queued behind the undeclared publish remote). A second landing of this duplicate would produce the same squash and is not wanted."
+  }
+}

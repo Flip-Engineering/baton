@@ -1,0 +1,6 @@
+{
+  "type": "Constraint",
+  "grounding": "verified",
+  "body": "Every real landing in this deployment refuses integrate_publish_undeclared: the served resident declares no advanced.integration.publishRemote, so a landed squash has nowhere to publish. Measured by wake-lead5 at 2026-09-23T02:40:17Z in swarm-wake-20260921: the dry run of contribution-4e9dad30a7f92dcf419f152f612e2c64 prepared squash 01023fa2 (gates skipped, no affected tests, target master at 65c913f0) and the real landing refused with \"the deployment declares no shared remote for landings (advanced.integration.publishRemote), so master cannot be published\". Landings at 18:23:25Z and 19:15:11Z on master postdate #558's own landing at 18:12:41Z, so the declaration existed before the 02:28:45Z restart and is gone from the resident serving now. The shared remote is https://github.com/Flip-Engineering/baton.git. Work is not lost (contributions publish and branches are preserved), but nothing reaches master until the declaration returns.",
+  "evidence": "refusal text recorded by this seat; git ls-remote origin master = 65c913f0df143ec8d01f999047ca5cfdf6f03a51 at 02:41Z; commit dates add06976 18:12:41Z, 3ecdc83e 18:23:25Z, 65c913f0 19:15:11Z; dryRun squashSha 01023fa292021ae6b347c6b178cdb04d517a93dd"
+}
