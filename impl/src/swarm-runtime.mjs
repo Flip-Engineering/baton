@@ -3052,16 +3052,25 @@ export class SwarmRuntime {
     this._readRouteProbeLedger();
     const ledger = this._routeProbeLedger;
     if (ledger.probesByKey.size === 0) return;
-    const retired = rows === null ? null
-      : new Map(rows.map((row) => [routeProbeScopeKey(row.route), row]));
+    // #545-A keys the probe lane by its account SCOPE, so several published routes share one key —
+    // and they can disagree: a sibling that reads ready while the probed row still carries the
+    // episode. The episode belongs to the scope, so ONE row reporting it keeps it open. A map that
+    // kept the last row would let a healthy sibling clear an episode nothing has answered, and the
+    // clearing it minted would then stand as the evidence of a turn that never ran.
+    const degradedScopes = rows === null ? null : new Map();
+    if (rows !== null) {
+      for (const row of rows) {
+        const key = routeProbeScopeKey(row.route);
+        degradedScopes.set(key, (degradedScopes.get(key) ?? false) || row.degraded != null);
+      }
+    }
     for (const [probeKey, probe] of ledger.probesByKey) {
       if (ledger.recovered.has(probeKey)) continue;
       const answer = this._probeAnswer(probe);
       if (answer !== null) { this._recordRouteRecovered(probe, answer); continue; }
-      if (retired === null) continue;
-      const row = retired.get(routeProbeScopeKey(probe.route)) ?? null;
-      // Still degraded (or the route table does not answer for it): nothing has been settled.
-      if (row === null || row.degraded != null) continue;
+      if (degradedScopes === null) continue;
+      // Still degraded, or the route table does not answer for the scope at all: nothing settled.
+      if (degradedScopes.get(routeProbeScopeKey(probe.route)) !== false) continue;
       this._recordRouteRecovered(probe, { at: new Date().toISOString() });
     }
   }
@@ -7504,11 +7513,15 @@ export class SwarmRuntime {
 
   /** The landed contribution whose own receipt already covers any of `paths`, or null. Two paths
    * overlap the way the fold's claims do: equal, or one a `/`-boundary prefix of the other — so a
-   * receipt that lists `impl/src/` matches a conflict on `impl/src/x.mjs`. */
+   * receipt that lists `impl/src/` matches a conflict on `impl/src/x.mjs`. A receipt that records
+   * no commit for the target AFTER it is skipped: it moved no ref, so it names a change the target
+   * never received. The `targetHeadAfter` it holds decides that, never the `dryRun` claim beside
+   * it — the fold admits the two disagreeing. */
   _landedBy(swarm, paths) {
     const overlaps = (left, right) => left === right
       || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
     for (const row of Object.values(swarm.contributions ?? {})) {
+      if ((row?.integration?.targetHeadAfter ?? null) === null) continue;
       const landed = row?.integration?.changedPaths;
       if (!Array.isArray(landed)) continue;
       if (paths.some((path) => landed.some((other) => overlaps(path, other)))) return row.contributionId;

@@ -279,6 +279,13 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
         ['index.json', '778d58928e63d98d3a06c5264105abdae5a69ce95ba492371b5ad4abd3703763']]);
     assert.equal(sha(readFileSync(join(root, 'events.jsonl'))),
       '0baa9c18c598e1face7da42bf9e773a6d29588fdfa56f00322e383963d1927ea');
+    // Re-captured after the projection gained its surface: #66 (1e050e42) added the doubt review
+    // plane to PROJECTION_CHECKPOINT_FIELDS, so projectionShapeDigest and projectionDigest moved
+    // and the checkpoint's bytes with them. The other two digests on this line's neighbours are
+    // unchanged, which is what says the move is the projection's and not the write path's.
+    assert.equal(sha(readFileSync(join(root, 'projection.checkpoint'))),
+      'a3c561371c766feb32f4cde09a93ec7785df5047eadc070c366b2608fa1da7b6');
+
     const checkpointBytes = readFileSync(join(root, 'projection.checkpoint'));
     const { deserialize } = await import('node:v8');
     const envelope = deserialize(checkpointBytes);
