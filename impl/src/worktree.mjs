@@ -2193,10 +2193,11 @@ export const SNAPSHOT_COMMIT_EMAIL = 'baton-snapshot@localhost';
  *   configures them; omitted, the scratch checkout derives them from the repository (#451)
  * @param {(dir: string, files: string[], context: object) => Promise<{files: string[], verdictLine: string|null, unexpected: any[]}>} [request.runGates]
  * @param {string|null} [request.publishRemote] the deployment's DECLARED shared remote (a URL or
- *   path from `advanced.integration.publishRemote`): the landed ref is pushed to it after the
- *   fast-forward, naming the declared value itself, never a remote name. Null on a dry run or a
- *   deployment that declares none — a real landing without one refuses
- *   `integrate_publish_undeclared` before anything moves.
+ *   path from `advanced.integration.publishRemote`): a real landing with one fetches the
+ *   remote's target branch first and gates on that tip (#570), builds the squash on it, and
+ *   pushes the landed ref to it after the fast-forward, naming the declared value itself, never
+ *   a remote name. Null on a dry run or a deployment that declares none — a real landing
+ *   without one refuses `integrate_publish_undeclared` before anything moves.
  * @param {boolean} [request.dryRun]
  * @param {object} [request.log]
  * @param {(info: {dir: string, target: string}) => Promise<void>} [request.started] the caller's
@@ -2225,12 +2226,77 @@ export async function landContribution(repoRoot, request) {
   } catch {
     throw mergeError(`the target ${target} is not a local branch of this repository`, 'integrate_change_invalid');
   }
+  // Issue #558: `publishRemote` is the deployment's DECLARED shared remote — a configuration
+  // value, never `origin` (a resident origin has pointed at a local checkout instead of the
+  // shared remote) and never derived from repoId (a hash of the local git dir path, distinct per
+  // clone). Both flags are read BEFORE the target head is resolved: a real landing with a
+  // declared remote gates on that remote's tip (#570 below), and a real landing without one
+  // refuses before anything moves.
+  const dryRun = request.dryRun === true;
+  const publishRemote = typeof request.publishRemote === 'string' && request.publishRemote.length > 0
+    && !request.publishRemote.includes('\0') ? request.publishRemote : null;
+  // Issue #570: the local target ref can drift behind the declared remote (the resident's own
+  // master sat commits behind the published tip), and a squash built on the stale head pushes as
+  // a non-fast-forward and rolls the landing back. A real landing with a declared remote
+  // therefore fetches the remote's target branch FIRST — one git call, in the same hermetic
+  // environment as the push — and gates on that tip: the landing requires the local ref to be an
+  // ancestor of the fetched tip and refuses typed, naming both heads, when the pair has
+  // diverged, builds the squash on the fetched tip, and the compare-and-swap below brings the
+  // local ref from its stale head to the landed squash in the same step. A remote that does not
+  // hold the branch yet is no tip to gate on: the landing proceeds on the local ref, and the push
+  // creates the branch there. A dry run — and any deployment that declares no remote — lands on
+  // the local ref exactly as before.
+  let ontoHead = targetHeadBefore;
+  if (!dryRun && publishRemote !== null) {
+    let fetchedTip = null;
+    let fetched = false;
+    try {
+      gitFile(['fetch', '--no-tags', publishRemote, ref], repoRoot,
+        { stdio: 'pipe' }, { GIT_TERMINAL_PROMPT: '0' });
+      fetched = true;
+    } catch (error) {
+      // A remote that does not hold the target branch yet (a fresh declaration publishes the
+      // first landing to it) has no remote tip to gate on: one `ls-remote` classifies the failed
+      // fetch — an absent branch lets the landing proceed on the local ref exactly as a
+      // no-remote deployment does, while an unreachable remote, or a branch the probe still sees
+      // after the fetch failed, refuses typed.
+      let absent = false;
+      try {
+        absent = sh('git', ['ls-remote', '--heads', publishRemote, ref], repoRoot) === '';
+      } catch { absent = false; }
+      if (!absent) {
+        throw Object.assign(
+          mergeError(`the declared shared remote could not be fetched for ${target}; declare a reachable remote with advanced.integration.publishRemote`, 'integrate_publish_failed'),
+          {
+            script: 'git fetch',
+            ...(Number.isSafeInteger(error.status) ? { exit: error.status } : {}),
+            stderrTail: redactPushTail(gitStepTail(error)),
+          },
+        );
+      }
+    }
+    if (fetched) fetchedTip = sh('git', ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'], repoRoot);
+    if (fetchedTip !== null && fetchedTip !== targetHeadBefore) {
+      let behind = false;
+      try {
+        sh('git', ['merge-base', '--is-ancestor', targetHeadBefore, fetchedTip], repoRoot);
+        behind = true;
+      } catch { behind = false; }
+      if (!behind) {
+        throw Object.assign(
+          mergeError(`the target ${target} has diverged from the declared shared remote: the local head ${targetHeadBefore} is not an ancestor of the fetched tip ${fetchedTip}`, 'integrate_target_diverged'),
+          { localSha: targetHeadBefore, fetchedSha: fetchedTip },
+        );
+      }
+      ontoHead = fetchedTip;
+    }
+  }
   // The base rule (#296 item 1). Never the contribution's recorded observedHead: once a lane
   // rebases, that commit is an ancestor of nothing on the target and a squash from it would replay
   // the lane's ancestors as its own work.
   let base;
   try {
-    base = sh('git', ['merge-base', ref, tip], repoRoot);
+    base = sh('git', ['merge-base', ontoHead, tip], repoRoot);
   } catch {
     throw mergeError(`the contribution commit ${commitSha} and ${target} share no common ancestor`, 'integrate_commit_unreachable');
   }
@@ -2342,7 +2408,7 @@ export async function landContribution(repoRoot, request) {
     }
   };
 
-  let attempt = await prepare(targetHeadBefore);
+  let attempt = await prepare(ontoHead);
   // The target moving between the squash and the fast-forward is a race, not a refusal: re-base
   // ONCE onto the new head and only refuse if it moves again. `update-ref` is the CAS that decides.
   if (sh('git', ['rev-parse', '--verify', ref], repoRoot) !== targetHeadBefore) {
@@ -2368,14 +2434,8 @@ export async function landContribution(repoRoot, request) {
         { verdictLine: gates?.verdictLine ?? null, unexpected },
       );
     }
-    const dryRun = request.dryRun === true;
-    // Issue #558: the declared shared remote — a deployment configuration value, never `origin`
-    // (a resident origin has pointed at a local checkout instead of the shared remote) and never
-    // derived from repoId (a hash of the local git dir path, distinct per clone). A real landing
-    // without one refuses BEFORE anything moves: a landing that cannot publish never reports a
-    // local success. A dry run lands nothing, so it publishes nothing either.
-    const publishRemote = typeof request.publishRemote === 'string' && request.publishRemote.length > 0
-      && !request.publishRemote.includes('\0') ? request.publishRemote : null;
+    // A landing that cannot publish never reports a local success. A dry run lands nothing, so
+    // it publishes nothing either.
     if (!dryRun && publishRemote === null) {
       throw mergeError(
         `the deployment declares no shared remote for landings (advanced.integration.publishRemote), so ${target} cannot be published`,
