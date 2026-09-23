@@ -7845,6 +7845,11 @@ export class SwarmRuntime {
       // A hard conflict REFUSES — it never lands. What this list carries is the overlap git merged
       // WITHOUT a conflict: the silent case the #296 observation says went unrecorded.
       conflicts: landed.overlaps,
+      // Issue #562: the paths the squash carried only because the lane's base — the deployment's own
+      // effective-tree snapshot — carried them. The landing took them out of the commit; naming them
+      // here is what keeps the exclusion from being a silent drop.
+      ...(Array.isArray(landed.inherited) && landed.inherited.length > 0
+        ? { inherited: [...landed.inherited] } : {}),
       issue, dryRun: landed.dryRun,
     };
     // A key of its OWN: `_once` already recorded the operation REQUEST under the operation key, and a
