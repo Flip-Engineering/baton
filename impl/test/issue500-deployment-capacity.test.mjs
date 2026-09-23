@@ -146,6 +146,12 @@ test('500-caps-B: a capacity observation is quantized down before any verdict or
   const INODE_QUANTUM = 10_000;
   const deployment = await openDeployment(t, 'quantum', {
     advanced: {
+      // #561: the derived floor carries a swap-growth reserve measured from the host; this
+      // fixture stages a debt-free host so the row judges quantization alone, never the real
+      // machine's memory pressure.
+      worktreeCapacityHostObservation: () => ({
+        totalBytes: 8 * 1024 ** 3, availableBytes: 8 * 1024 ** 3, swapFreeBytes: 0, cores: 4,
+      }),
       capacity: {
         observe: () => ({
           freeBytes: 3 * BYTE_QUANTUM + 12_345, freeInodes: 2 * INODE_QUANTUM + 999,
