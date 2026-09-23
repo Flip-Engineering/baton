@@ -278,6 +278,9 @@ function worktreeFixture(t, { observe, estimate, policy, runtimeFootprint }) {
     },
     integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(repo),
     observe, estimate, runtimeFootprint,
+    // The floor fixtures pin the estimate+footprint arithmetic; the swap reserve they pin
+    // separately (#561) with their own staged observation, never the real machine's.
+    swapObservation: () => ({ swapTotalBytes: 0, swapFreeBytes: 0 }),
   });
 }
 
@@ -451,10 +454,13 @@ test('HC-12 (#329, revised #541): a staged observation names its own numbers; a 
   assert.equal(mac.coreShareBytes, Math.floor((16 * G) / 10));
   assert.equal('workerMemoryTight' in mac, false, 'no worker memory share is derived — a worker holds no slot');
   assert.equal('workerSlots' in mac, false, 'no worker slot count is derived — seats are not cores');
-  assert.equal(mac.memoryTight, true, '3.9 GB available cannot fund a full-suite verdict (14.4 GB)');
+  assert.equal(mac.memoryTight, false, '3.9 GB funds one more node process — the flag means exactly that (#561), never the full-suite entitlement');
   const none = { cores: 0, bytes: 0, leases: { verify: 0, worker: 0 } };
-  const shortfall = hostCapacityShortfall('verify', mac, none);
-  assert.deepEqual(shortfall, { dimension: 'memory', observed: Math.floor(3.9 * G), required: mac.suiteBytes, unit: 'bytes' });
+  assert.deepEqual(hostCapacityShortfall('verify', mac, none, mac.suiteCores),
+    { dimension: 'memory', observed: Math.floor(3.9 * G), required: mac.suiteBytes, unit: 'bytes' },
+    'a full-width verdict (nine named lanes) still queues on the observed headroom: 3.9 GB cannot fund it');
+  assert.equal(hostCapacityShortfall('verify', mac, none), null,
+    'an unnamed width defaults to what the headroom funds (#561): two lanes fit in 3.9 GB, so nothing queues');
   assert.equal(hostCapacityShortfall('worker', mac, none), null, 'a worker fits');
   const loaded = deriveHostCapacity(hostCapacityObservation({ cores: 10, totalBytes: 16 * G, freeBytes: 15 * G, load1m: 12 }));
   assert.equal(hostCapacityShortfall('worker', loaded, none), null, '#541: load is not a shortfall dimension');

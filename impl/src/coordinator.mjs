@@ -481,10 +481,10 @@ export async function runSupervisedGateRun({
   const poll = setInterval(observeAhead, 25);
   if (typeof poll.unref === 'function') poll.unref();
   let lease = null;
-  let degraded = null;
-  // #541: the wait is not bounded — a landing's gate run is admitted when the verdicts ahead of it
-  // release, never refused for having waited. A host that cannot fund a suite at all (a standing
-  // memory shortfall) answers `degraded` at once and the gate run proceeds without a lease.
+  // #541: the wait is not bounded — a landing's gate run is admitted when the verdicts ahead of
+  // it release, never refused for having waited. #561 brings memory inside the same law: a host
+  // that cannot fund the gate run right now QUEUES it, because a landing that verifies without
+  // the lease is the shape that froze the 2026-09-22 host.
   lease = await acquireSuiteVerifyLease({
     authority, holder, log: () => {},
     onQueued: (row) => {
@@ -493,9 +493,6 @@ export async function runSupervisedGateRun({
     },
   });
   clearInterval(poll);
-  if (lease.degraded) {
-    degraded = Object.freeze({ reason: lease.degraded.dimension ?? 'memory', shortfall: lease.degraded });
-  }
   try {
     const digest = lease === null || lease.token === null ? null : suiteLeaseTokenDigest(lease.token);
     const layout = gateRunnerLayout(file);
@@ -511,8 +508,8 @@ export async function runSupervisedGateRun({
       env: { ...env, ...(digest === null ? {} : { [SUITE_VERIFY_LEASE_ENV]: digest }) },
     });
   } finally {
-    // A degraded run holds nothing to release; a run that took the lease returns it whatever the
-    // child's outcome, so the host's verdict budget is never pinned by a landing that died.
+    // The lease returns whatever the child's outcome, so the host's verdict budget is never
+    // pinned by a landing that died.
     if (lease !== null && lease.disabled !== true) await lease.release();
   }
 }

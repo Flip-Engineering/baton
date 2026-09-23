@@ -13,9 +13,11 @@
 //                 FIFO queue files for the rest
 //   admission     `verify` (a full-suite verdict) and `worker` (a recruited participant's
 //                 dispatch) ask `acquire()`; the request is admitted when the derived budget has
-//                 room, and otherwise QUEUED in order with a visible {position, ahead} until
-//                 capacity returns — admission is never refused, for being busy or for having
-//                 waited (#541); a worker is never queued at all
+//                 room and the OBSERVED memory headroom — RAM plus free swap minus the resident
+//                 sets the live lease holders' process trees actually hold (#561) — funds the
+//                 request's own measured class, and otherwise QUEUED in order with a visible
+//                 {position, ahead} until capacity returns — admission is never refused, for
+//                 being busy or for having waited (#541)
 //
 // The lease directory is a concurrency substrate, so it uses the ONE published-owner protocol the
 // per-repo worktree capacity ledger proved (worktree-capacity.mjs): an owner record published by
@@ -162,6 +164,101 @@ export function parseMemInfoAvailable(text) {
   return match ? Number(match[1]) * 1024 : null;
 }
 
+/** `sysctl vm.swapusage`'s "total = 1024.00M used = 124.94M free = 899.06M" values as bytes, or
+ * null when the text is not a swapusage report. #561: swap free is memory headroom the OS can
+ * still page into before it kills for low-swap — the 2026-09-22 freeze hit with 9.1 of 9.7 GB
+ * used and the volume out of room to grow it. */
+export function parseSwapUsage(text) {
+  if (typeof text !== 'string') return null;
+  const entry = (label) => {
+    const match = new RegExp(`${label}\\s*=\\s*([\\d.]+)\\s*([KMG])b?`, 'iu').exec(text);
+    if (!match) return null;
+    const scale = { K: 1024, M: 1024 ** 2, G: 1024 ** 3 }[match[2].toUpperCase()];
+    return Math.floor(Number(match[1]) * scale);
+  };
+  const swapTotalBytes = entry('total');
+  const swapFreeBytes = entry('free');
+  if (!Number.isSafeInteger(swapTotalBytes) || !Number.isSafeInteger(swapFreeBytes)) return null;
+  return Object.freeze({ swapTotalBytes, swapFreeBytes });
+}
+
+/** /proc/meminfo's SwapTotal/SwapFree (kB) as bytes, or null when the text does not carry them. */
+export function parseMemInfoSwap(text) {
+  if (typeof text !== 'string') return null;
+  const total = /^SwapTotal:\s+(\d+) kB$/mu.exec(text);
+  const free = /^SwapFree:\s+(\d+) kB$/mu.exec(text);
+  return total && free
+    ? Object.freeze({ swapTotalBytes: Number(total[1]) * 1024, swapFreeBytes: Number(free[1]) * 1024 })
+    : null;
+}
+
+/** Measure the swap the kernel has provisioned and what of it is still free, the platform's own
+ * way. Zeros — not a guess — when no platform report exists or reads: an unmeasured swap
+ * contributes no headroom, and the observation says so by carrying zeros. Never throws. */
+export function hostSwapObservation({
+  platform: hostPlatform = platform(),
+  swapUsage = () => execFileSync('/usr/sbin/sysctl', ['vm.swapusage'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }),
+  memInfo = () => readFileSync('/proc/meminfo', 'utf8'),
+} = {}) {
+  let measured = null;
+  try {
+    if (hostPlatform === 'darwin') measured = parseSwapUsage(swapUsage());
+    else if (hostPlatform === 'linux') measured = parseMemInfoSwap(memInfo());
+  } catch { measured = null; }
+  return Object.freeze({
+    swapTotalBytes: measured?.swapTotalBytes ?? 0,
+    swapFreeBytes: measured?.swapFreeBytes ?? 0,
+  });
+}
+
+/** One `ps` snapshot of every process's pid, parent pid and resident set (KB) as
+ * `{ pid → { ppid, rssBytes } }`, or an empty map when the snapshot cannot be read. #561: the
+ * observed per-worker holding — what each running worker's process tree actually holds — comes
+ * from this snapshot, never from a declared constant. */
+export function parseProcessSnapshot(text) {
+  const table = new Map();
+  if (typeof text !== 'string') return table;
+  for (const line of text.split('\n')) {
+    const fields = line.trim().split(/\s+/u);
+    if (fields.length < 3) continue;
+    const pid = Number(fields[0]);
+    const ppid = Number(fields[1]);
+    const rssBytes = Number(fields[2]) * 1024;
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid) || !Number.isSafeInteger(rssBytes) || rssBytes < 0) continue;
+    table.set(pid, { ppid, rssBytes });
+  }
+  return table;
+}
+
+function psSnapshot() {
+  try {
+    return parseProcessSnapshot(execFileSync('ps', ['-eo', 'pid=,ppid=,rss='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+  } catch { return new Map(); }
+}
+
+/** The resident-set bytes of `pid`'s descendant subtree out of one parsed snapshot — the
+ * process itself plus every live descendant, each counted once. An unmeasured pid holds zero:
+ * absence of evidence is zero charge, never a declared cost. */
+export function subtreeResidentBytes(snapshot, pid) {
+  if (!(snapshot instanceof Map) || !snapshot.has(pid)) return 0;
+  const children = new Map();
+  for (const [entryPid, entry] of snapshot) {
+    if (!children.has(entry.ppid)) children.set(entry.ppid, []);
+    children.get(entry.ppid).push(entryPid);
+  }
+  let total = 0;
+  const seen = new Set([pid]);
+  const queue = [pid];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    total += snapshot.get(current)?.rssBytes ?? 0;
+    for (const child of children.get(current) ?? []) {
+      if (!seen.has(child)) { seen.add(child); queue.push(child); }
+    }
+  }
+  return total;
+}
+
 /** Measure available memory the platform's own way; `os.freemem()` is the fallback where no
  * platform report exists or the report cannot be read. Never throws. */
 export function hostAvailableMemoryBytes({
@@ -180,23 +277,35 @@ export function hostAvailableMemoryBytes({
 
 /** The host observation every threshold derives from. Dependencies are injectable so a test can
  * stage a loaded host; production reads the machine. A STAGED observation (one that names its
- * `freeBytes`) reads `availableBytes` as that same number unless it names it too, so a staged
- * host never reaches for the real machine's vm_stat. */
+ * `freeBytes`) reads `availableBytes` as that same number unless it names it too, and its swap as
+ * the numbers it names or zeros — a staged host never reaches for the real machine's vm_stat or
+ * sysctl. #561: the observation carries the swap the kernel has provisioned and what of it is
+ * still free, because swap free is memory the OS can still page into. */
 export function hostCapacityObservation({
   cores = availableParallelism(), totalBytes = totalmem(), freeBytes, availableBytes,
-  load1m = loadavg()[0] ?? 0,
+  load1m = loadavg()[0] ?? 0, swap, swapTotalBytes, swapFreeBytes,
 } = {}) {
   const staged = freeBytes !== undefined;
   const free = staged ? freeBytes : freemem();
   const available = availableBytes !== undefined
     ? availableBytes
     : (staged ? free : hostAvailableMemoryBytes({ freeBytes: free, totalBytes }));
+  const measuredSwap = swap ?? (staged
+    ? { swapTotalBytes: swapTotalBytes ?? 0, swapFreeBytes: swapFreeBytes ?? 0 }
+    : hostSwapObservation());
   if (!Number.isSafeInteger(cores) || cores <= 0) throw new TypeError('host capacity cores must be a positive safe integer');
   if (!Number.isSafeInteger(totalBytes) || totalBytes <= 0) throw new TypeError('host capacity total memory must be a positive safe integer');
   if (!Number.isSafeInteger(free) || free < 0 || free > totalBytes) throw new TypeError('host capacity free memory must be a safe integer within total memory');
   if (!Number.isSafeInteger(available) || available < 0 || available > totalBytes) throw new TypeError('host capacity available memory must be a safe integer within total memory');
   if (!Number.isFinite(load1m) || load1m < 0) throw new TypeError('host capacity load average must be a non-negative finite number');
-  return Object.freeze({ cores, totalBytes, freeBytes: free, availableBytes: available, load1m });
+  if (!Number.isSafeInteger(measuredSwap.swapTotalBytes) || measuredSwap.swapTotalBytes < 0
+    || !Number.isSafeInteger(measuredSwap.swapFreeBytes) || measuredSwap.swapFreeBytes < 0) {
+    throw new TypeError('host capacity swap observation must be non-negative safe integers');
+  }
+  return Object.freeze({
+    cores, totalBytes, freeBytes: free, availableBytes: available, load1m,
+    swapTotalBytes: measuredSwap.swapTotalBytes, swapFreeBytes: measuredSwap.swapFreeBytes,
+  });
 }
 
 /** The ONE derivation from the host observation to every admission threshold (#297: no numeric
@@ -215,21 +324,28 @@ export function hostCapacityObservation({
  *   saturated     load1m ≥ cores — the operator's `uptime` read, derived: at or above a
  *                 one-minute load equal to the core count the host is already oversubscribed,
  *                 and new heavy work queues.
- *   memoryTight   availableBytes < suiteBytes — available memory cannot fund one more verdict.
+ *   swapHeadroom  swapFreeBytes — the paging room the kernel still has (#561); the disk floor
+ *                 (worktree capacity) reserves the room swap needs to grow into, so this number
+ *                 is real headroom and not a promise the volume cannot keep.
+ *   memoryTight   availableBytes + swapHeadroom < coreShareBytes — the OS cannot fund one more
+ *                 node process at one core's share (#561: the freeze host read available
+ *                 0.6 GB + swap free 0.6 GB while holding 12.9 GB of workers). Whether a
+ *                 specific request fits is judged by the authority against the request's own
+ *                 measured class (see roomFor), never by this coarse flag alone.
  *   suiteLanes    saturated ? 1 : min(usableCores, floor(usableBytes / coreShare)) — the suite
  *                 runner's default file parallelism (#297/#424), stated here beside the other
  *                 derivations because the observation's LOAD is one of its terms: a host already
  *                 at its core count takes ONE lane, never a full-width burst into a host that is
  *                 already oversubscribed (the 2026-09-18 load-58 incident, #424).
  *
- * A worker (a recruited participant) has NO derived slot (operator ruling, 2026-09-18, retiring
- * the #329 "one core share per worker" rule): a worker is not a thread, its footprint is not
- * known before it runs, and mapping seats onto cores was a hardware analogy, not a measurement.
- * A worker has no admission gate: it holds no slot, `roomFor` admits it unconditionally, and
- * the host's own scheduler is the throttle (#541).
+ * A worker (a recruited participant) has NO derived core slot (operator ruling, 2026-09-18,
+ * retiring the #329 "one core share per worker" rule): a worker is not a thread, and mapping
+ * seats onto cores was a hardware analogy. #561 adds the rule the freeze exposed: a worker holds
+ * MEMORY, and its admission consults the memory workers actually hold (the authority measures
+ * it — see HostCapacityAuthority) against the headroom this derivation reports.
  */
 export function deriveHostCapacity(observation) {
-  const { cores, totalBytes, freeBytes, availableBytes, load1m } = hostCapacityObservation(observation);
+  const { cores, totalBytes, freeBytes, availableBytes, load1m, swapTotalBytes, swapFreeBytes } = hostCapacityObservation(observation);
   const hubCores = 1;
   const usableCores = Math.max(1, cores - hubCores);
   const suiteCores = Math.max(1, cores - hubCores);
@@ -238,55 +354,90 @@ export function deriveHostCapacity(observation) {
   const suiteBytes = coreShareBytes * suiteCores;
   const usableBytes = totalBytes - coreShareBytes;
   return Object.freeze({
-    cores, totalBytes, freeBytes, availableBytes, load1m,
+    cores, totalBytes, freeBytes, availableBytes, load1m, swapTotalBytes, swapFreeBytes,
     hubCores, usableCores, suiteCores, verdictLanes, coreShareBytes, suiteBytes, usableBytes,
+    swapHeadroomBytes: swapFreeBytes,
     saturated: load1m >= cores,
-    memoryTight: availableBytes < suiteBytes,
+    memoryTight: availableBytes + swapFreeBytes < coreShareBytes,
   });
 }
 
-/** The weight ONE admitted lease charges the derived budget: a verify charges the measured
- * suite cost; a worker charges nothing — it holds no slot (see deriveHostCapacity). */
+/** The static claim ONE admitted lease books against the derived core and byte budget: a verify
+ * claims the suite cost (so two full verdicts cannot share one suite's worth of host), a worker
+ * claims nothing static — its cost is judged from measurement (see usedWorkerBytes). */
 function leaseWeight(kind, capacity) {
   return kind === 'verify'
     ? Object.freeze({ cores: capacity.suiteCores, bytes: capacity.suiteBytes })
     : Object.freeze({ cores: 0, bytes: 0 });
 }
 
-/** Whether the host's own measurement is too tight for ONE lease of this kind (the budget of
- * already-admitted leases is judged separately by `fits`). Only a verify has a measured
- * memory cost to be tight against; a worker holds no slot, so this answers false for it. */
-function memoryTightFor(kind, capacity) {
-  return kind === 'verify' && capacity.memoryTight;
+/** #561: the memory the OS can still hand out beside what the live leases HOLD — available
+ * RAM plus free swap minus the observed resident sets of the lease holders' process trees.
+ * This, not the static entitlement, is what admission spends: the 2026-09-22 freeze host read
+ * `memoryTight: true` while admitting its 33rd worker because nothing subtracted the 12.9 GB
+ * the running workers held. A `used` without measurements (a hand-built fixture) holds nothing. */
+function memoryHeadroomBytes(capacity, used) {
+  return capacity.availableBytes + capacity.swapHeadroomBytes - (used.heldBytes ?? 0);
 }
 
-/** Whether the derived budget has room for ONE more lease of this kind beside `used`. */
+/** The measured cost of ONE node process on this host right now: the mean resident set per
+ * live lease over the holders the snapshot could measure. The core share is the fallback where
+ * nothing is measurable — a derivation, never a constant. */
+function perNodeBytes(capacity, used) {
+  return used.measuredPerNodeBytes ?? capacity.coreShareBytes;
+}
+
+/** The measured cost of ONE worker seat: the mean resident set per worker lease on the holders
+ * the snapshot could measure. Zero where nothing is measured — a host with no measurable
+ * workers has no evidence a new one costs anything, so the first workers admit freely. */
+function perWorkerBytes(used) {
+  return used.measuredPerWorkerBytes ?? 0;
+}
+
+
+/** The bytes ONE verify request of `lanes` lanes needs: lanes times the measured per-process
+ * cost. The runner names the width it resolved (its plan line prints it); an unnamed width
+ * defaults to what the headroom currently funds, at least one lane, at most the usable cores. */
+function verifyRequestBytes(capacity, used, lanes) {
+  const resolved = Number.isSafeInteger(lanes) && lanes > 0
+    ? lanes
+    : Math.max(1, Math.min(capacity.usableCores, Math.floor(memoryHeadroomBytes(capacity, used) / perNodeBytes(capacity, used))));
+  return resolved * perNodeBytes(capacity, used);
+}
+
+/** Whether the derived static budget has room for ONE more lease of this kind beside `used`. */
 function budgetFits(kind, capacity, used) {
   const weight = leaseWeight(kind, capacity);
   return used.cores + weight.cores <= capacity.usableCores
     && used.bytes + weight.bytes <= capacity.usableBytes;
 }
 
-/** Whether ONE more lease of this kind is admissible right now. A worker is always admissible:
- * it holds no slot, its footprint is not known before it runs, and the host's own scheduler is
- * the throttle (#541: a load-average threshold is a cutoff on agent control flow, removed). A
- * verify is admissible when the host's measured memory funds one more and the budget the
- * admitted verifies leave has room for it. */
-function roomFor(kind, capacity, used) {
-  if (kind !== 'verify') return true;
-  return !memoryTightFor(kind, capacity) && budgetFits(kind, capacity, used);
+/** Whether ONE more lease of this kind is admissible right now. #561: every kind is judged
+ * against the OBSERVED memory headroom — what the live lease holders actually hold, measured —
+ * beside the static budget a verify books. A worker needs the measured per-worker cost to fit;
+ * a verify needs its lane width times the measured per-process cost. Nothing is refused for
+ * having waited (#541): a request that does not fit queues, in order, until it does. */
+function roomFor(kind, capacity, used, lanes = undefined) {
+  if (!budgetFits(kind, capacity, used)) return false;
+  const headroom = memoryHeadroomBytes(capacity, used);
+  return kind === 'worker'
+    ? headroom >= perWorkerBytes(used)
+    : headroom >= verifyRequestBytes(capacity, used, lanes);
 }
 
 /** #329: WHY a request of this kind does not fit right now — the ONE dimension an operator can
  * act on, with the observed and required numbers, so a queued request names what it waits on.
- * `memory` (available memory below this kind's share) or `budget` (admitted leases hold the
- * cores or bytes this kind needs). Null when the request fits — and always null for a worker,
- * which weighs nothing and never queues (#541). */
-export function hostCapacityShortfall(kind, capacity, used) {
-  const weight = leaseWeight(kind, capacity);
-  if (memoryTightFor(kind, capacity)) {
-    return Object.freeze({ dimension: 'memory', observed: capacity.availableBytes, required: weight.bytes, unit: 'bytes' });
+ * `memory` first (the observed headroom — RAM plus free swap minus measured holdings — cannot
+ * fund the request's own measured class; the #495 shed keys on this dimension, so it must
+ * surface even while a verify holds the static budget), then `budget` (the static claim's cores
+ * or bytes). Null when the request fits. */
+export function hostCapacityShortfall(kind, capacity, used, lanes = undefined) {
+  const headroom = memoryHeadroomBytes(capacity, used);
+  const required = kind === 'worker' ? perWorkerBytes(used) : verifyRequestBytes(capacity, used, lanes);
+  if (headroom < required) {
+    return Object.freeze({ dimension: 'memory', observed: headroom, required, unit: 'bytes' });
   }
+  const weight = leaseWeight(kind, capacity);
   if (weight.cores > 0 && used.cores + weight.cores > capacity.usableCores) {
     return Object.freeze({ dimension: 'budget', observed: capacity.usableCores - used.cores, required: weight.cores, unit: 'cores' });
   }
@@ -455,10 +606,11 @@ export class HostCapacityAuthority {
     observation = hostCapacityObservation, liveness = livePid,
     now = Date.now, pollMs = DEFAULT_POLL_MS,
     shedPollMs = DEFAULT_SHED_POLL_MS,
+    holdings = psSnapshot,
   } = {}) {
     if (typeof root !== 'string' || root.length === 0 || !isAbsolute(root)) throw new TypeError('host capacity lease root must be one absolute path');
     if (typeof residentId !== 'string' || residentId.length === 0 || Buffer.byteLength(residentId) > 128) throw new TypeError('host capacity resident id must be one bounded non-empty string');
-    if (typeof observation !== 'function' || typeof liveness !== 'function' || typeof now !== 'function') throw new TypeError('host capacity dependencies must be functions');
+    if (typeof observation !== 'function' || typeof liveness !== 'function' || typeof now !== 'function' || typeof holdings !== 'function') throw new TypeError('host capacity dependencies must be functions');
     if (!Number.isSafeInteger(pollMs) || pollMs <= 0) throw new TypeError('host capacity poll interval must be a positive safe integer');
     if (!Number.isSafeInteger(shedPollMs) || shedPollMs <= 0) throw new TypeError('host capacity shed poll interval must be a positive safe integer');
     this.root = root;
@@ -468,6 +620,7 @@ export class HostCapacityAuthority {
     this.now = now;
     this.pollMs = pollMs;
     this.shedPollMs = shedPollMs;
+    this.holdings = holdings;
     this.ownerId = randomBytes(16).toString('hex');
     this.leasesDir = join(root, 'leases');
     this.queueDir = join(root, 'queue');
@@ -608,17 +761,64 @@ export class HostCapacityAuthority {
     }
   }
 
-  #usedBudget(capacity) {
+  /** #561: what the live leases HOLD, observed. One `ps` snapshot; each live holder pid
+   * contributes its descendant subtree's resident set once (a resident process that holds both
+   * worker and verify leases is one tree, counted once), and a holder the snapshot cannot
+   * measure charges nothing — absence of evidence is zero, never a declared cost. The two
+   * per-lease means attribute each measured tree across the leases it carries, so a worker
+   * admission can price ONE more seat and a verify admission ONE more node process from what
+   * this host's processes really hold. */
+  #measureHoldings(records) {
+    const byPid = new Map();
+    for (const record of records) {
+      if (!this.liveness(record.pid)) continue;
+      const entry = byPid.get(record.pid) ?? { workerLeases: 0, verifyLeases: 0 };
+      entry[`${record.kind}Leases`] += 1;
+      byPid.set(record.pid, entry);
+    }
+    let snapshot;
+    try { snapshot = this.holdings(); } catch { snapshot = new Map(); }
+    let heldBytes = 0;
+    let measuredLeases = 0;
+    let workerLeaseTotal = 0;
+    let workerBytesTotal = 0;
+    for (const [pid, entry] of byPid) {
+      if (!snapshot.has(pid)) continue;
+      const bytes = subtreeResidentBytes(snapshot, pid);
+      heldBytes += bytes;
+      const leasesHere = entry.workerLeases + entry.verifyLeases;
+      measuredLeases += leasesHere;
+      workerLeaseTotal += entry.workerLeases;
+      workerBytesTotal += bytes * (entry.workerLeases / leasesHere);
+    }
+    return {
+      heldBytes,
+      measuredPerNodeBytes: measuredLeases > 0 ? Math.ceil(heldBytes / measuredLeases) : null,
+      measuredPerWorkerBytes: workerLeaseTotal > 0 ? Math.ceil(workerBytesTotal / workerLeaseTotal) : null,
+    };
+  }
+
+  #budgetFrom(capacity, records) {
     let cores = 0;
     let bytes = 0;
     const leases = { verify: 0, worker: 0 };
-    for (const record of listRecords(this.leasesDir, 'host capacity lease', LEASE_FIELDS)) {
+    for (const record of records) {
       const weight = leaseWeight(record.kind, capacity);
       cores += weight.cores;
       bytes += weight.bytes;
       leases[record.kind] += 1;
     }
-    return Object.freeze({ cores, bytes, leases: Object.freeze(leases) });
+    const holdings = this.#measureHoldings(records);
+    return Object.freeze({
+      cores, bytes, leases: Object.freeze(leases),
+      heldBytes: holdings.heldBytes,
+      measuredPerNodeBytes: holdings.measuredPerNodeBytes,
+      measuredPerWorkerBytes: holdings.measuredPerWorkerBytes,
+    });
+  }
+
+  #usedBudget(capacity) {
+    return this.#budgetFrom(capacity, listRecords(this.leasesDir, 'host capacity lease', LEASE_FIELDS));
   }
 
   #queueRows(entries) {
@@ -660,18 +860,10 @@ export class HostCapacityAuthority {
    * it is what the doctor and the deployment summary show. */
   observeNow() {
     const capacity = deriveHostCapacity(hostCapacityObservation(this.observation()));
-    let cores = 0;
-    let bytes = 0;
-    const leases = { verify: 0, worker: 0 };
-    for (const record of listRecords(this.leasesDir, 'host capacity lease', LEASE_FIELDS)) {
-      if (!this.liveness(record.pid)) continue;
-      const weight = leaseWeight(record.kind, capacity);
-      cores += weight.cores;
-      bytes += weight.bytes;
-      leases[record.kind] += 1;
-    }
+    const live = listRecords(this.leasesDir, 'host capacity lease', LEASE_FIELDS)
+      .filter((record) => this.liveness(record.pid));
+    const used = this.#budgetFrom(capacity, live);
     const queue = this.#queueRows(listRecords(this.queueDir, 'host capacity queue', QUEUE_FIELDS));
-    const used = Object.freeze({ cores, bytes, leases: Object.freeze(leases) });
     return Object.freeze({
       capacity, used, queue,
       roomForVerify: roomFor('verify', capacity, used),
@@ -698,13 +890,18 @@ export class HostCapacityAuthority {
 
   /** Admit one unit of heavy work. Resolves with `{token}` once the derived budget admits the
    * request; while it does not, the request waits IN ORDER as a visible queue entry and
-   * `onQueued` is called once with {position, ahead}. The wait is not bounded: a request that
-   * cannot be admitted now is admitted when the requests ahead of it release, and is never
-   * refused for having waited (#541). A worker never queues (see roomFor). */
-  async acquire(kind, { holder = '', onQueued = null } = {}) {
+   * `onQueued` is called once with {position, ahead, shortfall}. The wait is not bounded: a
+   * request that cannot be admitted now is admitted when the requests ahead of it release, and
+   * is never refused for having waited (#541) — #561 extends that law to memory: a verify whose
+   * lane width the observed headroom cannot fund queues like any other, because a suite run
+   * without the lease is how the 2026-09-22 freeze happened. `lanes` names the width a verify
+   * will run (the runner's resolved parallelism); an unnamed width defaults to what the
+   * headroom currently funds. */
+  async acquire(kind, { holder = '', onQueued = null, lanes = undefined } = {}) {
     if (!HOST_CAPACITY_LEASE_KINDS.includes(kind)) throw new TypeError(`host capacity lease kind must be one of ${HOST_CAPACITY_LEASE_KINDS.join(', ')}`);
     if (typeof holder !== 'string') throw new TypeError('host capacity lease holder must be a string');
     if (onQueued !== null && typeof onQueued !== 'function') throw new TypeError('host capacity onQueued must be a function');
+    if (lanes !== undefined && (!Number.isSafeInteger(lanes) || lanes <= 0)) throw new TypeError('host capacity verify lane width must be a positive safe integer');
     this.#ensureRoot();
     const nonce = randomBytes(16).toString('hex');
     let queuedAt = null;
@@ -718,16 +915,10 @@ export class HostCapacityAuthority {
         const mine = entries.find((record) => record.nonce === nonce) ?? null;
         const ahead = mine ? entries.indexOf(mine) : entries.length;
         const head = mine === null || ahead === 0;
-        // #541: a host whose memory cannot fund one full suite is a standing property of the
-        // host, not a queue. It answers at once — no lease, the shortfall named — and the caller
-        // proceeds without the exclusion a lease would buy. Nothing waits on a limit no wait
-        // could cure.
-        if (kind === 'verify' && mine === null && memoryTightFor(kind, capacity)) {
-          return Object.freeze({ degraded: hostCapacityShortfall(kind, capacity, used) });
-        }
-        // A verify is judged against the suite's measured cost and the budget the admitted
-        // verifies leave; a worker holds no slot and is always admitted (see roomFor).
-        if (head && roomFor(kind, capacity, used)) {
+        // Every kind is judged the same way (#561): the static budget a verify books, then the
+        // OBSERVED memory headroom against the request's own measured class. What does not fit
+        // queues — durably, with no deadline — until the requests ahead release.
+        if (head && roomFor(kind, capacity, used, lanes)) {
           const lease = {
             schemaVersion: 1, kind, holder, nonce, pid: process.pid,
             residentId: this.residentId, acquiredAt: new Date(this.now()).toISOString(),
@@ -749,11 +940,10 @@ export class HostCapacityAuthority {
             position: ahead + 1, ahead, running: used.leases.verify, workerLeases: used.leases.worker,
             // #329: the dimension this request waits on, with the numbers, so the queued row
             // and the refusal name what an operator can act on.
-            shortfall: hostCapacityShortfall(kind, capacity, used),
+            shortfall: hostCapacityShortfall(kind, capacity, used, lanes),
           },
         });
       });
-      if (outcome.degraded) return Object.freeze({ token: null, degraded: outcome.degraded });
       if (outcome.admitted) {
         return Object.freeze({
           token: outcome.admitted,

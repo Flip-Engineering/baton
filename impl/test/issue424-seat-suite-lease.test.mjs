@@ -9,13 +9,15 @@
 // deployment was WIRED — and RuntimeIsolation projects the deployment's environment onto its seats
 // with the BATON_* names intact (only secret- and provider-shaped names are filtered). What made
 // the seats' verdicts lease-free was therefore the runner's own pre-lane decision: the host's
-// standing `memory` shortfall (available bytes below the suite's 90%-of-RAM share) spends the
-// runner's short default wait, and the runner proceeds degraded holding no lease record.
+// standing `memory` shortfall answered the lease request with a degrade, and the runner
+// proceeded holding no lease record. #561 removed that shape: the request QUEUES durably with
+// no deadline, on the observed memory headroom, so a seat-run verdict holds the lease like any
+// other.
 //
 // Two rules follow, and both are pinned here: a run that only INHERITS the suite root is a
 // verdict like any other (it admits, and its holder names the seat, so #333's participant row
 // shows it), while the `nested` bypass requires the parent's own lease token in the environment;
-// and the lane width — the one guard that still applies to a degraded run — derives from the
+// and the lane width — the term the lease request prices its run with — derives from the
 // host's current load, not from cores and memory alone.
 //
 // Red-before: written before the implementation; rows S424-1..S424-5 fail at HEAD (the suite
@@ -159,7 +161,7 @@ test('S424-5: the runner prints the expanded selection count and the resolved la
   t.after(() => rmSync(parent, { recursive: true, force: true }));
   const env = {
     ...process.env, BATON_HOST_CAPACITY_ROOT: root,
-    BATON_HOST_CAPACITY_POLL_MS: '25', BATON_SUITE_PARALLELISM: '3', BATON_TEST_TMP_PARENT: parent,
+    BATON_HOST_CAPACITY_POLL_MS: '25', BATON_SUITE_PARALLELISM: '1', BATON_TEST_TMP_PARENT: parent,
   };
   // This test itself runs as a suite child; the runner it spawns is a top-level one.
   delete env.BATON_TEST_SUITE_ROOT;
@@ -176,11 +178,10 @@ test('S424-5: the runner prints the expanded selection count and the resolved la
     child.once('error', (error) => resolveClose({ code: null, error }));
     child.once('close', (code) => resolveClose({ code, error: null }));
   });
-  // #541: admission never refuses. A host that can fund a suite queues behind the blocker and
-  // prints the queued row; a host that cannot fund one degrades at once. Either row is
-  // admission's own, and it follows the plan line. Once it shows, the blocker is released so a
-  // queued run is admitted and finishes.
-  const admissionRow = /host capacity queued this verify request at position|proceeding WITHOUT a host verify lease/u;
+  // #541: admission never refuses. The runner queues behind the blocker and prints the queued
+  // row (#561: a memory-tight host queues too — the degrade shape is gone). The row follows the
+  // plan line, and once it shows the blocker is released so the queued run is admitted.
+  const admissionRow = /host capacity queued this verify request at position/u;
   while (!admissionRow.test(stderr)) {
     await new Promise((resolveWait) => { setTimeout(resolveWait, 25); });
   }
@@ -188,13 +189,13 @@ test('S424-5: the runner prints the expanded selection count and the resolved la
   const terminal = await done;
   assert.equal(terminal.error, null);
   assert.match(stderr,
-    /^baton test runner: plan — 1 file\(s\) expanded from 1 changed path\(s\): 1 in the parallel lane \(x3\), 0 in the serial lane; progress deadline \d+ ms per file$/mu,
+    /^baton test runner: plan — 1 file\(s\) expanded from 1 changed path\(s\): 1 in the parallel lane \(x1\), 0 in the serial lane; progress deadline \d+ ms per file$/mu,
     'the plan line prints the expanded file count and the lane width the run resolved');
   const planIndex = stderr.search(/^baton test runner: plan —/mu);
   const admittedIndex = stderr.search(admissionRow);
   assert.ok(planIndex !== -1 && planIndex < admittedIndex,
     'the plan line precedes admission, so it precedes any lane');
-  assert.equal(terminal.code, 0, 'the run was admitted (or degraded) and finished — never refused');
+  assert.equal(terminal.code, 0, 'the run was admitted and finished — never refused for waiting');
 }, { timeout: 120_000 });
 
 // The staged-authority blocker #333's suite uses: one live verify lease fills the whole verdict

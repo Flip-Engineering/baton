@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { compareCanonicalStrings } from './canonical-order.mjs';
+import { hostSwapObservation } from './host-capacity.mjs';
 // G-32: this module's git calls (defaultEstimate's `ls-tree -r -l -z` above all) share the ONE
 // whole-repository listing bound with worktree.mjs rather than restating a buffer size.
 import { gitListingMaxBuffer } from './worktree.mjs';
@@ -151,20 +152,25 @@ export function normalizeWorktreeCapacityPolicy(value) {
  * is the largest checkout estimate this deployment has ever recorded (its ledger's high-water —
  * "room for one more participant") plus the runtime footprint the deployment measures from its
  * own records (ledger and evidence directories; worker homes are already the checkout estimates
- * the high-water carries). Deployment policy may still pin `minFreeBytes`/`minFreeInodes`
- * explicitly — a configured floor replaces the derivation, and the policy digest pins which of
- * the two regimes is in force. Every input is a measurement or a deployment record; nothing here
- * is chosen. */
+ * the high-water carries). #561 adds the term the 2026-09-22 freeze exposed: the OBSERVED swap
+ * the kernel has provisioned. Swap lives on this volume and grows under memory pressure; a
+ * volume filled to the floor's old bytes left paging nowhere to go and the kernel killed
+ * daemons for low-swap, so the reserve keeps the swap the host actually uses growable.
+ * Deployment policy may still pin `minFreeBytes`/`minFreeInodes` explicitly — a configured
+ * floor replaces the derivation, and the policy digest pins which of the two regimes is in
+ * force. Every input is a measurement or a deployment record; nothing here is chosen. */
 export function deriveWorktreeCapacityFloor({
   estimateHighWaterBytes, estimateHighWaterInodes, runtimeFootprintBytes, runtimeFootprintInodes,
+  swapReserveBytes = 0,
 }) {
   for (const [field, value] of Object.entries({
     estimateHighWaterBytes, estimateHighWaterInodes, runtimeFootprintBytes, runtimeFootprintInodes,
   })) {
     if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`worktree capacity floor derivation requires a non-negative safe integer ${field}`);
   }
+  if (!Number.isSafeInteger(swapReserveBytes) || swapReserveBytes < 0) throw new TypeError('worktree capacity floor derivation requires a non-negative safe integer swapReserveBytes');
   return Object.freeze({
-    bytes: estimateHighWaterBytes + runtimeFootprintBytes,
+    bytes: estimateHighWaterBytes + runtimeFootprintBytes + swapReserveBytes,
     inodes: estimateHighWaterInodes + runtimeFootprintInodes,
   });
 }
@@ -294,11 +300,13 @@ export class WorktreeCapacityAuthority {
   constructor({
     repoRoot, policy, integrityKey, observe = defaultObserve, estimate = defaultEstimate,
     runtimeFootprint = null, now = Date.now, lockWaitMs = DEFAULT_LOCK_WAIT_MS,
+    swapObservation = hostSwapObservation,
   }) {
     this.repoRoot = repoRoot;
     this.policy = normalizeWorktreeCapacityPolicy(policy);
     if (!Buffer.isBuffer(integrityKey) || integrityKey.byteLength !== 32) throw new TypeError('worktree capacity requires one 32-byte integrity key');
-    if (typeof observe !== 'function' || typeof estimate !== 'function' || typeof now !== 'function') throw new TypeError('worktree capacity dependencies must be functions');
+    if (typeof observe !== 'function' || typeof estimate !== 'function' || typeof now !== 'function'
+      || typeof swapObservation !== 'function') throw new TypeError('worktree capacity dependencies must be functions');
     if (runtimeFootprint !== null && typeof runtimeFootprint !== 'function') throw new TypeError('worktree capacity runtime footprint must be a function when provided');
     // A derived floor (#307) is resolved at each admission from the ledger high-water plus the
     // deployment-measured runtime footprint; without the footprint dependency the derivation
@@ -311,6 +319,7 @@ export class WorktreeCapacityAuthority {
     this.integrityKey = Buffer.from(integrityKey);
     this.observe = observe; this.estimate = estimate; this.now = now; this.lockWaitMs = lockWaitMs;
     this.runtimeFootprint = runtimeFootprint;
+    this.swapObservation = swapObservation;
     this.ownerId = randomBytes(16).toString('hex');
     this.root = join(repoRoot, '.baton', 'capacity');
     this.statePath = join(this.root, 'reservations.json');
@@ -320,30 +329,38 @@ export class WorktreeCapacityAuthority {
 
   /** The effective floor for one admission check: per field, a configured policy floor wins;
    * a null field (#307) derives from the ledger's estimate high-water plus the measured runtime
-   * footprint. Runs under the lock with the state already read. */
+   * footprint plus the observed swap reserve (#561). Runs under the lock with the state already
+   * read. */
   #effectiveFloor(estimateHighWater) {
     const configuredBytes = this.policy.minFreeBytes;
     const configuredInodes = this.policy.minFreeInodes;
     const highWater = Object.freeze({ ...estimateHighWater });
     if (configuredBytes !== null && configuredInodes !== null) {
-      return Object.freeze({ bytes: configuredBytes, inodes: configuredInodes, source: 'configured', estimateHighWater: highWater, runtimeFootprint: null });
+      return Object.freeze({ bytes: configuredBytes, inodes: configuredInodes, source: 'configured', estimateHighWater: highWater, runtimeFootprint: null, swapReserveBytes: 0 });
     }
     let footprint;
+    let swapReserveBytes = 0;
     try {
       footprint = validateMeasurement(this.runtimeFootprint(), 'worktreeCapacityRuntimeFootprint', ['bytes', 'inodes']);
     } catch (error) {
       if (error instanceof WorktreeCapacityError) throw error;
       throw typed('worktree capacity could not measure its runtime footprint', 'worktree_capacity_unavailable', error);
     }
+    try {
+      const swap = this.swapObservation();
+      if (Number.isSafeInteger(swap?.swapTotalBytes) && swap.swapTotalBytes > 0) swapReserveBytes = swap.swapTotalBytes;
+    } catch { swapReserveBytes = 0; }
     const derived = deriveWorktreeCapacityFloor({
       estimateHighWaterBytes: highWater.bytes, estimateHighWaterInodes: highWater.inodes,
       runtimeFootprintBytes: footprint.bytes, runtimeFootprintInodes: footprint.inodes,
+      swapReserveBytes,
     });
     return Object.freeze({
       bytes: configuredBytes ?? derived.bytes,
       inodes: configuredInodes ?? derived.inodes,
       source: configuredBytes !== null || configuredInodes !== null ? 'mixed' : 'derived',
       estimateHighWater: highWater, runtimeFootprint: Object.freeze(footprint),
+      swapReserveBytes,
     });
   }
 
@@ -738,8 +755,11 @@ export class WorktreeCapacityAuthority {
       if (reasons.length > 0) {
         const deficitBytes = Math.max(0, outstanding.bytes + wave.bytes + floor.bytes - observation.freeBytes);
         const deficitInodes = Math.max(0, outstanding.inodes + wave.inodes + floor.inodes - observation.freeInodes);
+        const reserveLine = floor.source === 'derived' && floor.swapReserveBytes > 0
+          ? ` plus the observed swap reserve ${floor.swapReserveBytes} bytes (#561: the room swap needs to grow on this volume)`
+          : '';
         const floorLine = floor.source === 'derived'
-          ? `the derived floor is ${floor.bytes} bytes and ${floor.inodes} inodes (largest recorded checkout estimate ${floor.estimateHighWater.bytes} bytes plus the measured runtime footprint ${floor.runtimeFootprint.bytes} bytes)`
+          ? `the derived floor is ${floor.bytes} bytes and ${floor.inodes} inodes (largest recorded checkout estimate ${floor.estimateHighWater.bytes} bytes plus the measured runtime footprint ${floor.runtimeFootprint.bytes} bytes${reserveLine})`
           : `the configured floor is ${floor.bytes} bytes and ${floor.inodes} inodes (advanced.capacity.policy.minFreeBytes/minFreeInodes)`;
         const remedy = []
           .concat(deficitBytes > 0 || deficitInodes > 0

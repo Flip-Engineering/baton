@@ -5,9 +5,9 @@
 // residents each running a suite would drive the load the way the 2026-09-14 incident did.
 // The lease is acquired before the lanes start and released at the verdict; while the
 // request waits it prints the queued row (position, ahead, shortfall — the #329 shape). The
-// wait is not bounded (#541): the run is admitted when the verdicts ahead of it release. A host
-// that cannot fund a suite at all answers `degraded` at once and the run proceeds without a
-// lease, saying so.
+// wait is not bounded (#541), and #561 brings memory inside it: a host that cannot fund the
+// run right now QUEUES the request (the width it resolved prices it) — a run without the lease
+// is the shape that froze the 2026-09-22 host, so this runner no longer has it.
 //
 // BATON_HOST_CAPACITY_DISABLED=1 stays the operator bypass (the run acquires nothing and touches
 // no lease directory). The `nested` bypass is narrower: a runner spawned BY a test file whose
@@ -97,15 +97,6 @@ export function formatSuiteQueueRow(row) {
   return `baton test runner: host capacity queued this verify request at position ${row?.position} (${row?.ahead} ahead)${shortfall} (operator bypass: ${HOST_CAPACITY_BYPASS})`;
 }
 
-/** The degraded-run warning: the host cannot fund a verdict, so this run proceeds without
- * the exclusion the lease would have bought — concurrent suites here will contend. Takes the
- * authority's `degraded` shortfall row (#541: answered at once, never after a wait). */
-export function formatSuiteDegradedWarning(shortfall) {
-  const detail = shortfall
-    ? `${shortfall.dimension}: ${shortfall.observed} ${shortfall.unit} observed, ${shortfall.required} required`
-    : 'no room for a verify lease';
-  return `baton test runner: proceeding WITHOUT a host verify lease (${detail}) — this host cannot fund a full suite, so no wait would admit it; concurrent suites here will contend`;
-}
 
 /** Issue #512: the terminal row a refused admission prints, beside the authority's own message.
  * It names the stage the run stopped at (`admission`), the refusal's typed code, the dimension
@@ -135,13 +126,15 @@ export function formatSuitePlan({
 }
 
 /** Acquire the runner's verify lease, printing the queued row while it waits. Resolves with
- * `{disabled, nested, token, degraded, authority, release}`; a bypassed or nested run resolves
- * `{disabled: true}` without touching the lease directory. The wait is not bounded (#541): the
- * run is admitted when the verdicts ahead of it release. A host that cannot fund a suite at all
- * answers `degraded` at once with the shortfall, and the run proceeds without a lease. */
+ * `{disabled, nested, token, authority, release}`; a bypassed or nested run resolves
+ * `{disabled: true}` without touching the lease directory. The wait is not bounded (#541, #561):
+ * the run is admitted when the verdicts ahead of it release — including on a host whose memory
+ * cannot fund the run right now, because a suite that proceeds without the lease is exactly how
+ * the 2026-09-22 freeze happened. `parallelism` names the lane width the run resolved (the plan
+ * line prints it), so the lease prices the run it actually excludes. */
 export async function acquireSuiteVerifyLease({
   authority = null, createAuthority = createSuiteLeaseAuthority,
-  env = process.env, holder = suiteLeaseHolder(env),
+  env = process.env, holder = suiteLeaseHolder(env), parallelism = undefined,
   log = (line) => process.stderr.write(`${line}\n`), onQueued = null,
 } = {}) {
   if (suiteLeaseDisabled(env) || suiteLeaseNested(env)) {
@@ -154,6 +147,7 @@ export async function acquireSuiteVerifyLease({
   let reported = false;
   const outcome = await resolved.acquire('verify', {
     holder,
+    ...(parallelism !== undefined ? { lanes: parallelism } : {}),
     onQueued: (row) => {
       if (reported) return;
       reported = true;
@@ -165,7 +159,6 @@ export async function acquireSuiteVerifyLease({
   return Object.freeze({
     disabled: false, nested: false,
     token: outcome.token,
-    degraded: outcome.degraded ?? null,
     authority: resolved,
     release: async () => {
       if (released || outcome.token === null) return false;

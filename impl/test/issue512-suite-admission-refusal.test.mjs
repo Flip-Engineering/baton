@@ -90,7 +90,7 @@ function runRunner({ file, env }) {
 
 test('S512-1: the admission refusal row names the stage, the code, the waiting dimension and the missing verdict', () => {
   assert.equal(typeof suiteLease.formatSuiteAdmissionRefusal, 'function',
-    'the runner\'s refusal row is one exported formatter beside the queued and degraded rows');
+    'the runner\'s refusal row is one exported formatter beside the queued row');
   // A synthetic refusal: since #541 admission never refuses for waiting, the formatter's input
   // is a genuine authority failure that still carries a shortfall row.
   const waited = Object.assign(new Error('host capacity lease directory is unavailable'), {
@@ -147,28 +147,26 @@ test('S512-2: a runner refused at admission exits 1 with one terminal row and no
   assert.doesNotMatch(terminal.stdout, /^# file /mu, 'no lane started: admission refuses pre-effect');
 }, { timeout: 120_000 });
 
-test('S512-3: a run behind another verify lease waits and runs once it releases, or degrades at once on a host that cannot fund a suite — never refused for waiting (#541)', async (t) => {
+test('S512-3: a run behind another verify lease waits and runs once it releases — never refused for waiting (#541, #561)', async (t) => {
   const root = scratch(t, 'baton-s512-queue-');
   const blocker = blockVerifyBudget(root, t);
   const { done, stderrSoFar } = runRunner({
     file: FIXTURE,
-    env: stagedEnv(root, { BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: root }),
+    env: stagedEnv(root, { BATON_HOST_CAPACITY_POLL_MS: '25', BATON_TEST_TMP_PARENT: root, BATON_SUITE_PARALLELISM: '1' }),
   });
-  const live = deriveHostCapacity(hostCapacityObservation());
   const queuedRow = /host capacity queued this verify request at position 1 \(0 ahead\)/u;
-  const degradedRow = /proceeding WITHOUT a host verify lease/u;
-  while (!queuedRow.test(stderrSoFar()) && !degradedRow.test(stderrSoFar())) {
+  while (!queuedRow.test(stderrSoFar())) {
     await new Promise((resolveWait) => { setTimeout(resolveWait, 25); });
   }
-  if (!live.memoryTight) {
-    assert.match(stderrSoFar(), /waiting on budget: [\d.]+ cores observed/u, 'the row names the budget it waits on');
-    rmSync(join(root, 'leases', `lease-verify-${blocker.nonce}.json`), { force: true });
-  }
+  assert.match(stderrSoFar(), /waiting on (budget|memory): /u,
+    '#561: the row names the dimension it waits on — the observed headroom on a memory-tight host, the budget beside a live verdict');
+  rmSync(join(root, 'leases', `lease-verify-${blocker.nonce}.json`), { force: true });
   const terminal = await done;
   assert.equal(terminal.signal, null);
-  assert.equal(terminal.code, 0, 'the run proceeded once admitted (or degraded), never refused');
+  assert.equal(terminal.code, 0, 'the run proceeded once admitted, never refused');
   assert.equal(refusalRows(terminal.stderr).length, 0, 'no refusal row: nothing was refused for waiting');
   assert.doesNotMatch(terminal.stderr, /admission wait is spent|host_capacity_queue_timeout/u);
   assert.match(terminal.stdout, /^# file /mu, 'the run ran its lane');
-  if (live.memoryTight) assert.match(terminal.stderr, degradedRow, 'a host that cannot fund a suite degrades at once');
+  assert.doesNotMatch(terminal.stderr, /proceeding WITHOUT a host verify lease/u,
+    '#561 removed the degrade-and-proceed shape');
 }, { timeout: 120_000 });

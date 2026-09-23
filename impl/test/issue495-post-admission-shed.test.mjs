@@ -75,7 +75,12 @@ function leaseFiles(root) {
 function authority(root, host, extra = {}) {
   return new HostCapacityAuthority({
     root, residentId: 'deployment-s495', observation: stagedObservation(host),
-    now: () => NOW, pollMs: 10, ...extra,
+    now: () => NOW, pollMs: 10,
+    // #561: the authority measures what live holders hold; this suite stages an empty snapshot
+    // so the observed headroom is exactly the staged availableBytes and the per-process cost is
+    // the derivation's core-share fallback — machine-independent numbers.
+    holdings: () => new Map(),
+    ...extra,
   });
 }
 
@@ -117,7 +122,9 @@ test('S495-2: an exhaustion that persists sheds exactly the newest verify lease 
     holder: 'participant:swarm:seat',
     residentId: 'deployment-b',
     acquiredAt: NEWER,
-    shortfall: { dimension: 'memory', observed: EXHAUSTED_BYTES, required: 24 * G, unit: 'bytes' },
+    shortfall: { dimension: 'memory', observed: EXHAUSTED_BYTES, required: 8 * G, unit: 'bytes' },
+    // #561: the requirement is ONE lane at the core-share fallback (nothing measurable), not the
+    // old whole-suite entitlement — the smallest unit of the class of work it admitted.
     at: '2026-09-20T12:00:00.000Z',
   }, 'ONE typed host.* row names what was shed and why, with the observed and required numbers');
   assert.equal(existsSync(newer.path), false, 'the newest admitted verify lease is the one shed');
@@ -271,14 +278,15 @@ import { MockAdapter, openBaton } from ${JSON.stringify(INDEX_URL)};
 const ROUTE = Object.freeze(${ROUTE});
 ${ADAPTER}
 export const createBatonDeployment = () => openBaton({ repo: process.cwd(), advanced: {
-  deploymentRoot: ${JSON.stringify(deploymentRoot)},
   adapters: { codex: adapter() },
   routes: [ROUTE],
   verification: { command: 'node', arguments: ['--test'] },
   resident: { env: ${JSON.stringify(env)}, home: ${JSON.stringify(home)}, webDrainMs: 2_000, sessionTtlMs: 60_000 },
   capacity: { hostCapacity: {
     root: ${JSON.stringify(leaseRootPath)}, pollMs: 25,
-    observation: ${stagedHostLiteral(EXHAUSTED_BYTES)},
+    // Zero available: the observed headroom (zero minus whatever the live holder measures) cannot
+    // fund one more process under ANY reading of the snapshot, so the shed fires deterministically.
+    observation: ${stagedHostLiteral(0)},
   } },
 } });
 `);
@@ -353,9 +361,15 @@ test('S495-6: a serving resident sheds the newest verify lease and records the r
   assert.equal(row.payload.holder, 'check:c9:k9', 'the row names the holder shed');
   assert.equal(row.payload.residentId, 'deployment-elsewhere', 'the row names whose lease it was');
   assert.equal(row.payload.acquiredAt, NEWER, 'the row names when it was acquired');
-  assert.deepEqual(row.payload.shortfall, {
-    dimension: 'memory', observed: EXHAUSTED_BYTES, required: 24 * G, unit: 'bytes',
-  }, 'the row carries the observed and required numbers of the memory shortfall');
+  // #561: the resident's authority measures the staged holder with the real process snapshot, so
+  // the row's two numbers are this machine's live readings. The mechanism, not the magnitudes, is
+  // what pins: the memory dimension with both numbers, observed below what one more process needs.
+  const shortfall = row.payload.shortfall;
+  assert.equal(shortfall.dimension, 'memory', 'the row carries the memory shortfall');
+  assert.equal(shortfall.unit, 'bytes', 'the shortfall is byte-denominated');
+  assert.ok(Number.isSafeInteger(shortfall.observed) && Number.isSafeInteger(shortfall.required)
+    && shortfall.required > 0 && shortfall.observed < shortfall.required,
+    `the row carries the observed and required numbers, observed short: ${JSON.stringify(shortfall)}`);
   assert.equal(typeof row.payload.at, 'string', 'the row is stamped');
   assert.equal(existsSync(staged.path), false, 'the shed lease left the shared budget');
   assert.deepEqual(leaseFiles(fixture.leaseRoot), [], 'and the budget is what the next read sees');

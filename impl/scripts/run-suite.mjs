@@ -126,7 +126,7 @@ const { defaultSuiteParallelism } = await import(new URL('../src/host-capacity.m
 // names its lease, and only the parent's own token digest (BATON_SUITE_VERIFY_LEASE, published to
 // this run's children below) nests a runner; the inherited BATON_TEST_SUITE_ROOT never does.
 const {
-  acquireSuiteVerifyLease, formatSuiteAdmissionRefusal, formatSuiteDegradedWarning,
+  acquireSuiteVerifyLease, formatSuiteAdmissionRefusal,
   formatSuitePlan, SUITE_VERIFY_LEASE_ENV, suiteLeaseTokenDigest,
 } = await import(new URL('./suite-host-lease.mjs', import.meta.url).href);
 
@@ -693,8 +693,8 @@ if (legacyPassthrough) {
   }
   // Issue #424: the plan — what this run expanded and the lane width it resolved (the derivation
   // reads the host's load, so a saturated host resolves one lane) — prints BEFORE admission and
-  // before any lane. A reader sees the size of the run even when the host queues the verdict,
-  // degrades it to no lease, or refuses it.
+  // before any lane. A reader sees the size of the run even when the host queues the verdict or
+  // refuses it.
   process.stderr.write(`${formatSuitePlan({
     expanded: files.parallel.length + files.serial.length,
     changedPaths: changedPaths.length,
@@ -706,15 +706,15 @@ if (legacyPassthrough) {
   // Issue #333: the runner holds one host-wide verify lease for the whole verdict — a full
   // suite costs every core but the hub's, so two residents each running a suite would repeat
   // the 2026-09-14 load incident. Admission waits IN ORDER printing the #329 queued row until
-  // the verdicts ahead release (#541: the wait is not bounded, never refused for waiting); a host
-  // that cannot fund a suite at all answers degraded at once and the run proceeds without a
-  // lease, with a warning. The lease releases at the verdict whichever way it ends. A bypassed
-  // run acquires nothing.
+  // the verdicts ahead release (#541: the wait is not bounded, never refused for waiting).
+  // #561: the wait also covers a host whose memory cannot fund the run right now — the request
+  // names the lane width it resolved, so the lease prices the run it actually excludes, and a
+  // run that proceeded without the lease (the 2026-09-22 freeze) is no longer a shape this
+  // runner has. The lease releases at the verdict. A bypassed run acquires nothing.
   // Issue #512: an admission that fails for a real reason is terminal and names itself.
   let suiteLease = null;
   try {
-    suiteLease = await acquireSuiteVerifyLease();
-    if (suiteLease.degraded) process.stderr.write(`${formatSuiteDegradedWarning(suiteLease.degraded)}\n`);
+    suiteLease = await acquireSuiteVerifyLease({ parallelism });
   } catch (error) {
     process.stderr.write(`baton test runner: ${error?.message ?? error}\n`);
     process.stderr.write(`${formatSuiteAdmissionRefusal(error)}\n`);

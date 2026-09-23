@@ -152,6 +152,9 @@ test('500-caps-B: a capacity observation is quantized down before any verdict or
         }),
       },
     },
+    // #561: the derived floor reserves the observed swap; this fixture pins the quantization, so
+    // it stages a swapless host rather than reading the real machine's swap total.
+    onDriver: (options) => { options.worktreeCapacitySwapObservation = () => ({ swapTotalBytes: 0, swapFreeBytes: 0 }); },
   });
   const doctor = await deployment.doctor();
   assert.equal(doctor.workspace.state, 'ready');
