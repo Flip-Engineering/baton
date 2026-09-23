@@ -1,14 +1,19 @@
-# Baton's laws proposed for the operator's approval — revision 9 (Codex-cleared candidate set, presented for the operator's decision)
+# Baton application laws — approved revision 9.1
 
-Provenance: work-bend2-laws, pillar 3 of issue #539. Revision 9 applies Codex's clearance of
-revision 8 (`codex-minimal-review-r8.md`, 2026-09-22): the substantive r6 counterexamples are
-addressed, M-17 and M-18 pass as independent prohibitions, and the one admission-level
-consolidation — absorbing M-9 into M-8 — is applied here together with the three presentation
-corrections. The result is 16 independent entries, presented to the operator for per-entry
-decision; the count is a consequence of the overlap review, not a target. M-17 and M-18 are
-incorporated into the candidate set as proposed — they are not adopted until the operator
-approves them. Revision 8 landed as `fabfef59` (integrated at `60901316`). Still no `laws.bend`
-entries and no rewrite implementation.
+The operator approved all 16 operative entries reviewed at
+`1fab9a1da60db3d5d9c9d3cef89d3caabd68fe35`. The final Codex r9.1 review records
+`APPROVED`; the operator authorization is relayed in the bend2-laws-lead4 brief.
+M-6 and M-9 are absorbed into M-8, M-15 is deferred, and M-16 remains the repository
+writing rule. The law-suitability and no-development holds are superseded.
+
+The operative statements below retain their approved behavioral meaning. Their bracketed
+classifications describe enforcement at the historical extraction base. Encoding status,
+checked scope, source/test verification and remaining application obligations are recorded
+in [laws-trace.md](laws-trace.md).
+
+Historical revision 9 changes follow. Revision 9.1 corrected the design-notes reduction
+record; routine maintenance here corrects the three historical references identified by the
+final review.
 
 What changed, per the r6 review:
 
@@ -26,7 +31,7 @@ What changed, per the r6 review:
   complies.
 - **M-17 clarified.** A continuation owner means actual retained responsibility or a recoverable
   handoff; an authorized suspension names its reason and resumption authority.
-- **Bookkeeping.** The set is 17 labeled entries after splitting M-3 into a/b/c; the design-notes
+- **Bookkeeping.** The operative set has 16 entries after splitting M-3 into a/b/c and absorbing M-9; the design-notes
   reduction record is corrected (DEV-6 deferred, DEV-7 excluded, PM-10 routed, the old CX-6
   rejection marked historical).
 
@@ -44,11 +49,11 @@ revisions 1–4.
 6. Is it consistent with the other accepted contracts and later operator rulings?
 
 (Connection to implementation, proof command and external effect assumptions is the
-post-admission proof-mechanics step, held until the set is validated.)
+post-admission proof-mechanics step, tracked in laws-trace.md.)
 
 ---
 
-## The proposed set (16 independent entries; M-9 is absorbed into M-8)
+## The approved set (16 independent entries; M-9 is absorbed into M-8)
 
 **M-1 · No acceptance claim without recoverable matching intent.** [partly enforced]
 Forbidden: acknowledging that managed work has been accepted or recorded unless a recoverable
@@ -253,7 +258,7 @@ Evidence: proposed — the #556 incident and the operator direction relayed 2026
 ## Disposition and reduction record (repairs)
 
 The row-by-row verdict table of revision 5 stands, with these repairs: CAP-3's verdict now reads
-"reduced → M-10 and the adopted abandonment entry" (M-17 in this revision's numbering); CS-02's
+"reduced → M-10 and M-17 (narrow abandonment, incorporated in revision 6)"; CS-02's
 verdict reads "reduced → boundary-decoder obligations; the associated flagged entry was
 withdrawn" (removing the embedded "rejected" so the mechanical count and the tally agree);
 PM-10's and LEDG-17's routes now name M-7/M-8 and the interface clause respectively. Verdict
@@ -269,17 +274,13 @@ boundary.
 
 ---
 
-## Presented for the operator's decision
+## Encoding and evidence
 
-Codex's r8 review cleared this set: the substantive r6 counterexamples are addressed, M-17 and
-M-18 pass as independent prohibitions, M-9 is absorbed into M-8 as required, and no further
-broad review round is needed unless the behavioral meaning changes. The set above now goes to
-the operator for a per-entry decision.
+The seven proof-mechanics requirements in `laws-design-notes.md` apply to each approved
+entry. `laws-trace.md` records the exact checked propositions, passing and violating examples,
+source and test links, application connection and external assumptions. A compiled model
+establishes only its stated scope. Application proof status stays open until the laws import
+the actual Baton2 transitions and their host assumptions have evidence.
 
-What the operator decides on: each of the 16 entries, plus the deferred M-15 (design notes),
-the excluded M-16 (AGENTS.md), and the absorbed M-6/M-9 (retained as clauses of M-4 and M-8).
-On approval, the seven proof-mechanics requirements attach per selected entry — the exact
-proposition, the checked proof against the actual Baton2 transition, a passing and a violating
-implementation, and the external assumptions — with compiled examples under
-`docs/bend2/examples/laws-*`. `laws.bend` stays empty until approvals arrive; the lane holds
-under the pause between reviews.
+M-6 and M-9 are retained as clauses of M-8. M-15 remains deferred in the design notes;
+M-16 remains in AGENTS.md. No further law-suitability decision is pending.
