@@ -205,9 +205,13 @@ export const EPISODE_TOPICS = Object.freeze([
 // vocabulary; the outward-facing surfaces resolve through them.
 export const PROVIDER_EXECUTION_SETTLED_PHASES = new Set([
   'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped',
+  // #102 Decision 6: a quorum-reached partial cell rest is settled provider truth.
+  'degraded',
 ]);
 export const APPLICATION_RUN_TERMINAL_PHASES = new Set([
   'completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped',
+  // #102 Decision 6: the degraded quorum terminal joins the closed terminal set.
+  'degraded',
 ]);
 /**
  * The `action.do` block the served view mints for one action kind (2026-09-14 audit, U-E5/U-I7).
@@ -6284,7 +6288,7 @@ export function _waveDriverDetached(application, waveId) {
     ));
   }
 // WLS-1: single-pass steering-registered index for the roster projections. ONE eventsView()
-// read builds (a) runId → {waveId, waveRole, route} and (b) (waveId,waveRole) → runId, so
+// read builds (a) runId → {waveId, waveRole, route, cell} and (b) (waveId,waveRole) → runId, so
 // waves.list / waves.progress serve every member from the maps instead of rescanning the log
 // per member (the 87k-event × member-count furnace that times out the bus command budget).
 // Per-invocation only — never cached across calls (event-log-derived honesty, no staleness).
@@ -6311,7 +6315,7 @@ export function _runWaveIndex(application) {
         || event.payload?.kind !== APPLICATION_STEERING_REGISTERED_KIND) continue;
       const p = event.payload;
       if (p?.runId !== undefined && !byRunId.has(p.runId)) {
-        byRunId.set(p.runId, { waveId: p.waveId, waveRole: p.waveRole, route: p.route });
+        byRunId.set(p.runId, { waveId: p.waveId, waveRole: p.waveRole, route: p.route, cell: p.cell });
       }
       if (p?.waveId !== undefined && p?.waveRole !== undefined) {
         let roles = byWaveRole.get(p.waveId);
@@ -6368,6 +6372,29 @@ export function _runWaveRoute(application, runId, index = null) {
       if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
         && event.payload?.runId === runId && event.payload?.route !== undefined) {
         return clone(event.payload.route);
+      }
+    }
+    return null;
+  }
+// #102 Decision 6: the run's cell declaration — the steering-registered `cell` (minted by
+// start(), same event-log-only discipline as _runWaveId/_runWaveRole/_runWaveRoute). The
+// shape is re-validated on read, so a foreign or legacy record never parses as a cell.
+export function _runCellDeclaration(application, runId, index = null) {
+    const raw = index !== null
+      ? (index.byRunId.get(runId)?.cell ?? null)
+      : readCellDeclaration(application, runId);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    if (!Number.isSafeInteger(raw.size) || raw.size < 2) return null;
+    if (!Number.isSafeInteger(raw.quorum) || raw.quorum < 1 || raw.quorum > raw.size) return null;
+    if (typeof raw.strict !== 'boolean') return null;
+    return clone(raw);
+  }
+function readCellDeclaration(application, runId) {
+    const events = application.driver.coordination.eventsView();
+    for (const event of events) {
+      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
+        && event.payload?.runId === runId && event.payload?.cell !== undefined) {
+        return event.payload.cell;
       }
     }
     return null;
