@@ -58,6 +58,10 @@ export function harnessWakeCapabilityRows() {
   })));
 }
 
+/** One wake may be observed again after a failed transport. Durable attempt rows bound those
+ * retries across resident restarts; a successful row closes the identity at any ordinal. */
+export const ROOT_WAKE_DELIVERY_ATTEMPT_CAP = 3;
+
 /** Issue #564: the capability rows of exactly the harnesses a deployment can run, for the doctor
  * and the deployment view. A harness the table does not know is reported as a row with no
  * turn-starting channel, never omitted: a root that can run an unwakeable harness is told so where
@@ -239,9 +243,12 @@ function frameAddress(frame) {
     ? frame.swarmId : null;
   const runId = typeof frame?.runId === 'string' && frame.runId.length > 0
     ? frame.runId : null;
+  const workerId = typeof frame?.workerId === 'string' && frame.workerId.length > 0
+    ? frame.workerId : null;
   if (swarmId !== null) return Object.freeze({ swarmId });
   if (runId !== null) return Object.freeze({ swarmId: null, runId });
-  throw refusal('wake frame identity requires either swarmId or runId', 'wake_frame_identity_invalid');
+  if (workerId !== null) return Object.freeze({ swarmId: null, workerId });
+  throw refusal('wake frame identity requires swarmId, runId, or workerId', 'wake_frame_identity_invalid');
 }
 
 function sameIdentity(payload, frame) {
@@ -251,11 +258,28 @@ function sameIdentity(payload, frame) {
     && payload.seq === frame.seq
     && payload.wakeClass === frame.wakeClass
     && payload.swarmId === address.swarmId
-    && (address.runId === undefined || payload.runId === address.runId);
+    && (address.runId === undefined || payload.runId === address.runId)
+    && (address.workerId === undefined || payload.workerId === address.workerId);
 }
 
-function alreadyRecorded(store, frame) {
-  return storedEvents(store).some((row) => sameIdentity(deliveryPayload(row), frame));
+function deliveryReceipts(store, frame) {
+  return storedEvents(store).map(deliveryPayload).filter((payload) => sameIdentity(payload, frame));
+}
+
+function deliveryState(store, frame) {
+  const receipts = deliveryReceipts(store, frame);
+  const delivered = receipts.find((payload) => payload.kind === 'wake.root_delivered') ?? null;
+  const failures = receipts.filter((payload) => payload.kind === 'wake.root_undelivered');
+  const lastFailure = failures.at(-1) ?? null;
+  const recordedOrdinals = receipts.map((payload, index) => (
+    Number.isSafeInteger(payload.attempt) && payload.attempt > 0 ? payload.attempt : index + 1
+  ));
+  return Object.freeze({
+    delivered,
+    failures: Object.freeze(failures),
+    nextAttempt: (recordedOrdinals.length === 0 ? 0 : Math.max(...recordedOrdinals)) + 1,
+    lastCode: lastFailure?.code ?? null,
+  });
 }
 
 function validateIdentity(frame) {
@@ -266,11 +290,11 @@ function validateIdentity(frame) {
   return frameAddress(frame);
 }
 
-function recordDelivery(store, kind, payload, identity) {
+function recordDelivery(store, kind, payload, identity, attempt) {
   if (typeof store?.recordDriver !== 'function') {
     throw refusal('wake delivery store has no runtime driver writer', 'wake_delivery_store_invalid');
   }
-  const key = `wake-root-delivery:${JSON.stringify(identity)}`;
+  const key = `wake-root-delivery:${JSON.stringify({ ...identity, attempt })}`;
   return store.recordDriver(kind, payload, { actor: 'policy', key });
 }
 
@@ -281,7 +305,8 @@ function typedFailure(error) {
 
 const inFlightByStore = new WeakMap();
 
-/** Deliver and durably mark one root wake identity at most once in this runtime. */
+/** Deliver one root wake. A delivered receipt is final; a failed receipt advances the durable
+ * attempt ordinal on a later observation until the per-wake cap is reached. */
 export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
   const address = validateIdentity(frame);
   if (store === null || (typeof store !== 'object' && typeof store !== 'function')) {
@@ -289,7 +314,14 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
   }
   const identity = { seq: frame.seq, wakeClass: frame.wakeClass, ...address };
   const identityKey = JSON.stringify(identity);
-  if (alreadyRecorded(store, frame)) return Object.freeze({ delivered: false, duplicate: true });
+  const recorded = deliveryState(store, frame);
+  if (recorded.delivered !== null) return Object.freeze({ delivered: false, duplicate: true });
+  if (recorded.failures.length >= ROOT_WAKE_DELIVERY_ATTEMPT_CAP) {
+    return Object.freeze({
+      delivered: false, exhausted: true, attempts: recorded.failures.length,
+      code: recorded.lastCode,
+    });
+  }
 
   let storeFlights = inFlightByStore.get(store);
   if (!storeFlights) {
@@ -298,16 +330,18 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
   }
   const priorFlight = storeFlights.get(identityKey);
   if (priorFlight) {
-    try { await priorFlight; } catch { /* the first attempt records its typed failure */ }
-    if (alreadyRecorded(store, frame)) return Object.freeze({ delivered: false, duplicate: true });
+    await priorFlight;
+    return Object.freeze({ delivered: false, duplicate: true });
   }
 
+  const attemptOrdinal = recorded.nextAttempt;
   const attempt = (async () => {
     const harness = target?.harness;
     const wakeCapability = harnessWakeCapability(harness);
     const mechanism = wakeCapability?.mechanism ?? 'none';
     const base = {
       seq: frame.seq, wakeClass: frame.wakeClass, ...address,
+      attempt: attemptOrdinal,
       harness: typeof harness === 'string' && harness.length > 0 ? harness : 'unknown',
       mechanism,
     };
@@ -331,14 +365,12 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
         throw error;
       }
       const payload = { ...base, sessionId: target.sessionId, at: new Date().toISOString() };
-      recordDelivery(store, 'wake.root_delivered', payload, identity);
+      recordDelivery(store, 'wake.root_delivered', payload, identity, attemptOrdinal);
       return Object.freeze({ delivered: true, ...payload });
     } catch (cause) {
       const error = typedFailure(cause);
       const payload = { ...base, code: error.code, at: new Date().toISOString() };
-      if (!alreadyRecorded(store, frame)) {
-        recordDelivery(store, 'wake.root_undelivered', payload, identity);
-      }
+      recordDelivery(store, 'wake.root_undelivered', payload, identity, attemptOrdinal);
       throw error;
     }
   })();
@@ -391,9 +423,15 @@ function rootTurnReportedPayload(store, frame) {
     : source?.kind === 'worker.turn_reported'
       ? { kind: source.kind, ...(source.payload ?? {}) }
       : null;
-  if (payload?.kind !== 'worker.turn_reported'
-    || typeof payload.runId !== 'string' || payload.runId.length === 0
-    || payload.runId !== frame.runId) {
+  const sourceRunId = typeof payload?.runId === 'string' && payload.runId.length > 0
+    ? payload.runId : null;
+  const sourceWorkerId = typeof payload?.worker === 'string' && payload.worker.length > 0
+    ? payload.worker : null;
+  const sourceMatches = typeof frame.runId === 'string' && frame.runId.length > 0
+    ? sourceRunId === frame.runId
+    : typeof frame.workerId === 'string' && frame.workerId.length > 0
+      && sourceRunId === null && sourceWorkerId === frame.workerId;
+  if (payload?.kind !== 'worker.turn_reported' || !sourceMatches) {
     throw refusal('root_turn_reported frame does not resolve to a worker.turn_reported row',
       'root_wake_source_invalid');
   }
@@ -407,9 +445,9 @@ function rootWakeBody(payload, wakeClass) {
   return `Baton root attention is owed.\n${JSON.stringify(payload, null, 2)}`;
 }
 
-/** Consume one root_owed frame. The frame resolves only through the addressing row's public kind
- * and payload. Delivery and its durable receipt use the frame's {seq, wakeClass, swarmId}
- * identity, so a replay returns the exactly-once duplicate result. */
+/** Consume one root-addressed frame. The frame resolves only through its public source row kind
+ * and payload. A delivered receipt closes its subject identity; failed attempts remain retryable
+ * under their durable ordinals. */
 export async function deliverRootWakeFrame({
   store,
   frame,
