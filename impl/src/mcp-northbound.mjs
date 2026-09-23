@@ -123,7 +123,6 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_services_list', 'services.list'],
     ['services.list', 'services.list'],
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
-    ...LIFECYCLE_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.key]),
     ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [[tool.name, tool.command], [tool.command, tool.command]]),
   ].map(([tool, name]) => [tool, name]),
 ));
@@ -135,11 +134,6 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
 const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   // The hand-rows-only served set (the pre-spread snapshot's source, above) …
   ...PRE_SPREAD_ORDINARY_ENTRIES,
-  // … grown by the D1 lifecycle spread: one [tool, command, definition] row per derived
-  // sibling, which is what makes the served-command set cover the web bus (the D3 law).
-  ...LIFECYCLE_ORDINARY_SIBLINGS.map((sibling) => [
-    sibling.tool, sibling.key, APPLICATION_COMMAND_DEFINITIONS[sibling.key],
-  ]),
 ]);
 
 export const SURFACING_MATRIX_MCP_ROWS = Object.freeze(
@@ -696,20 +690,6 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({ ...repo, topic: runId, depth: { type: 'string', enum: APPLICATION_SEMANTIC_REGISTRY.depths }, runId }, ['repoId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  // Issue #555: the seed leg is a #314 core-table projection source — baton_knowledge
-  // {verb: 'seed'} projects THIS row's schema, so the ordinary table carries it.
-  {
-    name: 'baton_run_knowledge_seed',
-    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
-    inputSchema: schema({
-      ...repo, runId,
-      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
-      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
-      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
-      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
-    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
   {
     // CS-2: baton_runs was already in ORDINARY_APPLICATION_ENTRIES dispatch (sibling of the
     // advertised set) but missing from the tool table — advertise it on the application surface.
@@ -892,6 +872,45 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // MCP-W2 (mcp-packaging-decisions v1.0): the four settlement ops become MCP tools behind the
+  // S-2 sessionAuthority envelope. The envelope is the authenticated connection's proof (never a
+  // caller field); knowledge.promote refuses without it, and knowledge.settlement_lease requires
+  // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
+  {
+    name: 'baton_scratchpad_elevate',
+    description: 'Elevate one terminal task\'s scratchpad entries into an orchestrator board candidacy (S-2 settlement lane).',
+    inputSchema: schema({
+      ...repo, ...idem, runId, taskId: runId, workerId: runId,
+      expectedScratchpadFence: { type: 'integer', minimum: 0 },
+      entryIds: { type: 'array', maxItems: 64, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+    }, ['repoId', 'idempotencyKey', 'runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_scratchpad_settle',
+    description: 'Settle one workflow\'s shared scratchpad partition with explicit skips (S-2 settlement lane).',
+    inputSchema: schema({
+      ...repo, ...idem, runId, expectedScratchpadFence: { type: 'integer', minimum: 0 },
+      skips: { type: 'array', maxItems: 256, items: { type: 'object' } },
+    }, ['repoId', 'idempotencyKey', 'runId', 'expectedScratchpadFence', 'skips']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_knowledge_promote',
+    description: 'Admit one workflow candidate Finding into shared knowledge through the run-orchestrator lease. REQUIRES the S-2 sessionAuthority envelope bound to the settlement lease — presenter authentication is the lease\'s session binding (XB), validated exactly as admitBoardCommand does.',
+    inputSchema: schema({
+      ...repo, ...idem, runId, candidateFindingId: runId, policy: { type: 'object' }, lease: { type: 'object' },
+    }, ['repoId', 'idempotencyKey', 'runId', 'candidateFindingId', 'policy', 'lease']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_knowledge_settlement_lease',
+    description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
+    inputSchema: schema({
+      ...repo, ...idem, waveId: runId, members: { type: 'array', maxItems: FRAME_LIMITS['wave.members'].value, items: runId },
+    }, ['repoId', 'idempotencyKey', 'waveId']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   // Issue #206: the message lane's ordinary tools (restored per the final-landing ruling).
   {
     name: 'baton_run_message_send',
@@ -908,6 +927,61 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     description: "Read the honest receipt state machine for one message: {delivered, read, actedOn, reply} - the lane's exact shape, resolve-then-authorized (an unknown id refuses identically to a foreign one).",
     inputSchema: schema({ ...repo, messageId: { type: 'string', pattern: '^message:[a-f0-9]{64}$' } }, ['repoId', 'messageId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  // Issue #566 (d1288fd9 regression): the facade six's remaining four plus the scratchpad and
+  // knowledge-seed ordinary rows return — the dispatch chain, shape guards, capability classes,
+  // and explicit-tool sets never left, so only these definition rows were cut.
+  {
+    name: 'baton_run_attention_watch',
+    description: "Page the run's attention inbox through the lane's own scope authority: {reasons, throughCursor, afterCursor, runId} with storm coalescing and candidacy gating. Kind is a shape-only target filter; cursor is a safe offset.",
+    inputSchema: schema({
+      ...repo, runId, kind: runId, cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_scratchpad_read',
+    description: 'Read a bounded, UNTRUSTED-framed page of one scratchpad scope (shared or worker:<id>): at most 64 entries, at most 4,096-byte leaves, the fence/observedSeq verbatim, and the 256 KiB serialized page budget with digest-citation truncation.',
+    inputSchema: schema({
+      ...repo, runId, scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'runId', 'scope']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_scratchpad_elevate',
+    description: "Settle one terminal task's scratchpad partition through the coordinator's fence-bound elevation wrapper (ordinary end-of-task path). Returns the store receipt verbatim; an exact retry returns the empty successor.",
+    inputSchema: schema({
+      ...repo, runId, taskId: runId,
+      entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+    }, ['repoId', 'runId', 'taskId', 'entryIds']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_scratchpad_append',
+    description: "Append one entry to a run scratchpad scope (shared or worker:<id>) as a direct EPHEMERAL write (issue #158). Returns the store receipt verbatim {ok, result:'written'|'idempotent', entryId, entryDigest, scope, scratchpadFence, eventSeq}. The entry's author is server-bound to the caller identity; an exact retry under the same idempotencyKey replays the prior receipt.",
+    inputSchema: schema({
+      ...repo, runId,
+      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
+      body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
+      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
+    }, ['repoId', 'runId', 'scope']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  // Issue #555: the seed leg is a #314 core-table projection source — baton_knowledge
+  // {verb: 'seed'} projects THIS row's schema, so the ordinary table carries it.
+  {
+    name: 'baton_run_knowledge_seed',
+    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
+    inputSchema: schema({
+      ...repo, runId,
+      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
+      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
+      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
+    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   // Issue #99/#179 (harvest-accessor contract Decision 4): the accessor's two ordinary tools.
   {
@@ -1126,24 +1200,19 @@ function withSpellingNote(tool) {
   return tool;
 }
 export const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
-  // Issue #156 D1 step 3: the derived lifecycle siblings LEAD the table (the combined profile's
-  // ordinary prefix starts with them), each spread from its fleet_run_* source definition — the
-  // M4b one-operation-one-schema claim — with the explicit _meta registry stamp (the fleet_*
-  // sources carry execution but not _meta).
-  ...LIFECYCLE_ORDINARY_SIBLINGS.map((sibling) => {
-    const source = APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.source);
-    return Object.freeze({
-      ...source,
-      name: sibling.tool,
-      _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
-    });
-  }),
   ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.map(withSpellingNote),
   ...SWARM_APPLICATION_TOOL_DEFINITIONS,
   ...EVIDENCE_SEARCH_TOOL_DEFINITIONS,
   ...SERVICES_LIST_TOOL_DEFINITIONS,
   // Issue #294 (final-landing ruling): the wake family's registry rows claim the mcp surface.
   ...WAKE_TOOL_DEFINITIONS,
+  // Issue #233: the canonical dot-name twins of the retained ordinary tools — each dot name is
+  // the command itself (canonicalAndTransportNames(command).canonical), admitted beside its
+  // legacy baton_* spelling with the same definition row. Cut by d1288fd9, restored by #566.
+  ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => {
+    const base = LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.legacyTool);
+    return withSpellingNote(Object.freeze({ ...base, name: sibling.tool }));
+  }),
 ]);
 
 // ── the core mutation answer (docs/49 §5; issues #302, #294) ─────────────────────────────────────
@@ -1452,7 +1521,7 @@ export function mcpToolCommandPairs() {
     return Object.freeze({ tool, command });
   }));
 }
-const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
+const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...CANONICAL_DOT_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 
 // #233 regression (2026-08-15, caught live by the fleet-drive): the canonical-naming fold
 // dropped this map while its consumer survived — every tools/call argument validation
@@ -1683,13 +1752,16 @@ function validateArguments(name, args, maxWaitMs = null) {
           ...(cause?.cap != null ? { cap: cause.cap } : {}),
           ...(cause?.actual != null ? { actual: cause.actual } : {}),
           unit: cause?.unit ?? 'bytes',
+          gracefulPath: cause?.gracefulPath ?? null,
+          ...(cause?.field != null ? { field: cause.field } : {}),
         };
       }
       return { code: 'invalid_run_command', message: 'arguments do not satisfy the command contract for this tool' };
     }
-    // Issue #156 D1 item 4: the bounded-wait bound admits BOTH spellings of the wait/follow
-    // operations, so the baton_run_* siblings inherit the maxWaitMs bound instead of bypassing it.
-    if (['fleet_run_wait', 'fleet_run_follow', 'baton_run_wait', 'baton_run_follow'].includes(name)
+    // The bounded-wait bound covers the fleet spellings of the wait/follow operations (the
+    // minted baton_run_* lifecycle siblings left with the #566 composition restore; the
+    // canonical dot spellings share the fleet definitions and never re-enter this guard).
+    if (['fleet_run_wait', 'fleet_run_follow'].includes(name)
       && (!Number.isSafeInteger(maxWaitMs) || args.timeoutMs > maxWaitMs)) return 'invalid_run_wait';
   }
   if (name === 'fleet_spawn') {

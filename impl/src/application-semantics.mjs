@@ -2169,13 +2169,6 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.member.view', 'mcp.baton', 'baton_run_workstreams'],
   ['run.view', 'mcp.baton', 'baton_run_episode'],
   ['run.view', 'mcp.baton', 'baton_run_inspect'],
-  // Issue #156 D4 item 1: the five non-canonical ops are NOT canonicalOperations keys, so their
-  // baton_run_* siblings resolve through these rows plus the renderer's canonical-miss fallback.
-  ['run.status', 'mcp.baton', 'baton_run_status'],
-  ['run.follow', 'mcp.baton', 'baton_run_follow'],
-  ['run.wait', 'mcp.baton', 'baton_run_wait'],
-  ['run.resume_work', 'mcp.baton', 'baton_run_resume_work'],
-  ['run.retry_verification', 'mcp.baton', 'baton_run_retry_verification'],
   ['run.adopt', 'mcp.fleet', 'fleet_run_adopt'],
   ['run.answer', 'mcp.fleet', 'fleet_run_answer'],
   ['run.approve', 'mcp.fleet', 'fleet_run_approve'],
