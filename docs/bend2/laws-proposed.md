@@ -255,29 +255,34 @@ transition may move live work into a state whose only exit is an explicit act by
 - `c200ced7` forced every swarm participant through that park.
 - On 2026-09-23 every live seat of this deployment parked by 06:40 UTC and stayed parked for seven
   hours: work that finished after the last external act was not resumed by the runtime.
-- Issue #572 removes the park and replaces it with an immediate continue nudge at turn end, and
-  AGENTS.md bans the pattern.
+- Issue #572 removes the park, and AGENTS.md bans the pattern.
 
-**Shape in the rewrite.** The law is stated so the parked state is unrepresentable rather than
-merely forbidden: the work state's type carries only states whose exit the runtime itself takes, the
-turn loop's exit function is total over that type, and the law requires every state's exit to be the
-runtime's own. Neither half can be given up silently: a state the exit function does not cover is
-refused, and a state whose exit an external act takes makes the law's obligation unsatisfiable.
-`examples/laws-no-park.bend` states the model and the law, and `examples/laws-no-park.evidence.md`
-records both controls at the pin. The operator's expected shape is the continue nudge at turn end:
-the runtime's own exit from the completed-turn state.
+**Operator decision (2026-09-23).** At every turn end Baton wakes the seat's orchestrator (its
+parent seat, or the root) with the turn's report, and the orchestrator decides whether to nudge the
+seat on. The seat stops when it declares itself done or its orchestrator stops it. Root wake is
+#564. The law below is stated in that shape: a live state may wait, but only on a party Baton wakes
+to decide it.
+
+**Shape in the rewrite.** The law is stated so a state waiting on a party the runtime does not wake
+is unrepresentable rather than merely forbidden. The work state's type names, for every state, the
+party the state waits on: the runtime itself, the orchestrator Baton wakes at turn end with the
+report, or a party Baton does not wake. A total function answers whether Baton wakes a party, and
+the law requires every state's waiter to be a woken one. Neither half can be given up silently: a
+state whose waiter the function does not name is refused, and a state parked on an unwoken party
+makes the law's obligation unsatisfiable. `examples/laws-no-park.bend` states the model and the
+law, and `examples/laws-no-park.evidence.md` records both controls at the pin.
 
 **Questions for law review.**
 
-1. Is the statement expressible at the pin as written, where a state whose only exit is another
-   party's act cannot be constructed beside the law, or does the unrepresentability claim need a
-   stronger type-level obligation than the discharged law and its two controls supply?
+1. Is the statement expressible at the pin as written, where a state waiting only on an unwoken
+   party cannot be constructed beside the law, or does the unrepresentability claim need a stronger
+   obligation than the discharged law and its two controls supply?
 2. Does the entry meet the law definition (a forbidden behavior with an enforcement anchor), or is
    it tested behaviour that belongs in the trace as a test obligation rather than as a law?
-3. Does the law admit the waits that are not parks: a run waiting on a verification lease, a seat
-   waiting on a provider retry, or a gate run waiting on a runner, each of which the runtime itself
-   resumes? The distinguishing shape proposed here is that such a wait carries a runtime-taken exit
-   in its own state, while a park carries none.
+3. Does the law admit the waits that are not parks - a run waiting on a verification lease, a seat
+   waiting on a provider retry, a gate run waiting on a runner - where the waited-on party is one
+   Baton wakes? The model admits them through the party the state names, and it states no
+   obligation that a wait ends without a wake.
 
 ---
 

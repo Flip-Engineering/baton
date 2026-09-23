@@ -1,36 +1,47 @@
-# CLAIM: the runtime's turn loop is total over its state type, and no state in the
-# model has an exit another party must take; adding a state whose exit is a claim,
-# nudge, guide, resume decision or review makes the law below false, so the parked
-# state cannot be represented beside the law.
-# Status: proposed addition (revision 10, 2026-09-23). Not part of the approved 16.
+# CLAIM: every state in the model names a party Baton wakes to decide it, so a state that waits
+# on a party the runtime does not wake makes the law below false and cannot be represented beside
+# it; the parked seat of 2026-09-23 is exactly such a state.
+# Status: proposed addition (revision 10, 2026-09-23), shape set by the operator: at every turn
+# end Baton wakes the seat's orchestrator with the turn's report, and the orchestrator decides
+# whether to nudge the seat on. Not part of the approved 16.
 # Reference: ../reference/README.md, bend 2.0.25, a4952426.
 # Evidence: laws-no-park.evidence.md.
 import Base
 
-# Who takes the step out of a state: the runtime itself, or another party. The
-# model keeps them distinct values, which is what lets a law forbid the second.
-type Exit is Data:
+# The party a state waits on. `Runtime{}` means the work is resumed with no other actor,
+# `Orchestrator{}` the seat's parent seat or the root, which Baton wakes at turn end with the
+# turn's report, and `Unwoken{}` any party the runtime does not wake.
+type Party is Data:
   Runtime{}
-  External{}
+  Orchestrator{}
+  Unwoken{}
 
-# The turn loop's states. Every constructor is a state the runtime reaches and
-# leaves by itself. The real park (Baton 89661c1f) is a state whose exit is
-# External; it has no constructor here.
+# The work states. A state may wait, but only on a party Baton wakes to decide it.
 type State is Data:
   Working{turn: Nat}
+  AwaitingOrchestrator{turn: Nat}
   Complete{}
 
-def exit_of(s: State) -> Exit:
+def waiter_of(s: State) -> Party:
   match s:
     case Working{+turn}: Runtime{}
+    case AwaitingOrchestrator{+turn}: Orchestrator{}
     case Complete{}: Runtime{}
 
-# The law: every state's exit is the runtime's own.
-law runtime_takes_every_exit:
-  for s: State
-  {exit_of(s) == Runtime{} : Exit}
+# Whether Baton wakes this party. Total over the party type, and false only for `Unwoken{}`.
+def woken(p: Party) -> Bool:
+  match p:
+    case Runtime{}: True{}
+    case Orchestrator{}: True{}
+    case Unwoken{}: False{}
 
-def runtime_takes_every_exit(s):
+# The law: every state's waiter is a party Baton wakes to decide it.
+law waiter_is_woken:
+  for s: State
+  {woken(waiter_of(s)) == True{} : Bool}
+
+def waiter_is_woken(s):
   match s:
     case Working{+turn}: {==}
+    case AwaitingOrchestrator{+turn}: {==}
     case Complete{}: {==}

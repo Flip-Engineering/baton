@@ -246,9 +246,9 @@ row in the approved set above. Its record:
 
 | | |
 |---|---|
-| Statement | The runtime never deliberately pauses, idles or truncates an agent's work; no transition may move live work into a state whose only exit is an explicit act by another party (claim, nudge, guide, resume decision, review). |
+| Statement | The runtime never deliberately pauses, idles or truncates an agent's work; no transition may move live work into a state whose only exit is an explicit act by another party (claim, nudge, guide, resume decision, review). The operator's decision of 2026-09-23 states the sanctioned shape: at every turn end Baton wakes the seat's orchestrator with the turn's report, and the orchestrator decides whether to nudge the seat on. |
 | Enforcement anchor in Baton | The park commit `89661c1f` introduced into the turn checkpoint and `c200ced7` forced on every participant; issue #572 removes it, and AGENTS.md bans it. |
-| Encoding | [examples/laws-no-park.bend](examples/laws-no-park.bend): the exit function is total over the state type, and `runtime_takes_every_exit` requires every state's exit to be the runtime's own. |
-| Checked scope | The model law is discharged at the pin and both controls fail as required: a state with an external exit makes the obligation unsatisfiable, and a state the exit function does not cover is refused. [examples/laws-no-park.evidence.md](examples/laws-no-park.evidence.md) records the commands and outputs. |
-| Application scope | Open. The law constrains the rewrite's work-state type and its turn loop; the current JavaScript park is removed by issue #572, not proved by this law. |
+| Encoding | [examples/laws-no-park.bend](examples/laws-no-park.bend): every state names its waiter, a total `woken` answers whether Baton wakes a party, and `waiter_is_woken` requires every state's waiter to be a woken one. |
+| Checked scope | The model law is discharged at the pin and both controls fail as required: a state parked on an unwoken party makes the obligation unsatisfiable (`expected False{}, observed True{}`), and a state the waiter function does not cover is refused (`expected cases for Parked`). [examples/laws-no-park.evidence.md](examples/laws-no-park.evidence.md) records the commands and outputs. |
+| Application scope | Open. The law constrains the rewrite's work-state type, its waiter function and the runtime's wake rule; the wake itself and the orchestrator's decision are host effects (root wake is #564), and the current JavaScript park is removed by issue #572, not proved by this law. |
 | Open questions | The three review questions in `laws-proposed.md`: expressibility at the pin, law versus tested behaviour, and the waits that are not parks. |
