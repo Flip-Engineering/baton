@@ -7,10 +7,9 @@
 // ReplManifests and versioned bindings over settled context cells, the coordinator resolves a
 // per-worker citation set into a bounded, sanitized, UNTRUSTED `replObjects` block that BOTH
 // provider-facing renderers emit as `## Cited REPL objects`, and the run/approval boundaries
-// (R10/R11, tiers, promotion provenance, review-by-projection) close the contract. Every
-// capability row below is RED at HEAD (the seam and its refusal family are absent from this
-// tree) and fails at a NAMED stage; the PIN rows are green today by construction and must STAY
-// green on the implementation (the fold's "must NOT change").
+// (R10/R11, tiers, promotion provenance, review-by-projection) close the contract. The rows below
+// are this issue's acceptance criteria: each was red-first and failed at its NAMED stage before the
+// realization landed, and the PIN rows were green before it and state what it must not change.
 //
 // Row inventory (34 rows — 24 RED / 10 PIN — suite-fold-2 F1-F8 folded):
 //   A1-A3  RED    D1 seam + renderers   (renderBrief-repl-objects-missing, renderPrompt-repl-objects-missing, cited-repl-objects-seam-missing)
@@ -98,11 +97,11 @@ import {
 } from '../src/context-program.mjs';
 import { applicationSemanticRegistry } from '../src/application-semantics.mjs';
 
-// Verified split (two consecutive runs from the repo root, at the suite-fold-2 HEAD):
-//   run 1: tests 34 · pass 10 · fail 24 · cancelled 0 · skipped 0 · todo 0 (≈2760 ms)
-//   run 2: tests 34 · pass 10 · fail 24 · cancelled 0 · skipped 0 · todo 0 (≈2390 ms)
-//   deterministic — the 10 passes are exactly the PIN rows (A4, B2, B4, C3, E3, F3, F4, G3, H3,
-//   I1); the 24 failures are the RED rows, each confirmed to fail at its NAMED stage.
+// Verified split (runs from the repo root).
+//   Before the realization (the served base): tests 34 · pass 12 · fail 22 — the 22 rows the
+//   expected-red manifest pinned under #69; B1 and G2 had already converged with #79/#143.
+//   After the realization (two consecutive runs): tests 34 · pass 34 · fail 0 · cancelled 0 ·
+//   skipped 0 · todo 0. The ten PIN rows and the two rows that had converged stay green.
 
 const dirs = [];
 function tmpDir() {
