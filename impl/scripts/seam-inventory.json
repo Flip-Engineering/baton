@@ -1523,7 +1523,7 @@
         {
           "name": "_validateSessionContext",
           "ordinal": 0,
-          "size": 15,
+          "size": 19,
           "seam": "effect",
           "evidence": [
             "effect:worktree_authority",
@@ -14068,7 +14068,7 @@
         {
           "name": "_integrate",
           "ordinal": 0,
-          "size": 227,
+          "size": 232,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -20745,7 +20745,7 @@
         {
           "name": "_recover",
           "ordinal": 0,
-          "size": 551,
+          "size": 549,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -20760,7 +20760,7 @@
         {
           "name": "_reattachPreservedSession",
           "ordinal": 0,
-          "size": 139,
+          "size": 137,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
