@@ -9225,6 +9225,7 @@ export class SwarmRuntime {
         // answer and the durable row carrying the objective's reference — never a second copy of
         // the text the join row already holds.
         return { participantId: participant.participantId,
+          result: objectiveReferencedReceipt(stopped, seat),
           leaveReason, writes: [...(leave ? [leave] : []), ...reviewerLoss] };
       }, { context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
