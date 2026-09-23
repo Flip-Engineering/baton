@@ -1467,6 +1467,10 @@
       "reason": "#564"
     },
     {
+      "file": "test/issue564-turn-report-root-owed-red.test.mjs",
+      "reason": "#572"
+    },
+    {
       "file": "test/issue564-wake-capability-report-red.test.mjs",
       "reason": "#564"
     },
