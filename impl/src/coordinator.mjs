@@ -4123,6 +4123,10 @@ export class Coordinator {
       && !handle.recoverySpawnAbort.signal.aborted) {
       handle.recoverySpawnAbort.abort({ mode, actor });
     }
+    if (handle.automaticRecoveryTimer != null) {
+      this._clearTimeout(handle.automaticRecoveryTimer);
+      handle.automaticRecoveryTimer = null;
+    }
     handle.status = 'stopping';
     this._clearBudgetStop(handle);
     this._clearWatchdog(handle);
@@ -4460,6 +4464,12 @@ export class Coordinator {
       // crash reaches this path, never the kill waiter).
       this._settleTransportDeath(handle, task, stopEvent);
     }
+    if (this._prepareProviderRetryAfterTransport(handle, task)) {
+      await this.releaseGoneWorkerReservations();
+      this._scheduleAutomaticProviderRecovery(handle, task,
+        this._providerFaultDeaths?.get(handle.id) ?? null);
+      return;
+    }
     const runtimeRemoved = this._removeRuntimeScope(handle);
     await this._removeOwnedTaskWorktree(handle, task);
     if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
@@ -4467,6 +4477,16 @@ export class Coordinator {
     // Issue #450: an exact process close settles this worker's capacity reservation the same way a
     // confirmed kill does — the seam that observes the death is where the release is named.
     await this.releaseGoneWorkerReservations();
+  }
+
+  _prepareProviderRetryAfterTransport(handle, task) {
+    return runtimeObservation._prepareProviderRetryAfterTransport(this, this._recorder, handle, task);
+  }
+
+  _scheduleAutomaticProviderRecovery(handle, task, death = null, opts = {}) {
+    return runtimeObservation._scheduleAutomaticProviderRecovery(
+      this, this._recorder, handle, task, death, opts,
+    );
   }
 
   // Deployment-issued participant credentials follow the participant across native turns and
@@ -6136,7 +6156,9 @@ export class Coordinator {
     return runtimeAdmission._queueTransientProviderTurnRetry(this, this._recorder, handle, terminalEvent, workerResult, task);
   }
 
-  async _retryTransientProviderTurn(handle, terminalEvent, workerResult, { code, attempt, route }) {
+  async _retryTransientProviderTurn(handle, terminalEvent, workerResult, {
+    code, attempt, route, retryEvidence,
+  }) {
     const task = this._tasks.get(handle.taskId);
     const admission = { events: [] };
     handle.turnAdmission = admission;
@@ -6163,11 +6185,12 @@ export class Coordinator {
       worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'provider.transient_retry', actor: 'policy', ...this._routeAttribution(handle, task),
       payload: {
-        code, route, attempt, of: this._transientTurnRetryLimit, terminalSeq: terminalEvent?.seq ?? null,
+        code, route, attempt, terminalSeq: terminalEvent?.seq ?? null,
         action: 'new_turn_on_same_session',
       },
     });
     handle.transientTurnRetries = attempt;
+    handle.transientRetryEvidence = retryEvidence;
     handle.turnTerminalObserved = false;
     this._resetWatchdogTurn(handle);
     for (const event of admission.events) this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });

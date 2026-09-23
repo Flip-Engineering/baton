@@ -913,9 +913,8 @@ async function cancelRunStopTarget(coordinator, recorder, state, handle, task, k
         kind, actor: state.actor, ...coordinator._routeAttribution(handle, task), payload: {},
       });
       const evidence = recorder.mapEvent(cancelled);
-      // #201: a retry_pending park survives the crash-path stop — the task belongs to the
-      // successor incarnation's resume, not this dying generation's cancel semantics.
-      if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') {
+      // #574: an explicit run stop owns the task even when provider recovery had parked it.
+      if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
         coordinator._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${cancelled.seq}`, evidence);
         task.status = 'cancelled';
       }
@@ -1321,13 +1320,19 @@ export function _finalizeStop(coordinator, recorder, workerId, waiter) {
       if (handle) {
         const task = coordinator._tasks.get(handle.taskId);
         if (waiter.mode === 'kill') {
+          const providerRetry = task?.status === 'retry_pending'
+            && handle.terminalCause?.kind === 'provider_failure'
+            && [KILL_RULES.providerCrash, KILL_RULES.providerFault].includes(waiter.rule)
+            && coordinator._drainState === 'open';
+          waiter.providerRetry = providerRetry;
           // #295 item 3: a typed provider fault is a RESUMABLE death — the work the member
           // produced must outlive it, so a checkpoint is preserved on that class even though the
           // task itself settled failed. Any other kill of a terminal task preserves nothing.
           const preserveProgress = Boolean(task && (!TERMINAL_TASK_STATUSES.has(task.status)
             || handle.terminalCause?.kind === 'provider_failure'));
-          // #201: retry_pending parks survive the kill-confirmed cancel — the successor resumes.
-          if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') {
+          // Provider recovery retains its durable park. An explicit operator/run/drain stop
+          // transitions the park to cancelled and prevents any later recovery callback.
+          if (task && !TERMINAL_TASK_STATUSES.has(task.status) && !providerRetry) {
             const evidence = recorder.mapEvent(stopEvent);
             coordinator._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${stopEvent.seq}`, evidence);
           }
@@ -1335,10 +1340,16 @@ export function _finalizeStop(coordinator, recorder, workerId, waiter) {
           handle.sessionPreservation = null;
           handle.preservedTurnEpoch = null;
           const runtimeRemoved = coordinator._removeRuntimeScope(handle);
-          if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') task.status = 'cancelled';
+          if (task && !TERMINAL_TASK_STATUSES.has(task.status) && !providerRetry) task.status = 'cancelled';
           waiter.cleanupPromise = coordinator._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress)
-            .then(() => waiter.retainUnownedWorktree
-              ? undefined : coordinator._removeOwnedTaskWorktree(handle, task))
+            .then(() => {
+              if (providerRetry) {
+                coordinator._prepareProviderRetryAfterTransport(handle, task);
+                return undefined;
+              }
+              return waiter.retainUnownedWorktree
+                ? undefined : coordinator._removeOwnedTaskWorktree(handle, task);
+            })
             // Issue #450: the reservation this kill leaves behind is settled once the
             // transaction is over (see the settled continuation below) — after this handle's last
             // hold is released, so the sweep never races the stop it belongs to.
@@ -1432,7 +1443,12 @@ export function _finalizeStop(coordinator, recorder, workerId, waiter) {
         // #265 item 2 and #295 items (2)+(4): the kill reaped this member's transport, so every
         // observed native child is settled (unknown + named gap) and a typed provider death lands
         // as a run-level row naming the route, the fault class, and what was preserved.
-        coordinator._settleTransportDeath(handle, coordinator._tasks.get(handle.taskId), stopEvent);
+        const task = coordinator._tasks.get(handle.taskId);
+        coordinator._settleTransportDeath(handle, task, stopEvent);
+        if (waiter.providerRetry === true) {
+          coordinator._scheduleAutomaticProviderRecovery(handle, task,
+            coordinator._providerFaultDeaths?.get(handle.id) ?? null);
+        }
       }
       if (handle && waiter.mode === 'kill') handle.localAuthority = false;
       // The transaction is over the moment its cleanup settles: the waiter must leave the map
