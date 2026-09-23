@@ -187,6 +187,8 @@ test('564-c1: review_owed fires with no other active reviewer seat, needs_root o
   const f = fixture(t);
   await f.call('create', { purpose: 'Test root wake addressing' });
   await f.recruit('author');
+  // The premise of this row is that NO other active seat holds review: state it, so a change to
+  // the recruit default permissions (e.g. #572) cannot make this fixture assert the opposite.
   await f.recruit('idle-peer', ['read', 'communicate', 'contribute']);
 
   await f.call('update', {
