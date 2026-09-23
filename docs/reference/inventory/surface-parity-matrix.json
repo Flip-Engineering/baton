@@ -13,6 +13,15 @@
       "ledgered": false
     },
     {
+      "name": "baton_attention_wait",
+      "category": "notifications",
+      "cli": null,
+      "mcp": "baton_attention_wait",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
       "name": "baton_run_follow",
       "category": "notifications",
       "cli": null,
