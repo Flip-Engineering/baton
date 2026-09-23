@@ -23,6 +23,8 @@ export const CANONICAL_RUN_PHASES = Object.freeze([
   'uncertain', 'verifying', 'result_ready', 'awaiting_selection', 'result_selected',
   'reviewing', 'integrating', 'completed', 'failed', 'inconclusive', 'cancelled', 'stopped',
   'denied', 'stopping',
+  // #102 Decision 6: the cell's quorum-reached partial rest is canonical terminal truth.
+  'degraded',
 ]);
 export const CANONICAL_MEMBER_STATES = Object.freeze([
   'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',
@@ -104,9 +106,13 @@ export function serializeAttentionKind(kind) {
 const PROVIDER_SETTLED_CANONICAL = new Set([
   'result_ready', 'awaiting_selection', 'result_selected',
   'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
+  // #102 Decision 6: the degraded quorum terminal is settled and terminal canonical truth.
+  'degraded',
 ]);
 const APPLICATION_TERMINAL_CANONICAL = new Set([
   'completed', 'failed', 'inconclusive', 'cancelled', 'stopped', 'denied',
+  // #102 Decision 6: the degraded quorum terminal is settled and terminal canonical truth.
+  'degraded',
 ]);
 export function providerSettled(phase) {
   return PROVIDER_SETTLED_CANONICAL.has(canonicalRunPhase(phase));
