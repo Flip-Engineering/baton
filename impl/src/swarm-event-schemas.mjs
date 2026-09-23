@@ -254,6 +254,40 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
   // opened) and how it stopped (the code it failed under) are recorded by the runtime as it runs,
   // not by the caller that asked. They are driver rows, never caller-submittable and never folded
   // into the swarm state; `swarm.view` annotates the contribution row it belongs to with both.
+  'wake.root_delivered': Object.freeze({
+    summary: Object.freeze('one root-addressed wake written to an operator session through its declared turn-starting channel'),
+    fields: Object.freeze({
+      seq: Object.freeze({ type: 'integer', description: 'the wake frame sequence' }),
+      wakeClass: STRING('the wake class carried by the frame'),
+      swarmId: STRING('the swarm the wake belongs to'),
+      harness: STRING('the operator session harness'),
+      mechanism: STRING('the turn-starting delivery mechanism'),
+      sessionId: STRING('the operator session that received the wake'),
+      at: STRING('the delivery instant, ISO 8601'),
+    }),
+    example: Object.freeze({
+      seq: 42, wakeClass: 'attention', swarmId: 'swarm-40e643e96fd1edcd',
+      harness: 'claude-code', mechanism: 'session-socket', sessionId: 'session-ada',
+      at: '2026-09-23T04:00:00.000Z',
+    }),
+  }),
+  'wake.root_undelivered': Object.freeze({
+    summary: Object.freeze('one root-addressed wake that a declared operator-session channel could not deliver'),
+    fields: Object.freeze({
+      seq: Object.freeze({ type: 'integer', description: 'the wake frame sequence' }),
+      wakeClass: STRING('the wake class carried by the frame'),
+      swarmId: STRING('the swarm the wake belongs to'),
+      harness: STRING('the operator session harness'),
+      mechanism: STRING('the declared delivery mechanism, or none when the harness has no turn-starting channel'),
+      code: STRING('the typed refusal code'),
+      at: STRING('the refusal instant, ISO 8601'),
+    }),
+    example: Object.freeze({
+      seq: 43, wakeClass: 'attention', swarmId: 'swarm-40e643e96fd1edcd',
+      harness: 'codex', mechanism: 'none', code: 'wake_delivery_unavailable',
+      at: '2026-09-23T04:00:01.000Z',
+    }),
+  }),
   'swarm.integration_started': Object.freeze({
     summary: Object.freeze('a landing opened its scratch checkout — recorded by the runtime before the squash or any gate runs'),
     fields: Object.freeze({
