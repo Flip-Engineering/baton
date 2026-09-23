@@ -12787,7 +12787,7 @@
         {
           "name": "_observeParticipantFaults",
           "ordinal": 0,
-          "size": 47,
+          "size": 57,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -12991,6 +12991,29 @@
           "seam": "observation",
           "evidence": [
             "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordRootAttentionRows",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:record_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_reconcileReviewerLossRows",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:projection_name",
+            "observation:key_name"
           ]
         },
         {
@@ -14240,7 +14263,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1211,
+          "size": 1238,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
