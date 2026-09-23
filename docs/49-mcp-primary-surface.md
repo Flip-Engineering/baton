@@ -1,18 +1,18 @@
 # 49 — MCP as the primary agent surface: a core tool set, one entry story, receipts and wakes, reincarnation survival (issue #314)
 
-Design direction: 2026-09-18, design seat kimi-314. Stage: `design` — pinned red-before by
-`impl/test/issue314-mcp-core-surface-red.test.mjs` (ten rows, one per law, each red at HEAD with
-an assertion that names the missing law; manifest rows under reason `#314`). Every claim about
-current behavior below cites the file and line it was read at; the byte numbers are measured by
-the red file's own fixture (a stub card over the real `McpFleetServer` and the production
-wrapper — the exact composition both entry scripts serve).
+Design direction: 2026-09-18. The core projection, entry points, receipts, wakes, and resident
+reconnection are implemented. Their contracts are covered by
+`impl/test/issue314-core-table.test.mjs`, `issue314-mcp-core-surface-red.test.mjs`,
+`issue314-lane2-receipts-wakes.test.mjs`, and `issue314-lane3-reincarnation-rebind.test.mjs`.
 
-> **Landed (2026-09-18, lane 4 — the entry story).** The laws this lane owns are closed and noted
-> in place: law (c) (§4) in full, and law (f)'s GUIDE half (§7). Lane 1's projection (the core
-> table and the served surface) and lanes 2–3's rules (receipts/wakes, reincarnation survival)
-> stay red-listed under `#314`; 314-f's third clause rides lane 1's landing.
+The production application surface exposes eight core tools: `baton_deployment`, `baton_run`,
+`baton_swarm`, `baton_waves`, `baton_knowledge`, `baton_wakes`, `baton_services`, and
+`baton_surface`. The raw `McpFleetServer` application table contains 57 tools after the #566
+restoration; the production wrapper projects that table into the core families. The startup
+gate in `impl/test/mcp-web-startup-gate.test.mjs` checks the composed entry point and its gate
+selection for application entry-point and bridge changes.
 
-The issue: MCP.md documents 52 flat `baton_*` tools on the ordinary surface (the generated
+The original issue measured 52 flat `baton_*` tools on the ordinary surface (the generated
 inventory, impl/MCP.md §Tool inventory) plus six `baton_surface_*` meta tools the production
 wrapper merges — **58 tools, 64,629 bytes of schema on every `tools/list`** (measured). An
 orchestrator running lanes needs about a dozen operations (the issue names them: doctor, run
@@ -51,10 +51,10 @@ fails.
   `impl/scripts/expected-red-tests.json` in this change; a landing moves them, never the
   reverse.
 
-## 1. The measured present
+## 1. Measured baseline
 
-Measured 2026-09-18 at HEAD (the red file's fixture answers these; they are reproducible, not
-asserted from prose):
+These measurements describe the 2026-09-18 baseline before the core projection. The current
+tool counts are stated above; the historical schema byte counts below belong to that baseline.
 
 | fact | value | source |
 |---|---|---|
@@ -213,32 +213,23 @@ profile serves (the landed mechanism), `describe` answers one capability's live 
 posture, `invoke` routes it through the authority it already has. A caller that knows a legacy
 spelling gets taught the core verb by the refusal (§8) without a `tools/list` round trip.
 
-**Landed (#314 lane 1; #317 added the eighth tool).** `tools/list` over the served surface carries
-the core tools and nothing else (row 314-a green). The byte budget measured at #314 landing (7
-tools, 19,707 B against 7 × 3,038 = 21,266 B) has not been re-measured against the eighth tool;
-whoever next touches this section should re-run row 314-b's measurement rather than trust this
-stale figure. The 51 non-core flat tools (52 including `baton_services_list`) stay reachable through
-`baton_surface`, and a flat spelling the core folds in refuses with `movedTo` (§8, row 314-g).
-The six unified `baton_surface_*` spellings stay accepted as unadvertised aliases of their core
-verb: the CLI's own MCP client (`configured-mcp-client.mjs`, `baton surface … --mcp`) speaks them,
-and §0 keeps the CLI unchanged.
+The production wrapper advertises eight core tools. The #566 composition measures 21,230
+serialized bytes in the descriptor fixture used by the core-surface tests. The raw application
+table has 57 flat tools; the resident bridge filters that table through its admission policy.
+`baton_surface` resolves capabilities through their existing authority paths. A flat spelling
+folded into a core family refuses with `movedTo` (§8, row 314-g).
 
-The byte budget is **derived, never a bare ceiling** (docs/43): the red file carries the
-designed core tool definitions as executable data, and
+The six unified `baton_surface_*` spellings remain accepted as unadvertised aliases of their
+core verbs. The CLI MCP client in `configured-mcp-client.mjs` uses these aliases.
+
+The byte-budget test derives its bound from the designed schemas:
 
 ```
-budget = 7 × S_max
-S_max = the largest designed core tool definition's serialized bytes
-      = 3,038 bytes (baton_swarm, measured from the red file's table at authoring)
-budget = 21,266 bytes
+budget = designedCoreTools().length × largest designed schema's serialized bytes
 ```
 
-measured over the `tools/list` result as served (production wrapper included). Against the
-measured present that is 64,629 → ≤ 21,266 bytes and 58 → 7 tools — a 3× context cut on every
-turn of every agent client. Adding an eighth tool fails the name-set pin (§2); growing a
-description or a field set past the budget fails the byte pin; both are a decision with a red
-row, never drift. A designed schema that shrinks lowers the budget at the same edit — the
-number is recomputed from the table, not restated by hand.
+Row 314-b compares the serialized `tools/list` result against this bound. The name-set test
+checks all eight families. Changes to the designed schemas change the derived budget.
 
 ## 4. One entry story
 
@@ -478,9 +469,9 @@ it against impl/MCP.md on every run, so a tool added to the inventory without a 
 | `baton_run_attention_watch` | **retired** — `baton_wakes {verb: "subscribe"}` replaces it |
 | `baton_swarm_watch` | **retired from MCP** — `baton_wakes {verb: "subscribe", swarms: [id]}` replaces it; the CLI keeps `baton swarm watch` |
 
-58 rows, accounting for all 52 inventory tools and all 6 meta tools. Field mappings are verbatim
-from the legacy tool schemas (impl/src/mcp-northbound.mjs:608-909 and the swarm rows' own table)
-— the red file's designed core schemas carry them.
+The migration table groups legacy spellings by destination. Field mappings come from the
+legacy tool schemas in `impl/src/mcp-northbound.mjs` and the swarm command table; the core
+schema tests check their projection.
 
 > **Landed (2026-09-18, lane 4) — the guide half.** `impl/MCP.md`'s `## Migration from the flat
 > tool set` is a GENERATED block rendered from this section by

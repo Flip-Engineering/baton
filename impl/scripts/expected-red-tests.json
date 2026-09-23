@@ -50,14 +50,6 @@
       "reason": "#164"
     },
     {
-      "key": "test/bridge-idempotency-344.test.mjs :: 344: read tools carry no idempotencyKey",
-      "reason": "#566"
-    },
-    {
-      "key": "test/canonical-naming-233-red.test.mjs :: CLOSED SET: MCP application dispatch names equal exactly the ONE derivation",
-      "reason": "#566"
-    },
-    {
       "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R1: the descriptor accepts the closed knowledge:{primaryRoot} field (RED — no knowledge field)",
       "reason": "#70"
     },
@@ -193,28 +185,12 @@
       "reason": "#73"
     },
     {
-      "key": "test/frame-economics-red.test.mjs :: F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs",
-      "reason": "#566"
-    },
-    {
-      "key": "test/grammar-m4b-red.test.mjs :: M4B-3: a canonical MCP tool executes beside the legacy tool, reaching one operation",
-      "reason": "#566"
-    },
-    {
       "key": "test/grammar-m5-red.test.mjs :: M5-1: the divergence ledger is empty and the M4 retirement is pinned",
       "reason": "#159"
     },
     {
       "key": "test/issue10-blocked-interaction-red.test.mjs :: AX1-F: a burst of provider tool-call/message telemetry does not advance lastProgress while a run is otherwise idle",
       "reason": "#10"
-    },
-    {
-      "key": "test/issue150-coaching-passthrough.test.mjs :: 150-CP1: validation-path coaching refusal carries cap, actual, unit, gracefulPath on the MCP wire",
-      "reason": "#566"
-    },
-    {
-      "key": "test/issue150-coaching-passthrough.test.mjs :: 150-CP2: at-cap message is admitted, cap+1 refuses with the coaching triple",
-      "reason": "#566"
     },
     {
       "key": "test/issue268-visibility-red.test.mjs :: #268 RED (stage: the attention coverage envelope not landed): attention carries its coverage — examined seats are named",
@@ -227,10 +203,6 @@
     {
       "key": "test/issue268-visibility-red.test.mjs :: #364 RED (stage: SWARM_PARTICIPANT_RUNTIME_STATES not exported): the closed runtime state set is exported and every surface reads the ONE derivation",
       "reason": "#364"
-    },
-    {
-      "key": "test/issue499-schema-counts.test.mjs :: 499-M1: each schema file carries exactly one surviving bare 64 (the triaged entryIds batch)",
-      "reason": "#566"
     },
     {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
@@ -281,76 +253,8 @@
       "reason": "#165"
     },
     {
-      "key": "test/mcp-packaging-red.test.mjs :: MP7: the four settlement tools register on MCP and promote requires the sessionAuthority envelope",
-      "reason": "#566"
-    },
-    {
-      "key": "test/mcp-packaging-red.test.mjs :: MP9: knowledge_settlement_lease requires the settlement capability on the principal",
-      "reason": "#566"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-01 RED: mcpApplicationCommandNames and mcpApplicationDispatch are exported (stage: served-set export)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-02 RED: application tools/list is 49 and includes every pre-spread-uncovered sibling (stage: application-tools-count-49)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-03 RED: the D3 parity derivation reports no uncovered web-bus command (stage: uncovered-set-empty)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-04 RED: fleet_run_resume_work and fleet_run_retry_verification are served on combined (stage: combined-includes-fleet-resume-retry)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-05 RED: every uncovered bus command has its sibling tool bound in the ordinary dispatch map (stage: dispatch-binds-siblings)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-06 RED: the fleet-sourced lifecycle siblings (12 at the contract floor, 14 after D2) byte-inherit the fleet_run_* wire schema, taskSupport forbidden, _meta stamped (stage: sibling-schema-inherits-source)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-07 RED: the wait/follow sibling list admits the siblings and invalid_run_wait bounds (stage: wait-follow-lists-admit-siblings)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-08 RED: fleet_run_resume_work/_retry_verification dispatch, typed refusal, idempotencyKey required, replay reconciles (stage: fleet-resume-retry-dispatch)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-09 RED: combined tools/list is 102 with the 14 siblings leading the ordinary prefix (stage: combined-102-includes-siblings)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-10a RED: the 5 non-canonical ops have mcp.baton surfaceAlias rows naming the sibling tool (stage: alias-rows-registered)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-10b RED: renderMcpToolInventory has the canonical-miss fallback byte-string in executable source (stage: renderer-fallback-absent)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-10c RED: renderMcpToolInventory renders the 5 non-canonical ops to their operation keys (stage: non-canonical-ops-render-operation-keys)",
-      "reason": "#156"
-    },
-    {
-      "key": "test/mcp-profile-parity-red.test.mjs :: RG-11-R RED: the surface-inventory artifact encodes mcp.application 49 / mcp.combined 102, tied to composition (stage: artifact-counts-49-102)",
-      "reason": "#156"
-    },
-    {
       "key": "test/mcp-reflex-surface-red.test.mjs :: Inventory: the combined surface adds the derived S-3 reflex tools, frozen and _meta-stamped like the ordinary table",
       "reason": "#261"
-    },
-    {
-      "key": "test/mcp-refusals-named.test.mjs :: a missing required argument is named by the refusal",
-      "reason": "#566"
-    },
-    {
-      "key": "test/mcp-refusals-named.test.mjs :: an unknown tool name answers with the nearest advertised tool and the full tool set",
-      "reason": "#566"
     },
     {
       "key": "test/nested-orchestration-red.test.mjs :: R1 RED (stage: connection-mint-missing): mintChildAuthority mints a FRESH child profile + token",
@@ -993,18 +897,6 @@
       "reason": "#158"
     },
     {
-      "key": "test/scratchpad-write-red.test.mjs :: A2-1 stage[mcp-append-tool-missing]: baton_run_scratchpad_append is advertised — capabilities, mcpApplicationToolNames, and tools/list",
-      "reason": "#566"
-    },
-    {
-      "key": "test/scratchpad-write-red.test.mjs :: A2-2 stage[mcp-append-dispatch-branch-missing]: tools/call for a valid append dispatch is routed, never the absent-tool protocolError",
-      "reason": "#566"
-    },
-    {
-      "key": "test/scratchpad-write-red.test.mjs :: A2-3 stage[mcp-append-admission-missing]: TOOL_DEFINITIONS + ORDINARY_EXPLICIT_TOOLS + the _dispatch chain all reference the tool",
-      "reason": "#566"
-    },
-    {
       "key": "test/scratchpad-write-red.test.mjs :: A4-1 stage[append-restrictor-missing]: a member append to a sibling worker:<other> partition refuses at the _authorize seam — no entry is minted",
       "reason": "#158"
     },
@@ -1027,10 +919,6 @@
     {
       "key": "test/scratchpad-write-red.test.mjs :: A9-2 stage[unknown-subverb-teaching-missing]: an unknown subverb names the unknown AND restates the closed set (D4)",
       "reason": "#158"
-    },
-    {
-      "key": "test/scratchpad-write-red.test.mjs :: P-A1 PIN: the read/elevate half of the parity table stays served — CLI parser + CLI_WEB_COMMANDS + MCP + registry all agree (the substrate the write completes)",
-      "reason": "#566"
     },
     {
       "key": "test/seat-telemetry-red.test.mjs :: A1 (stage: doctor-seats-missing): deployment.doctor carries an enumerable seats array, one closed D1 atom per readiness route in route order, observedAtEventSeq, and the card inherits seats (D2.4)",
@@ -1095,10 +983,6 @@
     {
       "key": "test/swarm-gap-red.test.mjs :: S-G5 RED (stage: scoped-view-context-unscoped): a scoped view projects only the context its subtree owns",
       "reason": "S-G5"
-    },
-    {
-      "key": "test/swarm-mcp-dispatch.test.mjs :: every canonical swarm.* dot twin dispatches on the combined surface",
-      "reason": "#566"
     },
     {
       "key": "test/swarm-wake.test.mjs :: a real resident wakes a real `baton swarm watch --follow` child on guidance, contribution, and close",
@@ -1221,14 +1105,6 @@
       "reason": "#102"
     },
     {
-      "key": "test/unified-cli-surface.test.mjs :: CLI generic invocation resolves exact canonical names before compatibility aliases",
-      "reason": "#566"
-    },
-    {
-      "key": "test/wave-observability-red.test.mjs :: A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)",
-      "reason": "#566"
-    },
-    {
       "key": "test/worker-verdict-surface-red.test.mjs :: C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing)",
       "reason": "#79"
     },
@@ -1287,18 +1163,6 @@
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
       "reason": "#87"
-    },
-    {
-      "key": "test/workflow-surface-red.test.mjs :: FP-15 (stage: tools + wire mapping absent): every newly projected refusal reaches the wire AS ITSELF",
-      "reason": "#566"
-    },
-    {
-      "key": "test/workflow-surface-red.test.mjs :: FP-19 (GUARD, green today): the settlement plane is byte-identical — the six new tools need no settlement class",
-      "reason": "#566"
-    },
-    {
-      "key": "test/workflow-surface-red.test.mjs :: WS-02 (stage: steps unserved today): the eight sequence steps resolve to served commands — boards facade-explicit",
-      "reason": "#566"
     }
   ],
   "converged": [
@@ -1337,6 +1201,10 @@
     {
       "file": "test/browser-use-red.test.mjs",
       "reason": "#85"
+    },
+    {
+      "file": "test/canonical-naming-233-red.test.mjs",
+      "reason": "#566"
     },
     {
       "file": "test/capacity-refusal-visibility-red.test.mjs",
@@ -1439,6 +1307,10 @@
       "reason": "#250"
     },
     {
+      "file": "test/frame-economics-red.test.mjs",
+      "reason": "#566"
+    },
+    {
       "file": "test/git-batch-216-red.test.mjs",
       "reason": "#216"
     },
@@ -1457,6 +1329,10 @@
     {
       "file": "test/grammar-m3-red.test.mjs",
       "reason": "#261"
+    },
+    {
+      "file": "test/grammar-m4b-red.test.mjs",
+      "reason": "#566"
     },
     {
       "file": "test/harvest-accessor-red.test.mjs",
@@ -1541,6 +1417,14 @@
     {
       "file": "test/log-archival-285-red.test.mjs",
       "reason": "#285"
+    },
+    {
+      "file": "test/mcp-packaging-red.test.mjs",
+      "reason": "#566"
+    },
+    {
+      "file": "test/mcp-profile-parity-red.test.mjs",
+      "reason": "#156"
     },
     {
       "file": "test/mcp-reflex-board-package-red.test.mjs",
@@ -1949,6 +1833,10 @@
     {
       "file": "test/wave-index-memo-229-red.test.mjs",
       "reason": "#229"
+    },
+    {
+      "file": "test/wave-observability-red.test.mjs",
+      "reason": "#566"
     },
     {
       "file": "test/wave-settle-error-surfacing-red.test.mjs",
