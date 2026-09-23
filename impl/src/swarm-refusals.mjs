@@ -146,6 +146,10 @@ export const SWARM_REFUSAL_CODES = Object.freeze({
   integrate_conflict: row(409, ['runtime'], 'the squashed change overlaps a contribution already landed on the target'),
   integrate_gates_red: row(409, ['runtime'], 'the derived gate set ran red, naming the unexpected rows'),
   integrate_target_moved: row(409, ['runtime'], 'the target advanced between the squash and the fast-forward, and the re-base did not settle it'),
+  // Issue #43 AX on a detached deployment checkout: an omitted target derives the local branch at
+  // the checkout's own commit, and when no single branch names it the derivation cannot pick —
+  // the caller names the target. Raised before anything moves: no scratch checkout, no gate row.
+  integrate_target_undetermined: row(400, ['runtime'], 'the deployment\'s checkout is detached and no single local branch names its commit, so the landing target must be named'),
   // The request names something that is not landable at all: a target that is not a local branch,
   // a range that carries no change, or a changed module that does not parse. Distinct from
   // `integrate_gates_red` (a real change whose derived tests ran red) and from `integrate_conflict`
