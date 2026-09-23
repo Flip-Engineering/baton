@@ -188,6 +188,9 @@ column uses the proposed architecture for planning; a held ownership deletion st
 | `B2-CRYPTO` | `LANG-CAP-10`: audited hashing, HMAC, secure entropy, constant-time comparison, and signatures where used. Keep secrets out of diagnostics and receipts. | Shared typed host boundary, consumed by the relevant owners; Phase 0 digest parity and each later authenticated/durable boundary. |
 | `B2-DESTINATION` | M-18 and `LANG-CAP-07/08/10`: validate repository/target identity before dispatch, bind publication to it, observe the designated shared destination, and reconcile uncertain delivery. | Verification and Landing / Workspace and Artifacts; Phase 4 publication planning and Phase 6 Git execution. |
 | `B2-HOST-CONFORMANCE` | `LANG-F-08/17/31`: native C implementations, ABI pin/rebuild manifest, cross-implementation protocol vectors, crash and cancellation tests, terminal behavior, and credential isolation. | Each effect owner; before that effect moves, complete in Phase 6. |
+| `B2-DIAGNOSTIC-BASIS` | `ARCH-CLOSE-11`: one recorded schema and policy basis for startup, doctor and recovery, with a cause classification on every refusal (a missing or unreconstructible basis, an unsupported decoder version, a projection defect, or corrupt source bytes). Drive the same valid ledger through all three entry points and require equivalent logical projections, and include a missing-policy negative case. | Event Stores and the recovery owner; before Phase 2 moves coordination authority, since a refusal of a recorded row is that phase's readiness signal. |
+| `B2-COVERAGE` | `ARCH-CLOSE-09`: typed change declarations, an independent structural scan, and consumer validation of the checked result for the exact source snapshot, demonstrated on a pure decision helper, a schema change, a shared library change, and an altered C effect. Keep the committed inventory until the replacement selects the same gates or stronger ones. | Verification and Landing; before the `F17` deletion in Phase 4. |
+| `B2-KNOWLEDGE-SCOPE` | `ARCH-CLOSE-08`: explicit knowledge promotion with source and destination attribution, reader-relative isolated views, and parent-child delegation across a restart. A unified scheduler must reject cross-scope reads and child authority elevation. | Scheduler; before the `F4` unification in Phase 3. |
 
 `LANG-CAP-02/03/04` prove TCP, UDP, environment, argv, clock, sleep, and basic randomness
 primitives. `LANG-CAP-01` proves basic file IO. These examples establish the operations they run.
@@ -195,6 +198,32 @@ Secure randomness, durable storage, monotonic-clock behavior, and full applicati
 their own conformance evidence. `LANG-F-27` shows that a typed fold can discard history;
 `LANG-F-29` shows that a receipt constructor can acknowledge no write. `LANG-F-30/31` require
 proof assumptions, unsafe/foreign boundaries, and fail-stop recovery to remain explicit.
+
+### Closure conditions to work items
+
+[`target-architecture.md`](target-architecture.md) states that this plan cites its closure IDs for each
+affected deletion and records the evidence that closes them. The prerequisite table above carries the
+work items; this table carries the closure conditions, with what closes each and the corpora that
+already measure the closed parts.
+
+| Closure condition | Closed by | State |
+|---|---|---|
+| `ARCH-CLOSE-01` | the approval and recovery records: [`reviews/codex-final-law-review-r9.1.md`](reviews/codex-final-law-review-r9.1.md), [`authorization.md`](authorization.md), [`recovery-2026-09-22.md`](recovery-2026-09-22.md) | recorded |
+| `ARCH-CLOSE-02` | `B2-AUTHORITY` | open; `examples/lang-cap-probes.evidence.md` carries the forged-record and dropped-lease controls |
+| `ARCH-CLOSE-03` | `B2-SUPERVISION` | open; `examples/lang-cap-dropped-child.evidence.md` is a failing control |
+| `ARCH-CLOSE-04` | `B2-FS-DURABILITY` | open; `examples/lang-cap-durability.evidence.md` shows the write path and its missing receipt |
+| `ARCH-CLOSE-05` | `B2-PROCESS` | open; `bend base Process`, `bend base exec` and `bend base IO.cancel` each exit 1 |
+| `ARCH-CLOSE-06` | `B2-HTTP-TLS`, with `B2-JSON` for framing | open |
+| `ARCH-CLOSE-07` | `B2-CRYPTO` | open |
+| `ARCH-CLOSE-08` | `B2-KNOWLEDGE-SCOPE` | open |
+| `ARCH-CLOSE-09` | `B2-COVERAGE` | open |
+| `ARCH-CLOSE-10` | `B2-FS-DURABILITY`, at its supported-platform contract and segmentation clauses | open |
+| `ARCH-CLOSE-11` | `B2-DIAGNOSTIC-BASIS` | open; `examples/arch-replay-stop.evidence.md` and `examples/arch-replay-basis.evidence.md` measure the classification gap on three verbs |
+| `ARCH-CLOSE-12` | `B2-DESTINATION`, and the deployment's own publication path | open for the deployment; `examples/arch-publish-target.evidence.md`, `arch-publish-content.evidence.md`, `arch-publish-bind.evidence.md` and `arch-publish-contention.evidence.md` measure the local halves at the pin |
+
+`B2-HOST-CONFORMANCE` names the evidence umbrella rather than a closure condition of its own: it
+supplies the ABI, pin and fault-case evidence for each host closure row above, so those rows are its
+dependent gates.
 
 ### Immediate work and phase entry
 
