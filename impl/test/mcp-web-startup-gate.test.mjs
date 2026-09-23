@@ -15,6 +15,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import { McpFleetServer } from '../src/index.mjs';
+import { selectFromRepository } from '../src/verification-selection.mjs';
 import { assertCliMcpControlParity } from '../src/control-surface-unification.mjs';
 import { assertUnifiedCapabilityCoverage } from '../src/surface-capability-catalog.mjs';
 import { assertSurfaceCapabilityNameClosure } from '../src/surface-capability-resolution.mjs';
@@ -24,7 +27,20 @@ import { CORE_TOOL_NAMES, coreToolDefinitions } from '../src/mcp-core-tools.mjs'
 // though the script is not a static-import graph root.
 const BRIDGE_SCRIPT = 'impl/scripts/mcp-web.mjs';
 
+test('MCP-SG-selection: entry point and bridge changes select the startup gate through imports (issue #565)', () => {
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+  const gate = 'impl/test/mcp-web-startup-gate.test.mjs';
+  for (const changedPath of ['impl/src/index.mjs', 'impl/src/mcp-web-bridge.mjs']) {
+    const selection = selectFromRepository({ root, changedPaths: [changedPath] });
+    const row = selection.provenance.find(({ path }) => path === gate);
+    assert.equal(row?.reason, 'imports', `${changedPath} selects the startup gate through imports`);
+  }
+  const scriptSelection = selectFromRepository({ root, changedPaths: [BRIDGE_SCRIPT] });
+  assert.ok(scriptSelection.files.includes(gate), 'the bridge script selects the startup gate');
+});
+
 test('MCP-SG: the baton-mcp-web startup sequence completes on this tree — parity, capability coverage, name closure, and the core tool table projection (issue #565)', () => {
+  assert.equal(typeof McpFleetServer, 'function', 'the application entry point exports the MCP server');
   // The three startup assertions, in the bridge script's order.
   assertCliMcpControlParity();
   assertUnifiedCapabilityCoverage();
