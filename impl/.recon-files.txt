@@ -1,0 +1,6 @@
+test/wave-attach-red.test.mjs
+test/waves-run-detach-red.test.mjs
+test/harvest-recovery-red.test.mjs
+test/wave-grammar-red.test.mjs
+test/wave-driver-policy-red.test.mjs
+test/wave-observability-red.test.mjs

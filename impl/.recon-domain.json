@@ -1,0 +1,132 @@
+[
+ {
+  "file": "test/wave-attach-red.test.mjs",
+  "code": 0,
+  "killed": false,
+  "seconds": 15.4,
+  "pass": 5,
+  "fail": 0,
+  "cancelled": 0,
+  "failed": [],
+  "passed": [
+   "W93-1: a wave whose driver dies mid-flight is attachable by a fresh host — same runs, honest terminal phases, harvested outcomes",
+   "W93-2: turn.settled replay dedups steering across attach — a consumed pause refuses not_found, a terminalized pause refuses not_paused",
+   "W93-3: attach on an all-terminal wave is an idempotent settle — outcomes returned, close clean, zero recovery terminalization",
+   "W93-4: waves.start mints distinct waveIds per idempotencyKey; an unknown or foreign waveId refuses with a typed error, never a silent new wave",
+   "W93-5: wave.driver_detached is recorded exactly once across repeated attaches of the same waveId"
+  ]
+ },
+ {
+  "file": "test/waves-run-detach-red.test.mjs",
+  "code": 0,
+  "killed": false,
+  "seconds": 5,
+  "pass": 3,
+  "fail": 0,
+  "cancelled": 0,
+  "failed": [],
+  "passed": [
+   "DR-1 (stage[detach-acceptance-missing]): waves.run at the bus returns the closed acceptance receipt — never the settlement — synchronously",
+   "DR-2 (stage[settle-record-missing]): the detached drive mints wave.settled with the D6 seven-key receipt, keyed on the waveId",
+   "DR-3 (pin): detach:false preserves the synchronous seven-key receipt (the suite/driver path is undisturbed)"
+  ]
+ },
+ {
+  "file": "test/harvest-recovery-red.test.mjs",
+  "code": 0,
+  "killed": false,
+  "seconds": 6.3,
+  "pass": 4,
+  "fail": 0,
+  "cancelled": 0,
+  "failed": [],
+  "passed": [
+   "R1-absent-path-miss-carries-recoverySha (RED at HEAD): a harvest_miss row surfaces the member outcome resultSha as recoverySha while resultSha stays on the member outcome",
+   "R2-absent-path-miss-no-sha (RED at HEAD): with no member resultSha the harvest_miss row receipts recoverySha null — never invented",
+   "R3-marker-miss-carries-recoverySha (RED at HEAD): a marker-miss harvest_miss row carries recoverySha === the recovered member sha",
+   "R4-mustContain-miss-carries-recoverySha (RED at HEAD): a mustContain-miss harvest_miss row carries recoverySha === the recovered member sha"
+  ]
+ },
+ {
+  "file": "test/wave-grammar-red.test.mjs",
+  "code": 0,
+  "killed": false,
+  "seconds": 4.5,
+  "pass": 5,
+  "fail": 0,
+  "cancelled": 0,
+  "failed": [],
+  "passed": [
+   "WG-1: waves.attach registry row (exact key/profile/surfaces/schema) + derived names; singular refused; no waves.start",
+   "WG-2: atomic transport attach — MCP + web bind, settle, return outcomes; typed refusals; exactly-once driver_detached",
+   "WG-3: hidden-by-declaration — advertised schemas exclude mintWaveDetached/waveId; validators accept them",
+   "WG-4: per-run observe required; no emergency_stop transported; deployment-facade parity",
+   "WG-5: two-commit landing discipline holds (digest change confined; suite markers; no waves.start)"
+  ]
+ },
+ {
+  "file": "test/wave-driver-policy-red.test.mjs",
+  "code": 0,
+  "killed": false,
+  "seconds": 39,
+  "pass": 11,
+  "fail": 0,
+  "cancelled": 0,
+  "failed": [],
+  "passed": [
+   "D1: two productive pauses are nudged exactly once each, then L6 declares done and claims",
+   "D2: a live member resets the wave-level stall clock; a frozen sibling still finishes",
+   "D3: a frozen member view breaks the loop with basis stall and clean close",
+   "D4: a numeric hardCapMs refuses as an unknown policy field; a frozen marker yields stall",
+   "D5: objective salting, opt-out, and the admission byte-check",
+   "D6: the unproductive-checkpoint budget ends the treadmill — claim path and none path",
+   "D7: receipt envelope shape, evidence file, and loud write failure",
+   "D8: a failed nudge is recorded, not consumed, and recovered on the next poll",
+   "D9: stall fan-out claims every paused member exactly once",
+   "D10: consecutive status failures stall; transient failures reset",
+   "D11: expectedFence 'current' resolves to the live worker fence for a Run-bound worker"
+  ]
+ },
+ {
+  "file": "test/wave-observability-red.test.mjs",
+  "code": 0,
+  "killed": false,
+  "seconds": 8.1,
+  "pass": 30,
+  "fail": 0,
+  "cancelled": 0,
+  "failed": [],
+  "passed": [
+   "A1-1: waves_start round-trips the web envelope and the capability gate refuses a control-less principal",
+   "A1-2: waves_progress round-trips the web envelope (observe gate)",
+   "A1-3 F2: waves_send dispatches to a REAL runId — the undispatched member resolves the typed post-admission refusal (F2)",
+   "A1-4 F2: waves_stop round-trips the web envelope to a REAL runId and admits ONLY {reason, runId} (F2)",
+   "A1-5: waves_list round-trips the web envelope (observe gate)",
+   "A1-6 F7: the application card advertises admitted wave commands in canonical spelling",
+   "A1-7 PIN: the byte-stable APPLICATION_COMMAND_DEFINITIONS key set is the 10 swarm verbs + the FULL 26-key insertion-order set (F8)",
+   "A2-1: wave.started carries the extended projection payload {deploymentId, idempotencyKey, roster: [{role, route, scope}], waveId} (D2.2/F1/F3)",
+   "A2-2 PIN: a repeat start with the same idempotencyKey appends nothing (exactly-once)",
+   "A2-3: waves.list reads the registry projection — open rows for THIS deployment",
+   "A2-4 F6/F13: legacy-store replay — a string-array roster survives a store close/reopen replay and renders the pinned no-run member read",
+   "A2-5: a malformed NEW-shape roster is refused typed BEFORE the durable append (#290)",
+   "A2-6 OQ1: the close side pins a TOP-LEVEL wave.closed fold branch beside context.pack_minted (B1)",
+   "A2-7 F9: attach is exactly-once — the facade start + attach keeps one wave.started record and one registry row",
+   "A3-1: waves.list rows carry the exact registry shape and page ≤16 with {cursor, nextCursor}",
+   "A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)",
+   "A4-1: waves.list rows read local by construction — remote/stale are deferred vocabulary, never fabricated (B3)",
+   "A4-2 PIN: processState only reads 'active' on an exact match — 'unknown' reads stale, never a guessed 'remote' (F4/F12)",
+   "A5-1: baton waves list parses to waves.list (D4)",
+   "A5-2: baton waves progress WAVE_ID parses to waves.progress (D4)",
+   "A5-3: singular wave refuses cli_command_unavailable with the plural corrective naming the RIGHT verb (D4)",
+   "A5-4: a bare baton waves attach issues waves.list — never the wave-ID-invalid refusal (F5)",
+   "A5-5 F11: the issued bare-attach command runs the FULL CLI parse→dispatch→render pipeline and surfaces the attachable set",
+   "A6-1 F3: the DIRECT-PORT waves.start refuses an admission-exceeding wave with wave_member_invalid naming {actual, cap, cause, role} (D5.1)",
+   "A6-2 F4: the web surface refuses wave_member_invalid with the SAME detail shape as A6-1 and the byte-identical message",
+   "A6-3 F4: the MCP surface refuses baton_waves_start with the SAME detail shape as A6-1 and the byte-identical message",
+   "A6-4 F5: a registry row whose member run no longer resolves refuses wave_not_found — typed on the facade, MCP, and web surfaces (behavioral, never a source grep)",
+   "A6-5 PIN: wave_registry_invalid stays a STORE-INTEGRITY throw — never an MCP per-command error (F8/F12)",
+   "A6-6 F4: `baton waves start --members JSON` drives an admission-exceeding objective through the FULL CLI pipeline — typed body.error + non-zero exit",
+   "A6-7 F10: the per-member runId envelope is validated on the negative path — application_wave_member_action_invalid typed on the facade and the web body"
+  ]
+ }
+]
