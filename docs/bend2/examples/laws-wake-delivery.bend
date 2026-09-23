@@ -1,18 +1,23 @@
 # CLAIM: replaying explicit turn-end, report and wake-delivery fixtures rejects a live wait with no
-# observed delivered wake, keeps a wake whose correlation is unknown or missing unconfirmed, and
-# never lets the wake table's routing metadata decide delivery either way.
-# Scope: a fixture corpus and a pure decision table, plus a host half that derives the routing
-# metadata of the adapter fixtures from impl/src/wake-stream.mjs. No impl file is modified.
+# delivered wake recorded for its own worker/task/turn identity, keeps a correlation that does not
+# hold at unconfirmed, and asserts that the routing metadata the wake table derives for each adapter
+# row equals the routing that row declares. A disagreement ends the run non-zero.
+# Scope: a fixture corpus, a pure decision table over explicit identities, and a host half that
+# derives each adapter row's routing from impl/src/wake-stream.mjs. No impl file is modified.
 #
-# The routing column is ROUTING METADATA, not delivery: it is what the wake table derives from a
-# coordination row, and a task-addressed frame does not show that a seat's orchestrator was not
-# reached. Delivery is decided only by the observation column and by a delivery receipt, and a
-# correlation that is unknown or missing stays unconfirmed rather than becoming a rejection.
+# The routing column is ROUTING METADATA. It is replayed and asserted, and no verdict is computed
+# from it: a frame routed to a task says where the frame goes and nothing about whether a seat's
+# orchestrator was reached.
 #
-# The four facts the operator's decision needs do not exist in the tree at this pin: nothing
-# composes a turn report, `parentId` is the seat's lineage and is never a wake address, no record
-# says which wake is owed, and the only delivery receipt in the tree is `message.delivered` for a
-# peer message, not for a wake. The receipt column is therefore declared by the fixtures.
+# Delivery is established by an observation of a delivered wake whose key equals the turn's own
+# worker/task/turn identity and whose recipient is the resolved orchestrator, or by a delivery
+# receipt with that same key and recipient. A turn whose key is unstated, an observation whose key
+# is unstated, and an observation or receipt recorded for a different turn all stay unconfirmed.
+#
+# The four facts the operator's decision needs do not exist in the tree at this pin: nothing composes
+# a turn report, `parentId` is the seat's lineage and is never a wake address, no record says which
+# wake is owed, and the only delivery receipt in the tree is `message.delivered` for a peer message.
+# The receipt column is declared by the fixtures.
 # Reference: ../reference/README.md, bend 2.0.25, a4952426.
 # Evidence: laws-wake-delivery.evidence.md.
 import Base
@@ -22,7 +27,6 @@ type Source is Data:
   Model{}
   Adapter{}
 
-# The explicit turn end and the turn's report.
 type TurnEnd is Data:
   Ended{}
   NotEnded{}
@@ -31,21 +35,20 @@ type Report is Data:
   Reported{}
   NoReport{}
 
-# Whether the seat is in a live wait at that turn end.
 type Wait is Data:
   Live{}
   Settled{}
 
-# Whether the frame could be correlated to this turn by worker, task and turn epoch.
-type Correlation is Data:
-  Correlated{}
-  Unknown{}
-  Missing{}
+# A turn's identity: the worker, the task and the turn epoch. Unstated means the deployment cannot
+# name it, which is not the same as naming a different one.
+type Key is Data:
+  KeyStated{worker: Nat, task: Nat, turn: Nat}
+  KeyUnstated{}
 
-# Whether the seat's orchestrator (its parent seat, or the root) resolved as a wake address.
+# The resolved orchestrator the wake is owed to: the seat's parent seat, or the root.
 type Parent is Data:
-  ParentResolved{}
-  ParentMissing{}
+  ResolvedSeat{seat: Nat}
+  Unresolved{}
 
 # The wake table's ROUTING metadata for this turn's row. Never evidence of delivery.
 type Routing is Data:
@@ -53,178 +56,261 @@ type Routing is Data:
   TaskAddressed{}
   NoFrame{}
 
-# What was observed about a delivered wake for this turn.
+# What was observed about a delivered wake, with the identity it was delivered for.
 type Observation is Data:
-  WakeDelivered{}
-  WakeAbsent{}
-  WakeUnobserved{}
+  DeliveredToSeat{seat: Nat, key: Key}
+  DeliveredToTask{key: Key}
+  RecordedAbsent{key: Key}
+  NotObserved{}
 
-# A delivery receipt keyed by worker, task and turn epoch for this turn's wake.
+# A delivery receipt for this turn's wake, keyed by recipient and identity.
 type Receipt is Data:
-  ReceiptOnFile{}
-  ReceiptMissing{}
+  ReceiptOnFile{seat: Nat, key: Key}
+  ReceiptMissing{key: Key}
   ReceiptNotChecked{}
 
 type Turn is Data:
-  Turn{ended: TurnEnd, report: Report, wait: Wait, co: Correlation, parent: Parent,
+  Turn{ended: TurnEnd, report: Report, wait: Wait, key: Key, parent: Parent,
        receipt: Receipt, observation: Observation, routing: Routing}
 
 type Verdict is Data:
   Delivered{}
   Rejected{}
   Unconfirmed{}
+  ObligationUnmet{}
   NotApplicable{}
 
 type Fixture is Data:
-  ParkWakeAbsent{}
-  ParkWakeObserved{}
-  RecoverySeatAddressed{}
-  ParkTransitionNoFrame{}
-  UnknownCorrelation{}
-  MissingCorrelation{}
-  ReceiptPresent{}
-  DeliveredNoReceipt{}
-  UnresolvedParent{}
-  SettledTurn{}
-
-def decide(t: Turn) -> Verdict:
-  match t:
-    case Turn{_, _, Settled{}, _, _, _, _, _}: NotApplicable{}
-    case Turn{NotEnded{}, _, _, _, _, _, _, _}: NotApplicable{}
-    case Turn{Ended{}, NoReport{}, _, _, _, _, _, _}: NotApplicable{}
-    case Turn{Ended{}, Reported{}, Live{}, Unknown{}, _, _, _, _}: Unconfirmed{}
-    case Turn{Ended{}, Reported{}, Live{}, Missing{}, _, _, _, _}: Unconfirmed{}
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentMissing{}, _, _, _}: Rejected{}
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, ReceiptOnFile{}, _, _}: Delivered{}
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, _, WakeDelivered{}, SeatAddressed{}}: Delivered{}
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, _, WakeDelivered{}, TaskAddressed{}}: Unconfirmed{}
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, _, WakeDelivered{}, NoFrame{}}: Unconfirmed{}
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, _, WakeAbsent{}, _}: Rejected{}
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, _, WakeUnobserved{}, _}: Unconfirmed{}
-
-# Delivery is established by a receipt, or by an observed wake addressed to the seat. Routing alone
-# establishes neither, and an absent receipt is not evidence that nothing was delivered.
-def confirmed(t: Turn) -> Bool:
-  match t:
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, ReceiptOnFile{}, _, _}: True{}
-    case Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, _, WakeDelivered{}, SeatAddressed{}}: True{}
-    case Turn{_, _, _, _, _, _, _, _}: False{}
-
+  ParkRoutingRecordedAbsent{}
+  ParkObservedToTask{}
+  RecoveryDeliveredToOrchestrator{}
+  ParkTransitionNotObserved{}
+  TurnKeyUnstated{}
+  ObservationKeyUnstated{}
+  ObservationKeyDiffers{}
+  DeliveredToAnotherSeat{}
+  ReceiptEvidence{}
+  ReceiptKeyDiffers{}
+  NoReportLiveTurn{}
+  ParentUnresolvedCase{}
+  SettledTurnCase{}
 def turn_of(f: Fixture) -> Turn:
   match f:
-    case ParkWakeAbsent{}: Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, ReceiptNotChecked{}, WakeAbsent{}, TaskAddressed{}}
-    case ParkWakeObserved{}: Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, ReceiptNotChecked{}, WakeDelivered{}, TaskAddressed{}}
-    case RecoverySeatAddressed{}: Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, ReceiptNotChecked{}, WakeDelivered{}, SeatAddressed{}}
-    case ParkTransitionNoFrame{}: Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, ReceiptNotChecked{}, WakeUnobserved{}, NoFrame{}}
-    case UnknownCorrelation{}: Turn{Ended{}, Reported{}, Live{}, Unknown{}, ParentResolved{}, ReceiptNotChecked{}, WakeDelivered{}, SeatAddressed{}}
-    case MissingCorrelation{}: Turn{Ended{}, Reported{}, Live{}, Missing{}, ParentResolved{}, ReceiptNotChecked{}, WakeAbsent{}, NoFrame{}}
-    case ReceiptPresent{}: Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, ReceiptOnFile{}, WakeUnobserved{}, NoFrame{}}
-    case DeliveredNoReceipt{}: Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentResolved{}, ReceiptMissing{}, WakeDelivered{}, SeatAddressed{}}
-    case UnresolvedParent{}: Turn{Ended{}, Reported{}, Live{}, Correlated{}, ParentMissing{}, ReceiptNotChecked{}, WakeUnobserved{}, NoFrame{}}
-    case SettledTurn{}: Turn{Ended{}, Reported{}, Settled{}, Correlated{}, ParentResolved{}, ReceiptNotChecked{}, WakeUnobserved{}, NoFrame{}}
+    case ParkRoutingRecordedAbsent{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptNotChecked{}, RecordedAbsent{KeyStated{11n, 22n, 33n}}, TaskAddressed{}}
+    case ParkObservedToTask{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptNotChecked{}, DeliveredToTask{KeyStated{11n, 22n, 33n}}, TaskAddressed{}}
+    case RecoveryDeliveredToOrchestrator{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptMissing{KeyStated{11n, 22n, 33n}}, DeliveredToSeat{7n, KeyStated{11n, 22n, 33n}}, SeatAddressed{}}
+    case ParkTransitionNotObserved{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptNotChecked{}, NotObserved{}, NoFrame{}}
+    case TurnKeyUnstated{}: Turn{Ended{}, Reported{}, Live{}, KeyUnstated{}, ResolvedSeat{7n}, ReceiptNotChecked{}, DeliveredToSeat{7n, KeyStated{11n, 22n, 33n}}, SeatAddressed{}}
+    case ObservationKeyUnstated{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptNotChecked{}, DeliveredToSeat{7n, KeyUnstated{}}, SeatAddressed{}}
+    case ObservationKeyDiffers{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptNotChecked{}, RecordedAbsent{KeyStated{11n, 22n, 34n}}, TaskAddressed{}}
+    case DeliveredToAnotherSeat{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptNotChecked{}, DeliveredToSeat{9n, KeyStated{11n, 22n, 33n}}, SeatAddressed{}}
+    case ReceiptEvidence{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptOnFile{7n, KeyStated{11n, 22n, 33n}}, NotObserved{}, NoFrame{}}
+    case ReceiptKeyDiffers{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptOnFile{7n, KeyStated{11n, 22n, 34n}}, NotObserved{}, NoFrame{}}
+    case NoReportLiveTurn{}: Turn{Ended{}, NoReport{}, Live{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptNotChecked{}, NotObserved{}, NoFrame{}}
+    case ParentUnresolvedCase{}: Turn{Ended{}, Reported{}, Live{}, KeyStated{11n, 22n, 33n}, Unresolved{}, ReceiptNotChecked{}, NotObserved{}, NoFrame{}}
+    case SettledTurnCase{}: Turn{Ended{}, Reported{}, Settled{}, KeyStated{11n, 22n, 33n}, ResolvedSeat{7n}, ReceiptNotChecked{}, NotObserved{}, NoFrame{}}
 
 def source_of(f: Fixture) -> Source:
   match f:
-    case ParkWakeAbsent{}: Adapter{}
-    case ParkWakeObserved{}: Adapter{}
-    case RecoverySeatAddressed{}: Adapter{}
-    case ParkTransitionNoFrame{}: Adapter{}
-    case UnknownCorrelation{}: Model{}
-    case MissingCorrelation{}: Model{}
-    case ReceiptPresent{}: Model{}
-    case DeliveredNoReceipt{}: Model{}
-    case UnresolvedParent{}: Model{}
-    case SettledTurn{}: Model{}
+    case ParkRoutingRecordedAbsent{}: Adapter{}
+    case ParkObservedToTask{}: Adapter{}
+    case RecoveryDeliveredToOrchestrator{}: Adapter{}
+    case ParkTransitionNotObserved{}: Adapter{}
+    case TurnKeyUnstated{}: Model{}
+    case ObservationKeyUnstated{}: Model{}
+    case ObservationKeyDiffers{}: Model{}
+    case DeliveredToAnotherSeat{}: Model{}
+    case ReceiptEvidence{}: Model{}
+    case ReceiptKeyDiffers{}: Model{}
+    case NoReportLiveTurn{}: Model{}
+    case ParentUnresolvedCase{}: Model{}
+    case SettledTurnCase{}: Model{}
+
+def routing_of(f: Fixture) -> Routing:
+  match f:
+    case ParkRoutingRecordedAbsent{}: TaskAddressed{}
+    case ParkObservedToTask{}: TaskAddressed{}
+    case RecoveryDeliveredToOrchestrator{}: SeatAddressed{}
+    case ParkTransitionNotObserved{}: NoFrame{}
+    case TurnKeyUnstated{}: SeatAddressed{}
+    case ObservationKeyUnstated{}: SeatAddressed{}
+    case ObservationKeyDiffers{}: TaskAddressed{}
+    case DeliveredToAnotherSeat{}: SeatAddressed{}
+    case ReceiptEvidence{}: NoFrame{}
+    case ReceiptKeyDiffers{}: NoFrame{}
+    case NoReportLiveTurn{}: NoFrame{}
+    case ParentUnresolvedCase{}: NoFrame{}
+    case SettledTurnCase{}: NoFrame{}
 
 def adapter_index(f: Fixture) -> Nat:
   match f:
-    case ParkWakeAbsent{}: 0n
-    case ParkWakeObserved{}: 0n
-    case RecoverySeatAddressed{}: 1n
-    case ParkTransitionNoFrame{}: 2n
-    case UnknownCorrelation{}: 3n
-    case MissingCorrelation{}: 3n
-    case ReceiptPresent{}: 3n
-    case DeliveredNoReceipt{}: 3n
-    case UnresolvedParent{}: 3n
-    case SettledTurn{}: 3n
+    case ParkRoutingRecordedAbsent{}: 0n
+    case ParkObservedToTask{}: 0n
+    case RecoveryDeliveredToOrchestrator{}: 1n
+    case ParkTransitionNotObserved{}: 2n
+    case TurnKeyUnstated{}: 3n
+    case ObservationKeyUnstated{}: 3n
+    case ObservationKeyDiffers{}: 3n
+    case DeliveredToAnotherSeat{}: 3n
+    case ReceiptEvidence{}: 3n
+    case ReceiptKeyDiffers{}: 3n
+    case NoReportLiveTurn{}: 3n
+    case ParentUnresolvedCase{}: 3n
+    case SettledTurnCase{}: 3n
 
 def label_of(f: Fixture) -> String:
   match f:
-    case ParkWakeAbsent{}: "park-wake-absent"
-    case ParkWakeObserved{}: "park-wake-observed"
-    case RecoverySeatAddressed{}: "recovery-seat-addressed"
-    case ParkTransitionNoFrame{}: "park-transition-no-frame"
-    case UnknownCorrelation{}: "correlation-unknown"
-    case MissingCorrelation{}: "correlation-missing"
-    case ReceiptPresent{}: "receipt-present"
-    case DeliveredNoReceipt{}: "delivered-no-receipt"
-    case UnresolvedParent{}: "parent-unresolved"
-    case SettledTurn{}: "settled-turn"
+    case ParkRoutingRecordedAbsent{}: "park-routing-recorded-absent"
+    case ParkObservedToTask{}: "park-observed-to-task"
+    case RecoveryDeliveredToOrchestrator{}: "recovery-delivered-to-orchestrator"
+    case ParkTransitionNotObserved{}: "park-transition-not-observed"
+    case TurnKeyUnstated{}: "turn-key-unstated"
+    case ObservationKeyUnstated{}: "observation-key-unstated"
+    case ObservationKeyDiffers{}: "observation-key-differs"
+    case DeliveredToAnotherSeat{}: "delivered-to-another-seat"
+    case ReceiptEvidence{}: "receipt-on-file"
+    case ReceiptKeyDiffers{}: "receipt-key-differs"
+    case NoReportLiveTurn{}: "no-report-live-turn"
+    case ParentUnresolvedCase{}: "parent-unresolved"
+    case SettledTurnCase{}: "settled-turn"
 
 def expected_of(f: Fixture) -> Verdict:
   match f:
-    case ParkWakeAbsent{}: Rejected{}
-    case ParkWakeObserved{}: Unconfirmed{}
-    case RecoverySeatAddressed{}: Delivered{}
-    case ParkTransitionNoFrame{}: Unconfirmed{}
-    case UnknownCorrelation{}: Unconfirmed{}
-    case MissingCorrelation{}: Unconfirmed{}
-    case ReceiptPresent{}: Delivered{}
-    case DeliveredNoReceipt{}: Delivered{}
-    case UnresolvedParent{}: Rejected{}
-    case SettledTurn{}: NotApplicable{}
+    case ParkRoutingRecordedAbsent{}: Rejected{}
+    case ParkObservedToTask{}: Unconfirmed{}
+    case RecoveryDeliveredToOrchestrator{}: Delivered{}
+    case ParkTransitionNotObserved{}: Unconfirmed{}
+    case TurnKeyUnstated{}: Unconfirmed{}
+    case ObservationKeyUnstated{}: Unconfirmed{}
+    case ObservationKeyDiffers{}: Unconfirmed{}
+    case DeliveredToAnotherSeat{}: Unconfirmed{}
+    case ReceiptEvidence{}: Delivered{}
+    case ReceiptKeyDiffers{}: Unconfirmed{}
+    case NoReportLiveTurn{}: ObligationUnmet{}
+    case ParentUnresolvedCase{}: Rejected{}
+    case SettledTurnCase{}: NotApplicable{}
 
-# Both values appear, so the law below is not vacuous.
 def expected_confirmed(f: Fixture) -> Bool:
   match f:
-    case ParkWakeAbsent{}: False{}
-    case ParkWakeObserved{}: False{}
-    case RecoverySeatAddressed{}: True{}
-    case ParkTransitionNoFrame{}: False{}
-    case UnknownCorrelation{}: False{}
-    case MissingCorrelation{}: False{}
-    case ReceiptPresent{}: True{}
-    case DeliveredNoReceipt{}: True{}
-    case UnresolvedParent{}: False{}
-    case SettledTurn{}: False{}
+    case ParkRoutingRecordedAbsent{}: False{}
+    case ParkObservedToTask{}: False{}
+    case RecoveryDeliveredToOrchestrator{}: True{}
+    case ParkTransitionNotObserved{}: False{}
+    case TurnKeyUnstated{}: False{}
+    case ObservationKeyUnstated{}: False{}
+    case ObservationKeyDiffers{}: False{}
+    case DeliveredToAnotherSeat{}: False{}
+    case ReceiptEvidence{}: True{}
+    case ReceiptKeyDiffers{}: False{}
+    case NoReportLiveTurn{}: False{}
+    case ParentUnresolvedCase{}: False{}
+    case SettledTurnCase{}: False{}
 
-def verdict_of(f: Fixture) -> Verdict:
-  decide(turn_of(f))
 
-def delivery_confirmed(f: Fixture) -> Bool:
-  confirmed(turn_of(f))
+def and2(a: Bool, b: Bool) -> Bool:
+  match a:
+    case True{}: b
+    case False{}: False{}
 
-def source_label(s: Source) -> String:
-  match s:
-    case Model{}: "model"
-    case Adapter{}: "adapter"
+def and3(a: Bool, b: Bool, c: Bool) -> Bool:
+  and2(a, and2(b, c))
 
-def route_label(is_seat: Bool, is_task: Bool) -> String:
-  match is_seat:
-    case True{}: "seat-addressed"
-    case False{}:
-      match is_task:
-        case True{}: "task-addressed"
-        case False{}: "no-frame"
+def key_matches(a: Key, b: Key) -> Bool:
+  match a:
+    case KeyStated{+worker, +task, +turn}:
+      match b:
+        case KeyStated{+w, +t, +n}: and3(Nat.is_eq(worker, w), Nat.is_eq(task, t), Nat.is_eq(turn, n))
+        case KeyUnstated{}: False{}
+    case KeyUnstated{}: False{}
 
-def observation_label(t: Turn) -> String:
-  match t:
-    case Turn{_, _, _, _, _, _, WakeDelivered{}, _}: "wake-delivered"
-    case Turn{_, _, _, _, _, _, WakeAbsent{}, _}: "wake-absent"
-    case Turn{_, _, _, _, _, _, WakeUnobserved{}, _}: "wake-unobserved"
+def obs_key(o: Observation) -> Key:
+  match o:
+    case DeliveredToSeat{_, +k}: k
+    case DeliveredToTask{+k}: k
+    case RecordedAbsent{+k}: k
+    case NotObserved{}: KeyUnstated{}
 
-def receipt_label(t: Turn) -> String:
-  match t:
-    case Turn{_, _, _, _, _, ReceiptOnFile{}, _, _}: "present"
-    case Turn{_, _, _, _, _, ReceiptMissing{}, _, _}: "absent"
-    case Turn{_, _, _, _, _, ReceiptNotChecked{}, _, _}: "not-checked"
+def obs_seat(o: Observation) -> Nat:
+  match o:
+    case DeliveredToSeat{+s, _}: s
+    case _: 0n
+
+def parent_seat(p: Parent) -> Nat:
+  match p:
+    case ResolvedSeat{+s}: s
+    case Unresolved{}: 0n
+
+def receipt_key(r: Receipt) -> Key:
+  match r:
+    case ReceiptOnFile{_, +k}: k
+    case ReceiptMissing{+k}: k
+    case ReceiptNotChecked{}: KeyUnstated{}
+
+def receipt_seat(r: Receipt) -> Nat:
+  match r:
+    case ReceiptOnFile{+s, _}: s
+    case _: 0n
+
+# A receipt establishes delivery only when it names this turn's identity and the resolved seat.
+def receipt_holds(key: Key, parent: Parent, +receipt: Receipt) -> Bool:
+  and2(key_matches(receipt_key(receipt), key), Nat.is_eq(receipt_seat(receipt), parent_seat(parent)))
+
+# An observation establishes delivery only when it names this turn's identity and the resolved seat.
+def obs_key_holds(key: Key, obs: Observation) -> Bool:
+  key_matches(obs_key(obs), key)
+
+def obs_seat_holds(key: Key, parent: Parent, +obs: Observation) -> Bool:
+  and2(key_matches(obs_key(obs), key), Nat.is_eq(obs_seat(obs), parent_seat(parent)))
+
+# A recorded absence leaves the wait rejected; anything else that is not an identity-matched delivery
+# leaves it unconfirmed.
+def absent_or_unconfirmed(o: Observation) -> Verdict:
+  match o:
+    case RecordedAbsent{_}: Rejected{}
+    case _: Unconfirmed{}
+
+def decide(wait: Wait, ended: TurnEnd, report: Report, parent: Parent, obs: Observation,
+           receipt_holds: Bool, obs_key_holds: Bool, obs_seat_holds: Bool) -> Verdict:
+  match wait:
+    case Settled{}: NotApplicable{}
+    case Live{}:
+      match ended:
+        case NotEnded{}: NotApplicable{}
+        case Ended{}:
+          match report:
+            case NoReport{}: ObligationUnmet{}
+            case Reported{}:
+              match parent:
+                case Unresolved{}: Rejected{}
+                case ResolvedSeat{_}:
+                  match receipt_holds:
+                    case True{}: Delivered{}
+                    case False{}:
+                      match obs_key_holds:
+                        case False{}: Unconfirmed{}
+                        case True{}:
+                          match obs_seat_holds:
+                            case True{}: Delivered{}
+                            case False{}: absent_or_unconfirmed(obs)
+
+def routing_code(r: Routing) -> U32:
+  match r:
+    case SeatAddressed{}: 0
+    case TaskAddressed{}: 1
+    case NoFrame{}: 2
+
+def routing_label(r: Routing) -> String:
+  match r:
+    case SeatAddressed{}: "seat-addressed"
+    case TaskAddressed{}: "task-addressed"
+    case NoFrame{}: "no-frame"
 
 def verdict_label(v: Verdict) -> String:
   match v:
     case Delivered{}: "delivered"
     case Rejected{}: "rejected"
     case Unconfirmed{}: "unconfirmed"
+    case ObligationUnmet{}: "obligation-unmet"
     case NotApplicable{}: "not-applicable"
 
 def is_unconfirmed(v: Verdict) -> Bool:
@@ -232,7 +318,38 @@ def is_unconfirmed(v: Verdict) -> Bool:
     case Delivered{}: False{}
     case Rejected{}: False{}
     case Unconfirmed{}: True{}
+    case ObligationUnmet{}: False{}
     case NotApplicable{}: False{}
+
+def is_unmet(v: Verdict) -> Bool:
+  match v:
+    case Delivered{}: False{}
+    case Rejected{}: False{}
+    case Unconfirmed{}: False{}
+    case ObligationUnmet{}: True{}
+    case NotApplicable{}: False{}
+
+def verdict_turn(t: Turn) -> Verdict:
+  match t:
+    case Turn{+ended, +report, +wait, +key, +parent, +receipt, +obs, _}:
+      decide(wait, ended, report, parent, obs,
+             receipt_holds(key, parent, receipt),
+             obs_key_holds(key, obs),
+             obs_seat_holds(key, parent, obs))
+
+def verdict_of(f: Fixture) -> Verdict:
+  verdict_turn(turn_of(f))
+
+def confirmed_verdict(v: Verdict) -> Bool:
+  match v:
+    case Delivered{}: True{}
+    case Rejected{}: False{}
+    case Unconfirmed{}: False{}
+    case ObligationUnmet{}: False{}
+    case NotApplicable{}: False{}
+
+def delivery_confirmed(f: Fixture) -> Bool:
+  confirmed_verdict(verdict_of(f))
 
 # Every fixture's verdict is the one the corpus records.
 law every_fixture_matches_its_expectation:
@@ -241,139 +358,263 @@ law every_fixture_matches_its_expectation:
 
 def every_fixture_matches_its_expectation(f):
   match f:
-    case ParkWakeAbsent{}: {==}
-    case ParkWakeObserved{}: {==}
-    case RecoverySeatAddressed{}: {==}
-    case ParkTransitionNoFrame{}: {==}
-    case UnknownCorrelation{}: {==}
-    case MissingCorrelation{}: {==}
-    case ReceiptPresent{}: {==}
-    case DeliveredNoReceipt{}: {==}
-    case UnresolvedParent{}: {==}
-    case SettledTurn{}: {==}
+    case ParkRoutingRecordedAbsent{}: {==}
+    case ParkObservedToTask{}: {==}
+    case RecoveryDeliveredToOrchestrator{}: {==}
+    case ParkTransitionNotObserved{}: {==}
+    case TurnKeyUnstated{}: {==}
+    case ObservationKeyUnstated{}: {==}
+    case ObservationKeyDiffers{}: {==}
+    case DeliveredToAnotherSeat{}: {==}
+    case ReceiptEvidence{}: {==}
+    case ReceiptKeyDiffers{}: {==}
+    case NoReportLiveTurn{}: {==}
+    case ParentUnresolvedCase{}: {==}
+    case SettledTurnCase{}: {==}
 
-# A correlation that is unknown or missing is never a rejection and never a delivery.
-def unknown_correlation_is_unconfirmed(t: Turn, v: Verdict) -> Bool:
+# An identity the deployment cannot state leaves the answer unconfirmed.
+def unstated_turn(t: Turn, v: Verdict) -> Bool:
   match t:
-    case Turn{_, _, _, Unknown{}, _, _, _, _}: is_unconfirmed(v)
-    case Turn{_, _, _, Missing{}, _, _, _, _}: is_unconfirmed(v)
+    case Turn{_, _, _, KeyUnstated{}, _, _, _, _}: is_unconfirmed(v)
+    case Turn{_, _, _, _, _, _, DeliveredToSeat{_, KeyUnstated{}}, _}: is_unconfirmed(v)
+    case Turn{_, _, _, _, _, _, DeliveredToTask{KeyUnstated{}}, _}: is_unconfirmed(v)
     case Turn{_, _, _, _, _, _, _, _}: True{}
 
-law unknown_or_missing_correlation_stays_unconfirmed:
+def unstated_key_is_unconfirmed(+f: Fixture) -> Bool:
+  unstated_turn(turn_of(f), verdict_of(f))
+
+law an_unstated_identity_stays_unconfirmed:
   for +f: Fixture
-  {unknown_correlation_is_unconfirmed(turn_of(f), verdict_of(f)) == True{} : Bool}
+  {unstated_key_is_unconfirmed(f) == True{} : Bool}
 
-def unknown_or_missing_correlation_stays_unconfirmed(f):
+def an_unstated_identity_stays_unconfirmed(f):
   match f:
-    case ParkWakeAbsent{}: {==}
-    case ParkWakeObserved{}: {==}
-    case RecoverySeatAddressed{}: {==}
-    case ParkTransitionNoFrame{}: {==}
-    case UnknownCorrelation{}: {==}
-    case MissingCorrelation{}: {==}
-    case ReceiptPresent{}: {==}
-    case DeliveredNoReceipt{}: {==}
-    case UnresolvedParent{}: {==}
-    case SettledTurn{}: {==}
+    case ParkRoutingRecordedAbsent{}: {==}
+    case ParkObservedToTask{}: {==}
+    case RecoveryDeliveredToOrchestrator{}: {==}
+    case ParkTransitionNotObserved{}: {==}
+    case TurnKeyUnstated{}: {==}
+    case ObservationKeyUnstated{}: {==}
+    case ObservationKeyDiffers{}: {==}
+    case DeliveredToAnotherSeat{}: {==}
+    case ReceiptEvidence{}: {==}
+    case ReceiptKeyDiffers{}: {==}
+    case NoReportLiveTurn{}: {==}
+    case ParentUnresolvedCase{}: {==}
+    case SettledTurnCase{}: {==}
 
-# Routing metadata never decides: an observed wake that is not addressed to the seat leaves the
-# answer unconfirmed, neither delivered nor rejected.
-def routing_never_decides(t: Turn, v: Verdict) -> Bool:
+# An observation or receipt recorded for a different turn leaves this turn's answer unconfirmed.
+def keys_differ(same: Bool, v: Verdict) -> Bool:
+  match same:
+    case True{}: True{}
+    case False{}: is_unconfirmed(v)
+
+def foreign_key_verdict(w: Nat, t: Nat, n: Nat, w2: Nat, t2: Nat, n2: Nat, v: Verdict) -> Bool:
+  keys_differ(and3(Nat.is_eq(w, w2), Nat.is_eq(t, t2), Nat.is_eq(n, n2)), v)
+
+def foreign_turn(t: Turn, v: Verdict) -> Bool:
   match t:
-    case Turn{_, _, _, _, _, _, WakeDelivered{}, TaskAddressed{}}: is_unconfirmed(v)
-    case Turn{_, _, _, _, _, _, WakeDelivered{}, NoFrame{}}: is_unconfirmed(v)
+    case Turn{_, _, _, KeyStated{+w, +t, +n}, _, _, DeliveredToSeat{_, KeyStated{+w2, +t2, +n2}}, _}:
+      foreign_key_verdict(w, t, n, w2, t2, n2, v)
+    case Turn{_, _, _, KeyStated{+w, +t, +n}, _, _, DeliveredToTask{KeyStated{+w2, +t2, +n2}}, _}:
+      foreign_key_verdict(w, t, n, w2, t2, n2, v)
+    case Turn{_, _, _, KeyStated{+w, +t, +n}, _, ReceiptOnFile{_, KeyStated{+w2, +t2, +n2}}, _, _}:
+      foreign_key_verdict(w, t, n, w2, t2, n2, v)
     case Turn{_, _, _, _, _, _, _, _}: True{}
 
-law routing_metadata_is_never_decisive:
+def foreign_identity_is_unconfirmed(+f: Fixture) -> Bool:
+  foreign_turn(turn_of(f), verdict_of(f))
+
+law a_foreign_identity_stays_unconfirmed:
   for +f: Fixture
-  {routing_never_decides(turn_of(f), verdict_of(f)) == True{} : Bool}
+  {foreign_identity_is_unconfirmed(f) == True{} : Bool}
 
-def routing_metadata_is_never_decisive(f):
+def a_foreign_identity_stays_unconfirmed(f):
   match f:
-    case ParkWakeAbsent{}: {==}
-    case ParkWakeObserved{}: {==}
-    case RecoverySeatAddressed{}: {==}
-    case ParkTransitionNoFrame{}: {==}
-    case UnknownCorrelation{}: {==}
-    case MissingCorrelation{}: {==}
-    case ReceiptPresent{}: {==}
-    case DeliveredNoReceipt{}: {==}
-    case UnresolvedParent{}: {==}
-    case SettledTurn{}: {==}
+    case ParkRoutingRecordedAbsent{}: {==}
+    case ParkObservedToTask{}: {==}
+    case RecoveryDeliveredToOrchestrator{}: {==}
+    case ParkTransitionNotObserved{}: {==}
+    case TurnKeyUnstated{}: {==}
+    case ObservationKeyUnstated{}: {==}
+    case ObservationKeyDiffers{}: {==}
+    case DeliveredToAnotherSeat{}: {==}
+    case ReceiptEvidence{}: {==}
+    case ReceiptKeyDiffers{}: {==}
+    case NoReportLiveTurn{}: {==}
+    case ParentUnresolvedCase{}: {==}
+    case SettledTurnCase{}: {==}
 
-law delivery_confirmed_only_by_evidence:
+# Routing metadata is not an input to the decision: a verdict is unchanged when the routing column
+# is replaced by another value. The decision table takes no routing parameter, and this law holds it
+# to that.
+def is_delivered(v: Verdict) -> Bool:
+  match v:
+    case Delivered{}: True{}
+    case Rejected{}: False{}
+    case Unconfirmed{}: False{}
+    case ObligationUnmet{}: False{}
+    case NotApplicable{}: False{}
+
+def is_rejected(v: Verdict) -> Bool:
+  match v:
+    case Delivered{}: False{}
+    case Rejected{}: True{}
+    case Unconfirmed{}: False{}
+    case ObligationUnmet{}: False{}
+    case NotApplicable{}: False{}
+
+def is_not_applicable(v: Verdict) -> Bool:
+  match v:
+    case Delivered{}: False{}
+    case Rejected{}: False{}
+    case Unconfirmed{}: False{}
+    case ObligationUnmet{}: False{}
+    case NotApplicable{}: True{}
+
+def verdict_eq(a: Verdict, b: Verdict) -> Bool:
+  match a:
+    case Delivered{}: is_delivered(b)
+    case Rejected{}: is_rejected(b)
+    case Unconfirmed{}: is_unconfirmed(b)
+    case ObligationUnmet{}: is_unmet(b)
+    case NotApplicable{}: is_not_applicable(b)
+
+def turn_without_routing(t: Turn) -> Turn:
+  match t:
+    case Turn{+ended, +report, +wait, +key, +parent, +receipt, +obs, _}:
+      Turn{ended, report, wait, key, parent, receipt, obs, NoFrame{}}
+
+def routing_same(+t: Turn) -> Bool:
+  verdict_eq(verdict_turn(turn_without_routing(t)), verdict_turn(t))
+
+def routing_irrelevant(+f: Fixture) -> Bool:
+  routing_same(turn_of(f))
+
+law routing_is_not_an_input_to_the_decision:
+  for +f: Fixture
+  {routing_irrelevant(f) == True{} : Bool}
+def routing_is_not_an_input_to_the_decision(f):
+  match f:
+    case ParkRoutingRecordedAbsent{}: {==}
+    case ParkObservedToTask{}: {==}
+    case RecoveryDeliveredToOrchestrator{}: {==}
+    case ParkTransitionNotObserved{}: {==}
+    case TurnKeyUnstated{}: {==}
+    case ObservationKeyUnstated{}: {==}
+    case ObservationKeyDiffers{}: {==}
+    case DeliveredToAnotherSeat{}: {==}
+    case ReceiptEvidence{}: {==}
+    case ReceiptKeyDiffers{}: {==}
+    case NoReportLiveTurn{}: {==}
+    case ParentUnresolvedCase{}: {==}
+    case SettledTurnCase{}: {==}
+
+# A live turn that ended without its report has an unmet obligation, which is not NotApplicable.
+def report_turn(t: Turn, v: Verdict) -> Bool:
+  match t:
+    case Turn{Ended{}, NoReport{}, Live{}, _, _, _, _, _}: is_unmet(v)
+    case Turn{_, _, _, _, _, _, _, _}: True{}
+
+def no_report_is_unmet(+f: Fixture) -> Bool:
+  report_turn(turn_of(f), verdict_of(f))
+
+law a_reportless_live_turn_is_an_unmet_obligation:
+  for +f: Fixture
+  {no_report_is_unmet(f) == True{} : Bool}
+
+def a_reportless_live_turn_is_an_unmet_obligation(f):
+  match f:
+    case ParkRoutingRecordedAbsent{}: {==}
+    case ParkObservedToTask{}: {==}
+    case RecoveryDeliveredToOrchestrator{}: {==}
+    case ParkTransitionNotObserved{}: {==}
+    case TurnKeyUnstated{}: {==}
+    case ObservationKeyUnstated{}: {==}
+    case ObservationKeyDiffers{}: {==}
+    case DeliveredToAnotherSeat{}: {==}
+    case ReceiptEvidence{}: {==}
+    case ReceiptKeyDiffers{}: {==}
+    case NoReportLiveTurn{}: {==}
+    case ParentUnresolvedCase{}: {==}
+    case SettledTurnCase{}: {==}
+
+law delivery_confirmed_only_by_identity_matched_evidence:
   for +f: Fixture
   {delivery_confirmed(f) == expected_confirmed(f) : Bool}
 
-def delivery_confirmed_only_by_evidence(f):
+def delivery_confirmed_only_by_identity_matched_evidence(f):
   match f:
-    case ParkWakeAbsent{}: {==}
-    case ParkWakeObserved{}: {==}
-    case RecoverySeatAddressed{}: {==}
-    case ParkTransitionNoFrame{}: {==}
-    case UnknownCorrelation{}: {==}
-    case MissingCorrelation{}: {==}
-    case ReceiptPresent{}: {==}
-    case DeliveredNoReceipt{}: {==}
-    case UnresolvedParent{}: {==}
-    case SettledTurn{}: {==}
-
-# The corpus carries an explicit turn end and the turn's report on every fixture.
-def carries_turn_end_and_report(t: Turn) -> Bool:
-  match t:
-    case Turn{Ended{}, Reported{}, _, _, _, _, _, _}: True{}
-    case Turn{_, _, _, _, _, _, _, _}: False{}
-
-law every_fixture_carries_a_turn_end_and_report:
-  for f: Fixture
-  {carries_turn_end_and_report(turn_of(f)) == True{} : Bool}
-
-def every_fixture_carries_a_turn_end_and_report(f):
-  match f:
-    case ParkWakeAbsent{}: {==}
-    case ParkWakeObserved{}: {==}
-    case RecoverySeatAddressed{}: {==}
-    case ParkTransitionNoFrame{}: {==}
-    case UnknownCorrelation{}: {==}
-    case MissingCorrelation{}: {==}
-    case ReceiptPresent{}: {==}
-    case DeliveredNoReceipt{}: {==}
-    case UnresolvedParent{}: {==}
-    case SettledTurn{}: {==}
+    case ParkRoutingRecordedAbsent{}: {==}
+    case ParkObservedToTask{}: {==}
+    case RecoveryDeliveredToOrchestrator{}: {==}
+    case ParkTransitionNotObserved{}: {==}
+    case TurnKeyUnstated{}: {==}
+    case ObservationKeyUnstated{}: {==}
+    case ObservationKeyDiffers{}: {==}
+    case DeliveredToAnotherSeat{}: {==}
+    case ReceiptEvidence{}: {==}
+    case ReceiptKeyDiffers{}: {==}
+    case NoReportLiveTurn{}: {==}
+    case ParentUnresolvedCase{}: {==}
+    case SettledTurnCase{}: {==}
 
 # The host half: impl/src/wake-stream.mjs's ROUTING metadata for an adapter fixture's own row.
 # 0 = seat-addressed, 1 = task-addressed, 2 = no frame derived.
 def Real.adapter_routing(index: Nat) -> IO(U32):
   import "./laws-wake-delivery.js"
 
-def render_model(+f: Fixture) -> IO(Unit):
-  do IO<Unit>:
-    IO.print(label_of(f) ++ " source=model derived=n/a observation=" ++ observation_label(turn_of(f)) ++ " receipt=" ++ receipt_label(turn_of(f)) ++ " verdict=" ++ verdict_label(verdict_of(f)))
+def derived_label(+code: U32, is_seat: Bool, is_task: Bool) -> String:
+  match is_seat:
+    case True{}: "seat-addressed"
+    case False{}:
+      match is_task:
+        case True{}: "task-addressed"
+        case False{}: "no-frame"
 
-def render_adapter(+f: Fixture) -> IO(Unit):
-  do IO<Unit>:
-    seat : U32 <- Real.adapter_routing(adapter_index(f))
-    task : U32 <- Real.adapter_routing(adapter_index(f))
-    IO.print(label_of(f) ++ " source=adapter derived=" ++ route_label(U32.is_eq(seat, 0), U32.is_eq(task, 1)) ++ " observation=" ++ observation_label(turn_of(f)) ++ " receipt=" ++ receipt_label(turn_of(f)) ++ " verdict=" ++ verdict_label(verdict_of(f)))
+def derived_words(+code: U32) -> String:
+  derived_label(code, U32.is_eq(code, 0), U32.is_eq(code, 1))
 
-def render(s: Source, f: Fixture) -> IO(Unit):
+def replay_model(+f: Fixture) -> IO(Unit):
+  do IO<Unit>:
+    IO.print(label_of(f) ++ " source=model verdict=" ++ verdict_label(verdict_of(f)))
+
+def adapter_line(agree: Bool, +code: U32, +f: Fixture) -> IO(Unit):
+  match agree:
+    case True{}: IO.print(label_of(f) ++ " source=adapter derived=" ++ derived_words(code) ++ " declared=" ++ routing_label(routing_of(f)) ++ " verdict=" ++ verdict_label(verdict_of(f)))
+    case False{}: IO.die(Unit, 1, label_of(f) ++ " routing DISAGREE: declared " ++ routing_label(routing_of(f)) ++ " derived " ++ derived_words(code))
+
+# An adapter row's derived routing is ASSERTED against the routing the fixture declares; a
+# disagreement ends the run with the code 1, in either runtime lane.
+def adapter_result(+code: U32, +f: Fixture) -> IO(Unit):
+  adapter_line(U32.is_eq(code, routing_code(routing_of(f))), code, f)
+
+def replay_adapter(+f: Fixture) -> IO(Unit):
+  do IO<Unit>:
+    code : U32 <- Real.adapter_routing(adapter_index(f))
+    adapter_result(code, f)
+
+def replay(s: Source, +f: Fixture) -> IO(Unit):
   match s:
-    case Model{}: render_model(f)
-    case Adapter{}: render_adapter(f)
+    case Model{}: replay_model(f)
+    case Adapter{}: replay_adapter(f)
 
 def one(+f: Fixture) -> IO(Unit):
-  render(source_of(f), f)
+  replay(source_of(f), f)
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    one(ParkWakeAbsent{})
-    one(ParkWakeObserved{})
-    one(RecoverySeatAddressed{})
-    one(ParkTransitionNoFrame{})
-    one(UnknownCorrelation{})
-    one(MissingCorrelation{})
-    one(ReceiptPresent{})
-    one(DeliveredNoReceipt{})
-    one(UnresolvedParent{})
-    one(SettledTurn{})
-    IO.print("wake-delivery witness: 10 fixtures replayed; every adapter derivation must agree with its declared routing, and every verdict must equal the corpus expectation.")
+    one(ParkRoutingRecordedAbsent{})
+    one(ParkObservedToTask{})
+    one(RecoveryDeliveredToOrchestrator{})
+    one(ParkTransitionNotObserved{})
+    one(TurnKeyUnstated{})
+    one(ObservationKeyUnstated{})
+    one(ObservationKeyDiffers{})
+    one(DeliveredToAnotherSeat{})
+    one(ReceiptEvidence{})
+    one(ReceiptKeyDiffers{})
+    one(NoReportLiveTurn{})
+    one(ParentUnresolvedCase{})
+    one(SettledTurnCase{})
+    IO.print("wake-delivery witness: 13 fixtures replayed; each adapter row's derived routing is asserted against the routing it declares, and every verdict must equal the corpus expectation.")
