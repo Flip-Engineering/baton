@@ -52,7 +52,7 @@ export const PROGRESS_CLASS_LEAVES = Object.freeze(['silent', 'progressing']);
 export const PROGRESS_BLOCKED_INTERACTION_DETAILS = Object.freeze([
   'approve_plan', 'select_candidate', 'answer_required', 'turn_checkpoint',
 ]);
-export const PROGRESS_SILENCE_THRESHOLD_MS = 120_000;
+export const PROGRESS_SILENCE_THRESHOLD_MS = FRAME_LIMITS['progress.silence_ms'].value;
 
 // Issue #10 (D2): the closed waiting-on vocabulary. Additive on the run view/outline/runs.list
 // item, never a new run phase (D1). The array is frozen AND written in ACTUAL sorted order so the
@@ -523,7 +523,7 @@ const actions = {
   },
   claim_turn: {
     label: 'Claim paused turn',
-    summary: 'Re-run the live trust gate against the exact paused task and resolve it to completed or failed — a final evaluation that can kill the worker; refuses claim_premature_liveness while the worker shows read-only liveness without an in-scope diff.',
+    summary: 'Re-run the live trust gate against the exact paused task and resolve it to completed or failed and record the verification result.',
     inputSchema: objectSchema({}, []),
     serverDerived: ['pauseId', 'workerId', 'taskId', 'turnEpoch'], effect: 'provider_control',
     destructive: true, irreversible: false, idempotent: true, priority: 'recommended',

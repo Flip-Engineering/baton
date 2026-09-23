@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { BatonApplication } from './application.mjs';
+import { harnessWakeCapabilityForHarnesses } from './wake-delivery.mjs';
 import { bindBaton } from './application-client.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { BatonWebClient } from './application-cli.mjs';
@@ -56,6 +57,7 @@ import {
   KILL_ESCALATION_GRACE_MS, processGroupAlive, reapOwnedProcessGroup,
 } from './process-lifecycle.mjs';
 import { WebNorthbound, createLocalAuthenticatedWebServer } from './web-northbound.mjs';
+import { normalizeRootWakeTarget } from './wake-delivery.mjs';
 
 const DEFAULT_BUDGET = Object.freeze({
   // The default notification envelope for goal/node budgets — never a stop (issue #258). The
@@ -71,8 +73,8 @@ const DEFAULT_BUDGET = Object.freeze({
 // provider-stall outer backstop, so the two surfaces share one coherent stall vocabulary. Nothing
 // in DEFAULT_BUDGET feeds this; a future wall-budget change can never silently change the stall.
 const DEFAULT_WATCHDOG = Object.freeze({
-  stallMs: 20 * 60_000,                       // strictly < DEFAULT_BUDGET.wallMin * 60_000 (480 min)
-  blockingInteractionTimeoutMs: 20 * 60_000,  // the null-deadline default for blocking interactions (D3)
+  stallMs: FRAME_LIMITS['driver.stall_ms'].value,                       // strictly < DEFAULT_BUDGET.wallMin * 60_000 (480 min)
+  blockingInteractionTimeoutMs: FRAME_LIMITS['driver.blocking_interaction_ms'].value,  // the null-deadline default for blocking interactions (D3)
   loopThreshold: 3,
   loopAction: 'escalate',                     // issue #258: evidence for the orchestrator, never a direct stop
   stallAction: 'escalate',                    // was 'interrupt' — D4 rung 1, never a direct stop
@@ -95,7 +97,7 @@ const DEFAULT_WORKTREE_CAPACITY = Object.freeze({
   // #500: operator-declared allowances with no derivation elsewhere in the tree — sizing a
   // real fleet's growth headroom is an operator judgment. The #500 pin test records the
   // shipped 64 MiB / 10 000-inode values.
-  runtimeReserveBytes: 64 * 1024 * 1024,
+  runtimeReserveBytes: FRAME_LIMITS['workspace.reserve_bytes'].value,
   runtimeReserveInodes: 10_000,
 });
 
@@ -108,8 +110,8 @@ const DEPENDENCY_PROJECTION_LIMITS = Object.freeze({
   maxMappings: 128,
   maxFiles: 1_000_000,
   maxDirectories: 250_000,
-  maxBytes: 2 * 1024 * 1024 * 1024,
-  maxFileBytes: 512 * 1024 * 1024,
+  maxBytes: FRAME_LIMITS['workspace.capacity_max_bytes'].value,
+  maxFileBytes: FRAME_LIMITS['workspace.file_max_bytes'].value,
   maxPathBytes: 4096,
   maxDepth: 256,
 });
@@ -611,11 +613,12 @@ function normalizeVerification(value, repoRoot) {
 
 function normalizeCapacity(value) {
   if (value === undefined) return null;
-  closed(value, ['estimate', 'hostCapacity', 'observe', 'policy', 'runtimeFootprint'], 'advanced capacity');
+  closed(value, ['estimate', 'hostCapacity', 'hostObservation', 'observe', 'policy', 'runtimeFootprint'], 'advanced capacity');
   if ((value.estimate !== undefined && typeof value.estimate !== 'function')
     || (value.observe !== undefined && typeof value.observe !== 'function')
+    || (value.hostObservation !== undefined && typeof value.hostObservation !== 'function')
     || (value.runtimeFootprint !== undefined && typeof value.runtimeFootprint !== 'function')) {
-    throw deploymentError('advanced capacity estimate, observe and runtimeFootprint must be functions when provided');
+    throw deploymentError('advanced capacity estimate, observe, hostObservation and runtimeFootprint must be functions when provided');
   }
   let hostCapacity;
   if (value.hostCapacity !== undefined) {
@@ -635,7 +638,7 @@ function normalizeCapacity(value) {
   } catch (error) {
     throw deploymentError(`advanced capacity policy is invalid: ${error.message}`);
   }
-  return Object.freeze({ policy, estimate: value.estimate, observe: value.observe, runtimeFootprint: value.runtimeFootprint, hostCapacity });
+  return Object.freeze({ policy, estimate: value.estimate, observe: value.observe, runtimeFootprint: value.runtimeFootprint, hostCapacity, hostObservation: value.hostObservation });
 }
 
 function existingRegular(path) {
@@ -1111,8 +1114,8 @@ function measureRuntimeFootprint(roots) {
 // equal-state projections stay deeply equal across reads and the verdict errs conservative
 // (the #35 discipline). Operator-declared steps with no derivation elsewhere; the #500 pin
 // test records the live values.
-const WORKSPACE_OBSERVATION_BYTE_QUANTUM = 64 * 1024 * 1024;
-const WORKSPACE_OBSERVATION_INODE_QUANTUM = 10_000;
+const WORKSPACE_OBSERVATION_BYTE_QUANTUM = FRAME_LIMITS['workspace.observation_quantum_bytes'].value;
+const WORKSPACE_OBSERVATION_INODE_QUANTUM = FRAME_LIMITS['workspace.observation_quantum_inodes'].value;
 
 function workspaceCapacityReadiness(repoRoot, policy, observe, floor = null) {
   let observation;
@@ -1696,14 +1699,15 @@ function museCommand() {
   throw deploymentError('Muse route requires a compatible muse executable with exec --json support');
 }
 
-/** Issue #28: deliberate wire ceilings are deployment-owned (64KiB–16MiB governance range). */
-const MIN_ADAPTER_WIRE_FRAME_BYTES = 64 * 1024;
-const MAX_ADAPTER_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
-// #500 (extending the #28 pin): the deployment default inside that corridor is 8 MiB — what
-// the claude-session families resolve to when neither advanced.adapterOptions nor
-// BATON_CLAUDE_MAX_WIRE_FRAME_BYTES speaks. Operator-declared; the #500 pin test records all
-// three bounds.
-const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 * 1024 * 1024;
+/** Issue #28: deliberate wire ceilings are deployment-owned; since #497 the corridor's floor,
+ * ceiling and derived default are registry rows (limits.mjs) — this module reads them and the
+ * #500 pin test records all three bounds. */
+const MIN_ADAPTER_WIRE_FRAME_BYTES = FRAME_LIMITS['adapter.wire_frame_min'].value;
+const MAX_ADAPTER_WIRE_FRAME_BYTES = FRAME_LIMITS['adapter.wire_frame_max'].value;
+// #500 (extending the #28 pin): the deployment default inside that corridor is 8 MiB — half the
+// ceiling — what the claude-session families resolve to when neither advanced.adapterOptions nor
+// BATON_CLAUDE_MAX_WIRE_FRAME_BYTES speaks.
+const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = MAX_ADAPTER_WIRE_FRAME_BYTES / 2;
 
 /**
  * `advanced.adapterOptions` is the deployment CALLER's channel for adapter configuration.
@@ -3312,6 +3316,8 @@ class BatonDeployment {
   // documents through (`package.admit`); null for a deployment that serves no context runtime,
   // and the port then refuses `context_source_unavailable` instead of inventing a store.
   #contextSourceAdmit = null;
+  // Issue #564: the operator-owned session this resident starts on a root_owed wake.
+  #rootWakeTarget = null;
   // #306 (2): the revision this deployment serves, frozen at open.
   #served = null;
   #claudeCredentialProbe = null;
@@ -3396,6 +3402,7 @@ class BatonDeployment {
     // capacity rule (see `#watchHostExhaustion`). Null on a host the suite left unwired.
     this.#hostCapacity = deployment.hostCapacity ?? null;
     this.#contextSourceAdmit = typeof deployment.contextSourceAdmit === "function" ? deployment.contextSourceAdmit : null;
+    this.#rootWakeTarget = deployment.rootWakeTarget ?? null;
     this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
@@ -3619,6 +3626,12 @@ class BatonDeployment {
     const routeUsage = this.#routeUsageRows(routes, profiles);
     const base = {
       ...this.#readiness, ready, routes, routeUsage,
+      // Issue #564: the per-harness turn-starting capability of this deployment's served routes.
+      // The doctor names, for each harness this deployment can run, how a root-addressed wake
+      // starts a turn in an idle session of it, or that no channel exists: the served
+      // BATONDeployment.doctorReadiness is the surface `deployment.doctor` and the resident facade
+      // read, so the rows must ride THIS base, never only the bare application's.
+      wakeDelivery: harnessWakeCapabilityForHarnesses(routes.map((route) => route.harness)),
       // #317 (docs/50 D5): the services section rides the doctor beside routeUsage — present only
       // when the deployment declares services, so the composed document's shape is unchanged for
       // a deployment without the section (D7).
@@ -4231,6 +4244,9 @@ class BatonDeployment {
       // The stream reads it once at publish and refreshes it on its observation cadence, so the
       // drift is visible where the deaths appear without a git read per frame.
       served: () => this.wakeServedFact(),
+      ...(this.#rootWakeTarget === null ? {} : {
+        rootWakeDelivery: { target: this.#rootWakeTarget },
+      }),
       // #441 lane A: the ONE context-CAS writer (`bench.admitSource`) the package.admit port mints
       // branch documents through — the resident wiring the lane handed back in needsFromOthers.
       ...(this.#contextSourceAdmit === null ? {} : { contextSourceAdmit: this.#contextSourceAdmit }),
@@ -6253,11 +6269,14 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'integration', 'liveness', 'modelProfiles', 'museCredentials', 'ompCredentials', 'resident', 'rootWake', 'routes', 'serviceClients', 'services', 'verification', 'workflowPolicy'], 'advanced');
   // Issue #558: the declared shared remote landings publish to, validated at open.
   const rawIntegration = advanced.integration ?? {};
   closed(rawIntegration, ['publishRemote'], 'advanced integration');
   const integrationPublishRemote = normalizeIntegrationPublishRemote(rawIntegration.publishRemote);
+  // Issue #564: a configured root target is admitted only when the closed harness capability row
+  // names a channel that starts an idle operator turn. The option remains null when undeclared.
+  const rootWakeTarget = normalizeRootWakeTarget(advanced.rootWake);
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -6473,8 +6492,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   for (const field of ['probeTimeoutMs', 'failureWindowMs']) {
     if (rawLiveness[field] !== undefined
       && (!Number.isSafeInteger(rawLiveness[field]) || rawLiveness[field] <= 0
-        || rawLiveness[field] > 120_000)) {
-      throw deploymentError(`advanced liveness.${field} must be a positive safe integer ≤ 120000`);
+        || rawLiveness[field] > FRAME_LIMITS['route.probe_deadline_ms'].value)) {
+      throw deploymentError(`advanced liveness.${field} must be a positive safe integer ≤ ${FRAME_LIMITS['route.probe_deadline_ms'].value}`);
     }
   }
   const adapters = advanced.adapters
@@ -6680,10 +6699,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     adapters,
     worktreeCapacity: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
     worktreeCapacityRuntimeFootprint: runtimeFootprintProbe,
-    hostCapacity: hostCapacityAuthority,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
       worktreeCapacityObserve: capacity.observe,
+      // #561: a fixture stages its own host measurement so the floor's swap reserve stays
+      // hermetic; production leaves this unset and createDriver measures the machine.
+      ...(capacity.hostObservation ? { worktreeCapacityHostObservation: capacity.hostObservation } : {}),
     } : {}),
     ...(toolchainProjection ? { toolchainProjection } : {}),
     runtimeIsolation: {
@@ -6710,12 +6731,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // bounded attempts STOP_WAIT_ATTEMPT_BOUND names (above) before the stop proceeds with
     // the worker named abandoned. Operator-declared with no derivation elsewhere; the #500
     // pin test records the value.
-    stopDeadlineMs: 15_000,
+    stopDeadlineMs: FRAME_LIMITS['run.stop_deadline_ms'].value,
     // TG3: the bounded steering-cycle window — a deployment knob, never stallTimeoutMs (the
     // layer confusion in v0.9 is corrected; the stall watchdog is issue #67).
     // #500: 5 min between steering nudges; operator-declared with no derivation elsewhere in
     // the tree, and the #500 pin test records the shipped value.
-    progressNudgeWindowMs: 300_000,
     // #500: the drain — 64 workers waited on in one pass, a 90 s window (the bound the
     // registry's host.reincarnation.wait_ms row adds its measured startup allowance to), and
     // a 10 ms poll cadence. Operator-declared; the #500 pin test records the values.
@@ -6788,8 +6808,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     coordination: driver.coordination,
     log: driver.log,
     now: rawLiveness.now ?? Date.now,
-    probeTimeoutMs: rawLiveness.probeTimeoutMs ?? 120_000,
-    failureWindowMs: rawLiveness.failureWindowMs ?? 10 * 60 * 1000,
+    probeTimeoutMs: rawLiveness.probeTimeoutMs ?? FRAME_LIMITS['route.probe_deadline_ms'].value,
+    failureWindowMs: rawLiveness.failureWindowMs ?? FRAME_LIMITS['route.failure_window_ms'].value,
   });
   // #341 part 2: ONE ledger-derived provider-refusal index for this deployment, built here where
   // the ledger, the adapter cards and the route inventory are all in hand. The readiness rows, the
@@ -6859,6 +6879,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     contextRuntime.attachCoordination(driver.coordination);
     application = new BatonApplication({
       driver,
+      rootWake: rootWakeTarget,
       repoId: repository.repoId,
       deploymentId,
       profiles: {
@@ -6941,6 +6962,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // publication contract publishes at the flip. openStartedAtMs is stamped at entry.
       startupElapsedMs: Date.now() - openStartedAtMs,
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
+      rootWakeTarget,
       refusals: routeRefusals, degrades: routeDegrades,
       services: providerServices, serviceClients,
       hostCapacity: hostCapacityAuthority, hostCapacityProbe, served,
@@ -6960,6 +6982,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // can mint on a served deployment.
       contextSourceAdmit: (value) => contextRuntime.bench.admitSource(value),
     });
+    // Resume successors left pending by an older resident before publishing this deployment.
+    await application._swarmRuntime()._continueRecoveredSeats();
     return opened;
   } catch (error) {
     // Issue #384: a start that refuses records WHY, through the deployment's own writer path,

@@ -319,7 +319,7 @@ test('356-d: a transport error carries the underlying socket cause (code and mes
 test('356-d2: the local transport\u2019s typed refusal code names itself in the socket cause', async () => {
   // A Unix socket path is bounded (sun_path, 104 bytes) and this deployment's tmpdir alone is 75
   // bytes deep, so the fixture mints its directory directly under /tmp and cleans it with the rest.
-  const directory = mkdtempSync('/tmp/baton-issue356-socket-');
+  const directory = mkdtempSync(join(tmpdir(), 'baton-issue356-socket-'));
   roots.push(directory);
   const localFetch = createLocalSocketFetch({ socketPath: join(directory, 'resident.sock') });
   const client = new BatonWebClient({

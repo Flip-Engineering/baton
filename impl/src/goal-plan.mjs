@@ -77,6 +77,23 @@ export const GOAL_PLAN_CEILINGS = Object.freeze({
   planBytes: 64 * FRAME_LIMITS['spill.body'].value,
   statusBytes: 64 * FRAME_LIMITS['spill.body'].value,
 });
+
+/** Issue #530 (the residual four): the policy VALIDATOR's own maxima, each named with its
+ * derivation — an operator-declared policy value is admitted up to these bounds and refused
+ * past them, so the number is a declared face of this module, never an anonymous literal. */
+// An approval certifies a policy digest for a human decision cycle; past thirty days the
+// certified state is no longer recoverable from the ledger's own practice, so the grant's
+// longest honest life is one month.
+export const APPROVAL_TTL_MAX_MS = 30 * 24 * 60 * 60 * 1000;
+// Structural ceilings for the coordination store's index and DAG validation: beyond these the
+// topological sort and version-history scan exceed the per-request time budget.
+export const GOAL_PLAN_STRUCTURE_CEILINGS = Object.freeze({ versions: 1_000_000, nodes: 100_000 });
+// A plan's verification wall clock is bounded by one working day: a verdict that settles after
+// a day certifies nothing about the tree it ran on.
+export const VERIFICATION_TIMEOUT_MAX_MS = 24 * 60 * 60 * 1000;
+// A verification report is one captured artifact, so its ceiling is the corridor's own
+// one-artifact bound (adapter.wire_frame_max, #28/#497).
+export const VERIFICATION_OUTPUT_MAX_BYTES = FRAME_LIMITS['adapter.wire_frame_max'].value;
 /** The closed-shape read. Presence is always enforced; the unknown-field half is opt-in, so a
  * calling seam that may extend a structure stays forward-compatible while a schema declared
  * closed (the v2 route allowlist) refuses an undeclared field instead of ignoring it. */
@@ -154,7 +171,7 @@ export function normalizeGoalPlanPolicy(value) {
   exactObject(raw, ['schemaVersion', 'repoId', 'mandatory', 'approvalTtlMs', 'riskClasses', 'effectClasses', 'capabilityClasses', 'limits']);
   exactObject(raw.limits, ['maxGoalVersions', 'maxPlanVersions', 'maxNodes', 'maxDepsPerNode', 'maxTextBytes', 'maxItems', 'maxScopePaths', 'maxRouteValues', 'maxGoalBytes', 'maxPlanBytes', 'maxStatusBytes', 'maxTokens', 'maxUsd', 'maxWallMin', 'maxProviderTurns']);
   if (raw.schemaVersion !== 1 || !validId(raw.repoId) || typeof raw.mandatory !== 'boolean'
-    || !Number.isSafeInteger(raw.approvalTtlMs) || raw.approvalTtlMs <= 0 || raw.approvalTtlMs > 30 * 24 * 60 * 60 * 1000) fail('goal/plan policy is invalid', 'goal_plan_policy_invalid');
+    || !Number.isSafeInteger(raw.approvalTtlMs) || raw.approvalTtlMs <= 0 || raw.approvalTtlMs > APPROVAL_TTL_MAX_MS) fail('goal/plan policy is invalid', 'goal_plan_policy_invalid');
   // Risk order is semantic, so retain deployment order while still requiring unique values.
   const risks = raw.riskClasses.map((item) => normalizedText(item, 64, 'riskClasses'));
   if (new Set(risks).size !== risks.length) fail('riskClasses contains duplicates', 'goal_plan_policy_invalid');
@@ -165,11 +182,9 @@ export function normalizeGoalPlanPolicy(value) {
   const canonicalMaxUsd = maxUsdNanos === null ? null : usdFromNanos(maxUsdNanos);
   if (integerLimits.some((key) => !Number.isSafeInteger(raw.limits[key]) || raw.limits[key] <= 0)
     || canonicalMaxUsd === null
-    // 1M versions / 100K nodes: structural ceilings for the coordination store's
-    // index and DAG validation — beyond these the topological sort and version
-    // history scan exceed the per-request time budget.
-    || raw.limits.maxGoalVersions > 1_000_000 || raw.limits.maxPlanVersions > 1_000_000
-    || raw.limits.maxNodes > 100_000 || raw.limits.maxDepsPerNode > 100_000
+    // the named structure ceilings above (GOAL_PLAN_STRUCTURE_CEILINGS)
+    || raw.limits.maxGoalVersions > GOAL_PLAN_STRUCTURE_CEILINGS.versions || raw.limits.maxPlanVersions > GOAL_PLAN_STRUCTURE_CEILINGS.versions
+    || raw.limits.maxNodes > GOAL_PLAN_STRUCTURE_CEILINGS.nodes || raw.limits.maxDepsPerNode > GOAL_PLAN_STRUCTURE_CEILINGS.nodes
     || raw.limits.maxTextBytes > GOAL_PLAN_CEILINGS.textBytes || raw.limits.maxGoalBytes > GOAL_PLAN_CEILINGS.goalBytes
     || raw.limits.maxPlanBytes > GOAL_PLAN_CEILINGS.planBytes || raw.limits.maxStatusBytes > GOAL_PLAN_CEILINGS.statusBytes) fail('goal/plan policy limits are invalid', 'goal_plan_policy_invalid');
   raw.limits.maxUsd = canonicalMaxUsd;
@@ -222,8 +237,8 @@ function normalizeVerification(value, policy, deps) {
   const requiredPredecessorEvidence = normalizedSet(value.requiredPredecessorEvidence, policy.limits.maxDepsPerNode, 256, 'verification.requiredPredecessorEvidence');
   if (!Number.isSafeInteger(value.expectExit) || value.expectExit < 0 || value.expectExit > 255
     || value.expectResult !== 'exit_code'
-    || !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs <= 0 || value.timeoutMs > 24 * 60 * 60 * 1000
-    || !Number.isSafeInteger(value.maxOutputBytes) || value.maxOutputBytes <= 0 || value.maxOutputBytes > 16 * 1024 * 1024
+    || !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs <= 0 || value.timeoutMs > VERIFICATION_TIMEOUT_MAX_MS
+    || !Number.isSafeInteger(value.maxOutputBytes) || value.maxOutputBytes <= 0 || value.maxOutputBytes > VERIFICATION_OUTPUT_MAX_BYTES
     || goalPlanDigest(requiredPredecessorEvidence) !== goalPlanDigest(deps)) fail('verification contract is invalid', 'plan_verification_invalid');
   return {
     command, arguments: [...value.arguments], cwd, envAllowlist, expectExit: value.expectExit,

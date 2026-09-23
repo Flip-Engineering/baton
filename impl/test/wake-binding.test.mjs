@@ -69,7 +69,7 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   // every file) would fail configuration, not the binding contract under test. The socket root is
   // minted directly under the short system root — the rule the resident fixtures follow (#446: a
   // measured fall-back with a one-character stand-in for mkdtemp's six missed a 68..72-byte band).
-  const socketDir = mkdtempSync('/tmp/bt-waking-sock-');
+  const socketDir = mkdtempSync(join(tmpdir(), 'bt-waking-sock-'));
   t.after(() => rmSync(socketDir, { recursive: true, force: true }));
 
   const port = await freePort();

@@ -472,7 +472,15 @@ function normalizeDriver(driver) {
     throw specInvalid('the workflow driver "hardCapMs" is retired under the #163 law — clock-based caps never decide the fate of agentic work; omit the key or pass hardCapMs: null (the drive waits for terminality or handled attention, never a clock)');
   }
   const hardCapMs = base.hardCapMs === null ? null : DEFAULT_DRIVER.hardCapMs;
-  return { pollIntervalMs, stallTimeoutMs, hardCapMs };
+  const onCheckpoint = base.onCheckpoint ?? null;
+  if (onCheckpoint !== null && typeof onCheckpoint !== 'function') {
+    throw specInvalid('workflow driver onCheckpoint must be a function');
+  }
+  const signal = base.signal ?? null;
+  if (signal !== null && typeof signal.addEventListener !== 'function') {
+    throw specInvalid('workflow driver signal must be an AbortSignal');
+  }
+  return { pollIntervalMs, stallTimeoutMs, hardCapMs, onCheckpoint, signal };
 }
 
 // #180 (per-wave verification profile): driver.verification accepts the closed vocabulary
@@ -630,7 +638,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   const steering = [];
   const steeringState = {
     approved: new Set(), messaged: new Map(), msgAttempts: new Map(), msgDone: new Set(),
-    elevated: new Set(), nudgedReqs: new Set(), nudgedRoles: new Set(), claimedRoles: new Set(),
+    elevated: new Set(), nudgedReqs: new Set(), checkpointRetries: new Map(),
     answeredKeys: new Set(), handledDecisionKeys: new Set(), deniedDecisionKeys: new Set(), awaitingDecisionByRole: new Map(), signaled: false,
   };
 
@@ -682,12 +690,17 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
 
   let stopReceipt = null;
   let closeError = null;
-  try { stopReceipt = await wave.close({ reason: 'Workflow interpreter settled.' }); }
+  try {
+    if (driveExit === 'pending_empty' || driveExit === 'operator_stopped') {
+      stopReceipt = await wave.close({ reason: 'Workflow interpreter settled.' });
+    }
+  }
   catch (error) {
     closeError = { code: error?.code ?? null, message: String(error?.message ?? error) };
   }
   // Carry closure evidence in the established receipt rather than silently discarding it.
-  steering.push({ evidence: 'wave_close_result', receipt: stopReceipt, error: closeError });
+  steering.push({ evidence: stopReceipt === null && closeError === null
+    ? 'wave_continues' : 'wave_close_result', receipt: stopReceipt, error: closeError });
 
   const outcomes = [];
   for (const member of spec.members) {
@@ -855,6 +868,7 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
   const unreadable = new Set();
   const closedObservers = new Set();
   let exit = null;
+  let checkpointReport = false;
 
   async function processMember(role) {
     const handle = handles.get(role);
@@ -897,9 +911,12 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
       }
     }
 
-    // 4. checkpoint — nudge (nudgeOnCheckpoint) then claim (claimOnStall), each once.
+    // Deliver each checkpoint to the caller policy, or return it to the caller in the receipt.
     const checkpoint = Array.isArray(v.attention) ? v.attention.find((a) => a?.kind === 'turn_checkpoint' && typeof a?.requestId === 'string') : null;
-    if (checkpoint) await handleCheckpoint(handle, role, checkpoint, st, steering, s);
+    if (checkpoint) {
+      const handled = await handleCheckpoint(wave, handle, role, checkpoint, st, driver, steering, s);
+      if (!handled) checkpointReport = true;
+    }
 
     // 5. elevateWhenNotes — read the worker tier, elevate once per (runId, role).
     if (st.elevateWhenNotes && !s.elevated.has(role)) await tryElevate(handle, role, v, st.elevateWhenNotes, steering, s);
@@ -922,6 +939,7 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
   }
 
   while (pending.size > 0) {
+    if (driver.signal?.aborted) { exit = 'operator_stopped'; break; }
     await Promise.all([...pending].map((role) => processMember(role)));
 
     // 8. signalOnMembersDone — when the named roles are terminal, signal the remaining members.
@@ -938,10 +956,10 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
       steering.push({ trigger: 'signalOnMembersDone', role: [...signalRoles][0], doneRoles: [...signalRoles], recipients });
     }
 
-    // Explicit handled-attention exit: every remaining member is
-    // parked on a decision the policy already handled (deferred / refused); no steering move
-    // remains in this policy. A past decision does not stop a member that resumed work.
-    if (pending.size > 0 && [...pending].every((role) => s.handledDecisionKeys.size > 0 && roleStuckOnHandled(handles.get(role), role, s))) {
+    // Return unresolved attention to the caller. The receipt retains each live member
+    // so the caller can continue it or explicitly stop it.
+    if (checkpointReport) { exit = 'checkpoint_reported'; break; }
+    if (pending.size > 0 && [...pending].some((role) => s.handledDecisionKeys.size > 0 && roleStuckOnHandled(handles.get(role), role, s))) {
       exit = 'stuck_handled';
       break;
     }
@@ -1042,25 +1060,42 @@ async function answerDecision(handle, role, decision, policy, steering, s, key) 
   steering.push({ trigger: 'answerDecisions', role, requestId, optionId: match.value, outcome: 'answered' });
 }
 
-async function handleCheckpoint(handle, role, checkpoint, st, steering, s) {
+async function handleCheckpoint(wave, handle, role, checkpoint, st, driver, steering, s) {
   const rid = checkpoint.requestId;
-  // A pausable member mints a fresh checkpoint requestId per re-park, so nudge dedup is keyed by
-  // ROLE (nudge once), not requestId — then the next re-park is claimed (claimOnStall). A pure
-  // claim policy (no nudgeOnCheckpoint) claims on the first claim-carrying checkpoint.
-  const nudgeReady = st.nudgeOnCheckpoint && !s.nudgedRoles.has(role) && !s.claimedRoles.has(role);
-  const claimReady = st.claimOnStall && !s.claimedRoles.has(role) && (s.nudgedRoles.has(role) || checkpoint.claim != null);
-  if (nudgeReady && !(claimReady && !st.nudgeOnCheckpoint)) {
+  if (s.nudgedReqs.has(rid)) return true;
+  if (driver.onCheckpoint === null && !st.nudgeOnCheckpoint) {
+    steering.push({ evidence: 'turn_checkpoint', role, runId: handle.id, checkpoint });
+    return false;
+  }
+  try {
+    const choice = driver.onCheckpoint === null ? 'continue'
+      : await driver.onCheckpoint({ role, runId: handle.id, requestId: rid, claim: checkpoint.claim ?? null });
+    if (!['continue', 'done', 'stop'].includes(choice)) {
+      throw workflowError('onCheckpoint must return continue, done or stop', 'checkpoint_decision_invalid');
+    }
+    const result = choice === 'stop'
+      ? await wave.stopMember(role, { reason: 'Workflow orchestrator stopped this member.' })
+      : await handle.act(choice === 'done' ? 'claim_turn' : 'nudge_turn', choice === 'done'
+        ? {} : { message: st.nudgeOnCheckpoint?.message ?? 'Continue the current task.' });
+    if (result?.ok === false) {
+      throw workflowError(String(result.reason ?? result.result ?? 'checkpoint action refused'),
+        result.result ?? 'checkpoint_action_refused');
+    }
     s.nudgedReqs.add(rid);
-    s.nudgedRoles.add(role);
-    try { await handle.act('nudge_turn', { message: st.nudgeOnCheckpoint.message }); } catch { /* delivery best-effort */ }
-    steering.push({ trigger: 'nudgeOnCheckpoint', role, requestId: rid });
-    return;
+    steering.push({ trigger: driver.onCheckpoint === null ? 'nudgeOnCheckpoint' : 'onCheckpoint',
+      role, requestId: rid, outcome: choice });
+  } catch (error) {
+    const key = `${handle.id}:${rid}`;
+    let row = s.checkpointRetries.get(key);
+    if (row === undefined) {
+      row = { evidence: 'checkpoint_action_retry', role, requestId: rid, attempts: 0 };
+      s.checkpointRetries.set(key, row);
+      steering.push(row);
+    }
+    row.attempts += 1;
+    row.error = { code: error?.code ?? null, message: String(error?.message ?? error) };
   }
-  if (claimReady) {
-    s.claimedRoles.add(role);
-    try { await handle.act('claim_turn', {}); } catch { /* claim is terminal on a stale checkpoint */ }
-    steering.push({ trigger: 'claimOnStall', role, requestId: rid });
-  }
+  return true;
 }
 
 async function tryElevate(handle, role, v, policy, steering, s) {

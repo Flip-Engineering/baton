@@ -781,16 +781,14 @@ export function debugGateRefusal(events) {
 // refusals — everything else escalates to null so a raw gate-internal phase name never
 // crosses to the worker (#73's class).
 const VERDICT_CHECK_PHASES = Object.freeze(new Set([
-  'path_scope', 'forbidden_effect', 'required_effect',
+  'path_scope', 'forbidden_effect',
 ]));
 // Issue #61 D1 + OQ1 — the hub-minted corrective-class table, keyed by terminal CODE
-// (never the coarse gate: required_effect_absent degrades to gate unknown but keeps its
-// corrective). Frozen so a caller cannot rewrite a corrective (#73). A code absent from
+// rather than the coarse gate. Frozen so a caller cannot rewrite a corrective (#73). A code absent from
 // the table carries corrective null — honest absence, escalate to the orchestrator.
 export const VERDICT_CORRECTIVE_TABLE = Object.freeze({
   worker_path_scope_violation: 'in_scope_revision',
   forbidden_effect_observed: 'forbidden_effect_retraction',
-  required_effect_absent: 'in_scope_edit',
   verification_red_green_failed: 'failing_check_fix',
   verification_coverage_failed: 'coverage_completion',
   verification_output_exceeded: null,
@@ -828,21 +826,8 @@ function verdictSurfaceCheck(event, liveCode) {
 }
 // Issue #61 D1 (fold Minor 1) — the detail evidence CLASS. Scope and red_green/coverage
 // reuse debugGateDetail verbatim (digests+counts, sanitizer tail — never paths, never the
-// raw capsule); required_effect_absent carries the digest/count subset of
-// requiredEffectEvidence; every other gate carries {}.
-function verdictSurfaceDetail(gate, liveCode, event) {
-  if (liveCode === 'required_effect_absent') {
-    const evidence = event.payload?.requiredEffectEvidence && typeof event.payload.requiredEffectEvidence === 'object'
-      ? event.payload.requiredEffectEvidence : {};
-    return {
-      changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
-      changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
-      inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
-        ? evidence.inScopeChangedPathCount : 0,
-      inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
-        ? evidence.inScopeChangedPathsDigest : null,
-    };
-  }
+// raw capsule); every other gate carries {}.
+function verdictSurfaceDetail(gate, event) {
   return debugGateDetail(gate, event);
 }
 function isVerdictCandidate(event) {
@@ -867,7 +852,7 @@ export function projectVerdictSurface(events) {
     gate,
     code: debugTerminalCode(liveCode, 'trust_gate_failed'),
     check: verdictSurfaceCheck(event, liveCode),
-    detail: verdictSurfaceDetail(gate, liveCode, event),
+    detail: verdictSurfaceDetail(gate, event),
     corrective: Object.hasOwn(VERDICT_CORRECTIVE_TABLE, liveCode)
       ? VERDICT_CORRECTIVE_TABLE[liveCode] : null,
   };
@@ -1048,7 +1033,7 @@ function normalizeReviewPolicy(value) {
   }
   if (value.mode !== 'required' || !Array.isArray(value.routes) || value.routes.length === 0 || value.routes.length > 64
     || !safeScopePath(value.reportPath) || !Number.isSafeInteger(value.maxFindings) || value.maxFindings <= 0 || value.maxFindings > 1_024
-    || !Number.isSafeInteger(value.maxReportBytes) || value.maxReportBytes < 256 || value.maxReportBytes > 16 * 1024 * 1024) {
+    || !Number.isSafeInteger(value.maxReportBytes) || value.maxReportBytes < 256 || value.maxReportBytes > FRAME_LIMITS['review.report_max_bytes'].value) {
     throw applicationError('profile reviewPolicy is invalid', 'application_profile_invalid');
   }
   const routes = value.routes.map((route) => normalizeRoute(route, 'application_profile_invalid'));
@@ -6311,7 +6296,7 @@ export function _runWaveIndex(application) {
         || event.payload?.kind !== APPLICATION_STEERING_REGISTERED_KIND) continue;
       const p = event.payload;
       if (p?.runId !== undefined && !byRunId.has(p.runId)) {
-        byRunId.set(p.runId, { waveId: p.waveId, waveRole: p.waveRole, route: p.route });
+        byRunId.set(p.runId, { waveId: p.waveId, waveRole: p.waveRole, route: p.route, driverKind: p.driverKind });
       }
       if (p?.waveId !== undefined && p?.waveRole !== undefined) {
         let roles = byWaveRole.get(p.waveId);

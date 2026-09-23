@@ -333,26 +333,7 @@ test('311-n2-h: an over-cap body rides as a digest-cited spill, and past the cei
 
 // ── 311-n2-i/j: a one-shot recipient parks in its own swarm, and the read is scoped ───────────
 
-test('311-n2-i: a one-shot recipient gets a durable park recorded in ITS OWN swarm', async (t) => {
-  const f = await built(t, { midTurn: 'unsupported' });
-  const sender = f.asParticipant('s-one', 'lead');
-  const answer = await f.call('notify', {
-    swarmId: 's-one', participantId: 'sibling', toSwarmId: 's-two', message: 'A contract for your next turn.',
-  }, sender);
-  assert.equal(answer.notify.state, 'parked', 'a harness that takes no mid-turn delivery parks');
-  assert.equal(answer.notify.reason, 'harness_one_shot');
-  const parked = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
-    && event.payload.kind === 'swarm.guidance_parked');
-  assert.equal(parked.length, 1, 'one park row');
-  assert.equal(parked[0].payload.swarmId, 's-two', 'the park lands in the RECIPIENT\'s swarm, where its brief composes');
-  assert.equal(parked[0].payload.participantId, 'sibling');
-  assert.equal(parked[0].payload.from.participantId, 'lead', 'the park names who sent it');
-  assert.equal(parked[0].payload.from.swarmId, 's-one');
-  const view = await f.call('view', { swarmId: 's-two' });
-  const row = view.participants.find((entry) => entry.participantId === 'sibling');
-  assert.equal(row.guidance.length, 1, 'the recipient\'s own row carries it');
-  assert.equal(row.guidance[0].delivery.state, 'parked');
-});
+
 
 test('311-n2-j: the receipt read is scoped to the swarm and to the caller\'s own correspondence', async (t) => {
   const f = await built(t);

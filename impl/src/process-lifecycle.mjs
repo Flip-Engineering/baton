@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const START_KEYS = ['generation', 'phase', 'pid', 'processGroupId', 'schemaVersion'];
 const CLOSE_KEYS = ['code', 'generation', 'pid', 'processGroupId', 'ready', 'schemaVersion', 'signal'];
@@ -39,7 +40,7 @@ export function observeProcessGroupIdentity(processGroupId, opts = {}) {
   let value;
   try {
     value = execute('/bin/ps', ['-o', 'pid=,pgid=,lstart=', '-p', String(processGroupId)], {
-      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: 1_000,
+      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: FRAME_LIMITS['process.ps_probe_ms'].value,
     }).trim();
   } catch { return null; }
   const match = /^(\d+)\s+(\d+)\s+(.+)$/u.exec(value);
@@ -114,7 +115,7 @@ export async function reapOwnedProcessGroup(processGroupId, opts = {}) {
   const signal = opts.signal ?? process.kill.bind(process);
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const timeoutMs = Number.isSafeInteger(opts.timeoutMs) && opts.timeoutMs >= 0 ? opts.timeoutMs : 2000;
+  const timeoutMs = Number.isSafeInteger(opts.timeoutMs) && opts.timeoutMs >= 0 ? opts.timeoutMs : FRAME_LIMITS['process.reap_timeout_ms'].value;
   const pollMs = Number.isSafeInteger(opts.pollMs) && opts.pollMs > 0 ? opts.pollMs : 5;
   // The poll budget is DERIVED from the two inputs the caller already named — the deadline and the
   // interval it polls on: a bounded wait polls at 0, pollMs, … and every interval that still lands
@@ -168,7 +169,7 @@ export class ProcessCloseReapLatch {
     if (!positiveSafe(options.pid)) throw new TypeError('ProcessCloseReapLatch pid must be a positive safe integer');
     this.pid = options.pid;
     this.timeoutMs = Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0
-      ? options.timeoutMs : 2000;
+      ? options.timeoutMs : FRAME_LIMITS['process.reap_timeout_ms'].value;
     this.reap = options.reap ?? reapOwnedProcessGroup;
     if (typeof this.reap !== 'function') throw new TypeError('ProcessCloseReapLatch reap must be a function');
     this.onProcessClosed = options.onProcessClosed;

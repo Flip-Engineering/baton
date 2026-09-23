@@ -1,5 +1,8 @@
 # 54 — Native wake: seats receive wake events, seats never fetch them (issue #529)
 
+Sections 1–8 preserve the original design proposal. Section 9 describes the current turn-report
+and root-session delivery contract under #564 and #572.
+
 Design direction: 2026-09-20. Status: proposed. This document supersedes the two prior attempts
 (the external harness tool wrapping `baton deployment watch --follow`, and the native
 `baton deployment watch --timeout-ms` CLI verb), both rejected because they required an agent to
@@ -34,8 +37,7 @@ The complete set of wake classes at HEAD:
 
 **Swarm-scoped:** `recruited`, `left`, `assigned`, `work_updated`, `coupling_updated`,
 `context_updated`, `contribution_recorded`, `contribution_integrated`, `reviewed`, `note`,
-`knowledge`, `closed`, `refused`, `queued`, `dead`, `reroute_proposed`,
-`resume_decision_required`.
+`knowledge`, `closed`, `refused`, `queued`, `dead`, `reroute_proposed`.
 
 **Deployment-scoped:** `incarnation_changed`, `paused`, `attention`, `guidance_delivered`,
 `integrated`, `checkpoint`, `capacity_pressure`, `resident_lifecycle`.
@@ -258,3 +260,52 @@ remain available. The `baton deployment watch --follow` CLI remains available. T
    participant-row field, write the test suite.
 3. Documentation: update `docs/39-swarm-runtime.md` §"Waking the orchestrator" with the native
    wake mechanism.
+
+## 9. Turn reports and root-session delivery
+
+Each swarm seat's turn end delivers its report to its active parent through guidance. Guidance
+starts a turn when the parent is waiting at a turn boundary. Reports from top-level seats and
+reports whose parent delivery fails are addressed to the root session. The report includes the
+worker identity, turn identity, result, and `assignmentDone` flag. The orchestrator decides whether
+to continue the seat. A seat declares completion with `swarm.participant_left` and reason
+`completed`, then ends its turn.
+
+Workers outside a swarm record `worker.turn_reported`. Its `root_turn_reported` wake carries the
+Run and worker identities and the complete result to the root session. Its `assignmentDone` is
+false because this path records turn completion; the orchestrator can claim or stop the Run.
+
+The deployment accepts `advanced.rootWake` with `harness`, `sessionId`, and optional `from`.
+`baton serve` and `baton quarantine --restart` read this declaration from `BATON_ROOT_WAKE`:
+
+```sh
+BATON_ROOT_WAKE='{"harness":"claude-code","sessionId":"OPERATOR_SESSION_ID"}' baton serve
+```
+
+The session ID must identify the intended operator session in `claude agents --json`.
+`BATON_PUBLISH_REMOTE` configures publication independently and can be set in the same environment.
+An absent `BATON_ROOT_WAKE` leaves the CLI resident without a root-session delivery consumer.
+Invalid declarations fail before the resident opens. The current operator-session transport uses
+the Claude Code session socket; the capability table reports which harnesses can start a turn.
+
+The resident subscribes to root-addressed wakes and records `wake.root_delivered` or
+`wake.root_undelivered` with the source sequence, wake class, and swarm identity. Deployment worker
+reports have a null swarm identity. A delivered report's replay does not send a second message.
+Failed sends retain their receipt and retry while the resident attachment remains active. Each
+attempt uses the same message ID, derived from the source wake identity. A successful delivery
+ends retries; shutting down the attachment cancels its pending retry timer.
+
+On restart, the attachment replays root wakes from its subscription cursor. A failed delivery
+remains eligible because only a delivered receipt suppresses another attempt. A successor that
+cannot restart records `continuation_failed` root attention with its failure code and message;
+recovery continues for the other seats and retries the pending successor on later commands.
+
+A pausable generic Run requires a turn consumer before approval and dispatch. A configured
+root target satisfies this declaration. Embedded callers can start a Run with `driverKind: 'manual'`
+to declare that they handle each checkpoint through `nudge_turn`, `claim_turn`, or stop. Wave and
+swarm drivers provide their existing consumer declarations. A generic Run without a consumer
+refuses with `application_turn_consumer_required` before a worker starts.
+
+The workflow interpreter accepts `driver.onCheckpoint` with the same `continue`, `done`, and
+`stop` decisions. Its explicit `nudgeOnCheckpoint` policy applies once per checkpoint. The legacy
+`claimOnStall` field supplies no completion decision. Unhandled checkpoint or decision attention
+returns a `WAVE-INCOMPLETE` receipt with live members retained for the caller's next action.

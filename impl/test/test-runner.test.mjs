@@ -174,3 +174,21 @@ test('#521: a file that stops reporting is reaped by its own progress deadline a
     rmSync(parent, { recursive: true, force: true });
   }
 });
+
+test('the suite verdict destination stays private to its owning runner', async (t) => {
+  const { parent, file } = fixture(`
+    import assert from 'node:assert/strict';
+    import test from 'node:test';
+    test('nested runners receive no outer verdict destination', () => {
+      assert.equal(process.env.BATON_SUITE_VERDICT_FILE, undefined);
+    });
+  `);
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const verdictPath = join(parent, 'outer-verdict.json');
+  const result = await run(file, parent, { BATON_SUITE_VERDICT_FILE: verdictPath });
+  assert.equal(result.code, 0, result.stderr || result.stdout);
+  const verdict = JSON.parse(readFileSync(verdictPath, 'utf8'));
+  assert.equal(verdict.green, true);
+  assert.equal(verdict.passed, 1);
+  assert.deepEqual(verdict.unexpected, []);
+});

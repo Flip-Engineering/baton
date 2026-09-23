@@ -117,7 +117,7 @@ test('S495-2: an exhaustion that persists sheds exactly the newest verify lease 
     holder: 'participant:swarm:seat',
     residentId: 'deployment-b',
     acquiredAt: NEWER,
-    shortfall: { dimension: 'memory', observed: EXHAUSTED_BYTES, required: 24 * G, unit: 'bytes' },
+    shortfall: { dimension: 'memory', observed: EXHAUSTED_BYTES, required: 8 * G, unit: 'bytes' },
     at: '2026-09-20T12:00:00.000Z',
   }, 'ONE typed host.* row names what was shed and why, with the observed and required numbers');
   assert.equal(existsSync(newer.path), false, 'the newest admitted verify lease is the one shed');
@@ -125,7 +125,7 @@ test('S495-2: an exhaustion that persists sheds exactly the newest verify lease 
 
   const after = subject.observeNow();
   assert.equal(after.used.leases.verify, 1, 'the next observe sees the freed budget');
-  assert.equal(after.used.bytes, 24 * G, 'exactly one verify share is returned to the budget');
+  assert.equal(after.used.bytes, 8 * G, 'exactly one verify share is returned to the budget');
   assert.equal(await subject.release({
     kind: 'verify', nonce: newer.record.nonce, residentId: newer.record.residentId,
   }), false, 'a release racing the shed is a no-op that answers false, never an error');
@@ -256,7 +256,7 @@ function repository(t, root) {
 
 // The resident protocol bounds a socket path to sun_path (103 bytes); fixture roots are short.
 function serveFixture(t, label) {
-  const root = mkdtempSync(`/tmp/bt495-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt495-${label}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repo = repository(t, root);
   const home = join(root, 'home');
@@ -354,7 +354,7 @@ test('S495-6: a serving resident sheds the newest verify lease and records the r
   assert.equal(row.payload.residentId, 'deployment-elsewhere', 'the row names whose lease it was');
   assert.equal(row.payload.acquiredAt, NEWER, 'the row names when it was acquired');
   assert.deepEqual(row.payload.shortfall, {
-    dimension: 'memory', observed: EXHAUSTED_BYTES, required: 24 * G, unit: 'bytes',
+    dimension: 'memory', observed: EXHAUSTED_BYTES, required: 8 * G, unit: 'bytes',
   }, 'the row carries the observed and required numbers of the memory shortfall');
   assert.equal(typeof row.payload.at, 'string', 'the row is stamped');
   assert.equal(existsSync(staged.path), false, 'the shed lease left the shared budget');

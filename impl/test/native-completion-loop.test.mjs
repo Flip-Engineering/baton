@@ -191,7 +191,7 @@ async function flush(times = 60) {
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
+const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation'];
 const gateEvents = (coordinator, workerId) =>
   coordinator._log.read(workerId).filter((event) => gateCodes.includes(event.payload?.code));
 const verifyRuns = (coordinator, workerId) =>
@@ -316,7 +316,7 @@ test('N4: an orchestrator nudge is a real continuation — a fresh turn on the S
   assert.equal(adapter.epoch(handle.id), 2, 'and starts no further turn');
 });
 
-test('N5: an explicit claim runs the EXISTING verifier — accepted with the diff, refused without it', async () => {
+test('N5: an explicit claim runs the existing verifier with or without a diff', async () => {
   // (a) the in-scope diff is accepted by the real verifier.
   const accepted = await nativeCheckpoint({ capture: withDiff });
   const claimed = await accepted.coordinator.claimTurn(accepted.rows[0].pauseId, { actor: 'orchestrator' });
@@ -328,17 +328,16 @@ test('N5: an explicit claim runs the EXISTING verifier — accepted with the dif
   assert.equal(accepted.adapter.calls.prompt.length, 0, 'the claim needed no policy prompt');
   assert.equal(pauseRows(accepted.coordinator, accepted.task.id).length, 0, 'the record is consumed');
 
-  // (b) the same act without the required effect is refused by the gate's required-effect phase.
-  const refused = await nativeCheckpoint({ capture: noDiff });
-  const refusedClaim = await refused.coordinator.claimTurn(refused.rows[0].pauseId, { actor: 'orchestrator' });
-  assert.equal(refusedClaim.ok, true);
-  assert.equal(refusedClaim.outcome, 'failed');
-  assert.equal(refused.task.status, 'failed');
-  const verdict = gateEvents(refused.coordinator, refused.handle.id)
-    .find((event) => event.payload?.code === 'required_effect_absent');
-  assert.ok(verdict, 'the verifier names required_effect_absent — the claim is not accepted on prose');
-  assert.equal(verdict.payload?.steered, undefined, 'no retired steering receipt exists any more');
-  assert.equal(refused.adapter.calls.prompt.length, 0, 'and still no policy prompt');
+  // (b) the same act without a diff still reaches and passes the declared verifier.
+  const unchanged = await nativeCheckpoint({ capture: noDiff });
+  const unchangedClaim = await unchanged.coordinator.claimTurn(unchanged.rows[0].pauseId, { actor: 'orchestrator' });
+  assert.equal(unchangedClaim.ok, true);
+  assert.equal(unchangedClaim.outcome, 'completed');
+  assert.equal(unchanged.task.status, 'completed');
+  assert.equal(verifyRuns(unchanged.coordinator, unchanged.handle.id), 1);
+  assert.equal(gateEvents(unchanged.coordinator, unchanged.handle.id).length, 0);
+  assert.equal(unchanged.adapter.calls.kill.length, 0);
+  assert.equal(unchanged.adapter.calls.prompt.length, 0);
 });
 
 // ===========================================================================

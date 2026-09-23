@@ -8,7 +8,11 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { lintDefaultTestDirectory } from './fixture-clock-lint.mjs';
-import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mjs';
+import { lintDefaultSourceDirectory } from './numeric-constant-lint.mjs';
+import {
+  addedFixtureDirectories, snapshotFixtureDirectories, sweepStaleSuiteRoots,
+  writeSuiteOwnerReceipt,
+} from './suite-hygiene.mjs';
 import {
   computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, isHang,
   loadExpectedRed, planExpectedRedRewrite, reasonClassOf, verdictDocument, writeExpectedRed,
@@ -157,6 +161,18 @@ if (clockFindings.length > 0) {
   process.exit(1);
 }
 
+// Issue #418: an arbitrary bound must be visible the moment it is written — the standing
+// numeric-constant lint scans every impl/src module (the partition the audit lanes' closed
+// lists left uncovered) and refuses any bound-shaped constant outside the registry, the
+// operator env channel, a named pragma, or the lint's own named residue table.
+const numericFindings = lintDefaultSourceDirectory();
+if (numericFindings.length > 0) {
+  for (const finding of numericFindings) {
+    process.stderr.write(`numeric-constant-lint: ${finding.file}:${finding.line}: ${finding.constants} — ${finding.reason}\n`);
+  }
+  process.exit(1);
+}
+
 const ledgerPath = new URL('./surface-divergence-ledger.json', import.meta.url);
 let currentLedger;
 try {
@@ -224,7 +240,11 @@ if (previousLedger) {
   }
 }
 
-const parent = resolve(process.env.BATON_TEST_TMP_PARENT || tmpdir());
+// Unix-domain socket fixtures need their paths to remain below sockaddr_un.sun_path. `/tmp` is
+// the short system-temp spelling on Unix (including the `/private/tmp` target on macOS). An
+// explicit parent remains available to hermetic runner tests and operators.
+const defaultSuiteParent = process.platform === 'win32' ? tmpdir() : '/tmp';
+const parent = resolve(process.env.BATON_TEST_TMP_PARENT || defaultSuiteParent);
 mkdirSync(parent, { recursive: true, mode: 0o700 });
 // Issue #40: reclaim sibling roots whose recorded owner process is provably dead — the residue
 // of a SIGKILL-class death of an earlier run-suite, which runs no cleanup handler.
@@ -534,7 +554,7 @@ function requestStop(signal) {
 process.on('SIGINT', () => requestStop('SIGINT'));
 process.on('SIGTERM', () => requestStop('SIGTERM'));
 
-function childEnv(summaryFile) {
+function childEnv(summaryFile, fileTempRoot = suiteRoot) {
   const env = {
     ...process.env,
     BATON_TEST_SUITE_ROOT: suiteRoot,
@@ -549,7 +569,7 @@ function childEnv(summaryFile) {
     // the authority directly.
     BATON_HOST_CAPACITY_DISABLED: '1',
     ...(summaryFile ? { BATON_SUITE_SUMMARY_FILE: summaryFile } : {}),
-    TMPDIR: suiteRoot, TMP: suiteRoot, TEMP: suiteRoot,
+    TMPDIR: fileTempRoot, TMP: fileTempRoot, TEMP: fileTempRoot,
     ...(suiteLeaseDigest !== null ? { [SUITE_VERIFY_LEASE_ENV]: suiteLeaseDigest } : {}),
   };
   // Each file runs as its OWN process with its own reporter. A NODE_TEST_CONTEXT inherited from
@@ -558,6 +578,8 @@ function childEnv(summaryFile) {
   // unwritten — the file then reads as "exited without reporting". The child's context is this
   // run's, never the caller's.
   delete env.NODE_TEST_CONTEXT;
+  // This runner alone writes its verdict. Nested test runners own separate destinations.
+  delete env.BATON_SUITE_VERDICT_FILE;
   // The parent token is this run's own admission, never an inherited one: a run that holds no
   // lease hands its children no token (they are already unwired by the pin above).
   if (suiteLeaseDigest === null) delete env[SUITE_VERIFY_LEASE_ENV];
@@ -568,10 +590,13 @@ function childEnv(summaryFile) {
 async function runFile(file) {
   const id = ++jobCounter;
   const summaryFile = join(suiteRoot, `summary-${id}.json`);
+  const fileTempRoot = join(suiteRoot, `file-${id}`);
+  mkdirSync(fileTempRoot, { recursive: true, mode: 0o700 });
+  const fixturesBefore = snapshotFixtureDirectories(fileTempRoot, suiteRoot);
   const started = Date.now();
   const child = spawn(process.execPath, [
     '--import', watchdogUrl, `--test-reporter=${reporterUrl}`, '--test-reporter-destination=stdout', file,
-  ], { detached, stdio: ['ignore', 'pipe', 'pipe'], cwd: implRootPath, env: childEnv(summaryFile) });
+  ], { detached, stdio: ['ignore', 'pipe', 'pipe'], cwd: implRootPath, env: childEnv(summaryFile, fileTempRoot) });
   const job = { file, child, trackedGroup: new Map(), hung: null, lastEvent: null, output: [], stderr: [] };
   running.add(job);
   const deadline = createProgressDeadline({ timeoutMs: idleMs });
@@ -605,6 +630,24 @@ async function runFile(file) {
   try { summary = JSON.parse(readFileSync(summaryFile, 'utf8')); } catch { summary = null; }
   const failed = summary?.failed ?? [];
   const passed = summary?.passed ?? [];
+  const leakedFixtures = addedFixtureDirectories(
+    fixturesBefore,
+    snapshotFixtureDirectories(fileTempRoot, suiteRoot),
+  );
+  try {
+    rmSync(fileTempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+  } catch (error) {
+    failed.push({
+      file, name: '(file temp directory could not be reaped)', failureType: 'fixtureLeak',
+      message: error?.message ?? String(error),
+    });
+  }
+  if (leakedFixtures.length > 0) {
+    failed.push({
+      file, name: `(file leaked fixture directories: ${leakedFixtures.join(', ')})`,
+      failureType: 'fixtureLeak', message: leakedFixtures.join(', '),
+    });
+  }
   if (job.hung) {
     failed.push({ file, name: `(file hung: no test event for ${job.hung.idleMs} ms after ${job.hung.lastEvent ?? 'start'})`, failureType: 'fileHung', message: 'hung' });
   } else if (terminal.error) {

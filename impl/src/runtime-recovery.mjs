@@ -2586,22 +2586,6 @@ export function _finishUntrustedTransportReap(coordinator, recorder, handle, pro
     coordinator._bestEffort(record.cleanup(), 'stop_cleanup');
   }
 
-export function _refuseStallReap(coordinator, recorder, handle, error) {
-    coordinator._recordStallReapRefusal(handle, error);
-    if (handle?.watchdogActions?.has('stall')) {
-      coordinator._armStallCycle(handle, coordinator._tasks.get(handle.taskId), {
-        nudgeId: handle.stallSeamCycle?.nudgeId ?? null,
-        controlId: handle.stallSeamCycle?.controlId ?? null,
-      });
-    }
-  }
-
-export function _recordStallReapRefusal(coordinator, recorder, handle, error) {
-    coordinator._recordOperationFailure('health.stall_reap_refused', handle, 'stall_reap_failed', error, {
-      stallLifetime: handle.stallSeamCycle?.lifetime ?? null,
-    });
-  }
-
 export async function reconcileProviderSource(coordinator, recorder, providerId, ctx = {}) {
     await coordinator._assertOperational();
     if (typeof providerId !== 'string' || !ctx || Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider source reconciliation request is invalid'), { code: 'provider_reconciliation_invalid' });
@@ -3262,15 +3246,6 @@ export function* _replay(coordinator, recorder) {
               ...(recoveredFault?.detail ? { detail: recoveredFault.detail } : {}),
             });
             break;
-          case 'error':
-            if (e.actor === 'policy' && e.payload?.phase === 'trust_gate'
-              && e.payload?.code === 'required_effect_absent') {
-              terminalStatus = 'failed';
-              lastResult = null;
-              verdict = null;
-              terminalCause ??= deepFreeze({ kind: 'policy_failure', code: 'required_effect_absent' });
-            }
-            break;
           case 'control.forced_stop':
           case 'control.recovery_terminalized':
             if (e.kind === 'control.recovery_terminalized') recoveryTerminalized = true;
@@ -3595,8 +3570,6 @@ export function* _replay(coordinator, recorder) {
         watchdogActions: new Set(),
         recentFailedActions: [],
         turnInFlight: false,
-        stallSeamDigestSet: null,
-        stallSeamCycle: null,
         watchdogGeneration: 0,
         watchdogTimer: null,
         runtimeScope: null,

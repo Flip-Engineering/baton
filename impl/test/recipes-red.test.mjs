@@ -62,7 +62,7 @@ function validRecipe(overrides = {}) {
         report: 'reports/alpha.md',
       },
     ],
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'nudge-on-checkpoint', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
     ...overrides,
   };
 }
@@ -339,9 +339,8 @@ test('RC-3: the invocation manifest is the identity boundary — same key loads+
 
 // RC-5 (run options): callbacks/evidencePath/overrides never enter the recipe digest; the override
 // allowlist merges and re-validates (a post-merge oversize objective refuses before any side
-// effect); onDecision passes through unchanged (present only when the bidirectional field exists in
-// live code — skipped with an honest note until then).
-test('RC-5: run options never enter the digest; the override allowlist merges + re-validates before any side effect; onDecision is accepted and deferred', async (t) => {
+// effect); decision and checkpoint callbacks pass through without entering the recipe digest.
+test('RC-5: run options never enter the digest; overrides re-validate; orchestration callbacks pass through', async (t) => {
   const { baton, manifestDir, tracker } = harness(t, scenarios);
   const base = admitRecipe(validRecipe());
   const baseDigest = recipeDigest(base);
@@ -381,9 +380,7 @@ test('RC-5: run options never enter the digest; the override allowlist merges + 
   assert.equal(tracker.calls.length, 0, 'the post-merge refusal happened before any runs.start (zero side effects)');
   assert.equal(existsSync(join(manifestDir, 'rc5-oversize.json')), false, 'no manifest was persisted for the refused invocation');
 
-  // onDecision passes through unchanged — present only when the bidirectional field exists in live
-  // code. The shipped createWaveDriver has no onDecision policy field yet (bidirectional v2 DRIVER
-  // half), so the callback is accepted, carried, and honestly deferred — the run still completes.
+  // The completed fixture raises no decision, so the wired callback remains unfired.
   const onDecisionPath = join(manifestDir, 'rc5-ondecision.json');
   let fired = false;
   const od = await baton.recipes.run(base, {
@@ -391,7 +388,27 @@ test('RC-5: run options never enter the digest; the override allowlist merges + 
     callbacks: { onDecision: () => { fired = true; } },
   });
   assert.equal(od.manifest.recipeDigest, baseDigest, 'the onDecision callback never enters the digest');
-  assert.equal(fired, false, 'onDecision is accepted + deferred until the bidirectional field lands in live code');
+  assert.equal(fired, false, 'onDecision is wired but no decision was raised');
+
+  const callbackPolicy = admitRecipe(validRecipe({
+    policy: { pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+  }));
+  tracker.calls.length = 0;
+  await assert.rejects(
+    baton.recipes.run(callbackPolicy, {
+      task: 'feature X', idempotencyKey: 'rc5-policy-required',
+      manifestPath: join(manifestDir, 'rc5-policy-required.json'),
+    }),
+    (error) => error?.code === 'wave_driver_turn_policy_required',
+    'a recipe does not inject an always-continue checkpoint default',
+  );
+  assert.equal(tracker.calls.length, 0, 'the missing policy refuses before waves.start');
+  const callbackReceipt = await baton.recipes.run(callbackPolicy, {
+    task: 'feature X', idempotencyKey: 'rc5-checkpoint-callback',
+    manifestPath: join(manifestDir, 'rc5-checkpoint-callback.json'),
+    callbacks: { onCheckpoint: () => 'done' },
+  });
+  assert.equal(callbackReceipt.basis, 'completed', 'the invocation callback supplies the missing checkpoint policy');
 });
 
 // RC-6 (preset): `implementContract` over a MockAdapter seat returns the createWaveDriver receipt
@@ -407,7 +424,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     scope: ['impl/**'],
     idempotencyKey: 'rc6-key',
     manifestPath,
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'nudge-on-checkpoint', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
   });
   assert.equal(tracker.calls.length, 1, 'the preset starts exactly one implementer seat');
 
@@ -427,7 +444,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     task: 'the assigned contract rung',
     route: { harness: 'mock', model: 'mock-model', effort: 'low' },
     scope: ['impl/**'],
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'nudge-on-checkpoint', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
   }))), 'the preset recipe digest is stable');
 
   const firstRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();
@@ -440,7 +457,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     scope: ['impl/**'],
     idempotencyKey: 'rc6-key',
     manifestPath,
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'nudge-on-checkpoint', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
   });
   assert.equal(tracker.calls.length, 0, 'the idempotencyKey retry attaches — zero additional starts');
   const retryRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();

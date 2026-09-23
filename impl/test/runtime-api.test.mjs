@@ -42,7 +42,7 @@ const parseOf = (text) => parse(Lang.JavaScript, text).root();
 /** The 46 moved members: delegate parameter list (the member's own) and pre-move Function.length. */
 const MEMBERS = Object.freeze([
   ['_deadlineDue', '()', 0], ['supervisedProcesses', '()', 0], ['_localResourceOwnership', '(handle)', 1],
-  ['providerSilenceAttention', '(workerId)', 1], ['_claimLivenessPreflight', '(handle, task, record)', 3],
+  ['providerSilenceAttention', '(workerId)', 1],
   ['_sharedCheckoutCustody', '(handle, task)', 2],
   ['_captureTrustWorktree', '(handle, task, { snapshot = false } = {})', 2],
   ['_capacityOwnerIds', '(handle, task = null)', 1], ['_capacityOwnerHeld', '(ownerTaskId)', 1],
@@ -68,7 +68,7 @@ const MEMBERS = Object.freeze([
   ['_providerRouteOf', '(handle)', 1],
 ]);
 
-const ASYNC_MEMBERS = Object.freeze(['_claimLivenessPreflight', '_claimInteraction']);
+const ASYNC_MEMBERS = Object.freeze(['_claimInteraction']);
 
 test('AP1: receiver discipline — bare coordinator, no recording spelling, an acyclic leaf', () => {
   const text = read(MEMBER_FILE);
@@ -174,11 +174,11 @@ test('AP3: the inverse-transform residue — module bodies read as the members t
   }
 });
 
-test('AP4: the map sees the move — the target carries 47 surface members, _publicHandle keeps its evidence', () => {
+test('AP4: the map sees the move — the target carries 46 surface members, _publicHandle keeps its evidence', () => {
   const map = JSON.parse(read(MAP_FILE));
   const target = map.files.find((file) => file.file === MEMBER_FILE);
   assert.ok(target, 'the committed artifact carries the runtime-api target');
-  assert.equal(target.members.length, 47,
+  assert.equal(target.members.length, 46,
     'the 46 moved members plus canonicalActionPath, relocated with its only reader (design erratum: 46 + 1)');
   for (const member of target.members) {
     assert.equal(member.seam, 'surface', `${member.name}: the module member keeps the surface seam`);
@@ -194,7 +194,7 @@ test('AP4: the map sees the move — the target carries 47 surface members, _pub
   // The coordinator's 46 delegates classify surface exactly as before (fallback, no port rule).
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const surfaceDelegates = coordinatorFile.members.filter((member) => member.seam === 'surface');
-  assert.equal(surfaceDelegates.length, 46, 'the coordinator keeps 46 surface delegates');
+  assert.equal(surfaceDelegates.length, 45, 'the coordinator keeps 45 surface delegates');
   // The relocated class keeps the coordinator's export surface.
   assert.ok(Object.hasOwn(runtimeApi, 'WorkerNotFoundError'), 'the module exports the relocated class');
   assert.equal(WorkerNotFoundError, runtimeApi.WorkerNotFoundError,

@@ -11,7 +11,7 @@
 //      arms read, and nativeObservationEvent is the ONLY ctx key an arm assigns (the write-back
 //      surface the design's gate amendment pins).
 //   3. THE RECORDING CENSUS — per module and in total equal to the pre-move member's
-//      (10 log appends, 20 evidence maps, 11 driver records, 5 coordination reads).
+//      (10 log appends, 20 evidence maps, 12 driver records, 5 coordination reads).
 //   4. THE INVERSE-TRANSFORM RESIDUE — each family function inverts (ctx threading off, reroutes
 //      off, returns back to breaks) to its pre-move arm text; the generation-time audit
 //      reconstructed the whole 1 108-line member token-identical (seam-slice-14.md §4).
@@ -70,7 +70,7 @@ const CTX_KEYS = Object.freeze(['event', 'workerId', 'kind', 'harness', 'turnEpo
 const CENSUS = Object.freeze({
   dispatcher: { append: 9, mapEvent: 3, recordDriver: 1, coordination: 0 },
   'process-lifecycle': { append: 0, mapEvent: 1, recordDriver: 0, coordination: 0 },
-  'turn-terminal': { append: 0, mapEvent: 3, recordDriver: 0, coordination: 0 },
+  'turn-terminal': { append: 0, mapEvent: 3, recordDriver: 1, coordination: 0 },
   interaction: { append: 0, mapEvent: 12, recordDriver: 10, coordination: 1 },
   'observation-events': { append: 1, mapEvent: 1, recordDriver: 0, coordination: 4 },
 });
@@ -158,8 +158,8 @@ test('EH3: the recording census per module; totals equal the pre-move member', (
     assert.deepEqual(actual, expected, `${mod}: the recording census moved`);
     for (const k of Object.keys(totals)) totals[k] += actual[k];
   }
-  assert.deepEqual(totals, { append: 10, mapEvent: 20, recordDriver: 11, coordination: 5 },
-    'the five modules record exactly what the pre-move _handleEvent recorded');
+  assert.deepEqual(totals, { append: 10, mapEvent: 20, recordDriver: 12, coordination: 5 },
+    'the five modules include the durable root turn-report record');
 });
 
 test('EH4: the inverse-transform residue — family functions invert to their arms', () => {

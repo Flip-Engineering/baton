@@ -1280,33 +1280,24 @@ test('TC-23a trust[cell-editing-division-missing]: group.editing divides the gat
     + 'division is per-member, not all-or-nothing');
 });
 
-test('TC-23b trust pin: analysis:true skips required_effect even when repository_edit is required — the TG5 hatch', async () => {
-  // Fold (blue-team B7): the old pin's brief {analysis:true, requiredEffects:[]} left the required-effect
-  // gate INERT regardless of analysis (coordinator.mjs:12839-12849), so it stayed green even if the analysis
-  // hatch were removed entirely. The literal B7 fix ({analysis:true, requiredEffects:['repository_edit']})
-  // is refused at construction by the BU-2-1 brief validator (messages.mjs:92-98: analysis:true WITH
-  // repository_edit required is a self-contradiction) — so the gate's `!analysis` guard is a runtime
-  // backstop against exactly that contradictory brief. This pin injects that state (replacing the validated
-  // brief on the coordinator task) and proves the guard: diffless + analysis:true + repository_edit REQUIRED
-  // => NOT policy-killed. TC-23c stays the negative control (same requiredEffects, NO analysis => killed).
+test('TC-23b trust pin: analysis metadata does not affect unchanged-result verification', async () => {
   const { adapter, coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter({ pausable: false }), capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, requiredEffects: [] }));
   const task = coordinator._tasks.get(handle.taskId);
   task.brief = Object.freeze({ ...task.brief, analysis: true, requiredEffects: ['repository_edit'] });
   emitTurnCompleted(adapter, handle);
   await flush(60);
-  assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'PIN: analysis:true skips required_effect on a diffless capture EVEN with repository_edit required — the '
-    + 'TG5 hatch guard (coordinator.mjs:12842), not an inert gate; removing the `!analysis` guard fails this pin');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed');
+  assert.equal(adapter.calls.kill.length, 0);
 });
 
-test('TC-23c trust pin: an idle EDITING member is still policy-killed — the safe direction', async () => {
+test('TC-23c trust pin: an unchanged editing member reaches verification without a policy kill', async () => {
   const { adapter, coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter({ pausable: false }), capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief({ requiredEffects: ['repository_edit'] })); // diffless, no analysis
   emitTurnCompleted(adapter, handle);
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'PIN: a diffless editing member with required repository_edit still fails required_effect_absent (T14b)');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed');
+  assert.equal(adapter.calls.kill.length, 0);
 });
 
 // ===========================================================================

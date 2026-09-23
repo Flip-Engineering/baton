@@ -25,7 +25,7 @@ const repoId = 'repo-issue288-resident';
 
 // A short absolute root: the resident bounds a socket path to sun_path (103 bytes).
 function fixtureRoot(t, label) {
-  const root = mkdtempSync(`/tmp/bt288-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt288-${label}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }

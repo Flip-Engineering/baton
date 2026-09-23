@@ -50,7 +50,7 @@ const RUN_OPTION_FIELDS = Object.freeze([
   'task', 'idempotencyKey', 'manifestPath', 'evidencePath', 'callbacks', 'overrides',
 ]);
 const OVERRIDE_FIELDS = Object.freeze(['constraints', 'effort', 'scope']);
-const CALLBACK_FIELDS = Object.freeze(['onDecision']);
+const CALLBACK_FIELDS = Object.freeze(['onDecision', 'onCheckpoint']);
 const STEERING_MODES = Object.freeze(new Set(['nudge-on-checkpoint', 'none']));
 const FINALIZATIONS = Object.freeze(new Set(['none', 'claim-on-stall']));
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
@@ -58,14 +58,15 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 // The recipe policy allowlist is the DATA-only subset of createWaveDriver's policy (R-DC-6): no
 // functions, no signals. `saltObjectives` is forced false by the wrapper (the sole salt owner);
 // `evidencePath` is a per-invocation run option; `onProgress`/`signal` are signals, excluded. The
-// defaults mirror createWaveDriver's documented production cadence. #163 law: no hardCapMs —
-// a recipe policy naming the retired clock cap refuses as an unknown field.
+// timing defaults mirror createWaveDriver's production cadence. Checkpoint steering has no
+// default: the recipe or its invocation callback supplies the orchestrator decision (#572).
+// #163 law: no hardCapMs; a recipe naming the retired clock cap refuses as an unknown field.
 const DEFAULT_RECIPE_POLICY = Object.freeze({
-  steering: 'nudge-on-checkpoint',
+  steering: null,
   finalization: 'none',
-  pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
-  settleTimeoutMs: 5_000,
+  pollIntervalMs: FRAME_LIMITS['driver.poll_ms'].value,
+  stallTimeoutMs: FRAME_LIMITS['driver.stall_ms'].value,
+  settleTimeoutMs: FRAME_LIMITS['driver.settle_ms'].value,
   unproductiveNudgeBudget: 1,
   preflight: true,
 });
@@ -130,7 +131,7 @@ function admitPolicy(raw) {
   }
   assertClosed(source, POLICY_FIELDS, 'recipe policy');
   const merged = { ...DEFAULT_RECIPE_POLICY, ...source };
-  if (!STEERING_MODES.has(merged.steering)) {
+  if (merged.steering !== null && !STEERING_MODES.has(merged.steering)) {
     throw recipeError(`recipe policy "steering" is invalid: ${String(merged.steering)}`, 'recipe_schema_invalid');
   }
   if (!FINALIZATIONS.has(merged.finalization)) {
@@ -421,6 +422,9 @@ function validateRunOptions(invocation) {
     if (callbacks.onDecision !== undefined && typeof callbacks.onDecision !== 'function') {
       throw recipeError('recipes callback "onDecision" must be a function', 'recipe_options_invalid');
     }
+    if (callbacks.onCheckpoint !== undefined && typeof callbacks.onCheckpoint !== 'function') {
+      throw recipeError('recipes callback "onCheckpoint" must be a function', 'recipe_options_invalid');
+    }
   }
   const normalizedOverrides = validateOverrides(overrides);
   return { task, idempotencyKey, manifestPath, evidencePath, callbacks, overrides: normalizedOverrides };
@@ -466,10 +470,8 @@ async function startRun(baton, manifest, opts, merged) {
     ...merged.policy,
     saltObjectives: false, // R-DC-1: exactly one salt layer — the wrapper's, never the driver's.
     evidencePath: opts.evidencePath ?? null,
-    // RC-5: callbacks.onDecision is a closed run option and is ACCEPTED here, but NOT yet wired —
-    // the shipped createWaveDriver has no onDecision policy field (bidirectional v2 DRIVER half is
-    // the successor). When that field lands, pass it through unchanged here. Until then it is
-    // carried (never serialized into the recipe/digest) and honestly deferred.
+    ...(opts.callbacks?.onDecision === undefined ? {} : { onDecision: opts.callbacks.onDecision }),
+    ...(opts.callbacks?.onCheckpoint === undefined ? {} : { onCheckpoint: opts.callbacks.onCheckpoint }),
   };
   const driver = createWaveDriver(baton, driverPolicy);
   const receipt = await driver.run({
@@ -614,8 +616,8 @@ const IMPLEMENT_CONSTRAINTS = Object.freeze([
 const IMPLEMENT_DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   finalization: 'claim-on-stall',
-  pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
+  pollIntervalMs: FRAME_LIMITS['driver.poll_ms'].value,
+  stallTimeoutMs: FRAME_LIMITS['driver.stall_ms'].value,
   settleTimeoutMs: 15_000,
   unproductiveNudgeBudget: 1,
   preflight: true,

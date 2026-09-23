@@ -160,7 +160,7 @@ export class GrokAcpCli {
     this._sandbox = opts.sandbox ?? 'off';
     this._alwaysApprove = opts.alwaysApprove ?? true;
     if (typeof this._alwaysApprove !== 'boolean') throw new TypeError('GrokAcpCli: alwaysApprove must be boolean');
-    this._maxEventPayloadBytes = opts.maxEventPayloadBytes ?? 64 * 1024;
+    this._maxEventPayloadBytes = opts.maxEventPayloadBytes ?? FRAME_LIMITS['acp.event_payload_bytes'].value;
     if (!Number.isSafeInteger(this._maxEventPayloadBytes) || this._maxEventPayloadBytes < 1024) {
       throw new TypeError('GrokAcpCli: maxEventPayloadBytes must be an integer of at least 1024 bytes');
     }
@@ -748,7 +748,7 @@ export class GrokAcpCli {
     const session = {
       worker, child, buf: '',
       processGeneration, processClosedEmitted: false, processClosePending: false, providerReady: false, setupFailed: false,
-      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
+      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : FRAME_LIMITS['process.reap_timeout_ms'].value,
       timeoutFailure: null, processFailure: null,
       reqSeq: 0, reqIdSeq: 0, turnSeq: 0,
       pendingRequests: new Map(),

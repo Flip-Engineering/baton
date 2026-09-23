@@ -10,6 +10,7 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
+import { FRAME_LIMITS } from './limits.mjs';
 
 import { applicationTerminal, canonicalRunPhase } from './application-semantics.mjs';
 
@@ -20,7 +21,7 @@ const SUCCESS_RESTING = 'result_ready';
 const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const POLL_MS = 50;
-export const MAX_WAVE_PROGRESS_BYTES = 7 * 1024 * 1024;
+export const MAX_WAVE_PROGRESS_BYTES = FRAME_LIMITS['wave.progress_bytes'].value;
 
 function boundedJsonBytes(value, limit = MAX_WAVE_PROGRESS_BYTES) {
   let bytes = 0;

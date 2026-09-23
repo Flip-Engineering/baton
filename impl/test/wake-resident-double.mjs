@@ -11,6 +11,7 @@
 // against this socket instead of by hand.
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export const WAKE_STREAM_PATH = '/v1/wakes';
@@ -43,7 +44,7 @@ export async function startWakeResident({ token, frames = [], card, session } = 
   }
   // A short, owner-only path: the consumer's local transport bounds the socket path at 103 bytes and
   // validates the socket's own mode on every request.
-  const directory = mkdtempSync(join('/tmp', 'bt-wake-double-'));
+  const directory = mkdtempSync(join(tmpdir(), 'bt-wake-double-'));
   const socketPath = join(directory, 'resident.sock');
   const ledger = [...frames];
   const attachments = new Set();

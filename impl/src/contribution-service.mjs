@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
 import { EXPECTED_RED_MANIFEST_PATH, selectFromRepository } from './verification-selection.mjs';
 
@@ -24,7 +25,7 @@ const cleanupLeak = (cleanupError) => (cleanupError ? Object.freeze({
  * a capture may be older or newer than the deployment's tree. The ceiling is the widest
  * per-file read the captured-file seam admits (16 MiB): the graph must see every source file
  * whole, and a truncating bound here would silently under-select its importers. */
-const PREVERDICT_READ_CEILING = 16 * 1024 * 1024;
+const PREVERDICT_READ_CEILING = FRAME_LIMITS['review.preverdict_read_bytes'].value;
 
 /** Immutable contribution operations. Session/pause ownership stays with the coordinator;
  * this service owns revision retention, isolated checks, and attributable operation receipts. */

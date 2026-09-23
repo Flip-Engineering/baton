@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -129,6 +129,7 @@ function fixture(name, {
   goalPlanAuthorize = async () => true,
   applicationAuthorize = async () => true,
   scenario = null,
+  applicationOptions = {},
 } = {}) {
   const repo = root(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
@@ -160,6 +161,7 @@ function fixture(name, {
       observer: principal('application-observer'),
     },
     authorize: applicationAuthorize,
+    ...applicationOptions,
   });
   return { application, adapter, driver, repo, logDir };
 }
@@ -1860,3 +1862,32 @@ test('UA4-UA8: accepted result is pinned, evidenced, and explicitly adopted with
     cwd: repo, encoding: 'utf8',
   }).trim(), evidence.result.sha, 'shutdown preserves adopted result refs');
 });
+
+
+for (const consumer of ['missing', 'manual', 'wave', 'root']) {
+  test(`572-consumer: pausable approval with ${consumer} consumer`, async (t) => {
+    const f = fixture(`consumer-${consumer}`, { applicationOptions: consumer === 'root'
+      ? { rootWake: { harness: 'claude-code', sessionId: 'operator' } } : {} });
+    t.after(async () => {
+      await f.application.shutdown(principal('shutdown-admin'));
+      rmSync(f.repo, { recursive: true, force: true });
+      rmSync(f.logDir, { recursive: true, force: true });
+    });
+    const card = f.adapter.card.bind(f.adapter);
+    f.adapter.card = () => ({ ...card(), turnCompletion: 'pausable' });
+    const explicit = consumer === 'manual' || consumer === 'wave' ? { driverKind: consumer } : {};
+    const proposed = await f.application.start(intent({ runId: `consumer-${consumer}`, ...explicit }), principal('owner'));
+    if (consumer === 'missing') {
+      await assert.rejects(f.application.approve(proposed.runId, proposed.plan.digest, principal('approver')),
+        { code: 'application_turn_consumer_required' });
+      assert.equal(f.driver.coordinator.list().length, 0);
+      assert.equal(f.application._findRun(proposed.runId).approval, null);
+      return;
+    }
+    await f.application.approve(proposed.runId, proposed.plan.digest, principal('approver'));
+    assert.equal(f.driver.coordinator.list().length, 1);
+    if (consumer !== 'root') {
+      assert.equal(f.application._runWaveIndex().byRunId.get(proposed.runId).driverKind, consumer);
+    }
+  });
+}

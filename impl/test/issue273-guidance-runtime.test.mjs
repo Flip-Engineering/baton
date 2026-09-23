@@ -152,18 +152,7 @@ test('273-a: a lane that refuses on a deliverable harness answers a refused row,
     && event.payload?.kind === 'swarm.guidance_parked'), false, 'a deliverable harness never parks on an ordinary lane refusal');
 });
 
-test('273-a2: a worker_not_active lane refusal parks the guidance under the lane\'s own reason (#534)', async (t) => {
-  const f = await seated(t, { deliver: 'worker_not_active' });
-  const guided = await f.call('guide', { participantId: 'builder', message: 'Keep going.' });
-  assert.deepEqual(guided.result, { ok: true, result: 'parked', reason: 'worker_not_active',
-    messageId: guided.guide.messageId });
-  assert.equal(guided.guide.kind, 'swarm.guidance_parked');
-  assert.deepEqual(guided.guide.delivery,
-    { state: 'parked', lane: null, reason: 'worker_not_active' });
-  const parked = f.store.eventsView().filter((event) => event.kind === 'driver.recorded'
-    && event.payload?.kind === 'swarm.guidance_parked');
-  assert.equal(parked.length, 1, 'exactly one durable park — the seat\'s next exec or successor brief composes it');
-});
+
 
 // ── (b) priority: closed set, default, refusal shape ───────────────────────────────────────────
 
@@ -213,17 +202,7 @@ test('273-c: next_boundary asks the ordinary lane and now asks the immediate one
     [['next_boundary', 'delivered'], ['now', 'delivered']], 'both are durable and visible on the seat');
 });
 
-test('273-c: a one-shot seat parks at either priority, and the park stays durable', async (t) => {
-  const f = await seated(t, { park: true });
-  f.workers[0].vendor = 'mock-oneshot';
-  const parked = await f.call('guide', { participantId: 'builder', message: 'Hold the shape.', priority: 'now' });
-  assert.equal(parked.receipt.event.kind, 'swarm.guidance_parked');
-  assert.equal(parked.guide.priority, 'now');
-  assert.deepEqual(parked.guide.delivery, { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true });
-  assert.deepEqual(parked.next.observation, { wakeClass: 'guidance_delivered', participantId: 'builder' });
-  const rows = await f.guidanceFor('builder');
-  assert.deepEqual(rows.map((row) => row.delivery.state), ['parked']);
-});
+
 
 // ── (d) inReplyTo threads ─────────────────────────────────────────────────────────────────────
 

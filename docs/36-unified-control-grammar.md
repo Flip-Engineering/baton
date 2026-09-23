@@ -505,16 +505,19 @@ fields each kind requires of the caller are read from the payload schemas
 | `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
 | `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
 
-**Runtime-owned driver kinds (never caller-submittable, 11).** The operation lifecycle and refusal rows the runtime
+**Runtime-owned driver kinds (never caller-submittable, 14).** The operation lifecycle and refusal rows the runtime
 records for itself, disjoint from the caller-submittable set above:
 
 - `swarm.operation_requested`
 - `swarm.operation_unavailable`
 - `swarm.operation_completed`
 - `swarm.operation_refused`
+- `wake.root_delivered`
+- `wake.root_undelivered`
 - `swarm.integration_started`
 - `swarm.integration_failed`
 - `swarm.integration_swept`
+- `swarm.root_attention_owed`
 - `swarm.guidance_sent`
 - `swarm.guidance_parked`
 - `swarm.guidance_delivered`
@@ -531,7 +534,6 @@ runtime from durable state — never asserted by a caller:
 - `provider_fault`
 - `reroute_proposed`
 - `reroute_no_candidate`
-- `resume_decision_required`
 - `member_left_session_live`
 - `delegation_orphaned`
 - `assignment_holder_gone`
@@ -545,6 +547,7 @@ runtime from durable state — never asserted by a caller:
 - `recruit_queued`
 - `recruit_queue_timeout`
 - `unreviewed_contribution`
+- `root_wake_undelivered`
 - `worktree_foreign_changes`
 - `turn_ended_without_contribution`
 - `provider_auth_expired`

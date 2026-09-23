@@ -24,7 +24,7 @@ import {
 import {
   attentionItemLine, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse } from './messages.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath, WEB_WAIT_DEFAULT_MS } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { observeAdapterEvents } from './adapter.mjs';
@@ -624,8 +624,8 @@ export class Coordinator {
 
   /** Whether a recorded deadline has come due, derived from the RECORDS themselves (never a timer
    * constant): a pending interaction's `deadlineAt`, a blocking question's bounded deployment
-   * default off its own `mintedAt`, a stop waiter's `deadlineAt`, and an unanswered stall cycle's
-   * `mintedAt + windowMs`. This is exactly the set `_sweepDeadlines` acts on. */
+   * default off its own `mintedAt`, and a stop waiter's `deadlineAt`.
+   * This is the set `_sweepDeadlines` acts on. */
     _deadlineDue() {
     return runtimeApi._deadlineDue(this);
   }
@@ -1187,21 +1187,6 @@ export class Coordinator {
     return runtimeObservation._claimReservedTurn(this, this._recorder, { record, commit, rollback }, pauseId, opts);
   }
 
-  /**
-   * #88 claim-time liveness preflight (contract v1.1, CP1-CP7). Fires ONLY when the gate's own
-   * would-fire test holds (`!brief.analysis && brief.requiredEffects.includes('repository_edit')`,
-   * mirror of :12530) AND a FRESH capture is diffless under the gate's own five-way test (:12532).
-   * When it fires and the CP3 CLOSED counted set finds ≥1 event inside the CP4 pause-epoch window
-   * (`turnEpoch === record.turnEpoch && seq <= record.mintedEvent`), it returns the typed refusal
-   * `{ok:false, ...}` with per-class counts only (TG4 sanitized — no path strings, no worker
-   * prose). Otherwise `{ok:true}` so the claim falls through to the full gate unchanged (CP10: the
-   * silent worker's path is untouched). A throw here is NOT a refusal — the caller rolls back and
-   * rethrows with the error's own typed code (CP1 error path).
-   */
-    _claimLivenessPreflight(handle, task, record) {
-    return runtimeApi._claimLivenessPreflight(this, handle, task, record);
-  }
-
   /** #435: whether `worktree` IS the checkout the worktree authority owns for `ownerTaskId`
    * (`<repoRoot>/.baton/wt/<ownerTaskId>`), compared by real path. Only such a checkout has a
    * lane branch for the #428 custody repair; a fixture's or embedder's checkout elsewhere is
@@ -1743,16 +1728,7 @@ export class Coordinator {
         this._forceStop(workerId, waiter);
       }
     }
-    // G-26 / swarm-b finding 2: the stall-seam cycle is NOT timer-only. An expired cycle whose
-    // timer is already spent — it fired before its own window elapsed, or the loop was jammed past
-    // it — leaves a declared-stalled worker nothing else that can fire. The sweep is the lossless
-    // coverage the arming path's comment already claims.
-    for (const handle of this._workers.values()) {
-      const stall = handle.stallSeamCycle;
-      if (!stall || stall.answered !== false) continue;
-      if (now < stall.mintedAt + stall.windowMs) continue;
-      this._expireStallCycleSafely(handle);
-    }
+
   }
 
   /** Dispatch admission for one pending task, as a closed outcome: `selected` | `deferred`
@@ -2485,8 +2461,6 @@ export class Coordinator {
       watchdogActions: new Set(),
       recentFailedActions: [],
       turnInFlight: false,
-      stallSeamDigestSet: null,
-      stallSeamCycle: null,
       watchdogGeneration: 0,
       watchdogTimer: null,
       runtimeScope: null,
@@ -2570,7 +2544,7 @@ export class Coordinator {
         || !/^[a-f0-9]{64}$/u.test(candidate.targetDigest ?? '')
         || candidate.targetDigest !== canonicalDigest(candidate.target)
         || !Number.isSafeInteger(candidate.maxReportBytes) || candidate.maxReportBytes <= 0
-        || candidate.maxReportBytes > 16 * 1024 * 1024
+        || candidate.maxReportBytes > FRAME_LIMITS['review.report_max_bytes'].value
         || Buffer.byteLength(JSON.stringify(candidate.target)) > 128 * 1024) {
         throw new ReviewSelectionError('structured review contract is invalid', 'structured_review_invalid');
       }
@@ -4564,35 +4538,6 @@ export class Coordinator {
     return runtimeApi.watchdogConfig(this);
   }
 
-  /** D4 rung 2: arm the stall-seam cycle on a claim (control.steer / control.nudge). The answer
-   * set is the D2 REARM_KINDS (never TG2 scratchpad/capability evidence); expiry is
-   * working-compatible on _progressNudgeWindowMs ?? 300_000. */
-    _armStallCycle(handle, task, { nudgeId, controlId }) {
-    return runtimeObservation._armStallCycle(this, this._recorder, handle, task, { nudgeId, controlId });
-  }
-
-  /** D4 rung 3: a claimed stall-seam window that expires unanswered. Gated on no in-flight turn
-   * (a mid-turn worker is never reaped) and a still-declared stall; the reap is preserve-first
-   * (worktree.progress_unchanged / progress_checkpointed) then adapter.kill. */
-    _expireStallCycle(handle) {
-    return runtimeObservation._expireStallCycle(this, this._recorder, handle);
-  }
-
-  /** G-26 / swarm-b finding 2: a refused preserve (or kill) must NOT consume the stall cycle.
-   * `answered = true` plus a cleared timer left a declared-stalled worker with nothing left that
-   * could fire — the ladder's "the sweep still covers it" was a comment, not a mechanism. The
-   * refusal lands as a typed receipt and the cycle is re-armed through the one arming path, so the
-   * worker stays on the ladder and the next window tries again. */
-  _refuseStallReap(handle, error) {
-    return runtimeRecovery._refuseStallReap(this, this._recorder, handle, error);
-  }
-
-  /** The one expiry entry both fire-and-forget paths (timer + `_sweepDeadlines`) call: a throwing
-   * expiry is a named fact, never a broken sweep, and the two paths cannot drift apart (G-26). */
-    _expireStallCycleSafely(handle) {
-    return runtimeObservation._expireStallCycleSafely(this, this._recorder, handle);
-  }
-
   // =========================================================================
   // G-46 — the two catch policies, named. `_bestEffort(promise, reason)` is the
   // OBSERVATIONAL one (a named reason, no effect on the operation it observed);
@@ -4658,23 +4603,6 @@ export class Coordinator {
    * throws, and never transitions the task — the gate's own verdict is the authority on that. */
     _recordTrustGateEscape(handle, error) {
     return runtimeObservation._recordTrustGateEscape(this, this._recorder, handle, error);
-  }
-
-  /** The refusal receipt shared by every failed stall reap (G-26), through the one operational
-   * writer: this runs only on a path that already failed, so it may never rethrow into its caller. */
-  _recordStallReapRefusal(handle, error) {
-    return runtimeRecovery._recordStallReapRefusal(this, this._recorder, handle, error);
-  }
-
-  /** D4 rung 2 answer: a qualifying D2 re-arm inside the claimed window clears the stall. The
-   * ONLY escape — deletes the stall flag, clears the per-stall-LIFETIME digest set, re-arms fresh. */
-    _clearStall(handle) {
-    return runtimeObservation._clearStall(this, this._recorder, handle);
-  }
-
-  /** The stall-seam cycle answers only on a qualifying D2 REARM kind observed inside the window. */
-    _observeStallSeam(handle, event) {
-    return runtimeObservation._observeStallSeam(this, this._recorder, handle, event);
   }
 
     _scheduleScopeOrientation(handle, path) {
@@ -6134,7 +6062,7 @@ export class Coordinator {
   // Command: wait()
   // =========================================================================
 
-    wait(timeoutMs = 25000) {
+    wait(timeoutMs = WEB_WAIT_DEFAULT_MS) {
     return runtimeAdmission.wait(this, this._recorder, timeoutMs);
   }
 
@@ -6352,28 +6280,6 @@ export class Coordinator {
             outOfScopeChangedPathsDigest: canonicalDigest(outOfScopeChangedPaths),
           },
         });
-      }
-      // TG5: `analysis: true` documents repository_edit as not-required for this node — the
-      // required_effect progress verdict is skipped; every other phase (capture, forbidden_effect,
-      // path_scope, environment, coverage) still runs.
-      if (!task.brief?.analysis && task.brief?.requiredEffects?.includes('repository_edit')) {
-        const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
-        if (!sha || !baseSha || sha === baseSha || changedPaths.length === 0 || inScopeChangedPaths.length === 0) {
-          trustPhase = 'required_effect';
-          throw Object.assign(
-            new Error('approved Plan required a repository edit but capture proved no in-scope diff from its base'),
-            {
-              code: 'required_effect_absent',
-              requiredEffectEvidence: {
-                requiredEffect: 'repository_edit', baseSha, sha: sha ?? null,
-                changedPathCount: changedPaths.length,
-                changedPathsDigest: canonicalDigest(changedPaths),
-                inScopeChangedPathCount: inScopeChangedPaths.length,
-                inScopeChangedPathsDigest: canonicalDigest(inScopeChangedPaths),
-              },
-            },
-          );
-        }
       }
       const baseSha = task.sessionContext?.baseSha ?? null;
       // Issue #334 acceptance: a read-only run (repository mutation is not authorized) whose
@@ -6667,7 +6573,6 @@ export class Coordinator {
         payload: {
           message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase,
           ...(err?.verificationAttempt ? { verificationAttempt: err.verificationAttempt } : {}),
-          ...(err?.requiredEffectEvidence ? { requiredEffectEvidence: err.requiredEffectEvidence } : {}),
           ...(err?.pathScopeEvidence ? { pathScopeEvidence: err.pathScopeEvidence } : {}),
         },
       });
@@ -6688,7 +6593,7 @@ export class Coordinator {
       if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
       task.status = durable?.status ?? 'failed';
       if (task.status !== 'completed') task.verdict = null;
-      if (['forbidden_effect_observed', 'required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
+      if (['forbidden_effect_observed', 'worker_path_scope_violation'].includes(code)) {
         handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
         // TG4: the projected terminal cause names the gate — never 'unknown' — on the task
         // surface too (the handle's copy already fed result() and replay).

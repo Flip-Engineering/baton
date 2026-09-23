@@ -32,8 +32,8 @@
 //   CC-HONEST  reduceMember([], null, waitingOn.capacity_ceiling) → {class:'capacity_ceiling',
 //              blocked:false, waiting:true, gated:null, interactions:[]}, never working.
 //              (RED: stage[reduceMember-missing])
-//   CC-STRIP   a view that churns ONLY waitingOn.capacity_ceiling never moves the wave marker —
-//              the stall clock fires (basis 'stall'), never the cap. (RED:
+//   CC-STRIP   a view that churns ONLY waitingOn.capacity_ceiling never moves the member's
+//              observation clock; an explicit caller stop reports the dependency. (RED:
 //              stage[stallMarker-missing])
 //
 // §B dispatch_pending (Arm-2, no receipt — silent exits)
@@ -571,9 +571,22 @@ const DRIVER_POLICY = Object.freeze({
   pollIntervalMs: 20, stallTimeoutMs: 400, settleTimeoutMs: 1_500,
   finalization: 'claim-on-stall', unproductiveNudgeBudget: 1, saltObjectives: false,
 });
-// STRIP rows: a churning waitingOn must not reset the clock (stallTimeoutMs fires first); today
-// the churn resets it every poll and the wave rides to the cap.
+// STRIP rows: a churning waitingOn must not reset the observation clock. The fixture stops each
+// drive explicitly after the observation threshold and checks the resulting dependency row.
 const STRIP_POLICY = { ...DRIVER_POLICY, stallTimeoutMs: 250 };
+
+async function driveStrip(kind) {
+  const wave = stripWave(kind);
+  const controller = new AbortController();
+  let stopTimer = null;
+  const receipt = await createWaveDriver(wave.baton, {
+    ...STRIP_POLICY,
+    signal: controller.signal,
+    onProgress: () => { stopTimer ??= setTimeout(() => controller.abort(), 350); },
+  }).run({ members: wave.members });
+  clearTimeout(stopTimer);
+  return receipt;
+}
 const actCallsOf = (wave, role, action) => wave.runs.get(role).actCalls.filter((call) => call.action === action);
 
 // A canonical waitingOn value for a kind (the D3 since-stamp shape). provider_stalled rides a
@@ -691,10 +704,10 @@ test('CC-HONEST (RED): reduceMember classes capacity_ceiling, never working', ()
     'stage[reduceMember-missing]: the waiting shape for capacity_ceiling');
 });
 
-test('CC-STRIP (RED): waitingOn.capacity_ceiling transitions never move the wave marker — the stall clock fires, never the cap', async () => {
-  const wave = stripWave('capacity_ceiling');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+test('CC-STRIP (RED): capacity_ceiling transitions preserve the per-member observation clock', async () => {
+  const receipt = await driveStrip('capacity_ceiling');
+  assert.equal(receipt.basis, 'aborted');
+  assert.equal(receipt.waiting[0]?.waitingOn?.kind, 'capacity_ceiling');
 });
 
 // ===========================================================================
@@ -844,10 +857,10 @@ test('DP-HONEST (RED): reduceMember classes dispatch_pending, never working', ()
     'stage[reduceMember-missing]: the waiting shape for dispatch_pending');
 });
 
-test('DP-STRIP (RED): waitingOn.dispatch_pending transitions never move the wave marker', async () => {
-  const wave = stripWave('dispatch_pending');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+test('DP-STRIP (RED): dispatch_pending transitions preserve the per-member observation clock', async () => {
+  const receipt = await driveStrip('dispatch_pending');
+  assert.equal(receipt.basis, 'aborted');
+  assert.equal(receipt.waiting[0]?.waitingOn?.kind, 'dispatch_pending');
 });
 
 // ===========================================================================
@@ -1007,10 +1020,10 @@ test('SP-HONEST (RED): reduceMember classes spawning, never working', () => {
     'stage[reduceMember-missing]: the waiting shape for spawning');
 });
 
-test('SP-STRIP (RED): waitingOn.spawning transitions never move the wave marker', async () => {
-  const wave = stripWave('spawning');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+test('SP-STRIP (RED): spawning transitions preserve the per-member observation clock', async () => {
+  const receipt = await driveStrip('spawning');
+  assert.equal(receipt.basis, 'aborted');
+  assert.equal(receipt.waiting[0]?.waitingOn?.kind, 'spawning');
 });
 
 // ===========================================================================
@@ -1072,10 +1085,10 @@ test('PA-HONEST (RED): reduceMember classes plan_approval, never working', () =>
     'stage[reduceMember-missing]: the waiting shape for plan_approval');
 });
 
-test('PA-STRIP (RED): waitingOn.plan_approval transitions never move the wave marker', async () => {
-  const wave = stripWave('plan_approval');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+test('PA-STRIP (RED): plan_approval transitions preserve the per-member observation clock', async () => {
+  const receipt = await driveStrip('plan_approval');
+  assert.equal(receipt.basis, 'aborted');
+  assert.equal(receipt.waiting[0]?.waitingOn?.kind, 'plan_approval');
 });
 
 // ===========================================================================
@@ -1172,10 +1185,10 @@ test('PS-HONEST (RED): a blocked member reads honest null — the interaction ow
     'stage[waiting-on-honest-null-missing]: a blocked member reads honest null — never provider_stalled');
 });
 
-test('PS-STRIP (RED): waitingOn.provider_stalled transitions never move the wave marker', async () => {
-  const wave = stripWave('provider_stalled');
-  const receipt = await createWaveDriver(wave.baton, { ...STRIP_POLICY }).run({ members: wave.members });
-  assert.equal(receipt.basis, 'stall', 'stage[stallMarker-missing]: waitingOn transitions are stripped from the stall marker');
+test('PS-STRIP (RED): provider_stalled transitions preserve the per-member observation clock', async () => {
+  const receipt = await driveStrip('provider_stalled');
+  assert.equal(receipt.basis, 'aborted');
+  assert.equal(receipt.waiting[0]?.waitingOn?.kind, 'provider_stalled');
 });
 
 // ===========================================================================
@@ -1200,7 +1213,13 @@ test('D9-COMPOUND (RED): a member with BOTH a claim-ready checkpoint AND waiting
       act: () => ({ ok: true }),
     },
   });
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
+  const controller = new AbortController();
+  let stopTimer = null;
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY, signal: controller.signal,
+    onProgress: () => { stopTimer ??= setTimeout(() => controller.abort(), 100); },
+  }).run({ members: wave.members });
+  clearTimeout(stopTimer);
   assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 0,
     'stage[waiting-not-suppressed]: a waitingOn member is never claimed — the suppression gains `!reduced.waiting`');
   assert.equal(receipt.claims.length, 0, 'stage[waiting-not-suppressed]: no claims evidence for a suppressed member');
@@ -1248,14 +1267,18 @@ test('WAITING_ON_KINDS (RED): the frozen CLOSED enum of exactly the five kinds',
 // §H — Exoneration pins
 // ===========================================================================
 
-test('EXO-1 (PIN): a checkpoint WITHOUT waitingOn still claims exactly once — the ordinary pause is untouched', async () => {
+test('EXO-1 (PIN): an explicit done decision claims a checkpoint without waitingOn exactly once', async () => {
   const wave = fakeWave({
     w: {
-      status: () => fakeView({ attention: [cpAtt('cp-1', CLAIM_READY)] }),
+      status: (poll) => (poll === 0
+        ? fakeView({ attention: [cpAtt('cp-1', CLAIM_READY)] })
+        : fakeView({ phase: 'result_ready', terminal: true })),
       act: () => ({ ok: true }),
     },
   });
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY, onCheckpoint: () => 'done',
+  }).run({ members: wave.members });
   assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 1, 'a checkpoint member is claimed exactly once');
   assert.equal(receipt.claims.length, 1, 'one claims-evidence row');
 });
@@ -1267,7 +1290,13 @@ test('EXO-2 (PIN): a blocking interaction WITHOUT waitingOn suppresses claim —
       act: () => ({ ok: true }),
     },
   });
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY }).run({ members: wave.members });
+  const controller = new AbortController();
+  let stopTimer = null;
+  const receipt = await createWaveDriver(wave.baton, {
+    ...DRIVER_POLICY, signal: controller.signal,
+    onProgress: () => { stopTimer ??= setTimeout(() => controller.abort(), 100); },
+  }).run({ members: wave.members });
+  clearTimeout(stopTimer);
   assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 0, 'a blocked member is never claimed');
 });
 
