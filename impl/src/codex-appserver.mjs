@@ -840,7 +840,7 @@ export class CodexAppServerCli {
     const session = {
       worker, child, buf: '',
       processGeneration, processClosedEmitted: false, processClosePending: false, providerReady: false, setupFailed: false,
-      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
+      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : FRAME_LIMITS['process.reap_timeout_ms'].value,
       timeoutFailure: null, processFailure: null,
       reqSeq: 0, reqIdSeq: 0,
       pendingRequests: new Map(),

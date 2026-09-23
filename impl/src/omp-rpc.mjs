@@ -36,7 +36,7 @@ import { classifyProviderFault } from './provider-faults.mjs';
 // every frame bound, never an adapter-local literal (Decision 8's no-re-declare law). A
 // deployment may still override it per instance through the constructor's maxFrameBytes.
 const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
-const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
+const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = FRAME_LIMITS['acp.event_payload_bytes'].value;
 const DEFAULT_STREAM_CHUNK_BYTES = FRAME_LIMITS['stream.omp.flush'].value;
 
 // Backoff ladder for the READY-frame wait: bounded attempt budget with growing gaps. The FINAL

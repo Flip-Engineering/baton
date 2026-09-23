@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const digest = (value) => createHash('sha256').update(value).digest();
@@ -209,9 +210,9 @@ export class WebEventStream {
     this.now = opts.now ?? Date.now;
     this.ticketTtlMs = positiveInteger(opts.ticketTtlMs ?? 15_000, 'ticketTtlMs');
     this.replayLimit = nonNegativeInteger(opts.replayLimit ?? 1_000, 'replayLimit');
-    this.maxBufferedBytes = positiveInteger(opts.maxBufferedBytes ?? 256 * 1024, 'maxBufferedBytes');
+    this.maxBufferedBytes = positiveInteger(opts.maxBufferedBytes ?? FRAME_LIMITS['web_stream.buffer_bytes'].value, 'maxBufferedBytes');
     this.maxFrameBytes = positiveInteger(opts.maxFrameBytes ?? this.maxBufferedBytes, 'maxFrameBytes');
-    this.maxControlFrameBytes = positiveInteger(opts.maxControlFrameBytes ?? 2 * 1024, 'maxControlFrameBytes');
+    this.maxControlFrameBytes = positiveInteger(opts.maxControlFrameBytes ?? FRAME_LIMITS['web_stream.control_frame_bytes'].value, 'maxControlFrameBytes');
     this.maxTickets = positiveInteger(opts.maxTickets ?? 1_000, 'maxTickets');
     this.maxConnections = positiveInteger(opts.maxConnections ?? 100, 'maxConnections');
     this.maxEventsPerPump = positiveInteger(opts.maxEventsPerPump ?? 100, 'maxEventsPerPump');

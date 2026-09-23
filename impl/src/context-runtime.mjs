@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { FRAME_LIMITS } from './limits.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   accessSync, chmodSync, constants as fsConstants, mkdirSync, readFileSync, realpathSync, statSync,
@@ -737,7 +738,7 @@ export class RepositoryContextRuntime {
       const proveGroupExtinct = async () => {
         if (!groupAlive()) return;
         killGroup('SIGKILL');
-        const deadline = Date.now() + 2_000;
+        const deadline = Date.now() + FRAME_LIMITS['process.group_kill_escalation_ms'].value;
         while (groupAlive() && Date.now() < deadline) {
           await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
         }
@@ -752,7 +753,7 @@ export class RepositoryContextRuntime {
         if (aborted || closed) return;
         aborted = true;
         killGroup('SIGTERM');
-        escalation = setTimeout(() => killGroup('SIGKILL'), 2_000);
+        escalation = setTimeout(() => killGroup('SIGKILL'), FRAME_LIMITS['process.group_kill_escalation_ms'].value);
       };
       signal?.addEventListener('abort', abort, { once: true });
       worker.stderr?.on('data', (chunk) => {

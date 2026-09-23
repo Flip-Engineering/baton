@@ -24,7 +24,7 @@ import {
 import {
   attentionItemLine, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse } from './messages.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath, WEB_WAIT_DEFAULT_MS } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { observeAdapterEvents } from './adapter.mjs';
@@ -2530,7 +2530,7 @@ export class Coordinator {
         || !/^[a-f0-9]{64}$/u.test(candidate.targetDigest ?? '')
         || candidate.targetDigest !== canonicalDigest(candidate.target)
         || !Number.isSafeInteger(candidate.maxReportBytes) || candidate.maxReportBytes <= 0
-        || candidate.maxReportBytes > 16 * 1024 * 1024
+        || candidate.maxReportBytes > FRAME_LIMITS['review.report_max_bytes'].value
         || Buffer.byteLength(JSON.stringify(candidate.target)) > 128 * 1024) {
         throw new ReviewSelectionError('structured review contract is invalid', 'structured_review_invalid');
       }
@@ -6064,7 +6064,7 @@ export class Coordinator {
   // Command: wait()
   // =========================================================================
 
-    wait(timeoutMs = 25000) {
+    wait(timeoutMs = WEB_WAIT_DEFAULT_MS) {
     return runtimeAdmission.wait(this, this._recorder, timeoutMs);
   }
 

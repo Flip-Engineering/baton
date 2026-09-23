@@ -11,6 +11,7 @@
 // The two directories are structurally namespaced apart (W1).
 
 import { execFileSync } from 'node:child_process';
+import { FRAME_LIMITS } from './limits.mjs';
 import {
   chmodSync, closeSync, cpSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, renameSync,
   linkSync, symlinkSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
@@ -646,7 +647,7 @@ function recoverWorkspaceOwnerPublication(repoRoot, root, binding, authority) {
 function ownerProcessStart(pid) {
   try {
     const observed = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: 1_000,
+      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: FRAME_LIMITS['process.ps_probe_ms'].value,
     }).trim();
     return observed && Buffer.byteLength(observed) <= 256 ? observed : null;
   } catch { return null; }

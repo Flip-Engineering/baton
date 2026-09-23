@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { FRAME_LIMITS } from './limits.mjs';
 import { Lang, parse } from '@ast-grep/napi';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 
@@ -156,8 +157,8 @@ export class AtlasStructuralDelta {
     this.artifactRoot = opts.artifactRoot;
     // Issue #500: 16 MiB — the ledger event ceiling used by coordination rows, result
     // bodies and wire frames. A source file the ledger could hold is always diffed.
-    this.maxSourceBytes = opts.maxSourceBytes ?? 16 * 1024 * 1024;
-    this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
+    this.maxSourceBytes = opts.maxSourceBytes ?? FRAME_LIMITS['atlas.source_max_bytes'].value;
+    this.maxArtifactBytes = opts.maxArtifactBytes ?? FRAME_LIMITS['atlas.artifact_max_bytes'].value;
     if (!Number.isSafeInteger(this.maxArtifactBytes) || this.maxArtifactBytes <= 0) throw new TypeError('Atlas maxArtifactBytes must be a positive safe integer');
     this.availability = opts.availability ?? Object.freeze({ status: 'available', reason: 'language_ceiling_satisfied' });
     this.now = opts.now ?? Date.now;
