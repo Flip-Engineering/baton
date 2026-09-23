@@ -2271,7 +2271,11 @@ export async function landContribution(repoRoot, request) {
         .split('\n').filter((line) => line.length > 0).sort();
       // Every changed module must at least parse before a regenerator reads it — a generator that
       // consumed a syntactically broken module would write an artifact describing a broken tree.
+      // The changed list names deletions too, and a deleted path has no content to parse: its
+      // absence IS the change landing (#575, found landing the wake union's retired stall-stop
+      // suite), so only content the squash still carries is checked.
       for (const path of changedBeforeRegeneration.filter((entry) => entry.endsWith('.mjs'))) {
+        if (!existsSync(join(checkout.dir, path))) continue;
         try {
           execFileSync(process.execPath, ['--check', join(checkout.dir, path)], {
             cwd: checkout.dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
