@@ -344,6 +344,7 @@ const UNEXERCISED_OPTIONS = Object.freeze({
   drainPolicy: 'reached by drainAndClose, which every case runs without asserting its policy',
   gitExec: 'the preserved-result resolution spawn seam; no case resolves preserved results',
   hostCapacity: 'the contribution check is its only consult site',
+  integrationPublishRemote: 'the declared shared remote a landing publishes to, read into the landing authority by application.mjs; reached only by a landing that publishes',
   logDir: 'the store root; exercised implicitly by every case\'s construction',
   maxCapabilityBudgetTokens: 'a ceiling over the capability registry',
   maxCapabilityEnvelopeBytes: 'a ceiling over the capability registry',
