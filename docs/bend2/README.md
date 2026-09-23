@@ -28,6 +28,17 @@ The documents describe the design, its evidence, and the remaining work:
 | `rewrite-plan.md` | The phases of the rewrite: which subsystems move per phase, what the JavaScript and Bend2 halves must agree on at the boundary while both exist, and the test that proves each phase before the next starts. |
 | `go-no-go.md` | The recommendation and the specific findings it rests on. |
 
+## Records
+
+[reviews/](reviews/) holds the independent review written for each contribution, one file per
+contribution, recording what the reviewer ran and what it answered.
+[reviews/codex/](reviews/codex/) holds the external Codex architecture review, its manifest and
+its probe evidence; [reviews/codex-final-law-review-r9.1.md](reviews/codex-final-law-review-r9.1.md)
+is the final law approval record. [ledger.md](ledger.md) is the operational record.
+[recovery-2026-09-22.md](recovery-2026-09-22.md) and
+[recovery-2026-09-23.md](recovery-2026-09-23.md) record the two cold-restart recoveries with the
+retained-branch census and the state of every unlanded work item.
+
 ## Examples
 
 [examples/README.md](examples/README.md) fixes the convention: a `<claim-slug>.bend` file with a
