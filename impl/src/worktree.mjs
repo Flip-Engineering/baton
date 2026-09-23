@@ -1569,9 +1569,9 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
  * @param {string} repoRoot
  * @param {string} taskId
  * @param {{vendor?: string, model?: string, log?: object}} [opts]
- * @returns {Promise<{sha:string, snapshotted:boolean, baseSha:string, changedPaths:string[], sparseCheckoutIdentity:object, warnings:{code:string, paths:string[]}[]}>}
+ * @returns {{sha:string, snapshotted:boolean, baseSha:string, changedPaths:string[], sparseCheckoutIdentity:object, warnings:{code:string, paths:string[]}[]}}
  */
-export async function captureCommit(repoRoot, taskId, opts = {}) {
+function captureCommitNow(repoRoot, taskId, opts = {}) {
   normalizePhysicalOwnerId(taskId, 'taskId');
   const owned = validateOwnedWorktree(repoRoot, taskId, {
     ...(opts.expectedWorktreePath ? { expectedPath: opts.expectedWorktreePath } : {}),
@@ -1638,6 +1638,10 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
   warnings = Object.freeze(warnings);
   logEvent(opts, taskId, 'worktree.captured', { sha, snapshotted, baseSha: meta.baseSha, changedPaths, sparseCheckoutIdentity: owned.sparseCheckoutIdentity, warnings });
   return { sha, snapshotted, baseSha: meta.baseSha, changedPaths, sparseCheckoutIdentity: owned.sparseCheckoutIdentity, warnings };
+}
+
+export async function captureCommit(repoRoot, taskId, opts = {}) {
+  return captureCommitNow(repoRoot, taskId, opts);
 }
 
 // ---------------------------------------------------------------------------
@@ -2588,7 +2592,8 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * @param {string} repoRoot
  * @param {string[]} expectedActiveTaskIds
  * @param {{log?: object, ownerAuthority?: object, expectedOwnerBindings?: object[],
- *   sparseCheckoutIdentity?: object, custodyHolders?: Function, beforeOwnerCleanup?: Function}} [opts]
+ *   sparseCheckoutIdentity?: object, custodyHolders?: Function, beforeOwnerCleanup?: Function,
+ *   snapshotUncommitted?: boolean}} [opts]
  * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
@@ -2820,24 +2825,62 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         } catch (error) {
           if (!(error instanceof WorkspacePreservationError)
             && !(error instanceof WorkspaceCustodyError)) throw error;
-          const observation = error.observation;
-          report.diagnostics.push(Object.freeze({
-            code: error.code, physicalOwnerId: normalizedTaskId,
-            deploymentId: ownerReceipt?.deploymentId ?? null,
-            logicalTaskId: ownerReceipt?.logicalTaskId ?? null,
-            authority: ownerReceipt ? ownerState : 'unproven', retained: true,
-            contentState: observation.state,
-            dirtyPaths: observation.dirtyPaths,
-            headSha: observation.headSha, baseSha: observation.baseSha,
-            ...(error instanceof WorkspaceCustodyError ? { holders: error.holders } : {}),
-          }));
-          if (!report.retainedContentOwners.includes(normalizedTaskId)) {
-            report.retainedContentOwners.push(normalizedTaskId);
+          let retainedError = error;
+          // Issue #568: a prior controller's dirty checkout is recoverable only after its
+          // differing files have entered the lane branch. Exact local-dead authority and the
+          // absence of other live holders are required before capture. Capture keeps paths that
+          // cannot safely enter the branch in the checkout, so the second preservation check
+          // below retains that workspace.
+          if (opts.snapshotUncommitted === true
+            && error instanceof WorkspacePreservationError
+            && error.observation?.state === 'dirty'
+            && ownerReceipt
+            && ownerState === 'local_dead'
+            && liveWorkspaceHolders(opts, normalizedTaskId).length === 0) {
+            try {
+              captureCommitNow(repoRoot, normalizedTaskId, {
+                expectedWorktreePath: ownerReceipt.worktree,
+                expectedBaseSha: ownerReceipt.baseSha,
+                expectedBranch: ownerReceipt.branch,
+                ...(opts.sparseCheckoutIdentity
+                  ? { sparseCheckoutIdentity: opts.sparseCheckoutIdentity } : {}),
+                ...(opts.log ? { log: opts.log } : {}),
+              });
+              assertRemovableContent(repoRoot, normalizedTaskId, opts);
+              // The checkout is clean now. Continue through the branch-custody and removal
+              // checks below instead of recording the pre-capture observation as retained.
+              retainedError = null;
+            } catch (captureError) {
+              retainedError = captureError instanceof WorkspacePreservationError
+                ? captureError
+                : Object.assign(new WorkspacePreservationError(
+                  `worktree "${normalizedTaskId}" was retained: recovery snapshot failed`,
+                  observeOwnedWorktreeContent(repoRoot, normalizedTaskId),
+                  'workspace_recovery_snapshot_failed',
+                ), { cause: captureError });
+            }
           }
-          // A retained checkout keeps consuming its owner's capacity: joining the retained set is
-          // what keeps the reservation row from being settled for a resource that still exists.
-          retainExpected(normalizedTaskId);
-          continue;
+          if (retainedError !== null) {
+            const observation = retainedError.observation;
+            report.diagnostics.push(Object.freeze({
+              code: retainedError.code, physicalOwnerId: normalizedTaskId,
+              deploymentId: ownerReceipt?.deploymentId ?? null,
+              logicalTaskId: ownerReceipt?.logicalTaskId ?? null,
+              authority: ownerReceipt ? ownerState : 'unproven', retained: true,
+              contentState: observation.state,
+              dirtyPaths: observation.dirtyPaths,
+              headSha: observation.headSha, baseSha: observation.baseSha,
+              ...(retainedError instanceof WorkspaceCustodyError
+                ? { holders: retainedError.holders } : {}),
+            }));
+            if (!report.retainedContentOwners.includes(normalizedTaskId)) {
+              report.retainedContentOwners.push(normalizedTaskId);
+            }
+            // A retained checkout keeps consuming its owner's capacity: joining the retained set
+            // is what keeps the reservation row from being settled for a resource that still exists.
+            retainExpected(normalizedTaskId);
+            continue;
+          }
         }
       }
       // Issue #428: a checkout orphaned by a crash whose lane branch does not already
@@ -2894,6 +2937,16 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           continue;
         }
       }
+      // A restarted deployment records its cleanup intent before the checkout disappears. If the
+      // process stops between filesystem removal and receipt release, the next restart can
+      // distinguish that stopped owner from an invented ready receipt beside an unrelated ref.
+      if (ownerReceipt && ownerState === 'local_dead' && ownerReceipt.state === 'ready') {
+        try { ownerReceipt = updateWorkspaceOwnerState(repoRoot, normalizedTaskId, 'stopped'); }
+        catch (error) {
+          report.errors.push(`${taskId}: ${error.message || error}`);
+          continue;
+        }
+      }
       try {
         const hadDir = existsSync(fullDir); const hadResidue = hadDir || existsSync(metaFile) || existsSync(projectionExclude);
         if (hadDir) {
@@ -2923,8 +2976,9 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         if (existsSync(projectionExclude)) rmSync(authorityChild(repoRoot, 'wt', `${normalizedTaskId}.projection.exclude`, { kind: 'file', mustExist: true }), { force: true });
         if (branchPresent && branchWorkless) sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot);
         try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { branchPresent = false; }
+        const branchRetained = branchPresent && !branchWorkless;
         if (existsSync(fullDir) || existsSync(metaFile) || existsSync(projectionExclude)
-          || (branchPresent && !branchWorkless)) {
+          || (branchPresent && !branchRetained)) {
           throw new WorktreeCleanupError('reconciled worker ownership remained after cleanup');
         }
         if (hadDir) report.removedZombieDirs.push(fullDir);
@@ -3027,14 +3081,26 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       }
       let branchPresent = false; let branchSha = null;
       try { branchSha = sh('git', ['rev-parse', '--verify', `refs/heads/${receipt.branch}^{commit}`], repoRoot); branchPresent = true; } catch { /* absent */ }
-      if (branchPresent && branchSha !== receipt.baseSha) {
-        report.diagnostics.push(Object.freeze({
-          code: 'workspace_owner_branch_mismatch', physicalOwnerId,
-          deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
-          authority, retained: true,
-        }));
-        report.receiptOnlyRefusals.push(physicalOwnerId);
-        continue;
+      let branchRetained = branchPresent && branchSha !== receipt.baseSha;
+      if (branchRetained) {
+        try {
+          // A stopped local receipt records that this deployment crossed its removal boundary.
+          // An allocated/ready receipt beside a different ref remains ambiguous, as does a
+          // receipt from another deployment.
+          if (receipt.state !== 'stopped' || authority !== 'local_dead') {
+            throw new Error('owner has no completed local cleanup custody');
+          }
+          sh('git', ['merge-base', '--is-ancestor', receipt.baseSha, branchSha], repoRoot);
+        }
+        catch {
+          report.diagnostics.push(Object.freeze({
+            code: 'workspace_owner_branch_mismatch', physicalOwnerId,
+            deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
+            authority, retained: true,
+          }));
+          report.receiptOnlyRefusals.push(physicalOwnerId);
+          continue;
+        }
       }
       try {
         if (opts.beforeOwnerCleanup
@@ -3054,7 +3120,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         continue;
       }
       try {
-        if (branchPresent) sh('git', ['branch', '-D', receipt.branch], repoRoot);
+        if (branchPresent && !branchRetained) sh('git', ['branch', '-D', receipt.branch], repoRoot);
         // Reconcile has already made the stronger proof (dead controller, absent worktree, branch
         // handled), so it supersedes requireAllocated — the allocated-state gate is a
         // publication-path guard only and is dropped exclusively at this reconcile call site.
