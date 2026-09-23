@@ -145,8 +145,8 @@ test('configured MCP catalog spans every requested system category and projects 
 test('configured describe resolves canonical names and corrected live aliases deterministically', async () => {
   const raw = baseServer();
   const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
-  const exact = await call(server, 'baton_surface_describe', { name: 'run.status' }, 20);
-  assert.equal(exact.result.structuredContent.capability.id, 'run.status');
+  const exact = await call(server, 'baton_surface_describe', { name: 'run.view' }, 20);
+  assert.equal(exact.result.structuredContent.capability.id, 'run.view');
   const corrected = await call(server, 'baton_surface_describe', { name: 'baton_decision_list' }, 21);
   assert.equal(corrected.result.structuredContent.capability.id, 'decision.list');
 });

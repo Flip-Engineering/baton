@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { CLI_TOP_LEVEL_VERBS, CLI_WEB_COMMANDS, HOST_CLI_VERBS } from '../src/application-cli.mjs';
-import { mcpApplicationToolNames, ORDINARY_APPLICATION_TOOL_DEFINITIONS } from '../src/mcp-northbound.mjs';
+import { CORE_TOOL_VERBS, coreToolDefinitions } from '../src/mcp-core-tools.mjs';
 import {
   formatSurfaceResolutionFinding,
   resolveOperationSurfaces,
@@ -148,35 +148,16 @@ export function renderCliVerbInventory() {
  * construction (ORDINARY_APPLICATION_TOOL_DEFINITIONS), never deriveSurfaceNames alone.
  */
 export function renderMcpToolInventory() {
-  // Issue #156 D4: the inventory IS the application profile — one row per ordinary tool, its
-  // operation key in the Operation column, the advertised tool name in the MCP tool column (the
+  // Issue #314 (docs/49 §2): the inventory IS the shipped core table — one row per core tool,
+  // its verbs in the Operation column, the bare advertised name in the MCP tool column (the
   // surface-conformance reader takes that column), the annotation derived from the tool's own
-  // hints (never a hand-kept list). Resolution: the mcp.baton surfaceAlias row first, else the
-  // canonicalOperations byDerived index, else the alias-canonical fallback for an alias whose
-  // canonical key has no canonicalOperations entry (the five non-canonical ops), else the tool
-  // name itself.
-  const byDerived = new Map(
-    APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-      .filter((operation) => operation.surfaces.includes('mcp'))
-      .map((operation) => [operation.names.mcp, operation]),
-  );
-  const batonAlias = new Map(
-    APPLICATION_SEMANTIC_REGISTRY.surfaceAliases
-      .filter((alias) => alias.surface === 'mcp.baton')
-      .map((alias) => [alias.name, alias]),
-  );
-  const rows = mcpApplicationToolNames().map((tool) => {
-    const definition = ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((entry) => entry.name === tool);
-    const hints = definition?.annotations ?? {};
+  // hints (never a hand-kept list).
+  const definitions = new Map(coreToolDefinitions().map((tool) => [tool.name, tool]));
+  const rows = Object.entries(CORE_TOOL_VERBS).map(([tool, verbs]) => {
+    const hints = definitions.get(tool)?.annotations ?? {};
     const effect = hints.destructiveHint === true ? 'destructive'
       : hints.readOnlyHint === true ? 'idempotent' : 'effectful';
-    const alias = batonAlias.get(tool);
-    const operation = (alias
-      ? APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.find((entry) => entry.key === alias.canonical)
-        ?? { key: alias.canonical, profile: 'ordinary' }
-      : byDerived.get(tool))
-      ?? { key: tool, profile: 'ordinary' };
-    return `| \`${operation.key}\` | \`${operation.profile}\` | \`${tool}\` | ${effect} |`;
+    return `| \`${tool} {verb: ${verbs.join('|')}}\` | \`ordinary\` | \`${tool}\` | ${effect} |`;
   });
   return [
     '| Operation | Profile | MCP tool | Annotation |',
