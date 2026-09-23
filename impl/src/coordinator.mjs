@@ -1672,12 +1672,24 @@ export class Coordinator {
   /** One admission pass over every dependency-ready pending task. A task whose resolved vendor is
    * at its CONFIGURED ceiling defers on a durable `task.dispatch_deferred` receipt instead of a
    * silent skip; a card that configures no ceiling (`null`) throttles nothing. An exact route is
-   * never rerouted — it waits for its own vendor. */
+   * never rerouted — it waits for its own vendor.
+   *
+   * Issue #65: a task THIS process is already dispatching is never re-entered. A worker's
+   * up-channel event can arrive synchronously inside its own spawn (the adapter's event callback
+   * runs the command on the spot, claude-session's scan being the shipped path), and that
+   * command's tick lands here while the frame that owns the claim is still on the stack: the task
+   * is claimed durably but still 'pending' in memory (the flip to 'working' lands only after the
+   * adapter returns), so the pass used to claim it a second time. That replay mints a key from the
+   * version the FIRST claim already advanced (runtime-effects.mjs), so claimTask refuses
+   * `already assigned` and the refusal is consumed as the member's spawn refusal. The task whose
+   * dispatch frame is live is skipped here; the frame that claimed it owns the claim and the
+   * spawn. */
   _dispatchPass() {
     if (this._closed || this._drainState !== 'open') return;
     for (const taskId of this._taskOrder) {
       const task = this._tasks.get(taskId);
       if (!task || task.status !== 'pending') continue;
+      if (this._dispatching.has(taskId)) continue;
       if (task.deps.some((d) => this._tasks.get(d)?.status !== 'completed')) continue;
       const admission = this._resolveVendor(task);
       if (admission.outcome === 'deferred') {
@@ -1687,7 +1699,12 @@ export class Coordinator {
       if (admission.outcome !== 'selected') continue;
       const { selection } = admission;
       if (!this._adapters[selection.vendor]) continue;
-      this._dispatch(task, selection.vendor, selection.model, selection.effort, selection.workerPolicyResolution);
+      this._dispatching.add(taskId);
+      try {
+        this._dispatch(task, selection.vendor, selection.model, selection.effort, selection.workerPolicyResolution);
+      } finally {
+        this._dispatching.delete(taskId);
+      }
     }
   }
 
