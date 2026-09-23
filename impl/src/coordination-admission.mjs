@@ -18,7 +18,7 @@ import { contextCellIdentity, contextProgramIsPure, contextSessionIdentity, norm
 import { contextEffectNodeBinding, normalizeContextEffectCall } from './context-call.mjs';
 import { contextMapCallIdentity, contextMapNodeBinding, normalizeContextMapCall } from './context-map.mjs';
 import { contextValueDigest, normalizeContextProgram, normalizeReplManifest } from './context-program.mjs';
-import { CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, TERMINAL, boundedText, canonical, canonicalBytes, canonicalDigest, clone, digest, freeze, promotionActor, sha256Bytes, validKnowledgeContradictionPolicy, validRunId } from './coordination-internals.mjs';
+import { CoordinationIntegrityError, CoordinationRefusal, KNOWLEDGE_CANDIDATE_TRIGGERS, REPL_CITATION, TERMINAL, boundedText, canonical, canonicalBytes, canonicalDigest, clone, digest, freeze, promotionActor, sha256Bytes, validKnowledgeContradictionPolicy, validRunId } from './coordination-internals.mjs';
 import { DEFAULT_MAX_REPL_MANIFESTS_PER_RUN, RUN_ORCHESTRATOR_CAPABILITIES, RUN_ORCHESTRATOR_REVOCATION_REASONS } from './run-lineage.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { GoalPlanValidationError, goalPlanDigest, normalizePlanRequest, planRouteMatches } from './goal-plan.mjs';
@@ -105,7 +105,8 @@ function officialCoordinateMatches(identity, coordinate) { const fields = Object
 // JSON-encoded map keys — never string concatenation (Part A rule 2).
 const REPL_CELL_ID = /^cell:[a-f0-9]{64}$/u;
 
-const REPL_CITATION = /^repl:(shared|worker:[A-Za-z0-9._:-]{1,256}):([A-Za-z0-9._-]{1,128})@([1-9][0-9]*)$/u;
+// The citation grammar lives in coordination-internals.mjs (declared ONCE, read by both this
+// admission path and the coordinator's serving-path addressing check).
 
 const REPL_CELL_MEDIA_TYPE = 'application/vnd.baton.context-value+json';
 
@@ -5297,17 +5298,42 @@ export function admitReplManifest(store, fields, auth) {
   // equality against the wrapper-derived principalId for `worker:<id>`.
   let principal;
   if (replRole === 'shared') {
-    let lease;
-    try { lease = store._activeRunOrchestratorLease(auth); }
-    catch (error) {
-      throw new CoordinationRefusal(error?.message ?? 'Context REPL shared manifest lacks orchestrator authority',
-        'repl_manifest_authority_denied');
+    // R11/F5 — the per-member fan-out posture. A `shared` manifest admitted for one run is
+    // replicated into each member run of a multi-run wave, and the replication's authority is
+    // that SOURCE admission: the principal is copied from it, never chosen by the caller, so a
+    // fan-out can neither widen authority nor reach the worker tier. The orchestrator therefore
+    // does not re-present its lease for every member run; the lease it presented for the source
+    // admission is the one this act stands on.
+    const fanoutOf = typeof fields?.fanoutOf === 'string' ? fields.fanoutOf : null;
+    if (fanoutOf !== null) {
+      const source = store._replManifestAdmissions.get(fanoutOf);
+      if (!source) {
+        throw new CoordinationRefusal('Context REPL fan-out cites an unadmitted source manifest',
+          'repl_manifest_authority_denied');
+      }
+      if (source.replRole !== 'shared') {
+        throw new CoordinationRefusal('Context REPL fan-out source is not a shared manifest',
+          'repl_manifest_authority_denied');
+      }
+      if (canonicalDigest({ actor: auth?.actor ?? null, principalId: auth?.principalId ?? null })
+        !== canonicalDigest(source.principal)) {
+        throw new CoordinationRefusal('Context REPL fan-out caller is not the source manifest principal',
+          'repl_manifest_authority_denied');
+      }
+      principal = { actor: source.principal.actor, principalId: source.principal.principalId };
+    } else {
+      let lease;
+      try { lease = store._activeRunOrchestratorLease(auth); }
+      catch (error) {
+        throw new CoordinationRefusal(error?.message ?? 'Context REPL shared manifest lacks orchestrator authority',
+          'repl_manifest_authority_denied');
+      }
+      if (lease.parent.runId !== runId) {
+        throw new CoordinationRefusal('Context REPL shared manifest run differs from its orchestrator lease',
+          'repl_manifest_authority_denied');
+      }
+      principal = { actor: auth.actor, principalId: lease.session.principalId };
     }
-    if (lease.parent.runId !== runId) {
-      throw new CoordinationRefusal('Context REPL shared manifest run differs from its orchestrator lease',
-        'repl_manifest_authority_denied');
-    }
-    principal = { actor: auth.actor, principalId: lease.session.principalId };
   } else if (replRole === `worker:${auth?.principalId}`) {
     principal = { actor: auth?.actor, principalId: auth.principalId };
   } else {
@@ -5372,6 +5398,88 @@ export function admitReplManifest(store, fields, auth) {
       'repl_manifest_integrity');
   }
   return freeze({ ok: true, result: 'admitted', event: clone(event), record: projected });
+}
+
+/** R11/F5 — the per-member fan-out admission. A #94-style dynamic wave's members carry DISTINCT
+ * runIds, and a binding is keyed `(runId, scope, name)`, so one `shared` admission renders only
+ * into the members of that one run. The workflow tier is realized by replicating the source
+ * admission into EACH member's own runId at spawn: every member gets its own `shared` manifest
+ * (whose repl coordinate names the member run) and the `shared:<name>` binding over the same
+ * settled cell. Every member then resolves the same citation grammar in ITS OWN run, so no
+ * cross-run resolution is ever needed (D3's boundary stays intact) and an unlisted run resolves
+ * nothing.
+ *
+ * Authority is the SOURCE admission itself: the caller must be the principal that admitted it and
+ * the source must be a `shared` manifest. The replication copies that principal verbatim, so a
+ * fan-out cannot name an authority it does not already hold, and every member event is attributed
+ * to the orchestrator that authored the object. */
+export function admitReplFanout(store, fields, auth) {
+  if (!store._contextProgramPolicy) {
+    throw new CoordinationRefusal('Context Program authority is unavailable', 'repl_manifest_unavailable');
+  }
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+    || typeof fields.sourceManifestDigest !== 'string'
+    || !/^[a-f0-9]{64}$/u.test(fields.sourceManifestDigest)
+    || typeof fields.name !== 'string' || !SAFE_REPL_NAME.test(fields.name)
+    || typeof fields.cellId !== 'string' || !REPL_CELL_ID.test(fields.cellId)
+    || !Array.isArray(fields.members) || fields.members.length === 0
+    || fields.members.length > MAX_REPL_BINDINGS
+    || new Set(fields.members).size !== fields.members.length
+    || fields.members.some((member) => !validRunId(member))) {
+    throw new CoordinationRefusal('REPL fan-out requires a source digest, a name, a settled cell, and distinct member runs',
+      'invalid_repl_binding');
+  }
+  const source = store._replManifestAdmissions.get(fields.sourceManifestDigest);
+  if (!source) {
+    throw new CoordinationRefusal('REPL fan-out cites an unadmitted source manifest',
+      'repl_object_manifest_unadmitted');
+  }
+  if (source.replRole !== 'shared') {
+    throw new CoordinationRefusal('REPL fan-out source is not a shared manifest',
+      'repl_manifest_authority_denied');
+  }
+  const callerPrincipal = { actor: auth?.actor ?? null, principalId: auth?.principalId ?? null };
+  if (canonicalDigest(callerPrincipal) !== canonicalDigest(source.principal)) {
+    throw new CoordinationRefusal('REPL fan-out caller is not the source manifest principal',
+      'repl_manifest_authority_denied');
+  }
+  const cell = store.contextCell(fields.cellId);
+  if (!cell || cell.state !== 'completed') {
+    throw new CoordinationRefusal('REPL fan-out names a cell that is not settled',
+      'repl_binding_cell_not_settled');
+  }
+  const runIds = [];
+  for (const member of fields.members) {
+    store._assertRunAdmissionOpen(member, false);
+    // The member manifest is a fresh admission against the deployment's own tree and the SOURCE's
+    // resolved branch coordinates: the members read the same context objects, so the resolved
+    // coordinates are copied verbatim and only the repl coordinate (the run) differs.
+    const admitted = admitReplManifest(store, {
+      manifest: {
+        schemaVersion: 1, kind: 'baton.repl_manifest', repoId: store._repoId,
+        tree: { sha: store._deploymentBaseSha, source: 'deployment_snapshot' },
+        repl: { replRole: 'shared', runId: member },
+        branches: clone(source.branches),
+        policyDigest: store._contextProgramPolicy.policyDigest,
+      },
+      fanoutOf: fields.sourceManifestDigest,
+    }, {
+      actor: source.principal.actor, principalId: source.principal.principalId, repoId: store._repoId,
+      key: `repl.manifest_fanout:${fields.sourceManifestDigest}:${member}`,
+    });
+    admitReplBinding(store, {
+      scope: 'shared', name: fields.name, cellId: fields.cellId,
+      manifestDigest: admitted.record.manifestDigest,
+    }, {
+      actor: source.principal.actor, principalId: source.principal.principalId,
+      key: `repl.binding_fanout:${fields.sourceManifestDigest}:${member}:${fields.name}`,
+    });
+    runIds.push(member);
+  }
+  return freeze({
+    ok: true, result: 'fanned_out', sourceManifestDigest: fields.sourceManifestDigest,
+    name: fields.name, runIds: Object.freeze(runIds),
+  });
 }
 
 export function admitReplSession(store, fields, auth) {
@@ -6662,6 +6770,20 @@ export function admitReplBinding(store, fields, auth) {
     throw new CoordinationRefusal('REPL binding expectedBindingVersion must be null or a positive integer',
       'invalid_repl_binding');
   }
+  // D5: the promotion coordinates a rebind carries. The shape is closed ({scope, name,
+  // bindingVersion}) so a promotion records WHICH worker binding it promotes, never free prose
+  // about it, and the author of the promoted object stays recoverable from the durable row
+  // without a transitive read of the worker's own binding.
+  const promotedFrom = Object.hasOwn(fields, 'promotedFrom') ? fields.promotedFrom : null;
+  if (promotedFrom !== null
+    && (!promotedFrom || typeof promotedFrom !== 'object' || Array.isArray(promotedFrom)
+      || Object.keys(promotedFrom).sort().join(',') !== 'bindingVersion,name,scope'
+      || typeof promotedFrom.scope !== 'string' || !SAFE_REPL_SCOPE.test(promotedFrom.scope)
+      || typeof promotedFrom.name !== 'string' || !SAFE_REPL_NAME.test(promotedFrom.name)
+      || !Number.isSafeInteger(promotedFrom.bindingVersion) || promotedFrom.bindingVersion <= 0)) {
+    throw new CoordinationRefusal('REPL binding promotedFrom must name the exact {scope, name, bindingVersion} it promotes',
+      'invalid_repl_binding');
+  }
   // Idempotency (Part B rule 6, P1-4): an explicit payload-comparison block, never the bare
   // `_append` blind-key-return discipline board writes fall back to.
   const prior = store._byKey.get(auth?.key);
@@ -6669,12 +6791,13 @@ export function admitReplBinding(store, fields, auth) {
     const runId = store._replManifestAdmissions.get(prior.payload?.manifestDigest)?.runId ?? null;
     const identity = {
       scope: fields.scope, name: fields.name, cellId: fields.cellId,
-      manifestDigest: fields.manifestDigest, expectedBindingVersion,
+      manifestDigest: fields.manifestDigest, expectedBindingVersion, promotedFrom,
     };
     const priorIdentity = {
       scope: prior.payload?.scope, name: prior.payload?.name, cellId: prior.payload?.cellId,
       manifestDigest: prior.payload?.manifestDigest,
       expectedBindingVersion: prior.payload?.expectedBindingVersion ?? null,
+      promotedFrom: prior.payload?.promotedFrom ?? null,
     };
     if (prior.kind !== 'repl.binding_set' || prior.actor !== auth.actor
       || canonicalDigest(priorIdentity) !== canonicalDigest(identity)) {
@@ -6740,6 +6863,7 @@ export function admitReplBinding(store, fields, auth) {
   const payload = {
     schemaVersion: 1, scope: fields.scope, name: fields.name, bindingVersion, state: 'bound',
     cellId: fields.cellId, bindingDigest, manifestDigest: fields.manifestDigest, expectedBindingVersion,
+    ...(promotedFrom === null ? {} : { promotedFrom: clone(promotedFrom) }),
   };
   const event = store._append('repl.binding_set', payload, auth);
   return freeze({
