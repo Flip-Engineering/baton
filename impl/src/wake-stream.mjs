@@ -305,6 +305,16 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'participantId', kind: 'participant', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
+    // Issue #572: a parentless non-swarm turn report is addressed to the deployment root by its
+    // run. It has no swarm coordinate and is terminal because the report is the completed turn's
+    // durable handoff; the next act is to read that run.
+    wakeClass: 'root_turn_reported', scope: 'deployment', terminal: true,
+    next: 'baton run view {runId}',
+    summary: 'a parentless turn ended and reported its result to the deployment root',
+    rows: [operationalKind('worker.turn_reported')],
+    subject: { field: 'runId', kind: 'run', fallback: null },
+  }),
+  wakeRow({
     wakeClass: 'guidance_delivered', scope: 'deployment', terminal: false, next: null,
     summary: 'a message reached the participant it was addressed to',
     rows: [operationalKind('message.delivered')],
