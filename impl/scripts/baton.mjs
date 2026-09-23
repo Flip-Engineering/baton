@@ -25,6 +25,7 @@ import {
 } from '../src/kimi-credential-setup.mjs';
 import { ProductionConvergenceRuntime, wrapProductionDeployment } from '../src/production-convergence.mjs';
 import { wrapProductionCliClient } from '../src/production-cli-convergence.mjs';
+import { rootWakeTargetFromEnvironment } from '../src/wake-delivery.mjs';
 import {
   UNIFIED_SURFACE_CLI_HELP,
   executeUnifiedSurfaceCli,
@@ -322,9 +323,14 @@ async function serveCheckout() {
   const publishRemote = typeof process.env.BATON_PUBLISH_REMOTE === 'string'
     && process.env.BATON_PUBLISH_REMOTE.length > 0 ? process.env.BATON_PUBLISH_REMOTE : undefined;
   try {
+    const rootWake = rootWakeTargetFromEnvironment();
+    const advanced = {
+      ...(publishRemote === undefined ? {} : { integration: { publishRemote } }),
+      ...(rootWake === null ? {} : { rootWake }),
+    };
     deployment = await openBaton({
       repo: process.cwd(),
-      ...(publishRemote === undefined ? {} : { advanced: { integration: { publishRemote } } }),
+      ...(Object.keys(advanced).length === 0 ? {} : { advanced }),
     });
   } finally { openSignals.release(); }
   await serveDeployment(deployment, openSignals.pendingTrigger());
