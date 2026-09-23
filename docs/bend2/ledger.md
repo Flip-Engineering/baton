@@ -47,6 +47,27 @@ that substitution, measured by real recruit calls:
   `model_unavailable_in_harness` — the harness catalog defines `deepseek/deepseek-v4-pro`, not the
   bracketed spelling, so a served route can name a model its own harness cannot start.
 
+## The 2026-09-23 restart
+
+The host froze on 2026-09-22 at 20:44 UTC with 32 worker seats and a full `npm test --prefix impl`
+running (issue #561); every seat of this swarm died, and the resident restarted on master
+`65c913f0` at about 02:30 UTC. [recovery-2026-09-23.md](recovery-2026-09-23.md) records the
+successors, the retained-work census, and each owner. Two route facts were measured by real recruit
+calls at restart:
+
+- `codex/gpt-6-astra` at `xhigh` accepted two seats and crashed both with `provider_crashed` within
+  seconds of admission, matching the predecessor orchestrator's recorded death on the same route.
+  The live seats run on `omp/deepseek/deepseek-flash` at high effort.
+- `omp/deepseek/deepseek-v4-pro[1m]` refuses with `model_unavailable_in_harness` (the harness
+  defines `deepseek/deepseek-v4-pro`), repeating the refusal recorded above.
+
+The frozen seats' unlanded work is preserved under `refs/baton/preserve/` and is carried by two live
+seats and the lead: the law encoding increment (`bend2-laws-lead6`), the architecture corrections
+and the prototype track (`bend2-arch-lead4`), and the language capability examples
+(`bend2-orchestrator5`). A rehearsal applied every accepted contribution in one scratch checkout;
+they compose without conflict, and the union passes `laws-check.py` (14 of 14 rows) and both
+`lang-cap` programs.
+
 ## Findings that outlive this evaluation
 
 1. **A landing that touches `README.md` or `.gitignore` selects an environment-red test set.** The
@@ -74,3 +95,10 @@ that substitution, measured by real recruit calls:
    row. Two refusals of this evaluation's own contributions were that timeout, and the root filed it
    as issue #546 with the wide default set and the deadline named. A document whose name no test
    mentions lands in a short gate run.
+4. **A real landing cannot complete while the deployment declares no shared remote.** On master
+   `65c913f0`, `swarm.integrate` publishes the landed ref to the destination
+   `advanced.integration.publishRemote` names and refuses `integrate_publish_undeclared` when the
+   deployment declares none. That is the serving deployment's state, so the accepted contributions
+   wait on a deployment edit: declare the shared remote and reload the resident. Dry runs still
+   prepare the squash and report the changed-path selection, so composition and gate selection can
+   be checked before the declaration exists.
