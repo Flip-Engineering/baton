@@ -545,12 +545,79 @@ test('568-M: macOS lsof stderr makes a successful partial scan retain', async (t
     },
   });
 
-  assert.ok(report.diagnostics.some((row) => (
+  const diagnostic = report.diagnostics.find((row) => (
     row.physicalOwnerId === workspace.receipt.physicalOwnerId
       && row.code === 'linked_worktree_liveness_unobservable_retained'
-  )));
+  ));
+  assert.match(diagnostic?.reason ?? '', /incomplete observation/u);
   assert.equal(existsSync(external), true);
   assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
+});
+
+test('568-O: macOS lsof result guards retain failures and accept a clean no-match', async (t) => {
+  const cases = [
+    {
+      label: 'no-match', retained: false,
+      result: () => ({ status: 1, signal: null, stdout: '', stderr: '' }),
+    },
+    {
+      label: 'signal', retained: true, reason: /SIGTERM/u,
+      result: () => ({ status: null, signal: 'SIGTERM', stdout: '', stderr: '' }),
+    },
+    {
+      label: 'overflow', retained: true, reason: /ENOBUFS/u,
+      result: () => ({
+        status: 0, signal: null, stdout: 'truncated', stderr: '',
+        error: Object.assign(new Error('maxBuffer exceeded'), { code: 'ENOBUFS' }),
+      }),
+    },
+    {
+      label: 'missing', retained: true, reason: /ENOENT/u,
+      result: () => ({
+        status: null, signal: null, stdout: '', stderr: '',
+        error: Object.assign(new Error('missing lsof'), { code: 'ENOENT' }),
+      }),
+    },
+    {
+      label: 'bad-status', retained: true, reason: /status 2/u,
+      result: () => ({ status: 2, signal: null, stdout: '', stderr: '' }),
+    },
+  ];
+  for (const item of cases) {
+    const f = fixture(t, `macos-lsof-${item.label}`);
+    const before = authority(`macos-lsof-${item.label}-deployment`, 'controller-before');
+    const after = authority(`macos-lsof-${item.label}-deployment`, 'controller-after');
+    const workspace = await ownedWorkspace(f, before, `macos-lsof-${item.label}`);
+    const seat = projectedSeat(f, workspace);
+    const external = join(dirname(f.repo), `macos-lsof-${item.label}-external`);
+    addLinkedWorktree(seat, workspace, external, ['-b', `macos-lsof-${item.label}`]);
+
+    const report = reconcile(f.repo, [], {
+      ownerAuthority: after,
+      snapshotUncommitted: true,
+      beforeOwnerCleanup: () => {
+        assert.equal(item.retained, false, `${item.label} must keep owner capacity when retained`);
+        return true;
+      },
+      linkedWorktreeObservation: {
+        platform: 'darwin', uid: 501, spawnSync: () => item.result(),
+      },
+    });
+
+    const diagnostic = report.diagnostics.find((row) => (
+      row.physicalOwnerId === workspace.receipt.physicalOwnerId
+        && row.code === 'linked_worktree_liveness_unobservable_retained'
+    ));
+    if (item.retained) {
+      assert.match(diagnostic?.reason ?? '', item.reason);
+      assert.equal(existsSync(external), true);
+      assert.ok(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId));
+    } else {
+      assert.equal(diagnostic, undefined);
+      assert.equal(existsSync(external), false);
+      assert.equal(physicalWorkspaceOwnerReceipt(f.repo, workspace.receipt.physicalOwnerId), null);
+    }
+  }
 });
 
 test('568-N: a Git observation failure retains its row and examines later rows', async (t) => {
@@ -575,10 +642,13 @@ test('568-N: a Git observation failure retains its row and examines later rows',
     linkedWorktreeHolders: (path) => { observed.push(path); return []; },
   });
 
-  assert.ok(retained.diagnostics.some((row) => (
+  const diagnostic = retained.diagnostics.find((row) => (
     row.physicalOwnerId === workspace.receipt.physicalOwnerId
-      && row.code === 'linked_worktree_content_retained'
-  )));
+      && row.code === 'linked_worktree_git_observation_unobservable_retained'
+  ));
+  assert.deepEqual(diagnostic?.failedObservations?.map((row) => ({
+    worktreePath: row.worktreePath, observation: row.observation,
+  })), [{ worktreePath: first, observation: 'git_status' }]);
   assert.deepEqual(new Set(observed), new Set([first, second]));
   const recorded = readFileSync(
     seatLinkedWorktreeOwnershipPath(f.repo, workspace.receipt.physicalOwnerId), 'utf8',
