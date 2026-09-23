@@ -1914,6 +1914,14 @@ export class SwarmRuntime {
             reason: 'provider_fault',
           }, { actor: 'baton-runtime', key: leaveKey });
         }
+        // Issue #564: the death is also a review loss. The unreviewed contributions the dead seat
+        // could have reviewed are re-addressed to the root from the fresh fold, beside the fault
+        // rows and under the same deterministic keys — a replayed observation re-derives without
+        // double-recording. This observation writes no operation completion, so the rows are
+        // never behind an acknowledgment; a fault here leaves them to the next observation.
+        try {
+          this._recordReviewerLossRows(this.store.swarm(swarm.swarmId), 'baton-runtime');
+        } catch { /* the fault rows stand; the next observation re-derives under the same keys */ }
         // Issue #443: the death is answered, not only recorded. The DECISION row names the routes
         // that could carry this seat's work, ranked by the comparison a recruit performs, with
         // what the death left to carry: the row the root reads instead of retyping a resume, and
@@ -2385,18 +2393,35 @@ export class SwarmRuntime {
     return this._mutationResult('swarm.update', args, [write], principal, context,
       { kind: 'note', participantId: payload.participantId });
   }
-  /** Issue #564: record the root-addressed wake rows one recorded contribution owes (the
-   * derivation is `rootAttentionRowPayloads`), one driver row per trigger under a deterministic
-   * idempotency key — the replay-safety the stateless derivation needs. Returns the writes the
-   * caller folds into the mutation receipt. */
-  _recordRootAttentionRows(swarm, contribution, principal) {
-    return rootAttentionRowPayloads(swarm, contribution).map((row) => {
+  /** Issue #564: record already-derived root-addressed wake rows, one driver row per trigger
+   * under a deterministic idempotency key — the replay-safety the stateless derivation needs: a
+   * replayed write (or a re-derivation after an append fault) skips what already landed and
+   * records exactly the rows still missing. Returns the writes the caller folds into the
+   * mutation receipt. */
+  _recordRootAttentionRows(swarm, rows, actor) {
+    return rows.map((row) => {
       const event = this.store.recordDriver('swarm.root_attention_owed', row,
-        { actor: principal.actor,
+        { actor,
           key: `swarm-root-attention:${hash([row.swarmId, row.contributionId, row.owed, row.ask ?? null])}` }).event;
       return { kind: 'driver.recorded', payload: event.payload,
         seq: event.seq, ts: event.ts, actor: event.actor };
     });
+  }
+
+  /** Issue #564: the review-owed rows a swarm owes after a seat that held review stopped being
+   * active — a leave, or a provider-fault death. Every contribution still unreviewed (no
+   * SETTLING review, the same reads the contribution ledger applies) that no remaining active
+   * seat can review is re-addressed to the root, derived from the durable fold rather than the
+   * contribution's write instant; the keys above keep a second departure or a replayed
+   * observation from double-recording. needsFromOthers items are NOT re-derived here: their
+   * trigger is the contribution's own recording, not the departure. */
+  _recordReviewerLossRows(swarm, actor) {
+    const unreviewed = Object.values(swarm.contributions ?? {})
+      .filter((contribution) => !(swarm.reviews?.[contribution.contributionId] ?? [])
+        .some((review) => review.decision !== 'comment'));
+    return this._recordRootAttentionRows(swarm, unreviewed
+      .flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
+      .filter((row) => row.owed === 'review_owed'), actor);
   }
 
 
@@ -8212,24 +8237,33 @@ export class SwarmRuntime {
         payload.releasedBy = actor;
       }
       const recorded = this._write(args.event, payload, principal, this._operationKey(command, args, principal));
-      this._recordOperationCompleted(command, args, principal, context);
-      // Issue #564: the contribution row is in the fold — derive the root-addressed wake rows
-      // beside it. This runs AFTER the record and can never fail it: a derivation or recording
-      // fault is the rows' loss, never the caller's answer.
+      // Issue #564: the root-addressed fact is written DURABLY BEFORE the operation is completed,
+      // so an operation that reads completed can never be missing its owed row. The contribution
+      // (or leave) row above is already durable when this runs; a crash or append fault here
+      // faults the mutation with its completion unwritten, and a replay under the same
+      // idempotency key re-derives the missing rows — the deterministic keys skip what already
+      // landed — before completing. The derivation itself is a pure read of the fold; only the
+      // appends can fault, and they are never swallowed.
       let rootAttention = [];
       if (args.event === 'swarm.contribution_recorded') {
-        try {
-          const recordedSwarm = this._swarm(args.swarmId);
-          const recordedContribution = recordedSwarm.contributions?.[payload.contributionId] ?? null;
-          if (recordedContribution !== null) {
-            rootAttention = this._recordRootAttentionRows(recordedSwarm, recordedContribution, principal);
-          }
-        } catch { /* the contribution stands; an attention row is evidence, never admission-critical */ }
+        const recordedSwarm = this._swarm(args.swarmId);
+        const recordedContribution = recordedSwarm.contributions?.[payload.contributionId] ?? null;
+        if (recordedContribution !== null) {
+          rootAttention = this._recordRootAttentionRows(recordedSwarm,
+            rootAttentionRowPayloads(recordedSwarm, recordedContribution), principal.actor);
+        }
+      } else if (args.event === 'swarm.participant_left') {
+        // The departure is also a review loss: every contribution still unreviewed that no
+        // remaining active seat can review is re-addressed to the root from the fold — the
+        // trigger is the reviewer's departure, not the contribution's write instant.
+        rootAttention = this._recordReviewerLossRows(this._swarm(args.swarmId), principal.actor);
       }
+      this._recordOperationCompleted(command, args, principal, context);
       if (args.event === 'swarm.participant_left') this._reconcileHostCapacity();
       if (args.event === 'swarm.coupling_updated') this._settleCheckoutWriterState();
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
-        return this._mutationResult(command, args, [recorded], principal, context,
+        return this._mutationResult(command, args, [recorded, ...rootAttention].filter(Boolean),
+          principal, context,
           { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false });
       }
       return this._mutationResult(command, args, [externalJoin, recorded, ...rootAttention].filter(Boolean),
@@ -9166,14 +9200,19 @@ export class SwarmRuntime {
         const leave = seat.status === 'active' ? this._write('swarm.participant_left', {
           swarmId: args.swarmId, participantId: participant.participantId, reason: leaveReason,
         }, principal, `${operationKey}:leave`) : null;
+        // Issue #564: the stop is also a review loss — the same fold derivation the leave path
+        // runs, written durably inside the effect so it precedes the completion row `_once`
+        // records for this attempt. A settled (already-left) seat writes no leave and owes no
+        // re-derivation: its departure was already answered where it happened.
+        const reviewerLoss = leave
+          ? this._recordReviewerLossRows(this._swarm(args.swarmId), principal.actor) : [];
         this._reconcileHostCapacity();
         // Issue #469: the receipt a stop answers with IS the row the operation lane records
         // (`_once` writes the effect's own result), so projecting it HERE is what keeps both the
         // answer and the durable row carrying the objective's reference — never a second copy of
         // the text the join row already holds.
         return { participantId: participant.participantId,
-          result: objectiveReferencedReceipt(stopped, seat),
-          leaveReason, writes: leave ? [leave] : [] };
+          leaveReason, writes: leave ? [leave, ...reviewerLoss] : [] };
       }, { context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, result: result.result, leftReason: result.leaveReason ?? null });
