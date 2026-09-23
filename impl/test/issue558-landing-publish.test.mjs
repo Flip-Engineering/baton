@@ -10,8 +10,9 @@
 //
 //   (a) a landing with no declared remote refuses `integrate_publish_undeclared`, pre-effect:
 //       the target does not move and no receipt is recorded;
-//   (b) a landing whose declared remote is unreachable refuses `integrate_publish_failed`, and
-//       the local fast-forward is rolled back: the target holds no unpublished squash;
+//   (b) a landing whose declared remote is unreachable refuses `integrate_publish_unreachable`
+//       (#573: the pre-flight refuses before the gate run, so nothing ever moves and there is
+//       no local fast-forward to roll back);
 //   (c) a landing with a reachable declared remote publishes synchronously: the remote holds the
 //       squash the moment the landing returns, with no background hook involved;
 //   (d) a malformed declaration is refused at open, never first at landing time.
@@ -151,14 +152,16 @@ test('558a: a landing with no declared shared remote refuses typed and moves not
 
 test('558b: a landing that cannot reach the declared remote refuses typed and leaves no unpublished squash', needsGit, async (t) => {
   const w = await world(t, { publishRemote: join('no-such-directory', 'shared.git') });
+  // Issue #573: the pre-flight refuses before the scratch checkout exists, so this row never
+  // reaches the push whose failure #558 originally pinned here.
   const headBefore = git(w.repo, 'rev-parse', 'master');
 
   const error = await w.integrate().then(() => null, (thrown) => thrown);
 
   assert.ok(error, 'the landing refuses instead of reporting a local success');
-  assert.equal(error.code, 'integrate_publish_failed');
+  assert.equal(error.code, 'integrate_publish_unreachable');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore,
-    'the local fast-forward is rolled back: the target holds no unpublished squash');
+    'the target holds no unpublished squash: the pre-flight refuses before anything moves');
   assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
 });
 
