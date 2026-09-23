@@ -569,14 +569,6 @@
       "reason": "#161"
     },
     {
-      "key": "test/orchestrator-wake-red.test.mjs :: AUTHORITY-RUN-SCOPED (§E D3/F5): a live lease on run A never authorizes run B\\'s wake",
-      "reason": "#71"
-    },
-    {
-      "key": "test/orchestrator-wake-red.test.mjs :: WAIT-DISPATCH (§A): attention.wait dispatches; malformed closures refuse attention_wait_invalid before state",
-      "reason": "#71"
-    },
-    {
       "key": "test/phase10.1-reconciliation.test.mjs :: SC18: timeoutMs is enforced by every session adapter",
       "reason": "A-N5"
     },
