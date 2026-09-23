@@ -1,0 +1,11 @@
+round-trip ok: null
+round-trip ok: true
+round-trip ok: 0
+round-trip ok: 4096
+round-trip ok: "a\"b\\c"
+trailing input after a complete value
+trailing input after a complete value
+refused at position 3
+refused at position 3
+refused at position 2
+bend 2.0.26 is available: run bend update
