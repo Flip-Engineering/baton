@@ -11,6 +11,9 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { compareCanonicalStrings } from './canonical-order.mjs';
+// #561: the derived floor reserves the disk room the OS needs to keep paging under memory
+// pressure — measured from the same host observation every resident shares.
+import { hostCapacityObservation } from './host-capacity.mjs';
 // G-32: this module's git calls (defaultEstimate's `ls-tree -r -l -z` above all) share the ONE
 // whole-repository listing bound with worktree.mjs rather than restating a buffer size.
 import { gitListingMaxBuffer } from './worktree.mjs';
@@ -153,20 +156,40 @@ export function normalizeWorktreeCapacityPolicy(value) {
  * own records (ledger and evidence directories; worker homes are already the checkout estimates
  * the high-water carries). Deployment policy may still pin `minFreeBytes`/`minFreeInodes`
  * explicitly — a configured floor replaces the derivation, and the policy digest pins which of
- * the two regimes is in force. Every input is a measurement or a deployment record; nothing here
- * is chosen. */
+ * the two regimes is in force. One more term rides the derived bytes since #561:
+ *   swapReserve   the disk the OS may still need so paging can grow — the memory committed
+ *                 beyond what free RAM and free swap can absorb, bounded by ONE core share (one
+ *                 verdict's worth of paging: the same measured scale every admission weight
+ *                 uses). Zero when the host measures no such debt. Derived, never chosen.
+ * Every input is a measurement or a deployment record; nothing here is chosen. */
 export function deriveWorktreeCapacityFloor({
   estimateHighWaterBytes, estimateHighWaterInodes, runtimeFootprintBytes, runtimeFootprintInodes,
+  swapReserveBytes = 0,
 }) {
   for (const [field, value] of Object.entries({
     estimateHighWaterBytes, estimateHighWaterInodes, runtimeFootprintBytes, runtimeFootprintInodes,
   })) {
     if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`worktree capacity floor derivation requires a non-negative safe integer ${field}`);
   }
+  if (!Number.isSafeInteger(swapReserveBytes) || swapReserveBytes < 0) throw new TypeError('worktree capacity floor derivation requires a non-negative safe integer swapReserveBytes');
   return Object.freeze({
-    bytes: estimateHighWaterBytes + runtimeFootprintBytes,
+    bytes: estimateHighWaterBytes + runtimeFootprintBytes + swapReserveBytes,
     inodes: estimateHighWaterInodes + runtimeFootprintInodes,
   });
+}
+
+/** #561: the swap-growth reserve one derived floor carries — the paging debt the OS could still
+ * need to absorb (`totalBytes − availableBytes` beyond `swapFreeBytes`), bounded by ONE core
+ * share so the reserve scales with the heavy work the host admits and never with the debt's
+ * full size. All four terms are the host's own measurements. */
+export function deriveSwapReserveBytes({ totalBytes, availableBytes, swapFreeBytes, cores }) {
+  for (const [field, value] of Object.entries({ totalBytes, availableBytes, swapFreeBytes, cores })) {
+    if (!Number.isSafeInteger(value) || value < 0) return 0;
+  }
+  const committedUnbacked = Math.max(0, totalBytes - availableBytes);
+  const beyondSwap = Math.max(0, committedUnbacked - swapFreeBytes);
+  const oneShare = Math.max(1, Math.floor(totalBytes / cores));
+  return Math.min(beyondSwap, oneShare);
 }
 
 /** #307: the ONE capacity-pressure predicate. True when the deployment's workspace capacity
@@ -293,7 +316,7 @@ function validLockOwner(value) {
 export class WorktreeCapacityAuthority {
   constructor({
     repoRoot, policy, integrityKey, observe = defaultObserve, estimate = defaultEstimate,
-    runtimeFootprint = null, now = Date.now, lockWaitMs = DEFAULT_LOCK_WAIT_MS,
+    runtimeFootprint = null, hostObservation = null, now = Date.now, lockWaitMs = DEFAULT_LOCK_WAIT_MS,
   }) {
     this.repoRoot = repoRoot;
     this.policy = normalizeWorktreeCapacityPolicy(policy);
@@ -311,13 +334,13 @@ export class WorktreeCapacityAuthority {
     this.integrityKey = Buffer.from(integrityKey);
     this.observe = observe; this.estimate = estimate; this.now = now; this.lockWaitMs = lockWaitMs;
     this.runtimeFootprint = runtimeFootprint;
+    this.hostObservation = hostObservation;
     this.ownerId = randomBytes(16).toString('hex');
     this.root = join(repoRoot, '.baton', 'capacity');
     this.statePath = join(this.root, 'reservations.json');
     this.lockPath = join(this.root, 'lock');
     this.reaperPath = `${this.lockPath}.reaper`;
   }
-
   /** The effective floor for one admission check: per field, a configured policy floor wins;
    * a null field (#307) derives from the ledger's estimate high-water plus the measured runtime
    * footprint. Runs under the lock with the state already read. */
@@ -335,15 +358,27 @@ export class WorktreeCapacityAuthority {
       if (error instanceof WorktreeCapacityError) throw error;
       throw typed('worktree capacity could not measure its runtime footprint', 'worktree_capacity_unavailable', error);
     }
+    // #561: when the deployment wires a host observation, the derived bytes also reserve the
+    // disk room the OS may need to keep paging under memory pressure — measured, never chosen.
+    let swapReserveBytes = 0;
+    if (this.hostObservation !== null) {
+      const host = this.hostObservation();
+      swapReserveBytes = deriveSwapReserveBytes({
+        totalBytes: host.totalBytes, availableBytes: host.availableBytes,
+        swapFreeBytes: host.swapFreeBytes, cores: host.cores,
+      });
+    }
     const derived = deriveWorktreeCapacityFloor({
       estimateHighWaterBytes: highWater.bytes, estimateHighWaterInodes: highWater.inodes,
       runtimeFootprintBytes: footprint.bytes, runtimeFootprintInodes: footprint.inodes,
+      swapReserveBytes,
     });
     return Object.freeze({
       bytes: configuredBytes ?? derived.bytes,
       inodes: configuredInodes ?? derived.inodes,
       source: configuredBytes !== null || configuredInodes !== null ? 'mixed' : 'derived',
       estimateHighWater: highWater, runtimeFootprint: Object.freeze(footprint),
+      swapReserveBytes,
     });
   }
 
