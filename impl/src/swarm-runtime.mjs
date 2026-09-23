@@ -7401,11 +7401,13 @@ export class SwarmRuntime {
 
   /** The landed contribution whose own receipt already covers any of `paths`, or null. Two paths
    * overlap the way the fold's claims do: equal, or one a `/`-boundary prefix of the other — so a
-   * receipt that lists `impl/src/` matches a conflict on `impl/src/x.mjs`. */
+   * receipt that lists `impl/src/` matches a conflict on `impl/src/x.mjs`. A receipt a dry run left
+   * is skipped: it moves no ref, so it names a change the target never received. */
   _landedBy(swarm, paths) {
     const overlaps = (left, right) => left === right
       || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
     for (const row of Object.values(swarm.contributions ?? {})) {
+      if (row?.integration?.dryRun === true) continue;
       const landed = row?.integration?.changedPaths;
       if (!Array.isArray(landed)) continue;
       if (paths.some((path) => landed.some((other) => overlaps(path, other)))) return row.contributionId;
