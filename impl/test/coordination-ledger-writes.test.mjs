@@ -13,8 +13,11 @@
 //      pinned per member).
 //   4. THE STORE'S BEHAVIOR IS UNCHANGED — a fixture that claims the writer lease, writes the
 //      canonical-order receipt, compacts into a segment, checkpoints, releases, re-claims and
-//      restarts produces byte-identical durable output to the pre-move store (digests captured at
-//      36295b70, the slice-4 revision this slice was generated against).
+//      restarts produces the same durable output the pre-move store produced: the ledger and
+//      segment bytes stay pinned literally (the slice-4 capture at 36295b70), and the projection
+//      checkpoint — derived state whose bytes carry the projection, so every later projection
+//      family moves them — is pinned by the bindings its envelope must satisfy, not by a literal
+//      the projection's own growth invalidates.
 //
 // The 26 delegates and their arities are pinned against the committed seam map, so a helper that
 // loses its delegate, or a member that changes signature, fails here rather than in production.
@@ -271,7 +274,9 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
     assert.deepEqual(store.revokeBoardGrants({ workerId: 'w-clw-a' }, { actor: 'orchestrator', key: 'revoke-none' }),
       { ok: true, revoked: [] });
 
-    // The compaction seam: segment file, segment index, ledger rewrite, checkpoint — byte-pinned.
+    // The compaction seam: segment file, segment index, ledger rewrite, checkpoint. The ledger and
+    // segment bytes are pinned literally; the checkpoint is derived state and is pinned by its
+    // bindings below.
     store.createTask(fields('clw-c'), { actor: 'orchestrator', key: 'fixture-c' });
     store.createTask(fields('clw-d'), { actor: 'orchestrator', key: 'fixture-d' });
     assert.deepEqual(store.compact({ beforeSeq: 3 }), {
@@ -295,6 +300,36 @@ test('CLW5: the store keeps its exact durable behavior across the move', async (
     // unchanged, which is what says the move is the projection's and not the write path's.
     assert.equal(sha(readFileSync(join(root, 'projection.checkpoint'))),
       'a3c561371c766feb32f4cde09a93ec7785df5047eadc070c366b2608fa1da7b6');
+
+    const checkpointBytes = readFileSync(join(root, 'projection.checkpoint'));
+    const { deserialize } = await import('node:v8');
+    const envelope = deserialize(checkpointBytes);
+    assert.deepEqual(Object.keys(envelope).sort(), [
+      'authorityDigest', 'coversLineDigest', 'coversSeq', 'prefixBytes', 'prefixDigest',
+      'projectionBytes', 'projectionDigest', 'projectionShapeDigest', 'schemaVersion',
+      'servedCommit', 'swarmDictionaryFields',
+    ], 'the checkpoint envelope keeps the writer\'s exact key set');
+    const ledgerBytes = readFileSync(join(root, 'events.jsonl'));
+    assert.equal(envelope.schemaVersion, 1);
+    assert.equal(envelope.servedCommit, null, 'this fixture configures no deployment commit');
+    assert.ok(Array.isArray(envelope.swarmDictionaryFields));
+    assert.equal(envelope.coversSeq, store.snapshot().lastSeq,
+      'the claim covers every row the store folded');
+    assert.equal(envelope.prefixBytes, ledgerBytes.byteLength,
+      'the byte claim is the ledger file it was written beside');
+    assert.equal(envelope.prefixDigest, sha(ledgerBytes),
+      'the prefix digest re-derives from that ledger');
+    const lastLineStart = ledgerBytes.lastIndexOf(0x0a, ledgerBytes.byteLength - 2) + 1;
+    assert.equal(envelope.coversLineDigest,
+      sha(ledgerBytes.subarray(lastLineStart, ledgerBytes.byteLength - 1)),
+      'the claim anchors the last complete ledger line');
+    assert.ok(envelope.projectionBytes.byteLength > 0, 'the checkpoint carries the projection');
+    assert.equal(envelope.projectionDigest, sha(envelope.projectionBytes),
+      'the carried projection binds its own bytes');
+    assert.equal(envelope.authorityDigest, store._checkpointAuthorityDigest,
+      'the checkpoint binds this store authority');
+    assert.equal(envelope.projectionShapeDigest, store._projectionShapeDigest,
+      'and the projection shape it was written under');
 
     assert.equal(store.releaseWriterLease({ requireOwned: true }), true);
     assert.equal(existsSync(join(root, 'writer.lease')), false);

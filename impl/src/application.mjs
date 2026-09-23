@@ -1163,7 +1163,7 @@ export function validateApplicationCommandArgs(name, args) {
       || Object.keys(args).some((key) => key !== 'continuationCursor')
       || (args.continuationCursor !== undefined
         && (typeof args.continuationCursor !== 'string' || !/^[0-9]{1,32}$/u.test(args.continuationCursor)))) {
-      throw applicationError('Run list request is invalid', 'application_run_list_invalid',
+      throw applicationError('Run list request is invalid: continuationCursor must be 1-32 digits, the cursor the previous page names at continuation.arguments.continuationCursor', 'application_run_list_invalid',
         args?.continuationCursor === undefined ? null : { field: 'continuationCursor' });
     }
     return true;

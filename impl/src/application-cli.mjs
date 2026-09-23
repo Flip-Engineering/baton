@@ -420,7 +420,12 @@ function nonempty(value) { return typeof value === 'string' && value.length > 0;
  * growing a detail row full of nulls. */
 function socketCause(error) {
   const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : null;
-  const message = error instanceof Error && nonempty(error.message) ? error.message : null;
+  // #41: the transport's own text is kept for its failure class and its timing, never for the path
+  // it was connecting to — an absolute path under a private runtime root is the material this
+  // refusal judges, so it is replaced before the message can ride the detail.
+  const message = error instanceof Error && nonempty(error.message)
+    ? error.message.replace(/(^|\s)\/[^\s()]+/gu, '$1<socket path>')
+    : null;
   return code === null && message === null ? null : { code, message };
 }
 // U-F12: a key-closure violation names the offending key (the first one, in sorted order, so the
@@ -854,7 +859,14 @@ export function discoverBatonConnection({
     // so 103 bytes is the portable ceiling for a Unix socket path.
     if (!isAbsolute(profile.socketPath) || profile.socketPath.includes('\0')
       || Buffer.byteLength(profile.socketPath) > 103) {
-      throw cliCauseRefusal('user_profile_socket_path_invalid', { observed: observedValue(profile.socketPath ?? null) });
+      throw cliCauseRefusal('user_profile_socket_path_invalid', {
+        // #41: the refusal names the violation, never the value — the path is the material this
+        // row judges (a private runtime root must not be reprinted); `field` stays socketPath and
+        // the rule and remedy keep naming the accepted shape.
+        observed: !isAbsolute(profile.socketPath) ? 'the path is not absolute'
+          : profile.socketPath.includes('\0') ? 'the path contains a NUL byte'
+          : 'the path exceeds the 103-byte socket ceiling',
+      });
     }
     if (profile.deploymentId !== repository.deploymentId) {
       throw cliCauseRefusal('user_profile_deployment_mismatch', {
@@ -1609,7 +1621,7 @@ export const CLI_TOP_LEVEL_VERBS = Object.freeze([
     summary: 'Run, compile, start, stop and inspect workflow waves.',
   }),
   Object.freeze({
-    token: 'runs', verb: 'baton runs list', argv: Object.freeze(['runs', 'list']), kind: 'command',
+    token: 'runs', verb: 'baton runs list [--cursor CURSOR]', argv: Object.freeze(['runs', 'list']), kind: 'command',
     parser: 'baton-cli',
     summary: 'List the Runs this authenticated connection may observe.',
   }),
@@ -3104,6 +3116,13 @@ const CLI_FOLLOW_OPTION_KEYS = Object.freeze(['onFollowPage', 'signal']);
  * as application_follow_invalid, never silently loosened. */
 const CLI_FOLLOW_PAGE_WAIT_MS = 1_000;
 
+/** #41: the attachment refusal names the failure CLASS — the transport's typed code — never the
+ * transport's own text, which carries the socket path this refusal must not reprint. */
+function wakeAttachmentCause(cause) {
+  return typeof cause?.code === 'string' && cause.code.length > 0
+    ? cause.code : 'the resident refused the attachment';
+}
+
 /** One attachment, one line per frame, for as long as the caller waits. Returns when the caller
  * stops it (a signal), when the stream ends, or — for the swarm verb — when that swarm's own
  * `closed` wake lands. A refusal is thrown, never swallowed: a watch that cannot attach must not
@@ -3153,7 +3172,7 @@ export async function followWakes(parsed, client, options = {}) {
   if (outcome?.status === 'refused') {
     const cause = outcome.error;
     throw cliError(
-      `the deployment wake stream could not be attached: ${cause?.message ?? 'the resident refused the attachment'}`,
+      `the deployment wake stream could not be attached: ${wakeAttachmentCause(cause)}`,
       typeof cause?.code === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(cause.code) ? cause.code : 'wake_stream_unavailable',
     );
   }
@@ -3176,7 +3195,7 @@ export async function followWakes(parsed, client, options = {}) {
     await options.onFollowPage?.(frame);
     const cause = outcome.error;
     throw Object.assign(cliError(
-      `the deployment wake stream could not be attached: ${cause?.message ?? 'the resident refused the attachment'}`,
+      `the deployment wake stream could not be attached: ${wakeAttachmentCause(cause)}`,
       typeof cause?.code === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(cause.code) ? cause.code : 'wake_stream_unavailable',
     ), { detail: { ...(cause?.detail ?? {}), attachmentClosed: frame } });
   }
@@ -4046,10 +4065,22 @@ export function parseBatonCli(rawArgs) {
     }
     return parseDeploymentWatch(args, idempotencyKey);
   }
+  // Issue #136: `baton runs list [--cursor CURSOR]` resumes a paged read from the cursor the
+  // previous page named (continuation.arguments.continuationCursor); the web client's drain
+  // ladder continues forward from there. The admitted shape is the registry row's own
+  // ([0-9]{1,32}), so a parse never hands the resident an argument its own validation refuses.
   if (args[0] === 'runs' && args[1] === 'list') {
     args.splice(0, 2);
+    const cursor = take(args, '--cursor');
     noRemainder(args);
-    return { kind: 'command', name: 'runs.list', args: {}, idempotencyKey };
+    if (cursor !== null && !/^[0-9]{1,32}$/u.test(cursor)) {
+      throw cliError('--cursor must be 1-32 digits, the cursor a baton runs list answer carries at continuation.arguments.continuationCursor');
+    }
+    return {
+      kind: 'command', name: 'runs.list',
+      args: cursor === null ? {} : { continuationCursor: cursor },
+      idempotencyKey,
+    };
   }
   if (args[0] === 'review') {
     args.shift();
@@ -5069,10 +5100,11 @@ export class BatonWebClient {
     const body = await this._json('/v1/session', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
     const identity = body?.identity;
     const expiresAt = Date.parse(body?.expiresAt);
-    const identityFields = ['capabilities', 'repoIds', 'sessionId', 'userId'];
-    if (!record(body) || Object.keys(body).sort().join(',') !== ['expiresAt', 'identity', 'ok'].join(',')
-      || body.ok !== true || !record(identity)
-      || Object.keys(identity).sort().join(',') !== identityFields.sort().join(',')
+    // Issue #393 (audit-20260918 C14): every REQUIRED field is validated by its own shape check
+    // below, and a field a newer resident adds rides past untouched. The exact key set comparison
+    // that used to sit here refused every CLI session the moment the resident's /v1/session answer
+    // gained a field; setupBatonConnection's read takes the additive posture this converges on.
+    if (!record(body) || body.ok !== true || !record(identity)
       || !/^[A-Za-z0-9._:-]{1,256}$/u.test(identity.userId ?? '')
       || !/^[A-Za-z0-9._:-]{1,256}$/u.test(identity.sessionId ?? '')
       || !Array.isArray(identity.capabilities) || identity.capabilities.length === 0

@@ -1233,12 +1233,12 @@ export class Coordinator {
     // Operations admitted before the irreversible fence may finish, but no stop effect races
     // them. In particular, publisher/integration/provider work cannot be relabelled as drained
     // while it still owns an external or repository effect boundary.
-    while (this._authorityOps > 0 && Date.now() < deadline) {
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+    while (this._authorityOps > 0 && this._now() < deadline) {
+      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
     }
     if (this._authorityOps > 0) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'authority_operations_in_flight', count: this._authorityOps } });
-    while (this._startupRecoveryState === 'pending' && Date.now() < deadline) {
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+    while (this._startupRecoveryState === 'pending' && this._now() < deadline) {
+      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
     }
     if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_recovery_pending' } });
     await this._cancelPendingForDrain(deadline);
@@ -1267,7 +1267,7 @@ export class Coordinator {
       dispositions.set(workerId, disposition);
     };
     for (const workerId of targetWorkerIds) {
-      if (Date.now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'deadline', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds, null, physicalActor) } });
+      if (this._now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'deadline', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(targetWorkerIds, null, physicalActor) } });
       if (dispositions.has(workerId)) continue;
       const handle = this._workers.get(workerId); const task = handle ? this._tasks.get(handle.taskId) : null;
       if (!handle) { setDisposition(workerId, 'alreadyTerminal'); continue; }
@@ -1310,7 +1310,7 @@ export class Coordinator {
         else if (result?.result === 'stop_attempts_exhausted') this._abandonStopWorker(handle, result);
       } catch { /* exact state below is authoritative; retry until the deployment deadline */ }
     };
-    while (Date.now() <= deadline) {
+    while (this._now() <= deadline) {
       const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
       // #360: release what a settled holder cannot. A worker whose process is exactly closed
       // and whose seat has left/stopped (a durably admitted run stop) is reaped by the drain
@@ -1412,8 +1412,8 @@ export class Coordinator {
       }
       await this._beforeDrainDeadline(Promise.all(globalRemaining.map(attempt)), deadline,
         () => ({ reason: 'deadline', stage: 'remaining', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._drainWaitingOn(globalRemaining.map((handle) => handle.id), null, physicalActor) }));
-      if (Date.now() >= deadline) break;
-      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+      if (this._now() >= deadline) break;
+      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - this._now())));
     }
     // The terminal throw names its wait like every other deadline path (#277 G-21): a bare
     // non-convergence is never wrapped as its own cause by _drainFailure.
@@ -1431,7 +1431,7 @@ export class Coordinator {
       if (describe) { try { failure.detail = describe(); } catch { /* a wait that cannot be described is still a named deadline */ } }
       return failure;
     };
-    const remaining = deadline - Date.now();
+    const remaining = deadline - this._now();
     if (remaining <= 0) return Promise.reject(expired());
     return new Promise((resolveOperation, rejectOperation) => {
       const timer = setTimeout(() => rejectOperation(expired()), remaining);
@@ -2755,7 +2755,11 @@ export class Coordinator {
     if (typeof this._worktrees?.validateSessionContext === 'function') {
       const verdict = await this._worktrees.validateSessionContext(context);
       if (!verdict?.ok) {
-        throw new SessionSelectionError(verdict?.reason ?? 'session worktree is not reusable', 'session_context_mismatch');
+        // Issue #563: the worktree verdict's own code crosses the surface when it has one — a
+        // recorded base that is unknown, rewound or diverged is a named fact, not the generic
+        // session_context_mismatch that collapses all three.
+        throw new SessionSelectionError(verdict?.reason ?? 'session worktree is not reusable',
+          verdict?.code ?? 'session_context_mismatch');
       }
       return;
     }

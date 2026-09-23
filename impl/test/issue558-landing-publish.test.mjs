@@ -371,3 +371,29 @@ test('558f: a deployment whose driver declares no remote composes an authority t
   assert.equal(error.code, 'integrate_publish_undeclared');
   assert.equal(git(w.repo, 'rev-parse', 'master'), w.targetHead, 'the target is untouched');
 });
+
+// ── (g) a push that reaches somewhere else is unverified, never a success ────────────────────
+
+test('558g: a landing whose push is redirected away from the declared remote refuses unverified and rolls back', needsGit, async (t) => {
+  const w = await world(t, { bareRemote: true });
+  // Issue #556: git's own push-only rewrite. The push names the declared remote and is served by
+  // another repository, while a read of the declared remote is served by the declared one — the
+  // shape where every in-process signal of a push reads as a real publish that never arrived.
+  const elsewhere = join(w.directory, 'elsewhere.git');
+  execFileSync('git', ['init', '-q', '--bare', elsewhere], { env: { ...process.env, ...QUIET_GIT_ENV } });
+  git(w.repo, 'config', `url.${elsewhere}.pushInsteadOf`, w.remote);
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integrate().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing refuses instead of reporting a success the declared remote cannot show');
+  assert.equal(error.code, 'integrate_publish_unverified');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore,
+    'the local fast-forward is rolled back: the target holds no unverified squash');
+  assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
+  // The push itself succeeded somewhere: this is the false-positive success #556 recorded.
+  const landedElsewhere = execFileSync('git', ['--git-dir', elsewhere, 'rev-parse', 'refs/heads/master'], {
+    encoding: 'utf8', env: { ...process.env, ...QUIET_GIT_ENV },
+  }).trim();
+  assert.notEqual(landedElsewhere, headBefore, 'the redirected push wrote the other repository');
+});
