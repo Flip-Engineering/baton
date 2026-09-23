@@ -57,7 +57,12 @@ function fixture(t) {
     checkContribution: async () => ({ passed: true, sha: baseSha, attempt: { cleanup: { state: 'closed' } } }),
     workspaceAttachment: (workerId) => checkouts.get(workerId) ?? null,
     predecessorWorkspaceContext: () => null,
+    // Issue #564: the provider-fault seam the death observation reads — armed per worker by the
+    // reviewer-loss pins, so the observation's own repair behavior is testable without a real
+    // provider kill.
+    providerFaultDeathFor: (workerId) => faultDeaths.get(workerId) ?? null,
   };
+  const faultDeaths = new Map();
   const runtime = new SwarmRuntime({
     store,
     coordinator,
@@ -119,6 +124,12 @@ function fixture(t) {
       && event.payload?.kind === 'swarm.root_attention_owed'),
     updateCompletions,
     failRootAttention: (value) => { failRootAttention = value; },
+    seat: (participantId) => store.swarm(SWARM_ID)?.participants?.[participantId] ?? null,
+    workerIdOf: (participantId) => store.swarm(SWARM_ID)?.participants?.[participantId]
+      ?.bindings?.at(-1)?.workerId ?? null,
+    setFaultDeath: (workerId, death) => {
+      if (death === null) faultDeaths.delete(workerId); else faultDeaths.set(workerId, death);
+    },
     recruit: (participantId, permissions) => call('recruit', {
       participantId, objective: `Work as ${participantId}`,
       ...(permissions === undefined ? {} : { permissions }),
@@ -350,4 +361,73 @@ test('564-c4: an existing unreviewed contribution is re-addressed when its sole 
   await f.call('stop', { participantId: 'author', reason: 'Author leaves too' });
   assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 1,
     'a second departure never double-records the owed row');
+});
+
+test('564-e: an append fault at the stop path is repaired by a later stop even though the departure row exists', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test stop fault reconciliation' });
+  await f.recruit('author');
+  await f.recruit('reviewer', ['read', 'communicate', 'contribute', 'review']);
+
+  await f.call('update', {
+    event: 'swarm.contribution_recorded',
+    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+  });
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 0);
+
+  // The reviewer's probe: the stop writes its participant_left row, the owed append then
+  // faults. The departure is durable, the mutation faults unacknowledged, and the owed row
+  // is missing.
+  f.failRootAttention(true);
+  await assert.rejects(f.call('stop', { participantId: 'reviewer', reason: 'Lane done' }),
+    (error) => error.code === 'injected_append_fault',
+    'the append fault faults the stop, never a swallowed loss');
+  assert.equal(f.seat('reviewer').status, 'left', 'the departure row is durable beneath the fault');
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 0,
+    'the owed row did not land under the fault');
+
+  // The repair: a LATER stop sees the seat already settled (leave would be null) and must
+  // still reconcile the missing deterministic rows from the fold.
+  f.failRootAttention(false);
+  await f.call('stop', { participantId: 'reviewer', reason: 'Reconcile' });
+  const owed = f.attentionRows().filter((event) => event.payload.owed === 'review_owed');
+  assert.equal(owed.length, 1, 'the later stop reconciles the missing owed row');
+  assert.ok(f.seat('reviewer') !== null
+    && f.store.swarm(SWARM_ID).contributions[owed[0].payload.contributionId] !== null,
+    'the reconciled row names the recorded contribution');
+});
+
+test('564-f: an append fault at the provider-fault observation is repaired by a later observation', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Test observation fault reconciliation' });
+  await f.recruit('author');
+  await f.recruit('reviewer', ['read', 'communicate', 'contribute', 'review']);
+
+  await f.call('update', {
+    event: 'swarm.contribution_recorded',
+    payload: { participantId: 'author', body: f.contractBody(['root: land the queue']) },
+  });
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 0);
+
+  // The provider kills the reviewer's worker; the observation writes the fault and leave rows,
+  // but the owed append faults inside it. The observation is best-effort (a read must not fail
+  // on a reconciliation append), so the rows stay missing until a later observation passes.
+  f.setFaultDeath(f.workerIdOf('reviewer'),
+    { seq: 1, code: 'provider_fault',
+      route: { harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+      resetAt: null, snapshotSha: null });
+  f.failRootAttention(true);
+  await f.call('update', { event: 'swarm.context_updated',
+    payload: { key: 'notes:observe-1', body: 'trigger the fault observation' } });
+  assert.equal(f.seat('reviewer').status, 'left', 'the death settled the membership');
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'review_owed').length, 0,
+    'the owed row did not land under the fault');
+
+  f.failRootAttention(false);
+  await f.call('update', { event: 'swarm.context_updated',
+    payload: { key: 'notes:observe-2', body: 'trigger the reconciling observation' } });
+  const owed = f.attentionRows().filter((event) => event.payload.owed === 'review_owed');
+  assert.equal(owed.length, 1, 'the later observation reconciles the missing owed row');
+  assert.equal(f.attentionRows().filter((event) => event.payload.owed === 'needs_root').length, 1,
+    'the observation never re-fires the write-instant triggers');
 });

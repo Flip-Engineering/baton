@@ -1914,14 +1914,6 @@ export class SwarmRuntime {
             reason: 'provider_fault',
           }, { actor: 'baton-runtime', key: leaveKey });
         }
-        // Issue #564: the death is also a review loss. The unreviewed contributions the dead seat
-        // could have reviewed are re-addressed to the root from the fresh fold, beside the fault
-        // rows and under the same deterministic keys — a replayed observation re-derives without
-        // double-recording. This observation writes no operation completion, so the rows are
-        // never behind an acknowledgment; a fault here leaves them to the next observation.
-        try {
-          this._recordReviewerLossRows(this.store.swarm(swarm.swarmId), 'baton-runtime');
-        } catch { /* the fault rows stand; the next observation re-derives under the same keys */ }
         // Issue #443: the death is answered, not only recorded. The DECISION row names the routes
         // that could carry this seat's work, ranked by the comparison a recruit performs, with
         // what the death left to carry: the row the root reads instead of retyping a resume, and
@@ -1936,6 +1928,16 @@ export class SwarmRuntime {
         }
         changed = true;
       }
+      // Issue #564: reconcile, never only derive at the departure write. The per-seat loop above
+      // skips seats this pass already settled (an earlier pass wrote their fault row), so a
+      // reviewer-loss append that faulted in that earlier pass would otherwise never be repaired.
+      // Every pass therefore re-derives the swarm's owed rows from the fresh fold under the same
+      // deterministic keys — the guard inside makes a healthy pass a fold read, and the repair
+      // lands on the first observation after the fault. Best-effort: an observation is a read;
+      // a faulting append leaves the rows to the next pass rather than failing the caller.
+      try {
+        this._reconcileReviewerLossRows(this.store.swarm(swarm.swarmId), 'baton-runtime');
+      } catch { /* the next observation re-derives under the same keys */ }
     }
     if (changed) this._reconcileHostCapacity();
   }
@@ -2408,20 +2410,29 @@ export class SwarmRuntime {
     });
   }
 
-  /** Issue #564: the review-owed rows a swarm owes after a seat that held review stopped being
-   * active — a leave, or a provider-fault death. Every contribution still unreviewed (no
-   * SETTLING review, the same reads the contribution ledger applies) that no remaining active
-   * seat can review is re-addressed to the root, derived from the durable fold rather than the
-   * contribution's write instant; the keys above keep a second departure or a replayed
-   * observation from double-recording. needsFromOthers items are NOT re-derived here: their
-   * trigger is the contribution's own recording, not the departure. */
-  _recordReviewerLossRows(swarm, actor) {
+  /** Issue #564: RECONCILE the swarm's reviewer-loss rows — not a fire-once-per-departure hook.
+   * Every path that can observe the state (the stop effect, a participant_left update, the
+   * provider-fault observation) runs this: a contribution still unreviewed (no settling review —
+   * the same reads the contribution ledger applies) with no remaining active reviewer other than
+   * its own author is re-addressed to the root, and the deterministic keys make a re-run the
+   * REPAIR of a faulted earlier attempt — the missing rows land, the landed ones replay as
+   * no-ops — so a departure whose owed append faulted is never lost forever just because its
+   * departure row already exists. The cheap guard first: nothing unreviewed, or a remaining
+   * reviewer for every unreviewed contribution, reads no further and writes nothing.
+   * needsFromOthers needs are not reconciled here: their trigger is the contribution's own
+   * recording, not the roster. */
+  _reconcileReviewerLossRows(swarm, actor) {
+    const seats = Object.values(swarm.participants ?? {});
     const unreviewed = Object.values(swarm.contributions ?? {})
       .filter((contribution) => !(swarm.reviews?.[contribution.contributionId] ?? [])
         .some((review) => review.decision !== 'comment'));
-    return this._recordRootAttentionRows(swarm, unreviewed
-      .flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
-      .filter((row) => row.owed === 'review_owed'), actor);
+    const owed = unreviewed.filter((contribution) => !seats.some((seat) => seat?.status === 'active'
+      && seat?.participantId !== contribution.participantId
+      && Array.isArray(seat?.permissions) && seat.permissions.includes('review')));
+    if (owed.length === 0) return [];
+    return this._recordRootAttentionRows(swarm,
+      owed.flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
+        .filter((row) => row.owed === 'review_owed'), actor);
   }
 
 
@@ -8237,7 +8248,7 @@ export class SwarmRuntime {
         // The departure is also a review loss: every contribution still unreviewed that no
         // remaining active seat can review is re-addressed to the root from the fold — the
         // trigger is the reviewer's departure, not the contribution's write instant.
-        rootAttention = this._recordReviewerLossRows(this._swarm(args.swarmId), principal.actor);
+        rootAttention = this._reconcileReviewerLossRows(this._swarm(args.swarmId), principal.actor);
       }
       this._recordOperationCompleted(command, args, principal, context);
       if (args.event === 'swarm.participant_left') this._reconcileHostCapacity();
@@ -9181,19 +9192,19 @@ export class SwarmRuntime {
         const leave = seat.status === 'active' ? this._write('swarm.participant_left', {
           swarmId: args.swarmId, participantId: participant.participantId, reason: leaveReason,
         }, principal, `${operationKey}:leave`) : null;
-        // Issue #564: the stop is also a review loss — the same fold derivation the leave path
-        // runs, written durably inside the effect so it precedes the completion row `_once`
-        // records for this attempt. A settled (already-left) seat writes no leave and owes no
-        // re-derivation: its departure was already answered where it happened.
-        const reviewerLoss = leave
-          ? this._recordReviewerLossRows(this._swarm(args.swarmId), principal.actor) : [];
+        // Issue #564: the stop RECONCILES the reviewer-loss rows whether or not THIS call wrote
+        // the departure row: a first stop whose owed append faulted left the departure durable
+        // and the row missing, so a later stop (leave would be null for the settled seat) is
+        // the repair. The reconciler's deterministic keys keep a healthy re-run a no-op, and a
+        // fault here still faults the mutation with its completion unwritten.
+        const reviewerLoss = this._reconcileReviewerLossRows(this._swarm(args.swarmId), principal.actor);
         this._reconcileHostCapacity();
         // Issue #469: the receipt a stop answers with IS the row the operation lane records
         // (`_once` writes the effect's own result), so projecting it HERE is what keeps both the
         // answer and the durable row carrying the objective's reference — never a second copy of
         // the text the join row already holds.
         return { participantId: participant.participantId,
-          leaveReason, writes: leave ? [leave, ...reviewerLoss] : [] };
+          leaveReason, writes: [...(leave ? [leave] : []), ...reviewerLoss] };
       }, { context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, result: result.result, leftReason: result.leaveReason ?? null });
