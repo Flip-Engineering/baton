@@ -5,6 +5,7 @@ import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
+import { MAX_CELL_SIZE, normalizeCellDeclaration } from './wave.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
   goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
@@ -183,6 +184,7 @@ export {
 
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+
 
 const MAX_PROFILES = 256;
 
@@ -923,6 +925,10 @@ function normalizeIntent(value) {
     // idempotencyKey) rides only the first member's run.start and mints the pre-loop wave.started
     // record. None of these describe what the run IS — same non-identity treatment as driverKind.
     'waveId', 'waveRole', 'waveStart',
+    // #102 Decision 1: `cell` declares that this run IS a tight cell — `size` homogeneous worker
+    // nodes of ONE seat, keyed cell:<waveRole>:<index>. Like driverKind it describes who is
+    // driving the run, never what the run is, so it stays out of the runId derivation.
+    'cell',
   ]);
   const hasResultIntent = Object.hasOwn(value ?? {}, 'resultIntent');
   const hasDriverKind = Object.hasOwn(value ?? {}, 'driverKind');
@@ -930,6 +936,17 @@ function normalizeIntent(value) {
   const hasWaveRole = Object.hasOwn(value ?? {}, 'waveRole');
   const hasWaveStart = Object.hasOwn(value ?? {}, 'waveStart');
   const waveStart = value?.waveStart;
+  // #102 Decision 1: a cell is a run-shape declaration, read by the ONE declaration law the wave
+  // seams share (wave.mjs normalizeCellDeclaration, the same refusal codes). The wave role is
+  // required because it names the member nodes the cell's workers are keyed by, and a composition
+  // run already mints its nodes from its team, so the two declarations never combine.
+  let cell = null;
+  if (Object.hasOwn(value ?? {}, 'cell')) {
+    if (!hasWaveRole || !validId(value.waveRole) || Object.hasOwn(value ?? {}, 'composition')) {
+      throw applicationError('run intent is invalid', 'application_intent_invalid');
+    }
+    cell = normalizeCellDeclaration(value.cell, 'run cell');
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !allowed.has(key))
     || !Object.hasOwn(value, 'objective')
@@ -980,6 +997,7 @@ function normalizeIntent(value) {
     ...(hasDriverKind ? { driverKind: value.driverKind } : {}),
     ...(hasWaveId ? { waveId: value.waveId } : {}),
     ...(hasWaveRole ? { waveRole: value.waveRole } : {}),
+    ...(cell === null ? {} : { cell }),
     ...(hasWaveStart ? { waveStart: {
       deploymentId: waveStart.deploymentId,
       idempotencyKey: waveStart.idempotencyKey,
@@ -1431,6 +1449,64 @@ function compareRouteTeachingRow(left, right) {
   if (left.model !== right.model) return left.model < right.model ? -1 : 1;
   if (left.effort !== right.effort) return left.effort < right.effort ? -1 : 1;
   return 0;
+}
+
+// #102 Decision 6: the cell quorum aggregate. A cell run carries size homogeneous plan
+// nodes under one runId; the run-status builder derives the cell outcome over ALL of them,
+// never nodes[0]. The outcome is the closed aggregate cell: { size, quorum, survived, lost,
+// degraded } — survived is counted from the work-rest set, and every terminal non-survivor
+// is receipted in cell.lost with its per-member cause. A member the projection never
+// dispatched (no task) is receipted cell_member_lost — a spawn that never started is a loss
+// with its own name, never a silent absence. The aggregate is pure in (declaration,
+// projection, task and rest reads): no clock, no counter. Terminal minting reads it: lost
+// beyond the quorum allowance fails cell_below_quorum, any loss under strict fails
+// cell_exact_breach, and quorum <= survived < size rests cell.degraded.
+//
+// Rest is member-liveness evidence, read at two layers. A rested member usually reads
+// projection state accepted (its task verified through the referee). But a member the drive
+// re-turned before its completion landed holds an open follow-up turn while its completion
+// row sits refused-stale on the worker stream — the task fence protects the task transition,
+// and rightly so, yet the member did rest. The aggregate therefore also reads the worker's
+// durable turn evidence: a lifecycle.turn_completed row on the member's stream counts the
+// member survived even when the task still reads working. Task truth is never rewritten by
+// this — only the quorum count reads the wider evidence.
+const CELL_LOST_PROJECTION_STATES = new Set(['failed', 'cancelled', 'stopped', 'denied']);
+function workerRested(driver, workerId) {
+  if (typeof workerId !== 'string' || typeof driver?.log?.read !== 'function') return false;
+  try {
+    return driver.log.read(workerId)
+      .some((event) => event?.kind === 'lifecycle.turn_completed');
+  } catch {
+    return false;
+  }
+}
+function deriveCellAggregate(cell, nodes, taskOf, dispatchBegun = false, restedOf = null) {
+  if (!cell || typeof cell !== 'object') return null;
+  if (!Number.isSafeInteger(cell.size) || !Number.isSafeInteger(cell.quorum)) return null;
+  const list = Array.isArray(nodes) ? nodes : [];
+  let survived = 0;
+  const lost = [];
+  for (const node of list) {
+    const task = node?.taskId ? taskOf(node.taskId) : null;
+    if (!node?.taskId || !task) {
+      // A taskless member before dispatch began is pending, never lost: the mint has not run
+      // yet, so there is no absence to receipt. Past dispatch, a member with no task never
+      // started — receipted cell_member_lost with its own name, never a silent absence.
+      if (!dispatchBegun) continue;
+      lost.push({ workerId: task?.assignee ?? null, nodeKey: node?.key ?? null, cause: 'cell_member_lost' });
+      continue;
+    }
+    if (node.state === 'accepted' || task.status === 'completed'
+      || (typeof restedOf === 'function' && restedOf(task.assignee))) {
+      survived += 1;
+      continue;
+    }
+    if (CELL_LOST_PROJECTION_STATES.has(node.state)) {
+      lost.push({ workerId: task.assignee ?? null, nodeKey: node.key ?? null, cause: task.status ?? node.state });
+    }
+  }
+  const degraded = survived >= cell.quorum && survived < cell.size;
+  return { size: cell.size, quorum: cell.quorum, survived, lost, degraded };
 }
 
 // Issue #335: the ONE teaching every `application_route_not_allowed` site composes — the
@@ -3495,6 +3571,58 @@ export class BatonApplication {
       });
       return this._findRun(refreshed.goal.runId).dispatches;
     }
+    // #102 Decision 2 (TC-04/TC-05): a cell Plan carries `size` homogeneous nodes and is not a
+    // workflow, so it takes the plan-wave dispatch — one worker per node under the ONE runId the
+    // member owns. The wave authority key is the plan digest, so a re-dispatch of the same Plan is
+    // the durable resume; a partial dispatch is refused rather than completed. The branch reads
+    // the mint's own `cell:<waveRole>:<index>` node keys — the only producer of that shape — so
+    // the composition and recovery Plans that predate the cell keep their dispatch path
+    // (phase66 CE rows), and cardinality alone never turns an ordinary multi-node Plan into a
+    // cell.
+    if (refreshed.plan.nodes.length > 1
+      && refreshed.plan.nodes.every((node) => node.key.startsWith('cell:'))) {
+      if (refreshed.dispatches.length === refreshed.plan.nodes.length) return refreshed.dispatches;
+      if (refreshed.dispatches.length !== 0) {
+        throw applicationError('cell Plan wave is partially dispatched', 'application_cell_wave_incomplete');
+      }
+      if (typeof this.driver.coordinator.spawnPlanWave !== 'function') {
+        throw applicationError('coordinator lacks durable plan Wave authority', 'application_cell_wave_unavailable');
+      }
+      const members = refreshed.plan.nodes.map((node) => {
+        const gate = {
+          goalId: refreshed.goal.goalId, goalVersion: refreshed.goal.version,
+          goalDigest: refreshed.goal.digest, planId: refreshed.plan.planId,
+          planVersion: refreshed.plan.version, planDigest: refreshed.plan.digest,
+          nodeKey: node.key, expectedDispatchVersion: 0,
+          capabilities: clone(node.capabilities), effects: clone(node.effects),
+          ...(Object.hasOwn(node, 'requiredEffects')
+            ? { requiredEffects: clone(node.requiredEffects) } : {}),
+        };
+        const selectedRoute = exactPlanNodeRoute(node);
+        const route = {
+          vendor: selectedRoute.harness, model: selectedRoute.model, effort: selectedRoute.effort,
+        };
+        const preview = this.driver.coordination.previewPlanDispatch(gate, route);
+        const { goalPlan: ignored, ...brief } = preview.brief;
+        void ignored;
+        const taskId = `baton-${digest({
+          repoId: this.repoId, runId: refreshed.goal.runId,
+          planDigest: refreshed.plan.digest, nodeKey: node.key, dispatchVersion: 1,
+        }).slice(0, 24)}-${node.key.replaceAll(':', '-')}`;
+        return {
+          vendor: route.vendor, model: route.model, effort: route.effort,
+          brief, goalPlan: gate, runId: refreshed.goal.runId, taskId,
+        };
+      });
+      await this.driver.coordinator.spawnPlanWave(members, {
+        actor: this.principals.dispatcher.actor,
+        principalId: this.principals.dispatcher.principalId,
+        sessionId: this.principals.dispatcher.sessionId,
+        powers: ['plan:dispatch'],
+        idempotencyKey: `application:${refreshed.goal.runId}:cell:${refreshed.plan.digest}:v1`,
+      });
+      return this._findRun(refreshed.goal.runId).dispatches;
+    }
     if (refreshed.dispatch) return refreshed.dispatch;
     const node = refreshed.plan.nodes[0];
     const gate = {
@@ -3744,7 +3872,15 @@ export class BatonApplication {
         profile, intent.composition.team.length, workflowPolicy.maxRounds,
       )),
       routes: exactPlanRoutes(member.route),
-    })) : [singleNode];
+    })) : intent.cell
+      // #102 Decision 2 (TC-04): ONE member, `size` homogeneous nodes sharing this member's seat,
+      // scope and objective — the cell spends `size` workers under the one runId while the wave
+      // keeps ONE member row for it. Every worker identity stays derivable from the plan.
+      ? Array.from({ length: intent.cell.size }, (_, index) => ({
+        ...clone(singleNode),
+        key: `cell:${intent.waveRole}:${index}`,
+      }))
+      : [singleNode];
     const goalPlanPolicy = this.driver.coordination.goalPlanPolicy();
     const normalizedGoal = normalizeGoalRequest(goalFields, goalPlanPolicy);
     const hypotheticalGoal = {
@@ -3776,6 +3912,10 @@ export class BatonApplication {
         // waves.list seat map can recover it even when the wave was minted by the interpreter seam
         // (createWave mints a role-only string roster, wave.mjs:180 — the route is not in it).
         ...(intent.waveId !== undefined ? { route: clone(intent.route) } : {}),
+        // #102 Decision 6: the cell declaration rides the same record, so the run-status
+        // builder recovers size/quorum/strict for the quorum aggregate from the durable log
+        // (same event-log-only discipline as the wave binding above).
+        ...(intent.cell !== undefined ? { cell: clone(intent.cell) } : {}),
       }, {
         actor: owner.actor,
         key: `run.steering_registered:${intent.runId}`,
@@ -5343,6 +5483,28 @@ export class BatonApplication {
       if (runStop?.status === 'stopped') phase = 'stopped';
       else if (runStop) phase = 'stopping';
     }
+    // #102 Decision 6: a cell run's terminal truth is the quorum aggregate, never nodes[0].
+    // A stop still wins (above); otherwise the aggregate mints the terminal the count reached:
+    // a strict breach or a quorum-unreachable loss fails, a quorum rest with losses degrades.
+    const cellDeclaration = this._runCellDeclaration(runId);
+    // Dispatch begun is its own observation: any projected task, or any recorded dispatch.
+    // Before it, taskless members are pending (the mint has not run); past it, one is lost.
+    const cellDispatchBegun = projection.nodes.some((node) => node?.taskId)
+      || (current.dispatches?.length ?? 0) > 0 || !!current.dispatch;
+    const cellAggregate = cellDeclaration
+      ? deriveCellAggregate(cellDeclaration, projection.nodes,
+        (taskId) => this.driver.coordination.task(taskId), cellDispatchBegun,
+        (workerId) => workerRested(this.driver, workerId))
+      : null;
+    // The aggregate terminal below survives the single-node accepted refinement further
+    // down: a quorum mint is never re-derived from nodes[0].
+    let cellTerminalPhase = null;
+    if (cellAggregate && !runStop) {
+      if (cellDeclaration.strict === true && cellAggregate.lost.length > 0) phase = 'failed';
+      else if (cellAggregate.lost.length > cellAggregate.size - cellAggregate.quorum) phase = 'failed';
+      else if (cellAggregate.degraded) phase = 'degraded';
+      if (phase === 'failed' || phase === 'degraded') cellTerminalPhase = phase;
+    }
 
     // VR6/RV: inconclusive runtime repair remains repeatable while a candidate-owned diagnostic
     // checkpoint gets exactly one confirmation. The origin is pinned on the checkpoint so a later
@@ -5570,7 +5732,7 @@ export class BatonApplication {
         },
         cancelledAt: durableExport.cancelledAt ?? null,
       } : null;
-    if (!runStop && node.state === 'accepted') {
+    if (!runStop && node.state === 'accepted' && cellTerminalPhase === null) {
       if (readOnlyResult) phase = 'completed';
       else if (semanticReview.state === 'review_running') phase = 'reviewing';
       else if ((integration || durableExport?.status === 'completed')
@@ -5651,6 +5813,9 @@ export class BatonApplication {
       objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
+      // #102 Decision 6: a cell run carries its quorum aggregate receipt on the view; other
+      // runs carry no cell key, so their views are byte-identical to before.
+      ...(cellAggregate ? { cell: deepFreeze(cellAggregate) } : {}),
       cursor: projection.coordinationUpperBound,
       knowledge: knowledgeProjection.knowledge,
       knowledgeDigest: knowledgeProjection.knowledgeDigest,
@@ -5710,7 +5875,8 @@ export class BatonApplication {
         dispatchClosed: Boolean(runStop),
       },
       evidence: artifacts.map(publicArtifact),
-      narrative: terminalCauseNarrative(terminalCause) ?? (phase === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
+      narrative: terminalCauseNarrative(terminalCause) ?? (phase === 'degraded' ? 'Cell reached quorum with member losses; the aggregate receipt names the survivors and the lost.'
+        : phase === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
         : phase === 'stopping' ? 'Run stop is durably admitted and physical ownership is converging.'
           : phase === 'interrupted'
             ? 'Provider turn interrupted; the exact Plan member and native session remain attached for send or stop.'
@@ -7305,6 +7471,10 @@ export class BatonApplication {
     return applicationObservation._runWaveRoute(this, runId, index);
   }
 
+  _runCellDeclaration(runId, index = null) {
+    return applicationObservation._runCellDeclaration(this, runId, index);
+  }
+
   // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. A wave is the
   // set of runs bound to one waveId through the steering-registered record; waves.start starts each
   // member through the ORDINARY run.start admission (profile routes + scopes — the _resolveIntent
@@ -7453,6 +7623,9 @@ export class BatonApplication {
           driverKind: 'wave',
           waveId,
           waveRole: member.role,
+          // #102 Decision 2: the cell's size rides the member's run intent, so the run mints
+          // `size` homogeneous nodes and spends `size` workers under this ONE member's runId.
+          ...(member.group === undefined ? {} : { cell: member.group }),
           waveStart: { deploymentId: this.deploymentId, roster, idempotencyKey: request.idempotencyKey },
         }, principal, context);
       } catch (cause) {
@@ -7739,6 +7912,17 @@ export class BatonApplication {
   // Bounded closed validation for the wave ergonomics direct ports (the MCP schema and the MCP
   // validator already reject obvious shape failures; these guards keep the embedded direct ports
   // honest under the same closed-shape discipline as the rest of the command table).
+  /** #102 Decision 1: the closed `group` field on a wave member — `{editing?, quorum?, seat, size,
+   * strict?}` (docs/reference/evidence/tight-cell-2026-08-06/tight-cell-contract.md). The seat is
+   * the ONE route every cell worker takes, so a member that names a group and its own route is a
+   * contradiction rather than a precedence question; the closed shape and the strict defaults are
+   * the shared declaration law in wave.mjs. */
+  _normalizeCellGroup(member) {
+    if (member.exact !== undefined) {
+      throw applicationError('wave start member names both a group seat and its own route', 'wave_group_route_conflict');
+    }
+    return normalizeCellDeclaration(member.group, 'wave start member group');
+  }
   _normalizeWaveStart(value) {
     const allowed = new Set(['idempotencyKey', 'members']);
     if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -7754,11 +7938,18 @@ export class BatonApplication {
       // byte law admits oversize with spill at run.start (Decision 2 / OQ5) — never a wall in
       // front of a spill lane (v1.2 blue-team blocker 4).
       if (!member || typeof member !== 'object' || Array.isArray(member)
-        || Object.keys(member).some((key) => !['role', 'objective', 'exact', 'scope'].includes(key))
-        || !validId(member.role)
+        || Object.keys(member).some((key) => !['role', 'objective', 'exact', 'scope', 'group'].includes(key))) {
+        throw applicationError('wave start member is invalid', 'application_wave_start_invalid');
+      }
+      // #102 Decision 1: a member names EITHER its own route (`exact`) or a group seat, never both
+      // and never neither. The group's seat IS the member's route downstream, so the normalized
+      // member carries `exact` either way and every later reader is unchanged.
+      const group = member.group === undefined ? null : this._normalizeCellGroup(member);
+      const exact = group === null ? member.exact : group.seat;
+      if (!validId(member.role)
         || typeof member.objective !== 'string' || member.objective.length === 0 || member.objective.includes('\0')
-        || !member.exact || typeof member.exact !== 'object' || Array.isArray(member.exact)
-        || !['harness', 'model', 'effort'].every((axis) => validText(member.exact[axis]))
+        || !exact || typeof exact !== 'object' || Array.isArray(exact)
+        || !['harness', 'model', 'effort'].every((axis) => validText(exact[axis]))
         || (member.scope !== undefined
           && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
             || member.scope.some((item) => !validText(item))))) {
@@ -7768,8 +7959,9 @@ export class BatonApplication {
       roles.add(member.role);
       members.push(deepFreeze({
         role: member.role, objective: member.objective.normalize('NFKC').trim(),
-        exact: Object.freeze({ harness: member.exact.harness, model: member.exact.model, effort: member.exact.effort }),
+        exact: Object.freeze({ harness: exact.harness, model: exact.model, effort: exact.effort }),
         scope: member.scope === undefined ? null : [...member.scope].sort(),
+        ...(group === null ? {} : { group }),
       }));
     }
     return deepFreeze({ idempotencyKey: value.idempotencyKey, members });
