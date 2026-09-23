@@ -113,7 +113,7 @@ async function servedResident(t, { stream = null, binding = null } = {}) {
   // ambient root of 65..69 bytes (a suite root minted under this host's system temp dir is 67) was
   // then admitted and minted a 104..108-byte socket path the host refused: every row of this file,
   // but only inside a gate that hands its files that root (#446; row 316-sse-d).
-  const socketDir = mkdtempSync('/tmp/baton-316sse-');
+  const socketDir = mkdtempSync(join(tmpdir(), 'baton-316sse-'));
   roots.push(socketDir);
   const socketPath = join(socketDir, 'resident.sock');
   const host = new BatonWebHost({

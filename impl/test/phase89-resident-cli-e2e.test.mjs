@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,7 @@ import { spawnFixtureResident } from './fixtures/fixture-resident.mjs';
 const SCRIPT = fileURLToPath(new URL('../scripts/baton.mjs', import.meta.url));
 
 function repository(t) {
-  const root = mkdtempSync('/tmp/bt89-serve-repo-');
+  const root = mkdtempSync(join(tmpdir(), 'bt89-serve-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'phase89@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Phase 89'], { cwd: root });
@@ -45,8 +46,8 @@ async function until(predicate, label, timeoutMs = 15_000) {
 
 test('RLC1: baton serve is zero-assembly, connectable, signal-closeable, and secret-free', async (t) => {
   const repo = repository(t);
-  const home = mkdtempSync('/tmp/bt89-serve-home-');
-  const configRoot = mkdtempSync('/tmp/bt89-serve-config-');
+  const home = mkdtempSync(join(tmpdir(), 'bt89-serve-home-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'bt89-serve-config-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   t.after(() => rmSync(configRoot, { recursive: true, force: true }));
   const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot };
@@ -91,9 +92,9 @@ test('RLC1: baton serve is zero-assembly, connectable, signal-closeable, and sec
 
 test('P92-RLC2: CONFIG_MODULE accepts the same public deployment factory as ordinary serve', async (t) => {
   const repo = repository(t);
-  const home = mkdtempSync('/tmp/bt92-serve-home-');
-  const configRoot = mkdtempSync('/tmp/bt92-serve-config-');
-  const moduleRoot = mkdtempSync('/tmp/bt92-serve-module-');
+  const home = mkdtempSync(join(tmpdir(), 'bt92-serve-home-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'bt92-serve-config-'));
+  const moduleRoot = mkdtempSync(join(tmpdir(), 'bt92-serve-module-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   t.after(() => rmSync(configRoot, { recursive: true, force: true }));
   t.after(() => rmSync(moduleRoot, { recursive: true, force: true }));

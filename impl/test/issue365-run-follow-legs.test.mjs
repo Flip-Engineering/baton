@@ -60,7 +60,7 @@ async function refusalOf(fn) {
  * profile enables follow (the CLI derives its page wait from the deployment card, as shipped).
  * The socket root stays short because the host refuses a bound path over 103 bytes. */
 async function residentDeployment(t) {
-  const directory = mkdtempSync('/tmp/baton-365-');
+  const directory = mkdtempSync(join(tmpdir(), 'baton-365-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);

@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { MockAdapter, openBaton } from '../src/index.mjs';
@@ -31,7 +32,7 @@ const SESSION = Object.freeze({
   expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
 });
 function repository(t) {
-  const root = mkdtempSync('/tmp/bt-wake-repo-');
+  const root = mkdtempSync(join(tmpdir(), 'bt-wake-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'wake@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Wake'], { cwd: root });
@@ -63,9 +64,9 @@ function adapter() {
 }
 
 function options(t, repo) {
-  const deploymentRoot = mkdtempSync('/tmp/bt-wake-deployment-');
-  const configRoot = mkdtempSync('/tmp/bt-wake-config-');
-  const home = mkdtempSync('/tmp/bt-wake-home-');
+  const deploymentRoot = mkdtempSync(join(tmpdir(), 'bt-wake-deployment-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'bt-wake-config-'));
+  const home = mkdtempSync(join(tmpdir(), 'bt-wake-home-'));
   t.after(() => rmSync(deploymentRoot, { recursive: true, force: true }));
   t.after(() => rmSync(configRoot, { recursive: true, force: true }));
   t.after(() => rmSync(home, { recursive: true, force: true }));

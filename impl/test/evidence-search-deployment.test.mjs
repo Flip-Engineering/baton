@@ -305,7 +305,7 @@ const residentPrincipal = (id) => ({ actor: `direct:${id}`, principalId: id, ses
  * real authenticated Web host on an owner-only socket, driven by the real CLI client. The socket
  * root stays short because the host refuses a bound path over 103 bytes. */
 async function residentDeployment(t) {
-  const directory = mkdtempSync('/tmp/baton-evidence-resident-');
+  const directory = mkdtempSync(join(tmpdir(), 'baton-evidence-resident-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', repo]);

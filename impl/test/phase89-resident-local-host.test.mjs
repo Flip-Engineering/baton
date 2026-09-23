@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -14,7 +15,7 @@ import {
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 
 function repository(t) {
-  const root = mkdtempSync('/tmp/bt89-resident-repo-');
+  const root = mkdtempSync(join(tmpdir(), 'bt89-resident-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'phase89@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Phase 89'], { cwd: root });
@@ -65,9 +66,9 @@ function adapter() {
 }
 
 function options(t, repo) {
-  const deploymentRoot = mkdtempSync('/tmp/bt89-resident-deployment-');
-  const configRoot = mkdtempSync('/tmp/bt89-resident-config-');
-  const home = mkdtempSync('/tmp/bt89-resident-home-');
+  const deploymentRoot = mkdtempSync(join(tmpdir(), 'bt89-resident-deployment-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'bt89-resident-config-'));
+  const home = mkdtempSync(join(tmpdir(), 'bt89-resident-home-'));
   t.after(() => rmSync(deploymentRoot, { recursive: true, force: true }));
   t.after(() => rmSync(configRoot, { recursive: true, force: true }));
   t.after(() => rmSync(home, { recursive: true, force: true }));
@@ -223,7 +224,7 @@ test('RLH3: failed publication rolls back the listener and lease, leaves Runs us
 });
 
 test('RLH4: v2 coordination writer ownership distinguishes a reused live PID by process start', (t) => {
-  const directory = mkdtempSync('/tmp/bt89-writer-reuse-');
+  const directory = mkdtempSync(join(tmpdir(), 'bt89-writer-reuse-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const store = new CoordinationStore(directory);
   writeFileSync(join(directory, 'writer.lease'), `${JSON.stringify({

@@ -108,7 +108,7 @@ function waitFor(read, predicate, { timeoutMs = 5_000, label = 'condition' } = {
  * BRIDGE and never about a second implementation of the resident.
  */
 async function startScriptedResident({ answers, card = CARD }) {
-  const directory = mkdtempSync(join('/tmp', 'bt-314-lane2-'));
+  const directory = mkdtempSync(join(tmpdir(), 'bt-314-lane2-'));
   const socketPath = join(directory, 'resident.sock');
   const commands = [];
   const attachments = new Set();

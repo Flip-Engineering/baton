@@ -10,9 +10,35 @@
 //   terminate itself once its parent disappears.
 
 import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 const RECEIPT_NAME = 'suite-owner.json';
+const FIXTURE_DIRECTORY = /^(?:baton-|bt).+-[A-Za-z0-9]{6}$/u;
+
+/**
+ * List fixture-shaped directories directly below a test file's private temp directory.
+ * The suite runner compares snapshots taken around that file and owns cleanup of the directory.
+ */
+export function snapshotFixtureDirectories(tempRoot, suiteRoot) {
+  const root = resolve(tempRoot);
+  const suite = resolve(suiteRoot);
+  const rel = relative(suite, root);
+  if (rel === '' || isAbsolute(rel) || rel === '..' || rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)) {
+    return null;
+  }
+  try {
+    return new Set(readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && FIXTURE_DIRECTORY.test(entry.name))
+      .map((entry) => entry.name));
+  } catch {
+    return new Set();
+  }
+}
+
+export function addedFixtureDirectories(before, after) {
+  if (before === null || after === null) return [];
+  return [...after].filter((name) => !before.has(name)).sort();
+}
 
 export function writeSuiteOwnerReceipt(suiteRoot) {
   writeFileSync(join(suiteRoot, RECEIPT_NAME), JSON.stringify({

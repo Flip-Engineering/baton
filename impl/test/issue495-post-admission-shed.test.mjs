@@ -256,7 +256,7 @@ function repository(t, root) {
 
 // The resident protocol bounds a socket path to sun_path (103 bytes); fixture roots are short.
 function serveFixture(t, label) {
-  const root = mkdtempSync(`/tmp/bt495-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt495-${label}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repo = repository(t, root);
   const home = join(root, 'home');

@@ -40,6 +40,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -65,7 +66,7 @@ const HEARTBEAT_MS = 200;
 const HEARTBEAT_BOUND_MS = 4 * HEARTBEAT_MS;
 
 function fixtureRoot(t, label) {
-  const root = mkdtempSync(`/tmp/bt351c-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt351c-${label}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }

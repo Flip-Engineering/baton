@@ -36,6 +36,7 @@ import { EventEmitter, once } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -88,7 +89,7 @@ async function until(probe, { timeoutMs = 20_000, label = 'condition' } = {}) {
 const roots = [];
 /** The issue306r world (its socket root stays short — sun_path is 103 bytes, docs/42 §7). */
 function world(label) {
-  const root = mkdtempSync(`/tmp/bt478-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt478-${label}-`));
   roots.push(root);
   const repo = join(root, 'repo');
   const home = join(root, 'home');
