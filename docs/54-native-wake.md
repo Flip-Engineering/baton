@@ -304,3 +304,8 @@ root target satisfies this declaration. Embedded callers can start a Run with `d
 to declare that they handle each checkpoint through `nudge_turn`, `claim_turn`, or stop. Wave and
 swarm drivers provide their existing consumer declarations. A generic Run without a consumer
 refuses with `application_turn_consumer_required` before a worker starts.
+
+The workflow interpreter accepts `driver.onCheckpoint` with the same `continue`, `done`, and
+`stop` decisions. Its explicit `nudgeOnCheckpoint` policy applies once per checkpoint. The legacy
+`claimOnStall` field supplies no completion decision. Unhandled checkpoint or decision attention
+returns a `WAVE-INCOMPLETE` receipt with live members retained for the caller's next action.

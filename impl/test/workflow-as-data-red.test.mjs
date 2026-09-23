@@ -850,7 +850,7 @@ test('W3-approve (stage[policy-missing:approve-on-advertised-plan]): a member wi
   assert.ok(outcome.terminal === true || outcome.phase === 'result_ready', 'the approved member settles');
 });
 
-test('W3-checkpoint (stage[policy-missing:nudge-on-checkpoint+claim-on-stall]): a checkpoint is nudged and a stalled member is claimed — both receipted', async (t) => {
+test('W3-checkpoint: the orchestrator continues a turn and explicitly completes the next', async (t) => {
   const fx = await wadFixture(t, {
     adapter: new PausableWaveAdapter({
       harness: 'mock',
@@ -866,11 +866,12 @@ test('W3-checkpoint (stage[policy-missing:nudge-on-checkpoint+claim-on-stall]): 
       claimOnStall: true,
     },
   });
-  const receipt = await driveLane(fx.baton, 'policy-missing:nudge-on-checkpoint+claim-on-stall', spec);
-  const triggers = new Set((receipt.steering ?? []).map((event) => event.trigger));
-  assert.ok(triggers.has('nudgeOnCheckpoint'),
-    `stage[policy-missing:nudge-on-checkpoint+claim-on-stall]: nudgeOnCheckpoint fires and receipts`);
-  assert.ok(triggers.has('claimOnStall'), 'claimOnStall fires and receipts');
+  let checkpoints = 0;
+  const receipt = await laneOf(fx.baton, 'checkpoint')(spec, { detach: false,
+    driver: { ...LANE_DRIVER, onCheckpoint: () => ++checkpoints === 1 ? 'continue' : 'done' } });
+  assert.deepEqual(receipt.steering.filter((row) => row.trigger === 'onCheckpoint')
+    .map((row) => row.outcome), ['continue', 'done']);
+  assert.equal(receipt.steering.some((row) => row.trigger === 'claimOnStall'), false);
   // F3: not just the trigger names — the nudged member actually RESUMED (a real 'turn' prompt
   // followed the checkpoint; the pausable machinery advances the turn only on a genuine resume).
   assert.ok(fx.adapter.calls.prompt.some((call) => call.mode === 'turn'),
@@ -1132,8 +1133,9 @@ test('W3-answer-bounds (stage[policy-missing:answer-decisions]): a non-matching 
   const invalidEvents = (invalidReceipt.steering ?? []).filter((event) => event.trigger === 'answerDecisions');
   assert.ok(invalidEvents.some((event) => event.refused === true || event.outcome === 'refused' || event.code === 'workflow_steering_unknown'),
     'the invalid optionId refusal is receipted (validated against the live decision\'s options — B5)');
-  const settled = invalidReceipt.outcomes[0];
-  assert.ok(settled.terminal === true || settled.phase === 'result_ready', 'the answered member settles');
+  assert.equal(invalidReceipt.outcomes[0].terminal, false,
+    'the unanswered member remains live for the orchestrator');
+  assert.ok(invalidReceipt.steering.some((row) => row.evidence === 'wave_continues'));
 });
 
 test('W3-answer-first-match (stage[policy-missing:answer-decisions]): when two policy patterns match one question, the insertion-order FIRST match wins (F7b)', async (t) => {
@@ -1652,4 +1654,20 @@ test('workflow launch preserves staged, unstaged and untracked caller work while
   assert.deepEqual(readFileSync(join(fx.repo, 'personal.txt')), before.personal);
   assert.deepEqual(readFileSync(join(fx.repo, 'scratch.txt')), before.scratch);
   assert.deepEqual(readFileSync(join(fx.repo, 'objectives', 'writer.md')), before.objective);
+});
+
+
+test('572-workflow: an unhandled checkpoint returns to its caller with the member live', async (t) => {
+  const fx = await wadFixture(t, { adapter: new PausableWaveAdapter({ harness: 'mock',
+    scriptsByMarker: { '572-report': [{ edits: [edit('572-report', 1)] }] } }) });
+  writeObjective(fx.repo, '572-report', 'Prepare a report for the orchestrator');
+  const spec = validSpec({ idempotencyKey: '572-report', members: [wadMember('572-report')],
+    steering: { claimOnStall: true } });
+  const receipt = await driveLane(fx.baton, 'checkpoint-report', spec);
+  assert.equal(receipt.verdict, 'WAVE-INCOMPLETE');
+  assert.equal(receipt.outcomes[0].terminal, false);
+  assert.ok(receipt.steering.some((row) => row.evidence === 'turn_checkpoint'));
+  assert.ok(receipt.steering.some((row) => row.evidence === 'wave_continues'));
+  assert.equal(receipt.steering.some((row) => row.trigger === 'claimOnStall'), false);
+  assert.ok(fx.driver.coordinator.list().some((row) => row.status === 'working'));
 });
