@@ -6,23 +6,28 @@ review (`APPROVED`). Authorization was relayed in the bend2-laws-lead4 brief.
 [laws-proposed.md](laws-proposed.md) retains the approved behavioral statements.
 M-6 and M-9 are clauses of M-8; M-15 is deferred; M-16 is the writing rule.
 
-This increment states three quantified model obligations in [laws.bend](laws.bend),
-covering limited parts of M-5 and M-10. [laws-proof.bend](examples/laws-proof.bend)
-discharges those obligations. **Application proof status is open for all 16 laws.**
-The remaining 14 entries have trace and obligation records below; they have no checked
-Bend proposition in this increment. The three compiler TODOs in `laws.bend` count the
-model obligations only.
+This increment states ten quantified model obligations in [laws.bend](laws.bend), covering limited
+parts of M-5, M-10, M-14 and M-18. [laws-proof.bend](examples/laws-proof.bend) discharges those
+obligations, and [laws-transition.bend](examples/laws-transition.bend) drives the real review append
+and the real worker admission against those models on an enumerated corpus.
+**Application proof status is open for all 16 laws.** The remaining 12 entries have trace and
+obligation records below; they have no checked Bend proposition. The ten compiler TODOs in
+`laws.bend` count the model obligations only.
 
 Language evidence uses [the reference pin](reference/README.md),
 `bendlang/bend@a49524265bdfa5753a4bf38e25f0574a705dd868`, Bend 2.0.25.
 The relevant pinned language sections are `guide/GUIDE.md`, Laws and Proofs,
 Quantities, and Modules. [laws-check.evidence.md](examples/laws-check.evidence.md)
 records the commands, outputs and failures. `python3 docs/bend2/laws-check.py <bend>`
-checks the models, six negative controls and two existing JavaScript regression rows.
+checks the models, the transition witness, sixteen negative controls and two existing
+JavaScript regression rows.
 It is a bounded evidence check. Root owns the separate deployment command
 `npm test --prefix impl`; this lane did not execute it. The check runs under
 `/opt/homebrew/bin/python3` on this host; the `python3` first on `PATH` is an asdf shim
 with no python plugin behind it.
+
+The per-entry pin boundary follows the proof mechanics below: it names, for each approved entry,
+whether this pin can carry its witness at all, and the measured language gap where it cannot.
 
 ## Recovery and provenance
 
@@ -71,9 +76,9 @@ historical JavaScript test proves the complete approved prohibition.
 | M-11 | Extracted. CL-17: `swarm-event-schemas.mjs` and `swarm-contract.mjs` separate caller kinds from driver facts | `swarm-refusals.test.mjs`, fabricated driver-row refusal | Actual decoder-to-effect theorem pending |
 | M-12 | Extracted. DEV-2, LEDG-6: managed-work acceptance and durable intent boundary | `issue290-ledger-sync.test.mjs` covers persistence; DEV-2 cites the operator contract | Acknowledgment/managed-completion dependency proof pending |
 | M-13 | Extracted. DEV-3, WAKE-8: native attachment and `wake-stream.mjs` attribution | `wake-stream.test.mjs` attachment covering hosted swarms | Actual agent-interface delivery and re-arm independence proof pending |
-| M-14 | Partly enforced. DEV-4, CS-05/16/17: `swarm-contract.mjs`, `swarm-refusals.mjs`, `contribution-contract.mjs` | `issue372-closed-sets-taught.test.mjs`; `issue430-swarm-refusal-set.test.mjs`; `issue371-contract-example.test.mjs` | Actual failed-condition/context/refusal correspondence proof pending |
+| M-14 | Partly enforced. DEV-4, CS-05/16/17: `swarm-contract.mjs`, `swarm-refusals.mjs`, `contribution-contract.mjs` | `issue372-closed-sets-taught.test.mjs`; `issue430-swarm-refusal-set.test.mjs`; `issue371-contract-example.test.mjs` | Checked pure-model obligations: the composed refusal's field, rule and remedy follow the vocabulary row the validator judges by, and the rendered context redacts. The application's own refusal rows are not imported |
 | M-17 | Proposed CX-6, as narrowed in the approved set | No complete enforcement test claimed | Retained responsibility, recoverable handoff and authorized-suspension theorem pending |
-| M-18 | Proposed destination prohibition from #556 | The approved record cites a prior destination model; it is not rerun or claimed as application evidence here | Actual dispatch/completion destination theorem pending |
+| M-18 | Proposed destination prohibition from #556 | The approved record cites a prior destination model; it is not rerun or claimed as application evidence here | Checked pure-model decision: a declared deployment dispatches to exactly the declared remote, an undeclared one refuses with the undeclared code, and a publishing outcome carries no code. Dispatch, delivery and outcome remain host effects |
 
 Source filenames in this table are under `impl/src/`; test filenames are under `impl/test/`.
 The approved M-5 and M-10 classifications retain the historical WAKE-5 drop qualification:
@@ -145,11 +150,40 @@ the drop existed at the extraction base and was retired under #541.
    The model documents an existing branch for later integration. It authorizes no
    removal of admission checks elsewhere.
 
+## M-14 and M-18 proof mechanics
+
+- **M-14 refusal correspondence.** [laws-refusal-model.bend](examples/laws-refusal-model.bend)
+  carries the table the validator judges by and, written independently of it, the reader that
+  composes the explanation. Four laws compare a composed refusal against the table: its field, its
+  rule, its remedy and its redacted context. The two-reader split is what makes those laws
+  falsifiable; had the explanation been composed by calling the table readers directly, both sides
+  of every proposition would have been the same term and no mutation could have failed them. The
+  check mutates each reader in turn, and each mutation refuses the law that governs it. Scope: the
+  model's vocabulary stands for the recorded refusal set, the application's own refusal rows are
+  not imported, and the safety clause is modelled as redaction of a secret-valued context.
+- **M-18 landing decision.** [laws-decision-model.bend](examples/laws-decision-model.bend) takes
+  only a declaration, so no other value can become a target. Three laws state that a declared
+  deployment dispatches to exactly the declared remote, that an undeclared deployment refuses with
+  the undeclared code, and that a publishing outcome carries no refusal code. Three controls hold
+  them: a decision that infers a fixed remote, an undeclared deployment that publishes, and a
+  publishing outcome that carries a code. Scope: the decision only — the dispatch, the publish and
+  their outcome are host effects and are not modelled — and the refusal code is an opaque model
+  constant standing for `integrate_publish_undeclared`.
+- **Transition conformance.** [laws-transition.bend](examples/laws-transition.bend) folds the real
+  `foldSwarmEvent` review append and reads the real `HostCapacityAuthority` through a JS half that
+  requires `impl/src`, then compares eight enumerated cases against these models through a base-3
+  fingerprint of the retained decisions.
+  [laws-transition.evidence.md](examples/laws-transition.evidence.md) records both runtime lanes,
+  the eight cases and the control that drops a retained row. The corpus is enumerated: it binds the
+  real transitions to the models on those cases and does not quantify over them.
+
 ## Remaining proof mechanics
 
 For each row below, requirement, status, exceptions and rationale are the approved entry
 in `laws-proposed.md`; source/test trace is the table above. These records specify the
-next exact proposition and examples to implement. **All are unchecked obligations.**
+next exact proposition and examples to implement. The M-14 and M-18 propositions named here are
+the ones this increment checks in their pure-model form; every other row, and the application half
+of M-14 and M-18, remains an unchecked obligation.
 No proposed mathematical notation below is claimed to be accepted Bend syntax.
 
 | ID | Required application proposition and premises | Passing / violating controls to compile | Host assumptions to expose |
@@ -173,3 +207,34 @@ Each implementation must also be challenged with refusal of all work, deletion o
 history, and constant success where its types permit those behaviors. Useful admitted actions
 need passing witnesses. Which simplifications become justified depends on proofs over the
 actual transitions; this increment makes no application simplification claim.
+
+## Pin boundary per approved entry
+
+This table names, for each approved entry, whether this pin can carry a witness for it at all.
+`checked` means a quantified obligation over a pure model is discharged in this increment;
+`checkable` means a witness is expressible at the pin and is not yet written; `model only` means a
+pure model can be stated while the host half it quantifies over cannot be checked here; `blocked`
+names the measured gap from [language-review.md](language-review.md)'s capability rows and the host
+primitive the target architecture owes before the application proof can exist.
+
+| Entry | Pin boundary |
+|---|---|
+| M-1 | Blocked: LANG-CAP-01. The pin has no durable sync, atomic rename or metadata operation, and `lang-cap-durability.evidence.md` measures write and close with no durability receipt in the result. Model only until an authored C effect family exists. |
+| M-2 | Blocked: LANG-CAP-08 (no HTTP or TLS library) and LANG-CAP-01 (no durable attempt record). |
+| M-3a | Blocked: LANG-CAP-07 (git runs as a subprocess, which needs the LANG-CAP-05 process family) and the host's compare-and-swap. |
+| M-3b | Blocked: LANG-CAP-01 (no atomic rename, so no durable idempotency disposition). |
+| M-3c | Checkable: given an injected prior outcome, truthful replay is a pure relation. |
+| M-4 | Blocked: LANG-CAP-01 (no stat metadata, directory traversal, permissions or atomic publication). |
+| M-5 | Checked: two model obligations discharged, and the real append is driven by the transition witness. The recovery, compaction, replay and delivery clauses remain open. |
+| M-7 | Blocked: LANG-CAP-10 (no hashing, HMAC, constant-time comparison or secure random bytes) and the authority store's durability. |
+| M-8 | Partly checkable: the no-elevation-by-delegation subset invariant is expressible over the permission set; the instance, revocation and atomic-check halves are blocked by LANG-CAP-10 and LANG-CAP-01. |
+| M-10 | Checked: one model obligation discharged, and the real admission decision is read by the transition witness. The cancellation and retention clauses are blocked by LANG-CAP-09. |
+| M-11 | Partly checkable: the caller/driver kind disjointness. Driver provenance is blocked by LANG-CAP-06 (no JSON codec) and LANG-CAP-05. |
+| M-12 | Blocked: LANG-CAP-05 (no process family) and LANG-CAP-01 (no durable intent). |
+| M-13 | Blocked: LANG-CAP-09 (no name cancels a computation, races two or sets a deadline). |
+| M-14 | Checked: four model obligations discharged over the refusal vocabulary. The application's own refusal rows are not imported. |
+| M-17 | Blocked: LANG-CAP-05 and LANG-CAP-09 (no process lifetime, restart or suspension authority). |
+| M-18 | Checked for the decision: three model obligations discharged. Dispatch, delivery and outcome are blocked by LANG-CAP-08 and LANG-CAP-10. |
+
+A blocked entry's witness needs its host effect authored with fault-injection evidence outside
+Bend; no compiled example at this pin stands in for it.
