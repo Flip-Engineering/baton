@@ -1,9 +1,10 @@
 # ARCH-CLOSE closure status
 
 [`target-architecture.md`](target-architecture.md) names corrections `ARCH-CLOSE-01` through
-`ARCH-CLOSE-11` that its findings require before the affected behavior may be deleted or replaced.
+`ARCH-CLOSE-12` that its findings require before the affected behavior may be deleted or replaced.
 This file indexes what each correction has on the branch today, so a phase entry decision reads one
-table instead of eleven sections and the plan.
+table instead of twelve sections and the plan. [`rewrite-plan.md`](rewrite-plan.md) carries the
+mirroring closure-condition table, which maps each id to the work item that closes it.
 
 Status words used here:
 
@@ -15,6 +16,8 @@ Status words used here:
 - **Conforming path evidenced** — a corpus shows the current implementation meeting the requirement
   on a frozen trace.
 - **Discharged** — the correction's own stated evidence exists.
+- **Closed locally, open for the deployment** — the behavior is measured at the pin, and the
+  deployment-level half waits on a prerequisite the pin does not supply.
 
 A row moves when its evidence file is on the branch or in the accepted landing sequence; each row
 names that file, and the three `arch-replay-*` corpora and the review record below are accepted
@@ -33,6 +36,7 @@ contributions whose files arrive with that sequence. This index records no phase
 | `ARCH-CLOSE-09` | Typed declarations, independent structural scans and consumer validation of `CheckedChangeImpact` for the exact snapshot, over the four change kinds | Open | The committed inventory the correction replaces is still the branch's gate input; [`architecture-review.md`](architecture-review.md) records its F17 disposition |
 | `ARCH-CLOSE-10` | Native journal inventory and supported-platform durability contract, with fault injection and a segmentation design for large journals | Open | [`rewrite-plan.md`](rewrite-plan.md) carries the obligation and the `B2-FS-DURABILITY` work item |
 | `ARCH-CLOSE-11` | One recorded schema and policy basis for startup, doctor and recovery, with cause classification before repair | Gap reproduced, conforming path evidenced | Gap: `examples/arch-replay-stop.evidence.md` (a missing policy basis and a corrupted row both return `replay_refused` / `run_stop_integrity`, where the required behavior separates `missing_policy_basis` from `corrupt_source_bytes` and quarantines only the second), `examples/arch-replay-basis.evidence.md` (a changed authorization basis and a rejected mutation differ on classification and on the diagnostic verdict), and `examples/arch-replay-mutation.evidence.md` (a refused mutation writes zero ledger rows and leaves the cursor and owed delivery untouched, and the reference names one class where the required behavior separates `invalid_request` from `expired_authority`). Conforming path: `examples/arch-replay-cursor.evidence.md` (all four owed-cursor and restart cases agree) |
+| `ARCH-CLOSE-12` | The whole publication operation against the admitted destination: validate its identity before dispatch, claim completion only from evidence about that destination's content at the target, and record which of holds-the-ref, superseded-but-preserved, or absent the receipt asserts | Closed locally, open for the deployment | `examples/arch-publish-target.evidence.md`, `arch-publish-content.evidence.md`, `arch-publish-bind.evidence.md`, `arch-publish-contention.evidence.md` and `arch-publish-cas.evidence.md` measure destination identity, content-level completion, the bound record and contention on both halves at the pin; the deployment's own publication path is open until the resident declares `BATON_PUBLISH_REMOTE` ([`ledger.md`](ledger.md) finding 4) |
 
 ## The composition track, and what it leaves
 
