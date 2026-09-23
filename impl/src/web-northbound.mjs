@@ -21,6 +21,7 @@ import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalA
 import {
   WakeStream, attachmentClosedFrame, attachmentClosedReason, deriveWakeFrame, parseWakeFilter, wakeClassRow,
 } from './wake-stream.mjs';
+import { attachRootWakeDelivery } from './wake-delivery.mjs';
 // Issue #316 (b): the outcome the ONE attachment-end mapping reads as `restart` — the resident
 // itself is ending a wake attachment (a shutdown or restart, or an authority that stopped serving
 // it), never a transport the client closed. `_handleWakes` names its end through it.
@@ -1681,6 +1682,16 @@ export class WebNorthbound {
       throw new TypeError('wake heartbeat interval must be a positive safe integer');
     }
     this._wakeConnections = new Set();
+    // Issue #564: the resident's root delivery is one internal consumer of the SAME deployment
+    // wake stream every external attachment reads. Construction captures the stream head before
+    // returning, so every later root_owed append is delivered without a separate poller.
+    this._rootWakeDelivery = opts.rootWakeDelivery === undefined || opts.rootWakeDelivery === null
+      ? null
+      : attachRootWakeDelivery({
+        stream: this.wakes,
+        store: this.coordination,
+        ...opts.rootWakeDelivery,
+      });
   }
 
 
@@ -3418,6 +3429,7 @@ export class WebNorthbound {
     try { this.stream.shutdown?.(); } catch { streamOk = false; }
     // A wake attachment is a long-lived socket the server's own close() waits on: abort every one
     // before the drain clock starts, so a quiet deployment never times out its own shutdown.
+    this._rootWakeDelivery?.close();
     this.wakes.close?.();
     for (const finish of [...this._wakeConnections]) { try { finish(); } catch { /* already gone */ } }
     let exportDeliveryOk = true;
