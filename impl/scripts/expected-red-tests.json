@@ -1121,26 +1121,6 @@
       "reason": "#102"
     },
     {
-      "key": "test/tight-cell-red.test.mjs :: TC-01 group[group-field-admission-missing]: waves.start accepts the closed group field",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-02 group[group-seat-missing-refusal]: group without seat refuses wave_group_seat_missing before any spawn",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-03 group[group-route-conflict-refusal]: member-level route alongside group.seat refuses wave_group_route_conflict at BOTH seams",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-04 cell-mint[cell-mint-missing]: a cell member starts ONE run whose plan carries size homogeneous nodes",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-05 cell-identity[cell-identity-missing]: size distinct worker identities under one runId, steering.registered once",
-      "reason": "#102"
-    },
-    {
       "key": "test/tight-cell-red.test.mjs :: TC-06 cell-spawn[cell-spawn-refusal-missing]: a refused individual spawn is recorded cell_spawn_refused, never aborts the run",
       "reason": "#102"
     },
@@ -1157,22 +1137,6 @@
       "reason": "#102"
     },
     {
-      "key": "test/tight-cell-red.test.mjs :: TC-11 quorum[cell-quorum-aggregate-missing]: the run-status builder derives the cell aggregate, never nodes[0]",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-12 quorum[cell-below-quorum-terminal-missing]: lost > size - quorum fails cell_below_quorum",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-13 quorum[cell-exact-breach-missing]: group.strict with any loss fails cell_exact_breach",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-14 quorum[cell-member-lost-missing]: a never-started worker is receipted cell_member_lost, not a run failure",
-      "reason": "#102"
-    },
-    {
       "key": "test/tight-cell-red.test.mjs :: TC-15 collector[collector-result-law-missing]: the collective result is the collector's capture, siblings checkpoint-only",
       "reason": "#102"
     },
@@ -1181,24 +1145,8 @@
       "reason": "#102"
     },
     {
-      "key": "test/tight-cell-red.test.mjs :: TC-16 no-clock[cell-no-clock-law-missing]: the cell aggregate is the CLOSED {size,quorum,survived,lost,degraded} — no time/TTL/turn field",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-17 size[cell-size-bound-missing]: MAX_CELL_SIZE is a named documented count bound of 64",
-      "reason": "#102"
-    },
-    {
       "key": "test/tight-cell-red.test.mjs :: TC-19 loop[cell-end-to-end-loop-missing]: the WHOLE #74 loop is executable — mint, size grants, broadcast, worker-attributed claim/report, one collective result",
       "reason": "#74"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-20 quorum[first-node-truth-missing]: worker #1's terminal neither settles nor fails the cell",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-20b quorum[cell-quorum-behavioral-missing]: rest/kill/degrade probes the aggregate, never nodes[0]",
-      "reason": "#102"
     },
     {
       "key": "test/tight-cell-red.test.mjs :: TC-22 grant[per-member-mint-key-missing]: size mints under one send key derive per-member caller keys",
@@ -1214,10 +1162,6 @@
     },
     {
       "key": "test/tight-cell-red.test.mjs :: TC-25 quiescence[quiescence-ordering-missing]: a quorum terminal mints with a LIVE member — its grant is revoked, its worktree captured checkpoint-only, the whole-run stop reaps the remainder",
-      "reason": "#102"
-    },
-    {
-      "key": "test/tight-cell-red.test.mjs :: TC-26 quorum[survivor-set-missing]: survived is the closed work-rest set, losses receipted in cell.lost",
       "reason": "#102"
     },
     {
