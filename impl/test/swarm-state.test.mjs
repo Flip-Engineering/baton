@@ -750,6 +750,24 @@ describe('landing receipts', () => {
     assert.equal(err.code, 'contribution_duplicate');
   });
 
+  test('a receipt that records no moved target never refuses the landing that moves it', () => {
+    const swarms = author();
+    // The schema admits `dryRun: false` beside a null `targetHeadAfter` — neither field is checked
+    // against the other — so the guard keys on the fact (did the ref move?) and never the claim.
+    foldSwarmEvent(swarms, receipt(false, null));
+    assert.equal(integrationOf(swarms).targetHeadAfter, null, 'the fixture records a receipt that moved nothing');
+    assert.doesNotThrow(() => foldSwarmEvent(swarms, receipt(false, 'd'.repeat(40))));
+    assert.equal(integrationOf(swarms).targetHeadAfter, 'd'.repeat(40));
+  });
+
+  test('a receipt that names a commit for the target after it still refuses a second one', () => {
+    const swarms = author();
+    foldSwarmEvent(swarms, receipt(true, 'd'.repeat(40)));
+    const err = integrity(() => foldSwarmEvent(swarms, receipt(false, 'e'.repeat(40))));
+    assert.equal(err.code, 'contribution_duplicate',
+      'the moved target decides, whatever the dryRun claim beside it says');
+  });
+
   test('a dry run after a real landing never replaces the landing receipt', () => {
     const swarms = author();
     foldSwarmEvent(swarms, receipt(false, 'd'.repeat(40)));
