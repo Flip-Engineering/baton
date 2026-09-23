@@ -781,14 +781,20 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 55,
-    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), #158 inserts baton_run_scratchpad_append (36 → 37), then docs/39 adds the ten fleet_swarm_* tools (37 → 47), then #294 adds baton_wakes_subscribe/unsubscribe/since (47 → 50), then #318 adds baton_evidence_search (50 → 51); the enumeration reads 54 at #317\u2019s base (the swarm message family #311 and the canonical sibling twins landed after the pin\u2019s narration), and #317 adds baton_services_list (54 → 55)');
-  assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
-  assert.equal(names[15], 'baton_waves_list',
-    'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
-  assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
+  assert.equal(names.length, 57,
+    'stage: mcp-waves-list-row-missing — the served ordinary enumeration carries every landed addition: §4 baton_waves_list (34 → 35), #170 baton_waves_compile (35 → 36), #158 baton_run_scratchpad_append (36 → 37), docs/39 ten fleet_swarm_* (37 → 47), #294 baton_wakes_subscribe/unsubscribe/since (47 → 50), #318 baton_evidence_search (50 → 51), #317 baton_services_list plus the swarm message family #311 and the canonical sibling twins (51 → 54 → 55), then #99/#179 the accessor pair baton_run_resultpin/baton_waves_harvest (55 → 56) and the core-surface repair that restores baton_run_knowledge_seed (56 → 57)');
+  // The §4 insertion point is CONTIGUITY, never an absolute index: the enumeration has grown since
+  // the pin was written (the derived lifecycle siblings lead the table, and later families follow),
+  // so the row pins the adjacency the contract is about.
+  const stopAt = names.indexOf('baton_waves_stop');
+  assert.ok(stopAt >= 0, 'baton_waves_stop is served on the application surface');
+  assert.equal(names[stopAt + 1], 'baton_waves_list',
+    'baton_waves_list sits immediately after baton_waves_stop — the §4 pinned insertion point');
+  assert.equal(names[stopAt + 2], 'baton_waves_run',
+    'baton_waves_run (#114) follows immediately — the waves family stays contiguous');
   const sorted = mcpApplicationToolNames();
-  assert.equal(sorted.length, 55, 'the sorted ordinary surface reads 55 tools (baton_waves_compile #170 + baton_run_scratchpad_append #158 + ten fleet_swarm_* docs/39 + three #294 baton_wakes_* tools + baton_evidence_search #318 + baton_services_list #317, over the 54 the surface carried at #317\u2019s base)');
+  assert.equal(sorted.length, names.length, 'the sorted ordinary surface reads the same enumeration the server serves');
+  assert.equal(sorted.length, 57, 'the sorted ordinary surface reads 57 tools (the composition above)');
   assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 

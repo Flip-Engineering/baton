@@ -1048,8 +1048,15 @@ export class MockAdapter {
     const stagedClean = localGit(['status', '--porcelain'], session.opts.worktree, { encoding: 'utf8' }).trim() === '';
     let sha;
     if (!stagedClean) {
+      // The commit carries BOTH identities explicitly: `--author` names the mock member, and the
+      // `-c user.name/user.email` pair names the committer. Without the pair the commit reads the
+      // ambient git config, so a runtime whose HOME is the worker-private one (no .gitconfig)
+      // cannot record the member's work at all — the worktree stays uncommitted, the member's
+      // result has no sha, and every wave/harvest row that pins one fails for an environment
+      // reason rather than a behaviour one. The fixture is hermetic here on purpose.
       localGit(
-        ['commit', '-q', '-m', `mock edit: ${edit.path}`, `--author=${authorName} <${authorEmail}>`],
+        ['-c', `user.name=${authorName}`, '-c', `user.email=${authorEmail}`,
+          'commit', '-q', '-m', `mock edit: ${edit.path}`, `--author=${authorName} <${authorEmail}>`],
         session.opts.worktree,
       );
       sha = localGit(['rev-parse', 'HEAD'], session.opts.worktree, { encoding: 'utf8' }).trim();
