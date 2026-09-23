@@ -36,17 +36,23 @@ contributions whose files arrive with that sequence. This index records no phase
 
 ## The composition track, and what it leaves
 
-The architecture lane's composition track ran to the scale the pin allows: five corpora
+The architecture lane's composition track ran to the scale the pin allows: seven corpora
 (`arch-effect-publication`, `arch-publish-compose`, `arch-publish-target`, `arch-publish-content`,
-`arch-publish-bind`) exercise the acceptance-and-publication path, and its own evidence file carries
-the nine-step table. Four steps are closed with a run in this directory: completion evidence from the
-published content (`ARCH-CLOSE-11`'s diagnostic half and M-3a), reconciliation of an ambiguous
-outcome without claiming the effect (M-2, M-3c), the acceptance record bound to the published commit
-id (M-1, M-3b), and destination identity checked before the effect (M-18's dispatch half). Five
-prerequisites stay named: `ARCH-CLOSE-04` durability, `ARCH-CLOSE-10`'s local attempt journal,
-`ARCH-CLOSE-05`/`B2-PROCESS` for native publication, `B2-JSON`/`B2-CRYPTO` for a digest-bound record,
-and `B2-HTTP-TLS` for a shared transport, with crash injection under `B2-FS-DURABILITY` and
-`B2-PROCESS`.
+`arch-publish-bind`, `arch-publish-contention`, `arch-publish-cas`) exercise the
+acceptance-and-publication path, and its own evidence files carry the step tables. Five steps are
+closed with a run in this directory: completion evidence from the published content (`ARCH-CLOSE-11`'s
+diagnostic half and M-3a), reconciliation of an ambiguous outcome without claiming the effect (M-2,
+M-3c), the acceptance record bound to the published commit id (M-1, M-3b), destination identity
+checked before the effect (M-18's dispatch half), and target contention on both halves - the
+destination refuses a non-fast-forward publication and the local compare-and-swap refuses a stale
+expectation, neither merging nor retrying on its own. That last step is why a completion record
+asserts one of `holds_the_ref`, `superseded_but_preserved`, or `absent`: a claim carrying only the
+first is wrong as soon as another attempt publishes. Five prerequisites stay named: `ARCH-CLOSE-04`
+durability, `ARCH-CLOSE-10`'s local attempt journal, `ARCH-CLOSE-05`/`B2-PROCESS` for native
+publication, `B2-JSON`/`B2-CRYPTO` for a digest-bound record, and `B2-HTTP-TLS` for a shared
+transport, with crash injection under `B2-FS-DURABILITY` and `B2-PROCESS`. Two corners stay
+unexercised because the pin gives this lane no fault injection: a true concurrent race on one ref by
+two processes, and a crash between a retry and its publication.
 
 `rewrite-plan.md` phases the remaining work, and each correction above names the evidence its phase
 entry needs.
