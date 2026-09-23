@@ -1,7 +1,7 @@
 // wake-delivery.mjs — root wake delivery into operator-owned harness sessions.
 
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
 import { promisify } from 'node:util';
 import { FRAME_LIMITS } from './limits.mjs';
@@ -256,8 +256,11 @@ function sameIdentity(payload, frame) {
     && payload.swarmId === frame.swarmId;
 }
 
-function alreadyRecorded(store, frame) {
-  return storedEvents(store).some((row) => sameIdentity(deliveryPayload(row), frame));
+function alreadyRecorded(store, frame, kind = 'wake.root_delivered') {
+  return storedEvents(store).some((row) => {
+    const payload = deliveryPayload(row);
+    return payload?.kind === kind && sameIdentity(payload, frame);
+  });
 }
 
 function validateIdentity(frame) {
@@ -273,7 +276,7 @@ function recordDelivery(store, kind, payload, identity) {
   if (typeof store?.recordDriver !== 'function') {
     throw refusal('wake delivery store has no runtime driver writer', 'wake_delivery_store_invalid');
   }
-  const key = `wake-root-delivery:${JSON.stringify(identity)}`;
+  const key = `wake-root-delivery:${kind}:${JSON.stringify(identity)}`;
   return store.recordDriver(kind, payload, { actor: 'policy', key });
 }
 
@@ -301,7 +304,7 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
   }
   const priorFlight = storeFlights.get(identityKey);
   if (priorFlight) {
-    try { await priorFlight; } catch { /* the first attempt records its typed failure */ }
+    await priorFlight;
     if (alreadyRecorded(store, frame)) return Object.freeze({ delivered: false, duplicate: true });
   }
 
@@ -339,7 +342,7 @@ export async function deliverRootWakeOnce({ store, frame, target, deliver }) {
     } catch (cause) {
       const error = typedFailure(cause);
       const payload = { ...base, code: error.code, at: new Date().toISOString() };
-      if (!alreadyRecorded(store, frame)) {
+      if (!alreadyRecorded(store, frame, 'wake.root_undelivered')) {
         recordDelivery(store, 'wake.root_undelivered', payload, identity);
       }
       throw error;
@@ -439,6 +442,8 @@ export async function deliverRootWakeFrame({
           sessionId: normalizedTarget.sessionId,
           from: normalizedTarget.from,
           body,
+          messageId: `baton-wake-${createHash('sha256')
+            .update(JSON.stringify([frame.swarmId, frame.wakeClass, frame.seq])).digest('hex')}`,
           ...(discovery === undefined ? {} : { discovery }),
           ...(transport === undefined ? {} : { transport }),
         });
@@ -463,6 +468,7 @@ export function attachRootWakeDelivery({
   signal = null,
   onResult = null,
   onError = null,
+  retryDelayMs = 1_000,
 }) {
   if (typeof stream?.watch !== 'function') {
     throw refusal('root wake delivery requires a wake stream', 'wake_delivery_stream_invalid');
@@ -478,32 +484,65 @@ export function attachRootWakeDelivery({
   if (onError !== null && typeof onError !== 'function') {
     throw refusal('root wake delivery onError must be a function', 'wake_delivery_invalid');
   }
+  if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs <= 0) {
+    throw refusal('root wake retry delay must be a positive integer', 'wake_delivery_invalid');
+  }
   const controller = new AbortController();
-  const abort = () => controller.abort();
+  const pending = new Map();
+  let retryTimer = null;
+  let retryFlight = null;
+  const abort = () => {
+    controller.abort();
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    pending.clear();
+  };
   if (signal?.aborted) controller.abort();
   else signal?.addEventListener?.('abort', abort, { once: true });
   const consume = (frame) => deliverRootWakeFrame({
     store, frame, target: normalizedTarget, deliver, discovery, transport,
   });
+  const scheduleRetry = () => {
+    if (controller.signal.aborted || pending.size === 0 || retryTimer !== null || retryFlight !== null) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      retryFlight = (async () => {
+        for (const frame of [...pending.values()]) {
+          if (controller.signal.aborted) break;
+          await attempt(frame);
+        }
+      })().finally(() => { retryFlight = null; scheduleRetry(); });
+    }, retryDelayMs);
+    retryTimer.unref?.();
+  };
+  const attempt = async (frame) => {
+    const key = JSON.stringify([frame.swarmId, frame.wakeClass, frame.seq]);
+    try {
+      const result = await consume(frame);
+      pending.delete(key);
+      try { onResult?.(result, frame); } catch { /* delivery remains authoritative */ }
+    } catch (error) {
+      if (!controller.signal.aborted) pending.set(key, frame);
+      try { onError?.(error, frame); } catch { /* later delivery attempts remain active */ }
+    }
+    scheduleRetry();
+  };
   const done = stream.watch(Object.freeze({
     kinds: new Set(['root_owed', 'root_turn_reported']), swarms: null, participants: null, since,
   }), {
     signal: controller.signal,
-    onFrame: async (frame) => {
-      try {
-        const result = await consume(frame);
-        try { onResult?.(result, frame); } catch { /* delivery remains authoritative */ }
-      } catch (error) {
-        try { onError?.(error, frame); } catch { /* the next frame still runs */ }
-      }
-    },
+    onFrame: attempt,
   }).catch((error) => {
     try { onError?.(error, null); } catch { /* the attachment is already settled */ }
-  }).finally(() => signal?.removeEventListener?.('abort', abort));
+  }).finally(async () => {
+    abort();
+    signal?.removeEventListener?.('abort', abort);
+    await retryFlight;
+  });
   return Object.freeze({
     target: normalizedTarget,
     consume,
     done,
-    close: () => controller.abort(),
+    close: abort,
   });
 }
