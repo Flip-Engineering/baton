@@ -805,8 +805,17 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
           role: runId,
           objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
           exact: applicationRouteSchema,
+          // #102 Decision 1: the closed group seat — a member names this OR `exact`, and the XOR is
+          // the shape guard's own law below (the schema() idiom carries no XOR).
+          group: schema({
+            seat: applicationRouteSchema,
+            size: { type: 'integer', minimum: 2, maximum: FRAME_LIMITS['wave.members'].value },
+            quorum: { type: 'integer', minimum: 1, maximum: FRAME_LIMITS['wave.members'].value },
+            strict: { type: 'boolean' },
+            editing: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.members'].value, uniqueItems: true, items: { type: 'integer', minimum: 0 } },
+          }, ['seat', 'size']),
           scope: { type: 'array', minItems: 1, maxItems: FRAME_LIMITS['wave.member.scope'].value, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
-        }, ['role', 'objective', 'exact']),
+        }, ['role', 'objective']),
       },
     }, ['repoId', 'idempotencyKey', 'members']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1836,9 +1845,22 @@ function validateArguments(name, args, maxWaitMs = null) {
     const roles = new Set();
     for (let index = 0; index < args.members.length; index += 1) {
       const member = args.members[index];
+      // Probed record-safely: a non-object member earns the typed refusal below, never a TypeError.
+      const hasExact = record(member) && Object.hasOwn(member, 'exact');
+      const hasGroup = record(member) && Object.hasOwn(member, 'group');
       if (!record(member) || !nonempty(member.role) || !nonempty(member.objective)
-        || !record(member.exact) || !nonempty(member.exact.harness)
-        || !nonempty(member.exact.model) || !nonempty(member.exact.effort)
+        // #102 Decision 1: the member names exactly ONE route form — its own exact route, or a
+        // closed group whose seat every cell worker runs. The deeper group law (quorum, strict,
+        // editing) stays the application's declaration law (wave.mjs normalizeCellDeclaration),
+        // never a second copy here.
+        || hasExact === hasGroup
+        || (hasExact && (!record(member.exact) || !nonempty(member.exact.harness)
+          || !nonempty(member.exact.model) || !nonempty(member.exact.effort)))
+        || (hasGroup && (!record(member.group) || !record(member.group.seat)
+          || !nonempty(member.group.seat.harness) || !nonempty(member.group.seat.model)
+          || !nonempty(member.group.seat.effort)
+          || !Number.isSafeInteger(member.group.size) || member.group.size < 2
+          || member.group.size > FRAME_LIMITS['wave.members'].value))
         || (Object.hasOwn(member, 'scope')
           && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
             || member.scope.some((item) => !nonempty(item))))) {

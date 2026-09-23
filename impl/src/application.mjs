@@ -5,7 +5,7 @@ import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
-import { CELL_GROUP_FIELDS, MAX_CELL_SIZE } from './wave.mjs';
+import { MAX_CELL_SIZE, normalizeCellDeclaration } from './wave.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
   goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
@@ -925,6 +925,10 @@ function normalizeIntent(value) {
     // idempotencyKey) rides only the first member's run.start and mints the pre-loop wave.started
     // record. None of these describe what the run IS — same non-identity treatment as driverKind.
     'waveId', 'waveRole', 'waveStart',
+    // #102 Decision 1: `cell` declares that this run IS a tight cell — `size` homogeneous worker
+    // nodes of ONE seat, keyed cell:<waveRole>:<index>. Like driverKind it describes who is
+    // driving the run, never what the run is, so it stays out of the runId derivation.
+    'cell',
   ]);
   const hasResultIntent = Object.hasOwn(value ?? {}, 'resultIntent');
   const hasDriverKind = Object.hasOwn(value ?? {}, 'driverKind');
@@ -932,6 +936,17 @@ function normalizeIntent(value) {
   const hasWaveRole = Object.hasOwn(value ?? {}, 'waveRole');
   const hasWaveStart = Object.hasOwn(value ?? {}, 'waveStart');
   const waveStart = value?.waveStart;
+  // #102 Decision 1: a cell is a run-shape declaration, read by the ONE declaration law the wave
+  // seams share (wave.mjs normalizeCellDeclaration, the same refusal codes). The wave role is
+  // required because it names the member nodes the cell's workers are keyed by, and a composition
+  // run already mints its nodes from its team, so the two declarations never combine.
+  let cell = null;
+  if (Object.hasOwn(value ?? {}, 'cell')) {
+    if (!hasWaveRole || !validId(value.waveRole) || Object.hasOwn(value ?? {}, 'composition')) {
+      throw applicationError('run intent is invalid', 'application_intent_invalid');
+    }
+    cell = normalizeCellDeclaration(value.cell, 'run cell');
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !allowed.has(key))
     || !Object.hasOwn(value, 'objective')
@@ -982,6 +997,7 @@ function normalizeIntent(value) {
     ...(hasDriverKind ? { driverKind: value.driverKind } : {}),
     ...(hasWaveId ? { waveId: value.waveId } : {}),
     ...(hasWaveRole ? { waveRole: value.waveRole } : {}),
+    ...(cell === null ? {} : { cell }),
     ...(hasWaveStart ? { waveStart: {
       deploymentId: waveStart.deploymentId,
       idempotencyKey: waveStart.idempotencyKey,
@@ -3497,6 +3513,53 @@ export class BatonApplication {
       });
       return this._findRun(refreshed.goal.runId).dispatches;
     }
+    // #102 Decision 2 (TC-04/TC-05): a cell Plan carries `size` homogeneous nodes and is not a
+    // workflow, so it takes the plan-wave dispatch — one worker per node under the ONE runId the
+    // member owns. The wave authority key is the plan digest, so a re-dispatch of the same Plan is
+    // the durable resume; a partial dispatch is refused rather than completed.
+    if (refreshed.plan.nodes.length > 1) {
+      if (refreshed.dispatches.length === refreshed.plan.nodes.length) return refreshed.dispatches;
+      if (refreshed.dispatches.length !== 0) {
+        throw applicationError('cell Plan wave is partially dispatched', 'application_cell_wave_incomplete');
+      }
+      if (typeof this.driver.coordinator.spawnPlanWave !== 'function') {
+        throw applicationError('coordinator lacks durable plan Wave authority', 'application_cell_wave_unavailable');
+      }
+      const members = refreshed.plan.nodes.map((node) => {
+        const gate = {
+          goalId: refreshed.goal.goalId, goalVersion: refreshed.goal.version,
+          goalDigest: refreshed.goal.digest, planId: refreshed.plan.planId,
+          planVersion: refreshed.plan.version, planDigest: refreshed.plan.digest,
+          nodeKey: node.key, expectedDispatchVersion: 0,
+          capabilities: clone(node.capabilities), effects: clone(node.effects),
+          ...(Object.hasOwn(node, 'requiredEffects')
+            ? { requiredEffects: clone(node.requiredEffects) } : {}),
+        };
+        const selectedRoute = exactPlanNodeRoute(node);
+        const route = {
+          vendor: selectedRoute.harness, model: selectedRoute.model, effort: selectedRoute.effort,
+        };
+        const preview = this.driver.coordination.previewPlanDispatch(gate, route);
+        const { goalPlan: ignored, ...brief } = preview.brief;
+        void ignored;
+        const taskId = `baton-${digest({
+          repoId: this.repoId, runId: refreshed.goal.runId,
+          planDigest: refreshed.plan.digest, nodeKey: node.key, dispatchVersion: 1,
+        }).slice(0, 24)}-${node.key.replaceAll(':', '-')}`;
+        return {
+          vendor: route.vendor, model: route.model, effort: route.effort,
+          brief, goalPlan: gate, runId: refreshed.goal.runId, taskId,
+        };
+      });
+      await this.driver.coordinator.spawnPlanWave(members, {
+        actor: this.principals.dispatcher.actor,
+        principalId: this.principals.dispatcher.principalId,
+        sessionId: this.principals.dispatcher.sessionId,
+        powers: ['plan:dispatch'],
+        idempotencyKey: `application:${refreshed.goal.runId}:cell:${refreshed.plan.digest}:v1`,
+      });
+      return this._findRun(refreshed.goal.runId).dispatches;
+    }
     if (refreshed.dispatch) return refreshed.dispatch;
     const node = refreshed.plan.nodes[0];
     const gate = {
@@ -3746,7 +3809,15 @@ export class BatonApplication {
         profile, intent.composition.team.length, workflowPolicy.maxRounds,
       )),
       routes: exactPlanRoutes(member.route),
-    })) : [singleNode];
+    })) : intent.cell
+      // #102 Decision 2 (TC-04): ONE member, `size` homogeneous nodes sharing this member's seat,
+      // scope and objective — the cell spends `size` workers under the one runId while the wave
+      // keeps ONE member row for it. Every worker identity stays derivable from the plan.
+      ? Array.from({ length: intent.cell.size }, (_, index) => ({
+        ...clone(singleNode),
+        key: `cell:${intent.waveRole}:${index}`,
+      }))
+      : [singleNode];
     const goalPlanPolicy = this.driver.coordination.goalPlanPolicy();
     const normalizedGoal = normalizeGoalRequest(goalFields, goalPlanPolicy);
     const hypotheticalGoal = {
@@ -7455,6 +7526,9 @@ export class BatonApplication {
           driverKind: 'wave',
           waveId,
           waveRole: member.role,
+          // #102 Decision 2: the cell's size rides the member's run intent, so the run mints
+          // `size` homogeneous nodes and spends `size` workers under this ONE member's runId.
+          ...(member.group === undefined ? {} : { cell: member.group }),
           waveStart: { deploymentId: this.deploymentId, roster, idempotencyKey: request.idempotencyKey },
         }, principal, context);
       } catch (cause) {
@@ -7744,57 +7818,13 @@ export class BatonApplication {
   /** #102 Decision 1: the closed `group` field on a wave member — `{editing?, quorum?, seat, size,
    * strict?}` (docs/reference/evidence/tight-cell-2026-08-06/tight-cell-contract.md). The seat is
    * the ONE route every cell worker takes, so a member that names a group and its own route is a
-   * contradiction rather than a precedence question, and a group without a seat is ambiguous. The
-   * defaults are the strict ones: quorum defaults to size, so an undeclared tolerance never
-   * excuses a loss, and `strict: true` with a narrower quorum contradicts itself. */
+   * contradiction rather than a precedence question; the closed shape and the strict defaults are
+   * the shared declaration law in wave.mjs. */
   _normalizeCellGroup(member) {
-    const refuse = (message, code) => { throw applicationError(message, code); };
-    const group = member.group;
-    if (!group || typeof group !== 'object' || Array.isArray(group)) {
-      refuse('wave start member group is invalid', 'wave_group_invalid');
-    }
-    if (Object.keys(group).some((key) => !CELL_GROUP_FIELDS.includes(key))) {
-      refuse('wave start member group carries a field outside its closed shape', 'wave_group_invalid');
-    }
     if (member.exact !== undefined) {
-      refuse('wave start member names both a group seat and its own route', 'wave_group_route_conflict');
+      throw applicationError('wave start member names both a group seat and its own route', 'wave_group_route_conflict');
     }
-    const seat = group.seat;
-    if (seat === undefined) {
-      refuse('wave start member group names no seat, so the cell has no route to run', 'wave_group_seat_missing');
-    }
-    if (!seat || typeof seat !== 'object' || Array.isArray(seat)
-      || !['harness', 'model', 'effort'].every((axis) => validText(seat[axis]))) {
-      refuse('wave start member group seat is invalid', 'wave_group_invalid');
-    }
-    const size = group.size;
-    if (!Number.isSafeInteger(size) || size < 2 || size > MAX_CELL_SIZE) {
-      refuse(`wave start member group size must be an integer between 2 and ${MAX_CELL_SIZE}`, 'wave_group_invalid');
-    }
-    const quorum = group.quorum === undefined ? size : group.quorum;
-    if (!Number.isSafeInteger(quorum) || quorum < 1 || quorum > size) {
-      refuse('wave start member group quorum must be an integer between 1 and its size', 'wave_group_invalid');
-    }
-    const strict = group.strict === undefined ? false : group.strict;
-    if (typeof strict !== 'boolean') refuse('wave start member group strict must be a boolean', 'wave_group_invalid');
-    if (strict === true && quorum < size) {
-      refuse('wave start member group declares strict with a quorum below its size', 'wave_group_invalid');
-    }
-    let editing = null;
-    if (group.editing !== undefined) {
-      const indexes = group.editing;
-      if (!Array.isArray(indexes) || indexes.length === 0
-        || indexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= size)
-        || new Set(indexes).size !== indexes.length
-        || indexes.some((index, at) => at > 0 && index <= indexes[at - 1])) {
-        refuse('wave start member group editing must be a sorted list of distinct in-range member indexes', 'wave_group_invalid');
-      }
-      editing = Object.freeze([...indexes]);
-    }
-    return Object.freeze({
-      seat: Object.freeze({ harness: seat.harness, model: seat.model, effort: seat.effort }),
-      size, quorum, strict, editing,
-    });
+    return normalizeCellDeclaration(member.group, 'wave start member group');
   }
   _normalizeWaveStart(value) {
     const allowed = new Set(['idempotencyKey', 'members']);
