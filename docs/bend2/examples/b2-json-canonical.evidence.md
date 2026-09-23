@@ -64,11 +64,29 @@ The toolchain prints a version notice (`bend 2.0.26 is available: run bend updat
 the `grep -v` above removes exactly that line and nothing else.
 
 
-The corpus is twelve fixtures: `null`, `true`, `0`, `4096`, a string with a quote and a backslash,
-a string with newline, tab and a control character, an array of mixed scalars, the empty array, an
-object written with keys out of order (`b`, `a`, `c`), the empty object, a non-ASCII string and a
-nested object with a non-ASCII string. The first line is the UTF-8 hex of `café` (`63 61 66 c3 a9`),
-checked separately because the encoder carries bytes as `List<U32>`.
+## The corpus, value by value
+
+The twelve fixtures and the canonical text each one must produce. A reviewer can build the
+reference from this table alone; the strings are given as code points where a literal would depend
+on the file's own escaping.
+
+| # | Fixture (as built by `corpus()`) | Canonical output |
+|---|---|---|
+| 1 | `Jnull{}` | `null` |
+| 2 | `Jtrue{}` | `true` |
+| 3 | `Jint{0}` | `0` |
+| 4 | `Jint{4096}` | `4096` |
+| 5 | `Jstr{}` of code points 97, 34, 98, 92, 99 (`a`, quote, `b`, backslash, `c`) | `"a\"b\\c"` |
+| 6 | `Jstr{}` of code points 10, 9, 1 | `"\n\t\u0001"` |
+| 7 | `Jarr{Jint{1}, Jarr{Jnull{}, Jarr{Jstr{"x"}, Jnil{}}}}` | `[1,null,"x"]` |
+| 8 | `Jarr{Jnil{}, Jnil{}}` (the empty array, see Scope) | `[]` |
+| 9 | `Jobj{}` with members `b`: `Jint{2}`, `a`: `Jint{1}`, `c`: `[]`, in that chain order | `{"a":1,"b":2,"c":[]}` |
+| 10 | `Jobj{Jnil{}}` | `{}` |
+| 11 | `Jstr{}` of code points 99, 97, 102, 233 (`café`) | `"café"` |
+| 12 | `Jobj{}` with one member `nested`: an object with one member `z`: `Jstr{}` of code point 955 (`λ`) | `{"nested":{"z":"λ"}}` |
+
+The run's first line is the UTF-8 hex of fixture 11, `636166c3a9`, checked separately because the
+encoder carries bytes as `List<U32>` and does not print raw bytes.
 
 ## Shape constraints the checker imposed
 
