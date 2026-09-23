@@ -105,7 +105,8 @@ quarantines only the second.
 1. **A landing that touches `README.md` or `.gitignore` selects an environment-red test set.** The
    pre-verdict selector (`impl/src/verification-selection.mjs`) treats an unimported changed path's
    basename as a fixture needle, and dozens of tests write `README.md` or `.gitignore` fixtures, so
-   one such changed path selects 67 test files. On this host that set contains
+   one such changed path selects dozens of test files: 67 on the served master `65c913f0`, and 64 on
+   the `cc1a1876` rehearsal tree. On this host that set contains
    `test/phase78-concise-deployment-factory.test.mjs :: P92-DF10b`, which fails with
    `harness_unavailable`: the test isolates `HOME`, and the Kimi Code executable it needs is not on
    `PATH` or under the isolated home, so the doctor answers `harness_unavailable` where the fixture
