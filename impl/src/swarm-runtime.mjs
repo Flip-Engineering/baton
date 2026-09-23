@@ -889,6 +889,19 @@ const ROOT_ADDRESSED_NEED = /^(?:the\s+)?root\s*:/i;
  * `owed`, never `kind` (the name the reporting half reads): the ledger's driver container records `{kind, ...payload}`
  * (coordination-ledger.mjs recordDriver), so a payload field named `kind` would overwrite the
  * row's own operational identity and the row would never wake its class. */
+/** Issue #564 x #572: the bounded text a turn-report owed row carries. The report is a
+ * WorkerResult OBJECT by the time it is recorded, so the summary is read when it is a string; a
+ * string report rides whole; a reporter fallback (its parent guidance refused) falls back to the
+ * failure reason. Anything else is null rather than a serialized object the attention row cannot
+ * read. */
+function turnReportAsk(payload) {
+  const report = payload?.report;
+  if (typeof report === 'string' && report.length > 0) return report;
+  if (typeof report?.summary === 'string' && report.summary.length > 0) return report.summary;
+  const reason = payload?.deliveryFailure?.reason;
+  return typeof reason === 'string' && reason.length > 0 ? reason : null;
+}
+
 function rootAttentionRowPayloads(swarm, contribution) {
   const authorId = contribution?.participantId ?? null;
   const reviewHeld = Object.values(swarm?.participants ?? {}).some((seat) => seat?.status === 'active'
@@ -1937,6 +1950,7 @@ export class SwarmRuntime {
       // a faulting append leaves the rows to the next pass rather than failing the caller.
       try {
         this._reconcileReviewerLossRows(this.store.swarm(swarm.swarmId), 'baton-runtime');
+        this._reconcileTurnReportedRows(this.store.swarm(swarm.swarmId), 'baton-runtime');
       } catch { /* the next observation re-derives under the same keys */ }
     }
     if (changed) this._reconcileHostCapacity();
@@ -2433,6 +2447,36 @@ export class SwarmRuntime {
     return this._recordRootAttentionRows(swarm,
       owed.flatMap((contribution) => rootAttentionRowPayloads(swarm, contribution))
         .filter((row) => row.owed === 'review_owed'), actor);
+  }
+
+  /** Issue #564 x #572: RECONCILE the root-owed rows a top-level TURN END owes. A turn report
+   * whose nearest active ancestor is null has no parent seat to deliver to, so it waits on the
+   * root — and like the reviewer-loss rows this is re-derived from the durable rows on every
+   * observing call, one row per turn under the reporter's own deterministic key
+   * (`swarm-turn-report:swarmId:participantId:workerId:turnEpoch:turnSeq`), so a faulted append is repaired
+   * by the next pass and a replay adds nothing. A report with a live parent belongs to that parent
+   * and is never re-addressed to the root here. */
+  _reconcileTurnReportedRows(swarm, actor) {
+    const owed = [];
+    const seen = new Set();
+    for (const event of this.store.eventsView()) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.kind !== 'swarm.turn_reported' || payload.swarmId !== swarm.swarmId) continue;
+      if (payload.parentId !== null && payload.parentId !== undefined) continue;
+      const turn = `${payload.participantId}:${payload.workerId ?? ''}:${payload.turnEpoch ?? ''}:${payload.turnSeq ?? ''}`;
+      if (seen.has(turn)) continue;
+      seen.add(turn);
+      owed.push({ payload, turn });
+    }
+    if (owed.length === 0) return [];
+    return owed.map(({ payload, turn }) => {
+      const event = this.store.recordDriver('swarm.root_attention_owed', {
+        swarmId: swarm.swarmId, participantId: payload.participantId, owed: 'turn_reported',
+        ask: turnReportAsk(payload),
+        next: { command: 'swarm.view', swarmId: swarm.swarmId },
+      }, { actor, key: `swarm-turn-report-owed:${swarm.swarmId}:${turn}` }).event;
+      return { kind: 'driver.recorded', payload: event.payload, seq: event.seq, ts: event.ts, actor: event.actor };
+    });
   }
 
 
@@ -8267,7 +8311,10 @@ export class SwarmRuntime {
         // The departure is also a review loss: every contribution still unreviewed that no
         // remaining active seat can review is re-addressed to the root from the fold — the
         // trigger is the reviewer's departure, not the contribution's write instant.
-        rootAttention = this._reconcileReviewerLossRows(this._swarm(args.swarmId), principal.actor);
+        rootAttention = [
+          ...(this._reconcileReviewerLossRows(this._swarm(args.swarmId), principal.actor) ?? []),
+          ...(this._reconcileTurnReportedRows(this._swarm(args.swarmId), principal.actor) ?? []),
+        ];
       }
       this._recordOperationCompleted(command, args, principal, context);
       if (args.event === 'swarm.participant_left') this._reconcileHostCapacity();
@@ -9217,6 +9264,7 @@ export class SwarmRuntime {
         // the repair. The reconciler's deterministic keys keep a healthy re-run a no-op, and a
         // fault here still faults the mutation with its completion unwritten.
         const reviewerLoss = this._reconcileReviewerLossRows(this._swarm(args.swarmId), principal.actor);
+        const turnReported = this._reconcileTurnReportedRows(this._swarm(args.swarmId), principal.actor);
         this._reconcileHostCapacity();
         // Issue #469: the receipt a stop answers with IS the row the operation lane records
         // (`_once` writes the effect's own result), so projecting it HERE is what keeps both the
