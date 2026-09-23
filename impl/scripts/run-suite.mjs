@@ -558,6 +558,8 @@ function childEnv(summaryFile) {
   // unwritten — the file then reads as "exited without reporting". The child's context is this
   // run's, never the caller's.
   delete env.NODE_TEST_CONTEXT;
+  // This runner alone writes its verdict. Nested test runners own separate destinations.
+  delete env.BATON_SUITE_VERDICT_FILE;
   // The parent token is this run's own admission, never an inherited one: a run that holds no
   // lease hands its children no token (they are already unwired by the pin above).
   if (suiteLeaseDigest === null) delete env[SUITE_VERIFY_LEASE_ENV];
