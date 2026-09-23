@@ -56,6 +56,7 @@ import {
   KILL_ESCALATION_GRACE_MS, processGroupAlive, reapOwnedProcessGroup,
 } from './process-lifecycle.mjs';
 import { WebNorthbound, createLocalAuthenticatedWebServer } from './web-northbound.mjs';
+import { composePrescriptiveWarnings, PRESCRIPTIVE_DOCTOR_DEFAULTS } from './prescriptive-doctor.mjs';
 
 const DEFAULT_BUDGET = Object.freeze({
   // The default notification envelope for goal/node budgets — never a stop (issue #258). The
@@ -3316,6 +3317,13 @@ class BatonDeployment {
   #served = null;
   #claudeCredentialProbe = null;
   #grokCredentialProbe = null;
+  // #72: the credential METADATA read the prescriptive doctor's W3 uses. The grok route row keeps
+  // its own collapsed probe (the blocking horizon derivation reads that shape); this sibling
+  // exposes only the metadata class — expiry and state, never token material — so W3 can classify
+  // against the deployment's own early-invalidation window without touching the blocking path.
+  #grokCredentialMetadata = null;
+  // #72: the deployment's worktree-capacity policy, read by the W1 reserved-fraction threshold.
+  #capacityPolicy = null;
   #liveness = null;
   #adapters = {};
   #routes = [];
@@ -3391,6 +3399,8 @@ class BatonDeployment {
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
     this.#credentialLifetime = deployment.credentialLifetime ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
+    this.#grokCredentialMetadata = deployment.grokCredentialMetadata ?? null;
+    this.#capacityPolicy = deployment.capacityPolicy ?? null;
     this.#hostCapacityProbe = deployment.hostCapacityProbe ?? null;
     // #495: the authority this resident watches after admission — the post-admission half of the
     // capacity rule (see `#watchHostExhaustion`). Null on a host the suite left unwired.
@@ -3515,6 +3525,8 @@ class BatonDeployment {
     // #profileRows) — null when this deployment maps no route to an Artificial Analysis model, in
     // which case no row claims a profile field at all.
     const profiles = this.#profileRows();
+    // #72: the W7 reads — one per served route, collected as the routes are composed below.
+    const warningRouteInputs = [];
     const routes = Object.freeze(this.#readiness.routes.map((route) => {
       let row = route;
       if (route.harness === 'claude-code' && route.model.startsWith('claude-') && credential) {
@@ -3567,6 +3579,14 @@ class BatonDeployment {
       // preflight, the doctor consumers) while leaving the pre-existing enumerable row shape
       // (DP5's closed pin) and serialized doctor output unchanged.
       const live = this.#composeLive(row);
+      // #72 W7: the route's own liveness row is the auth-failure read this deployment can make
+      // per call — the ledger's route observations carry no auth classification of their own,
+      // so the warning never walks their history on this per-call read.
+      warningRouteInputs.push({
+        routeKey: { harness: row.harness, model: row.model, effort: row.effort },
+        observations: [],
+        liveness: { state: live.liveness?.state ?? null, code: live.liveness?.code ?? null },
+      });
       const composed = profiles === null ? { ...row } : { ...row, profile: profiles.get(key) ?? null };
       // #317 (docs/50 D6): the route's service attribution — the provider-service record the
       // route resolves to. Present only when this deployment declares services, so a deployment
@@ -3631,6 +3651,13 @@ class BatonDeployment {
     // `state: 'stopping'` beside the waits the stop holds. Present only while a stop is in flight,
     const stopping = this.#stoppingState();
     if (stopping !== null) base.stopping = stopping;
+    // #72 (§4.2): the prescriptive warnings — the ONE advisory layer — attached by the same
+    // non-enumerable Object.defineProperty pattern as `briefing`/`coordination`. A reader sees the
+    // rows by property access; Object.keys/JSON.stringify and the wave-driver preflight read
+    // nothing new, so the serialized doctor stays byte-stable and no warning can turn a dispatch
+    // into a refusal. Every detection is fail-open, so an unreadable substrate omits its row.
+    const warnings = composePrescriptiveWarnings(this.#prescriptiveWarningReads(workspace, warningRouteInputs));
+    Object.defineProperty(base, 'warnings', { value: warnings, enumerable: false });
     Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
     // Issue #351 lane 2: the startup truth the publication contract renders — the coordination
     // replay's final state (state/rows/checkpoint) beside the open's elapsed milliseconds, read
@@ -3641,6 +3668,52 @@ class BatonDeployment {
       value: this.startupReport(), enumerable: false,
     });
     return Object.freeze(base);
+  }
+
+  /** #72: the reads the prescriptive doctor classifies. Every read is guarded here: a deployment
+   * with no coordination store, no resident authority or no credential cache passes null for that
+   * substrate, and the corresponding detection simply omits its warning (the fail-open law of
+   * §4.1) — a warning is never worth failing a doctor read for. */
+  #prescriptiveWarningReads(workspace, routeInputs) {
+    let authorityRoot = null;
+    let publicOutlineState = null;
+    if (this.#residentAuthority) {
+      try {
+        authorityRoot = dirname(this.#residentAuthority.selectorPath);
+        publicOutlineState = this.#residentAuthority.publicOutline().state === 'published'
+          ? 'published' : 'private';
+      } catch {
+        authorityRoot = null;
+        publicOutlineState = null;
+      }
+    }
+    let claudeMetadata = null;
+    let grokMetadata = null;
+    let now = null;
+    try { claudeMetadata = this.#claudeCredentialProbe ? this.#claudeCredentialProbe() : null; } catch { claudeMetadata = null; }
+    try { grokMetadata = this.#grokCredentialMetadata ? this.#grokCredentialMetadata() : null; } catch { grokMetadata = null; }
+    try { now = this.#residentOptions.now(); } catch { now = null; }
+    const capacity = this.#capacityPolicy;
+    const policy = Object.freeze({
+      ...PRESCRIPTIVE_DOCTOR_DEFAULTS,
+      ...(Number.isSafeInteger(capacity?.maxReservedBytes)
+        ? { maxReservedBytes: capacity.maxReservedBytes } : {}),
+      ...(Number.isSafeInteger(capacity?.maxReservedInodes)
+        ? { maxReservedInodes: capacity.maxReservedInodes } : {}),
+    });
+    return {
+      root: this.#repository.root,
+      policy,
+      storeRoot: this.#driver?.coordination?.root ?? null,
+      claudeMetadata,
+      grokMetadata,
+      now,
+      workspace,
+      repoRoot: this.#repository.root,
+      authorityRoot,
+      publicOutlineState,
+      routes: routeInputs,
+    };
   }
 
   card() { return Object.freeze({ ...this.#card, readiness: this.doctorReadiness() }); }
@@ -6953,6 +7026,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       claudeCredentialCache,
       grokCredentialProbe,
       grokCredentialCache,
+      // #72: the two reads the prescriptive doctor adds beside the blocking probes — the grok
+      // credential METADATA (never token material) and the worktree-capacity policy the W1
+      // reserved-fraction threshold measures against.
+      grokCredentialMetadata: grokCredentialCache ? () => grokCredentialCache.metadata() : null,
+      capacityPolicy: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
       // #429: the measured-profile reader the route tables are served from (null for a deployment
       // that maps no route to an Artificial Analysis model).
       modelProfiles,

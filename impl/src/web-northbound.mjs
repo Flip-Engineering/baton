@@ -2877,8 +2877,15 @@ export class WebNorthbound {
       // process that reads the doctor sibling by property access AFTER an HTTP JSON round-trip,
       // and non-enumerable properties do not survive JSON.stringify. So the route reads the
       // non-enumerable sibling itself and adds the ONE named additive field to the served shape.
+      // #72 (§4.2): the same reading-consumer rule applies to the prescriptive warnings — the
+      // doctor sibling is non-enumerable, so the route reads it here and publishes the ONE named
+      // enumerable `warnings` field beside `briefing`.
       const readiness = card?.readiness && typeof card.readiness === 'object' && !Array.isArray(card.readiness)
-        ? { ...card.readiness, briefing: card.readiness.briefing ?? null }
+        ? {
+          ...card.readiness,
+          briefing: card.readiness.briefing ?? null,
+          warnings: card.readiness.warnings ?? null,
+        }
         : (card?.readiness ?? null);
       return this._write(res, result(200, {
         ok: true,

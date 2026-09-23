@@ -125,8 +125,16 @@ function typed(message, code = 'worktree_capacity_exceeded', cause) {
 }
 
 export function normalizeWorktreeCapacityPolicy(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).sort().join(',') !== [...POLICY_FIELDS].sort().join(',')) throw new TypeError('worktreeCapacity must be one closed policy');
+  // The gate admits the closed field set, and its OWN output: a policy that already carries the
+  // digest `normalizeWorktreeCapacityPolicy` computed for those fields is the same closed policy,
+  // so a caller that holds a normalized policy (a ledger's sealed policy, a fixture that plants
+  // one) can pass it straight back in. Any other key set — an unknown field, a missing field, or a
+  // digest that disagrees with the fields beside it — still refuses.
+  const closedKeys = [...POLICY_FIELDS].sort().join(',');
+  const digestKeys = [...POLICY_FIELDS, 'digest'].sort().join(',');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('worktreeCapacity must be one closed policy');
+  const keys = Object.keys(value).sort().join(',');
+  if (keys !== closedKeys && keys !== digestKeys) throw new TypeError('worktreeCapacity must be one closed policy');
   const normalized = {};
   for (const field of POLICY_FIELDS) {
     const item = value[field];
@@ -144,7 +152,11 @@ export function normalizeWorktreeCapacityPolicy(value) {
       || normalized.runtimeReserveBytes > normalized.maxReservedBytes))
     || (normalized.maxReservedInodes !== null && (normalized.maxReservedInodes <= 0
       || normalized.runtimeReserveInodes > normalized.maxReservedInodes))) throw new TypeError('worktreeCapacity ceilings are inconsistent');
-  return Object.freeze({ ...normalized, digest: digest(normalized) });
+  const computed = digest(normalized);
+  if (value.digest !== undefined && value.digest !== computed) {
+    throw new TypeError('worktreeCapacity digest disagrees with its policy fields');
+  }
+  return Object.freeze({ ...normalized, digest: computed });
 }
 
 /** #307: THE FLOOR IS A RECORD, NOT A CONSTANT. The workspace floor beneath one reservation wave
