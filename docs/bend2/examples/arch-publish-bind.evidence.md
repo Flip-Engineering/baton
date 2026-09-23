@@ -16,7 +16,7 @@ of increment 7 directed.
 | File | Holds |
 |---|---|
 | `arch-publish-bind.sh` | the five stages: acceptance, the record, publication, completion with the recorded commit, a record naming another commit |
-| `arch-publish-bind.evidence.md` | this record and the composition's final gap table |
+| `arch-publish-bind.evidence.md` | this record and the composition's gap table as of this increment, which the two contention corpora extend |
 
 ## Host and toolchain
 
@@ -82,10 +82,15 @@ that can be checked without trusting whoever wrote the line:
 Neither exists at the pin: `bend base Json` and the hashing names are absent, so the record is written
 by this script and the comparison is a string comparison. The gap table below records that.
 
-## The composition's final gap table
+## The composition's gap table at this increment
 
-The composition track stops here: gaps (3) and (1) are done at the scale the pin allows, and gap (2) is
-a named prerequisite rather than a task this lane can close. This is the final table.
+The composition track stops here at this increment: gaps (3) and (1) are done at the scale the pin
+allows, and gap (2) is a named prerequisite rather than a task this lane can close. This is not the
+track's last word: `arch-publish-contention.evidence.md` adds target contention at the declared ref and
+`arch-publish-cas.evidence.md` the local compare-and-swap on the target, which bring the composition to
+five steps closed at the pin - completion evidence, the reconciled ambiguous outcome, the record bound
+to the published commit, destination identity before the effect, and contention on both halves - while
+the same prerequisites carry the deployment halves.
 
 | Step of the composed path | State at the pin | Where the remaining half rests |
 |---|---|---|
@@ -101,9 +106,10 @@ a named prerequisite rather than a task this lane can close. This is the final t
 
 ## Verdict
 
-The claim holds, and the table above is the composition's final statement of what remains. Every row's
-closed half is a run recorded in this directory; every open half names the prerequisite that carries
-it in `../rewrite-plan.md`.
+The claim holds, and the table above is the composition's statement of what remained at this increment.
+Every row's closed half is a run recorded in this directory; every open half names the prerequisite
+that carries it in `../rewrite-plan.md`, and the two contention corpora extend the table as the framing
+above records.
 
 ## Related
 
