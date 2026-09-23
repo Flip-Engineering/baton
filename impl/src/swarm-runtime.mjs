@@ -7555,6 +7555,10 @@ export class SwarmRuntime {
     }
     if (typeof error.path === 'string') detail.path = error.path;
     if (typeof error.sha === 'string') detail.sha = error.sha;
+    // Issue #570: a target that diverged from the declared remote names both heads — the local
+    // head the deployment holds and the fetched tip the landing gated on.
+    if (typeof error.localSha === 'string') detail.localSha = error.localSha;
+    if (typeof error.fetchedSha === 'string') detail.fetchedSha = error.fetchedSha;
     // Issue #451: a landing step that DIED says so — the script, its exit status, and the bounded
     // redacted tail of what it wrote to stderr. Without these the operator saw a bare "failed in
     // the landing checkout" (`detail: {}`) and had to rebuild the checkout by hand to learn why.
@@ -7623,6 +7627,11 @@ export class SwarmRuntime {
         refuse(message, 'integrate_publish_failed', detail); break;
       case 'integrate_target_moved':
         refuse(message, 'integrate_target_moved', detail); break;
+      // Issue #570: the fetched remote tip and the local target ref went separate ways. The
+      // landing refuses instead of squashing onto a tip the local ref cannot fast-forward to,
+      // and the detail names both heads.
+      case 'integrate_target_diverged':
+        refuse(message, 'integrate_target_diverged', detail); break;
       case 'integrate_change_invalid':
         refuse(message, 'integrate_change_invalid', detail); break;
       default:
