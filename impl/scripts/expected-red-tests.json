@@ -1439,6 +1439,114 @@
     {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-tools (stage: tools absent): the six ordinary tools register with closed schemas, _meta digests, and honest annotations",
       "reason": "#87"
+    },
+    {
+      "key": "test/canonical-naming-233-red.test.mjs :: CLOSED SET: web-admitted command names equal exactly the ONE derivation",
+      "reason": "#233"
+    },
+    {
+      "key": "test/canonical-naming-233-red.test.mjs :: CLOSED SET: MCP application dispatch names equal exactly the ONE derivation",
+      "reason": "#233"
+    },
+    {
+      "key": "test/swarm-mcp-dispatch.test.mjs :: every canonical swarm.* dot twin dispatches on the combined surface",
+      "reason": "#233"
+    },
+    {
+      "key": "test/unified-cli-surface.test.mjs :: CLI generic invocation resolves exact canonical names before compatibility aliases",
+      "reason": "#233"
+    },
+    {
+      "key": "test/cli-silent-start-red.test.mjs :: PT-2c capability [generated-damerau1-sweep] — every generated distance-1 variant refuses (exactly-one) or falls through (zero/two-or-more)",
+      "reason": "#155"
+    },
+    {
+      "key": "test/cli-silent-start-red.test.mjs :: PT-7 pin [canonical-aliases-unchanged] — canonical aliases resolve to HEAD and every recognized first-token still dispatches, never run.start",
+      "reason": "#155"
+    },
+    {
+      "key": "test/cli-wave-fidelity-red.test.mjs :: A7-6 (D3 closed-set): every waves.* cli-claiming op is admitted, parses to { name: <key> }, and is documented — the ghost-prevention pin",
+      "reason": "#157"
+    },
+    {
+      "key": "test/doc-truth-conformance-red.test.mjs :: R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted or ledgered, and ledger rows are full shape",
+      "reason": "#159"
+    },
+    {
+      "key": "test/frame-economics-red.test.mjs :: F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs",
+      "reason": "#89"
+    },
+    {
+      "key": "test/grammar-m4b-red.test.mjs :: M4B-3: a canonical MCP tool executes beside the legacy tool, reaching one operation",
+      "reason": "#43"
+    },
+    {
+      "key": "test/mcp-packaging-red.test.mjs :: MP7: the four settlement tools register on MCP and promote requires the sessionAuthority envelope",
+      "reason": "#1"
+    },
+    {
+      "key": "test/mcp-packaging-red.test.mjs :: MP9: knowledge_settlement_lease requires the settlement capability on the principal",
+      "reason": "#1"
+    },
+    {
+      "key": "test/wave-observability-red.test.mjs :: A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)",
+      "reason": "#460"
+    },
+    {
+      "key": "test/bridge-idempotency-344.test.mjs :: 344: read tools carry no idempotencyKey",
+      "reason": "#344"
+    },
+    {
+      "key": "test/create-driver-wiring.test.mjs :: CDW5: every option the composition root reads is classified, and every exercised claim names a case in this file",
+      "reason": "#558"
+    },
+    {
+      "key": "test/issue150-coaching-passthrough.test.mjs :: 150-CP1: validation-path coaching refusal carries cap, actual, unit, gracefulPath on the MCP wire",
+      "reason": "#150"
+    },
+    {
+      "key": "test/issue150-coaching-passthrough.test.mjs :: 150-CP2: at-cap message is admitted, cap+1 refuses with the coaching triple",
+      "reason": "#150"
+    },
+    {
+      "key": "test/issue499-schema-counts.test.mjs :: 499-M1: each schema file carries exactly one surviving bare 64 (the triaged entryIds batch)",
+      "reason": "#499"
+    },
+    {
+      "key": "test/mcp-refusals-named.test.mjs :: a missing required argument is named by the refusal",
+      "reason": "#156"
+    },
+    {
+      "key": "test/mcp-refusals-named.test.mjs :: an unknown tool name answers with the nearest advertised tool and the full tool set",
+      "reason": "#156"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A2-1 stage[mcp-append-tool-missing]: baton_run_scratchpad_append is advertised — capabilities, mcpApplicationToolNames, and tools/list",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A2-2 stage[mcp-append-dispatch-branch-missing]: tools/call for a valid append dispatch is routed, never the absent-tool protocolError",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: A2-3 stage[mcp-append-admission-missing]: TOOL_DEFINITIONS + ORDINARY_EXPLICIT_TOOLS + the _dispatch chain all reference the tool",
+      "reason": "#158"
+    },
+    {
+      "key": "test/scratchpad-write-red.test.mjs :: P-A1 PIN: the read/elevate half of the parity table stays served — CLI parser + CLI_WEB_COMMANDS + MCP + registry all agree (the substrate the write completes)",
+      "reason": "#158"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: FP-15 (stage: tools + wire mapping absent): every newly projected refusal reaches the wire AS ITSELF",
+      "reason": "#87"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: FP-19 (GUARD, green today): the settlement plane is byte-identical — the six new tools need no settlement class",
+      "reason": "#87"
+    },
+    {
+      "key": "test/workflow-surface-red.test.mjs :: WS-02 (stage: steps unserved today): the eight sequence steps resolve to served commands — boards facade-explicit",
+      "reason": "#87"
     }
   ],
   "converged": [
@@ -1479,10 +1587,6 @@
       "reason": "#85"
     },
     {
-      "file": "test/canonical-naming-233-red.test.mjs",
-      "reason": "#233"
-    },
-    {
       "file": "test/capacity-refusal-visibility-red.test.mjs",
       "reason": "#35"
     },
@@ -1503,16 +1607,8 @@
       "reason": "#289"
     },
     {
-      "file": "test/cli-silent-start-red.test.mjs",
-      "reason": "#155"
-    },
-    {
       "file": "test/cli-truthfulness-red.test.mjs",
       "reason": "#36"
-    },
-    {
-      "file": "test/cli-wave-fidelity-red.test.mjs",
-      "reason": "#157"
     },
     {
       "file": "test/control-surface-truth-red.test.mjs",
@@ -1551,10 +1647,6 @@
       "reason": "#230"
     },
     {
-      "file": "test/doc-truth-conformance-red.test.mjs",
-      "reason": "#159"
-    },
-    {
       "file": "test/doubt-review-red.test.mjs",
       "reason": "#66"
     },
@@ -1583,10 +1675,6 @@
       "reason": "#250"
     },
     {
-      "file": "test/frame-economics-red.test.mjs",
-      "reason": "#89"
-    },
-    {
       "file": "test/git-batch-216-red.test.mjs",
       "reason": "#216"
     },
@@ -1605,10 +1693,6 @@
     {
       "file": "test/grammar-m3-red.test.mjs",
       "reason": "#261"
-    },
-    {
-      "file": "test/grammar-m4b-red.test.mjs",
-      "reason": "#43"
     },
     {
       "file": "test/harvest-accessor-red.test.mjs",
@@ -1689,10 +1773,6 @@
     {
       "file": "test/log-archival-285-red.test.mjs",
       "reason": "#285"
-    },
-    {
-      "file": "test/mcp-packaging-red.test.mjs",
-      "reason": "#1"
     },
     {
       "file": "test/mcp-reflex-board-package-red.test.mjs",
@@ -2093,10 +2173,6 @@
     {
       "file": "test/wave-index-memo-229-red.test.mjs",
       "reason": "#229"
-    },
-    {
-      "file": "test/wave-observability-red.test.mjs",
-      "reason": "#460"
     },
     {
       "file": "test/wave-settle-error-surfacing-red.test.mjs",
