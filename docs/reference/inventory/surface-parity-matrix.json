@@ -1009,7 +1009,7 @@
       "mcp": "baton_run_resultpin",
       "web": "run_resultpin",
       "divergence": null,
-      "ledgered": false
+      "ledgered": true
     },
     {
       "name": "run.resume",
@@ -1441,7 +1441,7 @@
       "mcp": "baton_waves_harvest",
       "web": "waves_harvest",
       "divergence": null,
-      "ledgered": false
+      "ledgered": true
     },
     {
       "name": "waves.list",
