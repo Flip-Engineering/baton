@@ -10,6 +10,7 @@ import {
 } from './control-surface-unification.mjs';
 import { BatonControlError, digestValue } from './holistic-runtime.mjs';
 import {
+  ORDINARY_APPLICATION_TOOL_DEFINITIONS,
   mcpAdvancedToolNames,
   mcpApplicationToolNames,
   mcpCombinedToolNames,
@@ -37,6 +38,9 @@ const semanticByKey = new Map(
   APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => [row.key, row]),
 );
 const applicationMcpNames = new Set(mcpApplicationToolNames());
+const applicationMcpModes = new Map(ORDINARY_APPLICATION_TOOL_DEFINITIONS.map((tool) => [
+  tool.name, tool.annotations.readOnlyHint ? 'query' : 'effect',
+]));
 const advancedMcpNames = new Set(mcpAdvancedToolNames());
 const combinedMcpNames = Object.freeze(mcpCombinedToolNames());
 const combinedMcpNameSet = new Set(combinedMcpNames);
@@ -196,6 +200,7 @@ function applicationRow(row) {
 }
 
 function nativeMode(name) {
+  if (applicationMcpModes.has(name)) return applicationMcpModes.get(name);
   return /[._](?:read|list|view|status|progress|compile|receipt|watch|recall|horizon|cite|result|capabilities|wait|episode|follow|inspect|workstreams)$/u.test(name)
     ? 'query' : 'effect';
 }

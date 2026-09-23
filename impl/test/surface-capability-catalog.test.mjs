@@ -86,18 +86,22 @@ test('direct and generic reachability reflect existing live transports rather th
   assert.ok(diagnostics.some((row) => row.id === 'deployment.doctor'));
 });
 
-test('canonical names outrank compatibility aliases and live alias corrections have one owner', () => {
+test('canonical names outrank compatibility aliases and preserve each live command identity', () => {
   const closure = assertSurfaceCapabilityNameClosure();
   assert.deepEqual(closure.unresolved, []);
-  assert.deepEqual(closure.shadowed, [], 'every live capability name keeps exactly one owner');
+  const liveNames = new Set(mcpCombinedToolNames());
+  for (const row of closure.shadowed) {
+    assert.ok(liveNames.has(row.name), `${row.name} is an advertised command`);
+    assert.equal(row.ownerKind, 'canonical');
+    assert.equal(row.shadowedKind, 'alias');
+    assert.equal(resolveSurfaceCapability(row.name).id, row.owner);
+  }
   assert.equal(resolveSurfaceCapability('run.view').id, 'run.view',
     'the fold operation keeps its own canonical identity');
-  assert.equal(resolveSurfaceCapability('run.episode').id, 'run.view',
-    'the retired episode spelling follows the run.view fold');
-  assert.equal(resolveSurfaceCapability('run.status').id, 'run.view',
-    'the retired status spelling follows the run.view fold');
-  assert.equal(resolveSurfaceCapability('runs.list').id, 'run.list',
-    'the runs.list compatibility spelling follows its canonical correction');
+  for (const name of ['run.episode', 'run.status', 'runs.list']) {
+    assert.equal(resolveSurfaceCapability(name).id, name,
+      'the advertised command keeps its exact identity');
+  }
   assert.equal(resolveSurfaceCapability('baton_decision_list').id, 'decision.list',
     'the registered alias correction keeps its decision.list owner');
 });
@@ -114,7 +118,7 @@ test('every served combined tool resolves to a catalog identity with an honest m
     }
     assert.ok(row.mode === 'query' || row.mode === 'effect', `${name} carries an honest mode`);
   }
-  for (const name of ['baton_run_episode', 'baton_run_inspect', 'baton_run_status', 'baton_run_wait', 'baton_knowledge_recall']) {
+  for (const name of ['baton_run_episode', 'baton_run_inspect', 'fleet_run_status', 'fleet_run_wait', 'baton_knowledge_recall', 'baton_help', 'baton_runs']) {
     assert.equal(resolveUnifiedCapability(name).mode, 'query', `${name} lost its read-only mode`);
   }
 });

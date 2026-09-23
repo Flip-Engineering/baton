@@ -23,7 +23,7 @@
     },
     {
       "name": "baton_help",
-      "category": "control",
+      "category": "observation",
       "cli": null,
       "mcp": "baton_help",
       "web": null,
@@ -68,7 +68,7 @@
     },
     {
       "name": "baton_runs",
-      "category": "control",
+      "category": "observation",
       "cli": null,
       "mcp": "baton_runs",
       "web": null,
