@@ -15,7 +15,7 @@ seat other than the row's author; the review seqs are in the shared context key
 | order | lane | contribution | tip | changed paths |
 |---|---|---|---|---|
 | 1 | review | `contribution-20dc89e0651fa4d7c041383599183261` | `a49954d6` | 6 |
-| 2 | laws | `contribution-1d7aadaec318a6be114a9ea4ee5bb46f` | `20a5c8ae` | 17 |
+| 2 | laws | `contribution-a3472f8af113fbc03ab3cc8794dac9fb` | `ea0bfbeb` | 17 |
 | 3 | architecture and prototypes | `contribution-9638c63e55af2a878cfe4d9c05ba24c7` | `3f5b22f8` | 48 |
 | 4 | lead records and evidence | `contribution-4427d906ccc48db8d2475d5c01040a40` | `311a4216` | 21 |
 | 5 | this record | branch `baton/bend2-orchestrator6f`, tip in `recovery:landing-plan` | 1 |
@@ -28,18 +28,21 @@ Measured against `62964e48`:
   the wide gate set, and the gate refuses only on unexpected rows (a pinned expected-red row lands).
 - Rows 1, 2, 3 and 5 touch documentation only, so their gate selection is empty.
 - Row 2 carries the laws lane's accepted tip: `bend2-laws-verify6f` re-ran the dead lane's
-  increment 2 and this record's lane added the revision-10 law proposal beside it; landing
-  `c16e8860` or `520ef83e` alone would carry the pre-increment or pre-proposal content.
+  increment 2, and the revision-10 law proposal was added beside it in the shape the operator
+  decided for #572 (at every turn end Baton wakes the seat's orchestrator with the turn's report).
+  Landing `c16e8860`, `520ef83e` or `20a5c8ae` alone would carry earlier, and now inconsistent,
+  content.
 - Rows 3 and 4 carry repaired references: the worked record's own files cite the Codex record at
   the paths it landed under.
 
 ## Two ways to land
 
-- **Path A, with swarm receipts.** Replace the resident (stop it, serve a checkout carrying
-  `c1720823` with the declaration delivered to that process, and make the declared remote writable
-  from the landing's own git environment), then run the five `swarm.integrate` calls in order,
-  each naming `target: bend2-rewrite`. The first row's pre-existing dry-run receipt is admitted by
-  that commit's corrected guard.
+- **Path A, with swarm receipts.** Replace the resident: stop it, fetch `origin master:master` and
+  serve the current master (which now carries the landing-pipeline fix), start that process with
+  the declaration in its own environment or by argv, and make the declared remote writable from
+  the landing's own git environment. Then run the five `swarm.integrate` calls in order, each
+  naming `target: bend2-rewrite`. The first row's pre-existing dry-run receipt is admitted by the
+  fix's corrected guard.
 - **Path B, one push.** The same content exists as one chain on the target:
   `baton/bend2-queue-r1` at `b97e3626428addaf756eef1bf0413695d7d39f52`, five landing-shaped
   commits (6, 17, 48, 21 and 1 paths) whose every path is byte-identical to its row tip, with 225
@@ -142,11 +145,17 @@ node <probe> <checkout of 7a92cfd5>                # driverHasOwnProperty true, 
 node --test test/issue558-publish-remote-reaches-driver-red.test.mjs  # pass 2, fail 0
 ```
 
-The classification half for CDW5 is `a11608c8` (the pending landing of
-`contribution-83d51bcddf0467f3a92bec2108f724aa`). Neither commit can land through
-`swarm.integrate` while the publish path refuses, so the served checkout receives the wiring half
-directly, as a cherry-pick or a patch, before the resident restarts with `BATON_PUBLISH_REMOTE`
-set.
+The fix is now on master. Commit `e501507a` carries it (its predecessor `cf316a44` is the
+landing-pipeline delta), `impl/src/index.mjs:1891` returns the member on the driver object, and
+the same probe that found the defect answers on a checkout of `e501507a`:
+
+```sh
+node <probe> <checkout of e501507a>  # driverHasOwnProperty true, landingReceives the declared URL
+```
+
+So serving the current master serves the fix; the earlier instruction to cherry-pick
+`c1720823` is superseded by that landing. What remains for a real landing to publish is the
+declaration in the serve process's own environment (or by argv) and the credential below.
 
 ## The push credential the landing needs
 
