@@ -192,6 +192,19 @@ export function deriveSwapReserveBytes({ totalBytes, availableBytes, swapFreeByt
   return Math.min(beyondSwap, oneShare);
 }
 
+/** #561: the production host observation the deployment wires into the authority — the same
+ * measured observation every resident shares, narrowed to the four terms the reserve derives
+ * from. Exported so the composition root wires the real machine and a test can stage its own. */
+export function measuredHostObservation() {
+  const observed = hostCapacityObservation();
+  return {
+    totalBytes: observed.totalBytes,
+    availableBytes: observed.availableBytes,
+    swapFreeBytes: observed.swapFreeBytes,
+    cores: observed.cores,
+  };
+}
+
 /** #307: the ONE capacity-pressure predicate. True when the deployment's workspace capacity
  * observation has crossed the floor — the deployment-level fact the view's deployment summary
  * carries (`capacityPressure`) and the wake stream lane turns into a capacity_pressure wake.
