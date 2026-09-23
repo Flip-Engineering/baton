@@ -3574,8 +3574,13 @@ export class BatonApplication {
     // #102 Decision 2 (TC-04/TC-05): a cell Plan carries `size` homogeneous nodes and is not a
     // workflow, so it takes the plan-wave dispatch — one worker per node under the ONE runId the
     // member owns. The wave authority key is the plan digest, so a re-dispatch of the same Plan is
-    // the durable resume; a partial dispatch is refused rather than completed.
-    if (refreshed.plan.nodes.length > 1) {
+    // the durable resume; a partial dispatch is refused rather than completed. The branch reads
+    // the mint's own `cell:<waveRole>:<index>` node keys — the only producer of that shape — so
+    // the composition and recovery Plans that predate the cell keep their dispatch path
+    // (phase66 CE rows), and cardinality alone never turns an ordinary multi-node Plan into a
+    // cell.
+    if (refreshed.plan.nodes.length > 1
+      && refreshed.plan.nodes.every((node) => node.key.startsWith('cell:'))) {
       if (refreshed.dispatches.length === refreshed.plan.nodes.length) return refreshed.dispatches;
       if (refreshed.dispatches.length !== 0) {
         throw applicationError('cell Plan wave is partially dispatched', 'application_cell_wave_incomplete');
