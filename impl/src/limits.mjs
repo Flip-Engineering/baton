@@ -247,6 +247,8 @@ const SUBSTRATE = Object.freeze({
   'stream.omp.flush': { lane: 'stream.omp.flush', class: 'substrate', value: 4096, unit: 'bytes', graceful: null },
   'scanner.window.board_claim': { lane: 'scanner.window.board_claim', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
   'scanner.window.board_report': { lane: 'scanner.window.board_report', class: 'substrate', value: 20480, unit: 'bytes', graceful: null },
+  'wake.discovery_timeout_ms': { lane: 'wake.discovery_timeout_ms', class: 'substrate', value: 10_000, unit: 'ms', graceful: null, enforcedAt: 'wake-delivery.mjs operator session discovery command' },
+  'wake.discovery_output_bytes': { lane: 'wake.discovery_output_bytes', class: 'substrate', value: WIRE_FRAME_BYTES, unit: 'bytes', graceful: null, enforcedAt: 'wake-delivery.mjs operator session discovery output' },
   'wire.frame': { lane: 'wire.frame', class: 'substrate', value: WIRE_FRAME_BYTES, unit: 'bytes', graceful: null },
   'credential.file': { lane: 'credential.file', class: 'substrate', value: 16384, unit: 'bytes', graceful: null },
   'context_pack.body': { lane: 'context_pack.body', class: 'substrate', value: 8192, unit: 'bytes', graceful: null },
