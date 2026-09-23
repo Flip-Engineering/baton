@@ -120,6 +120,19 @@ export function normalizeRootWakeTarget(value) {
   return Object.freeze({ harness, sessionId, from });
 }
 
+/** The root session explicitly configured for a resident launched by the CLI. */
+export function rootWakeTargetFromEnvironment(env = process.env) {
+  const raw = env.BATON_ROOT_WAKE;
+  if (raw === undefined || raw === '') return null;
+  let value;
+  try { value = JSON.parse(raw); }
+  catch { throw refusal('BATON_ROOT_WAKE must be a JSON root session object', 'wake_delivery_invalid'); }
+  if (value === null) {
+    throw refusal('BATON_ROOT_WAKE must name a root session', 'wake_delivery_invalid');
+  }
+  return normalizeRootWakeTarget(value);
+}
+
 export function claudeSessionSocketPath(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) {
     throw refusal('Claude session pid must be a positive safe integer', 'claude_session_pid_invalid');
