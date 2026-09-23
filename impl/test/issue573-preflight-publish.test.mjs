@@ -26,6 +26,45 @@ import { dirname, join } from 'node:path';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 
+/**
+ * The read-authorized/write-refused remote, hosted in a CHILD process (the landing's git steps run
+ * synchronously on this process, so a server sharing its event loop could never answer): fetch is
+ * served by the REAL `git upload-pack --stateless-rpc` against a real bare repository, while every
+ * receive-pack request is answered 401. A remote like this is the half an ls-remote pre-flight
+ * cannot catch: reads fully succeed, and only the push learns the environment holds no credential.
+ */
+const writeDeniedServer = (bare) => spawn(process.execPath, ['-e', [
+  'const { createServer } = require(\'node:http\');',
+  'const { spawnSync } = require(\'node:child_process\');',
+  `const bare = ${JSON.stringify(bare)};`,
+  'const server = createServer((request, response) => {',
+  '  const url = request.url ?? \'\';',
+  '  const chunks = [];',
+  '  request.on(\'data\', (chunk) => chunks.push(chunk));',
+  '  request.on(\'end\', () => {',
+  '    if (url.includes(\'service=git-upload-pack\') || url.endsWith(\'/git-upload-pack\')) {',
+  '      const advertise = url.includes(\'service=\');',
+  '      const run = spawnSync(\'git\', [\'upload-pack\', \'--stateless-rpc\', ...(advertise ? [\'--advertise-refs\'] : []), bare],',
+  '        { input: Buffer.concat(chunks), maxBuffer: 8 * 1024 * 1024 });',
+  '      if (!advertise) {',
+  '        response.writeHead(200, { \'Content-Type\': \'application/x-git-upload-pack-result\' });',
+  '        response.end(run.stdout);',
+  '        return;',
+  '      }',
+  '      response.writeHead(200, { \'Content-Type\': \'application/x-git-upload-pack-advertisement\' });',
+  '      response.write(\'001e# service=git-upload-pack\\n\');',
+  '      response.write(\'0000\');',
+  '      response.end(run.stdout);',
+  '      return;',
+  '    }',
+  '    response.statusCode = 401;',
+  '    response.setHeader(\'WWW-Authenticate\', \'Basic realm="baton issue573 push"\');',
+  '    response.end(\'401 Unauthorized\\n\');',
+  '  });',
+  '});',
+  'server.listen(0, \'127.0.0.1\', () => process.stdout.write(String(server.address().port)));',
+].join('\n')], { stdio: ['ignore', 'pipe', 'inherit'] });
+
 const principal = { actor: 'direct:issue573-root', principalId: 'issue573-root', sessionId: 'issue573-root' };
 const QUIET_GIT_ENV = { GIT_PAGER: 'cat', PAGER: 'cat', GIT_TERMINAL_PROMPT: '0' };
 const HAVE_GIT = (() => {
@@ -89,19 +128,30 @@ async function world(t, { mode }) {
   let httpServer = null;
   if (mode === 'unreachable') {
     publishRemote = join(directory, 'no-such-directory', 'shared.git');
-  } else if (mode === 'unauthenticated') {
-    // The 401 server lives in a CHILD process: the landing's git steps run synchronously on this
+  } else if (mode === 'unauthenticated' || mode === 'read-authorized-write-denied') {
+    // Fixture servers live in CHILD processes: the landing's git steps run synchronously on this
     // process, and a server sharing its event loop could never answer a request issued from the
     // same blocked loop.
-    const child = spawn(process.execPath, ['-e', [
-      'const { createServer } = require(\'node:http\');',
-      'const server = createServer((request, response) => {',
-      '  response.statusCode = 401;',
-      '  response.setHeader(\'WWW-Authenticate\', \'Basic realm="baton issue573"\');',
-      '  response.end(\'401 Unauthorized\\n\');',
-      '});',
-      'server.listen(0, \'127.0.0.1\', () => process.stdout.write(String(server.address().port)));',
-    ].join('\n')], { stdio: ['ignore', 'pipe', 'inherit'] });
+    let child;
+    if (mode === 'unauthenticated') {
+      child = spawn(process.execPath, ['-e', [
+        'const { createServer } = require(\'node:http\');',
+        'const server = createServer((request, response) => {',
+        '  response.statusCode = 401;',
+        '  response.setHeader(\'WWW-Authenticate\', \'Basic realm="baton issue573"\');',
+        '  response.end(\'401 Unauthorized\\n\');',
+        '});',
+        'server.listen(0, \'127.0.0.1\', () => process.stdout.write(String(server.address().port)));',
+      ].join('\n')], { stdio: ['ignore', 'pipe', 'inherit'] });
+    } else {
+      // Reads must FULLY succeed, so the fixture first publishes the target to a real bare
+      // repository the child's upload-pack serves.
+      const bare = join(directory, 'readable.git');
+      execFileSync('git', ['init', '-q', '--bare', bare], { env: { ...process.env, ...QUIET_GIT_ENV } });
+      git(bare, 'symbolic-ref', 'HEAD', 'refs/heads/master');
+      git(repo, 'push', '-q', bare, 'master:master');
+      child = writeDeniedServer(bare);
+    }
     const port = await new Promise((resolve, reject) => {
       let buffer = '';
       child.stdout.on('data', (chunk) => {
@@ -175,7 +225,7 @@ test('573a: a landing whose declared remote does not exist refuses before any ga
 
   assert.ok(error, 'the landing refuses instead of spending the gate run on a remote it cannot reach');
   assert.equal(error.code, 'integrate_publish_unreachable');
-  assert.equal(error.detail.script, 'git ls-remote', 'the refusal names the pre-flight step that failed');
+  assert.equal(error.detail.script, 'git push --dry-run', 'the refusal names the pre-flight step that failed');
   assert.equal(w.gateRuns(), 0, 'the derived gate run never started');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target is untouched');
   assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
@@ -191,7 +241,22 @@ test('573b: a landing whose declared remote cannot authenticate refuses before a
 
   assert.ok(error, 'the landing refuses instead of spending the gate run on a remote it cannot authenticate to');
   assert.equal(error.code, 'integrate_publish_unauthenticated');
-  assert.equal(error.detail.script, 'git ls-remote', 'the refusal names the pre-flight step that failed');
+  assert.equal(error.detail.script, 'git push --dry-run', 'the refusal names the pre-flight step that failed');
+  assert.equal(w.gateRuns(), 0, 'the derived gate run never started');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target is untouched');
+  assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
+});
+
+// ── (c) reads succeed and the push is what the remote refuses ────────────────────────────────
+
+test('573c: a remote that serves reads but refuses the push refuses the landing before any gate file runs', needsGit, async (t) => {
+  const w = await world(t, { mode: 'read-authorized-write-denied' });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integrate().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing refuses instead of spending the gate run on a remote it cannot push to');
+  assert.equal(error.code, 'integrate_publish_unauthenticated');
   assert.equal(w.gateRuns(), 0, 'the derived gate run never started');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target is untouched');
   assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
