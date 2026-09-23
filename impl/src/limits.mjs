@@ -180,13 +180,15 @@ const SUBSTRATE = Object.freeze({
   // nothing about the provider, so it never blocks the route).
   'route.probe_capture': { lane: 'route.probe_capture', class: 'substrate', value: 2048, unit: 'bytes', graceful: null },
   'route.probe_deadline_ms': { lane: 'route.probe_deadline_ms', class: 'substrate', value: 120_000, unit: 'ms', graceful: null },
-  // #456 (item 2), #575: the probe instant of a provider degrade whose provider named no reset —
-  // any fault class. The route row publishes `probeAfter` = the fault's own window (this row when
-  // the fault named none) after the last death of the episode, so no route sits degraded with no
-  // next step: one recruit is admitted as a probe at that instant, and its turn either clears the
+  // #456 (item 2), #575: the probe instant of a provider-QUOTA degrade whose provider named no
+  // reset. The route row publishes `probeAfter` = the fault's own window (this row when the fault
+  // named none) after the last death of the episode, so the quota episode always names its next
+  // step: one recruit is admitted as a probe at that instant, and its turn either clears the
   // episode or re-arms it. The same row bounds a quota block the provider answered without a
-  // reset instant (`derivedResetAt`), so the block and the episode end together.
-  'route.fault_probe_ms': { lane: 'route.fault_probe_ms', class: 'substrate', value: FAULT_PROBE_WINDOW_MS, unit: 'ms', graceful: null, enforcedAt: 'application-deployment.mjs deriveRouteDegrades (the probe instant a null-reset degrade publishes) and runtime-observation.mjs _recordProviderQuotaBlock (the derived end of a resetless quota block)' },
+  // reset instant (`derivedResetAt`), so the block and the episode end together. A stall or
+  // socket episode derives no instant: its recovery is a later successful turn or the operator's
+  // probe override, never a clock (#316-a3).
+  'route.fault_probe_ms': { lane: 'route.fault_probe_ms', class: 'substrate', value: FAULT_PROBE_WINDOW_MS, unit: 'ms', graceful: null, enforcedAt: 'application-deployment.mjs deriveRouteDegrades (the probe instant a null-reset quota degrade publishes) and runtime-observation.mjs _recordProviderQuotaBlock (the derived end of a resetless quota block)' },
   // Issue #394: the web transport's wait ceiling — ONE row for the bound BOTH wait arms draw
   // (the application `run.wait` arm, which refused above it, and the legacy coordinator `wait`
   // arm, which silently clamped to it). The derivation is the transport's own default per-command
