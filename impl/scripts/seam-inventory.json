@@ -13449,7 +13449,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 1102,
+          "size": 1108,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -13684,7 +13684,7 @@
         {
           "name": "_notificationReceipt",
           "ordinal": 0,
-          "size": 18,
+          "size": 22,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -19022,9 +19022,18 @@
           ]
         },
         {
+          "name": "recordedRunStopScope",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_validateRunStopAdmission",
           "ordinal": 0,
-          "size": 104,
+          "size": 110,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
