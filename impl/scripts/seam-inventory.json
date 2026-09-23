@@ -1523,7 +1523,7 @@
         {
           "name": "_validateSessionContext",
           "ordinal": 0,
-          "size": 15,
+          "size": 19,
           "seam": "effect",
           "evidence": [
             "effect:worktree_authority",
