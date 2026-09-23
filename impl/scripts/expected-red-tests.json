@@ -1359,6 +1359,10 @@
       "reason": "#36"
     },
     {
+      "file": "test/cli-wave-fidelity-red.test.mjs",
+      "reason": "#157"
+    },
+    {
       "file": "test/control-surface-truth-red.test.mjs",
       "reason": "#289"
     },
@@ -1393,6 +1397,10 @@
     {
       "file": "test/dispatch-seam-real-omp-red.test.mjs",
       "reason": "#230"
+    },
+    {
+      "file": "test/doc-truth-conformance-red.test.mjs",
+      "reason": "#159"
     },
     {
       "file": "test/doubt-review-red.test.mjs",
