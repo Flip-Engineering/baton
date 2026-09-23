@@ -7,22 +7,29 @@ next reads this file first.
 
 ## The queue
 
-Land one row per lane, always the lane's accepted tip. All four rows carry an accept review.
+Land one row per lane, always the lane's accepted tip. Every row carries an accept review from a
+seat other than the row's author.
 
 | order | lane | contribution | tip | changed paths |
 |---|---|---|---|---|
 | 1 | review | `contribution-20dc89e0651fa4d7c041383599183261` | `a49954d6` | 6 |
-| 2 | laws | `contribution-ae84c6ee9c2eefe2b3f4d04b5fe0f1ec` | `c16e8860` | 10 |
+| 2 | laws | `contribution-041576d985d70f6c6ecb9185740523bd` | `520ef83e` | 15 |
 | 3 | architecture and prototypes | `contribution-42c611df45d2dcb74a5664f2296a3df2` | `29439f98` | 48 |
 | 4 | lead records and evidence | `contribution-337edb7821ee3d228f634a86bbcb9e38` | `14a365f8` | 28 |
+| 5 | this record | `contribution-7f4a15a29aa1e5ffd2944734101e3832` | `46e495c8` | 1 |
 
 Measured at `cc1a1876`:
 
-- `git diff --name-only cc1a1876 <tip>` returns exactly the counts above, 92 paths in total.
-- The four path sets are pairwise disjoint. `README.md` appears in the lead row alone, so that row
+- `git diff --name-only cc1a1876 <tip>` returns exactly the counts above, 98 paths in total.
+- The five path sets are pairwise disjoint. `README.md` appears in the lead row alone, so that row
   is the only one whose changed paths select the wide gate set.
 - `git merge --squash <tip>` in a scratch worktree at `cc1a1876` exits 0 for every row and stages
   the count in the table, in this order.
+
+Row 2 lands `520ef83e`, the laws lane's accepted tip: `bend2-laws-verify6f` carried
+`bend2-laws-lead6`'s unlanded increment 2 into `contribution-041576d985d70f6c6ecb9185740523bd`
+and `bend2-reviewer3` accepted it (seq 131333). Its 15 changed paths are a superset of the 10 the
+lane's earlier tip carried, so landing `c16e8860` would now carry the pre-increment content.
 
 ## The publish path on the served revision
 
@@ -74,25 +81,29 @@ Until part 1 is on the revision the resident serves, no row of this queue can la
 - Row 1's real landing for `contribution-20dc89e0651fa4d7c041383599183261` was refused at
   2026-09-23T03:45Z; its dry-run measurements are the queue table above.
 
-## Unpublished work on the lane branches
+## The laws increment, published and accepted
 
 `baton/bend2-laws-lead6` at `520ef83e`, committed 2026-09-23T03:42:41Z, changes 11 paths over
 `c16e8860`: the M-14 refusal laws, the M-18 decision law, the transition witness, and the
-per-entry pin boundary, with their evidence files. The commit is not published as a contribution
-and its seat is dead. It moves the laws lane's tip, so it does not replace row 2 without its own
-review.
+per-entry pin boundary, with their evidence files. Its seat died before publishing it.
+`bend2-laws-verify6f` re-ran its checks from a scratch checkout at that commit (pinned toolchain
+by digest, the lane's 24-row driver, the models check and run, and the transition witness in both
+lanes) and published it as `contribution-041576d985d70f6c6ecb9185740523bd`; `bend2-reviewer3`
+accepted it at seq 131333. Row 2 therefore lands `520ef83e`.
 
 ## The fix, committed and verified elsewhere
 
 The measurement of the missing member was independently reproduced by `wake-lead6`
-(swarm-wake-20260921), which committed the wiring half on `baton/ws-558-publish-wiring` at
-`bdca3dca7ae86c7a4514646b65fca1f7e66fbf56`: one member added to the object `createDriver`
-returns, plus `impl/test/issue558-publish-remote-reaches-driver-red.test.mjs`. Verified here with
-the same probe that found the defect, against the served checkout and against that commit:
+(swarm-wake-20260921), which committed the wiring half on `baton/ws-558-publish-wiring`: one
+member added to the object `createDriver` returns, plus
+`impl/test/issue558-publish-remote-reaches-driver-red.test.mjs`. The branch's tip is
+`7a92cfd59d91c55379ce5469278ee494d82a94fc`; it carries the same `impl/src/index.mjs` change as its
+predecessor `bdca3dca7ae86c7a4514646b65fca1f7e66fbf56`, with one more test line. Both were
+verified here with the same probe that found the defect:
 
 ```sh
 node <probe> /private/tmp/baton-resident-20260921  # driverHasOwnProperty false, landingReceives null
-node <probe> <checkout of bdca3dca>                # driverHasOwnProperty true,  landingReceives the declared URL
+node <probe> <checkout of 7a92cfd5>                # driverHasOwnProperty true,  landingReceives the declared URL
 node --test test/issue558-publish-remote-reaches-driver-red.test.mjs  # pass 2, fail 0
 ```
 
