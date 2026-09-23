@@ -257,7 +257,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     fields: Object.freeze({
       seq: Object.freeze({ type: 'integer', description: 'the wake frame sequence' }),
       wakeClass: STRING('the wake class carried by the frame'),
-      swarmId: STRING('the swarm the wake belongs to'),
+      swarmId: STRING('the swarm identity, or null for a deployment worker report', { nullable: true }),
       harness: STRING('the operator session harness'),
       mechanism: STRING('the turn-starting delivery mechanism'),
       sessionId: STRING('the operator session that received the wake'),
@@ -274,7 +274,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     fields: Object.freeze({
       seq: Object.freeze({ type: 'integer', description: 'the wake frame sequence' }),
       wakeClass: STRING('the wake class carried by the frame'),
-      swarmId: STRING('the swarm the wake belongs to'),
+      swarmId: STRING('the swarm identity, or null for a deployment worker report', { nullable: true }),
       harness: STRING('the operator session harness'),
       mechanism: STRING('the declared delivery mechanism, or none when the harness has no turn-starting channel'),
       code: STRING('the typed refusal code'),
