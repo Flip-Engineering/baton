@@ -4960,7 +4960,7 @@
         {
           "name": "_dispatchCurrent",
           "ordinal": 0,
-          "size": 172,
+          "size": 224,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -5020,7 +5020,7 @@
         {
           "name": "start",
           "ordinal": 0,
-          "size": 259,
+          "size": 271,
           "seam": "surface",
           "evidence": [
             "effect:action_verb",
@@ -5434,7 +5434,7 @@
         {
           "name": "_buildView",
           "ordinal": 0,
-          "size": 467,
+          "size": 493,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -6132,6 +6132,15 @@
           ]
         },
         {
+          "name": "_runCellDeclaration",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:application_observation_port"
+          ]
+        },
+        {
           "name": "runWorkflow",
           "ordinal": 0,
           "size": 46,
@@ -6181,7 +6190,7 @@
         {
           "name": "startWave",
           "ordinal": 0,
-          "size": 63,
+          "size": 66,
           "seam": "surface",
           "evidence": [
             "effect:action_verb",
@@ -6246,9 +6255,18 @@
           ]
         },
         {
+          "name": "_normalizeCellGroup",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "admission",
+          "evidence": [
+            "admission:normalize_name"
+          ]
+        },
+        {
           "name": "_normalizeWaveStart",
           "ordinal": 0,
-          "size": 35,
+          "size": 43,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
@@ -26455,6 +26473,15 @@
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_runCellDeclaration",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
