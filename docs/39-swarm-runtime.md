@@ -996,7 +996,9 @@ retires the hand chain in README.md.
 excluded, carry, policy}` — candidates are the served routes that are ready and not faulted,
 ranked by the #429 profile comparison with `billing` read from each route's measured profile; a
 subscription route whose window is closed is listed under `excluded` with
-`excluded_window_closed`, never proposed. The swarm-level policy is one caller-submittable row,
+`excluded_window_closed`, never proposed. A codex-harness route is never a candidate either
+(#574): it is listed under `excluded` with `excluded_policy_no_codex`, so the decision row
+still audits every served route. The swarm-level policy is one caller-submittable row,
 `swarm.policy_updated {rerouteOnProviderFault: 'manual' | 'auto', reroutePreferApi}` (`organize`,
 through `swarm.update`, or at the open: `baton swarm create <purpose> --policy
 '{"rerouteOnProviderFault":"auto"}'` writes the same row in the create's own mutation, validated

@@ -42,6 +42,8 @@ const FAULTED = Object.freeze({ harness: 'zai', model: 'glm-5.3-flash', effort: 
 const OPEN_SUBSCRIPTION = Object.freeze({ harness: 'kimi-code', model: 'kimi-code/k3', effort: 'low' });
 const OPEN_API = Object.freeze({ harness: 'omp', model: 'deepseek/deepseek-flash', effort: 'low' });
 const CLOSED_SUBSCRIPTION = Object.freeze({ harness: 'muse', model: 'muse-spark-1.3-contributor', effort: 'low' });
+// Issue #574: an open codex route with zero turns — without the policy it would rank first.
+const CODEX_OPEN = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'low' });
 
 const RESET_AT = '2026-09-18T18:07:32.000Z';
 const SNAPSHOT_SHA = 'b'.repeat(40);
@@ -90,6 +92,7 @@ const faultedRouteRow = () => usageRow(FAULTED, {
 const closedSubscriptionRow = () => usageRow(CLOSED_SUBSCRIPTION, {
   state: 'blocked', code: PROVIDER_FAULT_CODES.quota, resetAt: RESET_AT, billing: 'subscription',
 });
+const codexOpenRow = () => usageRow(CODEX_OPEN, { billing: 'subscription', turns: 0 });
 const openSubscriptionRow = () => usageRow(OPEN_SUBSCRIPTION, { billing: 'subscription', turns: 2 });
 const openApiRow = () => usageRow(OPEN_API, { billing: 'api', turns: 1, intelligence: 55 });
 
@@ -488,4 +491,63 @@ test('443-e1: the new rows replay identically and no caller can submit one', asy
       return true;
     });
   }
+});
+
+// ── (f) issue #574: no codex candidates, and a refused auto-reroute retries without a cap ──────
+
+test('443-f1: an open codex route is excluded by policy, never a candidate, never the auto target', async (t) => {
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), codexOpenRow(), openSubscriptionRow()],
+    policy: { rerouteOnProviderFault: 'auto' }, tag: 'f1',
+  });
+  const view = await w.call('view', { swarmId: SWARM });
+  const proposal = rowsOf(w.store, 'swarm.reroute_proposed')[0].payload;
+
+  assert.deepEqual(proposal.candidates.map((row) => label(row)), [label(OPEN_SUBSCRIPTION)],
+    'the codex route is no candidate even with zero turns on a subscription billing');
+  const excluded = proposal.excluded.find((row) => label(row) === label(CODEX_OPEN));
+  assert.ok(excluded, 'the codex route is named in the excluded rows, not dropped in silence');
+  assert.equal(excluded.reason, 'excluded_policy_no_codex');
+
+  const rerouted = rowsOf(w.store, 'swarm.rerouted')[0].payload;
+  assert.deepEqual({ ...rerouted.to }, { ...OPEN_SUBSCRIPTION },
+    'the auto resume lands on the first non-codex candidate');
+  const successor = participantRow(view, rerouted.successor);
+  assert.deepEqual({ ...successor.route }, { ...OPEN_SUBSCRIPTION });
+});
+
+test('443-f2: a twice-refused auto-reroute stays pending and the third entry still performs it', async (t) => {
+  const w = await faultedSwarm(t, {
+    rows: [faultedRouteRow(), openSubscriptionRow(), openApiRow()],
+    policy: { rerouteOnProviderFault: 'auto' }, tag: 'f2',
+  });
+  // The deployment refuses the first two successor recruits before any row is written
+  // (prepareRun runs ahead of the membership write), then recovers.
+  const prepare = w.runtime.prepareRun.bind(w.runtime);
+  let refusals = 0;
+  w.runtime.prepareRun = async (request, principal) => {
+    if (refusals < 2) {
+      refusals += 1;
+      throw new Error('574 probe: the deployment refuses this recruit for now');
+    }
+    return prepare(request, principal);
+  };
+
+  await w.call('view', { swarmId: SWARM });
+  assert.equal(refusals, 1, 'the first entry attempted the resume');
+  assert.equal(rowsOf(w.store, 'swarm.rerouted').length, 0, 'a refused resume records no rerouted row');
+  assert.equal(w.store.swarm(SWARM).participants.alpha.reroute.decision, null,
+    'the decision stays pending, with no attempt counter to exhaust');
+
+  await w.call('view', { swarmId: SWARM });
+  assert.equal(refusals, 2, 'the next entry retried the still-pending decision');
+  assert.equal(rowsOf(w.store, 'swarm.rerouted').length, 0, 'still nothing recorded while refused');
+  assert.equal(w.store.swarm(SWARM).participants.alpha.reroute.decision, null);
+
+  const view = await w.call('view', { swarmId: SWARM });
+  assert.equal(refusals, 2, 'no further recruit was needed once the deployment recovered');
+  const rerouted = rowsOf(w.store, 'swarm.rerouted');
+  assert.equal(rerouted.length, 1, 'the third entry performed the pending resume');
+  assert.ok(participantRow(view, rerouted[0].payload.successor),
+    'and the successor is a member of the swarm');
 });

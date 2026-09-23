@@ -3228,8 +3228,11 @@ export class SwarmRuntime {
    * table. A candidate is a route a recruit could be admitted on right now (_routeEligible: ready,
    * unexhausted, undegraded), ranked by the ONE comparison above on its default axis; a route whose
    * window is closed is named in `excluded` with the reason and the instant its provider gave,
-   * instead of being dropped in silence. The route the fault CAME from is never listed as excluded:
-   * the decision row already names it, with the same reason and the same instant. */
+   * instead of being dropped in silence. Issue #574: a codex-harness route is never a candidate —
+   * it is named in `excluded` with `excluded_policy_no_codex`, so the decision row still audits
+   * every served route instead of dropping one in silence. The route the fault CAME from is never
+   * listed as excluded: the decision row already names it, with the same reason and the same
+   * instant. */
   _rerouteCandidates(preferApi, from = null) {
     const rows = this._routeUsageRows();
     if (rows === null || rows.length === 0) return { candidates: [], excluded: [] };
@@ -3247,7 +3250,9 @@ export class SwarmRuntime {
         state: row.state ?? null, resetAt: row.resetAt ?? null,
         profile: row.profile ?? null,
       });
-      if (this._routeEligible(row)) {
+      if (row.route?.harness === 'codex') {
+        excluded.push(shape('excluded_policy_no_codex'));
+      } else if (this._routeEligible(row)) {
         eligible.push({ row, shape: shape(billing === 'subscription' ? 'subscription_headroom' : 'api_fallback') });
       } else if (this._routeWindowClosed(row) && !routeEquals(row.route, from)) {
         excluded.push(shape('excluded_window_closed'));
