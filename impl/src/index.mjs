@@ -1910,6 +1910,12 @@ export function createDriver(opts) {
   return { coordinator, story, router, log, coordination, coordinationOpened, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, ready, close, closeAsync, drainAndClose, standingLaws,
     // The deployment checkout root: the swarm situation projection's git authority (#318) derives
     // the swarm's base commit and the rows landed since from it.
-    repoRoot: opts.repoRoot };
+    repoRoot: opts.repoRoot,
+    // Issue #558: the declared shared remote landings publish to. The landing authority
+    // application.mjs assembles reads it off THIS object (`this.driver.integrationPublishRemote`),
+    // so the value validated above and handed to the Coordinator must also be returned here:
+    // without it the authority reads null and every real landing refuses
+    // integrate_publish_undeclared however the deployment declared its remote.
+    integrationPublishRemote };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

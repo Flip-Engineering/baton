@@ -314,6 +314,42 @@ test('CDW4: the injected knowledge-briefing provider is consulted, and its block
   assert.equal(served.goal, stored.goal, 'the inner brief fields survive the composition untouched');
 });
 
+// Issue #558 follow-up: the declared shared remote is an opt the composition root validates and
+// hands to the Coordinator, while the landing authority application.mjs assembles reads it off the
+// object createDriver RETURNS (`this.driver.integrationPublishRemote`). A returned object that
+// omits the member makes that read undefined, the authority composes publishRemote: null, and
+// every real landing refuses integrate_publish_undeclared however the deployment declared its
+// remote — the state this deployment was in one level below the declaration the operator sets.
+// Both values are asserted: the normalized declaration, and the null an undeclared deployment
+// gets, which the authority's own typeof check must read as "none declared" rather than undefined.
+test('CDW6: the declared shared remote reaches the driver the landing authority reads', async (t) => {
+  const repository = repo();
+  const logDir = root('publish-log');
+  const undeclaredLogDir = root('publish-none-log');
+  const PUBLISH_REMOTE = 'https://example.test/baton-shared.git';
+  const driver = createDriver({
+    repoRoot: repository, repoId: 'repo-wiring-publish', logDir,
+    adapters: { mock: mock() }, verificationRuntime: RUNTIME_POLICY,
+    integrationPublishRemote: PUBLISH_REMOTE,
+  });
+  const undeclared = createDriver({
+    repoRoot: repository, repoId: 'repo-wiring-publish-none', logDir: undeclaredLogDir,
+    adapters: { mock: mock() }, verificationRuntime: RUNTIME_POLICY,
+  });
+  t.after(async () => {
+    await driver.drainAndClose('wiring-cdw6').catch(() => {});
+    await undeclared.drainAndClose('wiring-cdw6-none').catch(() => {});
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+    rmSync(undeclaredLogDir, { recursive: true, force: true });
+  });
+
+  assert.equal(driver.integrationPublishRemote, PUBLISH_REMOTE,
+    'the declared remote must ride the driver object the landing authority reads it from');
+  assert.equal(undeclared.integrationPublishRemote, null,
+    'an undeclared deployment must still carry the member, as the null that declares none');
+});
+
 // The composition root's option surface is a closed set, and this file must say which options it
 // exercises. A new `opts.<name>` read inside createDriver — an authority that arrives through the
 // factory and is consulted by the runtime it builds — is a wiring the driver-level suite would
@@ -322,6 +358,7 @@ test('CDW4: the injected knowledge-briefing provider is consulted, and its block
 const EXERCISED_OPTIONS = Object.freeze({
   adapters: 'CDW1',
   goalPlanAuthority: 'CDW2',
+  integrationPublishRemote: 'CDW6',
   knowledgeBriefingProvider: 'CDW4',
   verificationRuntime: 'CDW1',
 });
