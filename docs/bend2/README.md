@@ -27,7 +27,7 @@ The documents describe the design, its evidence, and the remaining work:
 | `laws-trace.md` | Every law traced to the source that enforces it and the test that pins it, with unenforced laws marked proposed and the laws Bend2 could make unrepresentable stated as types. |
 | `rewrite-plan.md` | The phases of the rewrite: which subsystems move per phase, what the JavaScript and Bend2 halves must agree on at the boundary while both exist, and the test that proves each phase before the next starts. |
 | `go-no-go.md` | The recommendation and the specific findings it rests on. |
-| `arch-close-status.md` | What each `ARCH-CLOSE-01`..`11` correction has on this branch today, and which evidence file carries it. |
+| `arch-close-status.md` | What each `ARCH-CLOSE-01`..`12` correction has on this branch today, and which evidence file carries it. |
 
 ## Records
 

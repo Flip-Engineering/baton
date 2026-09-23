@@ -20,8 +20,9 @@ Status words used here:
   deployment-level half waits on a prerequisite the pin does not supply.
 
 A row moves when its evidence file is on the branch or in the accepted landing sequence; each row
-names that file, and the three `arch-replay-*` corpora and the review record below are accepted
-contributions whose files arrive with that sequence. This index records no phase decision.
+names that file, and the four `arch-replay-*` corpora, the seven composition corpora and the review
+record are accepted contributions whose files arrive with that sequence. This index records no phase
+decision.
 
 | Correction | Obligation, shortened | Status | Evidence on this branch |
 |---|---|---|---|
@@ -40,10 +41,11 @@ contributions whose files arrive with that sequence. This index records no phase
 
 ## The composition track, and what it leaves
 
-The architecture lane's composition track ran to the scale the pin allows: seven corpora
+The architecture lane's composition track ran to the scale the pin allows: seven composition corpora
 (`arch-effect-publication`, `arch-publish-compose`, `arch-publish-target`, `arch-publish-content`,
 `arch-publish-bind`, `arch-publish-contention`, `arch-publish-cas`) exercise the
-acceptance-and-publication path, and its own evidence files carry the step tables. Five steps are
+acceptance-and-publication path, and the four replay corpora named in the `ARCH-CLOSE-11` row carry the
+classification evidence; the index lists all eleven. Five steps are
 closed with a run in this directory: completion evidence from the published content (`ARCH-CLOSE-11`'s
 diagnostic half and M-3a), reconciliation of an ambiguous outcome without claiming the effect (M-2,
 M-3c), the acceptance record bound to the published commit id (M-1, M-3b), destination identity
