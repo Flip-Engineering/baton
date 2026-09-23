@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { BatonApplication } from './application.mjs';
+import { harnessWakeCapabilityForHarnesses } from './wake-delivery.mjs';
 import { bindBaton } from './application-client.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { BatonWebClient } from './application-cli.mjs';
@@ -6910,6 +6911,17 @@ export async function openBatonDeployment(rawOptions, createDriver) {
             enumerable: true,
             get: () => (opened === null ? null : opened.serviceRows()),
           });
+        }
+        // Issue #564: the per-harness turn-starting capability of this deployment's harnesses,
+        // beside the rows the doctor names. Attached ENUMERABLE only when at least one of them
+        // cannot start a turn in an idle session — that is when a root recruiting here must read
+        // it — so a deployment whose every harness can be woken keeps the serialized shape the
+        // existing consumers pin (the same late-bound pattern as `services` above).
+        {
+          const wakeDelivery = harnessWakeCapabilityForHarnesses(routes.map((route) => route.harness));
+          if (wakeDelivery.some((row) => row.canStartTurn === false)) {
+            Object.defineProperty(summary, 'wakeDelivery', { enumerable: true, value: wakeDelivery });
+          }
         }
         return Object.freeze(summary);
       },
