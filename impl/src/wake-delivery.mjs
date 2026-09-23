@@ -58,6 +58,22 @@ export function harnessWakeCapabilityRows() {
   })));
 }
 
+/** Issue #564: the capability rows of exactly the harnesses a deployment can run, for the doctor
+ * and the deployment view. A harness the table does not know is reported as a row with no
+ * turn-starting channel, never omitted: a root that can run an unwakeable harness is told so where
+ * it recruits instead of discovering it by silence. Sorted by harness, duplicates collapsed. */
+export function harnessWakeCapabilityForHarnesses(harnesses) {
+  const names = [...new Set((Array.isArray(harnesses) ? harnesses : [])
+    .filter((harness) => typeof harness === 'string' && harness.length > 0))].sort();
+  return Object.freeze(names.map((harness) => Object.freeze({
+    harness,
+    ...(harnessWakeCapability(harness) ?? {
+      mechanism: 'unknown', canStartTurn: false,
+      note: 'no wake-delivery row names this harness; an idle session of it cannot be started',
+    }),
+  })));
+}
+
 function refusal(message, code, cause = undefined) {
   const error = Object.assign(new Error(message), { name: 'WakeDeliveryRefusal', code });
   if (cause !== undefined) error.cause = cause;
