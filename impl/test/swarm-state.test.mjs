@@ -708,6 +708,57 @@ describe('accepted contribution — author still active', () => {
   });
 });
 
+// ── landing receipts ─────────────────────────────────────────────────────────
+
+describe('landing receipts', () => {
+  const author = () => {
+    const swarms = swarmWithParticipant();
+    foldSwarmEvent(swarms, e('swarm.contribution_recorded', {
+      swarmId: 'sw1', contributionId: 'c1', participantId: 'p1', body: 'the change',
+    }));
+    return swarms;
+  };
+  const receipt = (dryRun, after) => e('swarm.contribution_integrated', {
+    swarmId: 'sw1', contributionId: 'c1', participantId: 'p1',
+    base: 'a'.repeat(40), target: 'master', targetHeadBefore: 'b'.repeat(40),
+    targetHeadAfter: after, squashSha: 'c'.repeat(40),
+    changedPaths: ['impl/src/example.mjs'], dryRun,
+  });
+  const integrationOf = (swarms) => swarms.get('sw1').contributions.c1.integration;
+
+  test('a dry run records the receipt and moves nothing', () => {
+    const swarms = author();
+    foldSwarmEvent(swarms, receipt(true, null));
+    assert.equal(integrationOf(swarms).dryRun, true);
+    assert.equal(integrationOf(swarms).targetHeadAfter, null);
+  });
+
+  test('a real landing is recordable after a dry run of the same contribution', () => {
+    const swarms = author();
+    foldSwarmEvent(swarms, receipt(true, null));
+    // The rehearsal is not a landing: the target never received the change, so the landing that
+    // follows it must still be recordable, and its receipt is the one the row keeps.
+    assert.doesNotThrow(() => foldSwarmEvent(swarms, receipt(false, 'd'.repeat(40))));
+    assert.equal(integrationOf(swarms).dryRun, false);
+    assert.equal(integrationOf(swarms).targetHeadAfter, 'd'.repeat(40));
+  });
+
+  test('a contribution lands once', () => {
+    const swarms = author();
+    foldSwarmEvent(swarms, receipt(false, 'd'.repeat(40)));
+    const err = integrity(() => foldSwarmEvent(swarms, receipt(false, 'e'.repeat(40))));
+    assert.equal(err.code, 'contribution_duplicate');
+  });
+
+  test('a dry run after a real landing never replaces the landing receipt', () => {
+    const swarms = author();
+    foldSwarmEvent(swarms, receipt(false, 'd'.repeat(40)));
+    const err = integrity(() => foldSwarmEvent(swarms, receipt(true, null)));
+    assert.equal(err.code, 'contribution_duplicate');
+    assert.equal(integrationOf(swarms).targetHeadAfter, 'd'.repeat(40));
+  });
+});
+
 // ── deterministic replay ─────────────────────────────────────────────────────
 
 describe('deterministic replay', () => {
