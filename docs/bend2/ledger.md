@@ -144,3 +144,14 @@ quarantines only the second.
    wait on a deployment edit: declare the shared remote and reload the resident. Dry runs still
    prepare the squash and report the changed-path selection, so composition and gate selection can
    be checked before the declaration exists.
+
+   The declaration point is one environment variable. `baton serve` without `--config` opens the
+   checkout through `serveCheckout()` in `impl/scripts/baton.mjs` (master `65c913f0`, lines
+   316-329), which reads `BATON_PUBLISH_REMOTE` and passes it as
+   `advanced.integration.publishRemote` to `openBaton`; the value is a declaration and is never
+   inferred from `origin`. The serving resident runs that path with the variable unset. Restarting
+   the resident with `BATON_PUBLISH_REMOTE` set to the shared remote (this deployment's `origin` is
+   `https://github.com/Flip-Engineering/baton.git`, and `credential.helper=osxkeychain` is
+   configured for it) needs no source change. The landing then pushes the squash to the declared
+   remote after its local fast-forward, rolls the local move back if the push fails, and tables
+   `integrate_publish_undeclared` and `integrate_publish_failed` as distinct refusals.

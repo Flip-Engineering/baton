@@ -15,6 +15,7 @@ Status words used here:
 - **Conforming path evidenced** — a corpus shows the current implementation meeting the requirement
   on a frozen trace.
 - **Discharged** — the correction's own stated evidence exists.
+
 A row moves when its evidence file is on the branch or in the accepted landing sequence; each row
 names that file, and the three `arch-replay-*` corpora and the review record below are accepted
 contributions whose files arrive with that sequence. This index records no phase decision.
