@@ -6334,7 +6334,7 @@
         {
           "name": "doctorReadiness",
           "ordinal": 0,
-          "size": 24,
+          "size": 29,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -12805,7 +12805,7 @@
         {
           "name": "_observeParticipantFaults",
           "ordinal": 0,
-          "size": 57,
+          "size": 58,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -13026,6 +13026,18 @@
           "name": "_reconcileReviewerLossRows",
           "ordinal": 0,
           "size": 13,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call",
+            "observation:projection_name",
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_reconcileTurnReportedRows",
+          "ordinal": 0,
+          "size": 22,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -14281,7 +14293,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1239,
+          "size": 1243,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
