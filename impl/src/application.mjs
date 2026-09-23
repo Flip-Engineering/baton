@@ -5,6 +5,7 @@ import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
+import { CELL_GROUP_FIELDS, MAX_CELL_SIZE } from './wave.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
   goalPlanPage, normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState,
@@ -183,6 +184,7 @@ export {
 
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+
 
 const MAX_PROFILES = 256;
 
@@ -7739,6 +7741,61 @@ export class BatonApplication {
   // Bounded closed validation for the wave ergonomics direct ports (the MCP schema and the MCP
   // validator already reject obvious shape failures; these guards keep the embedded direct ports
   // honest under the same closed-shape discipline as the rest of the command table).
+  /** #102 Decision 1: the closed `group` field on a wave member — `{editing?, quorum?, seat, size,
+   * strict?}` (docs/reference/evidence/tight-cell-2026-08-06/tight-cell-contract.md). The seat is
+   * the ONE route every cell worker takes, so a member that names a group and its own route is a
+   * contradiction rather than a precedence question, and a group without a seat is ambiguous. The
+   * defaults are the strict ones: quorum defaults to size, so an undeclared tolerance never
+   * excuses a loss, and `strict: true` with a narrower quorum contradicts itself. */
+  _normalizeCellGroup(member) {
+    const refuse = (message, code) => { throw applicationError(message, code); };
+    const group = member.group;
+    if (!group || typeof group !== 'object' || Array.isArray(group)) {
+      refuse('wave start member group is invalid', 'wave_group_invalid');
+    }
+    if (Object.keys(group).some((key) => !CELL_GROUP_FIELDS.includes(key))) {
+      refuse('wave start member group carries a field outside its closed shape', 'wave_group_invalid');
+    }
+    if (member.exact !== undefined) {
+      refuse('wave start member names both a group seat and its own route', 'wave_group_route_conflict');
+    }
+    const seat = group.seat;
+    if (seat === undefined) {
+      refuse('wave start member group names no seat, so the cell has no route to run', 'wave_group_seat_missing');
+    }
+    if (!seat || typeof seat !== 'object' || Array.isArray(seat)
+      || !['harness', 'model', 'effort'].every((axis) => validText(seat[axis]))) {
+      refuse('wave start member group seat is invalid', 'wave_group_invalid');
+    }
+    const size = group.size;
+    if (!Number.isSafeInteger(size) || size < 2 || size > MAX_CELL_SIZE) {
+      refuse(`wave start member group size must be an integer between 2 and ${MAX_CELL_SIZE}`, 'wave_group_invalid');
+    }
+    const quorum = group.quorum === undefined ? size : group.quorum;
+    if (!Number.isSafeInteger(quorum) || quorum < 1 || quorum > size) {
+      refuse('wave start member group quorum must be an integer between 1 and its size', 'wave_group_invalid');
+    }
+    const strict = group.strict === undefined ? false : group.strict;
+    if (typeof strict !== 'boolean') refuse('wave start member group strict must be a boolean', 'wave_group_invalid');
+    if (strict === true && quorum < size) {
+      refuse('wave start member group declares strict with a quorum below its size', 'wave_group_invalid');
+    }
+    let editing = null;
+    if (group.editing !== undefined) {
+      const indexes = group.editing;
+      if (!Array.isArray(indexes) || indexes.length === 0
+        || indexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= size)
+        || new Set(indexes).size !== indexes.length
+        || indexes.some((index, at) => at > 0 && index <= indexes[at - 1])) {
+        refuse('wave start member group editing must be a sorted list of distinct in-range member indexes', 'wave_group_invalid');
+      }
+      editing = Object.freeze([...indexes]);
+    }
+    return Object.freeze({
+      seat: Object.freeze({ harness: seat.harness, model: seat.model, effort: seat.effort }),
+      size, quorum, strict, editing,
+    });
+  }
   _normalizeWaveStart(value) {
     const allowed = new Set(['idempotencyKey', 'members']);
     if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -7754,11 +7811,18 @@ export class BatonApplication {
       // byte law admits oversize with spill at run.start (Decision 2 / OQ5) — never a wall in
       // front of a spill lane (v1.2 blue-team blocker 4).
       if (!member || typeof member !== 'object' || Array.isArray(member)
-        || Object.keys(member).some((key) => !['role', 'objective', 'exact', 'scope'].includes(key))
-        || !validId(member.role)
+        || Object.keys(member).some((key) => !['role', 'objective', 'exact', 'scope', 'group'].includes(key))) {
+        throw applicationError('wave start member is invalid', 'application_wave_start_invalid');
+      }
+      // #102 Decision 1: a member names EITHER its own route (`exact`) or a group seat, never both
+      // and never neither. The group's seat IS the member's route downstream, so the normalized
+      // member carries `exact` either way and every later reader is unchanged.
+      const group = member.group === undefined ? null : this._normalizeCellGroup(member);
+      const exact = group === null ? member.exact : group.seat;
+      if (!validId(member.role)
         || typeof member.objective !== 'string' || member.objective.length === 0 || member.objective.includes('\0')
-        || !member.exact || typeof member.exact !== 'object' || Array.isArray(member.exact)
-        || !['harness', 'model', 'effort'].every((axis) => validText(member.exact[axis]))
+        || !exact || typeof exact !== 'object' || Array.isArray(exact)
+        || !['harness', 'model', 'effort'].every((axis) => validText(exact[axis]))
         || (member.scope !== undefined
           && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
             || member.scope.some((item) => !validText(item))))) {
@@ -7768,8 +7832,9 @@ export class BatonApplication {
       roles.add(member.role);
       members.push(deepFreeze({
         role: member.role, objective: member.objective.normalize('NFKC').trim(),
-        exact: Object.freeze({ harness: member.exact.harness, model: member.exact.model, effort: member.exact.effort }),
+        exact: Object.freeze({ harness: exact.harness, model: exact.model, effort: exact.effort }),
         scope: member.scope === undefined ? null : [...member.scope].sort(),
+        ...(group === null ? {} : { group }),
       }));
     }
     return deepFreeze({ idempotencyKey: value.idempotencyKey, members });
