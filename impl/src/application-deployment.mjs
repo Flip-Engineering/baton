@@ -636,11 +636,12 @@ function normalizeVerification(value, repoRoot) {
 
 function normalizeCapacity(value) {
   if (value === undefined) return null;
-  closed(value, ['estimate', 'hostCapacity', 'observe', 'policy', 'runtimeFootprint'], 'advanced capacity');
+  closed(value, ['estimate', 'hostCapacity', 'hostObservation', 'observe', 'policy', 'runtimeFootprint'], 'advanced capacity');
   if ((value.estimate !== undefined && typeof value.estimate !== 'function')
     || (value.observe !== undefined && typeof value.observe !== 'function')
+    || (value.hostObservation !== undefined && typeof value.hostObservation !== 'function')
     || (value.runtimeFootprint !== undefined && typeof value.runtimeFootprint !== 'function')) {
-    throw deploymentError('advanced capacity estimate, observe and runtimeFootprint must be functions when provided');
+    throw deploymentError('advanced capacity estimate, observe, hostObservation and runtimeFootprint must be functions when provided');
   }
   let hostCapacity;
   if (value.hostCapacity !== undefined) {
@@ -660,7 +661,7 @@ function normalizeCapacity(value) {
   } catch (error) {
     throw deploymentError(`advanced capacity policy is invalid: ${error.message}`);
   }
-  return Object.freeze({ policy, estimate: value.estimate, observe: value.observe, runtimeFootprint: value.runtimeFootprint, hostCapacity });
+  return Object.freeze({ policy, estimate: value.estimate, observe: value.observe, runtimeFootprint: value.runtimeFootprint, hostCapacity, hostObservation: value.hostObservation });
 }
 
 function existingRegular(path) {
@@ -6838,10 +6839,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     adapters,
     worktreeCapacity: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
     worktreeCapacityRuntimeFootprint: runtimeFootprintProbe,
-    hostCapacity: hostCapacityAuthority,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
       worktreeCapacityObserve: capacity.observe,
+      // #561: a fixture stages its own host measurement so the floor's swap reserve stays
+      // hermetic; production leaves this unset and createDriver measures the machine.
+      ...(capacity.hostObservation ? { worktreeCapacityHostObservation: capacity.hostObservation } : {}),
     } : {}),
     ...(toolchainProjection ? { toolchainProjection } : {}),
     runtimeIsolation: {
