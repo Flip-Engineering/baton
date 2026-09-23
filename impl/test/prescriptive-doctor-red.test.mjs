@@ -171,7 +171,7 @@ function tmpDir(label) {
 // this host is deep (the taskwave runtime path); a top-level /tmp root keeps the resident socket
 // path well under the bound.
 function shortTmpDir(label) {
-  const dir = mkdtempSync(join('/tmp', `baton-pd72-${label}-`));
+  const dir = mkdtempSync(join(tmpdir(), `baton-pd72-${label}-`));
   dirs.push(dir);
   return dir;
 }

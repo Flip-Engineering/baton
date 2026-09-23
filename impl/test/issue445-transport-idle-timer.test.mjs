@@ -27,6 +27,7 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { globalAgent } from 'node:http';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -52,7 +53,7 @@ test.after(() => { for (const root of roots) rmSync(root, { recursive: true, for
 function scratch() {
   // A Unix socket path is bounded (sun_path, 104 bytes) and this deployment's tmpdir alone is 75
   // bytes deep, so the fixture mints its directory directly under /tmp.
-  const directory = mkdtempSync('/tmp/baton-445-');
+  const directory = mkdtempSync(join(tmpdir(), 'baton-445-'));
   roots.push(directory);
   return directory;
 }

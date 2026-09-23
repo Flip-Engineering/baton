@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -23,7 +24,7 @@ const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'h
 // The deployment fixture is the repository's own: a mock adapter under an explicit route, so no
 // provider credential is consulted and no real model is called.
 function repository(t) {
-  const root = mkdtempSync('/tmp/bt-wakes-repo-');
+  const root = mkdtempSync(join(tmpdir(), 'bt-wakes-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'wakes@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Wakes'], { cwd: root });
@@ -55,9 +56,9 @@ function adapter() {
 }
 
 function options(t, { capacity = null } = {}) {
-  const deploymentRoot = mkdtempSync('/tmp/bt-wakes-deployment-');
-  const configRoot = mkdtempSync('/tmp/bt-wakes-config-');
-  const home = mkdtempSync('/tmp/bt-wakes-home-');
+  const deploymentRoot = mkdtempSync(join(tmpdir(), 'bt-wakes-deployment-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'bt-wakes-config-'));
+  const home = mkdtempSync(join(tmpdir(), 'bt-wakes-home-'));
   t.after(() => rmSync(deploymentRoot, { recursive: true, force: true }));
   t.after(() => rmSync(configRoot, { recursive: true, force: true }));
   t.after(() => rmSync(home, { recursive: true, force: true }));

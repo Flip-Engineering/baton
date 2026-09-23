@@ -190,7 +190,7 @@ async function endChild(child) {
 async function fixture(t, label, { drainTimeoutMs = 2_500, stopDeadlineMs = 400, webDrainMs = 300 } = {}) {
   // The resident's own socket path is bounded by sun_path (103 bytes) and the suite root on this
   // host is deep, so the fixture root is short (the issue351/issue383 idiom).
-  const directory = mkdtempSync(`/tmp/bt467-${label}-`);
+  const directory = mkdtempSync(join(tmpdir(), `bt467-${label}-`));
   const repo = join(directory, 'repo');
   initRepo(repo);
   const home = join(directory, 'home');
