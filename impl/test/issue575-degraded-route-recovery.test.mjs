@@ -128,8 +128,10 @@ async function openDeployment(t, label, routes) {
 }
 
 /** The episode the coordinator's death fold lands for a route, spelled the way the pre-#575
- * runtime spelled it: the payload route carries the version-suffixed harness label. */
-function degradedRow(route, { at, harnessLabel = VERSIONED_LABEL, resetAt = null, resetAtText = null } = {}) {
+ * runtime spelled it: the payload route carries the version-suffixed harness label. The fault
+ * class is quota by default — the class whose resetless block #575 ends by derivation; a stall
+ * or socket episode derives no instant (#316-a3). */
+function degradedRow(route, { at, harnessLabel = VERSIONED_LABEL, resetAt = null, resetAtText = null, failure = PROVIDER_FAULT_CODES.quota } = {}) {
   const stamp = new Date(at).toISOString();
   return {
     worker: 'w-1', harness: harnessLabel, turnEpoch: 1,
@@ -137,7 +139,7 @@ function degradedRow(route, { at, harnessLabel = VERSIONED_LABEL, resetAt = null
     harnessResolved: harnessLabel, modelResolved: route.model, effortResolved: route.effort,
     payload: {
       route: Object.freeze({ harness: harnessLabel, model: route.model, effort: route.effort }),
-      faultClass: PROVIDER_FAULT_CODES.socket,
+      faultClass: failure,
       participants: Object.freeze(['w-1', 'w-2', 'w-3']),
       window: Object.freeze({ from: stamp, to: stamp }), count: 3,
       next: Object.freeze({

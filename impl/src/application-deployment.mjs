@@ -2687,11 +2687,13 @@ function deriveRouteDegrades({ log, routes, refusals = null }) {
         resetAt,
         resetAtText: typeof payload.resetAtText === 'string' && payload.resetAtText.length > 0
           ? payload.resetAtText : null,
-        // #456 item 2, #575: every provider fault names its next step, quota or not — the
-        // fault's own window when its words named one, else the registry's fault-probe row
-        // (`degradeProbeAfter`). A derivation fenced to the quota class left a socket-fault
-        // episode with `probeAfter: null` and, through the block's `clearsAt`, with no step.
-        probeAfter: resetAt === null
+        // #456 item 2: the probe instant of a provider-QUOTA degrade whose provider named no
+        // reset — the fault's own window when its words named one, else the registry's
+        // fault-probe row (`degradeProbeAfter`). A quota window is a usage-window fact, so the
+        // bound is a quota fact (#575). A stall or socket episode names no next instant of its
+        // own: its recovery is the evidence — a later successful turn, or the operator's
+        // routeProbe override the refusal names — never a clock.
+        probeAfter: resetAt === null && faultClass === PROVIDER_FAULT_CODES.quota
           ? degradeProbeAfter(to, quotaRefusalText(observed, eventKey)) : null,
       }));
     }
