@@ -306,10 +306,10 @@ async function wakeFixture(t, { adapter = new ScriptableAdapter(), profile = PRO
 // A wave-shaped run through the application ceremony (run.start with driverKind:'wave' then the
 // plan approval gate). approve:false leaves the run awaiting plan approval so the wake pages
 // plan_approval.
-async function startWaveRun(fx, { approve = true, profile = 'default' } = {}) {
+async function startWaveRun(fx, { approve = true, profile = 'default', objective = 'orchestrator wake staging' } = {}) {
   const owner = fx.owner;
   const started = await fx.application.start({
-    objective: 'orchestrator wake staging', profile, route: ROUTE, scope: ['**'], driverKind: 'wave',
+    objective, profile, route: ROUTE, scope: ['**'], driverKind: 'wave',
   }, owner);
   const approved = approve
     ? await fx.application.approve(started.runId, started.plan.digest, principalOf('wake-approver'))
@@ -322,11 +322,12 @@ async function startWaveRun(fx, { approve = true, profile = 'default' } = {}) {
 // token: the MCP/web transports supply it on connection close, and the WAKE-ABORT row injects it
 // directly to pin the coordination_wait_aborted -> wake-cancelled mapping. It is a non-wire
 // field (never serialized), exactly like the transportHidden args the MCP schema carries.
-function wake(fx, runId, { storeCursor = 0, reasonsCursor = 0, timeoutMs = 5000, signal } = {}, principal = fx.owner) {
+function wake(fx, runId, { storeCursor = 0, reasonsCursor = 0, timeoutMs = 5000, kind, signal } = {}, principal = fx.owner) {
   return fx.application.command('attention.wait', {
     runId,
     afterCursor: { storeCursor, reasonsCursor },
     timeoutMs,
+    ...(kind !== undefined ? { kind } : {}),
     ...(signal ? { signal } : {}),
   }, principal, null);
 }
@@ -850,8 +851,10 @@ test('WORKER-REFUSED (§E D3/F5): a worker principal cannot call the wake — ev
 
 test('AUTHORITY-RUN-SCOPED (§E D3/F5): a live lease on run A never authorizes run B\'s wake', async (t) => {
   const fx = await wakeFixture(t);
-  const { runId: runA } = await startWaveRun(fx);
-  const { runId: runB } = await startWaveRun(fx);
+  // Distinct objectives: run.start replays an identical request to the same run, so two
+  // same-objective starts would stage ONE run and the cross-run refusal could never fire.
+  const { runId: runA } = await startWaveRun(fx, { objective: 'wake authority run A' });
+  const { runId: runB } = await startWaveRun(fx, { objective: 'wake authority run B' });
   authorityOn(fx, { runId: runA, principalId: 'lease-holder', sessionId: 'session-lease-holder' });
   const leasePrincipal = principalOf('lease-holder');
   // The live lease holder is admitted on its OWN run (lease.parent.runId === runId).
