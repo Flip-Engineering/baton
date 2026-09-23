@@ -1,0 +1,60 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "body": {
+      "subject": "Issue #126: fleet_bakeoff lands as a two-wave composition over the shipped recipe engine, with the referee's verdict on the result roster",
+      "base": {
+        "observedHead": "11deb7608f45920ccb56f7da3ca3baa55c32987a",
+        "rebasedOnto": "1e050e420a99d775d3d2f943453c23535a701fd9"
+      },
+      "commit": {
+        "sha": "2d5544456c8c7c26cd16508f04a8aa7a94a175d3",
+        "branch": "baton/ws-30956be3dde4fabec85d25fef5b69cc4"
+      },
+      "items": [
+        {
+          "id": "fleet-bakeoff-composition",
+          "status": "delivered",
+          "change": "baton.recipes.bakeoff (impl/src/recipes.mjs) — N candidates on ONE contract plus a referee whose verdict the result roster carries. WHICH IT IS: a composition over the shipped engine, not one recipe. The recipe schema admits the candidates' half (N cards sharing one objectiveTemplate, distinct roles, under the recipe.members cap), but a wave starts every member together (wave.mjs:307-312), so a referee card in the candidates' wave turns before any candidate has produced work to judge. The composition runs wave 1 (N candidates from one objectiveTemplate through runRecipe) and wave 2 (one referee whose objective names each candidate's role, resultSha and report path and reproduces its report text), then reads the referee's own pinned report back onto the result as bakeoff.referee.verdict. The roster (bakeoff.candidates, in declared order) carries each candidate's rendered objective, report path, phase and resultSha; bakeoff.contract carries the resolved contract text and its digest. The spec is closed (unknown option, fewer than two candidates, a referee without a report, and anything the shipped member gate refuses in the contract all refuse typed). Pinned reads are bounded by the objective lane and a read that cannot answer carries a typed reason (no_repository_root, no_result_sha, report_not_in_result, report_oversize, report_read_failed).",
+          "files": [
+            "impl/src/recipes.mjs"
+          ],
+          "test": "cd impl && node --test test/issue126-fleet-bakeoff-red.test.mjs",
+          "evidence": "2/2 green: BK-1 (12.0 s) and BK-2 (0.6 s)."
+        },
+        {
+          "id": "bakeoff-red-row",
+          "status": "delivered",
+          "change": "impl/test/issue126-fleet-bakeoff-red.test.mjs — BK-1 drives the real recipe/wave stack (real BatonApplication + createWaveDriver + MockAdapter fixtures + a real temporary git repository, no providers, no network) with three candidates on one contract and one referee, and asserts: the roster carries the candidates in declared order; every candidate preserved a distinct 40-hex result; every candidate's rendered objective is byte-identical up to the [attempt: salt role] trailer (the SAME contract, with the contract task and constraint present); the referee's objective names every candidate, its result sha and its report path and carries the report text; and the roster carries the referee's verdict text verbatim with verdictReason null. BK-2 pins the closed spec. RED BEFORE: baton.recipes.bakeoff was undefined (grep bakeoff over impl/src and impl/test was 0 hits at the base).",
+          "files": [
+            "impl/test/issue126-fleet-bakeoff-red.test.mjs"
+          ],
+          "test": "cd impl && node --test --test-name-pattern=BK test/issue126-fleet-bakeoff-red.test.mjs",
+          "evidence": "Red: AssertionError 'baton.recipes.bakeoff is the fleet_bakeoff surface' with actual 'undefined' against expected 'function'. Green after the seam: BK-1 and BK-2 pass."
+        }
+      ],
+      "verification": {
+        "targeted": true,
+        "gates": [
+          "cd impl && node --test test/issue126-fleet-bakeoff-red.test.mjs -> 2/2 pass",
+          "cd impl && node --test test/recipes-red.test.mjs test/issue368-recipe-objective-lane.test.mjs test/issue499-recipe-route-counts.test.mjs -> 14/14 pass",
+          "cd impl && node --test test/omp-process-truth.test.mjs -> 9/9 pass (lane #281 work also on this branch)"
+        ],
+        "fullSuite": false,
+        "environmentRed": []
+      },
+      "carriedForward": [
+        "The bakeoff is two waves because a wave starts every member together: a one-wave bakeoff would need a member-level dependency seam inside wave.mjs/wave-driver.mjs (a member that waits for named siblings and receives their results in its objective). This lane did not add one — the brief scoped it to a recipe over the shipped engine or the minimal missing seam — and the composition keeps the shared wave engine untouched for the sibling lanes.",
+        "Load sensitivity, measured: one BK-1 run failed with a null verdict while the host was busy. The driver reads each member's preserved result inside the settle window (wave.mjs:695-702); with a 5 s window a busy host yields resultSha null and the honest typed reason no_result_sha. The test now declares a 30 s settle/stall window and still fails when a member produced no report. A caller running a bakeoff on a loaded host should declare its own window; the receipt never invents a verdict.",
+        "The referee is handed each candidate's report TEXT (read from the candidate's result ref) plus its coordinates, so the judge does not depend on the candidates' worktrees still existing; the verdict itself is the referee's own pinned report, read the same way. No hub-composed northbound tool was added (docs/09 F3 names fleet_bakeoff as a hub-composed northbound tool): the brief scoped this lane to the recipe/engine surface, and the application/MCP/CLI surfaces were left untouched (rule 3).",
+        "Same-key retries attach both waves: the composition derives `<key>:candidates` and `<key>:referee`, so runRecipe's manifest/attach law applies unchanged to each wave.",
+        "ENVIRONMENT: the swarm bridge refused this contribution twice with operational_log_unavailable / ENOSPC while the host data volume sat at 100 percent (653 MiB free)."
+      ],
+      "needsFromOthers": [
+        "provider-lead2 / integrator: land 2d5544456c8c7c26cd16508f04a8aa7a94a175d3 from branch baton/ws-30956be3dde4fabec85d25fef5b69cc4 (impl/src/recipes.mjs + impl/test/issue126-fleet-bakeoff-red.test.mjs). The deployment verification command was not run here: this lane's rules admit only the touched and named files.",
+        "provider-lead2: if the operator wants fleet_bakeoff reachable as a northbound tool (MCP/CLI/web action) rather than only through baton.recipes, that is a separate surface item — this commit is the library half only.",
+        "operator: the host data volume is at 100 percent with 653 MiB free and the swarm log append refuses with ENOSPC; nothing in this lane's authority frees it."
+      ]
+    }
+  }
+}
