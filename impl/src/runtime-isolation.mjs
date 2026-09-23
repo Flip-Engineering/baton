@@ -6,6 +6,7 @@ import { accessSync, chmodSync, closeSync, constants as fsConstants, existsSync,
 import { basename, delimiter, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { projectCredentialTree } from './credential-projection.mjs';
 import { seatLinkedWorktreeOwnershipPath } from './worktree.mjs';
+import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 
 const SECRET_NAME = /(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)/i;
 const PROVIDER_OR_INJECTION = /^(ANTHROPIC_|OPENAI_|XAI_|ZAI_|Z_AI_|MOONSHOT_|KIMI_|AWS_|GOOGLE_|GCLOUD_|CLOUD_ML_|AZURE_|FOUNDRY_|GITHUB_|NODE_OPTIONS$|PYTHONPATH$|PYTHONHOME$|RUBYOPT$|PERL5OPT$|BASH_ENV$|ENV$|CDPATH$|GIT_CONFIG|GIT_DIR$|GIT_WORK_TREE$|DYLD_|LD_|.*_PROXY$)/i;
@@ -154,7 +155,7 @@ function linkedWorktreeOwnershipProjection(repoRoot, checkout) {
   const value = normalizedCheckout(checkout);
   if (value === null) return null;
   const physicalOwnerId = basename(value);
-  if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)) return null;
+  if (!isPhysicalWorkspaceId(physicalOwnerId)) return null;
   const expected = join(repoRoot, '.baton', 'wt', physicalOwnerId);
   let observed = value; let expectedObserved = expected;
   try { observed = realpathSync(value); } catch { /* the checkout may not exist yet */ }
