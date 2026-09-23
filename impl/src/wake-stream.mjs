@@ -275,7 +275,7 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   wakeRow({
     wakeClass: 'paused', scope: 'deployment', terminal: true,
     next: 'baton swarm guide {swarmId} {participantId}',
-    summary: 'a turn paused and stays paused until a caller claims, nudges, or waits on it',
+    summary: 'a turn ended and its orchestrator receives the report to decide continuation',
     rows: [operationalKind('turn.paused')],
     subject: { field: 'worker', kind: 'worker', fallback: { field: 'taskId', kind: 'task' } },
   }),

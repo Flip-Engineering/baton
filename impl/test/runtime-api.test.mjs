@@ -68,7 +68,7 @@ const MEMBERS = Object.freeze([
   ['_providerRouteOf', '(handle)', 1],
 ]);
 
-const ASYNC_MEMBERS = Object.freeze(['_claimLivenessPreflight', '_claimInteraction']);
+const ASYNC_MEMBERS = Object.freeze(['_claimInteraction']);
 
 test('AP1: receiver discipline — bare coordinator, no recording spelling, an acyclic leaf', () => {
   const text = read(MEMBER_FILE);

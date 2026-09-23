@@ -481,18 +481,8 @@ export function swarmReceiptNext(command, args = {}, outcome = null) {
   switch (command) {
     case 'swarm.create':
       return { command: 'swarm.recruit', args: { swarmId } };
-    case 'swarm.recruit': {
-      // Issue #525 D1: a resume-from recruit under the `manual` continuation policy lands the
-      // recovery and the question and stops before the work — the step that follows is not one
-      // act but the TWO the question admits (docs/52 D2), so the receipt names both.
-      if (outcome?.state === 'pending') {
-        return {
-          continue: { command: 'swarm.guide', args: { swarmId, participantId: args.participantId ?? null } },
-          stop: { command: 'swarm.stop', args: { swarmId, participantId: args.participantId ?? null } },
-        };
-      }
+    case 'swarm.recruit':
       return { command: 'swarm.guide', args: { swarmId, participantId: args.participantId ?? null } };
-    }
     case 'swarm.guide': {
       // The seat's next turn boundary is the `paused` class (a turn paused and staying paused IS
       // the boundary a queued guide lands on); a park is cleared by the delivery that composes it.

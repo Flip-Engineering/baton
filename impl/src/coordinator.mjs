@@ -617,8 +617,8 @@ export class Coordinator {
 
   /** Whether a recorded deadline has come due, derived from the RECORDS themselves (never a timer
    * constant): a pending interaction's `deadlineAt`, a blocking question's bounded deployment
-   * default off its own `mintedAt`, a stop waiter's `deadlineAt`, and an unanswered stall cycle's
-   * `mintedAt + windowMs`. This is exactly the set `_sweepDeadlines` acts on. */
+   * default off its own `mintedAt`, and a stop waiter's `deadlineAt`.
+   * This is the set `_sweepDeadlines` acts on. */
     _deadlineDue() {
     return runtimeApi._deadlineDue(this);
   }
