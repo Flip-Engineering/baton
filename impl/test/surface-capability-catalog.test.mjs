@@ -98,6 +98,10 @@ test('canonical names outrank compatibility aliases and preserve each live comma
   }
   assert.equal(resolveSurfaceCapability('run.view').id, 'run.view',
     'the fold operation keeps its own canonical identity');
+  const viewAliases = resolveSurfaceCapability('run.view').aliases.mcp;
+  for (const name of ['run.episode', 'run.inspect', 'run.status', 'run.wait']) {
+    assert.ok(viewAliases.includes(name), `${name} remains part of the run.view fold`);
+  }
   for (const name of ['run.episode', 'run.status', 'runs.list']) {
     assert.equal(resolveSurfaceCapability(name).id, name,
       'the advertised command keeps its exact identity');

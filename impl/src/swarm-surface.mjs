@@ -113,7 +113,7 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     }));
   const usage = [
     `baton swarm ${verb}`,
-    ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
+    ...positional.map((field) => `<${properties[field]?.enum?.join('|') ?? kebabCase(field).toUpperCase()}>`),
     ...flags.map((entry) => entry.switch ? `[${entry.flag}]`
       : `[${entry.flag} ${properties[entry.field]?.enum?.join('|') ?? 'VALUE'}]`),
     // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch and

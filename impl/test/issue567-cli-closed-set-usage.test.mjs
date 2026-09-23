@@ -7,6 +7,14 @@ import { SWARM_CLI_COMMANDS } from '../src/swarm-surface.mjs';
 test('567: swarm usage and help name every closed-set option value from the command schema', () => {
   for (const row of SWARM_CLI_COMMANDS) {
     const schema = SWARM_COMMAND_ROWS.find(({ command }) => command === row.command);
+    for (const field of row.positional) {
+      const values = schema.properties[field]?.enum;
+      if (!values) continue;
+      const spelling = `<${values.join('|')}>`;
+      assert.ok(row.usage.includes(spelling), `${row.command}: ${spelling}`);
+      assert.ok(batonCliHelp(row.command).includes(spelling), `${row.command} help: ${spelling}`);
+      assert.ok(batonCliHelp('swarm').includes(spelling), `swarm help: ${spelling}`);
+    }
     for (const flag of row.flags) {
       const values = schema.properties[flag.field]?.enum;
       if (!values) continue;
