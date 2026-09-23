@@ -13111,7 +13111,7 @@
         {
           "name": "_settleRouteProbes",
           "ordinal": 0,
-          "size": 17,
+          "size": 26,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -14032,7 +14032,7 @@
         {
           "name": "_landedBy",
           "ordinal": 0,
-          "size": 10,
+          "size": 11,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
