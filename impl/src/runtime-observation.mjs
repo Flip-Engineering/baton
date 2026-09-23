@@ -1102,7 +1102,6 @@ export function *_seedCoordinationTasksPasses(coordinator, recorder) {
         providerTelemetryFailed: false, providerTerminalSeal: null,
         sessionPreservation: null, preservedTurnEpoch: null,
         watchdogActions: new Set(), recentFailedActions: [], turnInFlight: false,
-        stallSeamDigestSet: null, stallSeamCycle: null,
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, recoverySpawnAbort: null, recoverySpawnPending: false, recoverySpawnPromise: null, recoveryStopReason: null,
         recoveryProviderReleaseDeferred: false,
@@ -1689,9 +1688,6 @@ export function _armWatchdog(coordinator, recorder, handle) {
         return;
       }
       handle.watchdogActions?.add('stall');
-      // D4 rung 2 / E5: a fresh stall lifetime starts with an EMPTY per-stall-LIFETIME digest
-      // set, cleared only by _clearStall on a qualifying D2 re-arm inside the claimed window.
-      handle.stallSeamDigestSet = new Set();
       recorder.log.append({
         worker: handle.id, harness: coordinator._harnessOf(handle.vendor), turnEpoch: coordinator._safeTurnEpoch(handle),
         kind: 'health.stall_suspected', actor: 'policy',
@@ -1735,59 +1731,6 @@ export function _mintStallDeclared(coordinator, recorder, handle) {
       windowMs: 0,
       mintedAt: coordinator._now(),
     });
-  }
-
-export function _armStallCycle(coordinator, recorder, handle, task, { nudgeId, controlId }) {
-    if (!handle || !handle.watchdogActions?.has('stall')) return false;
-    const windowMs = Number.isSafeInteger(coordinator._progressNudgeWindowMs)
-      ? coordinator._progressNudgeWindowMs : 300_000;
-    const cycle = {
-      kind: 'stall_seam',
-      worker: handle.id,
-      taskId: task?.id ?? handle.taskId,
-      nudgeId: nudgeId ?? null,
-      controlId: controlId ?? null,
-      mintedAt: coordinator._now(),
-      windowMs,
-      answered: false,
-      basis: 'no_progress_evidence',
-      lifetime: handle.stallSeamCycle?.lifetime ?? coordinator._now(),
-    };
-    handle.stallSeamCycle = cycle;
-    const timerHandle = coordinator._setTimeout(() => coordinator._expireStallCycleSafely(handle), windowMs);
-    if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
-    cycle.timer = timerHandle;
-    return true;
-  }
-
-export function _expireStallCycle(coordinator, recorder, handle) {
-    const cycle = handle?.stallSeamCycle;
-    if (!cycle || cycle.answered !== false) return;
-    if (coordinator._now() < cycle.mintedAt + cycle.windowMs) return; // window not yet elapsed
-    cycle.answered = true; // idempotency guard (timer + sweep both reach here)
-    if (cycle.timer != null) coordinator._clearTimeout(cycle.timer);
-    const task = coordinator._tasks.get(handle.taskId);
-    if (handle.turnInFlight === true) {
-      // Mid-turn: never reap. The stall stays escalated and the watchdog re-arms (D2).
-      handle.stallSeamCycle = null;
-      coordinator._armWatchdog(handle);
-      return;
-    }
-    if (!handle.watchdogActions?.has('stall')) {
-      handle.stallSeamCycle = null;
-      return;
-    }
-    coordinator._preserveProgressBeforeReap(handle, task, null, true)
-      .then(() => coordinator._applyWatchdogAction(handle, 'kill'))
-      .catch((error) => coordinator._refuseStallReap(handle, error));
-  }
-
-export function _expireStallCycleSafely(coordinator, recorder, handle) {
-    try {
-      coordinator._expireStallCycle(handle);
-    } catch (error) {
-      coordinator._recordStallReapRefusal(handle, error);
-    }
   }
 
 export function recordedFailures(coordinator, recorder) {
@@ -1834,20 +1777,8 @@ export function _recordTrustGateEscape(coordinator, recorder, handle, error) {
 
 export function _clearStall(coordinator, recorder, handle) {
     if (!handle) return;
-    if (handle.stallSeamCycle?.timer != null) coordinator._clearTimeout(handle.stallSeamCycle.timer);
     handle.watchdogActions?.delete('stall');
-    handle.stallSeamDigestSet = new Set();
-    handle.stallSeamCycle = null;
     coordinator._armWatchdog(handle);
-  }
-
-export function _observeStallSeam(coordinator, recorder, handle, event) {
-    const cycle = handle?.stallSeamCycle;
-    if (!cycle || cycle.answered !== false) return;
-    if (!REARM_KINDS.includes(event.kind)) return;
-    if (coordinator._now() >= cycle.mintedAt + cycle.windowMs) return; // outside the claimed window
-    cycle.answered = true;
-    coordinator._clearStall(handle);
   }
 
 export function _scheduleScopeOrientation(coordinator, recorder, handle, path) {
@@ -2180,8 +2111,6 @@ export function _observeWatchdogEvent(coordinator, recorder, handle, event) {
     }
     if (!REARM_KINDS.includes(event.kind)) return; // EVERYTHING ELSE IS SILENCE
     coordinator._touchWatchdog(handle);                     // progress evidence re-arms
-    // D4 rung 2: a qualifying D2 re-arm inside the claimed window answers the stall-seam cycle.
-    coordinator._observeStallSeam(handle, event);
   }
 
 export function _observeTurnProgress(coordinator, recorder, handle, event) {
@@ -3762,4 +3691,3 @@ export function *_terminalizeUnattachedCoordinationTasks(coordinator, recorder) 
       if (handle) handle.status = 'exited';
     }
   }
-

@@ -142,9 +142,8 @@ test('P92-OR1: explicit evidence intent accepts a textual capsule and inverse pr
   });
   await change.approve();
   const unchanged = await terminal(change);
-  assert.equal(unchanged.phase, 'failed');
-  assert.deepEqual(unchanged.terminalCause, {
-    kind: 'policy_failure', code: 'required_effect_absent',
-  });
+  assert.equal(unchanged.phase, 'completed');
+  assert.equal(unchanged.terminalCause, null);
+  assert.equal(unchanged.result?.state, 'accepted');
   assert.equal(unchanged.resultIntent, 'change');
 });

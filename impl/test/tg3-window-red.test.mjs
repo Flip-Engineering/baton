@@ -225,7 +225,7 @@ function emitContentMessage(adapter, handle, text) {
   });
 }
 
-const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
+const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation'];
 const gateEvents = (coordinator, workerId) =>
   coordinator._log.read(workerId).filter((event) => gateCodes.includes(event.payload?.code));
 const settledWith = (coordinator, workerId, basis) =>
@@ -338,20 +338,17 @@ test('TW-R4: claim_turn runs the existing verifier and completes an in-scope cla
   assert.equal(adapter.calls.prompt.length, 0, 'the claim needed no policy prompt');
 });
 
-test('TW-R5: claim_turn on a diffless checkpoint fails the gate — the verifier still demands the effect', async () => {
+test('TW-R5: claim_turn on a diffless checkpoint runs the declared verifier', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, handle, task, row } = await parked({ adapter, capture: noDiff });
 
   const claimed = await coordinator.claimTurn(row.pauseId, { actor: 'orchestrator' });
   assert.equal(claimed.ok, true);
-  assert.equal(claimed.outcome, 'failed', 'the diffless claim is refused by the authoritative gate');
-  assert.equal(task.status, 'failed');
-  const verdict = gateEvents(coordinator, handle.id).find((event) => event.payload?.code === 'required_effect_absent');
-  assert.ok(verdict, 'the gate verdict names required_effect_absent');
-  assert.equal(verdict.payload?.steered, undefined,
-    'the retired steering receipt no longer exists on a claim verdict');
-  assert.equal(verifyRuns(coordinator, handle.id), 0,
-    'the refusal lands in the gate\'s required-effect phase — the referee never runs (no verify receipt)');
+  assert.equal(claimed.outcome, 'completed');
+  assert.equal(task.status, 'completed');
+  assert.equal(gateEvents(coordinator, handle.id).length, 0);
+  assert.equal(verifyRuns(coordinator, handle.id), 1);
+  assert.equal(adapter.calls.kill.length, 0);
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the record is consumed');
 });
 

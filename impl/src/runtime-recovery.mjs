@@ -3262,15 +3262,6 @@ export function* _replay(coordinator, recorder) {
               ...(recoveredFault?.detail ? { detail: recoveredFault.detail } : {}),
             });
             break;
-          case 'error':
-            if (e.actor === 'policy' && e.payload?.phase === 'trust_gate'
-              && e.payload?.code === 'required_effect_absent') {
-              terminalStatus = 'failed';
-              lastResult = null;
-              verdict = null;
-              terminalCause ??= deepFreeze({ kind: 'policy_failure', code: 'required_effect_absent' });
-            }
-            break;
           case 'control.forced_stop':
           case 'control.recovery_terminalized':
             if (e.kind === 'control.recovery_terminalized') recoveryTerminalized = true;

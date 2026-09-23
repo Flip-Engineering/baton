@@ -63,10 +63,6 @@ export function _deadlineDue(coordinator) {
     for (const waiter of coordinator._stopWaiters.values()) {
       if (!waiter.finalized && waiter.deadlineAt != null && now >= waiter.deadlineAt) return true;
     }
-    for (const handle of coordinator._workers.values()) {
-      const stall = handle.stallSeamCycle;
-      if (stall && stall.answered === false && now >= stall.mintedAt + stall.windowMs) return true;
-    }
     return false;
   }
 

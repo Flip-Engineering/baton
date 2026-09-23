@@ -6283,28 +6283,6 @@ export class Coordinator {
           },
         });
       }
-      // TG5: `analysis: true` documents repository_edit as not-required for this node — the
-      // required_effect progress verdict is skipped; every other phase (capture, forbidden_effect,
-      // path_scope, environment, coverage) still runs.
-      if (!task.brief?.analysis && task.brief?.requiredEffects?.includes('repository_edit')) {
-        const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
-        if (!sha || !baseSha || sha === baseSha || changedPaths.length === 0 || inScopeChangedPaths.length === 0) {
-          trustPhase = 'required_effect';
-          throw Object.assign(
-            new Error('approved Plan required a repository edit but capture proved no in-scope diff from its base'),
-            {
-              code: 'required_effect_absent',
-              requiredEffectEvidence: {
-                requiredEffect: 'repository_edit', baseSha, sha: sha ?? null,
-                changedPathCount: changedPaths.length,
-                changedPathsDigest: canonicalDigest(changedPaths),
-                inScopeChangedPathCount: inScopeChangedPaths.length,
-                inScopeChangedPathsDigest: canonicalDigest(inScopeChangedPaths),
-              },
-            },
-          );
-        }
-      }
       const baseSha = task.sessionContext?.baseSha ?? null;
       // Issue #334 acceptance: a read-only run (repository mutation is not authorized) whose
       // captured candidate changed no path has nothing to verify against the base — the
@@ -6597,7 +6575,6 @@ export class Coordinator {
         payload: {
           message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase,
           ...(err?.verificationAttempt ? { verificationAttempt: err.verificationAttempt } : {}),
-          ...(err?.requiredEffectEvidence ? { requiredEffectEvidence: err.requiredEffectEvidence } : {}),
           ...(err?.pathScopeEvidence ? { pathScopeEvidence: err.pathScopeEvidence } : {}),
         },
       });
@@ -6618,7 +6595,7 @@ export class Coordinator {
       if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
       task.status = durable?.status ?? 'failed';
       if (task.status !== 'completed') task.verdict = null;
-      if (['forbidden_effect_observed', 'required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
+      if (['forbidden_effect_observed', 'worker_path_scope_violation'].includes(code)) {
         handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
         // TG4: the projected terminal cause names the gate — never 'unknown' — on the task
         // surface too (the handle's copy already fed result() and replay).

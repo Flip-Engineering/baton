@@ -52,10 +52,9 @@ export function turnCompleted(coordinator, recorder, ctx) {
         // decision channel is turn-ending by construction — the worker asks, the hub parks the
         // task input_required, and THEN the provider's result frame arrives as an ordinary
         // completed turn. A turn that ends with a blocking interaction STILL PENDING (unsettled)
-        // has by definition not produced its final diff, so the trust gate must not evaluate it
-        // (required_effect_absent killed the gated worker before the orchestrator could
-        // answer). Deferral, never exemption: the post-settlement continuation turn faces the
-        // gate. The guard keys on an actually-pending record — a turn that completes DURING
+        // has by definition not produced its final result, so the trust gate must not evaluate it.
+        // The post-settlement continuation turn faces the gate. The guard keys on an
+        // actually-pending record — a turn that completes DURING
         // answer delivery (record resolving/resolved, e.g. elicitation-style questions, CK2/CK8
         // phase11) is a completed result and must verify normally.
         {
