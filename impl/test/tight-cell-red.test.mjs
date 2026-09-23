@@ -989,6 +989,39 @@ test('TC-18a reply pin: the non-cell single-worker reply lane is byte-identical 
     'PIN: a reply to a reply still refuses message_depth_exceeded (depth stays 1)');
 });
 
+test('TC-18b dispatch identity: the multi-node wave dispatch is keyed on the durable cell declaration, never on Plan cardinality', async () => {
+  // Review finding (digest-rev7, seq 167457): the first cut of the cell dispatch guarded on
+  // `plan.nodes.length > 1`, so EVERY ordinary non-workflow multi-node successor Plan routed
+  // through the cell wave — their public-authority probe dispatched 'ordinary-a,ordinary-b' where
+  // the parent dispatched 'ordinary-a' alone. The guard is the run's durable cell identity (the
+  // steering-registered declaration), so an ordinary Run keeps exactly the dispatch it had before
+  // this lane and TC-18's byte-identity holds.
+  const fx = await waveFixture();
+  // The cell goes through the LIBRARY seam (createWave approves, so its workers really dispatch).
+  const wave = await fx.baton.waves.start({
+    members: [{ role: 'cell', objective: 'dispatch identity probe', scope: ['.'], group: { seat: SEAT, size: 2 } }],
+  });
+  const cellOutline = await wave.runs.get('cell').status().then((view) => view?.view ?? view);
+  const cellRunId = cellOutline.runId;
+  assert.notEqual(fx.application._runCellDeclaration(cellRunId), null,
+    'PIN: a cell Run carries its declaration — the multi-node branch is keyed on durable identity');
+  const cellWorkers = fx.driver.coordinator.list().filter((w) => w.runId === cellRunId);
+  assert.equal(cellWorkers.length, 2, 'PIN: the cell spends size workers under its one runId');
+  // An ORDINARY Run — no cell declaration — dispatched through the same seam: it keeps ONE member.
+  const owner = fx.principalOf('cell-owner');
+  const plain = await fx.application.start({ objective: 'ordinary work', route: SEAT, scope: ['.'] }, owner);
+  const plainRunId = plain.runId ?? plain.goal?.runId ?? null;
+  assert.ok(plainRunId && plain.plan?.digest, 'the ordinary Run proposed a Plan');
+  assert.equal(fx.application._runCellDeclaration(plainRunId), null,
+    'PIN: an ordinary Run carries NO cell declaration — the plan-wave dispatch branch cannot claim it '
+    + 'however many nodes its Plan has');
+  await fx.application.approve(plainRunId, plain.plan.digest, owner);
+  const plainWorkers = fx.driver.coordinator.list().filter((w) => w.runId === plainRunId);
+  assert.ok(plainWorkers.length <= 1,
+    'PIN: the ordinary Run keeps ONE dispatched member — the cell wave is never reached for a Run '
+    + `that declared no cell (dispatched ${plainWorkers.length})`);
+});
+
 test('TC-09b waves.send pin: the C5 runId fan-out already receipts delivered/targetCount at the coordinator seam', async () => {
   const { coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter(), capture: noDiff });
   const h1 = await coordinator.spawn('mock', makeBrief(), { runId: 'run:fan' });

@@ -3513,11 +3513,14 @@ export class BatonApplication {
       });
       return this._findRun(refreshed.goal.runId).dispatches;
     }
-    // #102 Decision 2 (TC-04/TC-05): a cell Plan carries `size` homogeneous nodes and is not a
-    // workflow, so it takes the plan-wave dispatch — one worker per node under the ONE runId the
-    // member owns. The wave authority key is the plan digest, so a re-dispatch of the same Plan is
-    // the durable resume; a partial dispatch is refused rather than completed.
-    if (refreshed.plan.nodes.length > 1) {
+    // #102 Decision 2 (TC-04/TC-05): a CELL Plan carries `size` homogeneous nodes, so it takes the
+    // plan-wave dispatch — one worker per node under the ONE runId the member owns. The guard is
+    // the run's DURABLE cell identity (its steering-registered declaration, the same record the
+    // run-status builder reads), never the plan's cardinality: an ordinary multi-node Plan — a
+    // context-map or a successor Plan — keeps exactly the dispatch it had before this lane, so
+    // TC-18's byte-identity holds for every Run that declared no cell. The wave authority key is
+    // the plan digest, so a re-dispatch of the same Plan is the durable resume.
+    if (this._runCellDeclaration(refreshed.goal.runId) !== null) {
       if (refreshed.dispatches.length === refreshed.plan.nodes.length) return refreshed.dispatches;
       if (refreshed.dispatches.length !== 0) {
         throw applicationError('cell Plan wave is partially dispatched', 'application_cell_wave_incomplete');
@@ -3609,6 +3612,13 @@ export class BatonApplication {
       idempotencyKey: `application:${refreshed.goal.runId}:dispatch:${refreshed.plan.digest}:${node.key}:v1`,
     });
     return this._findRun(refreshed.goal.runId).dispatch;
+  }
+
+  /** #102 Decision 6: the run's DURABLE cell declaration — the steering-registered record minted
+   * by start(). Null for every Run that is not a cell, which is what keeps the cell's dispatch and
+   * its aggregate off every other Run's path. */
+  _runCellDeclaration(runId) {
+    return applicationObservation._runCellDeclaration(this, runId);
   }
 
   _recursiveLease(principal, context) {
@@ -3849,6 +3859,10 @@ export class BatonApplication {
         // waves.list seat map can recover it even when the wave was minted by the interpreter seam
         // (createWave mints a role-only string roster, wave.mjs:180 — the route is not in it).
         ...(intent.waveId !== undefined ? { route: clone(intent.route) } : {}),
+        // #102 Decision 6: the run IS a cell — the declaration rides the record that already binds
+        // the run to its driver, so the run-status builder reads ONE authoritative source for the
+        // size, the quorum and the strict flag it aggregates over the Plan's nodes.
+        ...(intent.cell !== undefined ? { cell: clone(intent.cell) } : {}),
       }, {
         actor: owner.actor,
         key: `run.steering_registered:${intent.runId}`,
@@ -5464,8 +5478,60 @@ export class BatonApplication {
     // Issue #35: an admission-refused dispatch cancels the work task before any provider result
     // exists; the folded cancelCause is the only durable explanation for that terminal phase.
     const workTask = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
-    const terminalCause = projectTypedTerminalCause({
-      terminalResult: result, runStop,
+    // #102 Decision 6 (TC-11/TC-16/TC-20/TC-26): a CELL is ONE wave member whose Run carries
+    // `size` homogeneous nodes, so its terminal truth is the aggregate over ALL of them — never
+    // `nodes[0]`. The block is CLOSED at {size, quorum, survived, lost, degraded}: `survived`
+    // counts the members at rest (a node whose work is accepted), `lost` receipts every terminal
+    // non-survivor with its per-member cause (a member whose run never started is
+    // `cell_member_lost`), and `degraded` is the honest middle when the quorum holds but the cell
+    // is not whole. Every value is a count of node states — no clock, no turn budget.
+    // The plan's own shape is the cheap discriminator: an ordinary Run pays nothing here, and only
+    // a cell-shaped Plan (size homogeneous `cell:<role>:<index>` nodes) reads the declaration.
+    const cellDeclaration = projection.nodes.length > 1
+      && typeof projection.nodes[0]?.key === 'string' && projection.nodes[0].key.startsWith('cell:')
+      ? this._runCellDeclaration(runId) : null;
+    let cell = null;
+    let cellTerminal = false;
+    let cellCause = null;
+    if (cellDeclaration !== null && projection.nodes.length > 0) {
+      const members = projection.nodes;
+      // A member's own authority is its TASK: the plan node's dispatch state says where the
+      // dispatch got to, while the task carries the member's work. The contract's work-rest set
+      // {completed, result_ready} is the survivor set here, a terminal failure is a loss, and a
+      // member still working is LIVE — neither survived nor lost, so `survived + lost` may be less
+      // than `size` while the cell can still tip either way.
+      const memberStatus = (member) => (member?.taskId
+        ? this.driver.coordination.task(member.taskId)?.status ?? null : null);
+      const WORK_REST = ['completed', 'result_ready'];
+      const MEMBER_LOST = ['failed', 'cancelled', 'denied', 'stopped'];
+      const survivals = members.filter((member) => WORK_REST.includes(memberStatus(member))).length;
+      const losses = members.filter((member) => MEMBER_LOST.includes(memberStatus(member)))
+        .map((member) => ({
+          workerId: member?.workerId
+            ?? (member?.taskId ? this.driver.coordination.task(member.taskId)?.assignee ?? null : null),
+          cause: memberStatus(member),
+        }));
+      const quorum = cellDeclaration.quorum;
+      cell = deepFreeze({
+        size: members.length, quorum, survived: survivals, lost: losses,
+        degraded: quorum <= survivals && survivals < members.length,
+      });
+      // The terminal order is the contract's: an unreachable quorum fails the cell before the
+      // strict discipline is consulted, and a strict cell never degrades.
+      if (losses.length > cell.size - quorum) {
+        cellCause = 'cell_below_quorum';
+        cellTerminal = true;
+        phase = 'failed';
+      } else if (cellDeclaration.strict === true && losses.length > 0) {
+        cellCause = 'cell_exact_breach';
+        cellTerminal = true;
+        phase = 'failed';
+      } else if (cell.degraded) {
+        cellTerminal = true;
+        phase = 'degraded';
+      }
+    }
+    const terminalCause = cellCause ?? projectTypedTerminalCause({
       dispatchRefusal: workTask?.status === 'cancelled' && typeof workTask.cancelCause === 'string'
         ? { code: workTask.cancelCause } : null,
     });
@@ -5643,7 +5709,7 @@ export class BatonApplication {
         },
         cancelledAt: durableExport.cancelledAt ?? null,
       } : null;
-    if (!runStop && node.state === 'accepted') {
+    if (!runStop && node.state === 'accepted' && !cellTerminal) {
       if (readOnlyResult) phase = 'completed';
       else if (semanticReview.state === 'review_running') phase = 'reviewing';
       else if ((integration || durableExport?.status === 'completed')
@@ -5745,7 +5811,7 @@ export class BatonApplication {
           providerAttestation: 'provider-native observation only',
         },
       },
-      workerPolicy: clone(workerPolicy),
+      ...(cell === null ? {} : { cell: { size: cell.size, quorum: cell.quorum, survived: cell.survived, lost: cell.lost, degraded: cell.degraded } }),
       budget: { allocated: clone(current.goal.budget), node: clone(node.budget), termination: terminalCause },
       attention,
       attentionTruncated,

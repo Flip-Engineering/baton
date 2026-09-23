@@ -80,7 +80,8 @@ export const CANONICAL_ENUMS = Object.freeze({
     'planning', 'awaiting_approval', 'queued', 'working', 'paused', 'interrupted',
     'uncertain', 'verifying', 'result_ready', 'awaiting_selection', 'result_selected',
     'reviewing', 'integrating', 'completed', 'failed', 'inconclusive', 'cancelled', 'stopped',
-    'denied', 'stopping',
+    // #102 Decision 6 appends 'degraded' beside 'denied', matching the registry order.
+    'denied', 'degraded', 'stopping',
   ]),
   memberStates: Object.freeze([
     'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',

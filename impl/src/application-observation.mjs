@@ -208,6 +208,10 @@ export const PROVIDER_EXECUTION_SETTLED_PHASES = new Set([
 ]);
 export const APPLICATION_RUN_TERMINAL_PHASES = new Set([
   'completed', 'failed', 'inconclusive', 'cancelled', 'denied', 'stopped',
+  // #102 Decision 6: a cell whose quorum held but whose whole size did not is TERMINAL-OK — the
+  // distinct 'degraded' phase is how a downstream orchestrator tells "finished with losses" from
+  // "failed". A phase VALUE, never an error code.
+  'degraded',
 ]);
 /**
  * The `action.do` block the served view mints for one action kind (2026-09-14 audit, U-E5/U-I7).
@@ -6368,6 +6372,24 @@ export function _runWaveRoute(application, runId, index = null) {
       if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
         && event.payload?.runId === runId && event.payload?.route !== undefined) {
         return clone(event.payload.route);
+      }
+    }
+    return null;
+  }
+// #102 Decision 6: the cell declaration a run's nodes were minted from — the steering-registered
+// `cell` (minted by start(), the same event-log-only discipline as _runWaveId/_runWaveRole/
+// _runWaveRoute). The run-status builder reads it to aggregate {size, quorum, survived, lost,
+// degraded} over the Plan's nodes; a run that is not a cell answers null.
+export function _runCellDeclaration(application, runId, index = null) {
+    if (index !== null) {
+      const entry = index.byRunId.get(runId);
+      return entry !== undefined && entry.cell !== undefined ? clone(entry.cell) : null;
+    }
+    const events = application.driver.coordination.eventsView();
+    for (const event of events) {
+      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
+        && event.payload?.runId === runId && event.payload?.cell !== undefined) {
+        return clone(event.payload.cell);
       }
     }
     return null;
