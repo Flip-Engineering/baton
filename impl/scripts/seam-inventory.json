@@ -6139,7 +6139,7 @@
         {
           "name": "doctorReadiness",
           "ordinal": 0,
-          "size": 24,
+          "size": 29,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
