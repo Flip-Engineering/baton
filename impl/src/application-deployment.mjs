@@ -6879,6 +6879,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     contextRuntime.attachCoordination(driver.coordination);
     application = new BatonApplication({
       driver,
+      rootWake: rootWakeTarget,
       repoId: repository.repoId,
       deploymentId,
       profiles: {

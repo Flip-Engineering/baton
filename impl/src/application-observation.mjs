@@ -6296,7 +6296,7 @@ export function _runWaveIndex(application) {
         || event.payload?.kind !== APPLICATION_STEERING_REGISTERED_KIND) continue;
       const p = event.payload;
       if (p?.runId !== undefined && !byRunId.has(p.runId)) {
-        byRunId.set(p.runId, { waveId: p.waveId, waveRole: p.waveRole, route: p.route });
+        byRunId.set(p.runId, { waveId: p.waveId, waveRole: p.waveRole, route: p.route, driverKind: p.driverKind });
       }
       if (p?.waveId !== undefined && p?.waveRole !== undefined) {
         let roles = byWaveRole.get(p.waveId);

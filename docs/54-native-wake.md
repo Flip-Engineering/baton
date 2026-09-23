@@ -298,3 +298,9 @@ On restart, the attachment replays root wakes from its subscription cursor. A fa
 remains eligible because only a delivered receipt suppresses another attempt. A successor that
 cannot restart records `continuation_failed` root attention with its failure code and message;
 recovery continues for the other seats and retries the pending successor on later commands.
+
+A pausable generic Run requires a turn consumer before approval and dispatch. A configured
+root target satisfies this declaration. Embedded callers can start a Run with `driverKind: 'manual'`
+to declare that they handle each checkpoint through `nudge_turn`, `claim_turn`, or stop. Wave and
+swarm drivers provide their existing consumer declarations. A generic Run without a consumer
+refuses with `application_turn_consumer_required` before a worker starts.

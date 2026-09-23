@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { SwarmRuntime, lastCrashOf } from './swarm-runtime.mjs';
-import { harnessWakeCapabilityForHarnesses } from './wake-delivery.mjs';
+import { harnessWakeCapabilityForHarnesses, normalizeRootWakeTarget } from './wake-delivery.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
   SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { SECRET_SHAPED_TEXT, wrapProse } from './messages.mjs';
@@ -212,7 +212,7 @@ const PRODUCTION_WORKFLOW_DRIVER = Object.freeze({
 const RESULT_INTENTS = Object.freeze(new Set(['change', 'read_only_evidence']));
 // Issue #31 §2.2(4): the closed set of run drivers. Only the wave path exists today — an
 // MCP/embedded explicit registration channel is a named future extension, not built here.
-const DRIVER_KINDS = Object.freeze(new Set(['wave']));
+const DRIVER_KINDS = Object.freeze(new Set(['wave', 'manual']));
 // 93B (wave durability, attach-and-harvest): `wave.started` mints pre-loop, once per waveId
 // (idempotency-keyed so every member's run.start can carry it and only the first lands);
 // `wave.driver_detached` mints at attach-time, keyed `wave.driver_detached:${waveId}` — both ride
@@ -1583,7 +1583,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['rootWake', 'context', 'deploymentSummary', 'routeAdmission', 'providerServices', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -1605,6 +1605,7 @@ export class BatonApplication {
     // the column rather than minting a foreign row.
     this.deploymentId = options.deploymentId ?? null;
     this.authorize = options.authorize;
+    this.rootWakeTarget = normalizeRootWakeTarget(options.rootWake);
     this._clock = options.clock ?? (() => new Date().toISOString());
     if (typeof this._clock !== 'function') {
       throw applicationError('application clock is invalid', 'application_config_invalid');
@@ -3381,10 +3382,30 @@ export class BatonApplication {
     return deepFreeze({ schemaVersion: 1, state: 'ready', examinedRuns: runIds.length });
   }
 
+  _assertTurnConsumer(current) {
+    const runId = current.goal.runId;
+    if (this.rootWakeTarget !== null
+      || this.driver.coordination.hasSwarmParticipantRun?.(runId)) return;
+    const driverKind = this._runWaveIndex().byRunId.get(runId)?.driverKind;
+    if (DRIVER_KINDS.has(driverKind)) return;
+    const cards = new Map(this.driver.coordinator.routeCards().map((row) => [row.name, row.card]));
+    const requiresConsumer = current.plan?.nodes.some((node) => {
+      if (node.contextCall) return false;
+      const route = planSingleExactRoute(node.routes);
+      return route !== null && cards.get(route.harness)?.turnCompletion === 'pausable';
+    });
+    if (requiresConsumer) {
+      throw applicationError('A pausable Run requires an explicit turn-report consumer',
+        'application_turn_consumer_required', { runId,
+          next: 'Configure rootWake, or start the Run with driverKind manual and handle each turn checkpoint.' });
+    }
+  }
+
   async _dispatchCurrent(current) {
     const refreshed = this._findRun(current.goal.runId);
     this._assertRunMutable(refreshed.goal.runId);
     if (!refreshed.plan || refreshed.approval?.disposition !== 'approved') return refreshed.dispatch;
+    this._assertTurnConsumer(refreshed);
     // A deliberate shared-checkout attachment names ONE working checkout for ONE work node. A
     // multi-node workflow Plan would silently put every member in one tree, so it refuses here —
     // before any spawn — with nothing dispatched. The refusal KEEPS the admission (#388): the
@@ -3893,6 +3914,7 @@ export class BatonApplication {
         this._validateContextEffectPlan(current);
       }
     }
+    this._assertTurnConsumer(current);
     if (current.approval === null) {
       await this.driver.coordinator.approvePlan({
         goal: { goalId: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
