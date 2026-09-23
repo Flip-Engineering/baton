@@ -1249,58 +1249,6 @@
       "reason": "#566"
     },
     {
-      "key": "test/worker-verdict-surface-red.test.mjs :: C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing)",
-      "reason": "#79"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D1 (RED): a boundary-commit deployment never ships the no-commit line — the worktreeHarvestPolicy read (stage: live-composition-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D10 (RED): the served block is FROZEN for the run — a mid-run policy change does not retro-edit the admitted block the worker received (stage: live-composition-missing / epoch-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D11 (RED): a served line carries the LIVE input value — the exact pathScope, profile digest, workflow/result sources, and the profile-constraints line ship (stage: live-composition-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D12 (RED): the composed block drives the REAL recipe objective render seam — the no-commit line ships/absents in the worker-facing objective text by harvest policy, and the static list is retired (stage: live-composition-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D2 (RED): the applicationProfile schema declares the worktreeHarvestPolicy field (stage: worktree-harvest-policy-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D3 (RED): an orchestrator-harvest deployment ships the no-commit line under its named source (stage: live-composition-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D4 (RED): an underrived requested line refuses objective_constraint_underrived and is never printed (stage: live-composition-missing / underrived-refusal-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D5 (RED): a line naming a bound the deployment does not enforce refuses objective_constraint_unenforced (stage: live-composition-missing / unenforced-refusal-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D6 (RED): the wire_frame line is lane-conditional — it ships IFF the size census over the served scope shows a file over ~1500 lines (stage: live-composition-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D7 (RED): the composed block is a pure function of live policy, frozen at admission — two composes derive the same block and a suppression record carrying the epoch (stage: live-composition-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D8 (RED): the [attempt:] line is a per-attempt discriminator, never a constraint line (stage: live-composition-missing)",
-      "reason": "#61"
-    },
-    {
-      "key": "test/worker-verdict-surface-red.test.mjs :: D9 (RED): the suppression epoch DERIVES from the profile digest and the admission SHA — different inputs derive different epochs, never a hardcoded constant (stage: live-composition-missing / epoch-missing)",
-      "reason": "#61"
-    },
-    {
       "key": "test/workflow-surface-red.test.mjs :: FP-14-dispatch (stage: tools absent): each tool dispatches its facade command with the CONNECTION-derived principal",
       "reason": "#460"
     },

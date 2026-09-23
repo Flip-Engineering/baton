@@ -1963,6 +1963,12 @@ function applicationProfile(repoId, routes, verification, exportBounds) {
       mode: 'enabled', maxWaitMs: 30_000, maxChanges: 128,
       maxResponseBytes: FRAME_LIMITS['view.run.bytes'].value, maxScanEvents: 1024,
     },
+    // Issue #61 fold B5: whether the deployment expects worker boundary commits is a named
+    // profile field. The default is orchestrator-harvest (the orchestrator harvests the
+    // worktree, so the no-commit constraint line is TRUE there); a deployment opting into the
+    // #141 workstyle sets 'boundary-commits' — the live boundary line ships and the no-commit
+    // line is suppressed (the objective composition reads this field).
+    worktreeHarvestPolicy: 'orchestrator-harvest',
     exportPolicy: {
       mode: 'manual', format: 'directory-v1',
       maxFiles: exportBounds.maxFiles, maxBytes: exportBounds.maxBytes,

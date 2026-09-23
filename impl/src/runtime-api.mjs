@@ -21,6 +21,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { canonicalDigest } from './coordination-internals.mjs';
 import { boundedAttentionText } from './messages.mjs';
+import { projectVerdictSurface } from './application-observation.mjs';
 import { normalizeProviderRoute, readProviderFaultDetail } from './provider-faults.mjs';
 import {
   attachedToExistingCheckout, isPhysicalWorkspaceId, workspaceAttachmentOf,
@@ -344,53 +345,21 @@ export function _gateVerdictItemForWorker(coordinator, workerId, verdictKinds) {
       (latest, candidate) => (latest === null || candidate.seq > latest.seq ? candidate : latest), null,
     );
     if (!event) return null;
-    const liveCode = event.kind === 'verify.reverified'
-      ? (typeof event.payload?.verdict?.diagnosticCode === 'string'
-        ? event.payload.verdict.diagnosticCode : 'trust_gate_failed')
-      : (typeof event.payload?.code === 'string' ? event.payload.code : 'trust_gate_failed');
-    let gate;
-    if (liveCode === 'worker_path_scope_violation') gate = 'scope';
-    else if (liveCode === 'forbidden_effect_observed') gate = 'forbidden_effect';
-    else if (liveCode === 'verification_red_green_failed') gate = 'red_green';
-    else if (liveCode === 'verification_coverage_failed') gate = 'coverage';
-    else if (liveCode === 'plan_route_mismatch' || liveCode === 'recovery_route_mismatch') gate = 'route_mismatch';
-    else gate = 'unknown';
-    let detail = {};
-    if (gate === 'scope') {
-      const evidence = event.payload?.pathScopeEvidence && typeof event.payload.pathScopeEvidence === 'object'
-        ? event.payload.pathScopeEvidence : {};
-      detail = {
-        digests: {
-          changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
-          inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
-            ? evidence.inScopeChangedPathsDigest : null,
-          outOfScopeChangedPathsDigest: typeof evidence.outOfScopeChangedPathsDigest === 'string'
-            ? evidence.outOfScopeChangedPathsDigest : null,
-        },
-        counts: {
-          changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
-          inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
-            ? evidence.inScopeChangedPathCount : 0,
-          outOfScopeChangedPathCount: Number.isSafeInteger(evidence.outOfScopeChangedPathCount)
-            ? evidence.outOfScopeChangedPathCount : 0,
-        },
-      };
-    } else if (gate === 'red_green' || gate === 'coverage') {
-      const raw = typeof event.payload?.verdict?.failureCapsule?.text === 'string'
-        ? event.payload.verdict.failureCapsule.text
-        : typeof event.payload?.verdict?.output === 'string' ? event.payload.verdict.output : '';
-      detail = { tail: sanitizeVerifierDiagnosticText(raw).text };
-    }
+    // Issue #61 D1/R4 (fold v1.1): the push item derives from the SAME shared projection the
+    // R1 surface and the run.debug failure leg read — check and corrective ride the push, never
+    // a second inline derivation of the gate/detail mapping. A forged-corrective record projects
+    // no surface: the push carries nothing for it (the per-record degradation, never a
+    // fabricated item).
+    const surface = projectVerdictSurface([event]);
+    if (!surface) return null;
     const message = typeof event.payload?.message === 'string' && event.payload.message.length > 0
       ? sanitizeVerifierDiagnosticText(event.payload.message).text : null;
     return {
       kind: 'gate_verdict',
       requestId: `gate:${event.seq}`,
       workerId: typeof event.worker === 'string' ? event.worker : workerId,
-      gate,
-      code: liveCode,
       message,
-      detail,
+      ...surface,
     };
   }
 

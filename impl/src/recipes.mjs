@@ -23,6 +23,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createWaveDriver } from './wave-driver.mjs';
 import { runWorkflow } from './workflow-interpreter.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
+import { pathMatchesScope } from './path-scope.mjs';
 
 // Rule 1 caps. The descriptor/task/constraint caps are the recipe admission gates; the rendered
 // objective itself rides the machinery's own objective lane (limits.mjs wave.member.objective),
@@ -602,15 +603,102 @@ export function redriveMembers(manifest, roles, { newIdempotencyKey, carryForwar
 // The `implementContract` preset — one red-first implementation seat. This is the shape the bespoke
 // run-impl-wave.mjs scripts hand-copied; as data it is `baton.recipes.implementContract(...)`.
 const IMPLEMENT_TASK_TEMPLATE = 'Implement the assigned contract rung. The task that follows is your sole work authority.\n\n{task}';
+// Issue #61 fold B1: the static list is RETIRED as the objective's constraint source. It is
+// reduced to the single member that carries a live-derivation source — the scratchpad
+// closed-shape line (issue #62). The no-commit line, the wire_frame line and the coaching lines
+// are derived live, reclassified as coaching prose, or absent (never shipped as static
+// constraints) — composeObjectiveConstraintLines below is the composition that replaces them.
 const IMPLEMENT_CONSTRAINTS = Object.freeze([
-  'Work red-first: write the failing test first, then implement until green.',
-  'HARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.',
-  'Do NOT git commit — the orchestrator harvests your worktree.',
-  'Match existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.',
   // Issue #62: the scratchpad's four closed entry kinds, verbatim — an entry outside these
   // refuses scratchpad_entry_invalid (a demo surveyor lost three writes to a hand-rolled shape).
   'SCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:"current", unique idempotencyKey).',
 ]);
+// Issue #61 D2 (fold v1.1) — the implement-contract objective's constraint block is composed
+// from the deployment's live policy reads at admission (Rule 1: every served line derives from
+// a named source; Rule 2: a line that cannot be derived is never printed). The composition is a
+// pure function of the admission-time deployment state — the same state derives the same block
+// and the same suppression record, whose epoch names the profile digest and the admission SHA
+// (fold B6); no clock, no random. The [attempt: <salt> <role>] discriminator is NOT a constraint
+// line — renderObjective appends it from the attempt salt (fold Minor 2).
+const WIRE_FRAME_LINE = 'HARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.';
+const NO_COMMIT_LINE = 'Do NOT git commit — the orchestrator harvests your worktree.';
+const BOUNDARY_COMMIT_LINE = 'commit at natural subsystem boundaries (#141): a boundary commit is the work receipt the orchestrator does not hold.';
+// The bounds with a live enforcement row: wire_frame_oversize is the issue #28 wire.frame row
+// (limits.mjs). A requested HARD CONSTRAINT naming any other bound refuses — a bound the
+// deployment does not enforce is never printed (Rule 2, objective_constraint_unenforced).
+const ENFORCED_OBJECTIVE_BOUNDS = Object.freeze(new Set(['wire_frame_oversize']));
+// The Rule-1 derivation vocabulary: the closed named-source patterns a served constraint line
+// must be re-derivable from. A requested line matching none refuses objective_constraint_underrived.
+const OBJECTIVE_NAMED_SOURCE_PATTERNS = Object.freeze([
+  /^Baton deployment profile /u,
+  /^Baton workflow /u,
+  /^Baton objective\/result policy /u,
+  /Do not claim completion without the deployment verification command/u,
+  /^Work only within: /u,
+  /HARD CONSTRAINT \(wire_frame_oversize/u,
+  /commit at natural subsystem boundaries/u,
+  /^Do NOT git commit/u,
+  /SCRATCHPAD_WRITE/u,
+]);
+export function composeObjectiveConstraintLines(input) {
+  const profile = input?.profile;
+  const admissionSha = input?.admissionSha;
+  if (!profile || typeof profile.digest !== 'string' || typeof admissionSha !== 'string') {
+    throw recipeError('composeObjectiveConstraintLines needs the admission-time deployment state (profile.digest, admissionSha)', 'recipe_options_invalid');
+  }
+  const lines = [];
+  // The deployment profile — profileConstraint(name, profile)'s named source, carrying the LIVE
+  // profile digest.
+  lines.push(`Baton deployment profile ${profile.name}@${profile.digest}`);
+  if (typeof input.workflowConstraint === 'string' && input.workflowConstraint.length > 0) lines.push(input.workflowConstraint);
+  if (typeof input.resultConstraint === 'string' && input.resultConstraint.length > 0) lines.push(input.resultConstraint);
+  for (const constraint of Array.isArray(profile.constraints) ? profile.constraints : []) {
+    if (typeof constraint === 'string' && constraint.length > 0) lines.push(constraint);
+  }
+  const pathScope = Array.isArray(input.goal?.pathScope)
+    ? input.goal.pathScope.filter((entry) => typeof entry === 'string') : [];
+  if (pathScope.length > 0) lines.push(`Work only within: ${pathScope.join(', ')}`);
+  // The harvest policy: the no-commit line is TRUE on an orchestrator-harvest deployment (the
+  // orchestrator harvests the worktree) and ships under that named source; on a boundary-commits
+  // deployment the #141 norm refutes it — the live boundary line ships and the suppression
+  // record names the refuting norm (Rule 2; the absence is observable, never silent).
+  const suppressed = [];
+  if (profile.worktreeHarvestPolicy === 'boundary-commits') {
+    lines.push(BOUNDARY_COMMIT_LINE);
+    suppressed.push({
+      line: NO_COMMIT_LINE,
+      reason: 'no-commit refuted by the #141 boundary-commit norm (worktreeHarvestPolicy boundary-commits)',
+    });
+  } else {
+    lines.push(NO_COMMIT_LINE);
+  }
+  // The wire_frame bound is lane-conditional (fold Minor 3): the size census is read over the
+  // lane's SERVED scope through the one scope matcher — a large file outside the scope never
+  // triggers the line.
+  const sizeCensus = input.sizeCensus && typeof input.sizeCensus === 'object' ? input.sizeCensus : {};
+  const scopeHasOversizedFile = Object.entries(sizeCensus).some(([path, lineCount]) =>
+    lineCount > 1500 && pathScope.some((pattern) => pathMatchesScope(path, pattern)));
+  if (scopeHasOversizedFile) lines.push(WIRE_FRAME_LINE);
+  // The scratchpad closed-shape line — the sole retained static member (fold B1).
+  lines.push(...IMPLEMENT_CONSTRAINTS);
+  // Explicitly requested lines carry the honesty rule's loud form: a line naming an unenforced
+  // bound refuses objective_constraint_unenforced; a line with no named derivation source
+  // refuses objective_constraint_underrived — neither is ever printed.
+  for (const line of Array.isArray(input.requestedLines) ? input.requestedLines : []) {
+    if (typeof line !== 'string' || line.length === 0) {
+      throw recipeError('a requested constraint line must be a non-empty string', 'recipe_options_invalid');
+    }
+    const bound = /^HARD CONSTRAINT \(([a-z0-9_]+)\)/iu.exec(line);
+    if (bound && !ENFORCED_OBJECTIVE_BOUNDS.has(bound[1])) {
+      throw recipeError(`the requested constraint names a bound the deployment does not enforce: ${bound[1]}`, 'objective_constraint_unenforced');
+    }
+    if (!OBJECTIVE_NAMED_SOURCE_PATTERNS.some((pattern) => pattern.test(line))) {
+      throw recipeError('the requested constraint line carries no named live derivation source', 'objective_constraint_underrived');
+    }
+    lines.push(line);
+  }
+  return { lines, suppression: { epoch: { profileDigest: profile.digest, admissionSha }, suppressed } };
+}
 const IMPLEMENT_DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   finalization: 'claim-on-stall',
