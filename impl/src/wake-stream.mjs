@@ -313,13 +313,14 @@ export const WAKE_CLASS_TABLE = Object.freeze([
   }),
   wakeRow({
     // Issue #572: a parentless non-swarm turn report is addressed to the deployment root by its
-    // run. It has no swarm coordinate and is terminal because the report is the completed turn's
-    // durable handoff; the next act is to read that run.
+    // run, or by its direct coordinator worker when no run exists. It has no swarm coordinate and
+    // is terminal because the report is the completed turn's durable handoff. A run carries its
+    // read command; a direct worker has no run command to render.
     wakeClass: 'root_turn_reported', scope: 'deployment', terminal: true,
     next: 'baton run view {runId}',
     summary: 'a parentless turn ended and reported its result to the deployment root',
     rows: [operationalKind('worker.turn_reported')],
-    subject: { field: 'runId', kind: 'run', fallback: null },
+    subject: { field: 'runId', kind: 'run', fallback: { field: 'worker', kind: 'worker' } },
   }),
   wakeRow({
     wakeClass: 'guidance_delivered', scope: 'deployment', terminal: false, next: null,
@@ -580,7 +581,8 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     runId,
     actor: event.actor ?? null,
     subject: subjectOf(row, payload),
-    next: renderNext(row, coordinates),
+    next: row.wakeClass === 'root_turn_reported' && runId === null
+      ? null : renderNext(row, coordinates),
     observation: false,
     served: servedHeader(served),
     // The bounded row identity: what woke the consumer, never a copy of a 60 KiB view (the wake
