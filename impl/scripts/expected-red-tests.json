@@ -205,6 +205,14 @@
       "reason": "#364"
     },
     {
+      "key": "test/issue469-operation-objective-ref.test.mjs :: 469-a: a stop receipt records the objective by reference, under the registry bound",
+      "reason": "#469"
+    },
+    {
+      "key": "test/issue469-operation-objective-ref.test.mjs :: 469-b: the CLI stop rendering shows the first line, reached by the reference",
+      "reason": "#469"
+    },
+    {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
       "reason": "#460"
     },
