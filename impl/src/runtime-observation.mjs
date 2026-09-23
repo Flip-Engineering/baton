@@ -2662,7 +2662,10 @@ export function contextRead(coordinator, recorder, workerId, payload) {
     // {repoId, runId, taskId, taskVersion, workerId, op, normalizedQueryDigest, packDigest,
     // freshnessDigest} — never the landed BD3-A interim shape.
     if (recorder.coordination.recordContextRead) {
-      try {
+      // G-46/#402: the audit write is OBSERVATIONAL — the read stands on the operational log
+      // whatever the store does with the audit. The named writer records a refusal under its
+      // reason, so a store that refuses the audit is answerable instead of silently swallowed.
+      coordinator._bestEffortSync(() => {
         const codeOrientation = (payload.query.kind === 'code' && answered.orientation) ? answered.orientation : null;
         const readFields = codeOrientation
           ? {
@@ -2675,7 +2678,7 @@ export function contextRead(coordinator, recorder, workerId, payload) {
               resultDigest: canonicalDigest(answered.rendered ?? null), runId, taskId: task.id, workerId,
             };
         recorder.coordination.recordContextRead(readFields, { actor: 'hub', key: `context.read:${workerId}:${payload.idempotencyKey}` });
-      } catch { /* the audit is best-effort; the read itself stands on the operational log */ }
+      }, 'context_read_audit');
     }
     return {
       ok: true,
@@ -2974,7 +2977,15 @@ export function recordWorkerGeneration(coordinator, recorder, handle) {
         workerId: handle.id, processGeneration: handle.processGeneration,
         runId: task.runId ?? null, taskId: task.id, taskVersion: durableTask.version,
       }, { actor: 'hub', key: `worker.generation_bound:${handle.id}:${handle.processGeneration}` });
-    } catch {
+    } catch (error) {
+      // G-46/#402: the binding that never landed IS this call's outcome — the worker runs on with
+      // no durable generation binding, and the next spawn's reconciliation reads that absence. So
+      // it is an OPERATIONAL rejection: a typed event on the worker's own stream rather than a
+      // bare `null`. The return value is unchanged — the caller already reads `null` as "not
+      // bound" — so the trace is added without moving the contract.
+      coordinator._recordOperationFailure('worker.generation_unbound', handle, 'generation_unbound', error, {
+        processGeneration: handle.processGeneration, taskId: task.id, runId: task.runId ?? null,
+      });
       return null;
     }
   }

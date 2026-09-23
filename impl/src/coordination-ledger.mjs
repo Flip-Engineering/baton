@@ -5689,6 +5689,17 @@ export function appendWaveClosed(store, fields, auth) {
   return { ok: true, event: clone(event), record: record ? clone(record) : null };
 }
 
+// #161 (G4/D1): the plan object's write lane lands the entries `admitPlanWrite` adjudicated and
+// derives nothing further. The batch form is ONE atomic `_appendBatch` (the DR-3 auto-demote pair
+// folds together); the single-entry form is the ordinary `_append`.
+export function appendPlanEntries(store, entries, batchKind = null) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new CoordinationRefusal('plan write carries no adjudicated entries', 'plan_task_invalid');
+  }
+  if (batchKind !== null) return store._appendBatch(entries, batchKind);
+  return entries.map((entry) => store._append(entry.kind, entry.payload, entry.auth));
+}
+
 export function _planElevationAtWaveClose(store, waveId, auth, closedEventSeq) {
   if (store._campaignPlans.size === 0) return;
   const demotions = [];

@@ -4217,7 +4217,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 159,
+          "size": 163,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call"
@@ -6105,7 +6105,7 @@
         {
           "name": "waveList",
           "ordinal": 0,
-          "size": 97,
+          "size": 121,
           "seam": "surface",
           "evidence": [
             "observation:durable_read",
@@ -6220,7 +6220,7 @@
         {
           "name": "doctorReadiness",
           "ordinal": 0,
-          "size": 24,
+          "size": 37,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -6257,7 +6257,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 235,
+          "size": 241,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
@@ -6470,6 +6470,25 @@
           "name": "boardRead",
           "ordinal": 0,
           "size": 21,
+          "seam": "surface",
+          "evidence": [
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "planRead",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "surface",
+          "evidence": [
+            "observation:durable_read",
+            "surface:transport_dispatch"
+          ]
+        },
+        {
+          "name": "planWrite",
+          "ordinal": 0,
+          "size": 30,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -11014,6 +11033,16 @@
           ]
         },
         {
+          "name": "appendPlanEntries",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:ledger_port"
+          ]
+        },
+        {
           "name": "ledgerHeadSeq",
           "ordinal": 0,
           "size": 1,
@@ -13111,7 +13140,7 @@
         {
           "name": "_settleRouteProbes",
           "ordinal": 0,
-          "size": 17,
+          "size": 26,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -13193,7 +13222,7 @@
         {
           "name": "_rerouteCandidates",
           "ordinal": 0,
-          "size": 37,
+          "size": 45,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -14032,7 +14061,7 @@
         {
           "name": "_landedBy",
           "ordinal": 0,
-          "size": 10,
+          "size": 11,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -17830,6 +17859,16 @@
           ]
         },
         {
+          "name": "appendPlanEntries",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:store_append",
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_planElevationAtWaveClose",
           "ordinal": 0,
           "size": 42,
@@ -21039,7 +21078,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 209,
+          "size": 213,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
@@ -21102,12 +21141,59 @@
           ]
         },
         {
+          "name": "writerHolderFacts",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "writerBusyRefusal",
+          "ordinal": 0,
+          "size": 10,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordWriterLeaseRecovery",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "claimWriterLease",
           "ordinal": 0,
-          "size": 51,
+          "size": 81,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
+            "effect:filesystem_mutation"
+          ]
+        },
+        {
+          "name": "_settleDeferredWriterLease",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_stampWriterLeaseAcquisitionSeq",
+          "ordinal": 0,
+          "size": 19,
+          "seam": "effect",
+          "evidence": [
             "effect:filesystem_mutation"
           ]
         },
@@ -22479,7 +22565,7 @@
         {
           "name": "contextRead",
           "ordinal": 0,
-          "size": 66,
+          "size": 69,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
@@ -22592,7 +22678,7 @@
         {
           "name": "recordWorkerGeneration",
           "ordinal": 0,
-          "size": 14,
+          "size": 22,
           "seam": "observation",
           "evidence": [
             "observation:record_name",

@@ -317,6 +317,10 @@ export function constructor(store, root, opts = {}) {
     store._operationalRangeRead = opts.operationalRangeRead ?? null;
     store._writerLease = null;
     store._writerLeaseRequired = false;
+    // #177: a recovery this open performed before its replay could fold — the record of a stale
+    // holder's lease and the ledger boundary the new lease was taken at. `_settleDeferredWriterLease`
+    // writes both the moment the projection exists; a synchronous open never leaves one behind.
+    store._writerLeaseRecovery = null;
     // #223: the in-memory segment index ({archivedThroughSeq, segments[]} or null) — ledger
     // metadata, NOT projection state. It records how much of the history lives in archived
     // content-addressed segments so the checkpoint can cache the live window only.
@@ -489,15 +493,63 @@ export function _sweepProjectionCheckpointTemps(store) {
     }
     return freeze(swept);
   }
+/** #177: the writer identity ONE refusal or record names, read from the holder record the store
+ * already has in hand. `holderIncarnation` is the kernel-observed process start identity — the
+ * writer lease's own incarnation primitive (process-lifecycle.mjs) — and is null for a record that
+ * predates schema 2, where the store knows only the pid. `acquiredAtEventSeq` is the ledger
+ * boundary the holder acquired at: the two facts an operator reads to tell "clean acquire" from
+ * "reaped a stale holder", and to tell a live holder from a crash loop. */
+function writerHolderFacts(owner) {
+  return {
+    holderPid: Number.isSafeInteger(owner?.pid) && owner.pid > 0 ? owner.pid : null,
+    holderIncarnation: typeof owner?.pidStart === 'string' && owner.pidStart.length > 0 ? owner.pidStart : null,
+    acquiredAtEventSeq: Number.isSafeInteger(owner?.acquiredAtEventSeq) && owner.acquiredAtEventSeq >= 0
+      ? owner.acquiredAtEventSeq : null,
+  };
+}
+
+/** #177 (the fleet's addition to the audit): a `coordination_writer_busy` refusal names WHAT it is
+ * busy with — the holder's pid and incarnation, the ledger boundary the holder acquired at, and the
+ * action that would let this claimant in — so the operator never opens the lease file by hand to
+ * find the pid, and a contention death reads as a holder instead of a mystery. */
+function writerBusyRefusal(message, owner, next) {
+  const facts = writerHolderFacts(owner);
+  const held = facts.holderPid === null ? null
+    : [`pid ${facts.holderPid}`,
+      ...(facts.holderIncarnation === null ? [] : [`incarnation ${facts.holderIncarnation}`]),
+      ...(facts.acquiredAtEventSeq === null ? [] : [`acquired at ledger row ${facts.acquiredAtEventSeq}`])].join(', ');
+  return new CoordinationRefusal(held === null ? message : `${message}: ${held}`, 'coordination_writer_busy', {
+    ...facts, next,
+  });
+}
+
+/** #177: the ONE writer of the `writer.lease_recovered` row. The reaped holder's identity and the
+ * reason it was reaped (`stale_owner`) become a durable driver row, so the next holder and any
+ * operator diagnosing a contention death can tell the two apart after the fact. It runs inside the
+ * claim's own effect window: a ledger that refuses this record fails the claim typed (the same
+ * posture `_mintHostStopOutcome` takes on the release path) rather than dropping the trace. */
+function _recordWriterLeaseRecovery(store, holder, token) {
+  const facts = writerHolderFacts(holder);
+  store.recordDriver('writer.lease_recovered', {
+    priorPid: facts.holderPid, priorPidStart: facts.holderIncarnation, reason: 'stale_owner',
+  }, { actor: 'policy', key: `writer.lease_recovered:${holder.pid}:${holder.pidStart ?? 'unbound'}:${token}` });
+}
 
 export function claimWriterLease(store) {
-    if (store._writerLease) throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy');
+    if (store._writerLease) throw writerBusyRefusal('coordination writer is already active', store._writerLease,
+      'this store already holds the writer lease; releaseWriterLease() before claiming again');
     const path = join(store.root, 'writer.lease'); const token = randomUUID(); const claimToken = randomUUID(); const claimPath = join(store.root, `writer.claim.${claimToken}`);
     const pidStart = writerProcessStartIdentity(process.pid);
     if (!pidStart) throw new CoordinationRefusal('coordination writer process identity is unavailable', 'coordination_writer_identity_unavailable');
-    const payload = { schemaVersion: 2, pid: process.pid, pidStart, token, acquiredAt: store._clock() };
+    const payload = {
+      schemaVersion: 2, pid: process.pid, pidStart, token, acquiredAt: store._clock(),
+      // #177: the ledger boundary this holder acquired at, so a later claim's refusal can name it.
+      // A deferred open cannot know it yet (its replay has not folded) and settles it after the load.
+      acquiredAtEventSeq: store._deferredLoad === true ? null : store._events.length,
+    };
     const claim = () => writeFileSync(path, `${JSON.stringify(payload)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     writeFileSync(claimPath, `${JSON.stringify({ schemaVersion: 2, pid: process.pid, pidStart, token: claimToken, acquiredAt: store._clock() })}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    let recoveredHolder = null;
     try {
       const liveClaims = [];
       for (const name of readdirSync(store.root).filter((item) => item.startsWith('writer.claim.')).sort()) {
@@ -522,24 +574,89 @@ export function claimWriterLease(store) {
       if (existsSync(path)) {
         let prior; try { prior = JSON.parse(readFileSync(path, 'utf8')); } catch { throw new CoordinationRefusal('coordination writer lease is malformed', 'coordination_writer_busy'); }
         const priorState = writerOwnerState(prior);
-        if (priorState !== 'stale') throw new CoordinationRefusal(
+        if (priorState !== 'stale') throw writerBusyRefusal(
           priorState === 'active' ? 'coordination writer is already active' : 'coordination writer ownership is ambiguous',
-          'coordination_writer_busy');
+          prior,
+          priorState === 'active'
+            ? `the holder (pid ${prior.pid}) is alive and serving; let it release the lease or stop it, then retry`
+            : `the holder (pid ${prior.pid}) can be proved neither live nor dead; inspect ${path} before removing it`,
+        );
         unlinkSync(path);
+        recoveredHolder = prior;
       }
       try { claim(); } catch (error) { if (error?.code === 'EEXIST') throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy'); throw error; }
     } finally {
       try { const observed = JSON.parse(readFileSync(claimPath, 'utf8')); if (observed?.token === claimToken) unlinkSync(claimPath); } catch { /* claim guard was already removed or replaced */ }
     }
-    store._writerLease = freeze({ path, token, pid: process.pid, pidStart }); store._writerLeaseRequired = true;
+    store._writerLease = freeze({
+      path, token, pid: process.pid, pidStart,
+      acquiredAt: payload.acquiredAt, acquiredAtEventSeq: payload.acquiredAtEventSeq,
+      // #177: a lease that reaped a dead holder says so, exactly as publish() carries
+      // `recoveredStaleAuthority` on the publication it minted over the stale one.
+      reclaimed: recoveredHolder !== null,
+      recovered: recoveredHolder === null ? null : freeze({
+        priorPid: recoveredHolder.pid,
+        priorPidStart: typeof recoveredHolder.pidStart === 'string' ? recoveredHolder.pidStart : null,
+      }),
+    });
+    store._writerLeaseRequired = true;
     try {
       if (store._canonicalOrderPolicy) store._ensureCanonicalOrderReceipt();
+      if (recoveredHolder !== null) {
+        // #177: the recovery is recorded the moment the store can host the row. A deferred open can
+        // host nothing until its replay folds — `_append` refuses outright before that — so it
+        // stashes the fact and `_settleDeferredWriterLease` writes it once the projection exists.
+        if (store._deferredLoad === true) store._writerLeaseRecovery = recoveredHolder;
+        else _recordWriterLeaseRecovery(store, recoveredHolder, token);
+      }
       // Issue #351 lane 3: a deferred-load store folds its history later, under the lease this
       // call just claimed (the async open drives the same replay between chunks) — the digest
       // re-verification below applies only once a load has actually folded the ledger.
       if (!store._deferredLoad && !store._ledgerMatchesLoadedProjection()) store._reloadProjection();
     } catch (error) { store.releaseWriterLease(); throw error; }
     return clone(store._writerLease);
+  }
+
+/** #177: settle what a DEFERRED claim could not write at claim time — the recovery record of a
+ * stale holder, and the ledger boundary the new lease was taken at. `_append` refuses while the
+ * replay is unfinished, so the claim stashes the fact and this runs the moment the projection
+ * exists (`loadCoordinationStoreAsync`, the production async open). A synchronous open leaves
+ * neither pending, so this is a no-op there. A ledger that refuses the record rejects the open,
+ * exactly as it would any other append: the trace is not optional.
+ *
+ * The boundary is written into the lease file itself, so the refusal a LATER claimant reads names
+ * the row the holder acquired at rather than "unknown": no append happened between the fold and
+ * this stamp (a deferred store refuses every append until then), so `_events.length` IS the
+ * boundary. The rewrite preserves the record's own token/pid/pidStart, which is all any reader of
+ * the lease compares, and lands by atomic rename so a concurrent claimant never reads a torn file.
+ *
+ * The stamp comes FIRST, before the recovery row is appended: the boundary is where the ledger
+ * stood when the lease was taken, not where it stands after writing about it. */
+export function _settleDeferredWriterLease(store) {
+    const recovery = store._writerLeaseRecovery;
+    store._writerLeaseRecovery = null;
+    _stampWriterLeaseAcquisitionSeq(store);
+    if (recovery !== null) _recordWriterLeaseRecovery(store, recovery, store._writerLease?.token ?? 'unbound');
+  }
+
+function _stampWriterLeaseAcquisitionSeq(store) {
+    const lease = store._writerLease;
+    if (!lease || Number.isSafeInteger(lease.acquiredAtEventSeq)) return;
+    let observed;
+    try { observed = JSON.parse(readFileSync(lease.path, 'utf8')); }
+    catch { return; } // an absent or unreadable lease is not this store's to rewrite
+    if (observed?.token !== lease.token || observed?.pid !== process.pid
+      || (observed.pidStart !== undefined && observed.pidStart !== lease.pidStart)) return;
+    const boundary = store._events.length;
+    const temporary = `${lease.path}.${randomUUID()}`;
+    try {
+      writeFileSync(temporary, `${JSON.stringify({ ...observed, acquiredAtEventSeq: boundary })}\n`, { encoding: 'utf8', mode: 0o600 });
+      renameSync(temporary, lease.path);
+    } catch (error) {
+      try { unlinkSync(temporary); } catch { /* the rename may already have committed */ }
+      throw error;
+    }
+    store._writerLease = freeze({ ...lease, acquiredAtEventSeq: boundary });
   }
 
 export function releaseWriterLease(store, options = undefined) {

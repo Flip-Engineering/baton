@@ -94,6 +94,23 @@ function canonical(value) {
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
 
+// #148 driver law (docs/reference/evidence/blind-waits-2026-08-13/blind-waits-contract.md, the
+// `Driver pump loops` row of D2 + G1): a loop over the bus logs the full non-ok envelope and stops
+// on repeated auth failure, never retry-blind. The codes below are the dead-authority refusals the
+// wait/poll seams emit (the contract's refusal-vocabulary table): the deployment policy, the
+// transport principal, and the recursive orchestrator lease. A status read refused with one of them
+// is a credential death, not a transient the pump may keep polling through.
+const AUTHORITY_REFUSAL_CODES = Object.freeze(new Set([
+  'application_unauthorized', 'unauthenticated', 'forbidden',
+  'run_orchestrator_lease_expired', 'run_orchestrator_lease_revoked',
+]));
+// The pump stops when one member's status read refuses with an authority code this many CONSECUTIVE
+// polls — the same K the steering loop's delivery-failure budget uses. One refusal is a transient;
+// the budget exhausted is a dead credential.
+const AUTHORITY_STOP_POLLS = 3;
+// The receipt carries at most this many logged status-failure envelopes (bounded evidence).
+const STATUS_FAILURE_ROWS = 8;
+
 // #111-F3 (carried by the #79 fold): the corrective nudge COACHES instead of the bare
 // completionMessage. A claim_premature_liveness refusal already carries TG4-sanitized fields —
 // `liveness` is per-class COUNTS only (never path strings, never worker prose) and `reason` is
@@ -606,6 +623,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
     let outcomes = [];
     let stop = null;
     let settlementResult = null;
+    // #148 driver law: the pump's own failure ledger. `statusFailures` holds the bounded non-ok
+    // envelopes each L5 read logged; `authorityFailuresByRole` counts a member's CONSECUTIVE
+    // authority refusals (any successful read resets the streak); `authFailure` is set the poll a
+    // member's streak exhausts the budget, and stops the pump.
+    const statusFailures = [];
+    const authorityFailuresByRole = new Map();
+    let authFailure = null;
     try {
       wave = await baton.waves.start(startOptions);
 
@@ -639,11 +663,32 @@ export function createWaveDriver(baton, rawPolicy = null) {
             terminal = outline.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING;
             markerDigest = stallMarker(outline);
             if (Number.isSafeInteger(outline.cursor)) cursor = outline.cursor;
-          } catch {
-            // L5/D10: a transient status failure contributes 'unavailable' (a marker CHANGE from
-            // the prior real digest → resets the wave-level clock); only CONSECUTIVE unavailable
-            // polls leave the marker stable and count toward stall.
+            authorityFailuresByRole.set(role, 0);
+          } catch (error) {
+            // L5/D10 (unchanged): a transient status failure contributes 'unavailable' (a marker
+            // CHANGE from the prior real digest → resets the wave-level clock); only CONSECUTIVE
+            // unavailable polls leave the marker stable and count toward stall.
             markerDigest = 'unavailable';
+            // #148 driver law: the read's failure is LOGGED as its full non-ok envelope — the
+            // wave's own per-member failureRecord shape (code + message) plus the member and the
+            // instant — so the receipt names what the read refused, not a bare 'unavailable'.
+            const code = typeof error?.code === 'string' ? error.code : null;
+            statusFailures.push({
+              role, at: new Date().toISOString(), code, message: String(error?.message ?? error),
+            });
+            // A typed authority refusal is never a transient: count CONSECUTIVE refusals per member
+            // (a successful read resets the streak above) and stop the pump once the streak is
+            // exhausted, instead of polling a dead credential to the deadline. Every other failure
+            // (an unreachable provider, a timeout) keeps the D10 stall semantics untouched.
+            if (code !== null && AUTHORITY_REFUSAL_CODES.has(code)) {
+              const streak = (authorityFailuresByRole.get(role) ?? 0) + 1;
+              authorityFailuresByRole.set(role, streak);
+              if (authFailure === null && streak >= AUTHORITY_STOP_POLLS) {
+                authFailure = { role, code, message: String(error?.message ?? error) };
+              }
+            } else {
+              authorityFailuresByRole.set(role, 0);
+            }
           }
           if (outline.knowledge) memberKnowledge.set(role, outline.knowledge);
           // #396: the member's OWN clock — a digest change is its own observed progress and
@@ -688,6 +733,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
             classByRole.set(role, phase === SUCCESS_RESTING || terminal ? 'terminal' : 'settled');
           }
         }
+
+        // #148 driver law: logging the envelope is only half the law — once a member's authority
+        // refusal streak is exhausted the pump STOPS instead of polling a dead credential blind.
+        // The wave still settles and closes below, and the receipt carries the typed refusal that
+        // stopped it; no steering or follow runs against a member whose reads are all refused.
+        if (authFailure !== null) { basis = 'auth_failed'; break; }
 
         // #396: no roster-wide clock is kept — each member's own digest change already reset
         // ITS clock above, and a sibling-only cursor movement is stripped from every digest,
@@ -968,6 +1019,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
       // Bidirectional v2 rule 6: one downgrade line per member that lost the follow path.
       follows,
       salt,
+      // #148 driver law: the logged non-ok status envelopes (bounded) and the typed authority
+      // refusal that stopped the pump (null when the pump stopped for any other reason). Both are
+      // always present so a reader never distinguishes "absent" from "none": `statusFailures` is
+      // the full envelope of every refused L5 read, `authFailure` names the member, code and
+      // message of the streak that exhausted the budget.
+      statusFailures: statusFailures.slice(-STATUS_FAILURE_ROWS),
+      authFailure,
       pumpDrained: evidence.pumpDrained === true,
       // KG settlement D3: the candidacy/settlement counts fold into the knowledge block (zero as 0,
       // never missing); the ritual's per-step refusals ride a bounded settlement.errors block.

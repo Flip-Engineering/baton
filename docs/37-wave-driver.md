@@ -32,7 +32,13 @@ reason this spec exists at all.
   member per poll. The stall clock is **wave-level** (one live member resets it for all;
   per-member stall *breaks* are deferred, §5). A transient status failure contributes
   `'unavailable'` and resets the clock; **consecutive** unavailable polls count toward stall
-  (a member whose status path is persistently broken must stall, not park forever).
+  (a member whose status path is persistently broken must stall, not park forever). Every
+  refused status read is logged in the receipt as its full non-ok envelope
+  (`statusFailures`, bounded), and three **consecutive** authority refusals on one member
+  (`application_unauthorized`, `unauthenticated`, `forbidden`, or either
+  `run_orchestrator_lease_*` code) are a dead credential, not a transient: the pump stops with
+  `basis === 'auth_failed'` and the receipt's `authFailure` names the member, code and message
+  of the streak that stopped it (#148 driver law, `blind-waits-contract.md` D2).
 - **L6 — Termination law (the v1 hole).** On a `turnCompletion:'pausable'` card with a
   `steering.registered` record (every wave member, `wave.mjs:179` → `coordinator.mjs:1991-1994`),
   a completed turn parks a fresh checkpoint with a fresh `requestId` — so nudge-forever is a
@@ -82,8 +88,11 @@ const receipt = await createWaveDriver(baton, policy).run(waveStartOptions);
 
 **Receipt** = the committed envelope (`{ schemaVersion: 1, outcomes, stops, remainingCount,
 residueUnknown }` — `wave.mjs:327-353`) plus additive fields: `basis` (`'completed' | 'stall' |
-'hard_cap' | 'aborted'` — `'completed'` means *all members exited, in any phase including
-failed/cancelled; per-member truth is in `outcomes`*), `nudges: [{ role, requestId, at }]`,
+'auth_failed' | 'aborted'` — `'completed'` means *all members exited, in any phase including
+failed/cancelled; per-member truth is in `outcomes`*; `'auth_failed'` is the pump stopping on a
+member's authority refusals, L5), `statusFailures: [{ role, at, code, message }]` (the bounded
+log of refused status reads), `authFailure: { role, code, message } | null` (the streak that
+stopped the pump, null on every other exit), `nudges: [{ role, requestId, at }]`,
 `claims: [{ role, requestId, at, code }]`, `salt`, and `pumpDrained`. The wave handle now requests
 cancellation of observer-owned drives when their last observer leaves; `pumpDrained` is true only
 when those drives have actually ended. Signal-ignoring facades remain visibly unconfirmed; see
@@ -137,9 +146,10 @@ completion authority to an automatic policy prompt. The worker watchdog is neutr
   pending-paused member receives exactly one claim at stall (scope-mismatch tolerated,
   recorded in `receipt.claims`); with `'none'`, `claim_turn` is never invoked.
 - **D10 — unavailable semantics:** consecutive status-failure polls count toward stall;
-  transient single-poll failures reset it.
-
-## 4. Migration and compat
+  transient single-poll failures reset it. The authority refusals are the exception the #148
+  driver law carves out: each refused read's envelope is logged (`receipt.statusFailures`), and
+  three consecutive authority refusals on one member stop the pump (`basis === 'auth_failed'`,
+  `receipt.authFailure`) instead of polling a dead credential to the stall clock.
 
 Each evidence driver collapses to `openBaton` + `createWaveDriver(baton, policy).run({
 repoRoot, members })` (~10 plumbing lines). The 2026-07-23/24 window holds ten wave drivers —

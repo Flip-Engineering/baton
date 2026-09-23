@@ -18,6 +18,7 @@ import { projectSwarmView, SWARM_VIEW_PROJECTIONS } from './swarm-contract.mjs';
 // the runtime raises; the fold status table below is DERIVED from it, never hand-kept.
 import { SWARM_REFUSAL_CODES } from './swarm-refusals.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalAndTransportNames } from './application-semantics.mjs';
+import { honestLivenessProjection } from './route-liveness.mjs';
 import {
   WakeStream, attachmentClosedFrame, attachmentClosedReason, deriveWakeFrame, parseWakeFilter, wakeClassRow,
 } from './wake-stream.mjs';
@@ -228,14 +229,34 @@ function normalizeContextPackageRequest(raw) {
   }
   return Object.freeze({ name: raw.name, branches: Object.freeze(branches) });
 }
+// Issue #161 (D3.2/D3.4): the plan object's two direct ports. The family publishes NO derived web
+// transport — the underscore wire names plan_read/plan_write stay refused (the divergence ledger
+// documents that) — while the canonical names plan.read/plan.write are admitted on the resident's
+// bus: the MCP tools dispatch them over the bridge, and the CLI reaches them. The port's own
+// closed normalizer (orchestrator-plan.mjs admitPlanWrite / readPlanObject) is the argument
+// authority, so like the wave and workflow direct ports these names skip
+// validateApplicationCommandArgs. The `web` surface claim stays off the registry rows: the web
+// surface serves no transport name for the family.
+const PLAN_WEB_ENTRIES = Object.freeze([
+  ['plan.read', 'plan.read', Object.freeze(['observe'])],
+  ['plan.write', 'plan.write', Object.freeze(['control', 'observe'])],
+]);
+const PLAN_ARG_FIELDS = Object.freeze({
+  'plan.read': new Set(['planId']),
+  'plan.write': new Set(['planId', 'idempotencyKey', 'mutation']),
+});
 const WEB_DIRECT_PORT_COMMANDS = new Set([
   ...WAVE_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...WORKFLOW_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...DEPLOYMENT_WEB_ENTRIES.map(([transport]) => transport),
   ...CONTEXT_PACKAGE_COMMANDS,
+  // Issue #161: the plan pair rides the same direct-port admission (orchestrator-plan.mjs is the
+  // argument authority).
+  ...PLAN_WEB_ENTRIES.map(([transport]) => transport),
 ]);
 const WORKFLOW_DOT_WEB_ENTRIES = Object.freeze(WORKFLOW_WEB_ENTRIES
   .map(([transport, name, capabilities]) => [name, name, capabilities]));
+
 
 // S-1 v2 R-WG-3: advertised web ARG_FIELDS exclude transportHidden fields; the validator still
 // accepts them (acceptance set = advertised ∪ transportHidden).
@@ -275,6 +296,8 @@ const COMMAND_CAPABILITY = Object.freeze({
   ...Object.fromEntries(DEPLOYMENT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(CONTEXT_PACKAGE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(CONTEXT_PACKAGE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  // Issue #161: the plan pair, canonical spelling only (PLAN_WEB_ENTRIES).
+  ...Object.fromEntries(PLAN_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
@@ -289,6 +312,8 @@ const READ_ONLY_COMMANDS = new Set([
   // Issue #344: the workflow direct-port reads ride no definition row (their argument authority
   // is the port normalizer), so the mcpStateful derivation above cannot see them — the four
   // read-only lanes are named beside it, both spellings, exactly like WAVE_DOT_WEB_ENTRIES.
+  // Issue #161: plan.read is a read lane — its envelope carries no idempotency key.
+  'plan.read',
   'run_message_receipt', 'run.message.receipt',
   'run_attention_watch', 'run.attention.watch',
   'run_scratchpad_read', 'run.scratchpad.read',
@@ -340,6 +365,9 @@ const ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
   ...Object.fromEntries(Object.entries(CONTEXT_PACKAGE_ARG_FIELDS)),
+  // Issue #161: the plan pair's closed accepted sets (the port's normalizer is the argument
+  // authority; the set is what the envelope admits, so a bridged plan.write can carry its body).
+  ...Object.fromEntries(Object.entries(PLAN_ARG_FIELDS)),
 });
 const ACCEPTED_ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(Object.entries(ARG_FIELDS).map(([transport, fields]) => [transport, fields])),
@@ -368,6 +396,9 @@ const APPLICATION_COMMAND = Object.freeze({
   // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
   // WAVE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
   run_scratchpad_append: 'run.scratchpad.append',
+  // Issue #161: the plan pair dispatches to its own direct ports under the canonical spelling (the
+  // family publishes no derived web transport, so there is no underscore twin to map).
+  'plan.read': 'plan.read', 'plan.write': 'plan.write',
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -387,6 +418,16 @@ const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logo
 const OIDC_START_PATH = '/v1/auth/oidc/start';
 const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
 
+
+/** #167 (D2 wire law): one readiness row's honest {verdict, probedAt} projection, re-added
+ * EXPLICITLY by every northbound transport. The doctor row's non-enumerable siblings (liveness,
+ * occupancy) do not survive a JSON round-trip, so the transport reads them by property access
+ * BEFORE serialization and adds the two fields a reading consumer must see. ONE derivation: this
+ * module never re-implements the staleness law (`route-liveness.mjs` owns it). */
+function withHonestLiveness(row) {
+  if (!row || typeof row !== 'object') return row;
+  return { ...row, ...honestLivenessProjection(row.liveness ?? null) };
+}
 function json(value) { return JSON.parse(JSON.stringify(value)); }
 function transportCapability(value) {
   const copy = json(value);
@@ -2520,7 +2561,7 @@ export class WebNorthbound {
       return this._handleOidcCallback(req, res, url, origin);
     }
     if (req.method === 'GET' && (['/v1/session', '/v1/application-card'].includes(url.pathname) || operatorAsset(url.pathname))) {
-      return this._handleOperatorRead(req, res, url.pathname, origin);
+      return this._handleOperatorRead(req, res, url, origin);
     }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/commands/')) {
       return this._handleCommandStatus(req, res, url, origin);
@@ -2836,7 +2877,7 @@ export class WebNorthbound {
     };
   }
 
-  async _handleOperatorRead(req, res, pathname, origin) {
+  async _handleOperatorRead(req, res, url, origin) {
     const ctx = this._oidcContext(req, origin);
     let principal;
     try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
@@ -2856,11 +2897,11 @@ export class WebNorthbound {
     }
     try {
       this._audit('operator_read_authorized', { ...ctx, principal }, {
-        resourceClass: pathname === '/v1/session' ? 'session' : pathname === '/v1/application-card' ? 'application_card' : 'asset',
+        resourceClass: url.pathname === '/v1/session' ? 'session' : url.pathname === '/v1/application-card' ? 'application_card' : 'asset',
       });
     }
     catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-    if (pathname === '/v1/session') {
+    if (url.pathname === '/v1/session') {
       return this._write(res, result(200, {
         ok: true,
         identity: {
@@ -2870,16 +2911,40 @@ export class WebNorthbound {
         expiresAt: principal.expiresAt,
       }));
     }
-    if (pathname === '/v1/application-card') {
+    if (url.pathname === '/v1/application-card') {
       if (!this.application) return this._write(res, applicationUnavailableRefusal('run application unavailable'));
-      const card = this.application.card();
+      let card = this.application.card();
+      // #167 (A2/D1 trigger 3): the operator's on-demand forced probe. `forceProbe` refreshes every
+      // stale route ONCE through the deployment's own probe handle — the cache discipline decides
+      // what is stale (a fresh window is never re-probed), so a repeated `baton doctor --check`
+      // costs no extra provider turn. The card is re-read after the probes so the served rows carry
+      // the refreshed verdicts.
+      if (url.searchParams?.get('forceProbe') === '1') {
+        for (const row of card?.readiness?.routes ?? []) {
+          if (typeof row?.liveness?.probe !== 'function') continue;
+          try { await row.liveness.probe(); } catch { /* the refreshed row projects the failure */ }
+        }
+        card = this.application.card();
+      }
       // Epic #103 (D6c): the web card is the reading consumer's TRANSPORT — the CLI is a child
       // process that reads the doctor sibling by property access AFTER an HTTP JSON round-trip,
       // and non-enumerable properties do not survive JSON.stringify. So the route reads the
       // non-enumerable sibling itself and adds the ONE named additive field to the served shape.
-      const readiness = card?.readiness && typeof card.readiness === 'object' && !Array.isArray(card.readiness)
-        ? { ...card.readiness, briefing: card.readiness.briefing ?? null }
-        : (card?.readiness ?? null);
+      // #167 (D2 wire law): the same transport law re-adds the honest liveness {verdict, probedAt}
+      // projection per route row, so a serializing reader sees the honest signal.
+      const source = card?.readiness && typeof card.readiness === 'object' && !Array.isArray(card.readiness)
+        ? card.readiness : null;
+      const readiness = source === null ? (card?.readiness ?? null) : {
+        ...source,
+        ...(Array.isArray(source.routes)
+          ? {
+            routes: source.routes.map((row) => {
+              const { verdict, probedAt } = withHonestLiveness(row);
+              return { ...row, verdict, probedAt };
+            }),
+          } : {}),
+        briefing: source.briefing ?? null,
+      };
       return this._write(res, result(200, {
         ok: true,
         // D1.4/F1 — the card advertises the admitted lane BY DERIVATION from the same transport
@@ -2890,7 +2955,7 @@ export class WebNorthbound {
         application: { ...card, readiness, commands: webCardCommandNames() },
       }));
     }
-    const asset = operatorAsset(pathname);
+    const asset = operatorAsset(url.pathname);
     const body = asset.body;
     const headers = {
       'content-type': asset.type, 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store',

@@ -26,7 +26,8 @@
 //   P6  elevation at wave close (D2) — completed → done + evidence links, incomplete → todo,
 //       wave map updated, reviewed-rejected done → re-opened todo (H4.2), no silent auto-promotion.
 //   P7  three-surface admission (D3) — registry rows, CLI plan read|write, CLI_WEB_COMMANDS,
-//       MCP baton_plan_read/write repoId-first, ledgered web refusal, generated CLI.md/MCP.md rows.
+//       MCP baton_plan_read/write repoId-first, ledgered web refusal, the generated CLI rows and the
+//       folded #555 MCP inventory the plan ports are reached through.
 //   P8  #74 integration — coordinator decomposition lands row tasks with ownedBy binding; the
 //       interpreter gates a member on its plan task's state (dispatch_pending / settleable).
 //   P9  orchestrator practice migration — plan.read at the orchestrator seat returns the campaign
@@ -153,8 +154,10 @@
 //   X6  the OPERATION_ROWS registry rows claim surfaces for plan.read/plan.write with closed input
 //       schemas (D3.1) — content-anchored region AND the parsed registry LIVE gate (a source comment
 //       alone is not a registry row). (RED — source: CANONICAL_OPERATION_SPECS has no plan rows)
-//   X7  the generated CLI.md/MCP.md blocks contain the plan rows (D3.5, never hand-edited) — the
-//       rows must be the registry-DERIVED surface names (a doc-only hand-edit fails the registry gate). (RED)
+//   X7  the plan rows reach the generated surface artifacts (D3.5, never hand-edited) — CLI.md's
+//       block carries both rows, MCP.md's #555-folded block carries the baton_surface row whose
+//       invoke verb reaches the plan ports, and the regenerated inventory artifact and parity
+//       matrix name both MCP spellings. (RED)
 //
 // §P8 #74 integration (stage: plan-gated-dispatch-missing)
 //   Q1  a #74 coordinator member's plan.write (task_upserted) writes its subtree's row tasks with
@@ -246,6 +249,8 @@ import {
   bindBaton, createDriver, CoordinationStore, McpFleetServer, WebNorthbound, WebSessionStore,
 } from '../src/index.mjs';
 import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
+import { renderMcpToolInventory } from '../scripts/render-surface-docs.mjs';
+import { resolveUnifiedCapability } from '../src/surface-capability-catalog.mjs';
 import { validateWebCommandEnvelope } from '../src/web-northbound.mjs';
 
 const NOW = Date.parse('2026-08-13T12:00:00.000Z');
@@ -270,9 +275,20 @@ const DEFAULT_PLAN_POLICY = Object.freeze({ maxFocusTasks: 4 });
 // (H2.1/H2.3), never this seam. Non-plan verbs keep the permissive deployment default — they are
 // not this row's subject. The capability-carrying review seat (principal('plan-review')) is what
 // the string-seat facade (which recognizes only the 'orchestrator' string) cannot admit.
-async function planAuthorize(command, principal, runId, subject) {
-  if (!command.startsWith('plan.')) return true;
-  return principal?.principalId === 'orchestrator' || principal?.principalId === 'plan-review';
+// H2.1 — the plan:* power is enforced in the deployment authorize (the restricting
+// restrictingReadAuthorize shape the #74 fold landed). The deployment authorize is called with ONE
+// request object ({command, principal, repoId, runId, subject}) — the shape application.mjs's
+// `_authorize` seam composes and the resident's own restrictor destructures. The orchestrator seat
+// and the review seat hold the power; a worker's own-task/subtree admission is the lane's ownership
+// composition (H2.1/H2.3), never this seam. Non-plan verbs keep the permissive deployment default —
+// they are not this row's subject. The capability-carrying review seat (principal('plan-review')) is
+// what the string-seat facade (which recognizes only the 'orchestrator' string) cannot admit.
+async function planAuthorize(request = {}) {
+  const command = typeof request === 'string' ? request : request?.command;
+  const who = typeof request === 'string' ? undefined : request?.principal;
+  if (typeof command !== 'string' || !command.startsWith('plan.')) return true;
+  const principalId = who?.principalId ?? who;
+  return principalId === 'orchestrator' || principalId === 'plan-review';
 }
 
 let envelopeSeq = 0;
@@ -623,7 +639,7 @@ test('M1: plan.write with plan.minted mints the plan and plan.read round-trips i
   const host = await hostFixture(t);
   const campaignId = 'campaign-161-m1';
   const planId = planIdFor('m1', campaignId);
-  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo');
+  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo', { owner: ownedBy('alpha', 'run:r1', 'wave:w1') });
   const outcome = await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alpha.id])), principal('orchestrator'), 'stage: plan-write-port-missing');
   assert.equal(outcome.status, 'plan_minted',
     'the mint resolves {status: \'plan_minted\'}');
@@ -651,7 +667,7 @@ test('M2: a retry of the same mint key + content returns the prior event — exa
   const host = await hostFixture(t);
   const campaignId = 'campaign-161-m2';
   const planId = planIdFor('m2', campaignId);
-  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo');
+  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo', { owner: ownedBy('alpha', 'run:r1', 'wave:w1') });
   const body = planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alpha.id]), `plan.minted:${planId}`);
   const first = await planWrite(host, body, principal('orchestrator'), 'stage: plan-write-port-missing');
   const second = await planWrite(host, body, principal('orchestrator'), 'stage: plan-write-port-missing');
@@ -673,11 +689,11 @@ test('M3: changed content under the same mint key refuses plan_replay_conflict',
   const host = await hostFixture(t);
   const campaignId = 'campaign-161-m3';
   const planId = planIdFor('m3', campaignId);
-  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo');
+  const alpha = task(taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1')), 'write the alpha report', 'todo', { owner: ownedBy('alpha', 'run:r1', 'wave:w1') });
   const firstBody = planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alpha.id]), `plan.minted:${planId}`);
   await planWrite(host, firstBody, principal('orchestrator'), 'stage: plan-write-port-missing');
 
-  const beta = task(taskIdFor(planId, 'write the beta report', ownedBy('beta', 'run:r1', 'wave:w1')), 'write the beta report', 'todo');
+  const beta = task(taskIdFor(planId, 'write the beta report', ownedBy('beta', 'run:r1', 'wave:w1')), 'write the beta report', 'todo', { owner: ownedBy('beta', 'run:r1', 'wave:w1') });
   const conflicting = planWriteBody(planId, mintMutation(planId, campaignId, [beta], [beta.id]), `plan.minted:${planId}`);
   await planWriteRefusal(host, conflicting, principal('orchestrator'),
     'stage: plan-write-port-missing', 'plan_replay_conflict');
@@ -1443,24 +1459,47 @@ test('X6: the OPERATION_ROWS registry rows claim surfaces for plan.read/plan.wri
     'stage: registry-plan-rows-missing — the parsed registry registers plan.read/plan.write as canonical operations (a source comment alone is not a registry row)');
 });
 
-test('X7: the generated CLI.md/MCP.md blocks contain the plan rows (D3.5)', () => {
-  // Blue-team X7 regeneration gate — the docs are GENERATED from the registry
-  // (render-surface-docs.mjs, #142), never hand-edited: the plan verbs must be REGISTERED (the
-  // ONE mechanical source) and the docs must carry the registry-DERIVED surface names. A doc-only
-  // hand-edit (advertise-but-dead: CLI.md/MCP.md claim the rows while the registry has none) fails
-  // the registry gate; a comment shortcut fails the derived-name presence check.
+test('X7: the plan rows reach the generated surface artifacts the folded #555 surface serves (D3.5)', () => {
+  // Blue-team X7 gate — every doc and artifact that carries the plan rows is GENERATED from the
+  // registry (render-surface-docs.mjs, surface-conformance.mjs, surface-parity.mjs), never
+  // hand-edited. #555 folded the MCP ordinary surface into ONE inventory of folded tools, so
+  // MCP.md's generated block documents the folded composition and the plan ports are reached on
+  // that surface through the baton_surface row's `invoke` verb — the generic path the unified
+  // capability catalog derives from the same registry rows. A doc-only hand-edit (CLI.md/MCP.md
+  // claiming rows the registry cannot derive) fails the registry gate; a comment shortcut fails
+  // the derived-name check.
   const planOps = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
     .filter((op) => op.key === 'plan.read' || op.key === 'plan.write');
   assert.equal(planOps.length, 2,
     'stage: registry-plan-rows-missing — at HEAD the registry has no plan.read/plan.write rows; the fold registers both (the generated docs can only carry rows the registry derives)');
 
   const cliDoc = readFileSync(fileURLToPath(new URL('../CLI.md', import.meta.url)), 'utf8');
+  const foldedSurfaceRow = renderMcpToolInventory().split('\n')
+    .find((line) => line.includes('`baton_surface`'));
+  assert.ok(foldedSurfaceRow, 'the folded MCP inventory renders its baton_surface row');
   const mcpDoc = readFileSync(fileURLToPath(new URL('../MCP.md', import.meta.url)), 'utf8');
+  assert.ok(mcpDoc.includes(foldedSurfaceRow),
+    'stage: docs-plan-rows-missing — the regenerated MCP.md carries the folded baton_surface row (the folded tool whose invoke verb reaches the plan ports, #555)');
+  const artifact = JSON.parse(readFileSync(
+    fileURLToPath(new URL('../scripts/surface-inventory-artifact.json', import.meta.url)), 'utf8'));
+  const parity = JSON.parse(readFileSync(
+    fileURLToPath(new URL('../../docs/reference/inventory/surface-parity-matrix.json', import.meta.url)), 'utf8'));
   for (const op of planOps) {
     assert.ok(cliDoc.includes(op.names.cli),
       `stage: docs-plan-rows-missing — the regenerated CLI.md carries ${op.names.cli} (the registry-derived row)`);
-    assert.ok(mcpDoc.includes(op.names.mcp),
-      `stage: docs-plan-rows-missing — the regenerated MCP.md carries ${op.names.mcp} (the registry-derived tool)`);
+    const capability = resolveUnifiedCapability(op.key);
+    assert.equal(capability.names.mcp, op.names.mcp,
+      `stage: docs-plan-rows-missing — the folded catalog resolves ${op.key} to the registry-derived MCP spelling`);
+    assert.equal(capability.surfaces.mcp.reachable, true,
+      `stage: docs-plan-rows-missing — ${op.key} is reachable on the folded MCP surface`);
+    assert.ok(capability.surfaces.mcp.via.includes('baton_surface_invoke'),
+      `stage: docs-plan-rows-missing — ${op.key} is reached through the folded baton_surface invoke path`);
+    assert.ok(artifact.profiles['mcp.combined'].includes(op.names.mcp),
+      `stage: docs-plan-rows-missing — the regenerated surface inventory artifact carries ${op.names.mcp} on the combined MCP profile`);
+    const row = (parity.rows ?? []).find((entry) => entry.name === op.key);
+    assert.ok(row, `stage: docs-plan-rows-missing — the regenerated parity matrix carries the ${op.key} row`);
+    assert.equal(row.mcp, op.names.mcp,
+      `stage: docs-plan-rows-missing — the regenerated parity matrix names ${op.names.mcp} for ${op.key}`);
   }
 });
 

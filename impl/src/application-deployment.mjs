@@ -22,7 +22,7 @@ import {
   resolveServiceCredentialValue, serviceCredentialReference, serviceForRoute, serviceStateOf,
 } from './provider-services.mjs';
 import { ProviderQuotaAuthority, routeQuotaKey } from './route-quota.mjs';
-import { RouteLiveness } from './route-liveness.mjs';
+import { RouteLiveness, honestLivenessProjection } from './route-liveness.mjs';
 import { matchProviderRefusal, PROVIDER_RESET_AT_FROM_TEXT } from './adapter.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { GOAL_PLAN_CEILINGS } from './goal-plan.mjs';
@@ -40,6 +40,9 @@ import { KimiAcpCli } from './kimi-acp.mjs';
 import { MAX_STDERR_TAIL_BYTES, MuseCli } from './cli-adapters.mjs';
 import { OmpRpcCli } from './omp-rpc.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import {
+  seatAtomsForRoutes, seatCeiling, seatDeferredByVendor, seatObservedAtEventSeq, seatVendor,
+} from './seat-telemetry.mjs';
 import { normalizeWorktreeCapacityPolicy, workspaceCapacityPressure, WorktreeCapacityError } from './worktree-capacity.mjs';
 import { deriveHostCapacity, hostCapacityObservation, HostCapacityAuthority } from './host-capacity.mjs';
 import { RuntimeIsolation, runtimeIdentity } from './runtime-isolation.mjs';
@@ -2038,7 +2041,7 @@ function publicRouteRuntime(card) {
 // the same whitelist-projector discipline (bounded, vendor-neutral atoms; no executable paths, no
 // credential values, no private runtime paths, no provider tokens). The liveness/occupancy/learning
 // fields carry only the bounded atoms the projection functions already produce.
-function publicRosterRow(route, { static: staticFields, liveness, occupancy, learning }) {
+function publicRosterRow(route, { static: staticFields, liveness, occupancy, learning, verdict, probedAt }) {
   return Object.freeze({
     harness: route.harness,
     model: route.model,
@@ -2048,8 +2051,22 @@ function publicRosterRow(route, { static: staticFields, liveness, occupancy, lea
     liveness,
     occupancy,
     learning,
+    // #167 (D2): present only when the deployment declares the liveness tier (the same additive
+    // rule as the doctor row) — the honest verdict never lives as a private sibling class.
+    ...(verdict === undefined ? {} : { verdict, probedAt }),
   });
 }
+
+/** #167 (G1/D2): the static readiness substrate as the roster row publishes it — the same closed
+ * atom ({state, code?, summary?}), read from the composed row the doctor already built. */
+function staticReadinessAtom(row) {
+  return Object.freeze({
+    state: row.state,
+    ...(row.code ? { code: row.code } : {}),
+    ...(row.summary ? { summary: row.summary } : {}),
+  });
+}
+
 
 // §4.2.2 fold F-2: the fleet_roster OPERATION's provenance envelope — claimed on the operation's
 // own registration/result envelope (the route.advice envelope precedent), never as fields of the
@@ -3338,6 +3355,12 @@ class BatonDeployment {
   #claudeCredentialProbe = null;
   #grokCredentialProbe = null;
   #liveness = null;
+  // #167 (D2): whether this deployment DECLARES the liveness tier (advanced.liveness). A declared
+  // tier publishes the honest {verdict, probedAt} projection ENUMERABLY on the doctor route row and
+  // the roster row (JSON-surviving, so an operator-wire reader sees it); an undeclared deployment
+  // keeps the DP5 closed enumerable row (contract-146 A8 pins that byte-unchanged shape) and
+  // reaches liveness only through the non-enumerable sibling.
+  #livenessDeclared = false;
   #adapters = {};
   #routes = [];
   #routeQuota = null;
@@ -3422,6 +3445,7 @@ class BatonDeployment {
     this.#contextSourceAdmit = typeof deployment.contextSourceAdmit === "function" ? deployment.contextSourceAdmit : null;
     this.#served = deployment.served ?? null;
     this.#liveness = deployment.liveness ?? null;
+    this.#livenessDeclared = deployment.livenessDeclared === true;
     this.#routeQuota = deployment.routeQuota ?? null;
     this.#routeRefusals = deployment.refusals ?? null;
     this.#routeDegrades = deployment.degrades ?? null;
@@ -3600,6 +3624,16 @@ class BatonDeployment {
         composed.service = this.#serviceForRoute(registryRoute ?? row)?.provider ?? null;
       }
       Object.defineProperty(composed, 'liveness', { value: live.liveness, enumerable: false });
+      // #167 (D2 wire law): the honest projection is ENUMERABLE on the doctor route row when this
+      // deployment declares the liveness tier, so Object.keys/JSON.stringify carry it to every
+      // operator-wire reader without reaching into the non-enumerable sibling.
+      if (this.#livenessDeclared) Object.assign(composed, honestLivenessProjection(live.liveness));
+      // #167 (G1): the static substrate in the roster row's own atom shape ({state, code?,
+      // summary?}) — a non-enumerable sibling, so the pre-existing enumerable doctor row keeps the
+      // DP5 closed set while a consumer reads the static axis without re-deriving it.
+      Object.defineProperty(composed, 'static', {
+        value: staticReadinessAtom(row), enumerable: false,
+      });
       Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
       // #341 part 2: the last refusal THIS deployment's ledger holds for the route — published by
       // the same non-enumerable pattern (a reader sees it; the pre-existing serialized row shape
@@ -3627,6 +3661,19 @@ class BatonDeployment {
       ledgerHeadSeq: coordination.ledgerHeadSeq(),
       epochLag: coordination.ledgerHeadSeq() - briefingHead.observedSeq,
     } : null;
+    // #146 (D2.1/D1): the fleet seat projection — one closed D1 atom per readiness route, in
+    // readiness route order, as an ENUMERABLE sibling of `routes` (the DP5 route row shape stays
+    // untouched). Each atom reads the single occupancy source above (`#occupancyFor`), so
+    // `routes[i].occupancy` and `seats[i]` can never disagree about the same route; every count is
+    // null where the allocator binds no single vendor. `observedAtEventSeq` labels the
+    // ledger-derived parts and each atom's `inFlightRevision` labels its live count (D3).
+    const coordinator = this.#driver?.coordinator ?? null;
+    const seats = seatAtomsForRoutes({
+      coordinator,
+      routes: this.#readiness.routes,
+      stateOf: (route, index) => routes[index].state,
+      deferredByVendor: seatDeferredByVendor(coordination),
+    });
     // #295 item 4: the composed document's verdict is derived from the SAME rows it publishes —
     // a route its provider exhausted is not ready for a recruit, so the open-time verdict can
     // never sit beside fresh blocked rows.
@@ -3642,7 +3689,8 @@ class BatonDeployment {
     // composed with THIS read's own profile map, so a route's usage row and doctor row agree.
     const routeUsage = this.#routeUsageRows(routes, profiles);
     const base = {
-      ...this.#readiness, ready, routes, routeUsage,
+      ...this.#readiness, ready, routes, routeUsage, seats,
+      observedAtEventSeq: seatObservedAtEventSeq(coordination),
       // #317 (docs/50 D5): the services section rides the doctor beside routeUsage — present only
       // when the deployment declares services, so the composed document's shape is unchanged for
       // a deployment without the section (D7).
@@ -3854,18 +3902,24 @@ class BatonDeployment {
     return { liveness, occupancy: this.#occupancyFor(route) };
   }
 
-  /** RT-7: the coordinator's real seat count plus the card's CONFIGURED ceiling — or `null` when
-   * no unique card matches (ambiguous/unmatched route) or the card declares no limit. Absence is
-   * never projected as a number: the old `: 1` fabricated a policy nobody configured (audit F3). */
+  /** RT-7 + #146 (B2): the coordinator's real seat count beside the resolved card's CONFIGURED
+   * ceiling, for the ONE vendor the allocator binds this route to. Absence is never projected as a
+   * number: a route the allocator cannot bind to a single vendor (ambiguous, unmatched, or a host
+   * with no coordinator) reads `{inFlight: null, concurrencyCeiling: null}` — the old `: 1` and the
+   * harness-keyed count both fabricated a policy nobody configured (audit F3).
+   *
+   * This is the single occupancy source: the doctor row's non-enumerable `occupancy`, the `seats`
+   * atom's `inFlight`/`ceiling`, and `publicRosterRow`'s enumerable `occupancy` all read it, so two
+   * fields of one response can never disagree about a route's seats. */
   #occupancyFor(route) {
-    const match = this.#liveness?.adapterFor(route);
-    const vendor = match?.vendor ?? route.harness;
-    const inFlight = typeof this.#driver.coordinator?._inFlightCount === 'function'
-      ? this.#driver.coordinator._inFlightCount(vendor) : 0;
-    const ceiling = match
-      ? normalizeConcurrencyCeiling(match.adapter.card()?.concurrencyCeiling, `${vendor} concurrencyCeiling`)
-      : null;
-    return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
+    const coordinator = this.#driver?.coordinator ?? null;
+    const vendor = seatVendor(coordinator, route);
+    if (vendor === null) return Object.freeze({ inFlight: null, concurrencyCeiling: null });
+    return Object.freeze({
+      inFlight: typeof coordinator._inFlightCount === 'function'
+        ? coordinator._inFlightCount(vendor) : null,
+      concurrencyCeiling: seatCeiling(coordinator, vendor),
+    });
   }
 
   /** #341: the per-route usage row — turns, tokens, usd, the card's concurrency ceiling, and the
@@ -4044,7 +4098,10 @@ class BatonDeployment {
         : Object.freeze({ state: 'unobserved', credentialKey: null });
       const occupancy = this.#occupancyFor(route);
       const learning = this.#learningFor(route);
-      return publicRosterRow(route, { static: staticFields, liveness, occupancy, learning });
+      return publicRosterRow(route, {
+        static: staticFields, liveness, occupancy, learning,
+        ...(this.#livenessDeclared ? honestLivenessProjection(liveness) : {}),
+      });
     }));
     const observations = this.#driver.coordination.routeObservations();
     return Object.freeze({
@@ -4074,7 +4131,11 @@ class BatonDeployment {
     this.#assertAdmitsTurns();
     if (Array.isArray(requests)) {
       for (const request of requests) {
-        if (record(request)) this.#assertRouteReady(request);
+        if (!record(request)) continue;
+        this.#assertRouteReady(request);
+        // #167 (A6/D1 trigger 1): the liveness gate is CONSULTED on every provider-spawn surface
+        // before any real turn — additive to assertRouteReady, never a replacement for it.
+        await this.#livenessGate(request);
       }
     }
     return this.#baton.runs.startMany(requests);
@@ -4084,7 +4145,9 @@ class BatonDeployment {
     this.#assertAdmitsTurns();
     if (record(options) && Array.isArray(options.team)) {
       for (const member of options.team) {
-        if (record(member) && record(member.exact)) this.#assertRouteReady({ exact: member.exact });
+        if (!(record(member) && record(member.exact))) continue;
+        this.#assertRouteReady({ exact: member.exact });
+        await this.#livenessGate({ exact: member.exact });
       }
     }
     return this.#baton.workflow(objective, options);
@@ -4093,6 +4156,7 @@ class BatonDeployment {
   async explore(objective, options = {}) {
     this.#assertAdmitsTurns();
     this.#assertRouteReady(options);
+    await this.#livenessGate(options);
     return this.#baton.explore(objective, options);
   }
 
@@ -4100,7 +4164,9 @@ class BatonDeployment {
     this.#assertAdmitsTurns();
     if (record(options) && Array.isArray(options.routes)) {
       for (const exact of options.routes) {
-        if (record(exact)) this.#assertRouteReady({ exact });
+        if (!record(exact)) continue;
+        this.#assertRouteReady({ exact });
+        await this.#livenessGate({ exact });
       }
     }
     return this.#baton.review(objective, options);
@@ -7039,6 +7105,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       reincarnationAuthority,
       reincarnationHandoff,
       liveness: livenessController,
+      // #167 (D2): whether the liveness tier was DECLARED (advanced.liveness) — the discriminator
+      // the honest enumerable {verdict, probedAt} projection rides, so an undeclared deployment
+      // keeps the DP5 closed enumerable row contract-146 A8 pins.
+      livenessDeclared: Object.keys(rawLiveness).length > 0,
       claudeCredentialProbe,
       credentialLifetime,
       claudeCredentialCache,
