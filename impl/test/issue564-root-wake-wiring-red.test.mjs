@@ -267,7 +267,8 @@ test('572-w5: a deployment-scoped worker turn report reaches the root socket exa
   await waitFor(() => received, (rows) => rows.length === 1, { label: 'deployment turn socket frame' });
   assert.deepEqual({ ...delivered[0].payload, at: '<at>' }, {
     kind: 'wake.root_delivered', seq: reported.event.seq, wakeClass: 'root_turn_reported',
-    swarmId: null, runId: 'run-root-572', harness: 'claude-code', mechanism: 'session-socket',
+    swarmId: null, runId: 'run-root-572', attempt: 1,
+    harness: 'claude-code', mechanism: 'session-socket',
     sessionId: TARGET.sessionId, at: '<at>',
   });
   assert.match(JSON.parse(received[0]).message.content, /deployment turn is ready for root/u);
@@ -297,7 +298,42 @@ test('572-w6: an unresolvable run-addressed frame records its typed delivery fai
   const failure = f.store.eventsView().find((event) => event.payload?.kind === 'wake.root_undelivered');
   assert.deepEqual({ ...failure?.payload, at: '<at>' }, {
     kind: 'wake.root_undelivered', seq: 5720, wakeClass: 'root_turn_reported',
-    swarmId: null, runId: 'run-missing-572', harness: 'claude-code', mechanism: 'session-socket',
+    swarmId: null, runId: 'run-missing-572', attempt: 1,
+    harness: 'claude-code', mechanism: 'session-socket',
     code: 'root_wake_source_invalid', at: '<at>',
   });
+});
+
+test('572-w7: a direct coordinator turn report is addressed by worker with no run command', async (t) => {
+  const sent = [];
+  const f = fixture(t, {
+    target: TARGET,
+    discovery: async () => JSON.stringify([{ sessionId: TARGET.sessionId, pid: 572 }]),
+    transport: async ({ frame }) => { sent.push(frame); },
+  });
+  const reported = f.store.recordDriver('worker.turn_reported', {
+    runId: null, worker: 'worker-direct-572', taskId: 'task-direct-572',
+    turnSeq: 13, turnEpoch: 4,
+    report: { status: 'completed', summary: 'The direct coordinator turn is ready.' },
+    assignmentDone: false,
+  }, { actor: 'baton-runtime', key: 'worker-turn-reported-direct-572' });
+  const frame = deriveWakeFrame(reported.event);
+  assert.deepEqual(frame?.subject, { kind: 'worker', id: 'worker-direct-572' });
+  assert.equal(frame?.runId, null);
+  assert.equal(frame?.workerId, 'worker-direct-572');
+  assert.equal(frame?.next, null);
+
+  const delivered = await waitFor(
+    () => f.store.eventsView().filter((event) => event.payload?.kind === 'wake.root_delivered'
+      && event.payload.seq === reported.event.seq),
+    (rows) => rows.length === 1,
+    { label: 'direct coordinator delivery' },
+  );
+  assert.deepEqual({ ...delivered[0].payload, at: '<at>' }, {
+    kind: 'wake.root_delivered', seq: reported.event.seq, wakeClass: 'root_turn_reported',
+    swarmId: null, workerId: 'worker-direct-572', attempt: 1,
+    harness: 'claude-code', mechanism: 'session-socket', sessionId: TARGET.sessionId, at: '<at>',
+  });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].message.content, /direct coordinator turn is ready/u);
 });

@@ -7,7 +7,7 @@
 //
 // The rows below pin the Claude Code session socket frame, the complete route-harness
 // capability table, typed refusals for harnesses without an operator-session channel, and
-// the durable exactly-once delivery receipt.
+// durable delivery attempts, and the final delivered receipt.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -175,6 +175,7 @@ test('root wake delivery sends and records once per frame identity', async () =>
   assert.equal(store.rows.length, 1);
   assert.deepEqual(store.rows[0].payload, {
     kind: 'wake.root_delivered', seq: 91, wakeClass: 'attention', swarmId: 'swarm-a',
+    attempt: 1,
     harness: 'claude-code', mechanism: 'session-socket', sessionId: 'session-root',
     at: store.rows[0].payload.at,
   });
@@ -202,6 +203,39 @@ test('concurrent delivery calls share the one in-flight attempt', async () => {
   assert.equal(store.rows.length, 1);
 });
 
+test('concurrent observers share one failed attempt and a later observer advances it', async () => {
+  const store = memoryStore();
+  const frame = { seq: 96, wakeClass: 'attention', swarmId: 'swarm-a' };
+  const target = { harness: 'claude-code', sessionId: 'session-root' };
+  let sends = 0;
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const deliver = async () => {
+    sends += 1;
+    if (sends === 1) {
+      await blocked;
+      throw Object.assign(new Error('socket refused'), { code: 'claude_session_transport_failed' });
+    }
+    return { delivered: true };
+  };
+
+  const first = deliverRootWakeOnce({ store, frame, target, deliver });
+  await new Promise((resolve) => setImmediate(resolve));
+  const concurrent = deliverRootWakeOnce({ store, frame, target, deliver });
+  release();
+  const settled = await Promise.allSettled([first, concurrent]);
+
+  assert.deepEqual(settled.map((result) => result.status), ['rejected', 'rejected']);
+  assert.deepEqual(settled.map((result) => result.reason?.code),
+    ['claude_session_transport_failed', 'claude_session_transport_failed']);
+  assert.equal(sends, 1);
+  assert.deepEqual(store.rows.map((row) => row.payload.attempt), [1]);
+
+  const recovered = await deliverRootWakeOnce({ store, frame, target, deliver });
+  assert.equal(recovered.attempt, 2);
+  assert.equal(sends, 2);
+});
+
 test('root wake delivery records a typed failure and no delivered row', async () => {
   const store = memoryStore();
   const frame = { seq: 92, wakeClass: 'attention', swarmId: 'swarm-a' };
@@ -217,17 +251,69 @@ test('root wake delivery records a typed failure and no delivered row', async ()
   assert.equal(store.rows.filter((row) => row.payload.kind === 'wake.root_delivered').length, 0);
   assert.deepEqual(store.rows[0].payload, {
     kind: 'wake.root_undelivered', seq: 92, wakeClass: 'attention', swarmId: 'swarm-a',
+    attempt: 1,
     harness: 'claude-code', mechanism: 'session-socket', code: 'claude_session_transport_failed',
     at: store.rows[0].payload.at,
   });
 });
 
+test('a transient root wake failure retries on a later pass and delivery is final', async () => {
+  const store = memoryStore();
+  const frame = { seq: 94, wakeClass: 'attention', swarmId: 'swarm-a' };
+  const target = { harness: 'claude-code', sessionId: 'session-root' };
+  let sends = 0;
+  const deliver = async () => {
+    sends += 1;
+    if (sends === 1) {
+      throw Object.assign(new Error('socket refused'), { code: 'claude_session_transport_failed' });
+    }
+    return { delivered: true };
+  };
+
+  await assert.rejects(deliverRootWakeOnce({ store, frame, target, deliver }),
+    (error) => error?.code === 'claude_session_transport_failed');
+  const recovered = await deliverRootWakeOnce({ store, frame, target, deliver });
+  const replay = await deliverRootWakeOnce({ store, frame, target, deliver });
+
+  assert.equal(recovered.delivered, true);
+  assert.equal(recovered.attempt, 2);
+  assert.deepEqual(replay, { delivered: false, duplicate: true });
+  assert.equal(sends, 2);
+  assert.deepEqual(store.rows.map((row) => [row.payload.kind, row.payload.attempt]), [
+    ['wake.root_undelivered', 1], ['wake.root_delivered', 2],
+  ]);
+});
+
+test('a permanent root wake failure stops at the durable attempt cap', async () => {
+  const store = memoryStore();
+  const frame = { seq: 95, wakeClass: 'attention', swarmId: 'swarm-a' };
+  const target = { harness: 'claude-code', sessionId: 'session-root' };
+  let sends = 0;
+  const deliver = async () => {
+    sends += 1;
+    throw Object.assign(new Error('socket refused'), { code: 'claude_session_transport_failed' });
+  };
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await assert.rejects(deliverRootWakeOnce({ store, frame, target, deliver }),
+      (error) => error?.code === 'claude_session_transport_failed');
+  }
+  const exhausted = await deliverRootWakeOnce({ store, frame, target, deliver });
+
+  assert.deepEqual(exhausted, {
+    delivered: false, exhausted: true, attempts: 3, code: 'claude_session_transport_failed',
+  });
+  assert.equal(sends, 3);
+  assert.deepEqual(store.rows.map((row) => row.payload.attempt), [1, 2, 3]);
+  assert.deepEqual(new Set(store.rows.map((row) => row.idempotencyKey)).size, 3);
+});
+
 test('root delivery receipt schemas are discoverable runtime driver rows', () => {
   assert.deepEqual(Object.keys(SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS['wake.root_delivered'].fields), [
-    'seq', 'wakeClass', 'swarmId', 'runId', 'harness', 'mechanism', 'sessionId', 'at',
+    'seq', 'wakeClass', 'swarmId', 'runId', 'workerId', 'attempt', 'harness', 'mechanism', 'sessionId', 'at',
   ]);
   assert.deepEqual(Object.keys(SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS['wake.root_undelivered'].fields), [
-    'seq', 'wakeClass', 'swarmId', 'runId', 'harness', 'mechanism', 'code', 'at',
+    'seq', 'wakeClass', 'swarmId', 'runId', 'workerId', 'attempt', 'harness', 'mechanism', 'code', 'at',
   ]);
 });
 
