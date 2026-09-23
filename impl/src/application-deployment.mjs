@@ -2688,9 +2688,14 @@ function deriveRouteDegrades({ log, routes, refusals = null }) {
         resetAt,
         resetAtText: typeof payload.resetAtText === 'string' && payload.resetAtText.length > 0
           ? payload.resetAtText : null,
+        // #456 item 2: the probe instant of a provider-QUOTA degrade whose provider named no
+        // reset — the fault's own window when its words named one, else the registry's
+        // fault-probe row (`degradeProbeAfter`). A quota window is a usage-window fact, so the
+        // bound is a quota fact (#575). A stall or socket episode names no next instant of its
+        // own: its recovery is the evidence — a later successful turn, or the operator's
+        // routeProbe override the refusal names — never a clock.
         probeAfter: resetAt === null && faultClass === PROVIDER_FAULT_CODES.quota
           ? degradeProbeAfter(to, quotaRefusalText(observed, eventKey)) : null,
-        probeFromText: quotaRefusalText(observed, eventKey) !== null,
       }));
     }
   }
@@ -2700,14 +2705,29 @@ function deriveRouteDegrades({ log, routes, refusals = null }) {
     const scope = routeQuotaScope(route);
     if (key === null || scope === null) continue;
     const episode = scopeEpisodes.get(scope);
-    if (episode) episodes.set(key, episode);
+    // #575: the episode carries the SERVED route beside its own ledger spelling, so the live
+    // block a recruit reads names coordinates the route table admits, and the advice row's
+    // route matches them too.
+    if (episode) {
+      episodes.set(key, Object.freeze({
+        ...episode,
+        servedRoute: Object.freeze({ ...route }),
+        next: episode.next === null ? null : Object.freeze({
+          ...episode.next,
+          route: Object.freeze({ ...route }),
+        }),
+      }));
+    }
   }
   return episodes;
 }
-
 /** The live degrade block for one route, or null: an episode no later successful turn and no
  * later verified probe has retired. `success`/`probeVerifiedAt` are the two readings the caller
- * owns; both are instants, and the later one wins. */
+ * owns; both are instants, and the later one wins. The block names the SERVED route's coordinates
+ * (`episode.servedRoute`, the row the episode is attached to), never the ledger event's own
+ * spelling — a degrade recorded under a version-suffixed harness label is still a fact about the
+ * served route (#575), and a block that published the ledger spelling would pin a probe recruit
+ * to a route the route table refuses. */
 function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null, now = null } = {}) {
   const retired = [successAt, probeVerifiedAt].filter((at) => typeof at === 'string');
   for (const at of retired) {
@@ -2721,15 +2741,18 @@ function liveDegradeBlock(episode, { successAt = null, probeVerifiedAt = null, n
   // no instant) keeps waiting for the probe its `next` asks for.
   if (episode.resetAt !== null && Number.isFinite(now) && Date.parse(episode.resetAt) <= now) return null;
   return Object.freeze({
-    state: 'degraded', scope: episode.scope ?? null, route: episode.route, since: episode.window.from,
+    state: 'degraded', scope: episode.scope ?? null,
+    route: episode.servedRoute ?? episode.route, since: episode.window.from,
     reason: episode.faultClass, faultClass: episode.faultClass,
     resetAt: episode.resetAt, resetAtText: episode.resetAtText,
     // #456 item 2: the row never sits degraded with no next step — it names the instant the route
-    // clears (`clearsAt`: the provider's own reset when it named one, else the probe instant) and,
-    // for a provider that named none, the instant ONE probe recruit is admitted at (`probeAfter`).
+    // clears (`clearsAt`: the provider's own reset when it named one, else the probe instant the
+    // fault's own window derived) and, for a provider that named none, the instant ONE probe
+    // recruit is admitted at (`probeAfter`). #575: the probe instant clears the episode whether
+    // the fault's window was read from the provider's words or from the registry's fault-probe
+    // row — a clear gated on the words alone never expired, and the route sat degraded forever.
     probeAfter: episode.probeAfter ?? null,
-    clearsAt: episode.resetAt
-      ?? (episode.probeFromText === true ? episode.probeAfter : null) ?? null,
+    clearsAt: episode.resetAt ?? episode.probeAfter ?? null,
     participants: episode.participants,
     window: episode.window, count: episode.count, next: episode.next,
   });

@@ -1143,16 +1143,22 @@ export class OmpRpcCli {
         session.setupFailed = true;
         // #342: the crash row carries the process's own last words beside the exit fact, so a
         // dead seat reads "Model … not found" on the participant row instead of a bare exit.
-        const stderrTail = typeof error?.stderrTail === 'string' ? error.stderrTail : '';
-        this._emit(session, 'lifecycle.crashed', {
-          phase: 'setup', usageSeal: this._usageSeal(session),
-          error: String(error?.message ?? error),
-          code: error?.code ?? 'setup_process_exit',
-          exitCode: error?.exitCode ?? null, signal: error?.signal ?? null,
-          stderrTail,
-        });
+        // #575: a stop that lands during setup owns the exit — kill() holds the transport's
+        // close authority and kill.confirmed is the terminal fact — so the exit of a killing
+        // session mints no crash cert. A provider answer is the only thing that types one; a
+        // stop certified as a provider fault degraded the route the seat was born on.
+        if (!session.killing) {
+          const stderrTail = typeof error?.stderrTail === 'string' ? error.stderrTail : '';
+          this._emit(session, 'lifecycle.crashed', {
+            phase: 'setup', usageSeal: this._usageSeal(session),
+            error: String(error?.message ?? error),
+            code: error?.code ?? 'setup_process_exit',
+            exitCode: error?.exitCode ?? null, signal: error?.signal ?? null,
+            stderrTail,
+          });
+        }
         await session.process.kill({ kind: 'kill.confirmed', payload: { terminalCause: 'setup', usageSeal: unavailableUsageSeal() } });
-        return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error), stderrTail };
+        return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error), stderrTail: typeof error?.stderrTail === 'string' ? error.stderrTail : '' };
       }
       // The exact process-lifecycle contract shape (validProcessReadyPayload is exact-keys):
       if (workerPolicyObserved) {

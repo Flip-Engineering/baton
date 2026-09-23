@@ -2662,17 +2662,24 @@ export class SwarmRuntime {
    * runtime CLOSED (the probe's own turn answered it) is not a live degrade, so the row reads ready
    * with the quota axis back to `ok`. Exactly the episode is matched — the clearing names the
    * admission, the admission names the episode — so a route the provider faulted AGAIN (a new
-   * episode, a new probe instant) reads degraded until ITS probe answers. A row the deployment
-   * derives as `blocked` keeps its own verdict: a refusal of its own is not a probe's to clear. */
+   * episode, a new probe instant) reads degraded until ITS probe answers. #575: the answer speaks
+   * for the provider-fault blocks the row carries too (the quota axis included) — a probe that
+   * turned on the route is the fact a block whose provider named no instant was waiting for —
+   * while a block that names no provider fault (a static readiness refusal) keeps its own
+   * verdict. */
   _withRouteRecovery(row) {
     const degraded = row?.degraded ?? null;
-    if (degraded === null || row.state !== 'degraded') return row;
+    if (degraded === null) return row;
+    const providerFacted = row.state === 'degraded'
+      || row?.quota?.state === 'exhausted'
+      || (typeof row?.code === 'string' && row.code.startsWith('provider_'));
+    if (!providerFacted) return row;
     const route = swarmRouteShape(row.route ?? null);
     const episodeAt = routeProbeEpisodeAt(degraded);
     if (route === null || episodeAt === null) return row;
     if (!this._routeProbeEpisodeRecovered(route, episodeAt)) return row;
     return Object.freeze({
-      ...row, state: 'ready', resetAt: null, reason: null,
+      ...row, state: 'ready', resetAt: null, reason: null, code: null,
       quota: Object.freeze({ state: 'ok', resetAt: null }), degraded: null,
     });
   }
