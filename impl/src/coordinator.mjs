@@ -2795,7 +2795,11 @@ export class Coordinator {
     if (typeof this._worktrees?.validateSessionContext === 'function') {
       const verdict = await this._worktrees.validateSessionContext(context);
       if (!verdict?.ok) {
-        throw new SessionSelectionError(verdict?.reason ?? 'session worktree is not reusable', 'session_context_mismatch');
+        // Issue #563: the worktree verdict's own code crosses the surface when it has one — a
+        // recorded base that is unknown, rewound or diverged is a named fact, not the generic
+        // session_context_mismatch that collapses all three.
+        throw new SessionSelectionError(verdict?.reason ?? 'session worktree is not reusable',
+          verdict?.code ?? 'session_context_mismatch');
       }
       return;
     }
