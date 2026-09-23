@@ -426,7 +426,7 @@ const drainReceipt = { state: 'closed' };
  *  `host.*` rows are the ones a deployment records through the same seam. */
 function hostFixture(t, { stopRecords, application, label }) {
   // sun_path is 103 bytes: the fixture root has to stay short (the issue351 fixtures' own rule).
-  const directory = mkdtempSync(`/tmp/bt450-${label}-`);
+  const directory = mkdtempSync(join(tmpdir(), `bt450-${label}-`));
   const lines = [];
   // The smallest server that satisfies the host's own contract: the stop path this file exercises
   // never listens, and `batonShutdown` is the Web leg's own receipt.

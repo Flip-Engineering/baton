@@ -19,6 +19,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +31,7 @@ const SCRIPT = fileURLToPath(new URL('../scripts/baton.mjs', import.meta.url));
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 
 function repository(t) {
-  const root = mkdtempSync('/tmp/bt507-repo-');
+  const root = mkdtempSync(join(tmpdir(), 'bt507-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'issue507@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Issue 507'], { cwd: root });
@@ -62,9 +63,9 @@ function adapter() {
 }
 
 function options(t) {
-  const deploymentRoot = mkdtempSync('/tmp/bt507-deployment-');
-  const configRoot = mkdtempSync('/tmp/bt507-config-');
-  const home = mkdtempSync('/tmp/bt507-home-');
+  const deploymentRoot = mkdtempSync(join(tmpdir(), 'bt507-deployment-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'bt507-config-'));
+  const home = mkdtempSync(join(tmpdir(), 'bt507-home-'));
   t.after(() => rmSync(deploymentRoot, { recursive: true, force: true }));
   t.after(() => rmSync(configRoot, { recursive: true, force: true }));
   t.after(() => rmSync(home, { recursive: true, force: true }));
@@ -227,8 +228,8 @@ test('507-b: one bounded page of wake frames over the real socket, cheaper than 
 });
 
 test('507-c: the argv reaches discovery — never the pre-fix unavailable-verb refusal', (t) => {
-  const home = mkdtempSync('/tmp/bt507-home-');
-  const checkout = mkdtempSync('/tmp/bt507-outside-');
+  const home = mkdtempSync(join(tmpdir(), 'bt507-home-'));
+  const checkout = mkdtempSync(join(tmpdir(), 'bt507-outside-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   t.after(() => rmSync(checkout, { recursive: true, force: true }));
   const child = spawnSync(process.execPath, [SCRIPT, 'deployment', 'wakes-since', '--since', '0'], {

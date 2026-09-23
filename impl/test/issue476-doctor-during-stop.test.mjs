@@ -28,6 +28,7 @@ import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -100,7 +101,7 @@ function initRepo(repo) {
  * in; it is generous because row (b) runs the real CLI in a child process.
  */
 async function fixture(t, label, { drainTimeoutMs = 8_000, stopDeadlineMs = 400, webDrainMs = 300 } = {}) {
-  const directory = mkdtempSync(`/tmp/bt476-${label}-`);
+  const directory = mkdtempSync(join(tmpdir(), `bt476-${label}-`));
   const repo = join(directory, 'repo');
   initRepo(repo);
   const home = join(directory, 'home');
@@ -309,7 +310,7 @@ test('476c: after the resident exits, doctor --check renders the needs_setup ans
   // cannot be in (its pid is the test runner's). So it is a REAL `baton serve`, spawned through
   // #471's helper, signalled the way an operator signals one, and read again once it has exited and
   // withdrawn its publication.
-  const directory = mkdtempSync('/tmp/bt476-exit-');
+  const directory = mkdtempSync(join(tmpdir(), 'bt476-exit-'));
   const repo = join(directory, 'repo');
   initRepo(repo);
   // A zero-assembly `baton serve` resolves the repository's own verification command, and a repo

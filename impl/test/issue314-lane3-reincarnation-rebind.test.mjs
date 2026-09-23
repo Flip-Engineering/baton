@@ -192,7 +192,7 @@ function publishSuccessor(f, { incarnation, socketPath, token }) {
  */
 async function startSuccessorResident({ token, session, card }) {
   if (typeof token !== 'string' || token.length === 0) throw new TypeError('the double needs a resident token');
-  const directory = mkdtempSync(join('/tmp', 'bt-314l3-double-'));
+  const directory = mkdtempSync(join(tmpdir(), 'bt-314l3-double-'));
   const socketPath = join(directory, 'resident.sock');
   const ledger = new Map();
   const keys = [];
