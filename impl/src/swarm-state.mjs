@@ -967,6 +967,13 @@ export function validateSwarmEvent(kind, payload) {
     if (!Array.isArray(p.changedPaths) || p.changedPaths.some((path) => !isNonEmptyString(path))) {
       refuse('swarm.contribution_integrated requires changedPaths as an array of paths', 'invalid_payload');
     }
+    // Issue #562: the paths the landing took out of the squash because the lane's base — the
+    // deployment's own effective-tree snapshot — carried them. Optional: a landing that excluded
+    // nothing writes no field, so every receipt recorded before this reads byte-identically.
+    if (p.inherited !== undefined
+      && (!Array.isArray(p.inherited) || p.inherited.some((path) => !isNonEmptyString(path)))) {
+      refuse('swarm.contribution_integrated inherited must be an array of paths', 'invalid_payload');
+    }
     if (p.gates !== undefined) {
       if (p.gates === null || typeof p.gates !== 'object' || Array.isArray(p.gates)) {
         refuse('swarm.contribution_integrated gates must be one object', 'invalid_payload');
@@ -2314,6 +2321,10 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       }),
       regenerated: Object.freeze([...(p.regenerated ?? [])]),
       conflicts: Object.freeze([...(p.conflicts ?? [])].map((row) => deepFreezeBody(row))),
+      // Issue #562: the paths the landing dropped because the lane's base carried them, kept on the
+      // receipt so the exclusion is never a silent one. Absent when the landing excluded nothing.
+      ...(Array.isArray(p.inherited) && p.inherited.length > 0
+        ? { inherited: Object.freeze([...p.inherited]) } : {}),
       issue: p.issue ?? null,
       dryRun: p.dryRun === true,
       actor: meta.actor, seq: meta.seq, ts: meta.ts,

@@ -2160,6 +2160,13 @@ function commitEnv(author, committer) {
  * private scaffolding into every other lane's checkout. */
 export const INTEGRATION_EXCLUDED_PREFIXES = Object.freeze(['.baton-brief/', '.baton/']);
 
+/** Issue #562: the identity the deployment's own effective-tree snapshot commits under. That
+ * snapshot is a lane worktree's BASE (application-deployment.mjs `repositorySnapshot`), so its tree
+ * is the resident's own checkout — including whatever that checkout had untracked-and-unignored at
+ * the moment the snapshot was taken. ONE derivation: the snapshot writer commits under it and the
+ * landing filter below reads it back. */
+export const SNAPSHOT_COMMIT_EMAIL = 'baton-snapshot@localhost';
+
 /**
  * Land one contribution's whole range as ONE squashed commit.
  *
@@ -2298,6 +2305,21 @@ export async function landContribution(repoRoot, request) {
         });
       }
       gitFile(['add', '-A'], checkout.dir, { stdio: 'pipe' });
+      // Issue #562: the paths this squash would carry only because the lane's BASE carried them. A
+      // lane worktree's base is the deployment's effective-tree snapshot, whose tree is the
+      // resident's checkout, so a file the resident had untracked-and-unignored then sits in every
+      // lane's base and the squash would land it as that lane's own addition. A path whose FIRST
+      // addition in this lane's history is the snapshot commit is the resident's content, never the
+      // lane's work: it leaves the index here, and the receipt names every path it took.
+      const inherited = [];
+      for (const path of sh('git', ['diff', '--cached', '--name-only', '--diff-filter=A'], checkout.dir)
+        .split('\n').filter((line) => line.length > 0)) {
+        const addedBy = sh('git', ['log', '--reverse', '--diff-filter=A', '--format=%ae', tip, '--', path], checkout.dir)
+          .split('\n').find((line) => line.length > 0) ?? null;
+        if (addedBy !== SNAPSHOT_COMMIT_EMAIL) continue;
+        gitFile(['rm', '--cached', '--quiet', '--', path], checkout.dir, { stdio: 'pipe' });
+        inherited.push(path);
+      }
       const changed = sh('git', ['diff', '--cached', '--name-only'], checkout.dir)
         .split('\n').filter((line) => line.length > 0).sort();
       const regenerated = changed.filter((path) => !changedBeforeRegeneration.includes(path));
@@ -2313,7 +2335,7 @@ export async function landContribution(repoRoot, request) {
       const targetChanged = sh('git', ['diff', '--name-only', base, ontoHead], checkout.dir)
         .split('\n').filter((line) => line.length > 0).sort();
       const overlaps = changed.filter((path) => targetChanged.includes(path));
-      return { checkout, squashSha, changed, regenerated, overlaps };
+      return { checkout, squashSha, changed, regenerated, overlaps, inherited };
     } catch (error) {
       await checkout.cleanup();
       throw error;
@@ -2334,7 +2356,7 @@ export async function landContribution(repoRoot, request) {
     targetHeadBefore = moved;
   }
 
-  const { checkout, squashSha, changed, regenerated, overlaps } = attempt;
+  const { checkout, squashSha, changed, regenerated, overlaps, inherited } = attempt;
   try {
     const gates = request.runGates
       ? await request.runGates(checkout.dir, changed, { base, targetHeadBefore, squashSha })
@@ -2413,11 +2435,12 @@ export async function landContribution(repoRoot, request) {
     }
     logEvent(request, 'worktree', 'worktree.contribution_landed', {
       contributionId, target, base, targetHeadBefore, squashSha, changedPaths: changed, dryRun,
+      ...(inherited.length === 0 ? {} : { inherited }),
     });
     return {
       base, target, targetHeadBefore,
       targetHeadAfter: dryRun ? null : squashSha,
-      squashSha, changedPaths: changed, regenerated, overlaps,
+      squashSha, changedPaths: changed, regenerated, overlaps, inherited,
       gates: {
         files: [...(gates?.files ?? [])],
         verdictLine: gates?.verdictLine ?? null,
