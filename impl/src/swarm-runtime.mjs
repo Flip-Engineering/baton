@@ -2474,14 +2474,20 @@ export class SwarmRuntime {
    * observing call, one row per turn under the reporter's own deterministic key
    * (`swarm-turn-report-owed:swarmId:participantId:workerId:turnEpoch:turnSeq` - a prefix of its own, so the owed record never shares a key with the reporter own `swarm.turn_reported` row), so a faulted append is repaired
    * by the next pass and a replay adds nothing. A report with a live parent belongs to that parent
-   * and is never re-addressed to the root here. */
+   * and is never re-addressed to the root here. A report whose named parent is gone — the fold no
+   * longer holds the seat, or it holds it in any state but active — is an orphan: no live seat can
+   * be woken for it, so the same derivation addresses it to the root, and a parent that dies after
+   * the turn re-derives the row on the first observing pass after the death. */
   _reconcileTurnReportedRows(swarm, actor) {
     const owed = [];
     const seen = new Set();
     for (const event of this.store.eventsView()) {
       const payload = event.kind === 'driver.recorded' ? event.payload : null;
       if (payload?.kind !== 'swarm.turn_reported' || payload.swarmId !== swarm.swarmId) continue;
-      if (payload.parentId !== null && payload.parentId !== undefined) continue;
+      if (payload.parentId !== null && payload.parentId !== undefined) {
+        const parent = swarm.participants?.[payload.parentId] ?? null;
+        if (parent?.status === 'active') continue;
+      }
       const turn = `${payload.participantId}:${payload.workerId ?? ''}:${payload.turnEpoch ?? ''}:${payload.turnSeq ?? ''}`;
       if (seen.has(turn)) continue;
       seen.add(turn);

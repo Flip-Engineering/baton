@@ -143,3 +143,35 @@ test("564-t6: reportTurnEnd drives the reconciler when the runtime provides it (
   const keys = f.store.eventsView().filter((e) => e.payload?.kind === "swarm.turn_reported").length;
   assert.equal(keys, 1, "and the owed record never collides with the reporter own swarm.turn_reported row");
 });
+
+test('564-t7: a report whose parent is gone is orphaned onto the root, and a live parent never is', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'orphaned turn end waits on the root (#564)' });
+  await f.call('recruit', { participantId: 'lead', objective: 'hold the lane' });
+  f.turn({ participantId: 'worker-a', workerId: 'w-4', turnSeq: 5, turnEpoch: 1, parentId: 'lead',
+    report: 'the child slice is done and waits on the parent' });
+  assert.equal(f.runtime._reconcileTurnReportedRows(f.store.swarm('baton'), 'test').length, 0,
+    'while the parent is active the report is the parent\'s alone');
+  assert.equal(f.owedRows().length, 0, 'and nothing is recorded for the root yet');
+
+  // The parent seat leaves; the fold no longer holds an active parent, so the same derivation
+  // re-addresses the orphaned report to the root on the next observing pass.
+  await f.call('update', { event: 'swarm.participant_left', payload: {
+    swarmId: 'baton', participantId: 'lead', reason: 'lane done',
+  } });
+  const recorded = f.runtime._reconcileTurnReportedRows(f.store.swarm('baton'), 'test');
+  assert.equal(recorded.length, 1, 'the orphaned report is re-addressed to the root after the parent leaves');
+  const owed = f.owedRows();
+  assert.equal(owed.length, 1, 'exactly one durable owed row for the orphaned turn');
+  assert.equal(owed[0].owed, 'turn_reported', 'the orphan rides the same owed vocabulary');
+  assert.equal(owed[0].participantId, 'worker-a', 'the row names the reporting seat, not the lost parent');
+
+  // A parent the fold never held is the same orphan by observation.
+  f.turn({ participantId: 'worker-b', workerId: 'w-5', turnSeq: 2, turnEpoch: 1, parentId: 'never-recruited',
+    report: 'whose parent never existed' });
+  f.runtime._reconcileTurnReportedRows(f.store.swarm('baton'), 'test');
+  assert.equal(f.owedRows().length, 2, 'an unknown parent is a missing parent, and wakes the root');
+  const replay = f.runtime._reconcileTurnReportedRows(f.store.swarm('baton'), 'test');
+  assert.equal(f.owedRows().length, 2, 'the deterministic key keeps the replay a repair, not a duplicate');
+  assert.equal(replay.length, 2, 'the pass answers the rows it already holds');
+});
