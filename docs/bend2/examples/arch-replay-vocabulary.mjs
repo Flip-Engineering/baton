@@ -3,8 +3,10 @@
 // both implementations").
 //
 // The corpus freezes one sixteen-row swarm trace that exercises the durable event vocabulary end
-// to end — every caller-submittable kind the contract admits at the fold at least once, plus the
-// runtime seeds — and then replays it under four mutations: as frozen, with row 7 replaced by a
+// to end — eleven of the thirteen caller-submittable kinds the contract admits at the fold
+// (swarm.participant_left stays unexercised) and thirteen of the twenty-five kinds the fold
+// vocabulary holds, plus the runtime seeds — and then replays it under four mutations: as frozen,
+// with row 7 replaced by a
 // kind no vocabulary admits, with row 11 carrying one field its payload shape does not admit, and
 // with row 13 replaced by a runtime-composed row the fold knows and the contract set does not. One
 // case folds the frozen trace twice and compares the projections byte for byte. A refusal stops the
@@ -34,9 +36,10 @@ const SWARM_ID = 'sw-vocab';
 const CLOCK_ISO = '2026-09-23T00:00:00.000Z';
 const WORKSPACE = 'ws-0f1e2d3c4b5a69788796a5b4c3d2e1f0';
 
-/** The frozen trace. Sixteen rows: the two runtime seeds, then every caller-submittable kind the
- * contract admits at the fold exactly once (claim_updated twice — its second row is the handoff
- * that rewrites the holder in place), then the close. The contract's own holder_released operation
+/** The frozen trace. Sixteen rows: the two runtime seeds, then eleven of the thirteen
+ * caller-submittable kinds the contract admits at the fold (claim_updated twice — its second row
+ * is the handoff that rewrites the holder in place; swarm.participant_left stays unexercised),
+ * then the close. The contract's own holder_released operation
  * is not among them: it is an operation kind the runtime expands into assignment releases before
  * anything is folded, so the fold itself never sees it. */
 const FROZEN = [

@@ -2,8 +2,10 @@
 
 ## Claim
 
-A frozen sixteen-row swarm trace — every caller-submittable event kind at least once over one
-seeded swarm — answers the same required logical behaviour in a pure Bend2 decision model and in
+A frozen sixteen-row swarm trace — eleven of the thirteen caller-submittable event kinds
+(`swarm.participant_left` stays unexercised) and thirteen of the twenty-five kinds the durable
+vocabulary holds, over one seeded swarm — answers the same required logical behaviour in a pure
+Bend2 decision model and in
 the branch's real durable fold: the whole trace decodes and folds into its collections, a kind no
 vocabulary admits refuses decode at its own row with the prefix before it retained, a payload
 missing a required field refuses decode the same way, a runtime-composed row the contract set
@@ -77,14 +79,17 @@ zero disagreements.
 
 ## What the corpus establishes
 
-- **Decode coverage at a phase boundary (migration rule 3).** Every event kind the durable
-  vocabulary holds decodes through the real fold, and the whole trace replays into one projection:
+- **Decode coverage at a phase boundary (migration rule 3).** Thirteen of the twenty-five kinds
+  the durable vocabulary holds decode through the real fold, and the whole trace replays into one
+  projection:
   `pa2,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1`.
 - **Preserved history under refusal.** A refusal stops the replay at its own row and retains every
   row before it: the forged-kind case keeps the six-row prefix, the missing-field case the
   ten-row prefix.
 - **Two vocabularies, one fold (CS-17/CL-17).** The contract's caller-submittable set admits
-  thirteen of the sixteen rows; the runtime seeds and the composed bypass row fold while staying
+  thirteen of the sixteen rows, covering eleven of its thirteen kinds
+  (`swarm.participant_left` stays unexercised); the runtime seeds and the composed bypass row
+  fold while staying
   outside it (caller_rows 13 vs 12 on the driver case); the contract's own `swarm.holder_released`
   operation is not a fold row at all — the runtime expands it into assignment releases before
   anything is folded.
