@@ -8,8 +8,9 @@ import {
   KILL_RULES, TERMINAL_TASK_STATUSES, boundedProcessObservation, deepFreeze, typedTerminalCode,
 } from '../runtime-recovery.mjs';
 
-/** Report a swarm turn through its registered runtime extension under terminal authority. */
+/** Deliver a turn report through its swarm extension or Run lineage under terminal authority. */
 function reportTurn(coordinator, ctx, event, report) {
+  ctx.handle.reportedTurnEpoch = event.turnEpoch;
   const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
   const deliver = typeof participantRuntime?.onTurnCompleted === 'function'
     ? () => participantRuntime.onTurnCompleted({ workerId: ctx.workerId,
@@ -23,6 +24,7 @@ function reportTurn(coordinator, ctx, event, report) {
 }
 
 export function turnCompleted(coordinator, recorder, ctx) {
+        const turnWasReported = ctx.turnWasTerminal && ctx.handle.reportedTurnEpoch === ctx.turnEpoch;
 // Adapters may wrap the WorkerResult as { result } (MockAdapter) or emit it directly
         // (coordinator.test). Normalize so the logged claim and the gate both see the WorkerResult.
         const wr = (ctx.payload && ctx.payload.result !== undefined && ctx.payload.status === undefined) ? ctx.payload.result : ctx.payload;
@@ -38,12 +40,12 @@ export function turnCompleted(coordinator, recorder, ctx) {
           payload: sealVerdict.seal ? { ...wr, usageSeal: sealVerdict.seal } : wr,
         });
         const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
-        if (!ctx.turnWasTerminal) reportTurn(coordinator, ctx, terminalEvent, wr);
+        if (!turnWasReported) reportTurn(coordinator, ctx, terminalEvent, wr);
         // D2 blk-5 / C4: the turn-terminal seam clears the liveness marker (a zombie flag would
         // hold liveness forever and make rung-3 reap impossible).
         ctx.handle.turnInFlight = false;
         coordinator._clearWatchdog(ctx.handle);
-        if (ctx.turnWasTerminal) return;
+        if (turnWasReported) return;
         if (!sealVerdict.ok) {
           coordinator._failTerminalProviderGovernance(ctx.handle, terminalEvent, sealVerdict.code);
           return
@@ -123,7 +125,7 @@ const sealVerdict = coordinator._validateTerminalUsageSeal(ctx.handle, ctx.paylo
         // Issue #572: a crashed turn is a turn end — the orchestrator is woken with the failure
         // report exactly as for a completed turn. A crash landing after the turn already settled
         // (turnWasTerminal) reported at that settlement and does not report twice.
-        if (!ctx.turnWasTerminal) reportTurn(coordinator, ctx, terminalEvent,
+        if (!ctx.turnWasTerminal || ctx.handle.reportedTurnEpoch !== ctx.turnEpoch) reportTurn(coordinator, ctx, terminalEvent,
           { ...ctx.payload, status: 'failed' });
         // #295: the crash cert is a provider-shaped payload — the adapter types the same fault and
         // the same bounded detail (route, reset instant) it typed on the turn, so a rate-limited
@@ -195,7 +197,7 @@ export function exited(coordinator, recorder, ctx) {
 const terminalEvent = ctx.appendAttributed({ worker: ctx.workerId, harness: ctx.harness, turnEpoch: ctx.turnEpoch, kind: ctx.kind, actor: ctx.actor, payload: ctx.payload });
         // Issue #572: an exit that ends the turn reports to the orchestrator like any turn end;
         // an exit after the turn already settled reported at that settlement.
-        if (!ctx.turnWasTerminal) reportTurn(coordinator, ctx, terminalEvent,
+        if (!ctx.turnWasTerminal || ctx.handle.reportedTurnEpoch !== ctx.turnEpoch) reportTurn(coordinator, ctx, terminalEvent,
           { ...ctx.payload, status: 'failed' });
         const task = coordinator._tasks.get(ctx.handle.taskId);
         const failActiveTask = task && !TERMINAL_TASK_STATUSES.has(task.status)
