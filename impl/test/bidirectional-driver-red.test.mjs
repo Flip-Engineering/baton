@@ -218,7 +218,7 @@ async function startPausedRun(kit, runId, objective = 'park a completed turn (ma
   }, principal('owner'));
   await kit.application.approve(runId, proposed.plan.digest, principal('approver'));
   await until(
-    async () => (await kit.application.status(runId, principal('owner'))).phase === 'paused',
+    async () => (await kit.application.status(runId, principal('owner'))).attention.some((row) => row.kind === 'turn_checkpoint'),
     'task pause',
   );
   return kit.application.status(runId, principal('owner'));
@@ -334,7 +334,7 @@ test('BD-1 (durable claim): completed park carries origin; pausedTurnStatus + at
   const workerId = checkpoint.workerId;
   const pauseId = checkpoint.requestId;
   const pausedEntry = kit.driver.coordinator._log.read(workerId)
-    .find((e) => e.kind === 'turn.paused');
+    .find((e) => e.kind === 'turn.reported');
   assert.ok(pausedEntry, 'durable turn.paused must exist');
   assert.ok(pausedEntry.payload?.origin, 'v2 turn.paused payload must carry origin');
   assert.equal(pausedEntry.payload.origin.kind, 'turn_completed');
@@ -518,7 +518,7 @@ test('BD-2 (sanitize pipeline): redact-before-bound, unicode scalar safe, emptyâ
   assert.equal(emptyCp.claim.summary, null, 'empty summary projects null, never empty string');
   const emptyWorker = emptyCp.workerId;
   const emptyPaused = emptyKit.driver.coordinator._log.read(emptyWorker)
-    .find((e) => e.kind === 'turn.paused');
+    .find((e) => e.kind === 'turn.reported');
   assert.equal(emptyPaused.payload.origin.summary, null);
 
   // Unicode scalar boundary: no mid-scalar slice
