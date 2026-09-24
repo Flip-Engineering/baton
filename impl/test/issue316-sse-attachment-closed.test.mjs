@@ -45,6 +45,7 @@ import { createLocalSocketFetch } from '../src/local-web-transport.mjs';
 import { WebSessionStore } from '../src/web-auth.mjs';
 import { WebNorthbound, createLocalAuthenticatedWebServer } from '../src/web-northbound.mjs';
 import { ATTACHMENT_CLOSED_REASONS, WakeStream } from '../src/wake-stream.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 const ORIGIN = 'https://baton.local';
 const REPO_ID = 'repo-issue-316-sse';
@@ -106,14 +107,12 @@ async function servedResident(t, { stream = null, binding = null } = {}) {
     wakes: stream ?? new WakeStream({ coordination, pollMs: 25 }),
   });
   const server = createLocalAuthenticatedWebServer(web);
-  // sun_path is bounded (104 bytes) and the host refuses a bound path over 103, so the socket root
-  // is minted under the SHORT system temp root — the rule the resident fixtures already follow
-  // (issue276/288/351/356/365/445/450) — never derived from the ambient one: `mkdtemp` appends SIX
-  // random characters, so a probe that stands them in with one character reads five bytes short. An
-  // ambient root of 65..69 bytes (a suite root minted under this host's system temp dir is 67) was
-  // then admitted and minted a 104..108-byte socket path the host refused: every row of this file,
-  // but only inside a gate that hands its files that root (#446; row 316-sse-d).
-  const socketDir = mkdtempSync('/tmp/baton-316sse-');
+  // sun_path is bounded (104 bytes) and the host refuses a bound path over 103, so the socket
+  // root goes through the measure-then-fall-back derivation (fixture-root.mjs): contained under
+  // the ambient TMPDIR when the socket path fits (#571), minted under the short system root when
+  // a deep ambient root — a seat's runtime tmp, a gate's 65..69-byte root (#446) — would push it
+  // past the bound. `mkdtemp` appends SIX random characters, so the probe stands in the full six.
+  const socketDir = fixtureSocketRoot('baton-316sse-');
   roots.push(socketDir);
   const socketPath = join(socketDir, 'resident.sock');
   const host = new BatonWebHost({

@@ -25,6 +25,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { serialize, deserialize } from 'node:v8';
@@ -64,7 +65,7 @@ function repository(t, root) {
 }
 
 function fixtureRoot(t, label) {
-  const root = mkdtempSync(`/tmp/bt351-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt351-${label}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }

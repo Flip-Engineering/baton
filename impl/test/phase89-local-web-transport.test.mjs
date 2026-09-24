@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -19,7 +21,7 @@ const REPO = 'repo-phase89-local';
 const ORIGIN = 'https://baton.local';
 
 function root(t) {
-  const directory = mkdtempSync('/tmp/bt89-local-');
+  const directory = fixtureSocketRoot('bt89-local-');
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }

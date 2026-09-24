@@ -49,6 +49,7 @@ import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs'
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { McpFleetServer } from '../src/mcp-northbound.mjs';
 import * as bridgeModule from '../src/mcp-web-bridge.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 const { BatonWebApplicationFacade, connectBatonWebApplication } = bridgeModule;
 /** docs/49 §6.1's rebind authority, read as data so this file is an honest red-before skeleton: at
@@ -192,7 +193,7 @@ function publishSuccessor(f, { incarnation, socketPath, token }) {
  */
 async function startSuccessorResident({ token, session, card }) {
   if (typeof token !== 'string' || token.length === 0) throw new TypeError('the double needs a resident token');
-  const directory = mkdtempSync(join('/tmp', 'bt-314l3-double-'));
+  const directory = fixtureSocketRoot('bt-314l3-double-');
   const socketPath = join(directory, 'resident.sock');
   const ledger = new Map();
   const keys = [];
