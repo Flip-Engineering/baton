@@ -755,7 +755,8 @@ export function* _startupReconstructionPasses(coordinator, recorder) {
                 recorder.recordDriver('worktree.removed', {
                   workspaceId: row.physicalOwnerId, participantId: null, workerId: null,
                   reason: 'crash_reconciliation', snapshot: row.snapshot ?? null,
-                  branch: row.branch ?? null, at: new Date().toISOString(),
+                  branch: row.branch ?? null, baseSha: row.baseSha ?? null,
+                  at: new Date().toISOString(),
                 }, `worktree.removed:${row.physicalOwnerId}:${row.snapshot ?? 'none'}`);
               }
               for (const row of report?.diagnostics ?? []) {

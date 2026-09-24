@@ -3541,6 +3541,10 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       // Only a checkout whose branch contains its HEAD may be removed here, and the row
       // says so before the removal happens.
       let crashSnapshotSha = null;
+      // #568: the base the preserved ref diffed from, so a later --resume-from can carry the
+      // snapshot after the owner metadata is gone (the durable worktree.removed row is then
+      // the only record that names it).
+      const crashBaseSha = typeof ownerReceipt?.baseSha === 'string' ? ownerReceipt.baseSha : null;
       if (isPhysicalWorkspaceId(normalizedTaskId) && existsSync(fullDir)) {
         const lane = laneBranchState(repoRoot, normalizedTaskId, fullDir);
         if (!lane.branchSha || !lane.contained) {
@@ -3716,13 +3720,13 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           logEvent(opts, taskId, 'worktree.removed', {
             workspaceId: normalizedTaskId, participantId: null,
             reason: 'crash_reconciliation', snapshot: crashSnapshotSha,
-            branch: `baton/${taskId}`,
+            branch: `baton/${taskId}`, baseSha: crashBaseSha,
           });
         }
         if (hadDir && physicalOwner) {
           report.removedWorkspaces.push(Object.freeze({
             physicalOwnerId: normalizedTaskId, snapshot: crashSnapshotSha,
-            branch: `baton/${taskId}`,
+            branch: `baton/${taskId}`, baseSha: crashBaseSha,
           }));
         }
         if (ownerReceipt) {
