@@ -71,6 +71,61 @@ const writeDeniedServer = (bare) => spawn(process.execPath, ['-e', [
 ].join('\n')], { stdio: ['ignore', 'pipe', 'inherit'] });
 
 const principal = { actor: 'direct:issue573-root', principalId: 'issue573-root', sessionId: 'issue573-root' };
+
+/**
+ * The credential-gated publish remote (#573's Required case): reads are served anonymously by the
+ * REAL `git upload-pack --stateless-rpc` against a real bare repository, and a push is served by
+ * the REAL `git receive-pack --stateless-rpc` only when the request carries the expected Basic
+ * credential — the shape of an HTTPS remote the owner's configured credential helper can answer.
+ */
+const authGatedServer = (bare, expectedAuth) => spawn(process.execPath, ['-e', [
+  'const { createServer } = require(\'node:http\');',
+  'const { spawnSync } = require(\'node:child_process\');',
+  `const bare = ${JSON.stringify(bare)};`,
+  `const expectedAuth = ${JSON.stringify(expectedAuth)};`,
+  'const server = createServer((request, response) => {',
+  '  const url = request.url ?? \'\';',
+  '  const chunks = [];',
+  '  request.on(\'data\', (chunk) => chunks.push(chunk));',
+  '  request.on(\'end\', () => {',
+  '    if (url.includes(\'service=git-upload-pack\') || url.endsWith(\'/git-upload-pack\')) {',
+  '      const advertise = url.includes(\'service=\');',
+  '      const run = spawnSync(\'git\', [\'upload-pack\', \'--stateless-rpc\', ...(advertise ? [\'--advertise-refs\'] : []), bare],',
+  '        { input: Buffer.concat(chunks), maxBuffer: 8 * 1024 * 1024 });',
+  '      if (!advertise) {',
+  '        response.writeHead(200, { \'Content-Type\': \'application/x-git-upload-pack-result\' });',
+  '        response.end(run.stdout);',
+  '        return;',
+  '      }',
+  '      response.writeHead(200, { \'Content-Type\': \'application/x-git-upload-pack-advertisement\' });',
+  '      response.write(\'001e# service=git-upload-pack\\n\');',
+  '      response.write(\'0000\');',
+  '      response.end(run.stdout);',
+  '      return;',
+  '    }',
+  '    if ((url.includes(\'service=git-receive-pack\') || url.endsWith(\'/git-receive-pack\'))'
+    + ' && request.headers.authorization === expectedAuth) {',
+  '      const advertise = url.includes(\'service=\');',
+  '      const run = spawnSync(\'git\', [\'receive-pack\', \'--stateless-rpc\', ...(advertise ? [\'--advertise-refs\'] : []), bare],',
+  '        { input: Buffer.concat(chunks), maxBuffer: 8 * 1024 * 1024 });',
+  '      if (!advertise) {',
+  '        response.writeHead(200, { \'Content-Type\': \'application/x-git-receive-pack-result\' });',
+  '        response.end(run.stdout);',
+  '        return;',
+  '      }',
+  '      response.writeHead(200, { \'Content-Type\': \'application/x-git-receive-pack-advertisement\' });',
+  '      response.write(\'001f# service=git-receive-pack\\n\');',
+  '      response.write(\'0000\');',
+  '      response.end(run.stdout);',
+  '      return;',
+  '    }',
+  '    response.statusCode = 401;',
+  '    response.setHeader(\'WWW-Authenticate\', \'Basic realm="baton issue573 push"\');',
+  '    response.end(\'401 Unauthorized\\n\');',
+  '  });',
+  '});',
+  'server.listen(0, \'127.0.0.1\', () => process.stdout.write(String(server.address().port)));',
+].join('\n')], { stdio: ['ignore', 'pipe', 'inherit'] });
 const QUIET_GIT_ENV = { GIT_PAGER: 'cat', PAGER: 'cat', GIT_TERMINAL_PROMPT: '0' };
 const HAVE_GIT = (() => {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -101,16 +156,32 @@ const ITEMS = [
   { id: 'publish-preflight', status: 'delivered', change: 'Preflight the declared remote before the gate run', files: ['impl/src/worktree.mjs'], test: 'node --test test/issue573-preflight-publish.test.mjs', evidence: 'suite green' },
 ];
 
+const FIXTURE_CREDENTIAL = 'baton573:hunter2573';
+const EXPECTED_AUTH = `Basic ${Buffer.from(FIXTURE_CREDENTIAL).toString('base64')}`;
+
 /**
  * A real repository with a target branch and a lane branch, an accepted contribution naming the
  * lane tip, and a declared shared remote that cannot publish: `unreachable` names a destination
  * that does not exist, `unauthenticated` points at a local HTTP server that answers 401 to every
- * request (the landing's git environment reads no credential store and is not allowed to prompt).
- * The fixture's gate callback counts its invocations, so a row can assert the derived gate run
- * never started.
+ * request (the landing's git environment reads no credential store and is not allowed to prompt),
+ * `auth-gated` serves reads anonymously and pushes only to the fixture credential. The fixture's
+ * gate callback counts its invocations, so a row can assert the derived gate run never started.
  */
-async function world(t, { mode }) {
+async function world(t, { mode, withCredential = false }) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-issue573-'));
+  // Every mode runs with the global git config pointed at an empty fixture HOME, so the only
+  // credential a landing's publish environment can find is one the fixture itself declared —
+  // the host's own global gitconfig never leaks into a row.
+  const home = join(directory, 'home');
+  mkdirSync(home, { recursive: true });
+  const previousHome = process.env.HOME;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  process.env.HOME = home;
+  process.env.XDG_CONFIG_HOME = join(home, 'xdg');
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previousXdg;
+  });
   const repo = join(directory, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'master', repo], { env: { ...process.env, ...QUIET_GIT_ENV } });
   git(repo, 'config', 'user.name', 'Issue 573');
@@ -130,10 +201,11 @@ async function world(t, { mode }) {
   const targetHead = git(repo, 'rev-parse', 'master');
 
   let publishRemote;
+  let bareRemote = null;
   let httpServer = null;
   if (mode === 'unreachable') {
     publishRemote = join(directory, 'no-such-directory', 'shared.git');
-  } else if (mode === 'unauthenticated' || mode === 'read-authorized-write-denied') {
+  } else if (mode === 'unauthenticated' || mode === 'read-authorized-write-denied' || mode === 'auth-gated') {
     // Fixture servers live in CHILD processes: the landing's git steps run synchronously on this
     // process, and a server sharing its event loop could never answer a request issued from the
     // same blocked loop.
@@ -155,7 +227,12 @@ async function world(t, { mode }) {
       execFileSync('git', ['init', '-q', '--bare', bare], { env: { ...process.env, ...QUIET_GIT_ENV } });
       git(bare, 'symbolic-ref', 'HEAD', 'refs/heads/master');
       git(repo, 'push', '-q', bare, 'master:master');
-      child = writeDeniedServer(bare);
+      if (mode === 'auth-gated') {
+        bareRemote = bare;
+        child = authGatedServer(bare, EXPECTED_AUTH);
+      } else {
+        child = writeDeniedServer(bare);
+      }
     }
     const port = await new Promise((resolve, reject) => {
       let buffer = '';
@@ -168,6 +245,14 @@ async function world(t, { mode }) {
       timer.unref();
     });
     publishRemote = `http://127.0.0.1:${port}/baton-issue573.git`;
+    if (withCredential) {
+      // The deployment owner's configured credential: a helper declared in the global gitconfig
+      // of the fixture HOME. The publish environment reads it; the hermetic local-only
+      // environment never does.
+      const [username, password] = FIXTURE_CREDENTIAL.split(':');
+      writeFileSync(join(home, '.gitconfig'),
+        `[credential]\n\thelper = "!f() { echo username=${username}; echo password=${password}; }; f"\n`);
+    }
     t.after(() => { child.kill(); });
   } else {
     throw new Error(`unknown fixture mode ${mode}`);
@@ -217,7 +302,7 @@ async function world(t, { mode }) {
     swarmId: 's1', contributionId: 'contribution:1', target: 'master', idempotencyKey: 'i573:integrate', ...args,
   }, principal);
   const foldRow = () => store.swarm('s1').contributions['contribution:1'];
-  return { directory, repo, store, runtime, integrate, foldRow, gateRuns: () => gateRuns, tip, targetHead, observedHead };
+  return { directory, repo, store, runtime, integrate, foldRow, gateRuns: () => gateRuns, tip, targetHead, observedHead, bareRemote };
 }
 
 // ── (a) the declared remote's destination does not exist ─────────────────────────────────────
@@ -265,4 +350,35 @@ test('573c: a remote that serves reads but refuses the push refuses the landing 
   assert.equal(w.gateRuns(), 0, 'the derived gate run never started');
   assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target is untouched');
   assert.equal(w.foldRow().integration, undefined, 'a refusal records no receipt');
+});
+
+// ── (d) the owner's configured credential publishes to an HTTPS-style remote ────────────────
+
+test('573d: a landing whose owner configures a credential for the declared remote publishes over HTTP', needsGit, async (t) => {
+  const w = await world(t, { mode: 'auth-gated', withCredential: true });
+
+  const answer = await w.integrate();
+
+  assert.equal(w.gateRuns(), 1, 'the derived gate run ran against the authenticated remote');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), answer.integration.squashSha,
+    'the local target ref ends at the landed squash');
+  assert.equal(git(w.bareRemote, 'rev-parse', 'refs/heads/master'), answer.integration.squashSha,
+    'the credential-gated remote holds the landed squash — the push authenticated with the owner\'s configured helper');
+  assert.equal(w.foldRow().integration.squashSha, answer.integration.squashSha, 'the receipt is recorded');
+});
+
+// ── (e) the same remote refuses when the owner's config holds no credential ─────────────────
+
+test('573e: the credential-gated remote refuses the landing when the owner configures no credential', needsGit, async (t) => {
+  const w = await world(t, { mode: 'auth-gated' });
+  const headBefore = git(w.repo, 'rev-parse', 'master');
+
+  const error = await w.integrate().then(() => null, (thrown) => thrown);
+
+  assert.ok(error, 'the landing refuses instead of spending the gate run on a remote it cannot authenticate to');
+  assert.equal(error.code, 'integrate_publish_unauthenticated');
+  assert.equal(w.gateRuns(), 0, 'the derived gate run never started');
+  assert.equal(git(w.repo, 'rev-parse', 'master'), headBefore, 'the target is untouched');
+  assert.equal(git(w.bareRemote, 'rev-parse', 'refs/heads/master'), w.targetHead,
+    'the remote holds only the fixture\'s initial publish — the refusal is the credential\'s absence, not the remote\'s shape');
 });
