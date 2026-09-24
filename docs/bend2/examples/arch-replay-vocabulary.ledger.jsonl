@@ -1,0 +1,16 @@
+{"kind":"swarm.created","payload":{"swarmId":"sw-vocab","purpose":"the event-vocabulary corpus","baseCommit":"31f356b2b1cd5a32a241116c52aa96ea7133fc4a"},"seq":1,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.participant_joined","payload":{"swarmId":"sw-vocab","participantId":"p1","role":"lead","workspaceId":"ws-0f1e2d3c4b5a69788796a5b4c3d2e1f0"},"seq":2,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.participant_joined","payload":{"swarmId":"sw-vocab","participantId":"p2","role":"worker"},"seq":3,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.group_updated","payload":{"swarmId":"sw-vocab","groupId":"g-review","members":["p1","p2"],"purpose":"review"},"seq":4,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.work_updated","payload":{"swarmId":"sw-vocab","workId":"w-vocab","objective":"the corpus work item"},"seq":5,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.coupling_updated","payload":{"swarmId":"sw-vocab","couplingId":"c-writer","coupling":"writer","action":"declare","participantId":"p1","workspaceId":"ws-0f1e2d3c4b5a69788796a5b4c3d2e1f0","name":"the corpus checkout"},"seq":6,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.claim_updated","payload":{"swarmId":"sw-vocab","claimId":"claim-vocab","participantId":"p1","workId":"w-vocab"},"seq":7,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.assignment_updated","payload":{"swarmId":"sw-vocab","assignmentId":"as-vocab","participantId":"p1","workId":"w-vocab","status":"active"},"seq":8,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.proposal_updated","payload":{"swarmId":"sw-vocab","proposalId":"prop-vocab","participantId":"p2","action":"propose","members":["p2"],"plan":{"work":[{"workId":"w-vocab-2","objective":"the proposed split"}],"claims":[{"participantId":"p2","workId":"w-vocab-2"}]}},"seq":9,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.context_updated","payload":{"swarmId":"sw-vocab","key":"corpus","body":"the frozen vocabulary trace"},"seq":10,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.contribution_recorded","payload":{"swarmId":"sw-vocab","contributionId":"c1","participantId":"p1","body":"the corpus contribution, recorded as text"},"seq":11,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.contribution_reviewed","payload":{"swarmId":"sw-vocab","contributionId":"c1","reviewerId":"p2","decision":"accept"},"seq":12,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.policy_updated","payload":{"swarmId":"sw-vocab","rerouteOnProviderFault":"manual"},"seq":13,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.claim_updated","payload":{"swarmId":"sw-vocab","claimId":"claim-vocab","participantId":"p1","handoffTo":"p2"},"seq":14,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.assignment_updated","payload":{"swarmId":"sw-vocab","assignmentId":"as-vocab","participantId":"p1","workId":"w-vocab","status":"released"},"seq":15,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}
+{"kind":"swarm.closed","payload":{"swarmId":"sw-vocab","reason":"the frozen vocabulary trace is complete"},"seq":16,"ts":"2026-09-23T00:00:00.000Z","actor":"corpus"}

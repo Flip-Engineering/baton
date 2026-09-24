@@ -1,156 +1,52 @@
-<div align="center">
+# Baton2
 
-<img src=".github/assets/banner.svg" alt="Baton — cross-harness agent orchestration" width="100%"/>
+Baton2 is the Bend2 rewrite of Baton, a system for coordinating coding agents, preserving their
+work, reviewing contributions, and publishing verified changes. Development takes place on the
+`bend2-rewrite` branch.
 
-</div>
+The target is a native application written in Bend2 with C host effects for operating-system
+services. The migration plan covers the decision core, durable state, worker lifecycle,
+verification, publication, and CLI, MCP, and web interfaces. Its final phase removes the temporary
+JavaScript boundary and the Node runtime.
 
+The rewrite is in development. This branch contains the current JavaScript implementation,
+the target design, and compiled language examples. Production migration depends on the evidence
+gates in the [rewrite plan](docs/bend2/rewrite-plan.md).
 
-# baton
+## Development contract
 
-**Repository:** <https://github.com/Flip-Engineering/baton>
+The [16 approved prohibitions](docs/bend2/laws-proposed.md) are Baton2's development contracts.
+They cover recoverable acceptance, uncertain external effects, truthful evidence, work
+preservation, authorization, continuation responsibility, and publication to the designated
+shared destination. The [approval record](docs/bend2/authorization.md) identifies the reviewed
+revision and its binding entries.
 
-**Cross-harness agent orchestration.** An orchestrator (an AI agent in one full coding harness, or a person at a terminal) directs other full coding-harness sessions as subordinate workers. Each worker gets its own git worktree, a written brief, a communication channel back to the orchestrator, live telemetry, mid-flight guidance, and a durable ledger recording what it did. The orchestrator is notified when a ledger event occurs, reads typed refusal codes that name the exact field and rule for any malformed request, and receives a validated contribution report with structured fields for what changed.
+The [language review](docs/bend2/language-review.md) records what the pinned compiler and runtime
+establish. Filesystem durability, process supervision and cancellation, JSON, HTTP/TLS, and
+cryptography have named prerequisites. Architecture changes and migration phases must satisfy
+their recorded proofs before taking production authority.
 
----
+## Design and evidence
 
-## What baton is
+- [Rewrite plan](docs/bend2/rewrite-plan.md): migration phases, entry conditions, verification, and rollback.
+- [Target architecture](docs/bend2/target-architecture.md): subsystem ownership and interfaces.
+- [Architecture review](docs/bend2/architecture-review.md): proposed changes and their consequences.
+- [Migration readiness](docs/bend2/go-no-go.md): evidence available and remaining prerequisites.
+- [Language reference](docs/bend2/reference/README.md): vendored `bendlang/bend` commit
+  `a49524265bdfa5753a4bf38e25f0574a705dd868` and Bend 2.0.25.
+- [Compiled examples](docs/bend2/examples/index.md): capability probes with commands and observed results.
 
-A run-centric **fleet application** with a **swarm runtime** on top:
+## Working with this branch
 
-- **Runs.** You state an outcome; baton compiles it into an approved Plan, routes it onto a live worker seat, watches liveness, fields questions, verifies results against evidence it re-derives itself in a fresh worktree, and closes every resource it opened.
-- **Swarms.** An orchestrator creates a swarm, recruits participants onto exact routes with path scopes and permissions, guides them, groups and couples them, and reads one view of who holds what. Participants report through a validated **contribution contract** (subject, base, commit, items, needs-from-others, carried-forward), reviewed and landed by the orchestrator. A seat can itself be a **sub-orchestrator**: granted `recruit` and `organize`, it recruits and steers its own builders.
-- **The resident.** `baton serve` hosts a standing, owner-local deployment for one repository: an authenticated command bus over an owner-only socket, a wake stream, and a durable coordination ledger under `.git/baton/`. The CLI and the MCP bridge are thin authenticated clients of the same authority; a resident survives client crashes and answers again after a restart from its checkpoint.
-- **The fleet.** Every worker is a full harness session in its own worktree, on whatever model and provider you configure: Claude Code, Codex, Grok and Kimi natively, GLM and DeepSeek through [omp](https://github.com/Flip-Engineering/omp), Muse as a one-shot contributor route, or your own harness adapter. Each route carries its own billing basis — subscription seats never get a per-token price on their profile; metered API routes do.
+[CONTRIBUTING.md](CONTRIBUTING.md) describes the repository workflow.
+[AGENTS.md](AGENTS.md) defines its writing rules.
+[SYSTEM.md](SYSTEM.md) describes the current Baton implementation.
 
-Underneath sits the **Coordinator**: a plain-code reliability kernel (version fencing, confirm-it-stopped, at-least-once cursors, answer-exactly-once, log-is-truth). The orchestrator may be an AI model; the Coordinator is deterministic code and is never an AI model, so the parts of the system responsible for correctness do not depend on a model's output.
+Run the current implementation's verification from the repository root:
 
----
-
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph YOU["Orchestrator (an AI harness, a sub-orchestrator seat, or a person)"]
-        O[creates swarms · recruits · guides · reviews · lands]
-    end
-    subgraph SURFACES["Control surfaces — one command bus, one grammar (docs/36)"]
-        CLI["baton CLI<br/>(authenticated client)"]
-        MCP["MCP bridge<br/>(mcp-web.mjs over the resident)"]
-        WEB["resident bus — baton serve<br/>(owner-only socket + wake stream)"]
-        FAC["embedded facade — openBaton()"]
-    end
-    subgraph APP["Application"]
-        SW["swarms: create · recruit · guide · update · capture · check · view · watch · stop"]
-        RUN["runs: start · show · do · stop · export · evidence search"]
-        WAVES["waves: run · start · attach · progress · send · stop · list"]
-    end
-    subgraph COLLAB["Shared context"]
-        CTX["swarm context (whiteboard) · boards · scratchpads ·<br/>context packages · knowledge horizons · REPL cells"]
-    end
-    subgraph KERNEL["Coordinator kernel (plain code)"]
-        COORD["dispatch · fences · event ledger · checkpoint + replay ·<br/>trust gate · host capacity · worktree custody · reap"]
-    end
-    subgraph FLEET["Workers (full harnesses, own worktrees, a bridge back)"]
-        W["your configured routes — any harness, any model"]
-    end
-    YOU --> SURFACES --> APP --> KERNEL --> FLEET
-    APP <--> COLLAB
-    FLEET <--> COLLAB
+```sh
+npm test --prefix impl
 ```
 
-**One authority, three access points.** The CLI discovers the resident through `.git/baton/connection.json` and speaks the authenticated bus; the MCP bridge (`impl/scripts/mcp-web.mjs`) projects the same operation table to an agent client; `openBaton({repo, advanced})` embeds the application directly in a Node process. Provider credentials are never passed as command arguments and never reach a worker's environment.
-
-**Wakes.** `baton swarm watch <swarm> --follow` prints one JSON frame per coordination row as it is written. The bounded form (`--timeout-ms`, `--wake-class`) returns on the first row of a named class, or at its deadline, and resumes with `--after-seq`. Run `baton swarm --help` for the full wake-class set.
-
-**Verification.** When a seat reports that a task is done, the system re-runs verification in a fresh worktree at the seat's commit, and that re-run's result is the one that counts.
-
-**Turn-based steering.** Pausable harnesses end turns as checkpoints. Between turns, the driver can send a worker a nudge, wait, or claim signal. One-shot harnesses receive guidance that is stored and delivered on their next resume. A worker's worktree is preserved on its lane branch when it dies.
-
----
-
-## Quickstart
-
-Requires Node ≥ 20. The only runtime dependency is `@ast-grep/napi`. Baton is not yet published to npm — run it from a clone:
-
-```bash
-git clone https://github.com/Flip-Engineering/baton.git
-cd baton/impl && npm ci
-alias baton="node $(pwd)/scripts/baton.mjs"   # or add impl/scripts to your PATH
-
-cd /path/to/your/repository
-
-# 1. Host a standing resident for this repo, from a dedicated shell
-(nohup baton serve > /tmp/baton-serve.log 2>&1 < /dev/null &)
-baton doctor --check             # connection, served commit, route readiness, model profiles
-
-# 2. Create a swarm and recruit one worker onto an exact route
-baton swarm create "First swarm" --swarm-id my-first-swarm
-baton swarm recruit my-first-swarm worker-1 "Fix the failing test in src/parser.js" \
-  --options '{"exact":{"harness":"claude-code","model":"claude-sonnet-5","effort":"high"},"scope":["src/parser.js","test/parser.test.js"]}'
-
-# 3. Wait for a wake
-baton swarm watch my-first-swarm --after-seq 0 --wake-class contribution_recorded,dead --follow
-
-# 4. Review and land what the worker reports
-baton swarm view my-first-swarm --projection participants
-baton swarm update my-first-swarm swarm.contribution_reviewed \
-  --payload '{"contributionId":"<id-from-the-wake>","decision":"accept","reason":"looks right"}'
-baton swarm stop my-first-swarm worker-1 "landed"
-```
-
-`baton --help` lists every top-level verb; `baton help swarm`, `baton help run`, `baton help routing` and `baton help connection` render the topics in depth. The generated command inventories are [impl/CLI.md](impl/CLI.md) and [impl/MCP.md](impl/MCP.md).
-
-**Credentials** are read once at the deployment root and projected into each worker's isolated environment. They are never passed as command arguments and never printed.
-
-| Harness / provider | Where the credential goes |
-|---|---|
-| omp → GLM | `glm_key.json` at the deployment root (shipped default) |
-| omp → DeepSeek | `deepseek_key.json` at the deployment root (shipped default) |
-| omp → Kimi | `kimi_key.json` at the deployment root, or `baton credentials install kimi` (shipped default) |
-| omp → any other provider its own config supports | declared per deployment through the `openBaton` option `advanced.ompCredentials.providerKeyFiles` — a provider prefix mapped to the key file name at the deployment root; the route's refusal names this option |
-| Claude Code | the harness's own OAuth login |
-| Codex, Grok, native Kimi | the harness's own login |
-| Muse | the OS keyring (`muse login`), with a file as a fallback |
-| Artificial Analysis (optional model-profile data) | `BATON_AA_KEY`, or `~/.config/baton/aa_key` |
-
-Run `baton doctor --check` to confirm a route is ready before recruiting on it.
-
-**Restarting a resident, or developing baton itself?** See [CONTRIBUTING.md](CONTRIBUTING.md) — it covers the operator loop, the suite verdict, and the self-hosted development workflow in full.
-
----
-
-## Documentation map
-
-- **[SYSTEM.md](SYSTEM.md)** — the authoritative system design (read it second, after this file).
-- **[GLOSSARY.md](GLOSSARY.md)** — the project's jargon, defined plainly.
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — the self-hosted development loop, the suite verdict, and how to land a change.
-- **[docs/PROGRESS.md](docs/PROGRESS.md)** — the per-phase progress ledger, oldest first; a row is never rewritten to look greener than it was.
-- **[impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md)** — generated from the executable command registry.
-- **[impl/scripts/expected-red-tests.json](impl/scripts/expected-red-tests.json)** — the reasoned expected-red manifest for the test suite; **[impl/src/limits.mjs](impl/src/limits.mjs)** — the frame-limits registry, the one place a bound is declared.
-
-**Design documents (`docs/32`–`docs/48`)**
-
-| doc | what it settles |
-|---|---|
-| [32](docs/32-reflexive-orchestration.md) | Reflexive orchestration: decision channels, task boards, context packages as typed hand-offs, REPL objects |
-| [33](docs/33-shared-objects-repl-layer.md) | Shared objects and the REPL layer: content-addressed cells, named bindings |
-| [34](docs/34-knowledge-horizons.md) | Knowledge horizons: task → workflow → project graphs, promotion, brief-time activation |
-| [35](docs/35-turn-checkpoints.md) | Turn checkpoints: steering signals sent between turns |
-| [36](docs/36-unified-control-grammar.md) | One grammar across embedded, web, CLI and MCP; the generated inventories and the conformance gate |
-| [37](docs/37-wave-driver.md) · [37b](docs/37-holistic-runtime-convergence.md) | The shipped wave driver; holistic runtime convergence |
-| [38](docs/38-flip-experience.md) · [38b](docs/38-flip-visual-surfaces.md) | The operator experience and visual surfaces (`baton top`) |
-| [39](docs/39-swarm-runtime.md) | The swarm runtime: living swarms, tight and loose coupling, communication and shared context, the knowledge verbs on the bridge |
-| [40](docs/40-runtime-review-2026-09-12.md) · [41](docs/41-verification-recovery-review.md) | The runtime review with checked results; verification and contribution recovery |
-| [42](docs/42-suite-legitimacy.md) · [42b](docs/42-deployment-topology.md) | Suite legitimacy (expected-red reasons, the environment dimension); deployment topology beyond one host |
-| [43](docs/43-host-capacity-and-derived-floors.md) | Host capacity is the throttle; the replaying → reconstructing → answering contract; restart truth |
-| [44](docs/44-red-suffix-convention.md) | The `-red` test-suffix convention |
-| [45](docs/45-open-coordination.md) | Open coordination: joint couplings, claims, peers-now |
-| [46](docs/46-swarm-visibility.md) | Swarm visibility: one liveness derivation, the contributions ledger, the cost of a view |
-| [47](docs/47-the-reading-half.md) | The reading half: a recruited seat reads its issue, its docs, its peers, and the landed work |
-| [48](docs/48-reincarnation-in-place.md) | Resident reincarnation in place: the incarnation model, the handoff protocol, what survives and what drains |
-
-The earlier corpus (problem framing through the representation ladder, docs 00–31) and the campaign-era working papers are indexed in the [superseded README](docs/reference/README-superseded-2026-08-13.md) and under `docs/reference/evidence/`; nothing was discarded. Dated campaign reports live in [`reviews/`](reviews/).
-
-## Status
-
-Baton is under active development and does not yet have a tagged release or a published package. The [open issue list](https://github.com/Flip-Engineering/baton/issues) is the current work tracker (`bug` + `priority:high` marks something that broke in real use and is sequenced first). There is currently no LICENSE file in this repository; check with the maintainers before relying on the code for anything beyond reading the source.
+Language probes follow the [example convention](docs/bend2/examples/README.md).
+Each records its toolchain, commands, output, and the scope of its conclusion.
