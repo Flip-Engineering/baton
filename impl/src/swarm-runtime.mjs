@@ -1390,6 +1390,18 @@ export const SWARM_SEAT_READ_COMMANDS = Object.freeze({
     fields: Object.freeze({}),
     required: Object.freeze([]),
   }),
+  // The spill read (#358): a `[SPILLED …]` marker is only a citation if the seat it addresses
+  // can follow it. The spill id is the marker's own content address (`spill:sha256:<digest>`,
+  // minted by the coordination store's spill lane), and the body it names is what the seat gets.
+  'run.spill.read': Object.freeze({
+    permission: 'read', identityFields: Object.freeze(['runId']),
+    situation: 'read the durable body a [SPILLED \u2026] marker on your brief or a peer message cites',
+    fields: Object.freeze({
+      spillId: Object.freeze({ type: 'string', pattern: '^spill:sha256:[a-f0-9]{64}$',
+        description: 'the spill id the marker named' }),
+    }),
+    required: Object.freeze(['spillId']),
+  }),
 });
 export const SWARM_SEAT_READ_COMMAND_NAMES = Object.freeze(Object.keys(SWARM_SEAT_READ_COMMANDS));
 
@@ -5435,7 +5447,7 @@ export class SwarmRuntime {
   /** The seat read verbs (#441 lane B). Admission is the SAME closed contract the bridge ran
    * before dispatch, re-run here as the authority; the caller resolves through the ONE membership
    * resolution every other command uses, and the run/swarm identity is the token's — never the
-   * request's. All three answer the caller's own swarm; none of them writes anything. */
+   * request's. All four answer the caller's own swarm; none of them writes anything. */
   async _seatReadDispatch(command, args, principal, context) {
     validateSwarmSeatReadCommand(command, args);
     const swarm = this._swarm(args.swarmId);
@@ -5447,7 +5459,26 @@ export class SwarmRuntime {
     }
     if (command === 'run.package.read') return this._packageRead(swarm, args, caller);
     if (command === 'run.contributions.read') return this._contributionsRead(swarm, args);
+    if (command === 'run.spill.read') return this._spillRead(swarm, args, caller);
     return this._peersRead(swarm, caller, this.store.eventsView());
+  }
+
+  /** `run.spill.read` (#358): the durable body one `[SPILLED …]` marker cites. The spill's own
+   * content address is the whole admission — the id names exactly one body the deployment's spill
+   * lane minted, so a seat reads the body a lane cut off its brief or a peer message. The read is
+   * the store's ONE materialization (the same projection the application's own citation resolver
+   * serves), and an id nothing holds refuses typed without inventing a body. */
+  async _spillRead(swarm, args, caller) {
+    const spillId = args.spillId;
+    const spill = typeof this.store.materializeSpill === 'function'
+      ? this.store.materializeSpill(spillId) : null;
+    if (!spill || spill.body === null || spill.body === undefined) {
+      refuse('This spill is unknown to this deployment', 'swarm_spill_not_found',
+        { spillId, participantId: caller.participantId, runId: caller.runId, rule: 'spill-known',
+          correction: 'read the spill id exactly as the [SPILLED \u2026] marker spelled it' });
+    }
+    return { swarmId: swarm.swarmId, spillId: spill.spillId, digest: spill.digest,
+      bytes: spill.bytes, body: spill.body };
   }
 
   /** `run.package.read` (#441 item 1): the package's branch list, or ONE branch's text.
@@ -5954,9 +5985,11 @@ export class SwarmRuntime {
       args.message, args.idempotencyKey])}`;
     const guidance = { from, priority, inReplyTo };
     const body = this._notificationBody(args.message, receiptId, principal.actor);
+    // The citation names the ONE verb the addressed seat can follow (#358): a marker that named
+    // no readable route left the seat searching its temp dir for a body the ledger holds.
     const citation = body.spilled === null ? ''
       : ` [SPILLED ${JSON.stringify({ spilled: true, bytes: body.spilled.bytes,
-        digest: body.spilled.digest, spill: body.spilled.spill })}]`;
+        digest: body.spilled.digest, spill: body.spilled.spill, read: 'run.spill.read' })}]`;
     // The provenance the issue asks for rides the DELIVERED text itself, in the run layer's own
     // peer-message shape: who sent it, from which swarm, when — before the body a reader judges.
     const frame = `[NOTIFY ${receiptId} from=${from.participantId ?? 'root'}@${from.swarmId}`
@@ -8833,8 +8866,12 @@ export class SwarmRuntime {
         // package attach settles the seat and its Run exactly as a refused run start does, through
         // ONE withdrawal (never a second cleanup path). The caller sees the original refusal, or the
         // typed conflict the Run itself answers (below).
+        // #358: the spawn's own receipt — the objective's spill facts — rides the recruit
+        // answer, so the recruiter reads a spill the moment it happens. A host whose startRun
+        // reports nothing carries no facts, and the receipt names none (never a guess).
+        let spawned = null;
         try {
-          await this.startRun({ runId, objective: brief, options: runOptions,
+          spawned = await this.startRun({ runId, objective: brief, options: runOptions,
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
             ...(workspace ? { workspace } : {}), ...(autoWake === null ? {} : { autoWake }) }, principal, context);
         const worker = this.coordinator.list().find((row) => row.runId === runId);
@@ -8986,10 +9023,10 @@ export class SwarmRuntime {
           // first instead of discovering a stale base on the lane's capture. One derivation, two
           // projections: the landed `baseBehind`, and the typed `advisory` the brief names.
           baseBehind: baseFacts.baseBehind, advisory: baseFacts.advisory,
-          // #341 part 3: what the recruit compared and what it chose — the deployment's own
-          // routeUsage rows, one row per route considered, each saying why it was or was not
-          // chosen. Null when this runtime has no route rows (a bare fixture host).
           routes: routeSelection?.routes ?? null,
+          // #358: the spawn's receipt — {bytes, spilled, spill} for the objective the seat was
+          // started under — or null when the host's startRun reports no facts.
+          objective: spawned?.objective ?? null,
         };
       }, { replaySafe: true, basis: Object.values(swarm.context), context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
@@ -8997,6 +9034,8 @@ export class SwarmRuntime {
           scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null,
           baseBehind: result.baseBehind ?? null, advisory: result.advisory ?? null,
           routes: result.routes ?? null,
+          // #358: the objective's spill facts the spawn reported (null when it reports none).
+          ...(result.objective ? { objective: result.objective } : {}),
           // Issue #525 D1: a resume-from recruit that stopped at the question carries the pending
           // decision, so the ONE `next` derivation answers with BOTH acts that settle it.
           ...(result.resumeDecision === undefined ? {} : { resumeDecision: result.resumeDecision }),

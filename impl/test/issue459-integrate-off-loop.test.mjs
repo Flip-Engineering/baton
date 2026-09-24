@@ -495,9 +495,11 @@ test('459g: a gate run slower than any fixed bound waits for its verdict and lan
   assert.deepEqual(w.leftoverCheckouts(), [], 'no scratch checkout is left behind');
 });
 
-test('459g2: a supervised child with no declared deadline waits on the child — timedOut never arms (#546)', async () => {
+test('459g2: a supervised child with no declared deadline waits on the child — timedOut never arms (#546)', async (t) => {
   const pool = new SupervisedProcesses();
-  const script = join(mkdtempSync(join(tmpdir(), 'baton-459g2-')), 'slow-verdict.mjs');
+  const directory = mkdtempSync(join(tmpdir(), 'baton-459g2-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const script = join(directory, 'slow-verdict.mjs');
   writeFileSync(script, "setTimeout(() => process.exit(0), 600);\n");
   const run = await pool.run({ file: script, cwd: dirname(script), label: '459g2-no-deadline' });
   assert.equal(run.status, 'ok', 'the child ran to its own exit past any old-style bound');

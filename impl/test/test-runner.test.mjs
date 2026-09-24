@@ -106,29 +106,34 @@ test('TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root',
   const { parent, file } = fixture(`
     import { spawn } from 'node:child_process';
     import { writeFileSync } from 'node:fs';
-    import { tmpdir } from 'node:os';
     import { join } from 'node:path';
     import test from 'node:test';
     test('hangs with a descendant', async () => {
       const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-      writeFileSync(join(tmpdir(), 'ready'), String(child.pid));
+      // The runner hands each file its OWN temp directory (TMPDIR); the marker the outer row waits
+      // for is the nested runner's suite root, which the runner names to the file separately.
+      writeFileSync(join(process.env.BATON_TEST_SUITE_ROOT, 'ready'), String(child.pid));
       await new Promise(() => {});
     });
   `);
+  // A nested runner boots node, calibrates, and plans before the file's marker can appear —
+  // seconds under suite load — so the marker wait is bounded by the semantics under test
+  // (30s), never by the machine's boot latency.
+  let runner = null;
   try {
-    const child = spawn(process.execPath, [RUNNER, file], {
+    runner = spawn(process.execPath, [RUNNER, file], {
       cwd: IMPL,
       env: runnerEnv(parent),
       stdio: 'ignore',
     });
-    await waitFor(() => suiteRoots(parent).some((name) => existsSync(join(parent, name, 'ready'))));
+    await waitFor(() => suiteRoots(parent).some((name) => existsSync(join(parent, name, 'ready'))), 30_000);
     const root = suiteRoots(parent)[0];
     const descendantPid = Number(readFileSync(join(parent, root, 'ready'), 'utf8'));
     assert.equal(pidAlive(descendantPid), true);
-    child.kill('SIGTERM');
+    runner.kill('SIGTERM');
     const result = await new Promise((resolveRun, rejectRun) => {
-      child.once('error', rejectRun);
-      child.once('close', (code, signal) => resolveRun({ code, signal }));
+      runner.once('error', rejectRun);
+      runner.once('close', (code, signal) => resolveRun({ code, signal }));
     });
     assert.deepEqual(result, { code: 143, signal: null });
     assert.equal(
@@ -138,6 +143,9 @@ test('TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root',
     );
     assert.deepEqual(suiteRoots(parent), []);
   } finally {
+    // A failure before the stop must not orphan a still-booting nested runner, which would
+    // recreate fixture paths after the removal below.
+    runner?.kill('SIGKILL');
     rmSync(parent, { recursive: true, force: true });
   }
 });

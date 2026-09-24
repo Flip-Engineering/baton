@@ -2382,6 +2382,18 @@ export class BatonApplication {
         if (this.driver.coordination.runStop(request.runId)) throw applicationError('Participant was stopped before dispatch', 'swarm_participant_stopped');
         await this._swarmNativeAccess.prepare(request);
         await this.approve(request.runId, current.plan.digest, this.principals.dispatcher, { view: 'narrow' });
+        // Issue #358: the spawn receipt names the objective's spill facts, so the recruit answer
+        // tells the recruiter AT ONCE when the objective an admission spilled (instead of the
+        // seat's confusion reporting it later). The spill id is the SAME content address the
+        // mint stored (coordinationLedger.spillIdForBody), so the receipt reads the durable
+        // truth — spilled only when the artifact exists — never a second admission derivation.
+        const spillId = coordinationLedger.spillIdForBody(objective);
+        const materialized = typeof this.driver.coordination.materializeSpill === 'function'
+          ? this.driver.coordination.materializeSpill(spillId) : null;
+        return { objective: {
+          bytes: Buffer.byteLength(objective), spilled: materialized !== null,
+          spill: materialized !== null ? spillId : null,
+        } };
       },
       // The participant knowledge verbs (#318): the runtime's knowledge dispatch routes into the
       // ONE implementation each verb already has — these very methods, with their own admission
@@ -3757,8 +3769,11 @@ export class BatonApplication {
         { actor: owner.actor, key: `run.objective.spill:${digest(requestedIntent.objective)}` });
       const spill = minted?.spill ?? null;
       if (spill) {
+        // The citation names the ONE verb the seat can follow (#358) — a brief renderer never
+        // emits a marker the seat cannot resolve.
         const citation = JSON.stringify({
           spilled: true, bytes: objectiveBytes, digest: spill.digest, spill: spill.spillId,
+          read: 'run.spill.read',
         });
         const suffix = `\n[SPILLED ${citation}]`;
         storedObjective = `${capBytesToScalar(requestedIntent.objective, objectiveCap - Buffer.byteLength(suffix))}${suffix}`;

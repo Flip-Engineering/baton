@@ -668,8 +668,15 @@ export class Coordinator {
     return runtimeRecovery._startupReconcilerObservation(this, this._recorder, caught, records, record);
   }
 
-  _trackStartupCleanup(operation, reconciler = null) {
-    return runtimeRecovery._trackStartupCleanup(this, this._recorder, operation, reconciler);
+  _trackStartupCleanup(operation, reconciler = null, opts = {}) {
+    return runtimeRecovery._trackStartupCleanup(this, this._recorder, operation, reconciler, opts);
+  }
+
+  /** Issue #542: the scratch runtime scopes this incarnation could not remove yet — the state
+   * behind the durable `host.cleanup_pending` rows, one bounded row per scope. Empty means the
+   * deferred removals reached absence (or none was ever pending). */
+  startupCleanupDeferred() {
+    return runtimeRecovery.startupCleanupDeferred(this, this._recorder);
   }
 
   async startupReady() {
@@ -3436,7 +3443,7 @@ export class Coordinator {
       // budget), never head-only without the resolution lane.
       const author = sender === 'orchestrator' ? '' : ` from=${sender}`;
       const framed = spilled
-        ? `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(spillRecord.head)} [SPILLED ${JSON.stringify({ spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill })}]`
+        ? `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(spillRecord.head)} [SPILLED ${JSON.stringify({ spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill, read: 'run.spill.read' })}]`
         : `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(body)}`;
       const slot = auth.workerId
         ? this._deliverPeerMessage(handle, record, framed).then((ok) => ({ ok }))

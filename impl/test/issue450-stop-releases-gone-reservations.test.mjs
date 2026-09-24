@@ -43,6 +43,7 @@ import { FenceTable } from '../src/fence.mjs';
 import { HOST_CAPACITY_BYPASS } from '../src/host-capacity.mjs';
 import { BatonApplication, MockAdapter, createBrief, createDriver } from '../src/index.mjs';
 import { Log } from '../src/log.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 const repoId = 'repo-issue450';
 
@@ -426,7 +427,7 @@ const drainReceipt = { state: 'closed' };
  *  `host.*` rows are the ones a deployment records through the same seam. */
 function hostFixture(t, { stopRecords, application, label }) {
   // sun_path is 103 bytes: the fixture root has to stay short (the issue351 fixtures' own rule).
-  const directory = mkdtempSync(`/tmp/bt450-${label}-`);
+  const directory = fixtureSocketRoot(`bt450-${label}-`, 'host.sock');
   const lines = [];
   // The smallest server that satisfies the host's own contract: the stop path this file exercises
   // never listens, and `batonShutdown` is the Web leg's own receipt.
