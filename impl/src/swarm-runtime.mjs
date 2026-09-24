@@ -6617,20 +6617,28 @@ export class SwarmRuntime {
     const predecessorLive = predecessorWorkerId !== null && !predecessorWorkerDead;
     const liveHolders = (ctxResult?.holders ?? []).filter((id) => id !== predecessorWorkerId);
     // The custody row the removal was backed by (#428); since #453 it names the snapshot's own
-    // paths too, and the LAST row for this workspace is the snapshot being carried.
+    // paths too, and the LAST row for this workspace is the snapshot being carried. #568: a
+    // crash-reclaimed workspace has no worktree.snapshotted row in this store — its snapshot and
+    // recorded base ride the durable worktree.removed row instead, so both kinds are read here,
+    // exactly as the view's custody projection reads them.
     let snapshotRow = null;
     for (const event of this.store.eventsView()) {
       const kind = event.kind === 'driver.recorded' ? event.payload?.kind : event.kind;
-      if (kind !== 'worktree.snapshotted') continue;
+      if (kind !== 'worktree.snapshotted' && kind !== 'worktree.removed') continue;
       const payload = event.payload ?? {};
       if (payload.workspaceId !== workspaceId) continue;
       // Only a row that names a commit is a snapshot a recruit could carry: the last such row for
       // this workspace is the snapshot the removal was backed by.
-      if (typeof payload.sha !== 'string' || payload.sha.length === 0) continue;
-      snapshotRow = payload;
+      const sha = kind === 'worktree.removed' ? payload.snapshot : payload.sha;
+      if (typeof sha !== 'string' || sha.length === 0) continue;
+      snapshotRow = {
+        ...payload, sha,
+        baseSha: typeof payload.baseSha === 'string' && payload.baseSha.length > 0
+          ? payload.baseSha : null,
+      };
     }
     const snapshotSha = typeof snapshotRow?.sha === 'string' ? snapshotRow.sha : null;
-    const baseSha = sessionContext?.baseSha ?? null;
+    const baseSha = sessionContext?.baseSha ?? snapshotRow?.baseSha ?? null;
     const snapshotPaths = exists || snapshotSha === null ? null
       : this._snapshotChangedPaths(repoRoot, baseSha, snapshotSha, snapshotRow?.paths ?? null);
     const missing = [];
