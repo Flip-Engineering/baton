@@ -6839,6 +6839,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     adapters,
     worktreeCapacity: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
     worktreeCapacityRuntimeFootprint: runtimeFootprintProbe,
+    hostCapacity: hostCapacityAuthority,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
       worktreeCapacityObserve: capacity.observe,
