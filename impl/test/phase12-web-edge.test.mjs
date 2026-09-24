@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -7,8 +9,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CoordinationStore, FixedWindowQuota, WebEdgePolicy, WebNorthbound, WebReadinessAuthority, WebSessionStore, createAuthenticatedWebServer, resolveEdgeRequest } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const ORIGIN = 'https://control.test';
-const root = () => mkdtempSync(join(tmpdir(), 'baton-web-edge-'));
+const root = () => mintFixtureDirectory(join(tmpdir(), 'baton-web-edge-'));
 class Response { writeHead(status, headers) { this.status = status; this.headers = headers; } end(body = '') { this.body = body ? JSON.parse(body) : null; } }
 class StreamResponse extends EventEmitter { constructor() { super(); this.output = ''; this.writableLength = 0; } writeHead(status, headers) { this.status = status; this.headers = headers; } write(value) { this.output += value; return true; } end() { this.ended = true; } }
 const raw = (headers = {}) => Object.entries(headers).flatMap(([name, value]) => (Array.isArray(value) ? value : [value]).flatMap((item) => [name, String(item)]));

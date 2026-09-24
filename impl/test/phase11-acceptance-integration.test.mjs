@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -9,10 +11,24 @@ import { dirname, join } from 'node:path';
 import { createDriver, IntegrationError, PublicationError } from '../src/index.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
 const receiptDigest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function repo() {
-  const root = mkdtempSync(join(tmpdir(), 'baton-acceptance-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-acceptance-'));
   git(['init', '-q'], root);
   git(['config', 'user.email', 'baton-test@example.com'], root);
   git(['config', 'user.name', 'Baton Test'], root);
@@ -45,7 +61,7 @@ async function until(fn, timeoutMs = 5000) {
 
 async function completedTask(root, taskId = 'integrate-me') {
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/integrated.txt', content: 'accepted\n' }] } });
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-ac5-log-'));
+  const logDir = mintFixtureDirectory(join(tmpdir(), 'baton-ac5-log-'));
   const driver = createDriver({
     repoRoot: root, logDir, adapters: { mock: adapter },
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
@@ -73,7 +89,7 @@ async function integratedPublicationTask({ now, approvalTimeoutMs = 1000 } = {})
   const root = repo();
   commitBase(root);
   const calls = [];
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-ac6-log-'));
+  const logDir = mintFixtureDirectory(join(tmpdir(), 'baton-ac6-log-'));
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/publish.txt', content: 'publish me\n' }] } });
   const driver = createDriver({
     repoRoot: root, logDir, adapters: { mock: adapter }, now, approvalTimeoutMs,
@@ -101,7 +117,7 @@ test('AC0: a provider-native failed result bypasses capture/referee and preserve
     edits: [{ path: 'src/partial.txt', content: 'recoverable progress\n' }],
   } });
   const driver = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac0-log-')), adapters: { mock: adapter },
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac0-log-')), adapters: { mock: adapter },
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   let captureCalls = 0;
@@ -138,7 +154,7 @@ test('AC1: createDriver requireRedGreen proves base red and result green', async
   commitBase(root);
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/new.txt', content: 'ok\n' }] } });
   const { coordinator, log } = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac1-log-')), adapters: { mock: adapter },
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac1-log-')), adapters: { mock: adapter },
     requireRedGreen: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({ command: 'test -f src/new.txt', expectExit: 0 }), { taskId: 'red-green' });
@@ -157,7 +173,7 @@ test('AC2: createDriver requireCoverage computes changed lines and accepts cover
   });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
   const { coordinator } = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac2-log-')), adapters: { mock: adapter },
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac2-log-')), adapters: { mock: adapter },
     requireCoverage: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({
@@ -178,7 +194,7 @@ test('AC2: requireCoverage rejects a passing but uncovered change', async () => 
   });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
   const { coordinator } = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac2b-log-')), adapters: { mock: adapter },
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac2b-log-')), adapters: { mock: adapter },
     requireCoverage: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({
@@ -197,7 +213,7 @@ test('AC3: required mutation accepts a nonzero all-killed population', async () 
   commitBase(root, { 'mutation.mjs': 'console.log(JSON.stringify({killed:2,total:2,survived:[]}))\n' });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
   const { coordinator } = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac3-log-')), adapters: { mock: adapter },
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac3-log-')), adapters: { mock: adapter },
     requireMutation: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({
@@ -215,7 +231,7 @@ test('AC3: required mutation rejects survivors and records only their closed cou
   commitBase(root, { 'mutation.mjs': 'console.log(JSON.stringify({killed:1,total:2,survived:["m2"]}))\n' });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
   const { coordinator } = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac3b-log-')), adapters: { mock: adapter },
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac3b-log-')), adapters: { mock: adapter },
     requireMutation: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({
@@ -238,7 +254,7 @@ test('AC4: independent oracle receives immutable spec/git evidence and unlocks r
   });
   const oracle = familyAdapter('family-b', { outcome: 'completed', summary: 'independent oracle prose' });
   const { coordinator, log } = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac4-log-')),
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac4-log-')),
     adapters: { implementer, oracle }, requireIndependentOracle: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const parent = await coordinator.spawn('implementer', brief({ command: 'test -f src/reviewed.txt', expectExit: 0 }), { taskId: 'review-parent' });
@@ -275,7 +291,7 @@ test('AC4: visible same-family fallback cannot satisfy a required independent or
   const implementer = familyAdapter('shared-family', { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'ok\n' }] });
   const fallback = familyAdapter('shared-family', { outcome: 'completed' });
   const { coordinator, log } = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac4-fallback-log-')),
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac4-fallback-log-')),
     adapters: { implementer, fallback }, requireIndependentOracle: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const parent = await coordinator.spawn('implementer', brief({ command: 'test -f src/x.js', expectExit: 0 }), { taskId: 'same-family-parent' });
@@ -300,7 +316,7 @@ test('CK8/CK9: review task creation failure reaches no reviewer adapter and pres
   let reviewerSpawns = 0;
   const rawSpawn = reviewer.spawn.bind(reviewer);
   reviewer.spawn = async (...args) => { reviewerSpawns += 1; return rawSpawn(...args); };
-  const driver = createDriver({ repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-review-fault-log-')), adapters: { implementer, reviewer }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
+  const driver = createDriver({ repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-review-fault-log-')), adapters: { implementer, reviewer }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const parent = await driver.coordinator.spawn('implementer', brief({ command: 'test -f src/reviewed.txt', expectExit: 0 }), { taskId: 'review-fault-parent' });
   await until(async () => (await driver.coordinator.result(parent.id)).ready);
   const rawAppend = driver.coordination._appendFile;
@@ -480,7 +496,7 @@ test('AC5: integration refuses an unaccepted captured result', async () => {
   commitBase(root);
   const adapter = new MockAdapter({ scenario: { outcome: 'completed' } });
   const { coordinator } = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac5-reject-log-')), adapters: { mock: adapter },
+    repoRoot: root, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-ac5-reject-log-')), adapters: { mock: adapter },
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const handle = await coordinator.spawn('mock', brief({ command: 'false', expectExit: 0 }), { taskId: 'rejected-result' });

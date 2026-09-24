@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Phase 11 MS1-MS5 desired behavior: model is an orchestrator control axis, not a CLI default.
 
 import { test } from 'node:test';
@@ -17,6 +19,20 @@ import { GrokAcpCli, withGrokModelArgs } from '../src/grok-acp.mjs';
 import { captureCommit, createFromBase, reap } from '../src/worktree.mjs';
 import { foldEvent, initialState } from '../src/story.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
@@ -55,7 +71,7 @@ function stubAdapter(harness, models, calls = []) {
 }
 
 function coordinator(adapters, route = () => Object.keys(adapters)[0]) {
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-ms-log-')));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-ms-log-')));
   const c = new Coordinator({
     log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters,
     worktrees: {
@@ -245,7 +261,7 @@ test('MS5: model attribution reaches verification, router learning, and terminal
   const ad = stubAdapter('stub', { default: 'stub-default', available: ['stub-exact'], family: 'stub' }, calls);
   const route = () => 'stub';
   route.record = (...args) => routeRecords.push(args);
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-ms5-log-')));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-ms5-log-')));
   const coordination = coordinationForLog(log);
   const worktrees = {
     create: async (taskId) => ({ path: `/tmp/${taskId}` }),
@@ -298,7 +314,7 @@ test('MS5: a non-alias observed-model mismatch fails visibly and kills the fallb
 });
 
 test('MS5: snapshot commits carry Baton-Model independently of Baton-Vendor', async (t) => {
-  const repo = mkdtempSync(join(tmpdir(), 'baton-ms5-repo-'));
+  const repo = mintFixtureDirectory(join(tmpdir(), 'baton-ms5-repo-'));
   t.after(() => rmSync(repo, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });

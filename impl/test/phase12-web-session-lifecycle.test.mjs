@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -7,8 +9,22 @@ import { join } from 'node:path';
 
 import { CoordinationStore, WebNorthbound, WebSessionStore } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const now = Date.parse('2026-07-11T12:00:00.000Z');
-const root = () => mkdtempSync(join(tmpdir(), 'baton-session-lifecycle-'));
+const root = () => mintFixtureDirectory(join(tmpdir(), 'baton-session-lifecycle-'));
 const bearer = (value) => ({ headers: { authorization: `Bearer ${value}` } });
 const ORIGIN = 'https://control.test';
 class Response {

@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Phase 11.0 red tests for CI1-CI6.
 // These are zero-quota seam tests. They intentionally target the public coordinator/driver path,
 // not isolated helpers, because every defect was a built-but-unwired boundary failure.
@@ -18,6 +20,20 @@ import { createBrief, isFact, isProse } from '../src/messages.mjs';
 import { initialState, foldEvent } from '../src/story.mjs';
 import { ClaudeSessionCli } from '../src/claude-session.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -89,7 +105,7 @@ function adapter(over = {}) {
 }
 
 function harness({ ad = adapter(), log, worktrees: worktreeOver = {}, stopDeadlineMs = 50 } = {}) {
-  const actualLog = log ?? new Log(mkdtempSync(join(tmpdir(), 'baton-p11-log-')));
+  const actualLog = log ?? new Log(mintFixtureDirectory(join(tmpdir(), 'baton-p11-log-')));
   const coordination = coordinationForLog(actualLog);
   const worktrees = {
     create: worktreeOver.create ?? (async (taskId) => ({ path: `/tmp/${taskId}`, branch: `baton/${taskId}`, baseSha: 'base' })),
@@ -335,8 +351,8 @@ test('CI4: worker result narrative is prose and never nested in a trusted lifecy
 // waiting a minute; no clock compression, no process.kill fallback, and the guaranteed driver
 // drain stays the only teardown.
 test('CI3 (#163): the driver arms no wall-budget killer, and an explicit stop reaps the exact child, worktree, metadata, and task branch', { timeout: 15_000 }, async (t) => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-p11-repo-'));
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-p11-driver-log-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-p11-repo-'));
+  const logDir = mintFixtureDirectory(join(tmpdir(), 'baton-p11-driver-log-'));
   t.after(() => {
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(logDir, { recursive: true, force: true });
@@ -414,7 +430,7 @@ test('CI5: wire spawn enriches task identity and duplicate turn-start does not d
 });
 
 test('CI6: replay advances automatic task and worker IDs without collision', async () => {
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-p11-replay-')));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-p11-replay-')));
   log.append({
     worker: 'w-1', harness: 'stub@1', turnEpoch: 1, actor: 'orchestrator',
     kind: 'lifecycle.spawned', payload: { taskId: 'task-1', brief: brief() },
@@ -431,7 +447,7 @@ test('CI6: replay advances automatic task and worker IDs without collision', asy
 });
 
 test('#267: allocation is checked against replayed identifiers by value, never inferred from their shape', async () => {
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-p11-replay-ids-')));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-p11-replay-ids-')));
   for (const [worker, taskId] of [['w-1', 'task-1'], ['w-3', 'task-7']]) {
     log.append({
       worker, harness: 'stub@1', turnEpoch: 1, actor: 'orchestrator',
@@ -457,7 +473,7 @@ test('#267: allocation is checked against replayed identifiers by value, never i
 });
 
 test('CI6: replay terminalizes an unattached in-flight session instead of fabricating control', async () => {
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-p11-orphan-')));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-p11-orphan-')));
   let killCalls = 0;
   const ad = adapter({ kill: async () => { killCalls += 1; return { ok: true }; } });
   log.append({

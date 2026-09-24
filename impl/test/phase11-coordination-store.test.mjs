@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -11,7 +13,21 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 
-const dir = () => mkdtempSync(join(tmpdir(), 'baton-coordination-'));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const dir = () => mintFixtureDirectory(join(tmpdir(), 'baton-coordination-'));
 const fields = (id, deps = []) => ({ id, brief: { goal: id }, deps, refines: null, taskType: 'test', reservedWorkerId: `w-${id}` });
 async function until(fn, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
