@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Phase 11.1 PS1-PS5 red tests: make already-native session depth usable through Coordinator.
 
 import { test } from 'node:test';
@@ -14,6 +16,20 @@ import { ClaudeSessionCli } from '../src/claude-session.mjs';
 import { CodexAppServerCli } from '../src/codex-appserver.mjs';
 import { GrokAcpCli } from '../src/grok-acp.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
@@ -63,8 +79,8 @@ function adapter(over = {}) {
 }
 
 function harness(ad, referee = async () => ({ reverified: true, observedExit: 0 }), worktreeOverrides = {}, coordinatorOverrides = {}) {
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-ps-log-')));
-  const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-ps-coordination-')), {
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-ps-log-')));
+  const coordination = new CoordinationStore(mintFixtureDirectory(join(tmpdir(), 'baton-ps-coordination-')), {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
   });
   const verifyCalls = [];
@@ -109,7 +125,7 @@ function completed(summary = 'done') {
 }
 
 async function recoverableNativeSession({ taskId, nativeId }) {
-  const wt = mkdtempSync(join(tmpdir(), `baton-ps-${taskId.slice(0, 32)}-wt-`));
+  const wt = mintFixtureDirectory(join(tmpdir(), `baton-ps-${taskId.slice(0, 32)}-wt-`));
   const original = adapter();
   const { c, log, coordination } = harness(original, undefined, {
     create: async () => ({ path: wt, branch: `baton/${taskId}`, baseSha: 'base-1' }),
@@ -341,14 +357,14 @@ test('PS1-PS5: Claude, Codex, and Grok each run two public turns on one native s
 
   for (const [name, make] of definitions) {
     const ad = make();
-    const log = new Log(mkdtempSync(join(tmpdir(), `baton-ps-${name}-`)));
-    const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), `baton-ps-${name}-coordination-`)), {
+    const log = new Log(mintFixtureDirectory(join(tmpdir(), `baton-ps-${name}-`)));
+    const coordination = new CoordinationStore(mintFixtureDirectory(join(tmpdir(), `baton-ps-${name}-coordination-`)), {
       operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
     });
     const c = new Coordinator({
       log, coordination, fences: new FenceTable(), adapters: { [name]: ad },
       worktrees: {
-        create: async () => ({ path: mkdtempSync(join(tmpdir(), `baton-ps-${name}-wt-`)) }),
+        create: async () => ({ path: mintFixtureDirectory(join(tmpdir(), `baton-ps-${name}-wt-`)) }),
         capture: async () => ({ sha: 'x', snapshotted: false }),
         createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {},
         remove: async () => {}, reconcile: async () => {},
@@ -456,7 +472,7 @@ test('PS6: Grok maps resume to ACP session/load', async (t) => {
 });
 
 test('PS8: coordinator resume requires and reuses a validated worktree without creating another', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-resume-wt-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-ps-resume-wt-'));
   const ad = adapter();
   let spawnOpts;
   ad.spawn = async (_worker, _brief, opts) => { spawnOpts = opts; return { ok: true }; };
@@ -490,7 +506,7 @@ test('PS8: coordinator resume requires and reuses a validated worktree without c
 });
 
 test('PS8: fork gets a fresh worktree and a durable parent-session lineage edge', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-fork-wt-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-ps-fork-wt-'));
   const ad = adapter();
   let spawnOpts;
   ad.spawn = async (_worker, _brief, opts) => { spawnOpts = opts; return { ok: true }; };
@@ -509,7 +525,7 @@ test('PS8: fork gets a fresh worktree and a durable parent-session lineage edge'
 });
 
 test('PS7: replayed session is reattached only after bounded handshake proves the same native identity', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-wt-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-ps-recover-wt-'));
   const original = adapter();
   const { c, log, coordination } = harness(original, undefined, {
     create: async () => ({ path: wt, branch: 'baton/recover-task', baseSha: 'base-1' }),
@@ -731,7 +747,7 @@ test('NR3/NR4: a maximum valid base task id uses bounded recovery identity and r
 });
 
 test('NR3/NR4: generic driver records cannot bypass validated recovery state projection', () => {
-  const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-ps-recovery-api-')));
+  const coordination = new CoordinationStore(mintFixtureDirectory(join(tmpdir(), 'baton-ps-recovery-api-')));
   const before = coordination.events().length;
   assert.throws(() => coordination.recordDriver('recovery.continuation_intent', {
     workerId: 'w-forged', taskId: 'missing', priorTaskId: 'missing-prior',
@@ -958,7 +974,7 @@ test('NR4/NR5: accepted-receipt loss reaps, materializes dispatch_unknown, and r
 });
 
 test('CK8/CK9: recovery intent append failure reaches no native adapter', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-intent-wt-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-ps-recover-intent-wt-'));
   const original = adapter();
   const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
   const h = await c.spawn('session', brief(), { taskId: 'recover-intent-task' });
@@ -986,7 +1002,7 @@ test('CK8/CK9: recovery intent append failure reaches no native adapter', async 
 });
 
 test('CK8/CK9: recovery refinement failure kills a native transport that already attached', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-refine-wt-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-ps-recover-refine-wt-'));
   const original = adapter();
   const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
   const h = await c.spawn('session', brief(), { taskId: 'recover-refine-task' });
@@ -1034,7 +1050,7 @@ test('CK8/CK9: recovery refinement failure kills a native transport that already
 });
 
 test('PS7: a reattachment identity mismatch is refused and the untrusted transport is killed', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-bad-wt-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-ps-recover-bad-wt-'));
   const original = adapter();
   const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
   const h = await c.spawn('session', brief(), { taskId: 'recover-bad-task' });
@@ -1062,7 +1078,7 @@ test('PS7: a reattachment identity mismatch is refused and the untrusted transpo
 });
 
 test('PS7: a hung reattachment is bounded, confirms stop, and invokes adapter cleanup', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-timeout-wt-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-ps-recover-timeout-wt-'));
   const original = adapter();
   const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
   const h = await c.spawn('session', brief(), { taskId: 'recover-timeout-task' });

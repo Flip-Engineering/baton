@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -5,13 +7,27 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectCredentialTree } from '../src/credential-projection.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'baton-credential-source-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-credential-source-'));
   chmodSync(root, 0o700);
   mkdirSync(join(root, 'credentials'), { mode: 0o700 });
   writeFileSync(join(root, 'config.toml'), 'api_key = "config-secret-value"\n', { mode: 0o600 });
   writeFileSync(join(root, 'credentials', 'kimi-code.json'), JSON.stringify({ access_token: 'subscription-secret-value' }), { mode: 0o600 });
-  const target = mkdtempSync(join(tmpdir(), 'baton-credential-target-'));
+  const target = mintFixtureDirectory(join(tmpdir(), 'baton-credential-target-'));
   chmodSync(target, 0o700);
   return { root, target };
 }
