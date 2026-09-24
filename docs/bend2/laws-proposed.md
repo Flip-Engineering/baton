@@ -240,11 +240,14 @@ Evidence: proposed — the #556 incident and the operator direction relayed 2026
 
 ## Revision 10: no parking pending an external act
 
-Status: accepted by the swarm, pending Codex law review. The swarm review accepted the entry on
-2026-09-23 (bend2-reviewer4, contribution-2b03cd1a): the encoding is verified at the pin, both
+Status: accepted by the swarm; external law review accept. The swarm review accepted the entry
+on 2026-09-23 (bend2-reviewer4, contribution-2b03cd1a): the encoding is verified at the pin, both
 controls fail as required, and the three questions below are answered — the statement is
 expressible at the pin as written, the entry meets the law definition, and the law admits the
-waits whose waited-on party Baton wakes. The entry enters the operative set as the seventeenth
+waits whose waited-on party Baton wakes. The external law review of 2026-09-24
+([reviews/kimi-law-review-r10.md](reviews/kimi-law-review-r10.md), verdict accept) independently
+re-verified the encoding at the pin, reproduced both controls as failing as required, and
+answered the three questions the same way. The entry enters the operative set as the seventeenth
 entry.
 
 **Statement.** The runtime never deliberately pauses, idles or truncates an agent's work. No
