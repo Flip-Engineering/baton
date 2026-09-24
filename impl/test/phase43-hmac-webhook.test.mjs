@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -7,6 +9,20 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { AdvisoryFeedRegistry, HmacAdvisoryWebhookSource, createDriver, signHmacAdvisoryWebhookForTest } from '../src/index.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const sha = (value) => createHash('sha256').update(value).digest('hex');
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -91,7 +107,7 @@ test('AF2/AF10: authentication-receipt metadata is recomputed from pinned domain
 });
 
 test('AF2/AF3: Coordinator native webhook ingress durably fences before acknowledging and exact retry is zero-append', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-native-webhook-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot); execFileSync('git', ['init', '-q'], { cwd: repoRoot });
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-native-webhook-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot); execFileSync('git', ['init', '-q'], { cwd: repoRoot });
   const { source } = sourceFixture(); const driver = createDriver({ repoRoot, repoId: 'repo-a', logDir: join(root, 'log'), adapters: {}, now, advisoryFeedSources: { 'fixture.secure': source } });
   await assert.rejects(driver.coordinator.receiveProviderWebhook('fixture.secure', request(), { actor: 'operator:alice' }), (error) => error.code === 'provider_delivery_invalid');
   const admitted = await driver.coordinator.receiveProviderWebhook('fixture.secure', request()); assert.equal(admitted.result, 'recorded'); assert.equal(driver.coordination.snapshot().provider.pendingCoordinateCount, 1);
@@ -100,7 +116,7 @@ test('AF2/AF3: Coordinator native webhook ingress durably fences before acknowle
 });
 
 test('AF2/AF7/AF10: driver restart synchronously rereads private CAS before restoring provider authority', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-native-replay-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot); execFileSync('git', ['init', '-q'], { cwd: repoRoot }); const logDir = join(root, 'log');
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-native-replay-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot); execFileSync('git', ['init', '-q'], { cwd: repoRoot }); const logDir = join(root, 'log');
   const built = sourceFixture(); const options = { repoRoot, repoId: 'repo-a', logDir, adapters: {}, now, advisoryFeedSources: { 'fixture.secure': built.source } };
   const first = createDriver(options); const admitted = await first.coordinator.receiveProviderWebhook('fixture.secure', request()); first.close();
   const replay = createDriver(options); assert.equal(replay.coordination.providerReceipt(admitted.receipt.id).rawDigest, sha(body)); assert.equal(built.privateCas.calls.some((call) => call.kind === 'getSync'), true); replay.close();

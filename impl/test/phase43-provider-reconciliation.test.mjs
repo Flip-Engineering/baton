@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -7,6 +9,20 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { McpFleetServer, SessionRecoverySupervisor, WebNorthbound, createDriver } from '../src/index.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const sha = (value) => createHash('sha256').update(Buffer.isBuffer(value) ? value : JSON.stringify(canonical(value))).digest('hex');
@@ -28,7 +44,7 @@ function quartermaster(state) {
 }
 
 async function world(overrides = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'baton-provider-reconcile-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot); execFileSync('git', ['init', '-q'], { cwd: repoRoot }); const logDir = join(root, 'log'); const state = { invokes: 0, reverifies: 0, adverse: overrides.adverse ?? false, adversePackages: new Set(overrides.adversePackages ?? []), identityExtra: overrides.identityExtra ?? null, policyProjection, polls: {}, pollCalls: 0, currentCalls: 0, failInvokes: overrides.failInvokes ?? 0, failCode: overrides.failCode, nowMs: Date.parse('2026-07-13T06:00:01.000Z') };
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-reconcile-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot); execFileSync('git', ['init', '-q'], { cwd: repoRoot }); const logDir = join(root, 'log'); const state = { invokes: 0, reverifies: 0, adverse: overrides.adverse ?? false, adversePackages: new Set(overrides.adversePackages ?? []), identityExtra: overrides.identityExtra ?? null, policyProjection, polls: {}, pollCalls: 0, currentCalls: 0, failInvokes: overrides.failInvokes ?? 0, failCode: overrides.failCode, nowMs: Date.parse('2026-07-13T06:00:01.000Z') };
   const authority = { card: () => ({ schemaVersion: 1, authorityId: 'fixture-index-authority', repoId: 'repo-a', atlasCardDigest }), async current({ signal } = {}) { state.currentCalls += 1; if (state.blockOfficial) return new Promise((resolve, reject) => { state.releaseOfficial = () => resolve({ schemaVersion: 1, repoId: 'repo-a', treeSha: 'abcd', indexEpoch, atlasCardDigest }); signal?.addEventListener('abort', () => state.resolveOfficialOnAbort ? state.releaseOfficial() : reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true }); }); return { schemaVersion: 1, repoId: 'repo-a', treeSha: state.currentCalls > 1 && overrides.changeIndex ? 'ffff' : 'abcd', indexEpoch, atlasCardDigest }; }, async reverify() { return { ok: true }; } };
   const options = { repoRoot, repoId: 'repo-a', logDir, adapters: {}, now: () => state.nowMs, advisoryFeedSources: { 'fixture.green': feedSource('fixture.green', fingerprint, state), 'fixture.green-two': feedSource('fixture.green-two', fingerprintTwo, state) }, capabilities: { 'cartographer-quartermaster': quartermaster(state) }, maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 256 * 1024,
     reuseDecisionPolicy: { authorize: async () => true, authorizeRecheck: async () => true, maxNeedBytes: 2048, maxRationaleBytes: 8192, policyReconcile: reconcileLimits }, providerReconciliation: { budgetTokens: 10_000, indexAuthority: authority } };
