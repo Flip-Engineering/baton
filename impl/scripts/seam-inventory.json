@@ -24746,7 +24746,7 @@
         {
           "name": "reportTurn",
           "ordinal": 0,
-          "size": 12,
+          "size": 13,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -24755,7 +24755,7 @@
         {
           "name": "turnCompleted",
           "ordinal": 0,
-          "size": 89,
+          "size": 90,
           "seam": "effect",
           "evidence": [
             "admission:authority_check",
