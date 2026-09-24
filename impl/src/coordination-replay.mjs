@@ -1529,8 +1529,11 @@ export function _scratchpadReapReceipt(store, prior, result = 'idempotent') {
  * is a wall deadline the stopping run already owns (`null` = reap every partition this pass); the
  * pass always takes at least one partition, so it advances whatever the clock says. The per-run
  * partition count is not a physical quantity — the previous literal cap bought nothing but the
- * ability to observe `partial`. */
-export function reapRunScratchpads(store, runId, { deadlineAt = null, now = Date.now } = {}) {
+ * ability to observe `partial`.
+ *
+ * #403: that deadline is read through the store's OWN (injectable) clock unless the caller hands
+ * its reading in — the host clock is never the authority for a window a fixture clock must expire. */
+export function reapRunScratchpads(store, runId, { deadlineAt = null, now = () => Date.parse(store._clock()) } = {}) {
   if (!validRunId(runId) || (!store._runStopByTarget.has(runId) && !store._runStops.has(runId))) {
     throw new CoordinationRefusal('scratchpad stop cleanup requires a stopping Run', 'run_stopping');
   }
@@ -2162,8 +2165,11 @@ export function _validateRecoveryAttemptAdmissionPayload(store, payload, event, 
   }
   let verified;
   try { verified = store._verifiedRecoveryPrior(task, integrity); }
-  catch {
-    fail('recovery attempt owner lacks exact hub verification', 'recovery_attempt_owner_unverified');
+  catch (error) {
+    // #400: the fold's own diagnosis says WHY the owner is unverified (a missing terminal
+    // evidence row, a changed mapping); the owner label alone lost it.
+    fail(error?.message ?? 'recovery attempt owner lacks exact hub verification',
+      error?.code ?? 'recovery_attempt_owner_unverified');
   }
   if (verified.mapped.seq !== p.verifiedOwner.evidence.coordinationSeq) {
     fail('recovery attempt owner verification evidence differs', 'recovery_attempt_owner_unverified');
@@ -2405,8 +2411,12 @@ export function createAndClaimPlanRecoveryRefinement(store, fields, gate, route,
       && claimedEvent.batch?.id === priorAdmission.batch.id && claimedEvent.batch.index === 2 && claimedEvent.batch.count === 3
       && store._recoveryBatchIdentity('goal_plan_recovery_dispatch', [priorAdmission, createdEvent, claimedEvent]) === priorAdmission.batch.id;
     if (!exact) throw new CoordinationRefusal('plan recovery idempotency key is bound differently', 'plan_recovery_conflict');
-    try { store._validateGoalPlanRecoveryTriple(priorAdmission, createdEvent, claimedEvent, false); }
-    catch { throw new CoordinationRefusal('plan recovery idempotency key is bound differently', 'plan_recovery_conflict'); }
+    // #400: a triple that IS bound by this key can still fail fold adjudication — a torn hop, an
+    // approval window the live policy no longer covers, an unverified prior. That diagnosis is the
+    // caller's: the fold's own code crosses the surface unchanged, the same way
+    // `_validateGoalPlanReplayTransactions` already lets it cross at replay. Relabelling it
+    // `plan_recovery_conflict` made a torn recorded transaction read as a key reuse.
+    store._validateGoalPlanRecoveryTriple(priorAdmission, createdEvent, claimedEvent, false);
     return freeze({
       ok: true, result: 'idempotent', dispatchEvent: clone(priorAdmission),
       createdEvent: clone(createdEvent), claimedEvent: clone(claimedEvent),
