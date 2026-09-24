@@ -2215,7 +2215,7 @@ export const SNAPSHOT_COMMIT_EMAIL = 'baton-snapshot@localhost';
  *   or any gate, so the durable record of a landing names its directory while it is still running
  * @returns {Promise<{base: string, target: string, targetHeadBefore: string, targetHeadAfter: string|null,
  *   squashSha: string, changedPaths: string[], regenerated: string[],
- *   gates: {files: string[], verdictLine: string|null, unexpected: any[]}, dryRun: boolean}>}
+ *   gates: {baseSha: string, files: string[], verdictLine: string|null, unexpected: any[]}, dryRun: boolean}>}
  */
 export async function landContribution(repoRoot, request) {
   const { contributionId, target, commitSha, message, author, committer } = request;
@@ -2411,7 +2411,7 @@ export async function landContribution(repoRoot, request) {
       const targetChanged = sh('git', ['diff', '--name-only', base, ontoHead], checkout.dir)
         .split('\n').filter((line) => line.length > 0).sort();
       const overlaps = changed.filter((path) => targetChanged.includes(path));
-      return { checkout, squashSha, changed, regenerated, overlaps, inherited };
+      return { checkout, squashSha, changed, regenerated, overlaps, inherited, ontoHead };
     } catch (error) {
       await checkout.cleanup();
       throw error;
@@ -2432,8 +2432,12 @@ export async function landContribution(repoRoot, request) {
     targetHeadBefore = moved;
   }
 
-  const { checkout, squashSha, changed, regenerated, overlaps, inherited } = attempt;
+  const { checkout, squashSha, changed, regenerated, overlaps, inherited, ontoHead: gateBase } = attempt;
   try {
+    // Issue #570: the gate verdict names the base commit it judged — the head the squash
+    // descends from, which is the fetched remote tip when the local ref sat behind the declared
+    // remote. A red verdict rides the refusal detail, so a refused landing shows which base
+    // produced it; a green one lands on the receipt's gates row.
     const gates = request.runGates
       ? await request.runGates(checkout.dir, changed, { base, targetHeadBefore, squashSha })
       : { files: [], verdictLine: null, unexpected: [] };
@@ -2441,7 +2445,7 @@ export async function landContribution(repoRoot, request) {
     if (unexpected.length > 0) {
       throw Object.assign(
         mergeError(`the derived gate set ran red: ${unexpected.length} test(s) fail with the change and pass on the target`, 'integrate_gates_red'),
-        { verdictLine: gates?.verdictLine ?? null, unexpected },
+        { verdictLine: gates?.verdictLine ?? null, unexpected, baseSha: gateBase },
       );
     }
     // A landing that cannot publish never reports a local success. A dry run lands nothing, so
@@ -2512,6 +2516,7 @@ export async function landContribution(repoRoot, request) {
       targetHeadAfter: dryRun ? null : squashSha,
       squashSha, changedPaths: changed, regenerated, overlaps, inherited,
       gates: {
+        baseSha: gateBase,
         files: [...(gates?.files ?? [])],
         verdictLine: gates?.verdictLine ?? null,
         unexpected: [],
