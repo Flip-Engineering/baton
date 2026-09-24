@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -20,7 +22,21 @@ import { openBaton } from '../src/index.mjs';
 // RED   = run.approve throws worker_policy_invalid (or dispatch never mints).
 // GREEN = approve completes; plan.node_dispatched + task.created mint with vendor 'omp'.
 
-const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (prefix) => mintFixtureDirectory(join(tmpdir(), `baton-${prefix}-`));
 
 async function buildDeployment() {
   const repo = root('omp-deploy-repo');

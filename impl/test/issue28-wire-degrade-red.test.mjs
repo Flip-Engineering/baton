@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // issue28-wire-degrade-red.test.mjs — R28-1..R28-5 (contract v2).
 //
 // Controlling contract: docs/reference/evidence/issue28-wire-degrade-2026-07-24/issue28-decisions.md
@@ -17,6 +19,20 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { ClaudeSessionCli } from '../src/claude-session.mjs';
 import { openBaton } from '../src/index.mjs';
 import { MockAdapter } from '../src/index.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const DEFAULT_CEILING = 1024 * 1024;
@@ -224,7 +240,7 @@ test('R28-3: adapterOptions/maxWireFrameBytes ceiling is honored and card report
   assert.equal(degraded[0].payload.toolUseId, 'toolu_r28_3');
 
   // Closed advanced.adapterOptions key is accepted by the deployment factory.
-  const repo = mkdtempSync(join(tmpdir(), 'baton-r28-3-'));
+  const repo = mintFixtureDirectory(join(tmpdir(), 'baton-r28-3-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'r28@example.invalid'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'R28'], { cwd: repo });
@@ -265,7 +281,7 @@ test('R28-3: adapterOptions/maxWireFrameBytes ceiling is honored and card report
   const deployment = await openBaton({
     repo,
     advanced: {
-      deploymentRoot: mkdtempSync(join(tmpdir(), 'baton-r28-3-dep-')),
+      deploymentRoot: mintFixtureDirectory(join(tmpdir(), 'baton-r28-3-dep-')),
       routes: [{ harness: 'claude-code', model: 'claude-sonnet-4', effort: 'high' }],
       adapters: { 'claude-code:claude': adapter },
       adapterOptions: { maxWireFrameBytes: ceiling },

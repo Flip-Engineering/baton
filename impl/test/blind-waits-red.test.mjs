@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // [attempt: 08d0dac7-8ad0-4e7c-a13e-9d7a3bb855bc row-suite-164]
 // row-suite-164 attempt 08d0dac7-8ad0-4e7c-a13e-9d7a3bb855bc — red-first suite for the folded #164 blind-waits contract (v2).
 // Authority: docs/reference/evidence/blind-waits-2026-08-13/blind-waits-contract.md (v1 DRAFT at HEAD) + the v2 fold directives
@@ -160,6 +162,20 @@ import {
   CoordinationStore, createDriver, McpFleetServer, WebNorthbound,
 } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const NOW = '2026-08-13T08:00:00.000Z';
 const NOW_MS = Date.parse(NOW);
 const ORIGIN = 'https://blind-waits.test';
@@ -186,7 +202,7 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-const root = (label) => mkdtempSync(join(tmpdir(), `baton-164-${label}-`));
+const root = (label) => mintFixtureDirectory(join(tmpdir(), `baton-164-${label}-`));
 const principal = (principalId) => ({
   actor: `direct:${principalId}`, principalId, sessionId: `${principalId}-session`,
 });

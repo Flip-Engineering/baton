@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Issue #343: per-row swarm.view projections over the MCP bridge, with the narrowing named.
 //
 // When a swarm.view answer exceeds the bridge frame, the MCP bridge must serve the rows
@@ -20,9 +22,23 @@ import { FRAME_LIMITS } from '../src/limits.mjs';
 import { SWARM_VIEW_PROJECTION_NAMES, projectSwarmView } from '../src/swarm-contract.mjs';
 import { narrowSwarmViewForBridge, swarmViewBridgeFrameBytes } from '../src/web-northbound.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const CEILING = FRAME_LIMITS['wire.frame'].value;
 
-const root = () => mkdtempSync(join(tmpdir(), 'baton-343-'));
+const root = () => mintFixtureDirectory(join(tmpdir(), 'baton-343-'));
 const principal = (overrides = {}) => ({
   userId: 'user-1', sessionId: 'session-1', credentialId: 'cred-1', authMethod: 'cookie',
   csrfToken: 'csrf-1', expiresAt: '2099-01-01T00:00:00.000Z', revoked: false,

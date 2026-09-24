@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Issue #518 — plan.node_budget_settled replay with no live authority.
 //
 // The incident: `_validatePlanBudgetSettlement` compared a recorded settlement against one
@@ -28,10 +30,24 @@ import { CoordinationStore } from '../src/index.mjs';
 import { coordinationReplayFailure } from '../src/coordination-store.mjs';
 import { findTokenShaped, fixtureCeilingBytes } from '../scripts/ledger-extract.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const CORPUS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ledgers-goal-plan');
 const FIXTURE = 'deployment-recorded-settlement.jsonl';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-issue518-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-issue518-${name}-`));
 const canonical = (value) => {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;
