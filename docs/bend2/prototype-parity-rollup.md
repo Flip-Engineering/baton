@@ -47,7 +47,7 @@ and enters quarantine only for corrupt source bytes.
 (`target-architecture.md`). The corpus drives the coordination fold, so it names no `CS`/`CL`/`AB`
 contract row.
 
-**Parity verdict, this run** (`--compare` at `2fc5fdaf`): 3 cases compared, 2 disagreements.
+**Parity verdict, this run** (`--compare` at `a01b9713`): 3 cases compared, 2 disagreements.
 `stop-policy-bearing` agrees on every field. `stop-missing-policy` disagrees on `classification`
 (required `missing_policy_basis`, reference `replay_refused`). `stop-corrupt-row` disagrees on
 `classification` and `quarantine` (required `corrupt_source_bytes` with quarantine `true`,
@@ -81,7 +81,7 @@ the diagnostic path reaches the verdict the same basis implies.
 **Requirement and contract rows**: `ARCH-CLOSE-11`, with `M-5`, `M-14` and `M-17`. The corpus
 drives the coordination fold, so it names no `CS`/`CL`/`AB` contract row.
 
-**Parity verdict, this run** (`--compare` at `2fc5fdaf`): 4 cases compared, 2 disagreements.
+**Parity verdict, this run** (`--compare` at `a01b9713`): 4 cases compared, 2 disagreements.
 `lease-same-basis` and `lease-missing-basis` agree on every field — the missing-basis row is
 admitted and folds to cursor 3, the required behaviour. `lease-changed-basis` disagrees on
 `classification` and on `doctor` (required `authorization_basis_changed` and `doctor=refused`;
@@ -112,7 +112,7 @@ supplies another.
 **Requirement and contract rows**: `ARCH-CLOSE-11`, with `M-5`, `M-13` and `M-17`. The corpus
 drives the coordination store, so it names no `CS`/`CL`/`AB` contract row.
 
-**Parity verdict, this run** (`--compare` at `2fc5fdaf`): 4 cases compared, 0 disagreements.
+**Parity verdict, this run** (`--compare` at `a01b9713`): 4 cases compared, 0 disagreements.
 `cursor-live` reports `source=live`; the same-basis restart reports `source=checkpoint,
 checkpoint=valid`; the changed-basis and missing-basis restarts report
 `source=ledger_fallback, checkpoint=stale_authority`; every case covers cursor 4 with 3 rows owed.
@@ -134,7 +134,7 @@ cause the refusal names.
 **Requirement and contract rows**: `M-14`, with `M-5` and `ARCH-CLOSE-11`. The corpus drives the
 coordination admission verb, so it names no `CS`/`CL`/`AB` contract row.
 
-**Parity verdict, this run** (`--compare` at `2fc5fdaf`): 3 cases compared, 2 disagreements.
+**Parity verdict, this run** (`--compare` at `a01b9713`): 3 cases compared, 2 disagreements.
 `mutation-valid` agrees on every field (admitted, one row written, cursor 3, owed 2).
 `mutation-unknown-field` and `mutation-expired-session` agree on admission, on `rows_written=0`,
 and on the state the attempt left behind (cursor 2, owed 1), and disagree on `refusal_class`
