@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -6,8 +8,22 @@ import { join } from 'node:path';
 
 import { RuntimeIsolation, isSecretEnvName } from '../src/runtime-isolation.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 test('GV6: runtime scope strips ambient secrets and creates private vendor homes', () => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-'));
   const isolation = new RuntimeIsolation({
     repoRoot,
     baseEnv: { PATH: '/bin', LANG: 'C', HOME: '/operator', OPENAI_API_KEY: 'ambient-secret', RANDOM_FLAG: 'safe' },
@@ -37,7 +53,7 @@ test('GV6: runtime scope strips ambient secrets and creates private vendor homes
 });
 
 test('GV6: explicit credential files are copied mode 0600 without exposing content in posture', () => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-file-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-file-'));
   const source = join(repoRoot, 'auth.json');
   writeFileSync(source, '{"token":"file-secret"}');
   const isolation = new RuntimeIsolation({ repoRoot, baseEnv: { PATH: '/bin' }, credentialFiles: { grok: [source] } });
@@ -64,8 +80,8 @@ test('GV6: explicit credential files are copied mode 0600 without exposing conte
 });
 
 test('GV6: explicit credential-file projection refuses a symbolic-link source', () => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-file-link-'));
-  const sourceRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-file-link-source-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-file-link-'));
+  const sourceRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-file-link-source-'));
   const actual = join(sourceRoot, 'actual.json');
   const link = join(sourceRoot, 'auth.json');
   writeFileSync(actual, '{"token":"file-secret"}', { mode: 0o600 });
@@ -81,7 +97,7 @@ test('GV6: explicit credential-file projection refuses a symbolic-link source', 
 });
 
 test('GV6: public posture is a closed path-free credential summary for absent and mixed projection', () => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-posture-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-posture-'));
   const source = join(repoRoot, 'credential.fixture');
   writeFileSync(source, 'fixture-secret');
   const isolation = new RuntimeIsolation({
@@ -111,7 +127,7 @@ test('GV6: secret-name classifier covers provider credentials but not ordinary s
 });
 
 test('KK4: Kimi receives its own private Claude-compatible runtime scope', () => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-kimi-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-kimi-'));
   const isolation = new RuntimeIsolation({ repoRoot, baseEnv: { PATH: '/bin' } });
   const scope = isolation.create('w-kimi', { card: {
     harness: 'claude-code', authPosture: 'api_key',
@@ -125,8 +141,8 @@ test('KK4: Kimi receives its own private Claude-compatible runtime scope', () =>
 });
 
 test('KK4/KK8: Kimi-through-Claude runtime creation and removal leave global Claude state byte-for-byte untouched', () => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-kimi-global-'));
-  const operatorHome = mkdtempSync(join(tmpdir(), 'baton-operator-home-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-kimi-global-'));
+  const operatorHome = mintFixtureDirectory(join(tmpdir(), 'baton-operator-home-'));
   const globalConfig = join(operatorHome, '.claude');
   const globalSettings = join(globalConfig, 'settings.json');
   mkdirSync(globalConfig, { recursive: true, mode: 0o700 });
@@ -152,8 +168,8 @@ test('KK4/KK8: Kimi-through-Claude runtime creation and removal leave global Cla
 });
 
 test('KC4: native Kimi gets a private KIMI_CODE_HOME and minimal subscription tree with redaction', () => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-native-kimi-repo-'));
-  const sourceRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-native-kimi-source-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-native-kimi-repo-'));
+  const sourceRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-native-kimi-source-'));
   mkdirSync(join(sourceRoot, 'credentials'), { mode: 0o700 });
   mkdirSync(join(sourceRoot, 'oauth'), { mode: 0o700 });
   writeFileSync(join(sourceRoot, 'config.toml'), 'default_model = "kimi-code/k3"\n', { mode: 0o600 });
@@ -183,7 +199,7 @@ test('KC4: native Kimi gets a private KIMI_CODE_HOME and minimal subscription tr
 });
 
 test('KC4: native Kimi credential projection refuses repository-owned sources', () => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-native-kimi-inrepo-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-runtime-native-kimi-inrepo-'));
   const sourceRoot = join(repoRoot, 'credentials');
   mkdirSync(sourceRoot, { mode: 0o700 });
   writeFileSync(join(sourceRoot, 'config.toml'), 'safe = true\n', { mode: 0o600 });

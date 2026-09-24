@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // glm-session.test.mjs — TDD-RED tests for SC6 (spec/phase10/system-completion.md): the GLM
 // session tier, built to the credential boundary.
 //
@@ -17,6 +19,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { assertIsAdapter } from '../src/adapter.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 
@@ -132,7 +148,7 @@ test('SC6: construction never throws without credentials — the credential boun
 
 test('GL1: owner-only raw/JSON credential files load without values entering diagnostics', async () => {
   const { loadGlmAuthTokenFile } = await import('../src/claude-session.mjs');
-  const root = mkdtempSync(join(tmpdir(), 'baton-glm-key-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-glm-key-'));
   const raw = join(root, 'raw.key'); writeFileSync(raw, 'fake-raw-token'); chmodSync(raw, 0o600);
   const json = join(root, 'key.json'); writeFileSync(json, JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'fake-json-token' } })); chmodSync(json, 0o600);
   assert.equal(loadGlmAuthTokenFile(raw), 'fake-raw-token'); assert.equal(loadGlmAuthTokenFile(json), 'fake-json-token');
@@ -147,10 +163,10 @@ test('GL1: owner-only raw/JSON credential files load without values entering dia
 });
 
 test('GL1/GL2: authTokenFile and exact GLM model mapping reach only the fake child boundary', async () => {
-  const GlmSessionCli = await importGlm(); const key = join(mkdtempSync(join(tmpdir(), 'baton-glm-key-wire-')), 'key.json');
+  const GlmSessionCli = await importGlm(); const key = join(mintFixtureDirectory(join(tmpdir(), 'baton-glm-key-wire-')), 'key.json');
   writeFileSync(key, JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'fake-file-token' } })); chmodSync(key, 0o600);
   const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authTokenFile: key, authTokenJsonPointer: '/env/ANTHROPIC_AUTH_TOKEN', model: 'glm-5.2' });
-  const c = collect(cli); const wt = mkdtempSync(join(tmpdir(), 'baton-glm-key-wt-'));
+  const c = collect(cli); const wt = mintFixtureDirectory(join(tmpdir(), 'baton-glm-key-wt-'));
   try {
     assert.equal(cli.card().modelSelection.configuredDefault, 'glm-5.2');
     assert.equal(cli.card().providerCompatibility.credentialState, 'available');
@@ -173,7 +189,7 @@ test('GL2: exact GLM dispatch rejects a different wire-observed model before acc
   const worker = 'glm-model-mismatch';
   try {
     assert.equal((await cli.spawn(worker, brief('provider output must remain private'), {
-      worktree: mkdtempSync(join(tmpdir(), 'baton-glm-model-wt-')),
+      worktree: mintFixtureDirectory(join(tmpdir(), 'baton-glm-model-wt-')),
       model: 'glm-5.2',
     })).ok, true);
     const crashed = await c.waitFor((event) => event.kind === 'lifecycle.crashed'
@@ -191,7 +207,7 @@ test('SC6: Z.ai env wiring reaches the child process — base URL, auth token, m
   delete process.env.ZHIPU_API_KEY;
   const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authToken: 'test-token-not-a-credential', model: 'glm-5.2-test' });
   const c = collect(cli);
-  const wt = mkdtempSync(join(tmpdir(), 'p10-glm-wt-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'p10-glm-wt-'));
   const probes = [
     ['g1', 'REPORT_ENV:ANTHROPIC_BASE_URL', 'env:ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic'],
     ['g2', 'REPORT_ENV_PRESENT:ANTHROPIC_AUTH_TOKEN', 'env-present:ANTHROPIC_AUTH_TOKEN=true'],
@@ -216,7 +232,7 @@ test('SC6: with no model given, no model-map override leaks into the child env',
   delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
   const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authToken: 'test-token-not-a-credential' });
   const c = collect(cli);
-  const wt = mkdtempSync(join(tmpdir(), 'p10-glm-wt2-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'p10-glm-wt2-'));
   try {
     const ack = await cli.spawn('g1', brief('REPORT_ENV:ANTHROPIC_DEFAULT_OPUS_MODEL'), { worktree: wt });
     assert.equal(ack.ok, true, ack.reason);
@@ -233,7 +249,7 @@ test('SC6: token resolution falls back authToken -> Z_AI_API_KEY -> ZHIPU_API_KE
   const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE] });
   assert.equal(cli._cfg.env.ANTHROPIC_AUTH_TOKEN, 'test-zai-fallback-token');
   const c = collect(cli);
-  const wt = mkdtempSync(join(tmpdir(), 'p10-glm-wt3-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'p10-glm-wt3-'));
   try {
     const ack = await cli.spawn('g1', brief('REPORT_ENV_PRESENT:ANTHROPIC_AUTH_TOKEN'), { worktree: wt });
     assert.equal(ack.ok, true, ack.reason);
@@ -246,7 +262,7 @@ test('SC6+SC1: GlmSessionCli inherits the unified spawn contract — worktreeRea
   const GlmSessionCli = await importGlm();
   const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authToken: 'test-token-not-a-credential' });
   const c = collect(cli);
-  const wt = mkdtempSync(join(tmpdir(), 'p10-glm-wt4-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'p10-glm-wt4-'));
   try {
     const ack = await cli.spawn('g1', brief('REPORT_CWD'), { worktreeReady: Promise.resolve({ path: wt }) });
     assert.equal(ack.ok, true, `SC1 inheritance: ${ack.reason}`);

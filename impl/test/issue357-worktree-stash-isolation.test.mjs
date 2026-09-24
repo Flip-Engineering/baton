@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Issue #357 — lane worktrees share one git stash stack (`refs/stash` is one per
 // repository, not one per worktree), so a seat's `git stash` round-trip can push onto the
 // shared stack and another seat's `git stash pop` applies the wrong entry in the wrong tree.
@@ -17,6 +19,20 @@ import { RuntimeIsolation, WORKTREE_STASH_BRIEF_SENTENCE } from '../src/runtime-
 import { renderBrief } from '../src/adapter.mjs';
 import { createBrief } from '../src/messages.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const HAVE_GIT = (() => {
   try {
     execFileSync('git', ['--version'], { stdio: 'ignore' });
@@ -34,7 +50,7 @@ const QUIET_GIT_ENV = {
 };
 
 function makeIsolation(tag) {
-  const repoRoot = mkdtempSync(join(tmpdir(), `baton-357-${tag}-`));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), `baton-357-${tag}-`));
   return new RuntimeIsolation({
     repoRoot,
     baseEnv: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: '/nonexistent-operator-home', LANG: 'C' },
@@ -76,7 +92,7 @@ function stashRef(scope, cwd) {
 
 test('issue357 (a): the projected scope refuses git stash in every spelling, refs/stash unchanged',
   needsGit, () => {
-    const dir = mkdtempSync(join(tmpdir(), 'baton-357-a-'));
+    const dir = mintFixtureDirectory(join(tmpdir(), 'baton-357-a-'));
     initRepo(dir);
     const isolation = makeIsolation('a');
     const scope = isolation.create('seat-a', 'codex');
@@ -116,7 +132,7 @@ test('issue357 (a): the projected scope refuses git stash in every spelling, ref
 
 test('issue357 (b): status and commit through the wrapper behave exactly as the real git',
   needsGit, () => {
-    const dir = mkdtempSync(join(tmpdir(), 'baton-357-b-'));
+    const dir = mintFixtureDirectory(join(tmpdir(), 'baton-357-b-'));
     initRepo(dir);
     const isolation = makeIsolation('b');
     const scope = isolation.create('seat-b', 'codex');
@@ -142,7 +158,7 @@ test('issue357 (b): status and commit through the wrapper behave exactly as the 
 
 test('issue357 (c): two projected scopes over two worktrees cannot move each other\'s edits through stash',
   needsGit, () => {
-    const dir = mkdtempSync(join(tmpdir(), 'baton-357-c-'));
+    const dir = mintFixtureDirectory(join(tmpdir(), 'baton-357-c-'));
     initRepo(dir);
     const env = { ...process.env, ...QUIET_GIT_ENV };
     const wtA = join(dir, 'wt-a');
@@ -175,8 +191,8 @@ test('issue357 (c): two projected scopes over two worktrees cannot move each oth
   });
 
 test('issue520 (f): the stash refusal is scoped to the lease\'s own checkout', needsGit, () => {
-  const lane = mkdtempSync(join(tmpdir(), 'baton-520-lane-'));
-  const fixture = mkdtempSync(join(tmpdir(), 'baton-520-fixture-'));
+  const lane = mintFixtureDirectory(join(tmpdir(), 'baton-520-lane-'));
+  const fixture = mintFixtureDirectory(join(tmpdir(), 'baton-520-fixture-'));
   initRepo(lane);
   initRepo(fixture);
   const isolation = makeIsolation('f');
