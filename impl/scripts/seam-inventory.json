@@ -207,13 +207,22 @@
           ]
         },
         {
-          "name": "startupCleanupDeferred",
+          "name": "cleanupDeferred",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:recovery_port"
+          ]
+        },
+        {
+          "name": "_reconcileDrainRuntimeScopes",
           "ordinal": 0,
           "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "effect:action_verb",
+            "recovery:reconcile_call",
             "recovery:recovery_port"
           ]
         },
@@ -721,7 +730,7 @@
         {
           "name": "_performDrain",
           "ordinal": 0,
-          "size": 195,
+          "size": 198,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -20846,6 +20855,16 @@
           ]
         },
         {
+          "name": "_reconcileDrainRuntimeScopes",
+          "ordinal": 0,
+          "size": 14,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
+          ]
+        },
+        {
           "name": "startupReady",
           "ordinal": 0,
           "size": 5,
@@ -20856,13 +20875,12 @@
           ]
         },
         {
-          "name": "startupCleanupDeferred",
+          "name": "cleanupDeferred",
           "ordinal": 0,
           "size": 5,
-          "seam": "recovery",
+          "seam": "surface",
           "evidence": [
-            "recovery:restart_name",
-            "effect:action_verb"
+            "surface:no_authority_touched"
           ]
         },
         {
