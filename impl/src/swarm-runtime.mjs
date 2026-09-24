@@ -1717,6 +1717,21 @@ function watchAbortMessage(departure) {
   return 'the watch was torn down: the incarnation holding it is leaving; re-arm the watch against the resident that serves this deployment next';
 }
 
+
+/** Issues #572/#574: the config-less serve's declaration of the operator routing rule —
+ * `BATON_ROUTING_EXCLUDE_HARNESSES=codex,grok` (comma-separated harness names). `undefined` when
+ * the variable is unset or blank (no rule declared); a declaration that names nothing after the
+ * split refuses, so a typo like `,,` cannot silently exclude nothing. The serve leg feeds the
+ * answer to the open as `advanced.routing.excludeHarnesses`. */
+export function parseRoutingExcludeHarnesses(value) {
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+  const harnesses = value.split(',').map((harness) => harness.trim());
+  if (harnesses.some((harness) => harness.length === 0)) {
+    throw new Error('BATON_ROUTING_EXCLUDE_HARNESSES names no harness between commas — declare comma-separated harness names, or unset it');
+  }
+  return harnesses;
+}
+
 export class SwarmRuntime {
   /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
    * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
@@ -6607,12 +6622,14 @@ export class SwarmRuntime {
       const exhaustion = this._routeExhaustedFor({ options: runOptions });
       if (exhaustion) {
         const ready = this._readyRouteLabels();
+        const excluded = exhaustion.reason === 'excluded_by_operator';
         refuse(
-          `route ${this._routeLabel(exhaustion.route)} is ${exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
+          `route ${this._routeLabel(exhaustion.route)} is ${excluded ? 'excluded by the operator\'s routing rule' : exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
           + (exhaustion.resetAt ? ` (resets at ${exhaustion.resetAt})` : '')
-          + ': every route the selection names is ineligible, so the deferred start cannot be admitted'
+          + (excluded ? ': the routing rule governs the deferred start, so it cannot be admitted'
+            : ': every route the selection names is ineligible, so the deferred start cannot be admitted')
           + (ready.length > 0 ? `; routes ready now: ${ready.join(', ')}` : '; no route is ready'),
-          'route_exhausted',
+          excluded ? 'route_excluded' : 'route_exhausted',
           {
             route: exhaustion.route, reason: exhaustion.reason,
             code: exhaustion.code, resetAt: exhaustion.resetAt,
@@ -8471,12 +8488,14 @@ export class SwarmRuntime {
         const exhaustion = this._routeExhaustedFor(args);
         if (exhaustion) {
           const ready = this._readyRouteLabels();
+          const excluded = exhaustion.reason === 'excluded_by_operator';
           refuse(
-            `route ${this._routeLabel(exhaustion.route)} is ${exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
+            `route ${this._routeLabel(exhaustion.route)} is ${excluded ? 'excluded by the operator\'s routing rule' : exhaustion.reason === 'quota_exhausted' ? 'quota-exhausted' : exhaustion.reason}`
             + (exhaustion.resetAt ? ` (resets at ${exhaustion.resetAt})` : '')
-            + ': every route the selection names is ineligible, so the recruit cannot be admitted'
+            + (excluded ? ': the routing rule governs recruits, so the recruit cannot be admitted onto it'
+              : ': every route the selection names is ineligible, so the recruit cannot be admitted')
             + (ready.length > 0 ? `; routes ready now: ${ready.join(', ')}` : '; no route is ready'),
-            'route_exhausted',
+            excluded ? 'route_excluded' : 'route_exhausted',
             {
               route: exhaustion.route, reason: exhaustion.reason,
               code: exhaustion.code, resetAt: exhaustion.resetAt,

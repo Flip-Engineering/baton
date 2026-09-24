@@ -31,7 +31,7 @@ import { join } from 'node:path';
 
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { PROVIDER_FAULT_CODES } from '../src/provider-faults.mjs';
-import { SwarmRuntime } from '../src/swarm-runtime.mjs';
+import { parseRoutingExcludeHarnesses, SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { SWARM_EVENT_KINDS, foldSwarmEvent, swarmSnapshot } from '../src/swarm-state.mjs';
 import { deriveWakeFrame, parseWakeFilter, wakeClassFor, wakeMatches } from '../src/wake-stream.mjs';
 
@@ -350,12 +350,30 @@ test('443-a4: the operator routing rule excludes a harness — a fault never rer
     w.call('recruit', { swarmId: SWARM, participantId: 'beta', objective: 'work',
       options: { exact: { ...CODEX } } }),
     (error) => {
-      assert.equal(error.code, 'route_exhausted');
+      assert.equal(error.code, 'route_excluded');
       assert.equal(error.detail?.reason, 'excluded_by_operator');
       return true;
     },
     'the recruit honours the exclusion the derivation honours',
   );
+});
+
+test('443-a5: the config-less serve declares the rule from the environment, validated like its sibling declarations', async (t) => {
+  // `baton serve` reads no deployment config module, so the operator declares the rule on the
+  // environment the way BATON_PUBLISH_REMOTE is: comma-separated harness names, blanks refused,
+  // and an unset or blank variable declares nothing.
+  assert.equal(parseRoutingExcludeHarnesses(undefined), undefined);
+  assert.equal(parseRoutingExcludeHarnesses(''), undefined);
+  assert.equal(parseRoutingExcludeHarnesses('   '), undefined, 'a blank declaration names nothing');
+  assert.deepEqual(parseRoutingExcludeHarnesses('codex'), ['codex']);
+  assert.deepEqual(parseRoutingExcludeHarnesses(' codex , grok '), ['codex', 'grok'],
+    'the entries are trimmed around the commas');
+  assert.deepEqual(parseRoutingExcludeHarnesses('Codex,GROK'), ['Codex', 'GROK'],
+    'the spelling is preserved here; the eligibility predicate compares case-insensitively');
+  assert.throws(() => parseRoutingExcludeHarnesses('codex,,grok'),
+    /names no harness between commas/u, 'an empty comma slot refuses instead of excluding nothing');
+  assert.throws(() => parseRoutingExcludeHarnesses(','),
+    /names no harness between commas/u);
 });
 
 // ── (b) the policy, and the auto resume through the same recruit path ───────────────────────────
