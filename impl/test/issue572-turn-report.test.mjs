@@ -207,6 +207,7 @@ test('a completed swarm turn wakes its parent with the report and remains availa
   assert.equal(f.log.read(child.id).some((e) => e.kind === 'turn.paused'), false);
   assert.equal(f.adapter.calls.prompt.length, 1);
   assert.equal(f.adapter.calls.prompt[0].worker, parent.id);
+  assert.equal(f.adapter.calls.prompt[0].mode, 'turn');
   assert.match(f.adapter.calls.prompt[0].content, /Implementation ready for review/);
   assert.equal(f.adapter.epoch(parent.id), 2);
   assert.equal(f.events('swarm.turn_report_delivered').length, 1);

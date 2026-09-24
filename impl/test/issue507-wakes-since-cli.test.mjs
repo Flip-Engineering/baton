@@ -107,10 +107,10 @@ function runBaton(args, { repo, env }) {
   });
 }
 
-async function untilPaused(swarm) {
+async function untilReported(swarm) {
   for (;;) {
-    const view = await swarm.view();
-    if (view.participants[0]?.runtime?.turn === 'paused') return view;
+    const view = await swarm.view({ participantId: 'worker' });
+    if (view.participants[0]?.turnReports?.length > 0) return view;
     await swarm.watch({ timeoutMs: 100 });
   }
 }
@@ -177,7 +177,7 @@ test('507-b: one bounded page of wake frames over the real socket, cheaper than 
   // seat's first turn wrote.
   const before = await swarm.view();
   await swarm.recruit('worker', 'Stay available', { exact: ROUTE, resultIntent: 'read_only_evidence' });
-  await untilPaused(swarm);
+  await untilReported(swarm);
   /** One `baton …` read through the fixture resident. */
   const read = async (args) => (await runBaton(args, { repo, env: configured.env })).json;
 
@@ -190,8 +190,8 @@ test('507-b: one bounded page of wake frames over the real socket, cheaper than 
     assert.ok(Number.isSafeInteger(frame.seq) && frame.seq > before.cursor, 'a frame is after the cursor');
     assert.ok(typeof frame.wakeClass === 'string' && frame.wakeClass.length > 0, 'a frame names its wake class');
   }
-  const paused = page.frames.find((frame) => frame.wakeClass === 'paused');
-  assert.ok(paused, 'the page carries the class the seat\'s turn pause wrote');
+  const paused = page.frames.find((frame) => frame.wakeClass === 'turn_reported');
+  assert.ok(paused, 'the page carries the class the seat\'s turn report wrote');
   assert.equal(paused.participantId, 'worker', 'the frame names the participant the wake is about');
   assert.ok(Number.isSafeInteger(page.cursor) && page.cursor >= before.cursor, 'the page names the deployment cursor');
   assert.equal(page.continuationCursor, String(page.cursor), 'the continuation cursor is the page cursor');
@@ -216,11 +216,11 @@ test('507-b: one bounded page of wake frames over the real socket, cheaper than 
 
   // The filter reaches the resident: the class axis selects, and an axis the deployment never
   // wrote answers an empty page rather than every row.
-  const filtered = await read(['deployment', 'wakes-since', '--since', '0', '--wake-class', 'paused',
+  const filtered = await read(['deployment', 'wakes-since', '--since', '0', '--wake-class', 'turn_reported',
     '--participant', 'worker']);
-  assert.ok(filtered.frames.length > 0, 'the class filter admits the pause row');
+  assert.ok(filtered.frames.length > 0, 'the class filter admits the turn report row');
   for (const frame of filtered.frames) {
-    assert.equal(frame.wakeClass, 'paused');
+    assert.equal(frame.wakeClass, 'turn_reported');
     assert.equal(frame.participantId, 'worker');
   }
   const empty = await read(['deployment', 'wakes-since', '--since', '0', '--wake-class', 'closed']);

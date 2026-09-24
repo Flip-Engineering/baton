@@ -88,8 +88,9 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   await paused(beta.runId);
   await delegated.work({ workId: 'W-A', objective: 'Part A', status: 'open' });
   await delegated.assign({ assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A', status: 'active' });
-  assert.deepEqual(kinds(await swarm.view()), ['root_wake_undelivered'],
-    'the fixture records the report owed to its root session');
+  const initialAttention = kinds(await swarm.view());
+  assert.ok(initialAttention.length > 0 && initialAttention.every((kind) => kind === 'root_wake_undelivered'),
+    'the fixture records reports owed to its root session');
 
   // Stopping alpha settles its membership (issue #350): the row reads left/stopped, so its dead
   // runtime is no longer attention — the stop was the organization's own act — while its
@@ -102,7 +103,7 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   assert.equal(alphaRow.runtime.state, 'dead');
   assert.equal(alphaRow.runtime.turn, null, 'a dead worker has no paused turn to guide');
   assert.equal(driver.coordinator.pausedTurns({ workerId: alphaWorker.id }).length >= 0, true);
-  assert.deepEqual(kinds(view).sort(), ['assignment_holder_gone', 'root_wake_undelivered']);
+  assert.deepEqual(kinds(view).filter((kind) => kind !== 'root_wake_undelivered'), ['assignment_holder_gone']);
   assert.deepEqual(view.attention.find((row) => row.kind === 'assignment_holder_gone'),
     { kind: 'assignment_holder_gone', assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A',
       next: { event: 'swarm.holder_released', participantId: 'alpha' } });
@@ -121,7 +122,7 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   // The root can still guide the orphan — loose coupling holds — and closing the swarm while it
   // runs is named too.
   const guided = await swarm.guide('beta', 'Finish part B');
-  assert.equal(guided.result.result, 'ok');
+  assert.equal(guided.result.result, 'nudged');
   await swarm.close({ reason: 'audit complete' });
   view = await swarm.view();
   assert.equal(view.status, 'closed');

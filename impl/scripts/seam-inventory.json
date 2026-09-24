@@ -21636,7 +21636,7 @@
         {
           "name": "_deliver",
           "ordinal": 0,
-          "size": 102,
+          "size": 110,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -24240,7 +24240,7 @@
         {
           "name": "_admitDelivery",
           "ordinal": 0,
-          "size": 96,
+          "size": 99,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",

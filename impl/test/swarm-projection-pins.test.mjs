@@ -114,8 +114,7 @@ test('the view pins what a participant was told, and the guide receipt that wrot
   // and the guide's OWN row is what the projection carries (the delivery says so with lane: null).
   const resumed = await delegated.guide('alpha', 'Resume on the interface');
   assert.equal(resumed.guide.kind, 'swarm.guidance_sent');
-  assert.equal(resumed.guide.delivery.state, 'delivered');
-  assert.equal(resumed.guide.delivery.lane.messageId, resumed.guide.messageId);
+  assert.deepEqual(resumed.guide.delivery, { state: 'delivered', lane: null });
   let view = await swarm.view();
   assert.deepEqual(view.participants.find((row) => row.participantId === 'alpha').guidance.map((row) => row.seq),
     [resumed.guide.seq], 'the paused-lane guide is pinned on the seat it was sent to');

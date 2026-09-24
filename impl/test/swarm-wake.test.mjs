@@ -116,8 +116,16 @@ test('a real resident wakes a real `baton swarm watch --follow` child on guidanc
   await owner.host();
   const swarm = await owner.swarms.create('Wake the orchestrator');
   await swarm.recruit('worker', 'Stay available', { exact: ROUTE, resultIntent: 'read_only_evidence' });
-  const untilPaused = async () => { for (;;) { const view = await swarm.view(); if (view.participants[0].runtime.turn === 'paused') return view; await swarm.watch({ timeoutMs: 100 }); } };
-  const before = await untilPaused();
+  let reportsSeen = 0;
+  const untilReported = async () => {
+    for (;;) {
+      const view = await swarm.view({ participantId: 'worker' });
+      const count = view.participants[0].turnReports.length;
+      if (count > reportsSeen) { reportsSeen = count; return view; }
+      await swarm.watch({ timeoutMs: 100 });
+    }
+  };
+  const before = await untilReported();
 
   const lines = [];
   const child = spawn(process.execPath, [BATON, 'swarm', 'watch', swarm.id, '--follow', '--since', String(before.cursor)], {
@@ -137,7 +145,7 @@ test('a real resident wakes a real `baton swarm watch --follow` child on guidanc
   // #272: a context row wakes naming the key it wrote, so the follower never re-reads the view.
   await swarm.update('swarm.context_updated', { key: 'wake:proof', body: { phase: 'context-subject-proof' } });
   await wakes(3);
-  await untilPaused();
+  await untilReported();
   await swarm.stop('worker', 'done');
   await swarm.close({ reason: 'proof complete' });
   const code = await exited;

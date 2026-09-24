@@ -2730,6 +2730,9 @@ export function _admitDelivery(coordinator, recorder, handle, mode, opts) {
       }
       const pause = coordinator.pausedTurns({ workerId })[0];
       if (pause) return { admitted: true, handoff: 'nudgeTurn', pause };
+      if (handle.turnTerminalObserved === true && task.status === 'working') {
+        return { admitted: true, handoff: 'reportedTurn' };
+      }
     }
 
     // C3: pre-check against an externally-supplied fence, BEFORE any delivery attempt —

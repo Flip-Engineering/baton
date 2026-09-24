@@ -374,7 +374,7 @@ test('PS1-PS5: Claude, Codex, and Grok each run two public turns on one native s
       'steering.registered', { runId: task.runId ?? null, driverKind: 'wave', actor: 'orchestrator' },
       `run.steering_registered:${task.runId ?? 'null'}`, 'orchestrator',
     );
-    await until(() => log.read(h.id).some((e) => e.kind === 'turn.paused'));
+    await until(() => log.read(h.id).some((e) => e.kind === 'turn.reported'));
     const firstSpawn = log.read(h.id).find((e) => e.kind === 'lifecycle.spawned' && e.actor === 'worker');
     const pid = firstSpawn?.payload?.pid;
     const sessionRef = c.list()[0].sessionRef;
@@ -387,7 +387,7 @@ test('PS1-PS5: Claude, Codex, and Grok each run two public turns on one native s
     const follow = await c.send(h.id, `FAKE:REPORT_CWD follow-up for ${name}`, 'turn');
     assert.equal(follow.ok, true, `${name}: public follow-up accepted`);
     // The follow-up turn completes → its checkpoint pause pends → claim runs the gate a second time.
-    await until(() => log.read(h.id).filter((e) => e.kind === 'turn.paused').length >= 2);
+    await until(() => log.read(h.id).filter((e) => e.kind === 'turn.reported').length >= 2);
     await c.claimTurn(c.pausedTurns()[0].pauseId, { actor: 'orchestrator' });
     await until(() => log.read(h.id).filter((e) => e.kind === 'verify.reverified').length === 2);
     assert.equal(log.read(h.id).filter((event) => event.kind === 'lifecycle.turn_completed' && event.actor === 'worker').length, 2,
