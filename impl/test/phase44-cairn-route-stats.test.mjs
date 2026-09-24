@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -8,7 +10,21 @@ import test from 'node:test';
 
 import { CairnRunScorecard, McpFleetServer, MockAdapter, WebNorthbound, createBrief, createDriver } from '../src/index.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-route-stats-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-route-stats-${name}-`));
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const sha = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const until = async (fn, label, timeoutMs = 5000) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const value = await fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 5)); } throw new Error(`timed out waiting for ${label}`); };

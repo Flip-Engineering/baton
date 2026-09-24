@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn as spawnChild } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
@@ -10,7 +12,21 @@ import { CoordinationStore } from '../src/coordination-store.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-session-recovery-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-session-recovery-${name}-`));
 const until = async (fn, label, timeoutMs = 5000) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const value = await fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 5)); } throw new Error(`timed out waiting for ${label}`); };
 
 // The recovery supervisor's bounded handshake and the coordinator's stop machinery are

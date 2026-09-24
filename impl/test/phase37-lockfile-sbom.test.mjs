@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,7 +8,21 @@ import test from 'node:test';
 
 import { AtlasCodeIndex, CartographerQuartermaster } from '../src/index.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-sbom-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-sbom-${name}-`));
 const write = (base, path, content) => { mkdirSync(dirname(join(base, path)), { recursive: true }); writeFileSync(join(base, path), content); };
 async function fixture(lock = null, policy = { maxLockfileBytes: 64 * 1024, maxComponents: 32 }) {
   const base = root('repo'); const atlasRoot = root('atlas'); const outputRoot = root('output');

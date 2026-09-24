@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -7,6 +9,20 @@ import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
 import { AdvisoryFeedRegistry, CoordinationStore, createDriver } from '../src/index.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -40,7 +56,7 @@ async function verified(feeds, deliveryId, sequence, marker = deliveryId) {
 }
 
 async function pollWorld() {
-  const raw = (sequence) => Buffer.from(JSON.stringify({ deliveryId: `delivery-${sequence}`, occurredAt: '2026-07-13T03:00:00.000Z', sequence, marker: `delivery-${sequence}` })); const state = {}; const feeds = registry(state); const cards = feeds.cards(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-poll-world-'));
+  const raw = (sequence) => Buffer.from(JSON.stringify({ deliveryId: `delivery-${sequence}`, occurredAt: '2026-07-13T03:00:00.000Z', sequence, marker: `delivery-${sequence}` })); const state = {}; const feeds = registry(state); const cards = feeds.cards(); const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-poll-world-'));
   const store = new CoordinationStore(root, { advisoryFeedCards: cards, advisoryPollReverify: (proof) => feeds.reverifyPollSync(proof), clock: () => '2026-07-13T04:00:01.000Z' });
   for (const sequence of [1, 3]) store.recordProviderDelivery({ repoId: 'repo-a', receipt: await feeds.verify('fixture.osv', { mode: 'webhook', raw: raw(sequence) }) }, { actor: 'provider:fixture.osv', key: `provider:pre:${sequence}` });
   const itemBytes = [1, 2, 3].map(raw); state.poll = { schemaVersion: 1, providerId: 'fixture.osv', pollId: 'full-1', observedAt: '2026-07-13T04:00:00.000Z', window: { fromSequence: 1, toSequence: 3 }, finalSequence: 3, cursorDigest: sha('cursor-3'), authReceiptDigest: sha('poll-auth'), keyFingerprint: fingerprint, pages: [{ raw: Buffer.from('{"page":1}'), items: itemBytes }] };
@@ -49,7 +65,7 @@ async function pollWorld() {
 }
 
 test('AF3/AF4/AF6: receipt append atomically creates a sanitized Source and repo-scoped pending fence', async () => {
-  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-receipt-'));
+  const feeds = registry(); const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-receipt-'));
   const store = new CoordinationStore(root, { advisoryFeedCards: feeds.cards(), clock: () => '2026-07-13T03:00:01.000Z' });
   const receipt = await verified(feeds, 'delivery-1', 1);
   const result = store.recordProviderDelivery({ repoId: 'repo-a', receipt }, { actor: 'provider:fixture.osv', key: 'provider:delivery-1' });
@@ -65,7 +81,7 @@ test('AF3/AF4/AF6: receipt append atomically creates a sanitized Source and repo
 });
 
 test('AF3/AF6: exact delivery retries are zero-append, conflicting bytes refuse, and semantic aliases share one pending work root', async () => {
-  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-dedupe-'));
+  const feeds = registry(); const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-dedupe-'));
   const store = new CoordinationStore(root, { advisoryFeedCards: feeds.cards(), clock: () => '2026-07-13T03:00:01.000Z' });
   const first = await verified(feeds, 'delivery-1', 1); const admitted = store.recordProviderDelivery({ repoId: 'repo-a', receipt: first }, { actor: 'provider:fixture.osv', key: 'provider:first' });
   const seq = store.snapshot().lastSeq;
@@ -82,7 +98,7 @@ test('AF3/AF6: exact delivery retries are zero-append, conflicting bytes refuse,
 });
 
 test('AF3/AF6/AF7: replay requires the pinned source card and reconstructs receipt, pending, and causal projections', async () => {
-  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-replay-'));
+  const feeds = registry(); const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-replay-'));
   const first = new CoordinationStore(root, { advisoryFeedCards: feeds.cards(), clock: () => '2026-07-13T03:00:01.000Z' });
   const admitted = first.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-1', 1) }, { actor: 'provider:fixture.osv', key: 'provider:first' });
   first.releaseWriterLease();
@@ -95,7 +111,7 @@ test('AF3/AF6/AF7: replay requires the pinned source card and reconstructs recei
 });
 
 test('AF3/AF5: pending admission is serialized inside decision append validation for borrow and build', async () => {
-  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-fence-'));
+  const feeds = registry(); const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-fence-'));
   const store = new CoordinationStore(root, { advisoryFeedCards: feeds.cards(), clock: () => '2026-07-13T03:00:01.000Z' });
   store.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-1', 1) }, { actor: 'provider:fixture.osv', key: 'provider:first' });
   for (const choice of ['borrow', 'build']) {
@@ -109,7 +125,7 @@ test('AF3/AF5: pending admission is serialized inside decision append validation
 });
 
 test('AF2/AF3: Coordinator owns fixed-route machine ingress and acknowledges only after durable admission', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-provider-driver-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot);
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-driver-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot);
   execFileSync('git', ['init', '-q'], { cwd: repoRoot });
   const driver = createDriver({ repoRoot, repoId: 'repo-a', logDir: join(root, 'log'), adapters: {}, now: () => Date.parse('2026-07-13T03:00:01.000Z'), advisoryFeedSources: { 'fixture.osv': feedSource() } });
   assert.equal(driver.coordinator.advisoryFeedCards()[0].providerId, 'fixture.osv');
@@ -122,7 +138,7 @@ test('AF2/AF3: Coordinator owns fixed-route machine ingress and acknowledges onl
 });
 
 test('AF3/AF10: append failure exposes neither an acknowledged receipt nor a partial pending projection', async () => {
-  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-append-failure-'));
+  const feeds = registry(); const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-append-failure-'));
   const store = new CoordinationStore(root, { advisoryFeedCards: feeds.cards(), clock: () => '2026-07-13T03:00:01.000Z', appendFile: () => { throw new Error('provider ledger unavailable'); } });
   const receipt = await verified(feeds, 'delivery-1', 1);
   assert.throws(() => store.recordProviderDelivery({ repoId: 'repo-a', receipt }, { actor: 'provider:fixture.osv', key: 'provider:first' }), /provider ledger unavailable/);
@@ -131,7 +147,7 @@ test('AF3/AF10: append failure exposes neither an acknowledged receipt nor a par
 });
 
 test('AF7: sequence gaps and late unseen deliveries remain admitted but health stays reconciliation-required', async () => {
-  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-sequence-')); const cards = feeds.cards();
+  const feeds = registry(); const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-sequence-')); const cards = feeds.cards();
   const store = new CoordinationStore(root, { advisoryFeedCards: cards, clock: () => '2026-07-13T03:00:01.000Z' });
   store.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-1', 1) }, { actor: 'provider:fixture.osv', key: 'provider:seq:1' });
   store.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-3', 3) }, { actor: 'provider:fixture.osv', key: 'provider:seq:3' });
@@ -143,7 +159,7 @@ test('AF7: sequence gaps and late unseen deliveries remain admitted but health s
 });
 
 test('AF7: one provider sequence cannot be rebound to different authenticated bytes', async () => {
-  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-sequence-conflict-')); const cards = feeds.cards();
+  const feeds = registry(); const root = mintFixtureDirectory(join(tmpdir(), 'baton-provider-sequence-conflict-')); const cards = feeds.cards();
   const store = new CoordinationStore(root, { advisoryFeedCards: cards, clock: () => '2026-07-13T03:00:01.000Z' });
   store.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-1', 1, 'first') }, { actor: 'provider:fixture.osv', key: 'provider:first' });
   const sequenceConflict = await verified(feeds, 'delivery-other', 1, 'different-authenticated-content');
