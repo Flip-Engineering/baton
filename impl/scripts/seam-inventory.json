@@ -4518,11 +4518,12 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 111,
+          "size": 123,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
-            "observation:durable_read"
+            "observation:durable_read",
+            "observation:ledger_port"
           ]
         },
         {
@@ -5031,7 +5032,7 @@
         {
           "name": "start",
           "ordinal": 0,
-          "size": 271,
+          "size": 274,
           "seam": "surface",
           "evidence": [
             "effect:action_verb",
@@ -13769,7 +13770,16 @@
         {
           "name": "_seatReadDispatch",
           "ordinal": 0,
-          "size": 13,
+          "size": 14,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_spillRead",
+          "ordinal": 0,
+          "size": 12,
           "seam": "admission",
           "evidence": [
             "admission:swarm_refusal"
@@ -13889,7 +13899,7 @@
         {
           "name": "_notify",
           "ordinal": 0,
-          "size": 60,
+          "size": 62,
           "seam": "observation",
           "evidence": [
             "observation:record_name"
@@ -14292,7 +14302,7 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 1239,
+          "size": 1245,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -18059,6 +18069,15 @@
           "seam": "observation",
           "evidence": [
             "delegates:observation"
+          ]
+        },
+        {
+          "name": "spillIdForBody",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {

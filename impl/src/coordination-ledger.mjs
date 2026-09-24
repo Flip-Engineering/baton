@@ -5782,6 +5782,13 @@ export function backfillBriefingPack(store, { family }, auth) {
   return { ok: true, result: minted.result, event: minted.event, pack: minted.pack };
 }
 
+/** The content address of one spilled body (#358): a spill's id is its body's SHA-256 digest,
+ * so every reader that asks "did THIS body spill?" derives the same id the mint stored — the
+ * recruit receipt reads the durable truth through this ONE spelling, never a second one. */
+export function spillIdForBody(body) {
+  return `spill:sha256:${createHash('sha256').update(body, 'utf8').digest('hex')}`;
+}
+
 export function mintSpill(store, fields, auth) {
   const body = fields?.body;
   const lane = fields?.lane ?? null;
@@ -5794,7 +5801,7 @@ export function mintSpill(store, fields, auth) {
     throw coachingRefusal(FRAME_LIMITS['spill.body'], bytes, spillCeiling);
   }
   const digest = createHash('sha256').update(body, 'utf8').digest('hex');
-  const spillId = `spill:sha256:${digest}`;
+  const spillId = spillIdForBody(body);
   const payload = { spillId, digest, bytes, lane, body };
   const prior = store._byKey.get(auth?.key);
   if (prior) {
