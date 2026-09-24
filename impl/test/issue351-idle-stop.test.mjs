@@ -26,6 +26,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, closeSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -57,7 +58,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The resident protocol bounds a socket path to sun_path (103 bytes); fixture roots are short.
 function fixtureRoot(t, label) {
-  const root = mkdtempSync(`/tmp/bt351s-${label}-`);
+  const root = mkdtempSync(join(tmpdir(), `bt351s-${label}-`));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
