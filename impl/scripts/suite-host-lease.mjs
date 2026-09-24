@@ -153,7 +153,7 @@ export function formatSuitePlan({
 export async function acquireSuiteVerifyLease({
   authority = null, createAuthority = createSuiteLeaseAuthority,
   env = process.env, holder = suiteLeaseHolder(env),
-  log = (line) => process.stderr.write(`${line}\n`), onQueued = null,
+  log = (line) => process.stderr.write(`${line}\n`), onQueued = null, signal = null,
 } = {}) {
   if (suiteLeaseDisabled(env) || suiteLeaseNested(env)) {
     return Object.freeze({
@@ -167,6 +167,9 @@ export async function acquireSuiteVerifyLease({
     holder,
     // #561: a suite a worker seat started waits for the lease a landing gate takes.
     durable: suiteLeaseDurable(holder),
+    // #576: a stopping resident's fence aborts the wait — a cancelled gate never hangs its
+    // resident in the queue.
+    ...(signal !== null ? { signal } : {}),
     onQueued: (row) => {
       if (reported) return;
       reported = true;

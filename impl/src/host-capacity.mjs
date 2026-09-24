@@ -864,13 +864,21 @@ export class HostCapacityAuthority {
    *
    * `bytes` (a worker option, #561) records the MEASURED footprint the admitted seat's process
    * holds, when the caller knows one at admission; `observeWorkerBytes` lands later
-   * measurements on the same record. */
-  async acquire(kind, { holder = '', onQueued = null, durable = false, bytes = null } = {}) {
+   * measurements on the same record.
+   *
+   * `signal` (optional, #576) ends the wait when it aborts: the request's own queue entry is
+   * removed — an abandoned wait never pins the queue behind a dead request — and the acquire
+   * throws `host_capacity_acquire_aborted`. A caller that passes no signal keeps the unbounded
+   * #541 wait. */
+  async acquire(kind, { holder = '', onQueued = null, durable = false, bytes = null, signal = null } = {}) {
     if (!HOST_CAPACITY_LEASE_KINDS.includes(kind)) throw new TypeError(`host capacity lease kind must be one of ${HOST_CAPACITY_LEASE_KINDS.join(', ')}`);
     if (typeof holder !== 'string') throw new TypeError('host capacity lease holder must be a string');
     if (onQueued !== null && typeof onQueued !== 'function') throw new TypeError('host capacity onQueued must be a function');
     if (typeof durable !== 'boolean') throw new TypeError('host capacity durable must be a boolean');
     if (bytes !== null && (!Number.isSafeInteger(bytes) || bytes <= 0)) throw new TypeError('host capacity measured bytes must be a positive safe integer');
+    if (signal !== null && typeof signal !== 'object') throw new TypeError('host capacity acquire signal must be an AbortSignal');
+    const abandoned = () => Object.assign(new Error('host capacity acquire was abandoned before admission'), { code: 'host_capacity_acquire_aborted' });
+    if (signal?.aborted === true) throw abandoned();
     this.#ensureRoot();
     const nonce = randomBytes(16).toString('hex');
     let queuedAt = null;
@@ -882,6 +890,15 @@ export class HostCapacityAuthority {
         const used = this.#usedBudget(capacity);
         const entries = listRecords(this.queueDir, 'host capacity queue', QUEUE_FIELDS);
         const mine = entries.find((record) => record.nonce === nonce) ?? null;
+        // #576: an aborted wait withdraws its own queue row before the caller leaves — the
+        // resident that fenced it is exiting, so pid liveness cannot be what frees the slot.
+        if (signal?.aborted === true) {
+          if (mine) {
+            rmSync(join(this.queueDir, queueName(mine)), { force: true });
+            fsyncDirectory(this.queueDir);
+          }
+          return Object.freeze({ aborted: true });
+        }
         const ahead = mine ? entries.indexOf(mine) : entries.length;
         const head = mine === null || ahead === 0;
         if (kind === 'verify' && mine === null && !durable && memoryTightFor(kind, capacity)) {
@@ -916,6 +933,7 @@ export class HostCapacityAuthority {
           },
         });
       });
+      if (outcome.aborted) throw abandoned();
       if (outcome.degraded) return Object.freeze({ token: null, degraded: outcome.degraded });
       if (outcome.admitted) {
         return Object.freeze({
@@ -927,7 +945,15 @@ export class HostCapacityAuthority {
         reportedQueue = true;
         if (onQueued) onQueued(Object.freeze(outcome.queued));
       }
-      await new Promise((resolve) => { setTimeout(resolve, this.pollMs); });
+      // The poll waits on the signal too, so an abort ends the wait within its own instant
+      // rather than a poll later; the loop's next pass withdraws the queue row.
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, this.pollMs);
+        if (signal !== null) {
+          if (signal.aborted === true) { clearTimeout(timer); resolve(); return; }
+          signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+        }
+      });
     }
   }
 
