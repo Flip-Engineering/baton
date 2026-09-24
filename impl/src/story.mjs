@@ -110,6 +110,7 @@ export const KIND = Object.freeze({
   QUESTION_ASKED: 'question.asked',
   // Issue #31 §2.1(2): the coordinator mints these two on the same per-worker log this module
   // folds, so a parked turn renders honestly instead of as done-and-idle.
+  TURN_REPORTED: 'turn.reported',
   TURN_PAUSED: 'turn.paused',
   TURN_SETTLED: 'turn.settled',
   QUESTION_ANSWERED: 'question.answered',
@@ -261,7 +262,7 @@ const LEGAL_TRANSITIONS = {
   // 'illegal_transition', and leave the worker rendered 'idle' (silently wrong). Admitting both
   // is the multi-value shape TURN_STARTED and INTERRUPT_REQUESTED already use.
   [KIND.TURN_PAUSED]: { from: ['working', 'idle'], to: 'paused' },
-  [KIND.TURN_SETTLED]: { from: ['paused'], to: 'working' },
+  [KIND.TURN_SETTLED]: { from: ['paused', 'idle', 'working'], to: 'working' },
   [KIND.EXITED]: { from: null, to: 'exited' },
   [KIND.CRASHED]: { from: null, to: 'exited' },
 };
@@ -386,6 +387,7 @@ function handleKnownKind(w, kind, payload, event) {
       if (w.status === 'working') transitionStatus(w, kind, 'idle');
       break;
     }
+    case KIND.TURN_REPORTED: break;
     case KIND.TURN_PAUSED: {
       // The turn finished but is parked at a checkpoint pending a steering decision. Leaving it
       // at TURN_COMPLETED's 'idle' would read as "done and free to redispatch" — a different

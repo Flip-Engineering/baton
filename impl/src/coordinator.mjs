@@ -889,12 +889,6 @@ export class Coordinator {
     return runtimeObservation._pendingInteractionFor(this, this._recorder, workerId);
   }
 
-  /**
-   * Issue #31 §2.1(2). Single-consumer resolution for a pause record, mirroring
-   * `_resolveInteractionAuthority`. 31-a exercises exactly one resolution path — the degenerate
-   * auto-settle, stamping `consumer: 'policy'` (the same convention `_cancelPendingForDrain`
-   * uses). 31-b's nudge/wait/claim acts reuse this helper unmodified.
-   */
     _resolvePauseAuthority(pauseId, record, consumer = 'policy') {
     return runtimeAdmission._resolvePauseAuthority(this, this._recorder, pauseId, record, consumer);
   }
@@ -924,32 +918,15 @@ export class Coordinator {
     } catch { return canonicalDigest([]); }
   }
 
-  /**
-   * Issue #31 §2.1(2) + §2.2(5), as revised 2026-09-12 (native-completion-loop). Mint a pause
-   * record for a `'pausable'`-carded turn and PARK the task: the checkpoint is visible on
-   * `pausedTurns()` and awaits an explicit steering act. The coordinator never self-drives the
-   * pause — no policy nudge, no window, no expiry verdict — so a `'pausable'` completion cannot
-   * recursively renew itself, and no clock, count, or prose ever decides the work.
-   *
-   * @returns {boolean} `settled` — always `false`: the caller never falls through to the trust
-   *   gate from a checkpoint. `claim_turn` (the real verifier), `nudge_turn` (a continuation),
-   *   and `wait_turn` are the only dispositions, and each is an explicit caller act.
-   */
-    _admitPauseRecord(handle, task, terminalEvent, wr, appendAttributed) {
-    return runtimeAdmission._admitPauseRecord(this, this._recorder, handle, task, terminalEvent, wr, appendAttributed);
+  /** Retain an ended turn for the orchestrator's explicit continuation or verification act. */
+    _admitTurnReport(handle, task, terminalEvent, wr, appendAttributed) {
+    return runtimeAdmission._admitTurnReport(this, this._recorder, handle, task, terminalEvent, wr, appendAttributed);
   }
 
-  // =========================================================================
-  // The pause seam has exactly one disposition now: park. The bounded policy
-  // progress-nudge cycle (policy nudge → armed window → answer / expiry) is
-  // RETIRED — see `_admitPauseRecord` for the finding and the ownership rule.
-  // The mechanics that existed only to serve it are gone with it: the nudge
-  // text, the armed window timer, the answer evaluation (`turn_started`, digest,
-  // and interaction classes), the constructive settle, and the expiry's
-  // automatic full final evaluation. No clock, count, or prose decides a paused
-  // task; an explicit `claim_turn` (the real verifier) or `nudge_turn` (a real
-  // continuation) does, and both live below.
-  // =========================================================================
+    _reportRunTurn(handle, event, report) {
+    return runtimeObservation._reportRunTurn(this, this._recorder, handle, event, report);
+  }
+
 
   // =========================================================================
   // Issue #31 §2.2(6), 31-b: the three steering acts on a paused turn
@@ -1131,8 +1108,9 @@ export class Coordinator {
       ...this._routeAttribution(handle, task),
       payload: { actor, basis: 'nudge', pauseId },
     });
-    this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
-      this._coordMapEvent(settledEvent), actor);
+    const evidence = this._coordMapEvent(settledEvent);
+    if (!record.reported) this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
+      evidence, actor);
     task.status = 'working';
     handle.status = 'working';
     handle.turnTerminalObserved = false;

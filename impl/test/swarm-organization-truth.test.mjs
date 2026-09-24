@@ -64,8 +64,9 @@ async function fixture(t) {
     const deadline = Date.now() + 5000;
     for (;;) {
       const worker = driver.coordinator.list().find((row) => row.runId === runId);
-      if (worker && driver.coordinator.pausedTurns({ workerId: worker.id }).length) return worker;
-      if (Date.now() > deadline) throw new Error(`participant of ${runId} did not pause`);
+      if (worker && driver.coordination.eventsView().some((event) => event.payload?.kind === 'swarm.turn_reported'
+        && event.payload.workerId === worker.id)) return worker;
+      if (Date.now() > deadline) throw new Error(`participant of ${runId} did not report a completed turn`);
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   };

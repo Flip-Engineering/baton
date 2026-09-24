@@ -110,7 +110,8 @@ and the ledger reference for the full report. The `turn_reported` wake marks the
 The assignment remains available for orchestrator guidance. A participant declares its assignment
 complete with `swarm.participant_left` and reason `completed`; its final turn then proceeds
 through verification and worker cleanup. Historical checkpoint records remain readable through
-the checkpoint APIs. Non-swarm runs still use the legacy checkpoint admission path.
+the checkpoint APIs. Non-swarm turns use Run lineage to address their orchestrator and retain a continuation record
+for explicit nudge and claim acts while the task stays working.
 
 Acceptance conditions may evolve as the task becomes understood; changes retain their authority
 and history. An accepted result need not close the whole group or terminate its participants.

@@ -391,7 +391,7 @@ async function driveredPause({ adapter, capture = noDiff, brief = makeBrief(), c
   if (stage) await stage(adapter, handle, coordinator);
   emitTurnCompleted(adapter, handle);
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'the drivered pause pends for the claim');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working', 'the drivered pause pends for the claim');
   const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId, 'the pause record exists');
   return { coordinator, handle, task, pauseId };
@@ -448,7 +448,7 @@ function assertRefusalBasics(coordinator, adapter, handle, task, pauseId, outcom
   const record = coordinator._pausedTurns.get(pauseId);
   assert.equal(record?.state, 'pending', 'the refusal rolls the record back to pending');
   assert.equal(record?.consumer, null, 'nothing is consumed');
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'the task stays paused');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working', 'the task stays paused');
   assertWorkerAlive(coordinator, adapter, handle, 'the refusal');
   assert.equal(streamAfter(coordinator, handle, preClaimSeq).length, 0,
     'a refusal mints ZERO events (no turn.settled, no gate event, no verdict, no expiry)');
@@ -510,7 +510,7 @@ test('T18 (#88 headline): a diffless pause carrying counted liveness REFUSES cla
   emitScratchWriteStaleFence(adapter, handle, 't18-failed-write');
   emitTurnCompleted(adapter, handle);
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working');
   const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId);
   const failedReceipt = coordinator._log.read(handle.id).find((event) => event.kind === 'scratchpad.write_result');
@@ -713,7 +713,7 @@ test('T18d (PIN, the anti-stale law): liveness from BEFORE the pause\'s own epoc
   await flush(40);
   emitTurnCompleted(adapter, handle, 2, 'second checkpoint');
   await flush(60);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'the epoch-2 pause pends');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working', 'the epoch-2 pause pends');
   const pauseId2 = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId2 && pauseId2 !== pauseId, 'a NEW pause record minted in epoch 2');
   const record2 = coordinator._pausedTurns.get(pauseId2);
@@ -810,7 +810,7 @@ test('T18h: a refused claim leaves the checkpoint pending without automatic expi
   emitTurnCompleted(adapter, handle);
   await flush(60);
   assert.equal(adapter.calls.prompt.length, 0, 'the checkpoint sends no automatic prompt');
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working');
   const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId);
 
@@ -825,7 +825,7 @@ test('T18h: a refused claim leaves the checkpoint pending without automatic expi
   // steering receipt — the cheaper save (the cycle) survives the refused claim.
   await sleep(180);
   await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused',
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working',
     'elapsed time cannot overrule the refused claim');
   const settled = coordinator._log.read(handle.id).filter((event) => event.kind === 'turn.settled'
     && event.payload?.basis === 'steering_expired');
@@ -867,7 +867,7 @@ test('T18g: a slow preflight capture cannot create expiry authority while the cl
     `stage[expiryPending-re-check]: the claim still refuses (got ${outcome?.result})`);
   await sleep(60);
   await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused',
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working',
     'the refused claim restores the independently steerable checkpoint');
   assert.equal(coordinator._pausedTurns.get(pauseId).state, 'pending');
   const settled = coordinator._log.read(handle.id).filter((event) => event.kind === 'turn.settled'
@@ -907,7 +907,7 @@ test('T18c: a preflight throw releases its reservation and preserves a retryable
   assert.equal(record?.state, 'pending', 'rollback-on-throw restored pending');
   assert.equal(record?.consumer, null);
   assert.equal(record?.steering, undefined, 'a failed capture creates no automatic cycle');
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'no settle, no gate run, no kill');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working', 'no settle, no gate run, no kill');
   assertWorkerAlive(coordinator, adapter, handle, 'the preflight throw');
   assert.equal(streamAfter(coordinator, handle, preClaimSeq).length, 0,
     'zero events minted by the thrown preflight');

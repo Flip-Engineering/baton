@@ -3303,10 +3303,12 @@ export function* _replay(coordinator, recorder) {
           // computing 'verifying' from the turn_completed case and CI6 durably fails the task —
           // fail-closed parity with an unresolved `input_required` task, whose restart behavior
           // is identical today. No live session survives a restart to honor a pause.
+          case 'turn.reported':
           case 'turn.paused': {
             const pausedTaskId = e.payload?.taskId ?? taskId;
             if (pausedTaskId && lastTurnCompletedSeq !== null) {
               reconstructedPaused.set(`pause:${pausedTaskId}:${lastTurnCompletedSeq}`, {
+                ...(e.kind === 'turn.reported' ? { reported: true, workerResult: lastResult } : {}),
                 state: 'pending', resolution: null, consumer: null, worker: workerId,
                 taskId: pausedTaskId, turnEpoch: e.payload?.turnEpoch ?? maxTurnEpoch,
                 changedPathsDigest: e.payload?.changedPathsDigest ?? null,

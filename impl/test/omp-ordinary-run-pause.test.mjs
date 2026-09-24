@@ -124,14 +124,14 @@ test('A-G2/I6: an ordinary OMP turn completion parks a visible checkpoint (the c
     type: 'agent_end', isTerminal: true,
     messages: [{ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'change complete' }] }],
   }));
-  await until(() => task.status === 'paused');
+  await until(() => coordinator.pausedTurns({ taskId: task.id }).length > 0);
 
   const rows = coordinator.pausedTurns({ taskId: task.id });
   assert.equal(rows.length, 1, 'exactly one claimable checkpoint is projected for the orchestrator');
   assert.equal(rows[0].state, 'pending');
   assert.equal(rows[0].consumer, null, 'nobody decided it — it awaits an explicit act');
   assert.equal(rows[0].workerId, handle.id);
-  const origin = coordinator._log.read(handle.id).find((event) => event.kind === 'turn.paused')?.payload?.origin;
+  const origin = coordinator._log.read(handle.id).find((event) => event.kind === 'turn.reported')?.payload?.origin;
   assert.equal(origin?.kind, 'turn_completed', 'the durable pause origin is the worker\'s own completion claim');
   assert.equal(origin?.resultStatus, 'completed');
 

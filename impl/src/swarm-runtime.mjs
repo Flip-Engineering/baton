@@ -6504,7 +6504,8 @@ export class SwarmRuntime {
     if (!Number.isSafeInteger(turnSeq) || turnSeq < 0
       || !Number.isSafeInteger(turnEpoch) || turnEpoch < 0
       || typeof workerId !== 'string'
-      || !(participant.bindings ?? []).some((binding) => binding.workerId === workerId)) {
+      || (!(participant.bindings ?? []).some((binding) => binding.workerId === workerId)
+        && !this.coordinator.list().some((worker) => worker.id === workerId && worker.runId === participant.runId))) {
       refuse('Turn report needs the participant worker and recorded turn identity',
         'swarm_payload_invalid', { rule: 'turn-report-identity', swarmId, participantId });
     }

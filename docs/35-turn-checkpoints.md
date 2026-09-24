@@ -1,4 +1,4 @@
-# 35 — Turn Checkpoints: steer, don't gate
+# 35 — Turn checkpoints
 
 Status: design groundwork for issue #31, **v2 revised per red-team findings R35-1..8**
 (2026-07-23). v1's degenerate case was undecidable (a wave member is byte-identical to a bare
@@ -7,6 +7,17 @@ unpark machinery, its settle/nudge acts riding the wrong lanes, its subagent cla
 wrong, and its escalation default a back-door turn limit. All corrected below. The operator's
 rule stands: turn-based limits make smart systems shallow and brittle — steer programmatically,
 never gate on turn boundaries.
+
+## Current runtime behavior (#572)
+
+At a turn end the runtime records the report and addresses the nearest live parent or the root
+wake stream. Swarm assignments remain working until the participant declares completion or its
+orchestrator stops it. Non-swarm adapters with `turnCompletion: 'pausable'` retain a `turn.reported`
+continuation record while the task remains working. The existing `nudge_turn` and `claim_turn`
+acts consume that record. Replay also accepts historical `turn.paused` records.
+
+The sections below preserve the original #31 design. Its turn-end pause transition was removed
+by #572. The current lifecycle is described in [39 — Swarm runtime](39-swarm-runtime.md).
 
 ## 1. The truth today
 
