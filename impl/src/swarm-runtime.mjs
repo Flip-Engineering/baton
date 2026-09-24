@@ -8866,8 +8866,12 @@ export class SwarmRuntime {
         // package attach settles the seat and its Run exactly as a refused run start does, through
         // ONE withdrawal (never a second cleanup path). The caller sees the original refusal, or the
         // typed conflict the Run itself answers (below).
+        // #358: the spawn's own receipt — the objective's spill facts — rides the recruit
+        // answer, so the recruiter reads a spill the moment it happens. A host whose startRun
+        // reports nothing carries no facts, and the receipt names none (never a guess).
+        let spawned = null;
         try {
-          await this.startRun({ runId, objective: brief, options: runOptions,
+          spawned = await this.startRun({ runId, objective: brief, options: runOptions,
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
             ...(workspace ? { workspace } : {}), ...(autoWake === null ? {} : { autoWake }) }, principal, context);
         const worker = this.coordinator.list().find((row) => row.runId === runId);
@@ -9019,10 +9023,10 @@ export class SwarmRuntime {
           // first instead of discovering a stale base on the lane's capture. One derivation, two
           // projections: the landed `baseBehind`, and the typed `advisory` the brief names.
           baseBehind: baseFacts.baseBehind, advisory: baseFacts.advisory,
-          // #341 part 3: what the recruit compared and what it chose — the deployment's own
-          // routeUsage rows, one row per route considered, each saying why it was or was not
-          // chosen. Null when this runtime has no route rows (a bare fixture host).
           routes: routeSelection?.routes ?? null,
+          // #358: the spawn's receipt — {bytes, spilled, spill} for the objective the seat was
+          // started under — or null when the host's startRun reports no facts.
+          objective: spawned?.objective ?? null,
         };
       }, { replaySafe: true, basis: Object.values(swarm.context), context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
@@ -9030,6 +9034,8 @@ export class SwarmRuntime {
           scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null,
           baseBehind: result.baseBehind ?? null, advisory: result.advisory ?? null,
           routes: result.routes ?? null,
+          // #358: the objective's spill facts the spawn reported (null when it reports none).
+          ...(result.objective ? { objective: result.objective } : {}),
           // Issue #525 D1: a resume-from recruit that stopped at the question carries the pending
           // decision, so the ONE `next` derivation answers with BOTH acts that settle it.
           ...(result.resumeDecision === undefined ? {} : { resumeDecision: result.resumeDecision }),

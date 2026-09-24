@@ -227,7 +227,10 @@ test('#358 (a): a 16 KB recruit objective reaches the fixture worker\'s brief wh
   // The composed brief opens with the recruiter's objective and carries it VERBATIM — a 4 KB
   // head cap would have cut the tail paragraph off and left a [SPILLED …] citation behind.
   assert.ok(goal.startsWith(objective), 'the objective rides the brief whole, from head to tail');
-  assert.ok(!goal.includes('[SPILLED'), 'no spill marker: nothing was cut off');
+  // The citation a spill leaves is a line of its own: `\n[SPILLED {…}]`. The brief's Swarm
+  // section NAMES the marker when it teaches the read verb — only a real citation means text
+  // was cut.
+  assert.ok(!goal.includes('\n[SPILLED {'), 'no spill citation: nothing was cut off');
 });
 
 test('#358 (b): a spilled message body is readable through run.spill.read by the addressed seat, and the marker names the verb', async (t) => {
@@ -286,6 +289,9 @@ test('#358 (c): the recruit receipt names the objective\'s spill facts', async (
 });
 
 test('#358 (c2): a spawn that reports its objective spilled passes the report to the recruiter verbatim', async (t) => {
+  // The startRun seam receives the COMPOSED brief (objective + swarm situation), so the stub
+  // reports the facts for exactly what it was handed, and the row asserts the verbatim pass-through.
+  const reported = {};
   const f = await lightFixture(t, 'receipt', { startRun: async (request) => {
     if (f.workers.some((row) => row.runId === request.runId)) return;
     const minted = f.store.mintSpill({ body: request.objective, lane: 'run.objective' },
@@ -293,17 +299,17 @@ test('#358 (c2): a spawn that reports its objective spilled passes the report to
     f.workers.push({ id: `w-${f.workers.length + 1}`, taskId: `t-${f.workers.length + 1}`,
       runId: request.runId, status: 'working', paused: true,
       sessionContext: { worktree: 'unused', repoRoot: 'unused' } });
-    return { objective: {
+    reported.objective = {
       bytes: Buffer.byteLength(request.objective), spilled: true, spill: minted.spill.spillId,
-    } };
+    };
+    return { objective: reported.objective };
   } });
   await f.command('swarm.create', { swarmId: SWARM_ID, purpose: 'Name the spill on the receipt', idempotencyKey: 'create' });
   const objective = sixteenKbObjective();
   const recruit = await f.command('swarm.recruit', { swarmId: SWARM_ID, participantId: 'alpha',
     objective, permissions: ['read', 'communicate', 'contribute'], idempotencyKey: 'recruit-alpha' });
-  assert.deepEqual(recruit.objective, {
-    bytes: Buffer.byteLength(objective), spilled: true, spill: `spill:sha256:${digestOf(objective)}`,
-  });
+  assert.ok(reported.objective, 'the composed brief crossed the objective lane and spilled');
+  assert.deepEqual(recruit.objective, reported.objective);
 });
 
 test('#358 (e): run.spill.read refuses a bad shape typed, before any runtime effect', async (t) => {
