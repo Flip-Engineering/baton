@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -7,7 +9,21 @@ import test from 'node:test';
 
 import { PublicSupplyChainOracle } from '../src/index.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase41-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase41-${name}-`));
 const response = (value, status = 200) => {
   const raw = Buffer.from(JSON.stringify(value));
   return { ok: status >= 200 && status < 300, status, headers: { get: () => null }, arrayBuffer: async () => raw };

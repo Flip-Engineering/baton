@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -8,7 +10,21 @@ import test from 'node:test';
 
 import { AtlasCodeIndex, CartographerQuartermaster, CoordinationStore, PublicSupplyChainOracle, createDriver } from '../src/index.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-reuse-invalidation-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-reuse-invalidation-${name}-`));
 const write = (base, path, content) => { mkdirSync(dirname(join(base, path)), { recursive: true }); writeFileSync(join(base, path), content); };
 const response = (value) => { const raw = Buffer.from(JSON.stringify(value)); return { ok: true, status: 200, arrayBuffer: async () => raw }; };
 const canonical = (value) => {
