@@ -35,6 +35,7 @@ import { SWARM_COMMAND_DEFINITIONS } from '../src/swarm-contract.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 import { wrapProductionMcpServer } from '../src/production-mcp-complete.mjs';
 import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
+import { fixtureSocketRoot } from './fixture-root.mjs';
 
 const REPO_ID = 'repo-314-lane2';
 const TOKEN = 'lane2-resident-token';
@@ -108,7 +109,7 @@ function waitFor(read, predicate, { timeoutMs = 5_000, label = 'condition' } = {
  * BRIDGE and never about a second implementation of the resident.
  */
 async function startScriptedResident({ answers, card = CARD }) {
-  const directory = mkdtempSync(join('/tmp', 'bt-314-lane2-'));
+  const directory = fixtureSocketRoot('bt-314-lane2-');
   const socketPath = join(directory, 'resident.sock');
   const commands = [];
   const attachments = new Set();
