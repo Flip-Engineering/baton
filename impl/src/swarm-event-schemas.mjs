@@ -350,7 +350,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       participantId: STRING('the participant the work belongs to'),
       contributionId: STRING('the contribution the attention comes from', { required: false }),
       turnReport: { type: 'json', required: false, description: 'The turn report preview, original report sequence, worker and turn identity, completion declaration, and omitted byte count' },
-      owed: { type: 'string', description: 'which trigger fired: review_owed (no other active seat holds the review permission), needs_root (a needsFromOthers item whose text is addressed to the root), turn_report (a seat\'s turn-end report has no live orchestrator — #572; the row rides this kind and carries no contributionId). Spelled `owed`, never `kind` (the name the reporting half consumes): the ledger\'s driver container records `{kind, ...payload}`, so a payload field named `kind` would overwrite the row\'s own operational identity', expectation: 'one of review_owed, needs_root, turn_report', example: 'needs_root' },
+      owed: { type: 'string', description: 'which trigger fired: review_owed (no other active seat holds the review permission), needs_root (a needsFromOthers item whose text is addressed to the root), turn_reported (a seat\'s turn-end report has no live orchestrator — #572; the row rides this kind and carries no contributionId). Spelled `owed`, never `kind` (the name the reporting half consumes): the ledger\'s driver container records `{kind, ...payload}`, so a payload field named `kind` would overwrite the row\'s own operational identity', expectation: 'one of review_owed, needs_root, turn_reported', example: 'needs_root' },
       ask: { type: 'string|null', description: 'the addressed needsFromOthers item text, bounded — null on a review_owed row', expectation: 'the item text as addressed, or null', example: 'the root: restart the resident with the publish remote declared' },
       next: { type: 'json', description: 'the act that answers the row, in the attention projection\'s shape', expectation: 'an object naming a command and its identity arguments', example: Object.freeze({ command: 'swarm.check', swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1' }) },
     }),
@@ -367,7 +367,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
   // `swarm.turn_report_delivered` records that the addressed parent's guidance lane took it. A
   // report re-recorded with parentId null (the parent was gone or its lane refused) carries
   // originalReportSeq and deliveryFailure beside it, and a `swarm.root_attention_owed` row with
-  // owed turn_report addresses the root. Both are runtime-recorded, never caller-submittable.
+  // owed turn_reported addresses the root. Both are runtime-recorded, never caller-submittable.
   'swarm.turn_reported': Object.freeze({
     summary: Object.freeze('a seat\'s turn end reported to its orchestrator — the parent seat when one is live, the nearest live ancestor, or the root (parentId null)'),
     fields: Object.freeze({

@@ -6510,16 +6510,18 @@ export class SwarmRuntime {
         'swarm_payload_invalid', { rule: 'turn-report-identity', swarmId, participantId });
     }
     const key = `swarm-turn-report:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
+    const rootKey = `swarm-turn-report-owed:${swarmId}:${participantId}:${workerId}:${turnEpoch}:${turnSeq}`;
     this._turnReportDeliveries ??= new Map();
     if (this._turnReportDeliveries.has(key)) return this._turnReportDeliveries.get(key);
-    const prior = this.store.priorCoordinationEvent(key);
+    const prior = this.store.priorCoordinationEvent(`${key}:root`)
+      ?? this.store.priorCoordinationEvent(key);
     const delivered = this.store.priorCoordinationEvent(`${key}:delivered`);
     if (delivered) return { event: prior, delivery: { state: 'delivered', parentId: delivered.payload.parentId } };
-    const rootOwed = this.store.priorCoordinationEvent(`${key}:root-owed`);
+    const rootOwed = this.store.priorCoordinationEvent(rootKey);
     if (rootOwed) return { event: this.store.priorCoordinationEvent(`${key}:root`) ?? prior,
       delivery: { state: 'root_addressed' } };
 
-    let parentId = participant.parentId ?? null;
+    let parentId = prior?.payload.parentId === null ? null : participant.parentId ?? null;
     const workers = this.coordinator.list();
     const visited = new Set([participantId]);
     while (parentId !== null) {
@@ -6550,11 +6552,19 @@ export class SwarmRuntime {
           ...(failure ? { deliveryFailure: failure } : {}),
         }, { actor: 'baton-runtime', key: `${key}:root` }).event;
       }
-      this.store.recordDriver('swarm.root_attention_owed', {
-        swarmId, participantId, owed: 'turn_report', turnReport,
-        ask: `Turn report from ${participantId}`,
-        next: { command: 'swarm.view', swarmId, participantId },
-      }, { actor: 'baton-runtime', key: `${key}:root-owed` });
+      if (typeof this._reconcileTurnReportedRows === 'function') {
+        this._reconcileTurnReportedRows(swarm, 'baton-runtime');
+      } else {
+        const reported = event.payload.report;
+        const reason = event.payload.deliveryFailure?.reason;
+        const ask = typeof reported === 'string' && reported.length > 0 ? reported
+          : typeof reported?.summary === 'string' && reported.summary.length > 0 ? reported.summary
+            : typeof reason === 'string' && reason.length > 0 ? reason : null;
+        this.store.recordDriver('swarm.root_attention_owed', {
+          swarmId, participantId, owed: 'turn_reported', ask,
+          next: { command: 'swarm.view', swarmId },
+        }, { actor: 'baton-runtime', key: rootKey });
+      }
       return { event, delivery: { state: 'root_addressed' } };
     };
     if (parentId === null) return addressRoot(null);
