@@ -192,7 +192,8 @@ async function snapshotAndRemove(w, { worker, paths = null }) {
 
 /** One dead predecessor whose checkout is gone and whose snapshot holds `CARRIED` + `TRACKED_EDIT`. */
 async function deadPredecessorWithSnapshot(w, { snapshotPaths = null } = {}) {
-  await w.call('create', { swarmId: SWARM, purpose: 'Carry a crash snapshot' });
+  await w.call('create', { swarmId: SWARM, purpose: 'Carry a crash snapshot',
+    policy: { resumeContinuation: 'manual' } });
   const alpha = await w.call('recruit', { swarmId: SWARM, participantId: 'alpha', objective: 'build alpha' });
   const worker = workerOf(w, alpha.runId);
   const checkout = w.checkouts.get(worker.sessionContext.ownerTaskId);
@@ -265,7 +266,8 @@ test('453-a2: a pre-#453 snapshot row names no paths — the carry derives them 
 
 test('453-bound: a predecessor whose checkout still exists is carried as `bound`', async (t) => {
   const w = world(t, { tag: 'bound' });
-  await w.call('create', { swarmId: SWARM, purpose: 'Carry a live checkout' });
+  await w.call('create', { swarmId: SWARM, purpose: 'Carry a live checkout',
+    policy: { resumeContinuation: 'manual' } });
   const alpha = await w.call('recruit', { swarmId: SWARM, participantId: 'alpha', objective: 'build alpha' });
   const worker = workerOf(w, alpha.runId);
   const checkout = w.checkouts.get(worker.sessionContext.ownerTaskId);
