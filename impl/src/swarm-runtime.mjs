@@ -159,6 +159,9 @@ async function defaultIntegrationRegenerate(dir, { pool = null } = {}) {
 /** One supervised run of the suite runner over `files` in `dir`, with its verdict document read
  * back (null when the runner wrote none) and its last words and exit status. */
 async function runGateFiles(dir, files, { pool = null, holder = null, leaseAuthority = null } = {}) {
+  // Issue #551: whether this incarnation read a verdict document at all. An unjudged run keeps
+  // its scratch directory, because the verdict it may still write is the one a successor reads.
+  let judged = false;
   const scratch = mkdtempSync(join(tmpdir(), 'baton-integrate-'));
   const verdictPath = join(scratch, 'verdict.json');
   try {
@@ -170,13 +173,19 @@ async function runGateFiles(dir, files, { pool = null, holder = null, leaseAutho
     try {
       document = JSON.parse(readFileSync(verdictPath, 'utf8'));
     } catch { document = null; }
+    judged = document !== null;
     return {
       result, document,
+      // Issue #551: where the verdict would be — the path a successor incarnation checks before
+      // concluding the run never finished.
+      verdictPath,
       stderrTail: boundedStderrTail(`${result.stderr || result.stdout}`),
       exit: result.status === 'timeout' ? null : result.code ?? null,
     };
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    // Issue #551: the scratch is removed only when the verdict was read; an unjudged run keeps its
+    // directory so the verdict it may still write is findable by the path the row carries.
+    if (judged) rmSync(scratch, { recursive: true, force: true });
   }
 }
 
@@ -214,7 +223,7 @@ function checkoutLandingTree(dir, sha) {
  * gate requires that the change's run accounted for every file the gate selected. */
 async function defaultIntegrationGates(dir, files, context, supervision = {}) {
   const change = await runGateFiles(dir, files, supervision);
-  const { result, document, stderrTail, exit } = change;
+  const { result, document, verdictPath, stderrTail, exit } = change;
   if (document === null) {
     // A runner that died before it could judge is not a green gate set. No resident-side wall
     // clock arms on this child (#546): an unjudged run is either a clean exit without a verdict
@@ -225,6 +234,9 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
     const reported = new Set(filesJudged.map((row) => row.file));
     return {
       files,
+      // Issue #551: the path a successor incarnation checks for a verdict written after this
+      // incarnation stopped waiting.
+      verdictPath,
       verdictLine: interrupted
         ? `partial — interrupted by ${result.signal}; ${filesJudged.length} of ${files.length} file(s) reported before the run died`
         : null,
@@ -236,7 +248,7 @@ async function defaultIntegrationGates(dir, files, context, supervision = {}) {
           filesJudged,
           filesUnreported: files.filter((file) => !reported.has(file)),
         } : {}),
-        stderrTail,
+        stderrTail, verdictPath,
       }],
       stderrTail, exit,
     };
@@ -1656,6 +1668,68 @@ export function contributionLedgerRows(swarm, { since = 0 } = {}) {
   return rows.sort((left, right) => left.seq - right.seq);
 }
 
+/** Issues #552/#554: the pipeline row's caps. A contribution row is itself priced by the bridge's
+ * frame budget (swarm-bridge-truth), so the pipeline lists are bounded and COUNT what they
+ * dropped instead of silently losing it. */
+const PIPELINE_LIST_CAP = 20;
+const PIPELINE_TEXT_BYTES = 240;
+
+/** Issues #552/#554: the landing pipeline a reader acts on, derived from the contribution rows a
+ * view already carries — their own `reviewState` (the ONE derivation `contributionLedgerRows`
+ * computes from the review rows) and their landing (`integration`) — beside the roster that holds
+ * the review permission. It answers three questions without a brute-force sweep: which
+ * contributions wait on a review and who can give it, which accepted rows are valid
+ * `swarm integrate` targets, and which `needsFromOthers` obligations are still open.
+ *
+ * An obligation is open while its contribution carries no landing: the need a contract declares is
+ * work its author asked of a peer before the row could land, so the landing receipt closes it.
+ * Each list is capped at PIPELINE_LIST_CAP rows and each text at PIPELINE_TEXT_BYTES, and the
+ * count the cap drops rides `omitted`. */
+export function swarmPipelineRows(contributions = [], participants = []) {
+  const bounded = (text) => (typeof text === 'string' ? capBytesToScalar(text, PIPELINE_TEXT_BYTES) : null);
+  const reviewAuthority = participants
+    .filter((row) => (row?.permissions ?? []).includes('review'))
+    .map((row) => row.participantId).sort(compareCanonicalStrings);
+  const awaitingReview = [];
+  const readyToLand = [];
+  const openNeeds = [];
+  const omitted = { awaitingReview: 0, readyToLand: 0, openNeeds: 0 };
+  const add = (list, name, row) => {
+    if (list.length < PIPELINE_LIST_CAP) list.push(Object.freeze(row));
+    else omitted[name] += 1;
+  };
+  for (const row of contributions) {
+    const landed = (row.integration ?? null) !== null;
+    // Two shapes reach this derivation: the ledger row (`contributionLedgerRows`) carries `subject`
+    // and `commit` directly, and the view row carries the contract projection beside the raw body.
+    // Read from whichever the caller handed over, never copied a second time.
+    const entry = {
+      contributionId: row.contributionId, participantId: row.participantId ?? null,
+      workId: row.workId ?? null,
+      subject: bounded(row.subject ?? row.contract?.subject ?? null),
+    };
+    if (row.reviewState === 'unreviewed') add(awaitingReview, 'awaitingReview', entry);
+    else if (row.reviewState === 'accepted' && !landed) {
+      add(readyToLand, 'readyToLand', { ...entry, commit: row.commit ?? row.contract?.commit ?? null });
+    }
+    if (landed) continue;
+    for (const need of Array.isArray(row.body?.needsFromOthers) ? row.body.needsFromOthers : []) {
+      add(openNeeds, 'openNeeds', {
+        contributionId: row.contributionId, participantId: row.participantId ?? null,
+        workId: row.workId ?? null, need: bounded(need),
+      });
+    }
+  }
+  return Object.freeze({
+    reviewAuthority: Object.freeze(reviewAuthority),
+    awaitingReview: Object.freeze(awaitingReview),
+    readyToLand: Object.freeze(readyToLand),
+    openNeeds: Object.freeze(openNeeds),
+    omitted: Object.freeze(omitted),
+    caps: Object.freeze({ list: PIPELINE_LIST_CAP, textBytes: PIPELINE_TEXT_BYTES }),
+  });
+}
+
 /** A refusal the seat read verbs raise. Their codes are the context-package family's, not the
  * swarm command family's: `context_package_not_found` and `context_package_branch_not_found` are
  * the coordination store's own (raised by `resolveContextPackageBranch`, spelled identically
@@ -2716,7 +2790,21 @@ export class SwarmRuntime {
     const participantId = this._attributedParticipant(args.swarmId, principal, context);
     const requested = this.store.priorCoordinationEvent(key);
     if (requested && requested.payload.requestDigest !== requestDigest) {
-      refuse('Swarm operation identity already names another request', 'swarm_replay_conflict');
+      // #511: the identity names a request that already landed under another body, so the refusal
+      // carries that request's own outcome — the command, the seat it resolved to and the row it
+      // was recorded at — beside the readback, never a bare collision.
+      refuse('Swarm operation identity already names another request', 'swarm_replay_conflict', {
+        prior: {
+          command: typeof requested.payload.command === 'string' ? requested.payload.command : null,
+          participantId: typeof requested.payload.participantId === 'string' ? requested.payload.participantId : null,
+          seq: Number.isSafeInteger(requested.seq) ? requested.seq : null,
+          ts: typeof requested.ts === 'string' ? requested.ts : null,
+          operationKey: key,
+        },
+        next: 'read that operation back with `baton swarm view` (or `swarm notifications` for a '
+          + 'recruit) before retrying: the same idempotencyKey repeats the original request or is '
+          + 'replaced with a new one',
+      });
     }
     const completed = this.store.priorCoordinationEvent(`${key}:completed`);
     if (completed) return clone(completed.payload.result);
@@ -4082,6 +4170,9 @@ export class SwarmRuntime {
     // git read) are paid by the whole record and the situation's own slice — the two projections
     // that promise it. Every other slice neither pays them nor carries the field.
     const carriesSituation = wholeRecord || projectionShape.rows.includes('situation');
+    // Issues #552/#554: the pipeline row costs one pass over the contribution rows this view
+    // already carries, paid only by the projections that ask for it.
+    const carriesPipeline = wholeRecord || projectionShape.rows.includes('pipeline');
     // The turn seam (trigger b) rides the worker row's fence epoch, compared inside the
     // observation cache — never a fold of #305 rows, which this ledger does not carry.
     // One repository memo per view: the deployment target facts every live base read needs.
@@ -5158,6 +5249,9 @@ export class SwarmRuntime {
       deployment: this.deploymentSummary ? this.deploymentSummary() : null,
       cursor: this.store.ledgerHeadSeq(),
     };
+    // Issues #552/#554: derived from the contribution rows THIS view carries, so the pipeline can
+    // never disagree with them about a review state or a landing.
+    if (carriesPipeline) view.pipeline = swarmPipelineRows(view.contributions, participants);
     // The projection is applied HERE, at the one place a view is built, by the ONE slicer the
     // bridge also measures with (swarm-contract): the default answers with the whole record, so a
     // caller that names no projection sees exactly what it always saw.
@@ -6111,6 +6205,10 @@ export class SwarmRuntime {
       inReplyTo: payload.inReplyTo ?? null,
       state: delivery.state ?? 'delivered', lane: clone(delivery.lane ?? null),
       reason: delivery.reason ?? null,
+      // Issue #557: a park on a one-shot harness can never clear. The mark rides the row where the
+      // state is written, so a sender that reads this notification — or any later read of it — can
+      // tell a delivery that will never arrive from one that has not arrived yet.
+      ...(delivery.terminal === true ? { terminal: true } : {}),
       delivered: delivery.state === 'delivered' ? true : null,
       read, actedOn: null,
       reply: replies[0] ?? null, replies,
@@ -6178,7 +6276,7 @@ export class SwarmRuntime {
         // harness takes no mid-turn delivery is durable where that seat's brief will find it.
         park = this._parkGuidance(target.swarm.swarmId, target.participant, frame, principal, args, guidance);
         messageId = park.result?.messageId ?? null;
-        delivery = { state: 'parked', lane: null, reason: 'harness_one_shot' };
+        delivery = { state: 'parked', lane: null, reason: 'harness_one_shot', terminal: true };
       } else {
         // The lane receipt is durable coordination log, not process state: the newest nudge/steer
         // row for this binding past the pre-call cursor is the row THIS delivery wrote.
@@ -8127,6 +8225,11 @@ export class SwarmRuntime {
       // A hard conflict REFUSES — it never lands. What this list carries is the overlap git merged
       // WITHOUT a conflict: the silent case the #296 observation says went unrecorded.
       conflicts: landed.overlaps,
+      // Issue #562: the paths the squash carried only because the lane's base — the deployment's own
+      // effective-tree snapshot — carried them. The landing took them out of the commit; naming them
+      // here is what keeps the exclusion from being a silent drop.
+      ...(Array.isArray(landed.inherited) && landed.inherited.length > 0
+        ? { inherited: [...landed.inherited] } : {}),
       issue, dryRun: landed.dryRun,
     };
     // A key of its OWN: `_once` already recorded the operation REQUEST under the operation key, and a
