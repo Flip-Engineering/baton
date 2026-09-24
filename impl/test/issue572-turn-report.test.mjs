@@ -1,0 +1,332 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { Coordinator } from '../src/coordinator.mjs';
+import { Log } from '../src/log.mjs';
+import { FenceTable } from '../src/fence.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
+
+import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
+import { deriveWakeFrame } from '../src/wake-stream.mjs';
+
+const dirs = [];
+function tmpDir() {
+  const d = mkdtempSync(join(tmpdir(), 'baton-turn-report-'));
+  dirs.push(d);
+  return d;
+}
+test.after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+
+function makeBrief(overrides = {}) {
+  return {
+    goal: 'produce an in-scope diff and report completion',
+    constraints: [],
+    pathScope: ['.'],
+    definitionOfDone: 'tests pass',
+    verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 100000, usd: 5, wallMin: 30 },
+    requiredEffects: ['repository_edit'],
+    ...overrides,
+  };
+}
+
+// The adapter starts each continuation synchronously inside prompt().
+class AtomicPausableAdapter {
+  constructor() {
+    this._card = {
+      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: null, maxContext: 100000,
+      verbs: { spawn: 'native', interrupt: 'native', answer: 'native', approve: 'native', kill: 'native' },
+      decision: 'native', turnCompletion: 'pausable',
+      modelSelection: {
+        mode: 'exact', configuredDefault: 'mock-model', available: ['mock-model'],
+        family: 'default', acceptedPrefixes: [], acceptedAliases: [],
+        reasoningEffort: ['low'], configuredEffort: 'low', serviceTier: null,
+      },
+      governance: {
+        usage: { tokens: 'native', usd: 'native', tokenMetric: 'mock-token', terminalSeal: 'native' },
+        providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+        toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+        maxWireFrameBytes: 1024 * 1024,
+      },
+    };
+    this.calls = { spawn: [], prompt: [], interrupt: [], approve: [], answer: [], kill: [] };
+    this.turns = new Map();
+    this._onEvent = null;
+  }
+  card() { return this._card; }
+  onEvent(cb) { this._onEvent = cb; }
+  emit(event) { if (this._onEvent) this._onEvent(event); }
+  async spawn(worker) {
+    this.calls.spawn.push({ worker });
+    const session = { epoch: 1, inFlight: true };
+    this.turns.set(worker, session);
+    this.emit({
+      worker, harness: 'mock@1.0.0', turnEpoch: session.epoch,
+      kind: 'lifecycle.turn_started', actor: 'worker', payload: {},
+    });
+    return { ok: true };
+  }
+  async prompt(worker, content, mode = 'turn') {
+    this.calls.prompt.push({ worker, content, mode });
+    const session = this.turns.get(worker);
+    assert.ok(session, 'prompt before spawn');
+    const beginsTurn = !session.inFlight;
+    session.inFlight = true;
+    if (beginsTurn) {
+      session.epoch += 1;
+      this.emit({
+        worker, harness: 'mock@1.0.0', turnEpoch: session.epoch,
+        kind: 'lifecycle.turn_started', actor: 'worker', payload: {},
+      });
+    }
+    return { ok: true };
+  }
+  async interrupt(worker, then) { this.calls.interrupt.push({ worker, then }); return { ok: true }; }
+  async approve(worker, requestId, decision, payload) {
+    this.calls.approve.push({ worker, requestId, decision, payload });
+    return { ok: true };
+  }
+  async answer(worker, requestId, answer) {
+    this.calls.answer.push({ worker, requestId, answer });
+    return { ok: true };
+  }
+  async kill(worker) {
+    this.calls.kill.push({ worker });
+    const session = this.turns.get(worker);
+    if (session) session.inFlight = false;
+    queueMicrotask(() => this.emit({
+      worker, harness: 'mock@1.0.0', turnEpoch: session?.epoch ?? 0,
+      kind: 'kill.confirmed', actor: 'policy', payload: {},
+    }));
+    return { ok: true, terminal: true };
+  }
+  /** End the in-flight turn exactly as the provider would: one `turn_completed` frame. */
+  completeTurn(worker, { output = 'checkpoint', status = 'completed' } = {}) {
+    const session = this.turns.get(worker);
+    assert.ok(session?.inFlight, 'completeTurn requires an in-flight turn');
+    session.inFlight = false;
+    this.emit({
+      worker, harness: 'mock@1.0.0', turnEpoch: session.epoch,
+      kind: 'lifecycle.turn_completed', actor: 'worker', payload: { status, output },
+    });
+  }
+  epoch(worker) { return this.turns.get(worker)?.epoch ?? 0; }
+}
+
+function passingReferee(task) {
+  return {
+    reverified: true, observedExit: task.brief.verification.expectExit,
+    matchesClaim: true, locus: 'fresh_sandbox', note: 'ok',
+  };
+}
+
+const withDiff = async () => ({ sha: 'sha-result', baseSha: 'sha-base', changedPaths: ['in-scope.txt'] });
+const noDiff = async () => ({ sha: 'sha-base', baseSha: 'sha-base', changedPaths: [] });
+
+function setup({ adapter, capture }) {
+  const dir = tmpDir();
+  const log = new Log(join(dir, 'log'));
+  const coordination = coordinationForLog(log);
+  const worktrees = {
+    create: async (taskId) => ({ path: `/tmp/wt/${taskId}`, branch: `baton/${taskId}`, baseSha: 'sha-base' }),
+    capture,
+    createVerifyWorktree: async () => ({ path: tmpdir() }),
+    removeVerifyWorktree: async () => {},
+    remove: async () => {},
+    reconcile: async () => {},
+  };
+  const coordinator = new Coordinator({
+    log,
+    coordination,
+    fences: new FenceTable(),
+    adapters: { mock: adapter },
+    worktrees,
+    referee: async (t) => passingReferee(t),
+    route: () => 'mock',
+    now: () => 0,
+    approvalTimeoutMs: 60000,
+    stopDeadlineMs: 15000,
+  });
+  return { dir, log, coordinator, store: coordination };
+}
+
+async function flush() {
+  for (let i = 0; i < 100; i += 1) await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function fixture(t) {
+  const adapter = new AtomicPausableAdapter();
+  const f = { ...setup({ adapter, capture: withDiff }), adapter };
+  const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner' };
+  const runtime = new SwarmRuntime({
+    store: f.store, coordinator: f.coordinator, authorize: async () => {},
+    prepareRun: async () => {},
+    startRun: async ({ runId, participantId }) => {
+      f.coordinator.registerParticipantRuntime(runId, {
+        env: {}, redactProviderFrame: (frame) => frame,
+        onTurnCompleted: (report) => runtime.reportTurnEnd({ ...report, swarmId: 'turns', participantId }),
+        isDone: () => f.store.swarm('turns').participants[participantId].leftReason === 'completed',
+      });
+      await f.coordinator.spawn('mock', makeBrief(), { runId });
+    },
+  });
+  let key = 0;
+  const call = (command, args = {}, principal = owner) => runtime.command(`swarm.${command}`,
+    { swarmId: 'turns', idempotencyKey: `call-${++key}`, ...args }, principal);
+  const recruit = async (id, parent = null) => {
+    await call('recruit', { participantId: id, objective: `Work as ${id}`, permissions: SWARM_PERMISSIONS },
+      parent ? { actor: `worker:${parent.id}`, principalId: `worker:${parent.id}`, sessionId: parent.id } : owner);
+    const binding = f.store.swarm('turns').participants[id].bindings.at(-1);
+    return f.coordinator._workers.get(binding.workerId);
+  };
+  await call('create', { purpose: 'Report turn completion' });
+  t.after(async () => { await f.coordinator.stopRunTargets([...f.coordinator._workers.keys()], 'orchestrator'); });
+  const events = (kind) => f.store.eventsView().filter((e) => e.kind === 'driver.recorded' && e.payload.kind === kind);
+  return { ...f, runtime, recruit, call, events };
+}
+
+test('a completed swarm turn wakes its parent with the report and remains available for guidance', async (t) => {
+  const f = await fixture(t);
+  const parent = await f.recruit('lead');
+  const child = await f.recruit('builder', parent);
+  f.adapter.completeTurn(parent.id, { output: 'Ready to review' });
+  await flush();
+  f.adapter.completeTurn(child.id, { output: 'Implementation ready for review' });
+  await flush();
+  assert.equal(f.coordinator._tasks.get(child.taskId).status, 'working');
+  assert.deepEqual(f.coordinator.pausedTurns({ workerId: child.id }), []);
+  assert.equal(f.log.read(child.id).some((e) => e.kind === 'turn.paused'), false);
+  assert.equal(f.adapter.calls.prompt.length, 1);
+  assert.equal(f.adapter.calls.prompt[0].worker, parent.id);
+  assert.match(f.adapter.calls.prompt[0].content, /Implementation ready for review/);
+  assert.equal(f.adapter.epoch(parent.id), 2);
+  assert.equal(f.events('swarm.turn_report_delivered').length, 1);
+  const guided = await f.call('guide', { participantId: 'builder', message: 'Add the regression case' });
+  assert.equal(guided.guide.delivery.state, 'delivered');
+  assert.equal(f.adapter.epoch(child.id), 2);
+  f.adapter.completeTurn(child.id, { output: 'Regression added' });
+  await flush();
+  assert.equal(f.events('swarm.turn_reported').filter((e) => e.payload.participantId === 'builder').length, 2);
+});
+
+test('the root wake carries the report, identity, and completion declaration', async (t) => {
+  const f = await fixture(t);
+  const child = await f.recruit('builder');
+  f.adapter.completeTurn(child.id, { output: 'Root review needed' });
+  await flush();
+  const owed = f.events('swarm.root_attention_owed');
+  assert.equal(owed.length, 1);
+  const frame = deriveWakeFrame(owed[0]);
+  assert.equal(frame.wakeClass, 'root_owed');
+  assert.equal(frame.turnReport.workerId, child.id);
+  assert.equal(frame.turnReport.assignmentDone, false);
+  assert.match(frame.turnReport.text, /Root review needed/);
+  assert.equal(frame.turnReport.omittedBytes, 0);
+  assert.equal(frame.turnReport.reportSeq, f.events('swarm.turn_reported')[0].seq);
+});
+
+test('a declared completion runs verification and closes the worker', async (t) => {
+  const f = await fixture(t);
+  const child = await f.recruit('builder');
+  await f.call('update', { event: 'swarm.participant_left', payload: { participantId: 'builder', reason: 'completed' } });
+  f.adapter.completeTurn(child.id, { output: 'Assignment complete' });
+  await flush();
+  assert.equal(f.coordinator._tasks.get(child.taskId).status, 'completed');
+  assert.equal(f.events('swarm.turn_reported')[0].payload.assignmentDone, true);
+  assert.equal(f.log.read(child.id).filter((e) => e.kind === 'verify.reverified').length, 1);
+  assert.equal(f.adapter.calls.kill.length, 1);
+  assert.deepEqual(f.coordinator.pausedTurns({ workerId: child.id }), []);
+});
+
+test('duplicate terminal frames and duplicate report calls deliver once', async (t) => {
+  const f = await fixture(t);
+  const parent = await f.recruit('lead');
+  const child = await f.recruit('builder', parent);
+  f.adapter.completeTurn(child.id, { output: 'Ready' });
+  await flush();
+  const reported = f.events('swarm.turn_reported')[0];
+  f.adapter.emit({ worker: child.id, harness: 'mock@1.0.0', turnEpoch: 1,
+    kind: 'lifecycle.turn_completed', actor: 'worker', payload: { status: 'completed', output: 'Ready' } });
+  await flush();
+  await Promise.all([f.runtime.reportTurnEnd(reported.payload), f.runtime.reportTurnEnd(reported.payload)]);
+  assert.equal(f.adapter.calls.prompt.length, 1);
+  assert.equal(f.events('swarm.turn_reported').length, 1);
+  assert.equal(f.events('swarm.turn_report_delivered').length, 1);
+});
+
+test('a failed parent delivery addresses the root once and preserves the report on retry', async (t) => {
+  const f = await fixture(t);
+  const parent = await f.recruit('lead');
+  const child = await f.recruit('builder', parent);
+  f.coordinator.guideParticipant = async () => ({ ok: false, result: 'delivery_refused' });
+  f.adapter.completeTurn(child.id, { output: 'Preserved report' });
+  await flush();
+  const report = f.events('swarm.turn_reported')[0];
+  assert.equal(f.events('swarm.root_attention_owed').length, 1);
+  const result = await f.runtime.reportTurnEnd({ ...report.payload, report: { output: 'Changed on retry' } });
+  assert.equal(result.delivery.state, 'root_addressed');
+  assert.equal(f.events('swarm.root_attention_owed').length, 1);
+  assert.match(f.events('swarm.root_attention_owed')[0].payload.turnReport.text, /Preserved report/);
+});
+
+test('a turn crash reports failure and the following exit does not report twice', async (t) => {
+  const f = await fixture(t);
+  const child = await f.recruit('builder');
+  f.adapter.emit({ worker: child.id, harness: 'mock@1.0.0', turnEpoch: 1,
+    kind: 'lifecycle.crashed', actor: 'worker', payload: { code: 'provider_crashed', message: 'Connection lost' } });
+  await flush();
+  f.adapter.emit({ worker: child.id, harness: 'mock@1.0.0', turnEpoch: 1,
+    kind: 'lifecycle.exited', actor: 'worker', payload: { exitCode: 1 } });
+  await flush();
+  assert.equal(f.events('swarm.turn_reported').length, 1);
+  assert.equal(f.events('swarm.turn_reported')[0].payload.report.status, 'failed');
+  assert.equal(f.events('swarm.root_attention_owed').length, 1);
+});
+
+test('the report reaches the nearest live ancestor when the immediate parent has exited', async (t) => {
+  const f = await fixture(t);
+  const grandparent = await f.recruit('root-seat');
+  const parent = await f.recruit('lead', grandparent);
+  const child = await f.recruit('builder', parent);
+  await f.coordinator.stopRunTargets([parent.id], 'orchestrator');
+  f.adapter.completeTurn(child.id, { output: 'Review needed' });
+  await flush();
+  assert.equal(f.adapter.calls.prompt.length, 1);
+  assert.equal(f.adapter.calls.prompt[0].worker, grandparent.id);
+  assert.equal(f.events('swarm.turn_report_delivered')[0].payload.parentId, 'root-seat');
+});
+
+test('an oversized report has a bounded wake preview and a complete named-participant read', async (t) => {
+  const f = await fixture(t);
+  const child = await f.recruit('builder');
+  const output = 'Result 😀 '.repeat(2000);
+  f.adapter.completeTurn(child.id, { output });
+  await flush();
+  const frame = deriveWakeFrame(f.events('swarm.root_attention_owed')[0]);
+  assert.ok(frame.turnReport.omittedBytes > 0);
+  assert.equal(Buffer.byteLength(frame.turnReport.text) + frame.turnReport.omittedBytes,
+    Buffer.byteLength(JSON.stringify({ status: 'completed', output })));
+  const view = await f.runtime.command(frame.turnReport.read.command, frame.turnReport.read.args,
+    { actor: 'owner', principalId: 'owner', sessionId: 'owner' });
+  assert.equal(view.participants.find((p) => p.participantId === 'builder').turnReports[0].report.output, output);
+});
+
+test('report replay after restart preserves a root address even if a parent becomes available', async (t) => {
+  const f = await fixture(t);
+  const parent = await f.recruit('lead');
+  const child = await f.recruit('builder', parent);
+  const guide = f.coordinator.guideParticipant.bind(f.coordinator);
+  f.coordinator.guideParticipant = async () => ({ ok: false, result: 'delivery_refused' });
+  f.adapter.completeTurn(child.id, { output: 'Review at root' });
+  await flush();
+  f.coordinator.guideParticipant = guide;
+  const restarted = new SwarmRuntime({ store: f.store, coordinator: f.coordinator, authorize: async () => {} });
+  const result = await restarted.reportTurnEnd(f.events('swarm.turn_reported')[0].payload);
+  assert.equal(result.delivery.state, 'root_addressed');
+  assert.equal(f.adapter.calls.prompt.length, 0);
+  assert.equal(f.events('swarm.root_attention_owed').length, 1);
+});

@@ -37,7 +37,8 @@ export class SwarmNativeAccess {
           // to the identity this credential was issued for — a report's swarmId/participantId
           // come from the registration, never from the caller's frame.
           isDone: () => this.isDone?.({ swarmId, participantId }) === true,
-          onTurnCompleted: (report) => this.onTurnCompleted?.({ ...report, swarmId, participantId }),
+          ...(typeof this.onTurnCompleted === 'function'
+            ? { onTurnCompleted: (report) => this.onTurnCompleted({ ...report, swarmId, participantId }) } : {}),
           env: Object.freeze({ ...issued.env, BATON_SWARM_CLIENT: this.clientPath }),
           redactProviderFrame: (frame) => JSON.parse(JSON.stringify(frame,
             (_key, value) => typeof value === 'string' ? value.replaceAll(issued.token, '[REDACTED]') : value)),

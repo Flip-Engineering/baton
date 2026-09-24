@@ -41,7 +41,7 @@ export function turnCompleted(coordinator, recorder, ctx) {
           payload: sealVerdict.seal ? { ...wr, usageSeal: sealVerdict.seal } : wr,
         });
         const participantRuntime = coordinator._participantRuntimes?.get(ctx.handle.runId);
-        reportTurn(coordinator, ctx, terminalEvent, wr);
+        if (!ctx.turnWasTerminal) reportTurn(coordinator, ctx, terminalEvent, wr);
         // D2 blk-5 / C4: the turn-terminal seam clears the liveness marker (a zombie flag would
         // hold liveness forever and make rung-3 reap impossible).
         ctx.handle.turnInFlight = false;
@@ -83,29 +83,18 @@ export function turnCompleted(coordinator, recorder, ctx) {
             && [...coordinator._pending.values()].some((record) => record.worker === ctx.handle.id && record.state === 'pending');
           if (parkedUnsettled) return
         }
-        // Issue #31 §2.1(1)-(2), as revised 2026-09-12: a 'pausable' card's completed turn is a
-        // CHECKPOINT, not an implicit claim — the trust gate does not dispatch, no gate event is
-        // written, and (native-completion-loop) the coordinator does not self-drive the pause
-        // either: no policy nudge, no window, no expiry verdict. A 'claim' card (the default —
-        // every card without the field) never reaches this branch and falls straight through to
-        // the pre-existing gate below, byte-identically to before. A driven and an un-driven
-        // checkpoint are now identical: both park visibly for an explicit `claim_turn` (the real
-        // verifier) or `nudge_turn` (a real continuation). Issue #572: the park is never silent —
-        // reportTurn above woke the seat's orchestrator with this turn's report, and a seat that
-        // declared its assignment complete parks no longer: its turn faces the gate below and its
-        // worker is retired when the gate settles.
+        // Swarm turn completion reports to the orchestrator and keeps the assignment available
+        // for guidance. A declared completion proceeds to verification and worker cleanup.
+        if (typeof participantRuntime?.onTurnCompleted === 'function'
+          && participantRuntime.isDone?.() !== true) return;
+        // Historical checkpoint consumers remain available to non-swarm callers.
         {
           const task = coordinator._tasks.get(ctx.handle.taskId);
-          // A turn can legally end AFTER its task was already terminalized (run stop, fleet
-          // drain, a provider turn landing post-cancellation). Parking a terminal task is
-          // impossible by TRANSITIONS and would throw `terminal` out of transitionTask — so skip
-          // the pause entirely and fall through, mirroring the interaction family's own
-          // `if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;` precedent.
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)
             && participantRuntime?.isDone?.() !== true
             && coordinator._turnCompletionOf(ctx.handle) === 'pausable') {
             const settled = coordinator._admitPauseRecord(ctx.handle, task, terminalEvent, wr, ctx.appendAttributed);
-            if (!settled) return
+            if (!settled) return;
           }
         }
         if (coordinator._drainState === 'open' && ctx.handle.status !== 'stopping' && ctx.handle.status !== 'dead') {

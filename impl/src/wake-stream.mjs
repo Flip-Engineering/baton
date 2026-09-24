@@ -570,6 +570,8 @@ export function deriveWakeFrame(event, attribution = new Map(), served = null) {
     runId,
     actor: event.actor ?? null,
     subject: subjectOf(row, payload),
+    ...(payload.owed === 'turn_report' && payload.turnReport
+      ? { turnReport: Object.freeze({ ...payload.turnReport }) } : {}),
     next: renderNext(row, coordinates),
     observation: false,
     served: servedHeader(served),
