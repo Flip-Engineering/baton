@@ -2042,6 +2042,42 @@ export class SwarmRuntime {
     return this._gatePool;
   }
 
+  /** The pool this runtime's landings already use, WITHOUT minting one (#576): at close time a
+   * runtime that never landed must not construct a pool just to fence it. */
+  _existingSupervisedPool() {
+    const coordinator = this.coordinator;
+    if (coordinator && typeof coordinator.supervisedProcesses === 'function') {
+      const pool = coordinator.supervisedProcesses();
+      if (pool && typeof pool.run === 'function') return pool;
+    }
+    return this._gatePool ?? null;
+  }
+
+  /** #576: track ONE in-flight landing so a stopping runtime can wait for it to unwind — the
+   * abandoned-attempt row it records is what lets the lead retry the landing. Returns the
+   * release the landing's `finally` calls; the tracked promise resolves then, never rejects. */
+  _trackLanding() {
+    let release;
+    const settled = new Promise((resolve) => { release = resolve; });
+    this._inflightLandings ??= new Set();
+    const entry = { settled };
+    this._inflightLandings.add(entry);
+    return () => { this._inflightLandings.delete(entry); release(); };
+  }
+
+  /** #576: wait out every in-flight landing. Called by the application's shutdown AFTER close()
+   * (which fences the gate pool and kills its children, so each landing unwinds to its own
+   * abandoned-attempt row) and BEFORE the driver's drain releases the writer lease — the row
+   * a lead retries from never races the lease release. No new landing can enter behind close():
+   * _dispatch refuses a closed runtime, and _integrate refuses it too. */
+  async settleLandings() {
+    for (;;) {
+      const inflight = [...(this._inflightLandings ?? [])];
+      if (inflight.length === 0) return;
+      await Promise.all(inflight.map((entry) => entry.settled));
+    }
+  }
+
   /** Issue #459: sweep the integration checkouts a previous incarnation left under this
    * repository's authority, ONCE per runtime incarnation — the first operation is the open. What
    * was swept is named twice: durably on the runtime's own driver row (the deployment-scope record
@@ -5301,7 +5337,12 @@ export class SwarmRuntime {
     // Issue #459: a runtime that owns its own supervised pool (a bare host with no coordinator)
     // kills what it started, exactly as the resident's fence kills the deployment's pooled
     // children. A landing's orphaned gate run is never this close's legacy.
-    this._gatePool?.killAll();
+    // Issue #576: the fence drops FIRST — no new gate starts once a stop is requested, and a
+    // gate run still queued for its verify lease aborts — then every live child is killed;
+    // the drain's cancelAndReap awaits their closes, so `closed` means the process exits.
+    const pool = this._existingSupervisedPool();
+    pool?.fence();
+    pool?.killAll();
   }
 
   async _watch(args, principal, context) {
@@ -8038,6 +8079,10 @@ export class SwarmRuntime {
         refuse(message, 'integrate_target_diverged', detail); break;
       case 'integrate_change_invalid':
         refuse(message, 'integrate_change_invalid', detail); break;
+      // Issue #576: the resident stopped under this landing — its gate run was cancelled and
+      // reaped by the drain, and the attempt is recorded so the lead can retry it.
+      case 'integrate_landing_abandoned':
+        refuse(message, 'integrate_landing_abandoned', detail); break;
       default:
         throw error;
     }
@@ -8081,6 +8126,9 @@ export class SwarmRuntime {
   }
 
   async _integrate(args, principal, context, swarm) {
+    // #576: a stop that landed between the dispatch's own check and this body starts no new
+    // gate — the runtime is closed, and the attempt refuses before anything is recorded.
+    if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
     const contribution = Object.hasOwn(swarm.contributions ?? {}, args.contributionId)
       ? swarm.contributions[args.contributionId] : null;
     if (!contribution) {
@@ -8160,6 +8208,9 @@ export class SwarmRuntime {
     /** The change as the squash carried it BEFORE the regenerators wrote — read by this runtime's
      * own regenerate callback, never guessed at afterwards (see `regenerated` below). */
     let changedBeforeRegeneration = null;
+    // #576: the stop's settle waits on this landing through its unwind, so the abandoned-attempt
+    // row it may record lands before the writer lease is released.
+    const landingDone = this._trackLanding();
     try {
       const regenerate = typeof authority.regenerate === 'function'
         ? authority.regenerate : (dir) => defaultIntegrationRegenerate(dir, { pool });
@@ -8271,11 +8322,25 @@ export class SwarmRuntime {
         selection: gateSelection, skipped: gateSkipped, stderrTail: gateTail, exit: gateExit,
         regenerated: gateRegenerated,
       });
+      if (started !== null && pool.fenced === true) {
+        // Issue #576: the stop fenced the pool and reaped this landing's gate run — the durable
+        // row says the attempt was ABANDONED by the stop (the lead retries it), never that the
+        // change failed its gate. The original error rides as the cause so no fact is lost.
+        const abandoned = Object.assign(
+          new Error('the resident stopped while this landing was in flight; its gate run was cancelled and reaped'),
+          { code: 'integrate_landing_abandoned', cause: error, detail: error?.detail },
+        );
+        this._recordIntegrationFailure(args, contribution, abandoned, principal, operationKey,
+          landingFacts, target);
+        this._refuseLanding(abandoned, swarm, landingFacts);
+      }
       if (started !== null) {
         this._recordIntegrationFailure(args, contribution, error, principal, operationKey,
           landingFacts, target);
       }
       this._refuseLanding(error, swarm, landingFacts);
+    } finally {
+      landingDone();
     }
     const receipt = {
       contributionId: args.contributionId, participantId: contribution.participantId,
