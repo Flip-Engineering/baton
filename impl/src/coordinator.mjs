@@ -668,8 +668,15 @@ export class Coordinator {
     return runtimeRecovery._startupReconcilerObservation(this, this._recorder, caught, records, record);
   }
 
-  _trackStartupCleanup(operation, reconciler = null) {
-    return runtimeRecovery._trackStartupCleanup(this, this._recorder, operation, reconciler);
+  _trackStartupCleanup(operation, reconciler = null, opts = {}) {
+    return runtimeRecovery._trackStartupCleanup(this, this._recorder, operation, reconciler, opts);
+  }
+
+  /** Issue #542: the scratch runtime scopes this incarnation could not remove yet — the state
+   * behind the durable `host.cleanup_pending` rows, one bounded row per scope. Empty means the
+   * deferred removals reached absence (or none was ever pending). */
+  startupCleanupDeferred() {
+    return runtimeRecovery.startupCleanupDeferred(this, this._recorder);
   }
 
   async startupReady() {
