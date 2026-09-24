@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -6,6 +8,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CoordinationIntegrityError, CoordinationStore } from '../src/coordination-store.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -20,7 +36,7 @@ const policy = (overrides = {}) => ({
 });
 
 function fixture({ taskId = 'representation-task', runId = null, policy: configuredPolicy = policy(), producerKind = 'structural_delta', supportingRefs = [], duplicatePrimary = false } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase61-representation-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-phase61-representation-'));
   const operational = new Map();
   const operationalRead = (worker, seq) => operational.get(`${worker}:${seq}`) ?? null;
   const coordination = new CoordinationStore(root, { operationalRead, representationPolicy: configuredPolicy });
