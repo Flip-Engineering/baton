@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -8,6 +10,20 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const until = async (fn, timeoutMs = 2_000) => {
@@ -69,7 +85,7 @@ function adapter() {
   return value;
 }
 
-function system(ad, { log = new Log(mkdtempSync(join(tmpdir(), 'baton-pg57-callback-'))) } = {}) {
+function system(ad, { log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-pg57-callback-'))) } = {}) {
   const coordination = coordinationForLog(log);
   const coordinator = new Coordinator({
     log,

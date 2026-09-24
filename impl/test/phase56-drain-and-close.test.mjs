@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -13,6 +15,20 @@ import { CoordinationStore, McpFleetServer, MockAdapter, WebNorthbound, createBr
 import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const IMPL = resolve(HERE, '..');
 const RUN_EVIDENCE = join(IMPL, 'scripts', 'run-evidence.mjs');
@@ -22,7 +38,7 @@ const deferred = () => { let resolvePromise; const promise = new Promise((resolv
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-const root = (label) => mkdtempSync(join(tmpdir(), `baton-phase56-${label}-`));
+const root = (label) => mintFixtureDirectory(join(tmpdir(), `baton-phase56-${label}-`));
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } }).trim();

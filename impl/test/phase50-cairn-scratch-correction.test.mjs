@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -8,7 +10,21 @@ import test from 'node:test';
 import { CairnRunScorecard, CoordinationIntegrityError, McpFleetServer, ReviewSelectionError, WebNorthbound, createDriver } from '../src/index.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase50-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase50-${name}-`));
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
 function repo() {
   const dir = root('repo'); git(['init', '-q'], dir); git(['config', 'user.email', 'baton@example.test'], dir); git(['config', 'user.name', 'Baton'], dir);
