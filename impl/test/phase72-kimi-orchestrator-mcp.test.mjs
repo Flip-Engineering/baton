@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,6 +14,20 @@ import {
   kimiBatonAcpMcpServer, kimiBatonMcpEntry,
 } from '../src/index.mjs';
 import { mockApplicationCard, northboundApplicationToolNames } from '../scripts/surface-truth.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const NOW = Date.parse('2026-07-17T23:30:00.000Z');
 // The card's commands derive from the command table (surface-truth.mjs).
@@ -128,7 +144,7 @@ function startToolCall(id, runId = 'run-remote-session') {
 
 test('KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session', async () => {
   const remote = wire();
-  const coordination = new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-kimi-remote-principal-')), 'coordination'));
+  const coordination = new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-kimi-remote-principal-')), 'coordination'));
   const server = await createBatonWebMcpServer({
     coordination, connection, fetchImpl: remote.fetchImpl, now: () => NOW, sleep: async () => {},
   });
@@ -151,7 +167,7 @@ test('KC6: Web MCP rejects every local identity and lifetime override', async ()
     { sessionTtlMs: 60_000 },
   ]) {
     const remote = wire();
-    const coordination = new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-kimi-override-')), 'coordination'));
+    const coordination = new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-kimi-override-')), 'coordination'));
     await assert.rejects(
       createBatonWebMcpServer({
         coordination, connection, fetchImpl: remote.fetchImpl, now: () => NOW,
@@ -167,7 +183,7 @@ test('KC6: an observe-only remote session refuses mutation locally before any We
   const observeOnly = structuredClone(remoteSession);
   observeOnly.identity.capabilities = ['observe'];
   const remote = wire({ session: observeOnly });
-  const coordination = new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-kimi-observe-only-')), 'coordination'));
+  const coordination = new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-kimi-observe-only-')), 'coordination'));
   const server = await createBatonWebMcpServer({
     coordination, connection, fetchImpl: remote.fetchImpl, now: () => NOW, sleep: async () => {},
   });
@@ -181,11 +197,11 @@ test('KC6: an observe-only remote session refuses mutation locally before any We
 test('KC6/KC7: independent bridges sharing one remote session derive one stable mutation key', async () => {
   const remote = wire();
   const first = await createBatonWebMcpServer({
-    coordination: new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-kimi-stable-a-')), 'coordination')),
+    coordination: new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-kimi-stable-a-')), 'coordination')),
     connection, fetchImpl: remote.fetchImpl, now: () => NOW, sleep: async () => {},
   });
   const second = await createBatonWebMcpServer({
-    coordination: new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-kimi-stable-b-')), 'coordination')),
+    coordination: new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-kimi-stable-b-')), 'coordination')),
     connection, fetchImpl: remote.fetchImpl, now: () => NOW, sleep: async () => {},
   });
   await initialize(first);
@@ -269,7 +285,7 @@ test('KC8: remote Web credentials are not serialized through facade or MCP state
     connection, fetchImpl: remote.fetchImpl, clock: () => NOW, sleep: async () => {},
   });
   const server = await createBatonWebMcpServer({
-    coordination: new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-kimi-token-state-')), 'coordination')),
+    coordination: new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-kimi-token-state-')), 'coordination')),
     connection, fetchImpl: remote.fetchImpl, now: () => NOW, sleep: async () => {},
   });
   assert.equal(JSON.stringify(facade).includes(connection.token), false);
@@ -280,7 +296,7 @@ test('KC8: remote Web credentials are not serialized through facade or MCP state
 
 test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web', async () => {
   const remote = wire();
-  const coordination = new CoordinationStore(join(mkdtempSync(join(tmpdir(), 'baton-kimi-orchestrator-')), 'coordination'));
+  const coordination = new CoordinationStore(join(mintFixtureDirectory(join(tmpdir(), 'baton-kimi-orchestrator-')), 'coordination'));
   const server = await createBatonWebMcpServer({
     coordination, connection, fetchImpl: remote.fetchImpl, now: () => NOW,
     sleep: async () => {},
@@ -484,7 +500,7 @@ test('KC8: project Kimi MCP entry contains no credential and allowlists only sem
 });
 
 test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web listener with pure stdio', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'baton-kimi-orchestrator-packaged-'));
+  const directory = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-orchestrator-packaged-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const coordination = new CoordinationStore(join(directory, 'web-coordination'));
   const sessions = new WebSessionStore(join(directory, 'sessions'));

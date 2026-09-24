@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Phase 69 VR6-VR8 — application-owned retry cascade, concise operator projection,
 // and recursive acceptance invariants (spec/phase69/verifier-runtime-and-checkpoint-recovery.md).
 // VR1-VR5 are covered by phase69-verifier-runtime-checkpoint.test.mjs; this file drives the
@@ -18,7 +20,21 @@ import {
 import { batonCliHelp } from '../src/application-cli.mjs';
 import { listWorktrees } from '../src/worktree.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase69-retry-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase69-retry-${name}-`));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const principal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
 

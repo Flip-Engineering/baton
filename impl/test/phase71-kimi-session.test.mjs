@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,6 +15,20 @@ import { coordinationForLog } from '../src/coordination-store.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const MODEL = 'kimi-k3[1m]';
@@ -59,7 +75,7 @@ test('KK1: card exposes exact K3 model and max-only required effort with no xhig
 });
 
 test('KK2/KK3: missing credential, missing effort, unsupported effort, and wrong model refuse before spawn without secrets', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-kimi-refuse-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-refuse-'));
   const cases = [
     [new KimiSessionCli({ cmd: process.execPath, args: [FAKE] }), { model: MODEL, reasoningEffort: 'max' }, 'credential_missing'],
     [new KimiSessionCli({ cmd: process.execPath, args: [FAKE], authToken: 'fixture-only' }), { model: MODEL }, 'effort_required'],
@@ -79,7 +95,7 @@ test('KK2/KK3: missing credential, missing effort, unsupported effort, and wrong
 test('KK2: each dispatch reaches the fake child with exact argv and closed official environment', async () => {
   const cli = new KimiSessionCli({ cmd: process.execPath, args: [FAKE], authToken: 'fixture-only' });
   const wait = collector(cli);
-  const wt = mkdtempSync(join(tmpdir(), 'baton-kimi-route-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-route-'));
   const official = {
     ANTHROPIC_BASE_URL: 'https://api.moonshot.ai/anthropic', ANTHROPIC_AUTH_TOKEN: 'fixture-only',
     ANTHROPIC_MODEL: MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL: MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL: MODEL,
@@ -141,7 +157,7 @@ test('KK6: package entry point exports KimiSessionCli', async () => {
 });
 
 test('KK3/KK8: credential file boundary is bounded, owner-only, symlink-safe, pointer-safe, and secret-free', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'baton-kimi-credential-'));
+  const dir = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-credential-'));
   const credential = join(dir, 'credential.json');
   writeFileSync(credential, JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'fixture-only' } }), { mode: 0o600 });
   assert.equal(loadProviderCredentialFile(credential, { providerLabel: 'Kimi' }), 'fixture-only');
@@ -195,7 +211,7 @@ test('KK3/KK8: credential file boundary is bounded, owner-only, symlink-safe, po
 });
 
 test('KK5/KK8: model mismatch is a typed crash before ready and auth refusal remains failed', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-kimi-failure-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-failure-'));
   const mismatch = new KimiSessionCli({ cmd: process.execPath, args: [FAKE], authToken: 'fixture-only' });
   const mismatchEvents = [];
   mismatch.onEvent((event) => mismatchEvents.push(event));
@@ -231,7 +247,7 @@ test('KK5/KK8: model mismatch is a typed crash before ready and auth refusal rem
 });
 
 test('KK3/KK5: protected provider output fails closed and never reaches content or result events', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-kimi-output-secret-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-output-secret-'));
   for (const [worker, secret, marker] of [
     ['secret-output', 'fixture-only', 'REPORT_ENV:ANTHROPIC_AUTH_TOKEN'],
     ['secret-output-escaped', 'fixture-"quoted', 'REPORT_ENV:ANTHROPIC_AUTH_TOKEN'],
@@ -255,7 +271,7 @@ test('KK3/KK5: protected provider output fails closed and never reaches content 
 });
 
 test('KK5/PH2: structured success remains successful even when provider prose looks like an API error', async () => {
-  const wt = mkdtempSync(join(tmpdir(), 'baton-kimi-prose-'));
+  const wt = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-prose-'));
   const cli = new KimiSessionCli({ cmd: process.execPath, args: [FAKE], authToken: 'fixture-only' });
   const events = [];
   cli.onEvent((event) => events.push(event));
@@ -273,7 +289,7 @@ test('KK5/PH2: structured success remains successful even when provider prose lo
 });
 
 test('KK4/KK5/KK7/KK8: coordinator derives isolation from the adapter card and kill preserves before cleanup without touching global Claude state', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-kimi-integrated-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-integrated-'));
   const wt = join(root, 'worktree');
   mkdirSync(wt);
   const operatorHome = join(root, 'operator');

@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -14,6 +16,20 @@ import {
   createRecoveryAttemptAdmission,
   createRecoveryAttemptCompletion,
 } from '../src/recovery-attempt.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const repoId = 'repo-phase76-recovery-integration';
 const runId = 'run-phase76-recovery-integration';
@@ -115,10 +131,10 @@ async function withLiveLoop(fn) {
 async function recoverableSession(name, options = {}) {
   const taskId = `phase76-${name}`;
   const nativeId = `native-${name}`;
-  const worktree = mkdtempSync(join(tmpdir(), `baton-phase76-${name}-wt-`));
-  const log = new Log(mkdtempSync(join(tmpdir(), `baton-phase76-${name}-log-`)));
+  const worktree = mintFixtureDirectory(join(tmpdir(), `baton-phase76-${name}-wt-`));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), `baton-phase76-${name}-log-`)));
   const coordination = new CoordinationStore(
-    mkdtempSync(join(tmpdir(), `baton-phase76-${name}-coordination-`)),
+    mintFixtureDirectory(join(tmpdir(), `baton-phase76-${name}-coordination-`)),
     { operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null },
   );
   const firstAdapter = adapter();

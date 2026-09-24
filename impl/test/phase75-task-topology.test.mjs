@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,6 +11,20 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const CHILD_RELATIONS = Object.freeze([
   'follow_up', 'oracle', 'preserved_resume', 'recovery', 'review', 'revision',
@@ -29,7 +45,7 @@ const POLICY = Object.freeze({
   }),
 });
 
-const root = (label) => mkdtempSync(join(tmpdir(), `baton-phase75-${label}-`));
+const root = (label) => mintFixtureDirectory(join(tmpdir(), `baton-phase75-${label}-`));
 const auth = (key) => ({ actor: 'orchestrator', key: `phase75:${key}` });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
