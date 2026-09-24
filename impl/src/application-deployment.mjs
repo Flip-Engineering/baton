@@ -3288,6 +3288,27 @@ async function openResidentAuthorityForHandoff({ create, handoff, waitMs }) {
     }
   }
 }
+/** Issue #559: the ONE owner-session claim set. The open issues the resident's own session from
+ * this list and a renewal that has to issue instead of rotate (`#renewOwnerSession`) issues the
+ * same one, so a renewed owner carries exactly the powers the open gave it. */
+const OWNER_SESSION_CAPABILITIES = Object.freeze([
+  'observe', 'control', 'approve', 'emergency_stop', 'export_result',
+  'retry_verification',
+  'goal:define', 'goal:observe', 'plan:propose', 'plan:approve',
+]);
+/** Issue #559: the fraction of the declared owner-session lifetime at which the resident renews
+ * it. `WebSessionStore.rotate` refuses a predecessor that has already EXPIRED, so the renewal
+ * instant owns the whole remaining half-lifetime as its margin: a renewal delayed by a suspended
+ * host or a loaded suite still lands inside the predecessor's life. */
+const OWNER_SESSION_RENEWAL_FRACTION = 0.5;
+/** Issue #559: how soon a renewal that FAILED is attempted again — short enough that the retry
+ * lands well inside the predecessor's remaining life, and long enough that a persistent failure
+ * does not spin. */
+const OWNER_SESSION_RENEWAL_RETRY_MS = 30_000;
+/** The renewal delay for a declared owner-session lifetime: half of it, floored at a millisecond
+ * so a lifetime of one millisecond still schedules a real timer. */
+const ownerSessionRenewalDelayMs = (lifetimeMs) => Math.max(1, Math.floor(lifetimeMs * OWNER_SESSION_RENEWAL_FRACTION));
+
 class BatonDeployment {
   // #306 lane A: the handoff in progress, or null. ONE shape:
   // {since, target: {sha, ref}, from: {incarnation, commit}, successor: {pid, incarnation, child},
@@ -3392,6 +3413,9 @@ class BatonDeployment {
   #startupElapsedMs = null;
   #residentAuthority = null;
   #residentSession = null;
+  // Issue #559: the pending owner-session renewal, or null. One timer at a time, unref'd so it
+  // never holds the process open, and cleared by the stop before the session it renews is revoked.
+  #residentRenewalTimer = null;
   #ordinaryHostPromise = null;
   // Issue #468: this incarnation's OWN serve log — {path, fd} of `resident/serve.<incarnation>.log`,
   // opened by this incarnation at open (never a predecessor's pipe). Null until then, and null for
@@ -4233,11 +4257,7 @@ class BatonDeployment {
     const issued = sessions.issue({
       userId: 'local-owner',
       authMethod: 'bearer',
-      capabilities: [
-        'observe', 'control', 'approve', 'emergency_stop', 'export_result',
-        'retry_verification',
-        'goal:define', 'goal:observe', 'plan:propose', 'plan:approve',
-      ],
+      capabilities: [...OWNER_SESSION_CAPABILITIES],
       repoIds: [this.#repository.repoId],
       ttlMs: options.sessionTtlMs,
     }, { actor: `deployment:${this.#repository.repoId}:resident` });
@@ -4340,6 +4360,10 @@ class BatonDeployment {
       // path's withdrawal takes it down. A handoff that never published returned above without
       // reaching this line, so an incumbent that goes on serving keeps the watch it already had.
       this.#watchHostExhaustion();
+      // Issue #559: the owner session this open issued is renewed for as long as THIS incarnation
+      // serves. Scheduled here, at the flip, because before it there is no session a client can be
+      // admitted by and nothing to keep alive.
+      this.#scheduleOwnerSessionRenewal(authority);
       return published;
     } catch (error) {
       try { await server.batonShutdown({ drainMs: options.webDrainMs }); } catch {}
@@ -4352,6 +4376,69 @@ class BatonDeployment {
       this.#residentSession = null;
       throw error;
     }
+  }
+  /** Issue #559: schedule the next renewal of this incarnation's owner session. The delay derives
+   * from the declared lifetime (`ownerSessionRenewalDelayMs`); an explicit `delayMs` is the shorter
+   * cadence a FAILED renewal retries at. The timer is unref'd — the same discipline the predecessor
+   * watch uses — so a pending renewal never holds the process open, and the stop clears it before
+   * it revokes the session the renewal would keep alive. */
+  #scheduleOwnerSessionRenewal(authority, delayMs = ownerSessionRenewalDelayMs(this.#residentOptions.sessionTtlMs)) {
+    if (this.#residentSession === null || this.#residentRenewalTimer !== null) return;
+    const timer = setTimeout(() => {
+      this.#residentRenewalTimer = null;
+      if (this.#residentSession === null) return;
+      this.#renewOwnerSession(authority);
+    }, delayMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.#residentRenewalTimer = timer;
+  }
+
+  /** Issue #559: one renewal of the owner session. The resident issues exactly one `local-owner`
+   * session at open and, until this, never renewed it, so an incarnation that outlived
+   * `sessionTtlMs` locked the owner out of a HEALTHY deployment: `/v1/auth/login` needs an identity
+   * provider a local resident has none of, `/v1/auth/refresh` needs an unexpired session, and
+   * `deployment.reincarnate` is itself an authenticated command. Raising `sessionTtlMs` would leave
+   * the same ceiling further out, so the admission is renewed instead: the store ROTATES the
+   * session (one durable `session.rotated` row, the predecessor revoked, the successor carrying the
+   * same claims) and the successor's credential is written where a client reads it — the
+   * `tokenFile` the published profile names.
+   *
+   * A rotation the store will not take, because the predecessor lapsed while this process was
+   * suspended, is recovered by ISSUING a fresh owner session: the ceiling is what this fixes, so a
+   * missed renewal must not restore it. A renewal that fails outright keeps the predecessor and
+   * retries sooner — the credential file is the ONE coordinate a client follows, and losing it is
+   * the lockout this exists to prevent. */
+  #renewOwnerSession(authority) {
+    const current = this.#residentSession;
+    if (current === null) return;
+    const { sessions, sessionId } = current;
+    const actor = `deployment:${this.#repository.repoId}:resident`;
+    let successor;
+    try {
+      successor = sessions.rotate(sessionId, { actor }) ?? sessions.issue({
+        userId: 'local-owner',
+        authMethod: 'bearer',
+        capabilities: [...OWNER_SESSION_CAPABILITIES],
+        repoIds: [this.#repository.repoId],
+        ttlMs: this.#residentOptions.sessionTtlMs,
+      }, { actor });
+      authority.renewToken(successor.token);
+    } catch (error) {
+      this.#webHost?._say?.(`baton serve: owner session renewal failed `
+        + `(${error?.code ?? error?.message ?? error}); retrying in ${OWNER_SESSION_RENEWAL_RETRY_MS} ms`);
+      this.#scheduleOwnerSessionRenewal(authority, OWNER_SESSION_RENEWAL_RETRY_MS);
+      return;
+    }
+    this.#residentSession = Object.freeze({ sessions, sessionId: successor.sessionId });
+    this.#scheduleOwnerSessionRenewal(authority);
+  }
+
+  /** Issue #559: end the renewal chain. The stop calls this before it revokes the live session, so
+   * a pending renewal can never rotate a session this incarnation has already given up. */
+  #clearOwnerSessionRenewal() {
+    if (this.#residentRenewalTimer === null) return;
+    clearTimeout(this.#residentRenewalTimer);
+    this.#residentRenewalTimer = null;
   }
   /** The deployment's own clock: the resident options carry it (advanced.resident.now), so a stop
    * row's `at` is stamped on the same clock as every other durable row this deployment writes. */
@@ -6122,6 +6209,10 @@ class BatonDeployment {
             }, 'reincarnation:failed:superseded');
             try { rmSync(handoff.markerPath, { force: true }); } catch { /* a stale marker is harmless */ }
           }
+          // Issue #559: the renewal chain ends with the session it renews. Cleared HERE, before the
+          // revoke below, so a pending renewal can never re-issue an admission this incarnation has
+          // already given up.
+          this.#clearOwnerSessionRenewal();
           try {
             this.#residentSession?.sessions.revoke(this.#residentSession.sessionId, {
               actor: `deployment:${this.#repository.repoId}:resident`, reason: 'deployment_closed',
