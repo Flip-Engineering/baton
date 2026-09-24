@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -7,7 +9,21 @@ import { join } from 'node:path';
 
 import { CoordinationIntegrityError, CoordinationRefusal, CoordinationStore } from '../src/coordination-store.mjs';
 
-const dir = () => mkdtempSync(join(tmpdir(), 'baton-acceptance-revocation-'));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const dir = () => mintFixtureDirectory(join(tmpdir(), 'baton-acceptance-revocation-'));
 const canonical = (value) => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
