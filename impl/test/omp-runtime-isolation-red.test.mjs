@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync } from 'node:fs';
@@ -17,7 +19,21 @@ import { OmpRpcCli } from '../src/omp-rpc.mjs';
 // RED   = the omp family's isolation env carries CLAUDE_CONFIG_DIR and no omp tree projection.
 // GREEN = surface 'omp', HOME isolated, ~/.omp projected into that HOME so omp finds its auth.
 
-const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (prefix) => mintFixtureDirectory(join(tmpdir(), `baton-${prefix}-`));
 
 function ompCard() {
   const adapter = new OmpRpcCli({

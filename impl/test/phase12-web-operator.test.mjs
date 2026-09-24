@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID, webcrypto } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -10,9 +12,23 @@ import { createContext, runInContext } from 'node:vm';
 import { CoordinationStore, WebNorthbound, WebSessionStore } from '../src/index.mjs';
 import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const NOW = Date.parse('2026-07-11T18:00:00.000Z');
 const ORIGIN = 'https://control.test';
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-${name}-`));
 
 class Response {
   writeHead(status, headers) { this.status = status; this.headers = headers; }

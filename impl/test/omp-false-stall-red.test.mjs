@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -41,6 +43,20 @@ import { createDriver } from '../src/index.mjs';
 //         and the classifier stays HONEST — once the turn genuinely ends, a silent worker
 //         still stalls. No termination semantics are weakened; the evidence simply becomes true.
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const line = (frame) => `${JSON.stringify(frame)}\n`;
 
 const policy = Object.freeze({
@@ -78,8 +94,8 @@ async function until(fn, timeoutMs = 5_000) {
 }
 
 test('OMP-FALSE-STALL: a live omp turn (steer-nudged, mid-tool-call) is never declared stalled', async () => {
-  const repo = mkdtempSync(join(tmpdir(), 'baton-omp-false-stall-repo-'));
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-omp-false-stall-log-'));
+  const repo = mintFixtureDirectory(join(tmpdir(), 'baton-omp-false-stall-repo-'));
+  const logDir = mintFixtureDirectory(join(tmpdir(), 'baton-omp-false-stall-log-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'l@example.invalid'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'L'], { cwd: repo });

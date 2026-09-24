@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
@@ -7,6 +9,20 @@ import { fileURLToPath } from 'node:url';
 import { assertIsAdapter } from '../src/adapter.mjs';
 import { buildKimiAcpArgs, KimiAcpCli } from '../src/kimi-acp.mjs';
 import { DEFAULT_WORKER_POLICY_REQUEST, resolveWorkerPolicy } from '../src/worker-policy.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const fixture = fileURLToPath(new URL('./fixtures/fake-kimi-acp.mjs', import.meta.url));
 const brief = {
@@ -26,7 +42,7 @@ const waitFor = async (events, predicate, timeoutMs = 2000) => {
 };
 
 function setup(mode = 'normal', extra = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'baton-kimi-acp-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-kimi-acp-'));
   const log = join(root, 'frames.ndjson');
   const envLog = join(root, 'env.json');
   const events = [];

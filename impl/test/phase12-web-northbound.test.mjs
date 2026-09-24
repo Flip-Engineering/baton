@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -8,7 +10,21 @@ import { Readable } from 'node:stream';
 
 import { APPLICATION_COMMAND_DEFINITIONS, CoordinationStore, MockAdapter, WebNorthbound, createAuthenticatedWebServer, createDriver } from '../src/index.mjs';
 
-const root = () => mkdtempSync(join(tmpdir(), 'baton-web-'));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = () => mintFixtureDirectory(join(tmpdir(), 'baton-web-'));
 const envelope = (overrides = {}) => ({
   schemaVersion: 1,
   commandId: 'cmd-1',
