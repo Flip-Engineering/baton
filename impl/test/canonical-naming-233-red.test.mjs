@@ -30,7 +30,7 @@ import {
   deriveSurfaceNames,
 } from '../src/application-semantics.mjs';
 import { validateWebCommandEnvelope, webAdmittedCommandNames } from '../src/web-northbound.mjs';
-import { mcpCombinedToolNames, mcpDispatchToolNames } from '../src/mcp-northbound.mjs';
+import { mcpCombinedToolNames, mcpDispatchToolNames, uncoveredCommands } from '../src/mcp-northbound.mjs';
 
 // The coordinator-lane kernel commands — hand-registered web literals predating the application
 // command table. Pinned frozen: the closed-set pin below must fail if one is removed silently.
@@ -61,6 +61,9 @@ const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
   // --issue path uses — admitted on the web lane (web-northbound.mjs ~169) since wave 13; the
   // underscore spellings are derived from these names like every other row here.
   'package.admit', 'package.attach',
+  // Issue #99: the harvest accessor's direct ports — admitted on the web lane
+  // (web-northbound.mjs HARVEST_WEB_ROWS), both spellings derived like every other row here.
+  'run.resultpin', 'waves.harvest',
 ]);
 
 // The retained legacy MCP spellings for mcp:true definitions (hand baton_* ordinary tools).
@@ -170,6 +173,11 @@ test('CLOSED SET: MCP application dispatch names equal exactly the ONE derivatio
   const dispatch = mcpDispatchToolNames();
   const expected = new Set(RETAINED_MCP_LEGACY_TOOLS.map(([tool]) => tool));
   for (const key of M4B_SIBLING_KEYS) expected.add(deriveSurfaceNames(key).mcp);
+  // Issue #156 D1 step 2: the lifecycle siblings spread from uncoveredCommands() — every
+  // web-admitted command the pre-spread rows do not serve gains one derived baton_* sibling in
+  // the dispatch map. The closed set re-derives them from the same exported derivation the map
+  // spreads, never a hand list (#159); run.feedback is the fourteenth such key on this tree.
+  for (const command of uncoveredCommands()) expected.add(deriveSurfaceNames(command).mcp);
   for (const [name, definition] of Object.entries(APPLICATION_COMMAND_DEFINITIONS)) {
     if (!definition.mcp) continue;
     const { canonical, mcp } = canonicalAndTransportNames(name);

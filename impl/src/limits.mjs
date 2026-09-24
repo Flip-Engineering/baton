@@ -72,6 +72,8 @@ const ADMISSION = Object.freeze({
   'run.objective': { lane: 'run.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission', refusalCode: 'spill_body_exceeded' },
   'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: SPILL_BODY_BYTES, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission', refusalCode: 'spill_body_exceeded' },
   'wave.run.spec_path': { lane: 'wave.run.spec_path', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'waves.run admission (the semantic-registry input schema; the interpreter containment re-checks)', refusalCode: 'workflow_spec_invalid' },
+  'waves.harvest.onto': { lane: 'waves.harvest.onto', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'the harvest accessor (registry schema, facade shape normalizer, MCP tool schema)', refusalCode: 'application_waves_harvest_invalid' },
+  'view.resultpin.page': { lane: 'view.resultpin.page', class: 'view', value: 262144, unit: 'bytes', graceful: 'shed-flagged' },
   'decision.question': { lane: 'decision.question', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionRequest / coordinator decision seam', refusalCode: 'decision_question_exceeded' },
   'decision.need': { lane: 'decision.need', class: 'admission', value: 2048, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.recordReuseDecision', refusalCode: 'decision_need_exceeded' },
   'decision.rationale': { lane: 'decision.rationale', class: 'admission', value: 8192, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.recordReuseDecision', refusalCode: 'decision_rationale_exceeded' },
@@ -273,6 +275,19 @@ const VIEW = Object.freeze({
   // row is a RENDER-side shed flag (OQ1), never a wire cap.
   'view.attention_push.items': { lane: 'view.attention_push.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
   'view.attention_push.bytes': { lane: 'view.attention_push.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
+  // Issue #69 (D2/D7): the cited-REPL-object section's bounds, declared independently of the #79
+  // rows above so a fold-order change in that lane can never renumber these. The ITEM row is the
+  // serve bound (8 = the knowledge-slice precedent); its overflow is a digest-cited spill, never a
+  // truncation. The BYTE row is a RENDER-side shed flag — the boundary entry's leaf is cut with a
+  // `(truncated)` marker and the full text stays reachable by citation.
+  'view.repl_object.items': { lane: 'view.repl_object.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
+  'view.repl_object.bytes': { lane: 'view.repl_object.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
+  // Issue #59 (D1): the re-drive continuity block's own bounds. The ITEM count is the block's
+  // wire bound (8, the #79/#69 precedent); overflow degrades to a digest-cited spill, never a
+  // truncation. The BYTE row is a RENDER-side shed flag (the full carried text rides the spill),
+  // exactly as `view.attention_push.bytes` sheds for #79.
+  'view.continuity.items': { lane: 'view.continuity.items', class: 'view', value: 8, unit: 'items', graceful: 'spill-digest-citation' },
+  'view.continuity.bytes': { lane: 'view.continuity.bytes', class: 'view', value: 4096, unit: 'bytes', graceful: 'shed-flagged' },
   'view.blocked_interaction_summary.bytes': { lane: 'view.blocked_interaction_summary.bytes', class: 'view', value: 160, unit: 'bytes', graceful: 'shed-flagged' },
   'view.knowledge_slice.items': { lane: 'view.knowledge_slice.items', class: 'view', value: 8, unit: 'items', graceful: 'shed-flagged' },
   'view.knowledge_slice.bytes': { lane: 'view.knowledge_slice.bytes', class: 'view', value: 2048, unit: 'bytes', graceful: 'shed-flagged' },
@@ -442,7 +457,7 @@ const COUNTS = Object.freeze({
  * graceful, enforcedAt?, refusalCode?}. */
 export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SWARM_PEER, ...SUBSTRATE, ...VIEW, ...CONTEXT_PACKAGE, ...BRIEF, ...CHECKPOINT, ...REINCARNATION, ...COUNTS });
 
-export const FRAME_LIMITS_VERSION = '1.3.0';
+export const FRAME_LIMITS_VERSION = '1.4.0';
 
 /** Issue #105 (D1/B-3): the closed conversational depth ceiling for reply chains — a per-branch
  * depth cap (never per-subtree), declared per send, default 1. The derivation: the scanner's
