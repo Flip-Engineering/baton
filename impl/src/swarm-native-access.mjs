@@ -8,8 +8,10 @@ import { WORKTREE_STASH_BRIEF_SENTENCE, WORKTREE_WRITER_BRIEF_SENTENCE } from '.
 /** Connect native participant tools to the live deployment without copying owner authority.
  * Credentials belong to a participant, independently of its current transport incarnation. */
 export class SwarmNativeAccess {
-  constructor({ coordinator, dispatch }) {
+  constructor({ coordinator, dispatch, onTurnCompleted = null, isDone = null }) {
     this.coordinator = coordinator;
+    this.onTurnCompleted = onTurnCompleted;
+    this.isDone = isDone;
     this.bridge = createSwarmNativeBridge({ dispatch });
     this.participants = new Map();
     this.clientPath = fileURLToPath(new URL('./swarm-native-bridge.mjs', import.meta.url));
@@ -31,6 +33,11 @@ export class SwarmNativeAccess {
         // recruit's rendered brief carries the Swarm section and the bridge tool from its very
         // first turn. Derived once above; never re-spelled here.
         const extension = Object.freeze({
+          // Issue #572: the turn-end report hook and the declared-done reading. Both are pinned
+          // to the identity this credential was issued for — a report's swarmId/participantId
+          // come from the registration, never from the caller's frame.
+          isDone: () => this.isDone?.({ swarmId, participantId }) === true,
+          onTurnCompleted: (report) => this.onTurnCompleted?.({ ...report, swarmId, participantId }),
           env: Object.freeze({ ...issued.env, BATON_SWARM_CLIENT: this.clientPath }),
           redactProviderFrame: (frame) => JSON.parse(JSON.stringify(frame,
             (_key, value) => typeof value === 'string' ? value.replaceAll(issued.token, '[REDACTED]') : value)),
