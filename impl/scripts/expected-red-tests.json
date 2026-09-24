@@ -6,6 +6,10 @@
       "reason": "A-G10"
     },
     {
+      "key": "test/blind-waits-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/blind-waits-red.test.mjs :: A1-a RED: run.wait({until:\"terminal\"}) on a durably-stopped run burns the clock instead of returning the projected terminal truth",
       "reason": "#164"
     },
@@ -48,6 +52,18 @@
     {
       "key": "test/blind-waits-red.test.mjs :: P-MCP RED: the MCP post-dispatch recheck list must extend to fleet_run_episode/fleet_run_workstreams (fold-164 B3)",
       "reason": "#164"
+    },
+    {
+      "key": "test/control-conflict-axis.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/coordinator-plan-effects-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/credential-projection.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/cross-deployment-knowledge-red.test.mjs :: A1-R1: the descriptor accepts the closed knowledge:{primaryRoot} field (RED — no knowledge field)",
@@ -138,6 +154,18 @@
       "reason": "#70"
     },
     {
+      "key": "test/deployment-omp-dispatch-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/dispatch-seam-omp-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/dispatch-seam-real-omp-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/feedback-forge-hardening-red.test.mjs :: P2 (PIN): referent fix (G4-B1) — evidence.verification.worker/workerSeq are the D1 binding keys",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
@@ -185,6 +213,14 @@
       "reason": "#73"
     },
     {
+      "key": "test/glm-session.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/grammar-m4b-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/grammar-m5-red.test.mjs :: M5-1: the divergence ledger is empty and the M4 retirement is pinned",
       "reason": "#159"
     },
@@ -205,8 +241,40 @@
       "reason": "#364"
     },
     {
+      "key": "test/issue28-wire-degrade-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue325-goal-plan-replay.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue343-swarm-view-narrowing.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue357-worktree-stash-isolation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue487-session-ledger-dual-writer.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue499-scan-component-ceiling.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/issue5-cross-controller-lifecycle-recovery.test.mjs :: issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources",
       "reason": "#460"
+    },
+    {
+      "key": "test/issue500-follow-response-ceiling.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/issue518-plan-budget-replay.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/kg-activation-red.test.mjs :: KG-A5: the admit gate lease binding + refusal taxonomy are unchanged; no auto-admit call site exists (source-scan)",
@@ -215,6 +283,18 @@
     {
       "key": "test/kg-settlement-red.test.mjs :: KS5: a crash between candidacy posts resolves exactly-once on re-drive",
       "reason": "#63"
+    },
+    {
+      "key": "test/kg3-activation-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/kg4-quality-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/kimi-acp.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/launch-validation-red.test.mjs :: A1 (stage[d1a-directory-refused]): the driver refuses a directory --targets before waves.start",
@@ -253,6 +333,14 @@
       "reason": "#165"
     },
     {
+      "key": "test/mcp-descriptor-auth.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/mcp-reflex-surface-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/mcp-reflex-surface-red.test.mjs :: Inventory: the combined surface adds the derived S-3 reflex tools, frozen and _meta-stamped like the ordinary table",
       "reason": "#261"
     },
@@ -287,6 +375,14 @@
     {
       "key": "test/nested-orchestration-red.test.mjs :: R8 RED (stage: orphan-sweep-missing): sweepChildOrphans revokes orphaned child authorities on startup",
       "reason": "#12"
+    },
+    {
+      "key": "test/omp-false-stall-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/omp-runtime-isolation-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/orchestrator-plan-object-red.test.mjs :: A1: a row member reads its OWN task and transitions it to done — admitted",
@@ -569,8 +665,28 @@
       "reason": "A-N5"
     },
     {
+      "key": "test/phase11-acceptance-integration.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase11-control-integrity.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase11-coordination-store.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/phase11-coordination-store.test.mjs :: CK8/CK9: public driver exposes coordination and queued DAG survives restart before dispatch",
       "reason": "design"
+    },
+    {
+      "key": "test/phase11-model-selection.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase11-persistent-sessions.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/phase11-persistent-sessions.test.mjs :: NR1/NR3: recovery attaches without provider work, commits its refinement and intent, then prompts",
@@ -581,12 +697,216 @@
       "reason": "#81"
     },
     {
+      "key": "test/phase12-browser-oidc.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-auth.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-command-status.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-edge.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-northbound.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/phase12-web-northbound.test.mjs :: UA5/WN: malformed Run intent, inconsistent Run identity, and capability refusal occur before application admission",
       "reason": "#160"
     },
     {
       "key": "test/phase12-web-northbound.test.mjs :: WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission",
       "reason": "#160"
+    },
+    {
+      "key": "test/phase12-web-operator.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-session-lifecycle.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase12-web-stream.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase13-atlas-index.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase13-atlas-structural.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase14-route-tuple.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase16-mcp-northbound.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase17-atlas-structural-rewrite.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase18-atlas-cpg.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase19-atlas-cpg-delta.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase20-atlas-cpg-taint.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase22-atlas-cpg-path-sensitive.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase24-atlas-representation-ceiling.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase25-atlas-behavior-fingerprint.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase26-structured-merge.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase27-atlas-egraph-evaluation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase29-capability-invocation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase31-cairn-scorecard.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase32-cartographer-quartermaster.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase36-quartermaster-external.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase37-lockfile-sbom.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase38-reuse-decision.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase39-reuse-invalidation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase40-proposed-install-graph.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase41-advisory-scanner.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase41-transitive-advisory-projection.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase42-policy-invalidation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase43-hmac-webhook.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase43-provider-receipts.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase43-provider-reconciliation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase44-cairn-route-stats.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase45-session-auto-rejoin.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase46-representation-review.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase47-cairn-causal-audit.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase48-cairn-recall.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase49-cairn-promotion.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase50-cairn-scratch-correction.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase52-cairn-recall-assessment.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase53-cairn-contradictions.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase54-atlas-cpg-lexical-bindings.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase56-drain-and-close.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-acceptance-revocation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-adversarial-governance.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-provider-callback-integrity.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-provider-governance.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase57-provider-turn-release.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/phase58-driver-sparse-projection.test.mjs :: Phase 58: createDriver composes worker/verify sparse views with projected node_modules and drain reaps every owned residue",
@@ -597,12 +917,80 @@
       "reason": "#460"
     },
     {
+      "key": "test/phase60-coordination-recovery.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase61-atlas-index-source-contract.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase61-atlas-structural-cpg-source-contract.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase61-representation-producer.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase61-representation-store.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-goal-plan-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-goal-plan-replay-reds.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-mcp-goal-plan.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase62-web-goal-plan.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/phase62-web-goal-plan.test.mjs :: GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures refuse safely",
       "reason": "design"
     },
     {
+      "key": "test/phase63-canonical-order-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase64-integrated-run-application.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase64-result-finalization-store.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase65-run-semantic-review-integration.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase66-materialized-result-export.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase66-plan-authorized-recovery.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/phase66-result-export-projection-reds.test.mjs :: CE11: Web registry dispatches strict run_export parity and rejects server path fields",
       "reason": "design"
+    },
+    {
+      "key": "test/phase66-run-continuation-export.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase66-run-recovery-application.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/phase67-change-aware-inspect.test.mjs :: inspect derives its bounded wait from deployment policy when continuation omits machinery",
@@ -621,12 +1009,40 @@
       "reason": "#6"
     },
     {
+      "key": "test/phase67-progressive-agent-experience.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/phase67-self-describing-continuation.test.mjs :: ordinary outline exposes one registry-derived, callable, bounded continuation without coordinates",
       "reason": "U-E7"
     },
     {
       "key": "test/phase67-self-describing-continuation.test.mjs :: terminal inspect omits continuation and contextual help recommends it",
       "reason": "U-E7"
+    },
+    {
+      "key": "test/phase67-signal-reap.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase68-unified-agent-entrypoint.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase69-verifier-retry-cascade.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase70-resumable-work.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase71-kimi-session.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: semantic mutation replay is stable while mismatched identity and malformed outlines fail closed",
@@ -637,9 +1053,41 @@
       "reason": "#289"
     },
     {
+      "key": "test/phase72-native-kimi-integration.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase73-required-effects.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase75-task-topology.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase76-recovery-attempt-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase76-recovery-attempt-integration.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase77-recursive-run-lineage.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase77-recursive-run-stop-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/phase78-bound-run-group-red.test.mjs :: RG5: the repository deployment forwards startMany and close drains all active group workers",
       "reason": "credential",
       "prerequisite": "codex/gpt-5.6-sol"
+    },
+    {
+      "key": "test/phase78-concise-deployment-factory.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF10: default route inventory retains configured Claude routes for explicit readiness without mutating an isolated home",
@@ -793,6 +1241,26 @@
       "reason": "design"
     },
     {
+      "key": "test/phase87-semantic-action-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase88-plan-route-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase89-resident-application-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase90-run-control-authority.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/phase91-semantic-interrupt-preservation-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/phase92-route-discovery-red.test.mjs :: P92-RD1: CLI-observed Claude login is ready without a credentials file and Kimi-through-Claude is explicitly unconfigured",
       "reason": "#293"
     },
@@ -849,6 +1317,10 @@
       "reason": "#72"
     },
     {
+      "key": "test/quiescence-activity-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/readiness-honesty-red.test.mjs :: A1a (stage: enumerable honest projection): a static-only doctor row reads unverified with probedAt null — never self-relabeled probe-verified — and the fields survive JSON.stringify; a fresh content-verified probe reads probe-verified with probedAt = recorded verifiedAt (D2 cardinal law + wire law)",
       "reason": "#167"
     },
@@ -885,8 +1357,16 @@
       "reason": "#167"
     },
     {
+      "key": "test/run-show-verification-verdict.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/run-show-verification-verdict.test.mjs :: V7: a candidate-owned exit mismatch reads as its own closed code on run show",
       "reason": "#460"
+    },
+    {
+      "key": "test/runtime-isolation.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/scratchpad-write-red.test.mjs :: A1-2 stage[cli-append-json-shape-missing]: the non-note JSON body path parses into the closed per-kind shape (H2.3)",
@@ -919,6 +1399,10 @@
     {
       "key": "test/scratchpad-write-red.test.mjs :: A9-2 stage[unknown-subverb-teaching-missing]: an unknown subverb names the unknown AND restates the closed set (D4)",
       "reason": "#158"
+    },
+    {
+      "key": "test/seat-telemetry-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
     },
     {
       "key": "test/seat-telemetry-red.test.mjs :: A1 (stage: doctor-seats-missing): deployment.doctor carries an enumerable seats array, one closed D1 atom per readiness route in route order, observedAtEventSeq, and the card inherits seats (D2.4)",
@@ -1049,6 +1533,22 @@
       "reason": "#102"
     },
     {
+      "key": "test/transport-liveness-235-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/wave-settle-error-surfacing-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/wire-settle-detach-red.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
+      "key": "test/worker-policy.test.mjs :: (file leaked fixture directories)",
+      "reason": "#571"
+    },
+    {
       "key": "test/worker-verdict-surface-red.test.mjs :: C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing)",
       "reason": "#79"
     },
@@ -1147,10 +1647,6 @@
       "reason": "#85"
     },
     {
-      "file": "test/canonical-naming-233-red.test.mjs",
-      "reason": "#566"
-    },
-    {
       "file": "test/capacity-refusal-visibility-red.test.mjs",
       "reason": "#35"
     },
@@ -1187,10 +1683,6 @@
       "reason": "#289"
     },
     {
-      "file": "test/coordinator-plan-effects-red.test.mjs",
-      "reason": "#240"
-    },
-    {
       "file": "test/credential-growth-red.test.mjs",
       "reason": "#245"
     },
@@ -1203,20 +1695,8 @@
       "reason": "#228"
     },
     {
-      "file": "test/deployment-omp-dispatch-red.test.mjs",
-      "reason": "#230"
-    },
-    {
       "file": "test/diagnostics-red.test.mjs",
       "reason": "#53"
-    },
-    {
-      "file": "test/dispatch-seam-omp-red.test.mjs",
-      "reason": "#230"
-    },
-    {
-      "file": "test/dispatch-seam-real-omp-red.test.mjs",
-      "reason": "#230"
     },
     {
       "file": "test/doc-truth-conformance-red.test.mjs",
@@ -1251,10 +1731,6 @@
       "reason": "#250"
     },
     {
-      "file": "test/frame-economics-red.test.mjs",
-      "reason": "#566"
-    },
-    {
       "file": "test/git-batch-216-red.test.mjs",
       "reason": "#216"
     },
@@ -1275,10 +1751,6 @@
       "reason": "#261"
     },
     {
-      "file": "test/grammar-m4b-red.test.mjs",
-      "reason": "#566"
-    },
-    {
       "file": "test/harvest-accessor-red.test.mjs",
       "reason": "#99"
     },
@@ -1293,10 +1765,6 @@
     {
       "file": "test/issue144-lsp-pool-red.test.mjs",
       "reason": "#144"
-    },
-    {
-      "file": "test/issue28-wire-degrade-red.test.mjs",
-      "reason": "#28"
     },
     {
       "file": "test/issue306-reincarnation-red.test.mjs",
@@ -1343,14 +1811,6 @@
       "reason": "#24"
     },
     {
-      "file": "test/kg3-activation-red.test.mjs",
-      "reason": "#26"
-    },
-    {
-      "file": "test/kg4-quality-red.test.mjs",
-      "reason": "#27"
-    },
-    {
       "file": "test/lastseq-cursor-210-red.test.mjs",
       "reason": "#210"
     },
@@ -1369,10 +1829,6 @@
     {
       "file": "test/log-archival-285-red.test.mjs",
       "reason": "#285"
-    },
-    {
-      "file": "test/mcp-packaging-red.test.mjs",
-      "reason": "#566"
     },
     {
       "file": "test/mcp-profile-parity-red.test.mjs",
@@ -1403,10 +1859,6 @@
       "reason": "#243"
     },
     {
-      "file": "test/omp-false-stall-red.test.mjs",
-      "reason": "#230"
-    },
-    {
       "file": "test/omp-first-turn-red.test.mjs",
       "reason": "#230"
     },
@@ -1417,10 +1869,6 @@
     {
       "file": "test/omp-rpc-red.test.mjs",
       "reason": "#228"
-    },
-    {
-      "file": "test/omp-runtime-isolation-red.test.mjs",
-      "reason": "#230"
     },
     {
       "file": "test/omp-turn-in-flight-red.test.mjs",
@@ -1452,10 +1900,6 @@
     },
     {
       "file": "test/phase77-recursive-authority-visibility-red.test.mjs",
-      "reason": "design"
-    },
-    {
-      "file": "test/phase77-recursive-run-stop-red.test.mjs",
       "reason": "design"
     },
     {
@@ -1543,15 +1987,7 @@
       "reason": "design"
     },
     {
-      "file": "test/phase89-resident-application-red.test.mjs",
-      "reason": "#289"
-    },
-    {
       "file": "test/phase89-resident-host-red.test.mjs",
-      "reason": "design"
-    },
-    {
-      "file": "test/phase91-semantic-interrupt-preservation-red.test.mjs",
       "reason": "design"
     },
     {
@@ -1617,10 +2053,6 @@
     {
       "file": "test/provider-quota-readiness-red.test.mjs",
       "reason": "#295"
-    },
-    {
-      "file": "test/quiescence-activity-red.test.mjs",
-      "reason": "#236"
     },
     {
       "file": "test/quiescence-completion-red.test.mjs",
@@ -1747,10 +2179,6 @@
       "reason": "#80"
     },
     {
-      "file": "test/transport-liveness-235-red.test.mjs",
-      "reason": "#235"
-    },
-    {
       "file": "test/trust-gate-steering-red.test.mjs",
       "reason": "#64"
     },
@@ -1787,14 +2215,6 @@
       "reason": "#229"
     },
     {
-      "file": "test/wave-observability-red.test.mjs",
-      "reason": "#566"
-    },
-    {
-      "file": "test/wave-settle-error-surfacing-red.test.mjs",
-      "reason": "#230"
-    },
-    {
       "file": "test/waves-list-scaling-red.test.mjs",
       "reason": "#6"
     },
@@ -1813,10 +2233,6 @@
     {
       "file": "test/wire-card-coverage-red.test.mjs",
       "reason": "#227"
-    },
-    {
-      "file": "test/wire-settle-detach-red.test.mjs",
-      "reason": "#232"
     },
     {
       "file": "test/worker-delivery-push-red.test.mjs",
