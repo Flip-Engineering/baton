@@ -3757,8 +3757,11 @@ export class BatonApplication {
         { actor: owner.actor, key: `run.objective.spill:${digest(requestedIntent.objective)}` });
       const spill = minted?.spill ?? null;
       if (spill) {
+        // The citation names the ONE verb the seat can follow (#358) — a brief renderer never
+        // emits a marker the seat cannot resolve.
         const citation = JSON.stringify({
           spilled: true, bytes: objectiveBytes, digest: spill.digest, spill: spill.spillId,
+          read: 'run.spill.read',
         });
         const suffix = `\n[SPILLED ${citation}]`;
         storedObjective = `${capBytesToScalar(requestedIntent.objective, objectiveCap - Buffer.byteLength(suffix))}${suffix}`;

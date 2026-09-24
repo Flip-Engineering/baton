@@ -3436,7 +3436,7 @@ export class Coordinator {
       // budget), never head-only without the resolution lane.
       const author = sender === 'orchestrator' ? '' : ` from=${sender}`;
       const framed = spilled
-        ? `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(spillRecord.head)} [SPILLED ${JSON.stringify({ spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill })}]`
+        ? `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(spillRecord.head)} [SPILLED ${JSON.stringify({ spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill, read: 'run.spill.read' })}]`
         : `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(body)}`;
       const slot = auth.workerId
         ? this._deliverPeerMessage(handle, record, framed).then((ok) => ({ ok }))
