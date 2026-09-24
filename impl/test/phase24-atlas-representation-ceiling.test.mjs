@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +7,21 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AtlasRepresentationCeiling } from '../src/index.mjs';
 
-const artifactRoot = () => mkdtempSync(join(tmpdir(), 'baton-representation-ceiling-'));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const artifactRoot = () => mintFixtureDirectory(join(tmpdir(), 'baton-representation-ceiling-'));
 const make = (opts = {}) => new AtlasRepresentationCeiling({ artifactRoot: artifactRoot(), maxArtifactBytes: 64 * 1024, ...opts });
 const ctx = { budgetTokens: 1000 };
 

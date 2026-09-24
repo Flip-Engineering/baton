@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -6,13 +8,27 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createBrief, createDriver, MockAdapter, MergirafResolver } from '../src/index.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 const write = (root, path, body) => { const file = join(root, path); execFileSync('mkdir', ['-p', join(file, '..')]); writeFileSync(file, body); };
 const commit = (root, message) => { git(['add', '-A'], root); git(['commit', '-q', '-m', message], root); return git(['rev-parse', 'HEAD'], root); };
 const until = async (fn, timeout = 5000) => { const end = Date.now() + timeout; while (Date.now() < end) { const value = await fn(); if (value) return value; await new Promise((r) => setTimeout(r, 10)); } throw new Error('timeout'); };
 
 function repo() {
-  const root = mkdtempSync(join(tmpdir(), 'baton-sm-repo-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-sm-repo-'));
   git(['init', '-q', '-b', 'main'], root); git(['config', 'user.email', 'test@example.com'], root); git(['config', 'user.name', 'Test'], root);
   write(root, 'src/value.js', 'export const values = { alpha: 1 };\n'); commit(root, 'base'); return root;
 }
@@ -23,7 +39,7 @@ function brief() {
 
 async function accepted(root, taskId, workerSource, structuredMerge, taskBrief = brief()) {
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/value.js', content: workerSource }] } });
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-sm-log-'));
+  const logDir = mintFixtureDirectory(join(tmpdir(), 'baton-sm-log-'));
   const driver = createDriver({ repoRoot: root, logDir, adapters: { mock: adapter }, structuredMerge, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const handle = await driver.coordinator.spawn('mock', taskBrief, { taskId });
   await until(async () => (await driver.coordinator.result(handle.id)).ready);
@@ -70,7 +86,7 @@ test('SM4: binary conflict input and resolver output both refuse at their trust 
 });
 
 test('SM4: a conflict parent swapped to an escaping symlink during resolution is refused', async () => {
-  const root = repo(); const outside = mkdtempSync(join(tmpdir(), 'baton-sm-outside-')); writeFileSync(join(outside, 'value.js'), 'outside sentinel\n');
+  const root = repo(); const outside = mintFixtureDirectory(join(tmpdir(), 'baton-sm-outside-')); writeFileSync(join(outside, 'value.js'), 'outside sentinel\n');
   const resolver = {
     maxFileBytes: 4096, identity: () => ({ tool: 'hostile-fake' }),
     resolve: async ({ absolutePath }) => {

@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +7,21 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AtlasCpgSlice, AtlasCpgTaint } from '../src/index.mjs';
 
-const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const dir = (name) => mintFixtureDirectory(join(tmpdir(), `baton-${name}-`));
 function fixture(source, opts = {}) {
   const root = dir('path-cpg-root'); const artifacts = dir('path-cpg-artifacts');
   mkdirSync(join(root, 'src'), { recursive: true }); writeFileSync(join(root, 'src/a.js'), source);
