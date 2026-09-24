@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // [attempt: ea57954b-95c1-4918-a494-41b0249738ee row-suite-146]
 // seat-telemetry-red.test.mjs — red-first acceptance suite for the FOLDED #146 fleet
 // seat-telemetry contract (contract-foundry-2026-08-13/contract-146.md, v1.1 fold).
@@ -48,6 +50,20 @@ import { MockAdapter, BatonApplication, bindBaton, createDriver, openBaton } fro
 // checkout root must resolve against THIS file, never the cwd — otherwise every read below
 // opens `impl/impl/src/...` and the row dies of ENOENT before it can measure its subject.
 // `application-observation.test.mjs` resolves the same way.
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const repoRead = (relative) => readFileSync(new URL('../../' + relative, import.meta.url), 'utf8');
 
 const REPO_ID = 'repo-seat-telemetry-146';
@@ -59,7 +75,7 @@ const ROUTE2 = Object.freeze({ harness: 'mock', model: 'mock-model-2', effort: '
 // ---------------------------------------------------------------------------
 
 function root(label) {
-  const dir = mkdtempSync(join(tmpdir(), `baton-146-${label}-`));
+  const dir = mintFixtureDirectory(join(tmpdir(), `baton-146-${label}-`));
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.test',
     'commit', '--allow-empty', '-q', '-m', 'base'], { cwd: dir });
@@ -160,7 +176,7 @@ async function until(fn, label, timeoutMs = 5_000) {
 
 async function openHost(t, { adapters, routes = [ROUTE] } = {}) {
   const repo = root('host');
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-146-log-'));
+  const logDir = mintFixtureDirectory(join(tmpdir(), 'baton-146-log-'));
   mkdirSync(join(repo, 'reports'), { recursive: true });
   const driver = createDriver({
     repoRoot: repo, repoId: REPO_ID, logDir, adapters,
@@ -256,7 +272,7 @@ test('A1 (stage: doctor-seats-missing): deployment.doctor carries an enumerable 
   const deployment = await openBaton({
     repo,
     advanced: {
-      deploymentRoot: join(mkdtempSync(join(tmpdir(), 'baton-146-dep-a1-')), 'dep'),
+      deploymentRoot: join(mintFixtureDirectory(join(tmpdir(), 'baton-146-dep-a1-')), 'dep'),
       adapters: { mock: adapter('mock', { ceiling: 4 }) },
       routes: [ROUTE],
       verification: { command: 'true', arguments: [] },
@@ -510,7 +526,7 @@ test('A8 (stage: doctor-seats-missing): the doctor\'s enumerable route rows stay
   const deployment = await openBaton({
     repo,
     advanced: {
-      deploymentRoot: join(mkdtempSync(join(tmpdir(), 'baton-146-dep-a8-')), 'dep'),
+      deploymentRoot: join(mintFixtureDirectory(join(tmpdir(), 'baton-146-dep-a8-')), 'dep'),
       adapters: { mock: adapter('mock', { pausable: true }), sibling: adapter('sibling', { pausable: true }) },
       routes: [ROUTE],
       verification: { command: 'true', arguments: [] },
@@ -619,7 +635,7 @@ test('A10 (stage: doctor-seats-missing): routes[i].occupancy.inFlight === seats[
   const deployment = await openBaton({
     repo,
     advanced: {
-      deploymentRoot: join(mkdtempSync(join(tmpdir(), 'baton-146-dep-a10m-')), 'dep'),
+      deploymentRoot: join(mintFixtureDirectory(join(tmpdir(), 'baton-146-dep-a10m-')), 'dep'),
       adapters: { mock: adapter('mock', { ceiling: 4 }) },
       routes: [ROUTE],
       verification: { command: 'true', arguments: [] },
@@ -641,7 +657,7 @@ test('A10 (stage: doctor-seats-missing): routes[i].occupancy.inFlight === seats[
   const deployment2 = await openBaton({
     repo: repo2,
     advanced: {
-      deploymentRoot: join(mkdtempSync(join(tmpdir(), 'baton-146-dep-a10a-')), 'dep'),
+      deploymentRoot: join(mintFixtureDirectory(join(tmpdir(), 'baton-146-dep-a10a-')), 'dep'),
       adapters: { mock: adapter('mock', { pausable: true }), sibling: adapter('sibling', { pausable: true }) },
       routes: [ROUTE],
       verification: { command: 'true', arguments: [] },

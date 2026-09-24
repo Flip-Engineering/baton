@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -6,6 +8,20 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore } from '../src/index.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -100,7 +116,7 @@ function settlement(control) {
 }
 
 test('RCA1: admitted control replays across restart before any provider boundary', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase90-admitted-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-phase90-admitted-'));
   const first = new CoordinationStore(root);
   const fields = admission();
   const admitted = first.admitRunControl(fields, {
@@ -121,7 +137,7 @@ test('RCA1: admitted control replays across restart before any provider boundary
 });
 
 test('RCA2: effect-start uncertainty and provider acknowledgement are explicit durable states', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase90-effect-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-phase90-effect-'));
   const first = new CoordinationStore(root);
   const fields = admission();
   let control = first.admitRunControl(fields, {
@@ -146,7 +162,7 @@ test('RCA2: effect-start uncertainty and provider acknowledgement are explicit d
 });
 
 test('RCA3: settled control replays exactly and cannot conflict under the same identity', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase90-settled-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-phase90-settled-'));
   const store = new CoordinationStore(root);
   const fields = admission();
   let control = store.admitRunControl(fields, {

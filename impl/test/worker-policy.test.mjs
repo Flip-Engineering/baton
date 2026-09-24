@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,6 +22,20 @@ import {
 } from '../src/goal-plan.mjs';
 import { Log } from '../src/log.mjs';
 import { processClosedPayload, processStartedPayload } from '../src/process-lifecycle.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const card = (overrides = {}) => ({
   schemaVersion: 1,
@@ -230,7 +246,7 @@ function coordinatorForPolicy(workerPolicy, calls = []) {
     async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
     async approve() { return { ok: true }; }, async answer() { return { ok: true }; }, async kill() { return { ok: true }; },
   };
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-worker-policy-log-')));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-worker-policy-log-')));
   return new Coordinator({
     log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters: { stub: adapter },
     worktrees: {
@@ -323,7 +339,7 @@ test('WP9: an observed launch-policy mismatch fails once and retains authority u
     async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
     async approve() { return { ok: true }; }, async answer() { return { ok: true }; },
   };
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-worker-policy-mismatch-log-')));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-worker-policy-mismatch-log-')));
   const coordinator = new Coordinator({
     log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters: { stub: adapter },
     worktrees: {

@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -11,6 +13,20 @@ import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 import { projectRunTimelinePage } from '../src/run-timeline.mjs';
 import { StoryCompiler } from '../src/story.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const controlId = (suffix) => `control:${suffix.padEnd(64, '0')}`;
 const unavailableSeal = Object.freeze({
@@ -213,11 +229,11 @@ function sessionAdapter({
 
 function fixture(options = {}) {
   const adapter = sessionAdapter(options);
-  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-phase91-log-')));
+  const log = new Log(mintFixtureDirectory(join(tmpdir(), 'baton-phase91-log-')));
   const coordination = coordinationForLog(log);
   const removals = [];
   const verifications = [];
-  const ownedWorktree = mkdtempSync(join(tmpdir(), 'baton-phase91-worktree-'));
+  const ownedWorktree = mintFixtureDirectory(join(tmpdir(), 'baton-phase91-worktree-'));
   const worktrees = {
     create: async (taskId) => ({ path: ownedWorktree, branch: `baton/${taskId}` }),
     capture: async () => ({ sha: 'capture-sha', snapshotted: false }),
@@ -457,7 +473,7 @@ test('P91-8: a stale semantic send fence cannot consume the preserved-session re
 });
 
 test('P91-9: preserve-turn choice and closed receipt survive admission, acknowledgement, settlement, and replay', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase91-control-store-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-phase91-control-store-'));
   const store = new CoordinationStore(root);
   const source = {
     actor: 'direct:phase91-owner', principalId: 'phase91-owner', sessionId: 'phase91-session',
@@ -897,7 +913,7 @@ test('P91-18: blocked-interaction preparation is durable and a crash before cont
 });
 
 test('P91-19: schema-v2 admission rejects an incoherent interrupted receipt target', () => {
-  const store = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-phase91-v2-target-')));
+  const store = new CoordinationStore(mintFixtureDirectory(join(tmpdir(), 'baton-phase91-v2-target-')));
   const before = store.events().length;
   assert.throws(() => admitV2Control(store, {
     suffix: '9119', operation: 'interrupt', turnState: 'working',
@@ -909,7 +925,7 @@ test('P91-19: schema-v2 admission rejects an incoherent interrupted receipt targ
 
 test('P91-20: schema-v2 closed operation state rejects cross-operation preservation shapes', () => {
   const interruptStore = new CoordinationStore(
-    mkdtempSync(join(tmpdir(), 'baton-phase91-v2-interrupt-shape-')),
+    mintFixtureDirectory(join(tmpdir(), 'baton-phase91-v2-interrupt-shape-')),
   );
   let seeded = admitV2Control(interruptStore, { suffix: '9120a' });
   let control = beginV2Effect(interruptStore, seeded.control, seeded.source);
@@ -935,7 +951,7 @@ test('P91-20: schema-v2 closed operation state rejects cross-operation preservat
   interruptStore.releaseWriterLease({ requireOwned: true });
 
   const sendStore = new CoordinationStore(
-    mkdtempSync(join(tmpdir(), 'baton-phase91-v2-send-shape-')),
+    mintFixtureDirectory(join(tmpdir(), 'baton-phase91-v2-send-shape-')),
   );
   const receiptDigest = digest('phase91-closed-preservation-receipt');
   seeded = admitV2Control(sendStore, {
@@ -966,7 +982,7 @@ test('P91-20: schema-v2 closed operation state rejects cross-operation preservat
 });
 
 test('P91-21: schema-v2 replay rejects a corrupted closed preservation receipt', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase91-v2-corrupt-replay-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-phase91-v2-corrupt-replay-'));
   const store = new CoordinationStore(root);
   const seeded = admitV2Control(store, { suffix: '9121' });
   const control = beginV2Effect(store, seeded.control, seeded.source);
@@ -996,7 +1012,7 @@ test('P91-21: schema-v2 replay rejects a corrupted closed preservation receipt',
 });
 
 test('P91-21a: replay accepts a digest-bound historical v1 preservation receipt without reopening v1 writes', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-phase91-v1-compatible-replay-'));
+  const root = mintFixtureDirectory(join(tmpdir(), 'baton-phase91-v1-compatible-replay-'));
   const store = new CoordinationStore(root);
   const seeded = admitV2Control(store, { suffix: '9121a' });
   const control = beginV2Effect(store, seeded.control, seeded.source);
@@ -1043,7 +1059,7 @@ test('P91-21a: replay accepts a digest-bound historical v1 preservation receipt 
   assert.deepEqual(replay.runControl(control.controlId).settlement.outcome, outcome);
   replay.releaseWriterLease({ requireOwned: true });
 
-  const ackOnlyRoot = mkdtempSync(join(tmpdir(), 'baton-phase91-v1-ack-replay-'));
+  const ackOnlyRoot = mintFixtureDirectory(join(tmpdir(), 'baton-phase91-v1-ack-replay-'));
   const ackOnlyEvents = acceptedLedger.trimEnd().split('\n').slice(0, 3);
   writeFileSync(join(ackOnlyRoot, 'events.jsonl'), `${ackOnlyEvents.join('\n')}\n`);
   const ackOnlyReplay = new CoordinationStore(ackOnlyRoot);
@@ -1056,7 +1072,7 @@ test('P91-21a: replay accepts a digest-bound historical v1 preservation receipt 
   ackOnlyReplay.releaseWriterLease({ requireOwned: true });
 
   const rejectMutation = (label, mutateReceipt) => {
-    const corruptRoot = mkdtempSync(join(tmpdir(), `baton-phase91-v1-${label}-`));
+    const corruptRoot = mintFixtureDirectory(join(tmpdir(), `baton-phase91-v1-${label}-`));
     const rows = acceptedLedger.trimEnd().split('\n').map((line) => JSON.parse(line));
     const ack = rows.find((event) => event.kind === 'run.control_provider_acked');
     const settlement = rows.find((event) => event.kind === 'run.control_settled');

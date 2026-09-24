@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // wire-settle-detach-red.test.mjs — red-first pin for #232: the synchronous settle path is
 // admitted on the WEB wire.
 //
@@ -31,6 +33,20 @@ import { WebNorthbound } from '../src/web-northbound.mjs';
 // Web-lane fixture (the phase12-web-northbound pattern: WebNorthbound over a fake application
 // that records the forwarded args — the server-side analogue of the fake client).
 // ---------------------------------------------------------------------------
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const REPO = 'repo-wire-settle';
 const ORIGIN = 'https://control.example.test';
@@ -86,7 +102,7 @@ function makeWebFixture() {
       return SETTLE_RECEIPT;
     },
   };
-  const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-wsd-web-')));
+  const coordination = new CoordinationStore(mintFixtureDirectory(join(tmpdir(), 'baton-wsd-web-')));
   const web = new WebNorthbound({
     coordinator: {}, coordination, repoIds: [REPO], allowedOrigins: [ORIGIN],
     now: () => Date.parse('2026-08-15T12:00:00.000Z'),
@@ -139,7 +155,7 @@ const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400 });
 const ROUTE = Object.freeze({ harness: 'mock', model: 'mock-model', effort: 'low' });
 
 function appRoot(label) {
-  const dir = mkdtempSync(join(tmpdir(), `baton-wsd-${label}-`));
+  const dir = mintFixtureDirectory(join(tmpdir(), `baton-wsd-${label}-`));
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '--allow-empty', '-q', '-m', 'base'], { cwd: dir });
   return dir;

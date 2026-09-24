@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -11,9 +13,23 @@ import {
   planRouteAuthorityState, planRouteMatches, planSingleExactRoute,
 } from '../src/goal-plan.mjs';
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const REPO_ID = 'repo-phase88-routes';
 const NOW = '2026-07-19T12:00:00.000Z';
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase88-route-${name}-`));
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase88-route-${name}-`));
 const routeA = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 const routeB = Object.freeze({ harness: 'grok', model: 'grok-4.5', effort: 'medium' });
 const dispatchRoute = (route) => ({ vendor: route.harness, model: route.model, effort: route.effort });
