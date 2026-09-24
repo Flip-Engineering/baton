@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +9,21 @@ import { dirname, join } from 'node:path';
 
 import { AtlasCodeIndex } from '../src/atlas-index.mjs';
 
-const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase61-scip-${name}-`));
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
+const root = (name) => mintFixtureDirectory(join(tmpdir(), `baton-phase61-scip-${name}-`));
 const sha = (value) => createHash('sha256').update(value).digest('hex');
 function stable(value) {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;

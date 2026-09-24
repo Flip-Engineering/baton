@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -6,6 +8,20 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore, MockAdapter, WebNorthbound, createDriver } from '../src/index.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const ORIGIN = 'https://control.example.test';
 const REPO = 'repo-a';
@@ -59,7 +75,7 @@ function fixture(coordinator = {}) {
     async spawn(harness, brief, opts) { calls.push({ operation: 'spawn', harness, brief, opts }); return { id: 'worker-1', taskId: opts.taskId }; },
     ...coordinator,
   };
-  const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-phase62-web-')));
+  const coordination = new CoordinationStore(mintFixtureDirectory(join(tmpdir(), 'baton-phase62-web-')));
   const web = new WebNorthbound({
     coordinator: methods, coordination, repoIds: [REPO], allowedOrigins: [ORIGIN],
     now: () => Date.parse('2026-07-13T12:00:00.000Z'),
@@ -68,7 +84,7 @@ function fixture(coordinator = {}) {
 }
 
 function realWebDriver() {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-phase62-web-repo-'));
+  const repoRoot = mintFixtureDirectory(join(tmpdir(), 'baton-phase62-web-repo-'));
   execFileSync('git', ['init', '-q'], { cwd: repoRoot });
   execFileSync('git', ['config', 'user.email', 'phase62@example.invalid'], { cwd: repoRoot });
   execFileSync('git', ['config', 'user.name', 'Phase 62'], { cwd: repoRoot });
@@ -83,7 +99,7 @@ function realWebDriver() {
     riskClasses: ['low', 'medium', 'high', 'critical'], effectClasses: ['repository_edit', 'provider_call'], capabilityClasses: ['code', 'test'],
     limits: { maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16, maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32, maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024, maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 1440, maxProviderTurns: 10_000 },
   };
-  return createDriver({ repoRoot, repoId: REPO, logDir: mkdtempSync(join(tmpdir(), 'baton-phase62-web-log-')), adapters: { mock: adapter }, goalPlanAuthority: { policy: authorityPolicy, authorize: async () => true } });
+  return createDriver({ repoRoot, repoId: REPO, logDir: mintFixtureDirectory(join(tmpdir(), 'baton-phase62-web-log-')), adapters: { mock: adapter }, goalPlanAuthority: { policy: authorityPolicy, authorize: async () => true } });
 }
 
 test('GP1/GP4/GP7: web goal and plan commands bind separate powers and transport-derived authority', async () => {
