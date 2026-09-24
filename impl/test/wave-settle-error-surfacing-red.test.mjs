@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -19,8 +21,22 @@ import { MockAdapter } from '../src/adapter.mjs';
 // RED   = the outcome carries no error (the swallowed class).
 // GREEN = outcome.error.code === the approve-phase error, terminalCause 'start', terminal true.
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const principal = (id) => ({ actor: `pin:${id}`, principalId: id, sessionId: `${id}-session` });
-const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
+const root = (prefix) => mintFixtureDirectory(join(tmpdir(), `baton-${prefix}-`));
 
 test('SETTLE-SURFACING: a member whose approve throws settles failed-with-cause, never silent', async () => {
   const repo = root('swallow-repo');

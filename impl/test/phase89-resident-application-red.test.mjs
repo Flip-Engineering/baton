@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 // Phase 89 RED contracts for the common resident application surface.
 //
 // These tests intentionally describe the smallest high-level Runs collection shared by a local
@@ -25,6 +27,20 @@ import {
   openBaton,
   validateApplicationCommandArgs,
 } from '../src/index.mjs';
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const REPO_ID = 'repo-phase89-resident';
 const EXACT_ROUTE = Object.freeze({ harness: 'mock', model: 'resident-model', effort: 'high' });
@@ -97,7 +113,7 @@ function adapter() {
 }
 
 function repository(name) {
-  const root = mkdtempSync(join(tmpdir(), `baton-phase89-resident-${name}-`));
+  const root = mintFixtureDirectory(join(tmpdir(), `baton-phase89-resident-${name}-`));
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'phase89@example.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Phase 89'], { cwd: root });
@@ -109,7 +125,7 @@ function repository(name) {
 
 function applicationFixture(name, { clock, authorize } = {}) {
   const repo = repository(name);
-  const logDir = mkdtempSync(join(tmpdir(), `baton-phase89-resident-${name}-log-`));
+  const logDir = mintFixtureDirectory(join(tmpdir(), `baton-phase89-resident-${name}-log-`));
   const driver = createDriver({
     repoRoot: repo,
     repoId: REPO_ID,
@@ -206,7 +222,7 @@ function connectionFixture(name) {
   const repo = repository(`connect-${name}`);
   const repoId = `repo-${createHash('sha256').update(realpathSync(join(repo, '.git')))
     .digest('hex').slice(0, 32)}`;
-  const home = mkdtempSync(join(tmpdir(), `baton-phase89-connect-${name}-home-`));
+  const home = mintFixtureDirectory(join(tmpdir(), `baton-phase89-connect-${name}-home-`));
   const configRoot = join(home, 'config');
   const profilesRoot = join(configRoot, 'baton', 'connections');
   const repositoryAuthorityRoot = join(repo, '.git', 'baton');
@@ -467,7 +483,7 @@ test('RA4 RED: openBaton exposes the same Runs collection while preserving conci
   const deployment = await openBaton({
     repo,
     advanced: {
-      deploymentRoot: mkdtempSync(join(tmpdir(), 'baton-phase89-resident-deployment-')),
+      deploymentRoot: mintFixtureDirectory(join(tmpdir(), 'baton-phase89-resident-deployment-')),
       adapters: { mock: adapter() },
       routes: [EXACT_ROUTE],
       verification: { command: 'node', arguments: ['-e', 'process.exit(0)'] },
@@ -929,7 +945,7 @@ test('RA13 RED: deployment.runs.start and deployment.run share the exact route-r
   const deployment = await openBaton({
     repo: repository('route-readiness-parity'),
     advanced: {
-      deploymentRoot: mkdtempSync(join(tmpdir(), 'baton-phase89-route-readiness-')),
+      deploymentRoot: mintFixtureDirectory(join(tmpdir(), 'baton-phase89-route-readiness-')),
       adapters: { mock: blocked },
       routes: [EXACT_ROUTE],
       verification: { command: 'node', arguments: ['-e', 'process.exit(0)'] },

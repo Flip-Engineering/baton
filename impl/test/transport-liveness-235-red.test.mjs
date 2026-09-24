@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -29,6 +31,20 @@ import { createDriver, createWave } from '../src/index.mjs';
 //         {kind:'provider_silent', summary:'no provider traffic observed this turn'};
 //         (3) the wave settle receipt carries progressClass 'provider_silent' (distinct from
 //         'silent') and the steering evidence names the member.
+
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
 
 const line = (frame) => `${JSON.stringify(frame)}\n`;
 
@@ -199,8 +215,8 @@ async function until(fn, timeoutMs = 3_000) {
 }
 
 test('TRANSPORT-LIVENESS/COORDINATOR: never-trafficked active turn projects provider_silent attention', async () => {
-  const repo = mkdtempSync(join(tmpdir(), 'baton-liveness-235-repo-'));
-  const logDir = mkdtempSync(join(tmpdir(), 'baton-liveness-235-log-'));
+  const repo = mintFixtureDirectory(join(tmpdir(), 'baton-liveness-235-repo-'));
+  const logDir = mintFixtureDirectory(join(tmpdir(), 'baton-liveness-235-log-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'l@example.invalid'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'L'], { cwd: repo });

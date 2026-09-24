@@ -1,3 +1,5 @@
+import { after as afterFixtureCleanup } from 'node:test';
+import { rmSync as removeFixtureDirectory } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -28,8 +30,22 @@ import { MockAdapter } from '../src/adapter.mjs';
 // GREEN = content.tool_call/content.message evidence advances lastProgress.at (an actively
 //         executing member is NEVER quiescent-silent).
 
+const mintedFixtureDirectories = [];
+
+function mintFixtureDirectory(...args) {
+  const directory = mkdtempSync(...args);
+  mintedFixtureDirectories.push(directory);
+  return directory;
+}
+
+afterFixtureCleanup(() => {
+  for (const directory of mintedFixtureDirectories) {
+    removeFixtureDirectory(directory, { recursive: true, force: true });
+  }
+});
+
 const principal = (id) => ({ actor: `pin:${id}`, principalId: id, sessionId: `${id}-session` });
-const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
+const root = (prefix) => mintFixtureDirectory(join(tmpdir(), `baton-${prefix}-`));
 
 async function buildFixture() {
   const repo = root('quiesce-repo');
