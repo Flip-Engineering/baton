@@ -1,0 +1,17 @@
+# arch-replay-vocabulary.cases — the case inputs both halves read, one CASE record per line.
+#
+# CASE|<case-id>|<mutation>|<replays>
+#
+# The frozen trace this corpus replays is arch-replay-vocabulary.ledger.jsonl: sixteen rows that
+# exercise the durable event vocabulary end to end over one seeded swarm. `mutation` is what the
+# replay applies to the frozen trace before folding it: `none` replays it as frozen,
+# `forged_kind` replaces row 7 with a kind no vocabulary admits, `missing_field` strips the
+# participant field from row 11's payload so the shape vocabulary cannot decode it, and
+# `driver_row` replaces row 13 with a runtime-composed row the fold knows and the contract's
+# caller set does not. `replays` is `once`, or `twice` to fold the same trace into two fresh maps
+# and compare the projections byte for byte.
+CASE|vocabulary-full|none|once
+CASE|vocabulary-rerun|none|twice
+CASE|vocabulary-forged-kind|forged_kind|once
+CASE|vocabulary-missing-field|missing_field|once
+CASE|vocabulary-driver-row|driver_row|once

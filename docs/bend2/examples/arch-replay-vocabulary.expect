@@ -1,0 +1,23 @@
+# arch-replay-vocabulary.expect — the required logical behaviour per case, read by neither half.
+#
+# EXPECT|<case-id>|rows|admitted|decode_stop|decode_code|fold_stop|fold_code|caller_rows|fp|rerun_identical
+#
+# The requirement is the vocabulary contract itself. The durable event set is closed (CS-01): a row
+# whose kind no vocabulary admits refuses decode with unknown_event_kind, and a row whose payload
+# misses a required field refuses decode with invalid_payload (CS-07); each refusal stops the replay
+# at its own row and retains every row before it, so a phase boundary can decode the history it is
+# handed (migration rule 3). Every vocabulary row folds into its own collection: the proposal row
+# arrives its plan (one more work row, one more claim row), the handoff and the release rewrite
+# their rows in place (AB-06), and the runtime-composed bypass row appends history on the writer
+# record it names while the contract's caller-submittable set excludes it (CS-17/CL-17). The fold
+# is pure, so the same trace folded twice yields one projection.
+#
+# Counts over the frozen sixteen-row composition (rows 1-3 are the runtime seeds, so thirteen
+# caller rows): pa2 gr1 wo2 cl2 as1 pr1 cx1 co1 rv1 cp1 po1 for the whole trace; the forged case
+# stops before row 7 and the missing-field case before row 11, each retaining its prefix; the
+# driver case replaces the policy row, so po reads 0 and twelve caller rows remain.
+EXPECT|vocabulary-full|rows=16|admitted=16|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=13|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1|rerun_identical=na
+EXPECT|vocabulary-rerun|rows=16|admitted=16|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=13|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po1|rerun_identical=true
+EXPECT|vocabulary-forged-kind|rows=16|admitted=6|decode_stop=7|decode_code=unknown_event_kind|fold_stop=0|fold_code=none|caller_rows=3|fp=pa2,gr1,wo1,cl0,as0,pr0,cx0,co0,rv0,cp1,po0|rerun_identical=na
+EXPECT|vocabulary-missing-field|rows=16|admitted=10|decode_stop=11|decode_code=invalid_payload|fold_stop=0|fold_code=none|caller_rows=7|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co0,rv0,cp1,po0|rerun_identical=na
+EXPECT|vocabulary-driver-row|rows=16|admitted=16|decode_stop=0|decode_code=none|fold_stop=0|fold_code=none|caller_rows=12|fp=pa2,gr1,wo2,cl2,as1,pr1,cx1,co1,rv1,cp1,po0|rerun_identical=na
