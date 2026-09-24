@@ -1,0 +1,51 @@
+{
+  "event": "swarm.contribution_recorded",
+  "payload": {
+    "subject": "Issue #564 delivery half landed: root wakes reach an idle Claude Code root session, proven live",
+    "base": {
+      "observedHead": "0d24fec8619d1cae9bf74ca5d38883e8d42e95de",
+      "rebasedOnto": "0d24fec8619d1cae9bf74ca5d38883e8d42e95de"
+    },
+    "commit": {
+      "sha": "0d4331380dc8f2752e567aaea922b77d531220f8",
+      "branch": "baton/ws-563683237501099e44ce22d2f3126664"
+    },
+    "items": [
+      {
+        "id": "564-delivery",
+        "status": "delivered",
+        "change": "Recut of origin-preserve/heads/baton/digest-lead10-564-landing (tree-identical to ws-564-union-lead9) onto master, 8 preserved commits: root wake delivery attached to the resident wake stream, Claude Code session-socket transport (/tmp/cc-socks/<pid>.sock via claude agents --json discovery), durable once-only receipts with attempt cap 3 and retry, closed per-harness capability table (claude-code has a channel; codex/grok/kimi-code/muse/omp are declared no-turn-starting-channel in the doctor and deployment view), undelivered root wakes reported as swarm attention, #572 turn-report reconciler recording root-owed rows for parentless turn ends",
+        "files": [
+          "impl/src/wake-delivery.mjs",
+          "impl/src/wake-stream.mjs",
+          "impl/src/swarm-runtime.mjs",
+          "impl/src/swarm-event-schemas.mjs",
+          "impl/src/application.mjs",
+          "impl/src/application-deployment.mjs",
+          "impl/src/web-northbound.mjs",
+          "impl/scripts/expected-red-tests.json",
+          "impl/scripts/seam-inventory.json",
+          "impl/test/issue564-root-wake-addressing-red.test.mjs",
+          "impl/test/issue564-root-wake-delivery-red.test.mjs",
+          "impl/test/issue564-root-wake-undelivered-attention-red.test.mjs",
+          "impl/test/issue564-root-wake-wiring-red.test.mjs",
+          "impl/test/issue564-turn-report-root-owed-red.test.mjs",
+          "impl/test/issue564-wake-capability-report-red.test.mjs",
+          "impl/test/seam-inventory.test.mjs"
+        ],
+        "test": "node --test test/issue564-root-wake-wiring-red.test.mjs test/issue564-root-wake-delivery-red.test.mjs test/issue564-root-wake-addressing-red.test.mjs test/issue564-root-wake-undelivered-attention-red.test.mjs test/issue564-turn-report-root-owed-red.test.mjs test/issue564-wake-capability-report-red.test.mjs test/seam-inventory.test.mjs",
+        "evidence": "targeted green: wiring 7 pass + 1 declared-red (572-w4, #572 reportTurnEnd not yet landed); delivery 12/12; addressing 9/9; undelivered-attention 5/5; turn-report-root-owed 5 pass + 1 skip declared for the #572 half; capability-report 3/3; seam-inventory 7/7. LIVE VERIFICATION: with a scratch deployment on this branch (WebNorthbound + rootWakeDelivery target {harness: claude-code, sessionId: 7c72f137-7943-4a2a-b6cb-500a0dfa866d}), a recorded swarm.root_attention_owed row produced exactly one wake.root_delivered receipt (attempt 1, mechanism session-socket, 2026-09-24T17:26:19Z) through the real claude agents --json discovery and the real /tmp/cc-socks/2455.sock; a replayed frame returned duplicate:true with no second send; the target session (baton-a9, idle) went idle->busy->idle, and the root confirmed at 17:27 UTC that the message arrived while idle and started a turn."
+      }
+    ],
+    "verification": {
+      "targeted": true,
+      "gates": [],
+      "fullSuite": false,
+      "environmentRed": []
+    },
+    "carriedForward": [],
+    "needsFromOthers": [
+      "rigidity #572 lead: land the reportTurnEnd producer writing swarm.turn_reported driver rows in the seeded contract shape (parentId null re-addresses to the root under key swarm-turn-report-owed:swarmId:participantId:workerId:turnEpoch:turnSeq; report string or {summary}); test row 572-w4 in impl/test/issue564-root-wake-wiring-red.test.mjs stays expected-red until it lands"
+    ]
+  }
+}
