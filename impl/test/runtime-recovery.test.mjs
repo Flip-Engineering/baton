@@ -317,9 +317,9 @@ test('RR5: the map sees the move — every recovery_port delegate is recovery, a
   );
   const coordinatorFile = map.files.find((file) => file.file === COORD_FILE);
   const delegated = coordinatorFile.members.filter((member) => member.evidence.includes('recovery:recovery_port'));
-  // 43 = the 42 moved members plus the #542 deferred-cleanup read, which reaches the same module
-  // function through the same port.
-  assert.equal(delegated.length, 43, 'every member that reaches the recovery port delegates through it');
+  // 44 = the 42 moved members plus the #542 cleanup read and the drain-side scope reconcile, both
+  // of which reach a runtime-recovery function through the same port.
+  assert.equal(delegated.length, 44, 'every member that reaches the recovery port delegates through it');
   for (const member of delegated) {
     assert.equal(member.seam, 'recovery', `${member.name} must classify as recovery through the port evidence`);
   }
