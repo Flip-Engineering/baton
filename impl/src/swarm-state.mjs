@@ -55,9 +55,10 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   // Issue #443: the PERFORMED re-route — the successor an `auto` swarm bound on the first
   // candidate, recorded by the runtime from the recruit it really ran, never caller-submittable.
   'swarm.rerouted',
-  // Issue #525: the resume-continuation decision — a resume-from recruit under the default
+  // Issue #525: the resume-continuation decision — a resume-from recruit under the DECLARED
   // `resumeContinuation: 'manual'` policy records the question, and the orchestrator's guide
-  // records the answer. Both are runtime-recorded, never caller-submittable.
+  // records the answer; the default is `auto`, which continues without the question (#572).
+  // Both are runtime-recorded, never caller-submittable.
   'swarm.resume_decision_requested',
   'swarm.resume_decision_answered',
   'swarm.context_updated',

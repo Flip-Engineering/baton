@@ -19,8 +19,9 @@
 //   - a resume run by a non-member (the root recovering a sub-orchestrator's seat) re-joins the
 //     successor under the predecessor's nearest living ancestor, so the question pages the level
 //     of the tree that recruited the seat;
-//   - the posture is a policy field, `resumeContinuation: 'manual' | 'auto'`, default 'manual';
-//     under 'auto' a resume-from recruit behaves exactly as it did before this contract.
+//   - the posture is a policy field, `resumeContinuation: 'auto' | 'manual'`, default 'auto'
+//     since #572; under a DECLARED 'manual' a resume-from recruit records the question and waits,
+//     which is the posture the rows below pin.
 //
 // Rows (every row is RED at the base commit 8ff5bf09, for the reason each assertion names):
 //   525-a  the closed sets carry the contract: the two runtime-recorded swarm kinds, the
@@ -187,7 +188,8 @@ function fixture(t) {
  * a fault-settled and a runtime-lost predecessor; issue452's fixture proves the seam here). */
 async function interruptedSeat(t) {
   const f = fixture(t);
-  await f.call('create', { purpose: 'A recovered seat asks whether to continue' });
+  await f.call('create', { purpose: 'A recovered seat asks whether to continue',
+    policy: { resumeContinuation: 'manual' } });
   await f.recruit('alpha');
   const checkout = f.checkoutOf('alpha');
   assert.ok(checkout !== null, 'alpha works in a checkout the row names');
@@ -353,7 +355,8 @@ test('525-e RED at base: swarm.stop settles a decision-pending successor without
 
 test('525-f RED at base: a root-run resume re-joins the predecessor\'s subtree, and the sub-orchestrator\'s scoped attention carries the question', async (t) => {
   const f = fixture(t);
-  await f.call('create', { purpose: 'A recovery decision finds the level that recruited the seat' });
+  await f.call('create', { purpose: 'A recovery decision finds the level that recruited the seat',
+    policy: { resumeContinuation: 'manual' } });
   await f.recruit('sub', { permissions: ['read', 'communicate', 'contribute', 'recruit'] });
   const subWorker = f.workerOf('sub');
   assert.ok(subWorker !== null);
