@@ -386,8 +386,8 @@ test('RE6: the tranche-2 split — the admission/effect triad, the descriptor un
     const match = text.match(/handoff: ('[a-zA-Z]+'|null)(, pause)?/u);
     return `${match[1]}${match[2] ?? ''}`;
   }).sort();
-  assert.deepEqual(handoffs, ["'followUp'", "'interruptThenGoverned'", "'nudgeTurn', pause", "'preservedSuccessor'", 'null'],
-    'the handoff set is exactly the four receiver handoffs plus the proceed case');
+  assert.deepEqual(handoffs, ["'followUp'", "'interruptThenGoverned'", "'nudgeTurn', pause", "'preservedSuccessor'", "'reportedTurn'", 'null'],
+    'the handoff set is exactly the five receiver handoffs plus the proceed case');
   for (const text of admitted.filter((t) => t.includes("'nudgeTurn'"))) {
     assert.ok(text.includes(', pause'), 'the nudgeTurn handoff carries the pause record');
   }

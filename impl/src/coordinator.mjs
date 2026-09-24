@@ -923,8 +923,8 @@ export class Coordinator {
     return runtimeAdmission._admitTurnReport(this, this._recorder, handle, task, terminalEvent, wr, appendAttributed);
   }
 
-    _reportRunTurn(handle, event, report) {
-    return runtimeObservation._reportRunTurn(this, this._recorder, handle, event, report);
+    _reportRunTurn(handle, terminalEvent, report) {
+    return runtimeObservation._reportRunTurn(this, this._recorder, handle, terminalEvent, report);
   }
 
 
