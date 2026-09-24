@@ -14237,7 +14237,7 @@
         {
           "name": "_landingFailureDetail",
           "ordinal": 0,
-          "size": 46,
+          "size": 53,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -14246,7 +14246,7 @@
         {
           "name": "_refuseLanding",
           "ordinal": 0,
-          "size": 38,
+          "size": 50,
           "seam": "admission",
           "evidence": [
             "admission:guard_name"
