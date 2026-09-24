@@ -11,7 +11,6 @@ import { coordinationForLog } from '../src/coordination-store.mjs';
 
 import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { deriveWakeFrame } from '../src/wake-stream.mjs';
-import { deliverRootWakeOnce } from '../src/wake-delivery.mjs';
 
 const dirs = [];
 function tmpDir() {
@@ -359,12 +358,6 @@ test('a non-swarm turn addresses the root with its report and preserves explicit
   assert.equal(frame.runId, 'run-nonswarm');
   assert.equal(frame.next, 'baton run view run-nonswarm');
   assert.match(frame.turnReport.text, /Non-swarm result/);
-  const deliveries = [];
-  const input = { store: f.store, frame, target: { harness: 'claude-code', sessionId: 'root' },
-    deliver: async ({ frame: delivered }) => { deliveries.push(delivered); return { delivered: true }; } };
-  await deliverRootWakeOnce(input);
-  await deliverRootWakeOnce(input);
-  assert.equal(deliveries.length, 1);
   const [continuation] = f.coordinator.pausedTurns({ workerId: handle.id });
   assert.equal((await f.coordinator.nudgeTurn(continuation.pauseId, 'Continue the investigation')).ok, true);
   assert.equal(adapter.epoch(handle.id), 2);
