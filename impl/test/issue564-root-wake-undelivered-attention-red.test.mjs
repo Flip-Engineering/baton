@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore } from '../src/index.mjs';
+import { deliverRootWakeOnce } from '../src/wake-delivery.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
 
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
@@ -128,4 +129,33 @@ test('564-u4: only this swarm owed rows are reported', async (t) => {
   });
   assert.equal(await f.rootWakeRow(foreign.event.seq), null,
     'another swarm owed wake never rides this swarm attention projection');
+});
+
+test('564-u5: a later successful attempt clears the attention left by a transient failure', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'retry root-addressed wake attention (#564)' });
+  await f.call('recruit', { participantId: 'lead', objective: 'hold the lane' });
+  const owed = f.record('swarm.root_attention_owed', {
+    swarmId: 'baton', participantId: 'lead', contributionId: 'c-retry', owed: 'needs_root',
+    ask: 'the root: inspect the recovered delivery',
+  });
+  const frame = { seq: owed.event.seq, wakeClass: 'root_owed', swarmId: 'baton' };
+  const target = { harness: 'claude-code', sessionId: 'session-root' };
+  let sends = 0;
+  const deliver = async () => {
+    sends += 1;
+    if (sends === 1) throw Object.assign(new Error('socket refused'), { code: 'claude_session_transport_failed' });
+    return { delivered: true };
+  };
+
+  await assert.rejects(deliverRootWakeOnce({ store: f.store, frame, target, deliver }),
+    (error) => error?.code === 'claude_session_transport_failed');
+  assert.deepEqual((await f.rootWakeRow(owed.event.seq))?.delivery,
+    { state: 'failed', code: 'claude_session_transport_failed' });
+
+  const recovered = await deliverRootWakeOnce({ store: f.store, frame, target, deliver });
+  assert.equal(recovered.delivered, true);
+  assert.equal(recovered.attempt, 2);
+  assert.equal(await f.rootWakeRow(owed.event.seq), null);
+  assert.equal(sends, 2);
 });
