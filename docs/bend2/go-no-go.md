@@ -21,7 +21,13 @@ laws at `1fab9a1da60db3d5d9c9d3cef89d3caabd68fe35`; [`authorization.md`](authori
 the decision, the binding entries and the phase-entry conditions. The separate Codex architecture
 review is open: it finds the eight logical owners useful for prototyping and supports Prototype-only
 for production authority transfer, and its required corrections stay as obligations on the phases
-they name (see [`reviews/codex/`](reviews/codex/)). Phase 1 has no differential result yet.
+they name (see [`reviews/codex/`](reviews/codex/)). The Phase 1 differential rollup
+([`prototype-parity-rollup.md`](prototype-parity-rollup.md)) measures the five architecture-review
+replay corpora — stop 2 of 3 disagreements, basis 2 of 4, cursor 0 of 4, mutation 2 of 3,
+vocabulary 0 of 5 — with every divergence explained and carried by the `ARCH-CLOSE-11` row of
+[`arch-close-status.md`](arch-close-status.md) (closing work item `B2-DIAGNOSTIC-BASIS`); the
+rewrite plan's proving test `phase1-shadow-parity.test.mjs` does not exist on the branch, so Go
+criterion 6 is not yet met.
 
 The swarm orchestrator owns this recommendation wording. This record cites the published basis and
 the evidence required to change the answer.
@@ -126,8 +132,9 @@ specific case. Qualifying cases include:
 The current recommendation meets the second and third conditions: `LANG-CAP-05`, `LANG-CAP-06` and
 the durability, cancellation, HTTP/TLS and cryptography prerequisites are credible but incomplete,
 and several required production effects have no effect-specific compiled implementation. It also
-lacks the architecture review's discharged correction obligations and the Phase 1 parity result
-required for **Go**.
+lacks the architecture review's discharged correction obligations; the Phase 1 differential rollup
+is landed with six explained divergences carried by `ARCH-CLOSE-11`, but the proving test
+`phase1-shadow-parity.test.mjs` does not exist on the branch, so Go criterion 6 is not met.
 
 ### Do not start the prototype
 
@@ -192,7 +199,13 @@ for the current pin.
 > [`laws-proposed.md`](laws-proposed.md) and
 > [`reviews/codex/codex-final-law-review-r9.1.md`](reviews/codex/codex-final-law-review-r9.1.md).
 >
-> **Prototype evidence:** no Phase 1 differential run exists yet. The prototype runs as two tracks:
+> **Prototype evidence:** the Phase 1 differential rollup
+> ([`prototype-parity-rollup.md`](prototype-parity-rollup.md)) measures the five
+> architecture-review replay corpora: stop 2 of 3 disagreements, basis 2 of 4, cursor 0 of 4,
+> mutation 2 of 3, vocabulary 0 of 5, with every divergence explained and carried by the
+> `ARCH-CLOSE-11` row of [`arch-close-status.md`](arch-close-status.md) (closing work item
+> `B2-DIAGNOSTIC-BASIS`); the rewrite plan's proving test `phase1-shadow-parity.test.mjs` does not
+> exist on the branch, so Go criterion 6 is not yet met. The prototype runs as two tracks:
 > the pure decision and replay track, and the native effect track whose findings compose into a
 > durable admission to canonical publication recovery path. The result must show zero unexplained
 > differences across the frozen corpus, approved laws, refusal mutations, replay prefixes, and wake
