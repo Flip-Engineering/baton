@@ -343,7 +343,7 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       swarmId: STRING('the swarm the contribution belongs to'),
       participantId: STRING('the seat whose contribution waits — the contribution\'s own author'),
       contributionId: STRING('the contribution the attention comes from'),
-      owed: { type: 'string', description: 'which trigger fired: review_owed (no other active seat holds the review permission) or needs_root (a needsFromOthers item whose text is addressed to the root). Spelled `owed`, never `kind` (the name the reporting half consumes): the ledger\'s driver container records `{kind, ...payload}`, so a payload field named `kind` would overwrite the row\'s own operational identity', expectation: 'one of review_owed, needs_root', example: 'needs_root' },
+      owed: { type: 'string', description: 'which trigger fired: review_owed (no other active seat holds the review permission), needs_root (a needsFromOthers item whose text is addressed to the root), turn_report (a seat\'s turn-end report has no live orchestrator — #572; the row rides this kind and carries no contributionId), or continuation_failed (a recovered successor failed to start). Spelled `owed`, never `kind` (the name the reporting half consumes): the ledger\'s driver container records `{kind, ...payload}`, so a payload field named `kind` would overwrite the row\'s own operational identity', expectation: 'one of review_owed, needs_root, turn_report, continuation_failed', example: 'needs_root' },
       ask: { type: 'string|null', description: 'the addressed needsFromOthers item text, bounded — null on a review_owed row', expectation: 'the item text as addressed, or null', example: 'the root: restart the resident with the publish remote declared' },
       next: { type: 'json', description: 'the act that answers the row, in the attention projection\'s shape', expectation: 'an object naming a command and its identity arguments', example: Object.freeze({ command: 'swarm.check', swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1' }) },
     }),
@@ -351,6 +351,49 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       swarmId: 'swarm-40e643e96fd1edcd', participantId: 'ada', contributionId: 'contribution-ada-1',
       owed: 'needs_root', ask: 'the root: restart the resident with the publish remote declared',
       next: Object.freeze({ command: 'swarm.view', swarmId: 'swarm-40e643e96fd1edcd' }),
+    }),
+  }),
+  // ── issue #572: the turn-end report rows ─────────────────────────────────────────────────────
+  // A seat's turn end is reported to its orchestrator: `swarm.turn_reported` is the durable fact
+  // (the seat, its turn identity, the orchestrator the report was addressed to, the report), and
+  // `swarm.turn_report_delivered` records that the addressed parent's guidance lane took it. A
+  // report re-recorded with parentId null (the parent was gone or its lane refused) carries
+  // originalReportSeq and deliveryFailure beside it, and a `swarm.root_attention_owed` row with
+  // owed turn_report addresses the root. Both are runtime-recorded, never caller-submittable.
+  'swarm.turn_reported': Object.freeze({
+    summary: Object.freeze('a seat\'s turn end reported to its orchestrator — the parent seat when one is live, the nearest live ancestor, or the root (parentId null)'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the reporting seat belongs to'),
+      participantId: STRING('the seat whose turn ended'),
+      parentId: STRING('the orchestrator the report was addressed to — null when the root is', { type: 'string|null' }),
+      workerId: STRING('the worker incarnation that ran the turn'),
+      turnSeq: { type: 'number', description: 'the ledger seq of the terminal event this report answers', expectation: 'a non-negative integer', example: 812 },
+      turnEpoch: { type: 'number', description: 'the turn epoch the terminal event rode', expectation: 'a non-negative integer', example: 3 },
+      report: JSON_VALUE('the turn\'s own result — the WorkerResult for a completed turn, or the terminal payload with status failed for a crash or exit'),
+      assignmentDone: { type: 'boolean', description: 'the seat declared its assignment complete (swarm.participant_left with reason completed) before this turn ended', example: false },
+      originalReportSeq: { type: 'number', description: 'the seq of the first recording of this report — present only on the root-addressed re-recording', required: false, example: 900 },
+      deliveryFailure: { type: 'json', description: 'why the parent-addressed delivery did not land — {parentId, reason}; present only on the root-addressed re-recording', required: false, example: { parentId: 'lead', reason: 'worker_not_active' } },
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'builder', parentId: 'lead',
+      workerId: 'worker-17', turnSeq: 812, turnEpoch: 3,
+      report: Object.freeze({ status: 'completed', summary: 'landed the seam' }), assignmentDone: false,
+      originalReportSeq: 900, deliveryFailure: Object.freeze({ parentId: 'lead', reason: 'worker_not_active' }),
+    }),
+  }),
+  'swarm.turn_report_delivered': Object.freeze({
+    summary: Object.freeze('a turn report the addressed orchestrator\'s guidance lane took — the wake that starts its turn'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the reporting seat belongs to'),
+      participantId: STRING('the seat whose turn ended'),
+      parentId: STRING('the orchestrator that took the report'),
+      turnSeq: { type: 'number', description: 'the ledger seq of the terminal event the report answers', expectation: 'a non-negative integer', example: 812 },
+      reportSeq: { type: 'number', description: 'the seq of the swarm.turn_reported row this delivery settles', expectation: 'a non-negative integer', example: 900 },
+      guidanceSeq: { type: 'number', description: 'the seq of the swarm.guidance_sent row the delivery rode', expectation: 'a non-negative integer', example: 901 },
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', participantId: 'builder', parentId: 'lead',
+      turnSeq: 812, reportSeq: 900, guidanceSeq: 901,
     }),
   }),
   // ── issue #273: guidance's own durable rows ───────────────────────────────────────────────────
