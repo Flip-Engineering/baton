@@ -629,8 +629,10 @@ async function runFile(file) {
   }
   if (leakedFixtures.length > 0) {
     failed.push({
-      file, name: `(file leaked fixture directories: ${leakedFixtures.join(', ')})`,
-      failureType: 'fixtureLeak', message: leakedFixtures.join(', '),
+      // The row key names the file only, so a file still being repaired can be pinned in the
+      // expected-red manifest; the leaked directory names ride the message.
+      file, name: '(file leaked fixture directories)',
+      failureType: 'fixtureLeak', message: `leaked fixture directories: ${leakedFixtures.join(', ')}`,
     });
   }
   if (job.hung) {

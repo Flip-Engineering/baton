@@ -139,7 +139,8 @@ test('SH6 (#571): the runner fails and reaps a timed-out file that leaves a fixt
     join(import.meta.dirname, '..', 'scripts', 'run-suite.mjs'), fixture,
   ], { encoding: 'utf8', env });
   assert.equal(outcome.status, 1);
-  assert.match(`${outcome.stdout}\n${outcome.stderr}`, /file leaked fixture directories: baton-deliberate-leak-/u);
+  assert.match(`${outcome.stdout}\n${outcome.stderr}`, /\(file leaked fixture directories\)/u);
+  assert.match(`${outcome.stdout}\n${outcome.stderr}`, /baton-deliberate-leak-/u);
   assert.match(`${outcome.stdout}\n${outcome.stderr}`, /file hung/u);
   assert.deepEqual(readdirSync(world).sort(), ['leaking-fixture.test.mjs'],
     'the runner removes the leaked directory and its suite root before it reports failure');
